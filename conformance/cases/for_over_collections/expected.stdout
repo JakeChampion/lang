@@ -1,0 +1,12 @@
+ordmap apple=1
+ordmap fig=2
+ordmap pear=3
+pmap one=1
+pvec 7
+pvec 8
+ordset 10
+ordset 20
+ordset 30
+pset only
+set b
+set a

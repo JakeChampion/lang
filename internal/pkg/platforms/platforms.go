@@ -253,12 +253,16 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     socket endpoints. wasi:sockets has IP sockets only.
 	//   - `reactor` — a readiness set the host keeps between waits:
 	//     epoll, kqueue, or on wasm a table of wasi:io pollables.
-	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "subprocess", "unix", "reactor"},
+	//   - `rawmem` — the native runtime's raw-memory floor: its allocator's
+	//     block layout and its static slots (`__raw_alloc`, `__raw_environ`,
+	//     …). Wasm serves the runtime helpers written on it with
+	//     hand-written WAT and lowers none of it.
+	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor"},
 
 	// hosted-native plus `sysctl` — the kernel's named variables by MIB
 	// (load averages, boot time). Linux removed sysctl(2) and keeps the
 	// same facts in /proc, so only Darwin grants it.
-	"hosted-darwin": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "subprocess", "unix", "reactor", "sysctl"},
+	"hosted-darwin": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets) but has no process model, so neither `proc` nor

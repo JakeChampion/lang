@@ -1271,10 +1271,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// `for x in <EXPR>` over a non-ident array iterable — clean from both checkers.
 		{"for-literal-clean", "function main(): i32 { let s = 0; for x in [1, 2, 3] { s = s + x; } return s; }\n", nil},
 		{"for-call-clean", "function mk(): i32[] { return [1, 2]; }\nfunction main(): i32 { let s = 0; for x in mk() { s = s + x; } return s; }\n", nil},
-		// `for x in <EXPR>` over a value no loop iterates: native lowers it to
-		// `.len()` + index and reports both at the loop.
-		{"for-over-struct", "enum Ty { S(i32), N(i32) }\nstruct Item { ty: Ty }\nstruct Box { list: Item[], k: i32 }\nfunction main(): i32 {\n  let b: Box = Box { list: [Item { ty: Ty.S(1) }], k: 1 };\n  let names: string[] = [];\n  for it in b {\n    if let Ty.S(v) = it.ty {\n      names = names.append(\"x\");\n    }\n  }\n  return names.len();\n}\n", []string{"E034", "E043"}},
-		{"for-over-i32", "function main(): i32 { let n: i32 = 3; let s: i32 = 0; for x in n { s = s + x; } return s; }\n", []string{"E034", "E043"}},
+		// `for x in <EXPR>` over a value no loop iterates is E083, naming the
+		// type rather than the array lowering's `len` and index.
+		{"for-over-struct", "enum Ty { S(i32), N(i32) }\nstruct Item { ty: Ty }\nstruct Box { list: Item[], k: i32 }\nfunction main(): i32 {\n  let b: Box = Box { list: [Item { ty: Ty.S(1) }], k: 1 };\n  let names: string[] = [];\n  for it in b {\n    if let Ty.S(v) = it.ty {\n      names = names.append(\"x\");\n    }\n  }\n  return names.len();\n}\n", []string{"E083"}},
+		{"for-over-i32", "function main(): i32 { let n: i32 = 3; let s: i32 = 0; for x in n { s = s + x; } return s; }\n", []string{"E083"}},
 		// Unannotated struct-array literal (`let ps = [P{..}, ..]`) — element type
 		// inferred, clean from both checkers.
 		{"inferred-struct-array-clean", "struct P { v: i32 }\nfunction main(): i32 { let ps = [P { v: 3 }, P { v: 4 }]; return ps[0].v + ps[1].v; }\n", nil},
@@ -1596,6 +1596,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e082-use-callback", "function apply(x: i32, k: (i32) => i32): i32 { return k(x); }\nfunction f(s: str): i32 { use n <- apply(41); return n + s.len(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
 		{"e082-owned-copy", "function f(sep: str): i32 { let owned: string = sep + \"\"; let g = (): i32 => owned.len(); return g(); }\nfunction main(): i32 { return f(\",\"); }\n", nil},
 		{"e082-view-without-a-closure", "function f(s: string, c: boolean): i32 { let v: str = slice_unchecked(s, 0, 1); let n: i32 = if (c) { v.len() } else { 0 }; return n; }\nfunction main(): i32 { return f(\"ab\", true); }\n", nil},
+		// E083 beside the two rows above: an unbounded type parameter, and a
+		// value whose iter() returns no Iterator. What does walk an Iterator
+		// needs core/iter, which these single-file rows do not load: the
+		// for_over_* conformance cases cover it.
+		{"e083-unbounded-type-parameter", "function each[T](v: T): i32 { for x in v { } return 0; }\nfunction main(): i32 { return each(1); }\n", []string{"E083"}},
+		{"e083-iter-returns-no-iterator", "struct Counter { n: i32 }\nfunction (c: Counter) iter(): i32 { return c.n; }\nfunction main(): i32 { let k: Counter = Counter { n: 3 }; for n in k { } return 0; }\n", []string{"E083"}},
 		{"e082-parameter-shadows-a-view", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (v: i32): i32 => v + 1; return g(v.len()); }\nfunction main(): i32 { return f(\"ab\"); }\n", nil},
 		{"e082-shared-struct-graph", e082SharedChain("i32"), nil},
 		{"e082-shared-struct-graph-view", e082SharedChain("str"), []string{"E082"}},
@@ -2360,6 +2366,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"unsettled-residual-try-ok", "function f(): Result[i32, string] { let r = Ok(3); return Ok(r? + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"unsettled-payload-store-some", "function main(): i32 { let o = None; o = Some(3); return 0; }\n", []string{"E003"}},
 		{"unsettled-payload-store-err", "function main(): i32 { let r = Ok(1); r = Err(\"s\"); return 0; }\n", []string{"E003"}},
+		// A generic enum named without arguments settles no parameter, so only a
+		// payload spelling one is unbound; a concrete payload keeps its type.
+		{"bare-generic-enum-payload-ok", "enum P[T] { Two(i32, T), Many(T[]), Wrap(Option[i32]), N }\nfunction f(p: P): i32 {\n  match (p) {\n    Two(a, b) => { return a * a + 1; },\n    Many(xs) => { return xs.len(); },\n    Wrap(o) => { return match (o) { Some(v) => v, None => 0 }; },\n    N => { return 0; }\n  }\n  return 0;\n}\nfunction g(p: P): i32 { return 1 + (match (p) { Two(_, b) => b, _ => 2 }); }\nfunction main(): i32 { return f(Wrap(Some(3))) + g(N); }\n", nil},
+		{"bare-generic-enum-payload-mismatch", "enum P[T] { Two(i32, T), N }\nfunction f(p: P): string { match (p) { Two(a, _) => { return a; }, N => { return \"\"; } } return \"\"; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"unsettled-payload-store-variant", "enum E[T] { A(T), B }\nfunction main(): i32 { let e = E.B; e = E.A(3); return 0; }\n", []string{"E003"}},
 		// A `for` loop inside a `defer` is checked like any other.
 		{"defer-for-body-checked", "struct S { n: i32 }\nfunction main(): i32 { let xs: i32[] = [1]; defer { for y in xs { let x: i32 = S { n: y }; } } return 0; }\n", []string{"E003"}},
@@ -2426,16 +2436,23 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"variant-missing-binding", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has => { return 1; }, Nil => { return 0; } } }\n", []string{"E015"}},
 		{"variant-binding-arity-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
 		// E015 continued: a RECORD-form variant (#6676) is destructured by field
-		// name in any order, and every field must be bound exactly once. A
-		// resolved pattern is rewritten to the positional one in declaration
-		// order (resolve_variant_fields_module); anything that does not resolve
-		// lands here. The rename row also draws E001 because both checkers bind
-		// the DECLARED names, leaving the renamed local undefined.
+		// name in any order, with the struct pattern's `field: local` rename and
+		// trailing `..`; every field must be bound exactly once unless `..`
+		// leaves the rest out. A resolved pattern is rewritten to the positional
+		// one in declaration order (resolve_variant_fields_module); anything that
+		// does not resolve lands here.
 		{"record-variant-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { h, w } => { return w * h; }, Unit => { return 0; } } }\n", nil},
 		{"record-variant-missing-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { w } => { return w; }, Unit => { return 0; } } }\n", []string{"E015"}},
 		{"record-variant-unknown-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { w, z } => { return w; }, Unit => { return 0; } } }\n", []string{"E015"}},
 		{"record-variant-dup-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { w, w } => { return w; }, Unit => { return 0; } } }\n", []string{"E015"}},
-		{"record-variant-rename", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { w: a, h: b } => { return a; }, Unit => { return 0; } } }\n", []string{"E001", "E015"}},
+		{"record-variant-rename-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { h: b, w: a } => { return a - b; }, Unit => { return 0; } } }\n", nil},
+		{"record-variant-rest-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; return match (s) { Rect { w, .. } => w, Unit => 0 }; }\n", nil},
+		{"record-variant-rename-rest-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; if let Rect { h: hh, .. } = s { return hh; } return 0; }\n", nil},
+		{"record-variant-rest-only-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { .. } => { return 1; }, Unit => { return 0; } } }\n", nil},
+		{"record-variant-nested-rename-rest-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let o: Option[S] = None; match (o) { Some(Rect { w: ww, .. }) => { return ww; }, Some(Unit()) => { return 1; }, None => { return 0; } } }\n", nil},
+		{"record-variant-rest-unknown-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { z: a, .. } => { return 1; }, Unit => { return 0; } } }\n", []string{"E015"}},
+		{"record-variant-rest-dup-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { w, w: b, .. } => { return w; }, Unit => { return 0; } } }\n", []string{"E015"}},
+		{"record-variant-literal-field-not-exhaustive", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; return match (s) { Rect { w: 0, .. } => 1, Unit => 0 }; }\n", []string{"E030"}},
 		{"record-pattern-on-positional", "enum S { Pair(i32, i32), Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Pair { a, b } => { return a; }, Unit => { return 0; } } }\n", []string{"E015"}},
 		{"positional-pattern-on-record-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect(w, h) => { return w * h; }, Unit => { return 0; } } }\n", nil},
 		// E054: an `@export(...)` world-export function cannot be generic
@@ -3671,6 +3688,11 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"record-variant-rename-and-rest", `enum S { Rect { w: i32, h: i32 }, Tag { name: string, n: i32 } }
+function f(s: S): i32 { match (s) { Rect { h: hh, w } => { return w - hh; }, Tag { n: count, .. } => { return count; } } }
+function g(o: Option[S]): i32 { return match (o) { Some(Rect { w: ww, .. }) => ww, Some(Tag { .. }) => 1, None => 0 }; }
+function h(s: S): i32 { if let Tag { name: nm, .. } = s { return nm.len(); } return 0; }
+function main(): i32 { return f(Rect(1, 2)) + g(None) + h(Tag("x", 1)); }`},
 		{"bound-method-unused-result-variable", `trait Cfg { function get(self: Self, k: string): Option[string]; }
 function f[P: Cfg](c: P): i32 { let s: string = c.get("x"); return 0; }
 function main(): i32 { return 0; }`},

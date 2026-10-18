@@ -1,0 +1,2 @@
+literal -1 does not fit in usize: unsigned types have no negative values
+literal 18446744073709551616 does not fit in

@@ -6,8 +6,7 @@
 // evaluates the initialiser as a constant expression — literals,
 // references to earlier consts, and arithmetic / comparison /
 // logical / unary operations on those, array and tuple literals of
-// constant elements, plus the __fern_asset / __fern_assets builtins
-// below. Anything outside that grammar (ordinary function calls, array
+// constant elements, plus the asset builtins below. Anything outside that grammar (ordinary function calls, array
 // indexing, struct literals, runtime expressions) is rejected with a
 // diagnostic.
 //
@@ -17,12 +16,14 @@
 // stripped from the program afterwards, so the checker / IR /
 // codegen layers stay unaware of the feature.
 //
-// The same traversal resolves `__fern_asset("name")` against the
-// compile-time asset set (see internal/pkg/embed), replacing the call with a
-// string literal holding the file's bytes. Assets use the const machinery
-// rather than a pass of their own for two reasons: an asset IS a
-// compile-time constant, and a `const PAGE: string = __fern_asset(...)`
-// has to resolve during const evaluation, not after it.
+// The same traversal resolves the asset builtins against the compile-time
+// asset set (see internal/pkg/embed): `__fern_asset("name")` becomes a string
+// literal holding the file's text, which must be valid UTF-8, and
+// `__fern_asset_bytes("name")` a `u8[]` literal holding its bytes. Assets use
+// the const machinery rather than a pass of their own for two reasons: an
+// asset IS a compile-time constant, and a
+// `const PAGE: string = __fern_asset(...)` has to resolve during const
+// evaluation, not after it.
 //
 // It also resolves `target_os()` and `target_arch()` to the two halves of
 // the compile target's name (Inputs.TargetOS / Inputs.TargetArch) when the
@@ -35,23 +36,27 @@ package constfold
 
 import (
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/pkg/embed"
 	"github.com/jakechampion/lang/internal/syntax/ast"
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// assetBuiltin is the compile-time asset accessor. It is not a function —
-// no declaration exists anywhere — so every occurrence must be substituted
-// here or reported; anything left behind reaches the checker as an
-// undefined identifier.
-const assetBuiltin = "__fern_asset"
-
-// assetsBuiltin enumerates the whole bundle: `__fern_assets()` becomes an
-// array of `(name, contents)` tuples in sorted-name order. Same
-// substitution trick as assetBuiltin one level up, so the backends stay
-// unaware of it too.
-const assetsBuiltin = "__fern_assets"
+// The asset builtins split the way read_file / read_file_bytes do: the text
+// form yields a `string` and refuses a file that is not valid UTF-8, the
+// bytes form yields `u8[]` and takes any file. None is a function — no
+// declaration exists anywhere — so every occurrence must be substituted here
+// or reported; anything left behind reaches the checker as an undefined
+// identifier.
+const (
+	assetBuiltin      = "__fern_asset"
+	assetBytesBuiltin = "__fern_asset_bytes"
+	// The enumerations become an array of `(name, contents)` tuples in
+	// sorted-name order.
+	assetsBuiltin      = "__fern_assets"
+	assetsBytesBuiltin = "__fern_assets_bytes"
+)
 
 // targetOSBuiltin is the compile target's environment as a constant:
 // `target_os()` reads "linux", "darwin", "android", "wasi", "wasi-http" or
@@ -101,7 +106,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 
 	for _, cd := range prog.Consts {
 		if _, dup := values[cd.Name]; dup {
-			errs = append(errs, &Error{Pos: cd.P, Msg: fmt.Sprintf("const %q redeclared", cd.Name)})
+			errs = append(errs, &Error{Pos: cd.P, Path: cd.SourceModule, Msg: fmt.Sprintf("const %q redeclared", cd.Name)})
 			continue
 		}
 		if rangeErrs := checkLiteralRange(cd); len(rangeErrs) > 0 {
@@ -110,13 +115,13 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		}
 		val, err := evalConstTyped(cd.Value, cd.Type, values, types, in.Assets)
 		if err != nil {
-			errs = append(errs, &Error{Pos: cd.P, Msg: fmt.Sprintf("const %s: %s", cd.Name, err)})
+			errs = append(errs, constError(cd, err))
 			continue
 		}
 		gotT := litType(val)
 		if cd.Type != nil {
 			if err := settleConstLit(cd.Type, val); err != nil {
-				errs = append(errs, &Error{Pos: cd.P, Msg: fmt.Sprintf("const %s: %s", cd.Name, err)})
+				errs = append(errs, constError(cd, err))
 				continue
 			}
 			// The declared type is the const's type once the literal has
@@ -147,6 +152,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 	sub := substituter{values: values, assets: in.Assets, targetOS: in.TargetOS, targetArch: in.TargetArch}
 	for _, fn := range prog.Funcs {
 		sub.values = values
+		sub.module = fn.BodyModule()
 		if body := fn.BodyModule(); body != "" && body != prog.EntryModule {
 			sub.values = libValues
 		}
@@ -233,6 +239,9 @@ func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, types
 		if isAssetsCall(n) {
 			return resolveAssets(n, assets)
 		}
+		if isAssetCall(n) && assetBytes(n) {
+			return resolveAsset(n, assets)
+		}
 	case *ast.Ident:
 		// An earlier composite const is copied, so the two trees never alias.
 		if v, ok := values[n.Name]; ok {
@@ -251,8 +260,8 @@ func evalConst(e ast.Expr, w intWidth, values map[string]ast.Expr, types map[str
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit, *ast.CharLit:
 		return n, nil
 	case *ast.Call:
-		if isAssetsCall(n) {
-			return nil, fmt.Errorf("%s() builds an array, which an operator cannot take in a constant expression", assetsBuiltin)
+		if isAssetsCall(n) || (isAssetCall(n) && assetBytes(n)) {
+			return nil, fmt.Errorf("%s() builds an array, which an operator cannot take in a constant expression", calleeName(n))
 		}
 		if !isAssetCall(n) {
 			return nil, fmt.Errorf("expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)")
@@ -532,6 +541,15 @@ func foldFloatBinary(n *ast.Binary, l, r float64) (ast.Expr, error) {
 	return nil, fmt.Errorf("operator `%s` not allowed in float constant expressions", n.Op)
 }
 
+// constError places err, met folding cd's initialiser, at the declaration.
+func constError(cd *ast.ConstDecl, err error) error {
+	msg := err.Error()
+	if e, ok := err.(*Error); ok {
+		msg = e.Msg
+	}
+	return &Error{Pos: cd.P, Path: cd.SourceModule, Msg: "const " + cd.Name + ": " + msg}
+}
+
 // checkLiteralRange judges every integer literal written in a const's
 // initialiser against the declared type before anything folds. Folding wraps
 // at the declared width, as `+`, `-` and `*` do at run time, so a literal that
@@ -707,6 +725,8 @@ type substituter struct {
 	targetOS   string
 	targetArch string
 	errs       []error
+	// module is the module of the body being walked, for its diagnostics.
+	module string
 	// bound is the scope stack of names a BINDER has introduced — params,
 	// var / destructure declarations, match and for-each bindings, lambda
 	// params. A const is a module-level name, so any of these shadows it,
@@ -747,31 +767,52 @@ func isTargetCall(c *ast.Call, name string) bool {
 	return ok && id.Name == name && len(c.Args) == 0
 }
 
-// isAssetCall reports whether c is a call of the __fern_asset builtin. It
+// isAssetCall reports whether c calls __fern_asset or __fern_asset_bytes. It
 // matches on the callee name alone so that a malformed use (wrong arity, a
 // computed name) is still recognised and reported as such, rather than
 // falling through to the checker as a call to an undefined function.
 func isAssetCall(c *ast.Call) bool {
-	id, ok := c.Callee.(*ast.Ident)
-	return ok && id.Name == assetBuiltin
+	n := calleeName(c)
+	return n == assetBuiltin || n == assetBytesBuiltin
+}
+
+// isAssetsCall reports whether c calls __fern_assets or __fern_assets_bytes.
+func isAssetsCall(c *ast.Call) bool {
+	n := calleeName(c)
+	return n == assetsBuiltin || n == assetsBytesBuiltin
+}
+
+// assetBytes reports whether an asset call is a bytes form.
+func assetBytes(c *ast.Call) bool {
+	n := calleeName(c)
+	return n == assetBytesBuiltin || n == assetsBytesBuiltin
+}
+
+func calleeName(c *ast.Call) string {
+	if id, ok := c.Callee.(*ast.Ident); ok {
+		return id.Name
+	}
+	return ""
 }
 
 // resolveAsset turns one __fern_asset("name") call into the string literal
-// holding that asset's bytes.
+// holding that asset's text, or one __fern_asset_bytes("name") call into the
+// u8[] literal holding its bytes.
 //
 // The name must be a literal: the substitution happens at compile time, so
 // there is no later point at which a computed name could be resolved. Saying
 // that plainly beats letting it reach the checker as an undefined function.
 func resolveAsset(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
+	fn := calleeName(c)
 	if len(c.Args) != 1 {
-		return nil, fmt.Errorf("%s: %s takes exactly one argument, got %d", c.P, assetBuiltin, len(c.Args))
+		return nil, fmt.Errorf("%s: %s takes exactly one argument, got %d", c.P, fn, len(c.Args))
 	}
 	lit, ok := c.Args[0].(*ast.StringLit)
 	if !ok {
-		return nil, fmt.Errorf("%s: %s needs a string literal — assets are resolved at compile time, so the name cannot be computed", c.P, assetBuiltin)
+		return nil, fmt.Errorf("%s: %s needs a string literal — assets are resolved at compile time, so the name cannot be computed", c.P, fn)
 	}
 	if assets == nil {
-		return nil, fmt.Errorf("%s: %s(%q) but no assets were embedded — pass -embed DIR to the compiler", c.P, assetBuiltin, lit.Value)
+		return nil, fmt.Errorf("%s: %s(%q) but no assets were embedded — pass -embed DIR to the compiler", c.P, fn, lit.Value)
 	}
 	data, ok := assets.Lookup(lit.Value)
 	if !ok {
@@ -781,17 +822,36 @@ func resolveAsset(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 		}
 		return nil, fmt.Errorf("%s (%s)", msg, assets.FormatAvailable())
 	}
+	if assetBytes(c) {
+		return bytesLit(c.P, data), nil
+	}
+	if !utf8.ValidString(data) {
+		return nil, notText(c.P, fn, assets, lit.Value)
+	}
 	return &ast.StringLit{P: c.P, Value: data}, nil
 }
 
-// isAssetsCall reports whether c is a call of the __fern_assets builtin.
-func isAssetsCall(c *ast.Call) bool {
-	id, ok := c.Callee.(*ast.Ident)
-	return ok && id.Name == assetsBuiltin
+// notText refuses a text-form asset whose file is not valid UTF-8.
+func notText(p ast.Position, fn string, assets *embed.Set, name string) error {
+	return fmt.Errorf("%s: %s: embedded asset %q under %s is not valid UTF-8 — read it as u8[] with %s_bytes", p, fn, name, assets.Root(), fn)
+}
+
+var u8Type = ast.NumberType{Width: 8, Signed: false}
+
+// bytesLit is the u8[] literal holding data, one element per byte. The
+// element type is stamped so an empty file needs no annotation.
+func bytesLit(p ast.Position, data string) *ast.ArrayLit {
+	elems := make([]ast.Expr, len(data))
+	for i := 0; i < len(data); i++ {
+		elems[i] = &ast.NumberLit{P: p, Value: int64(data[i]), Width: 8, IsUnsigned: true}
+	}
+	return &ast.ArrayLit{P: p, Elems: elems, ElemType: u8Type}
 }
 
 // resolveAssets turns `__fern_assets()` into an array literal of
-// `(name, contents)` tuples, one per embedded asset.
+// `(name, text)` tuples, or `__fern_assets_bytes()` into one of
+// `(name, bytes)` tuples, one per embedded asset. The text form refuses the
+// bundle when any file in it is not valid UTF-8, naming that file.
 //
 // Order is embed.Set.Names(), which is sorted, so the emitted program is
 // byte-identical across hosts — a filesystem-order walk would not be.
@@ -800,19 +860,31 @@ func isAssetsCall(c *ast.Call) bool {
 // names it. That is inherent to enumeration rather than an oversight: the
 // point is to reach assets whose names the program does not know.
 func resolveAssets(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
+	fn := calleeName(c)
 	if len(c.Args) != 0 {
-		return nil, fmt.Errorf("%s: %s takes no arguments, got %d", c.P, assetsBuiltin, len(c.Args))
+		return nil, fmt.Errorf("%s: %s takes no arguments, got %d", c.P, fn, len(c.Args))
 	}
 	if assets == nil {
-		return nil, fmt.Errorf("%s: %s() but no assets were embedded — pass -embed DIR to the compiler", c.P, assetsBuiltin)
+		return nil, fmt.Errorf("%s: %s() but no assets were embedded — pass -embed DIR to the compiler", c.P, fn)
+	}
+	bytes := assetBytes(c)
+	var contentT ast.Type = ast.StringType{}
+	if bytes {
+		contentT = ast.ArrayType{Elem: u8Type}
 	}
 	names := assets.Names()
 	elems := make([]ast.Expr, 0, len(names))
 	for _, n := range names {
 		data, _ := assets.Lookup(n)
+		var content ast.Expr = &ast.StringLit{P: c.P, Value: data}
+		if bytes {
+			content = bytesLit(c.P, data)
+		} else if !utf8.ValidString(data) {
+			return nil, notText(c.P, fn, assets, n)
+		}
 		elems = append(elems, &ast.TupleLit{P: c.P, Elems: []ast.Expr{
 			&ast.StringLit{P: c.P, Value: n},
-			&ast.StringLit{P: c.P, Value: data},
+			content,
 		}})
 	}
 	// ElemType is stamped rather than left for the checker to infer,
@@ -824,7 +896,7 @@ func resolveAssets(c *ast.Call, assets *embed.Set) (ast.Expr, error) {
 	return &ast.ArrayLit{
 		P:        c.P,
 		Elems:    elems,
-		ElemType: ast.TupleType{Elems: []ast.Type{ast.StringType{}, ast.StringType{}}},
+		ElemType: ast.TupleType{Elems: []ast.Type{ast.StringType{}, contentT}},
 	}, nil
 }
 
@@ -1079,7 +1151,7 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 		// not an lvalue the parser can produce (compiler bug)` (#8443).
 		if id, ok := x.Target.(*ast.Ident); ok {
 			if _, isConst := s.values[id.Name]; isConst && !s.isBound(id.Name) {
-				s.errs = append(s.errs, fmt.Errorf("%s: cannot assign to const %s", id.P, id.Name))
+				s.errs = append(s.errs, &Error{Pos: id.P, Path: s.module, Msg: "cannot assign to const " + id.Name})
 				s.walkExpr(&x.Value)
 				return
 			}

@@ -1,0 +1,39 @@
+// usize is the target's pointer width, and its arithmetic wraps there
+// (docs/INTEGER-SEMANTICS.md). On wasm32 that is 32 bits: u32::MAX is the
+// largest literal, a carry out of 32 bits is lost, a borrow below zero wraps
+// to u32::MAX, and a shift count masks to 31. usize_wraps_at_64_bits is the
+// same operations on the 64-bit targets.
+import "core/int";
+import "std/u64";
+
+function wide(a: i64): usize {
+    return a as usize;
+}
+
+function main(): i32 {
+    let past_i32: usize = 2147483648;
+    let u32_max: usize = 4294967295;
+    let u32_max_hex: usize = 0xFFFFFFFF;
+    let folded: usize = 2147483647 + 1;
+    print(past_i32.to_string());
+    print(folded.to_string());
+    print(u32_max.to_string());
+    if (u32_max == u32_max_hex) {
+        print("hex and decimal agree");
+    }
+    print(wide(4294967296).to_string());
+    print((wide(4294967295) + wide(1)).to_string());
+    print((wide(0) - wide(1)).to_string());
+    print((u32_max + 1).to_string());
+    print((u32_max * 2).to_string());
+    print((wide(1) << 31).to_string());
+    print((wide(1) << 32).to_string());
+    print((u32_max >> 1).to_string());
+    print((u32_max / 3).to_string());
+    print((u32_max % 10).to_string());
+    if (wide(0) - wide(1) > wide(0)) {
+        print("a borrow reads unsigned");
+    }
+    print(f"{past_i32 - 1}");
+    return 0;
+}

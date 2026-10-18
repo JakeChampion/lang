@@ -90,7 +90,7 @@ function emit(g: ircore.Gated, arm: boolean, debug: boolean, retain: boolean): s
 pub function run(): void {
   let src = "struct Leaf { n: i32 } struct Parent { left: Leaf, right: Leaf } @noinline function consume(own p: Parent): i32 { return p.left.n + p.right.n; } function main(): i32 { let l = Leaf { n: 7 }; let p = Parent { left:l,right:l }; return consume(p) - 14; }";
   let mod = parser.parse_module(lexer.tokenize(src));
-  require(!asmcore.refuse_parse_unknowns([mod]) && !asmcore.refuse_decl_names([mod]), 74);
+  require(!asmcore.refuse_parse_errors([mod]), 74);
   let g = semlower.program(semlower.driven(mod, "x86-64-linux"));
   require(g.ok, 75);
   for arm in [false, true] {

@@ -39,6 +39,7 @@
 package e2e
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -254,13 +255,32 @@ func semRefused(out string) bool {
 	return strings.Contains(out, "FERN_SEM_IR: the typed lowering refused")
 }
 
+// selfHostCompileTimeout bounds one compile of a generated program, which takes
+// a second or two; a compiler that runs past it is hung.
+var selfHostCompileTimeout = 2 * time.Minute
+
+// compileSelfHostSeed runs one self-host compile of a generated program,
+// killed at selfHostCompileTimeout; hung reports that it was.
+func compileSelfHostSeed(fernBin string, env []string, args ...string) (out []byte, hung bool, err error) {
+	cmd := selfHostCompileCmd(fernBin, env, args...)
+	var compiled bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &compiled, &compiled
+	hung, err = runBounded(cmd, selfHostCompileTimeout)
+	return compiled.Bytes(), hung, err
+}
+
+// reportCompileHang is the failure every leg reports for a hung compile.
+func reportCompileHang(failf failFunc, src string) {
+	failf("the self-host compiler did not finish in %v:\nsrc:\n%s", selfHostCompileTimeout, src)
+}
+
 // runSelfHostSeed compiles src with the self-host CLI, links it, and runs it.
 //
 // Returns (run, "") when the program ran, (nil, gapMessage) when the compiler
-// bailed, and (nil, "") when the LINK failed — a link failure has already been
-// reported through failf, because the compiler emitted asm the assembler
-// rejected and the artifact never ran, which is a finding this leg exists to
-// report rather than a coverage gap to skip.
+// bailed, and (nil, "") when the compile hung or the LINK failed. Both are
+// already reported through failf: a hung compiler, or asm the assembler
+// rejected, is a finding this leg exists to report rather than a coverage gap
+// to skip.
 //
 // It reports the bail rather than calling t.Skip itself. A skip unwinds the
 // subtest goroutine immediately, which silently bypassed the caller's
@@ -285,7 +305,11 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env [
 	asmPath := filepath.Join(dir, "prog.s")
 	args := append([]string{"-target", "x86-64-linux"}, flags...)
 	args = append(args, "-emit", "asm", "-o", asmPath, srcPath, stdlibRoot)
-	out, err := selfHostCompileCmd(fernBin, env, args...).CombinedOutput()
+	out, hung, err := compileSelfHostSeed(fernBin, env, args...)
+	if hung {
+		reportCompileHang(failf, src)
+		return nil, ""
+	}
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
 			strictIRBailSite(fernBin, "x86-64-linux", append(flags, "-emit", "asm"), env, srcPath, stdlibRoot, out))

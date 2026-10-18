@@ -31,3 +31,33 @@ func TestUninstantiatedEnumLocalSurvivesRecheck(t *testing.T) {
 		}
 	}
 }
+
+// A generic enum annotated without type arguments is the bare form in every
+// position, and the re-check reads the bare form the first check stamped back
+// as the same annotation. It used to fail its arity there, so the program
+// checked alone and was refused once anything generic was called (#12804).
+func TestBareEnumAnnotationSurvivesRecheck(t *testing.T) {
+	const decls = "enum Shape[T] { Circle(i32), Blank }\n" +
+		"enum Nest[T] { Wrap(Shape), Hole(T) }\n" +
+		"struct Holder { s: Shape }\n" +
+		"function id[T](x: T): T { return x; }\n" +
+		"function area(s: Shape): i32 { match (s) { Circle(r) => { return r * r; }, Blank => { return 0; } } return 0; }\n" +
+		"function make(n: i32): Shape { if (n > 0) { return Circle(n); } return Blank; }\n"
+	for _, src := range []string{
+		decls + "function main(): i32 { return id(area(Circle(3))); }\n",
+		decls + "function main(): i32 { let xs: Shape[] = [Circle(1), make(2)]; let h: Holder = Holder { s: xs[0] }; let n: Nest = Wrap(h.s); return id(area(h.s)); }\n",
+		decls + "function main(): i32 { let s: Shape = id(make(2)); return area(s); }\n",
+	} {
+		prog, err := parser.Parse(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := checker.Check(prog)
+		if err != nil {
+			t.Fatalf("check: %v\n%s", err, src)
+		}
+		if err := monomorph.Run(prog, info); err != nil {
+			t.Errorf("monomorph: %v\n%s", err, src)
+		}
+	}
+}

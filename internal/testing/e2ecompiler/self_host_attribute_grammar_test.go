@@ -48,6 +48,7 @@ func TestSelfHostAttributeGrammar(t *testing.T) {
 		"@derive(Eq,)\nstruct S { a: i32 }",
 		"@derive(1)\nstruct S { a: i32 }",
 		"@if\nstruct S { a: i32 }",
+		"@struct\nstruct S { a: i32 }",
 		"@frob\nstruct S { a: i32 }",
 		"@frob(1)\nstruct S { a: i32 }",
 		"@must_consume(1)\nstruct S { a: i32 }",

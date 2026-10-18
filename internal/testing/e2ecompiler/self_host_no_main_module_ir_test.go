@@ -32,7 +32,7 @@ function twice(n: i32): i32 { return n * 2; }
 pub function quad(n: i32): i32 { return twice(twice(n)); }`},
 	// Heap + string work, so the module pulls in the runtime (alloc / str_concat)
 	// and `_start` is emitted alongside it. A library whose functions allocate is
-	// the common real case (util.fern, asmcore.fern).
+	// the common real case (typeinfo.fern, asmcore.fern).
 	{"string-heap", `
 pub function label(i: i32): string {
     if (i % 2 == 0) { return "ab" + "!"; }
@@ -91,19 +91,18 @@ func TestSelfHostNoMainModuleIRX86_64(t *testing.T) {
 		})
 	}
 
-	// The real consumer, in miniature: a main-less compiler SOURCE. util.fern is
-	// the first file TestSelfHostBootstrapsItself pipes through this driver, and
-	// the one that failed when the driver was rerouted IR-or-error.
-	t.Run("util-fern-routes-ir", func(t *testing.T) {
-		src, err := os.ReadFile("../../../compiler/util.fern")
+	// A main-less compiler SOURCE. This driver loads no imports, so the module
+	// is one of the import-free ones.
+	t.Run("typeinfo-fern-routes-ir", func(t *testing.T) {
+		src, err := os.ReadFile("../../../compiler/typeinfo.fern")
 		if err != nil {
-			t.Fatalf("read util.fern: %v", err)
+			t.Fatalf("read typeinfo.fern: %v", err)
 		}
 		if path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src))); path != "ir" {
-			t.Fatalf("util.fern routed through %q path, want \"ir\"", path)
+			t.Fatalf("typeinfo.fern routed through %q path, want \"ir\"", path)
 		}
 		if asm := runCapture(t, gcc, runner, driverBin, src); len(asm) == 0 {
-			t.Fatal("util.fern emitted 0 bytes")
+			t.Fatal("typeinfo.fern emitted 0 bytes")
 		}
 	})
 }

@@ -1233,7 +1233,7 @@ func TestRunnerHTTPRequestIdExamplePasses(t *testing.T) {
 // std/http/hpack both ways, with the table sizes and evictions the RFC
 // shows, and holds a decoder to its list, field and table-size bounds.
 func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 12)
+	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 13)
 }
 
 // `tests/stdlib/http_qpack_test.fern` decodes RFC 9204 Appendix B's
@@ -1272,7 +1272,7 @@ func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
 // refused, malformed requests reset and malformed connections closed, HEAD
 // answered without a body, and the control frames.
 func TestRunnerHTTPH2ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h2", "std/http/h2", 19)
+	runnerSuitePasses(t, "http_h2", "std/http/h2", 20)
 }
 
 // `tests/stdlib/quic_frames_test.fern` reads and writes every QUIC frame,
@@ -1476,6 +1476,23 @@ func TestRunnerCliExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/cli", "# pass 34", "# fail 0", "1..34"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `tests/stdlib/envflag_test.fern` covers std/envflag's reading of a FERN_*
+// switch: the off spellings in any case, everything else on, and an unset
+// variable off and valueless.
+func TestRunnerEnvflagExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/envflag_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/envflag", "# pass 4", "# fail 0", "1..4"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -4563,7 +4580,8 @@ func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
 		"ok 8 - unknown status falls back to Status",
 		"ok 9 - HEAD response has no body",
 		"ok 10 - 204 has no Content-Length or body",
-		"# pass 11",
+		"ok 11 - Connection field where it carries meaning",
+		"# pass 12",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

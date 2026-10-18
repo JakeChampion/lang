@@ -560,6 +560,39 @@ func TestFreestandingDescriptorIsCheckOnly(t *testing.T) {
 	}
 }
 
+// The native runtime's raw-memory floor is the hosted natives' alone: wasm
+// lowers none of it. The Go checker does not register these names, so this
+// pins the table the self-host's E066 reads through the parity test.
+func TestRawMemoryFloorNativeOnly(t *testing.T) {
+	floor := []string{"__raw_alloc", "__raw_string", "__raw_arr_box", "__raw_scratch", "__raw_environ",
+		"__raw_splice_pipe", "__raw_cover", "__raw_task_state", "__raw_vdso", "__raw_vg_request"}
+	for _, b := range floor {
+		if c, ok := platforms.GatedBuiltin(b); !ok || c != "rawmem" {
+			t.Errorf("%s gated on %q (gated=%v), want rawmem", b, c, ok)
+		}
+	}
+	for _, b := range []string{"__raw_load8", "__raw_store8", "__raw_load_ptr", "__raw_store_ptr", "__raw_data", "__raw_array", "__raw_arr_ptr"} {
+		if c, ok := platforms.GatedBuiltin(b); ok {
+			t.Errorf("%s gated on %q; wasm lowers it, so it stays ungated", b, c)
+		}
+	}
+	want := "arm64-android arm64-darwin arm64-linux x86-64-linux"
+	if got := strings.Join(platforms.TargetsProviding("rawmem"), " "); got != want {
+		t.Errorf("rawmem providers = %s, want %s", got, want)
+	}
+}
+
+// E066 for timer_fd points at the pollable that reaches the same wakeup, on
+// a target that provides it, and on no other.
+func TestViolationNamesTheEquivalent(t *testing.T) {
+	for target, want := range map[string]bool{"wasm32-wasi": true, "wasm32-wasi-http": true, "arm64-freestanding": false} {
+		msg := platforms.Violation{Builtin: "timer_fd", Capability: "pollfd", Target: target}.Message("")
+		if got := strings.Contains(msg, "use `wasm_timer_pollable`, which this target provides"); got != want {
+			t.Errorf("%s: names the equivalent = %v, want %v: %s", target, got, want, msg)
+		}
+	}
+}
+
 // Table consistency: every capability named in the gate table is provided
 // by at least one target. Guards against typos like gating on "filesystem"
 // while descriptors say "fs", and is what lets Violation.Message assume a

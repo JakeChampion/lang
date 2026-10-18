@@ -66,14 +66,13 @@ function float_literal(): f64 { return 1.5; }
 // The unsigned widths: the u64 occupies the i64's slot and the u32 the i32's, and
 // each takes the operator forms that read no sign bit. A u32 literal past 2^31
 // has no signed immediate to use, so it carries its source text the way a
-// 64-bit one does; a cast names the mask its destination applies. Negation is
-// refused at both, as it is at the byte: its result leaves the range the type
-// names.
+// 64-bit one does; a cast names the mask its destination applies. Negation
+// wraps: it is 0 - n at the operand's width.
 function wide_unsigned(n: u64): u64 { return n + 1u64; }
 function half_unsigned(d: u32): u32 { return (2147483648u32 / d) >> 1; }
 function unsigned_widths(n: i32): i32 { return ((n as u32) as u64) as i32; }
 function unsigned_float(n: u32): f64 { return n as f64; }
-function refused_unsigned_negation(n: u32): u32 { return -n; }
+function wrapping_unsigned_negation(n: u32): u32 { return -n; }
 // String ordering is the runtime's byte compare against zero, and it reads a
 // view's bytes as readily as an owned string's.
 function sorted(a: string, b: string): boolean { return a < b; }

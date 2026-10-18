@@ -366,6 +366,26 @@ func TestFormatExplainWrapsBody(t *testing.T) {
 	}
 }
 
+// The page's own heading becomes the header line, so the title prints once.
+func TestFormatExplainHeadingPrintsOnce(t *testing.T) {
+	got := FormatExplain("e001", "# E001 — Undefined identifier\n\nThe compiler couldn't find it.\n")
+	want := "error E001: Undefined identifier\n\nThe compiler couldn't find it.\n\n"
+	if got != want {
+		t.Errorf("FormatExplain = %q, want %q", got, want)
+	}
+}
+
+// Every page opens with the `# CODE — title` heading FormatExplain folds into
+// its header.
+func TestExplanationsOpenWithTheirHeading(t *testing.T) {
+	for _, code := range AvailableCodes() {
+		first, _, _ := strings.Cut(Explain(code), "\n")
+		if !strings.HasPrefix(first, "# "+code+" — ") || len(first) == len("# "+code+" — ") {
+			t.Errorf("%s.md opens with %q, want \"# %s — title\"", code, first, code)
+		}
+	}
+}
+
 // FormatRemapped with a nil remap is identical to Format.
 func TestFormatRemappedNilIsIdentity(t *testing.T) {
 	src := "function f() {\n    return x + 1;\n}\n"

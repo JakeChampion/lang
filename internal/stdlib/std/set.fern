@@ -35,6 +35,7 @@
 //   s.to_array();    // [1, 2, 3, 4]  (insertion order)
 
 import "core/cmp";
+import "core/iter";
 
 // The distinct elements, in first-inserted order. The `xs` field is an
 // implementation detail — the invariant "no duplicates" is maintained
@@ -126,6 +127,12 @@ pub function (s: Set[T]) remove[T: cmp.Eq](x: T): Set[T] {
     i = i + 1;
   }
   return Set { xs: ys };
+}
+
+// `iter()` — an Iterator over the distinct elements in first-inserted
+// order, which is what `for x in s` walks.
+pub function (s: Set[T]) iter(): iter.ArrayIter[T] {
+  return iter.of(s.xs);
 }
 
 // `to_array()` — the distinct elements in first-inserted order. The

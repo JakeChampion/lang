@@ -99,6 +99,13 @@ pub function op_const_i32_text(t: string): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
 }
 
+// op_const_ptr_text is op_const_i32_text at the pointer width: a `usize`
+// literal past the i32 immediate, spliced into a 32-bit immediate on wasm and
+// a full 64-bit one on the register backends.
+pub function op_const_ptr_text(t: string): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: t };
+}
+
 pub function op_const_i64(v: i64): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
@@ -2221,8 +2228,8 @@ pub function op_lstat(): Op {
 //
 // Refused on wasm rather than deferred: neither preview has a volume to
 // measure, and a zero-filled record would claim a filesystem with no blocks
-// and no name length — a measurement nobody took. wasm_unsupported_builtin
-// names it, and `platforms.fern`'s `fsinfo` gate refuses it as E066.
+// and no name length — a measurement nobody took. `platforms.fern`'s `fsinfo`
+// gate refuses it as E066.
 pub function op_statfs(): Op {
   return op0(270);
 }
@@ -2602,7 +2609,7 @@ pub function op_sleep_ns(): Op {
 // convention ((status >> 8) & 0xff on a normal exit, 128 + signal on a signal
 // death), or -errno. Both lower to the __fern_proc_fork / __fern_proc_waitpid
 // helpers the native backends emit; no wasm (a component has no fork — see
-// wasm_unsupported_builtin). The crash-only supervision primitives
+// the `proc` gate in platforms.fern). The crash-only supervision primitives
 // (docs/CRASH-ONLY-SERVE.md D2'), mirroring the native builtins (#5686).
 pub function op_proc_fork(): Op {
   return op0(211);
@@ -2765,7 +2772,7 @@ pub function sha_builtin_op(tag: i32): Op {
 // push into. Completes the crash-only trio, mirroring the native builtin, and
 // is what lets a forked child become another program — the batched per-module
 // orchestrator in asm_modload_run needs exactly this. No wasm (a component has
-// no processes — see wasm_unsupported_builtin).
+// no processes — the `proc` gate in platforms.fern refuses it).
 pub function op_proc_exec(): Op {
   return op0(213);
 }
@@ -6750,7 +6757,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         let b: Op = cur[i + 1];
         let o: Op = cur[i + 2];
         if (const_i32_readable(b)
-          && is_foldable_binary_kind(o.kind_tag) && o.width != 64 && !o.unsigned
+          && is_foldable_binary_kind(o.kind_tag) && o.width == 0 && !o.unsigned
           && !fold_would_divide_by_zero(o.kind_tag, const_i32_value(b))) {
           out = out.append(op_const_i32(fold_binary_i32(o.kind_tag, const_i32_value(cur[i]), const_i32_value(b))));
           i = i + 3;

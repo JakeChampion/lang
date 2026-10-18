@@ -287,9 +287,9 @@ func loadMultiFileEntry(srcPath, abs, litSrc string, doc *literate.Document) (en
 // multi-file document's modules when none is marked `entry`.
 var mainFuncRe = regexp.MustCompile(`(?m)^\s*(pub\s+)?(function|fn)\s+main\b`)
 
-// embeddedAssets is set from the -embed flag: the asset bundle that
-// __fern_asset("name") resolves against during const folding. nil when
-// -embed was not passed, which makes any use of the builtin an error.
+// embeddedAssets is set from the -embed flag: the asset bundle the asset
+// builtins resolve against during const folding. nil when -embed was not
+// passed, which makes any use of one an error.
 // It is compile-time state shared by the check / interp / build paths
 // rather than a parameter because `run` already carries fifteen.
 var embeddedAssets *embed.Set
@@ -425,7 +425,7 @@ func main() {
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
 	backend := flag.String("backend", "", backendFlagUsage)
 	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component; `command-module` emits a WASI preview-1 COMMAND module — the same core bytes plus a `_start` that runs main and exits with its value, which is what a preview-1 host (`wasmtime run`, or a browser shim like web/wasi-shim.js) runs directly. Both are the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
-	embedDir := flag.String("embed", "", "embed a directory of assets into the binary at compile time. `__fern_asset(\"NAME\")` in the source is replaced with a string literal holding that file's bytes, where NAME is the file's slash-separated path relative to DIR. Assets are ordinary string literals: immortal (no refcount traffic), zero-copy to hand to user code, and NUL-safe, so binary assets (images, fonts, wasm) work unchanged.")
+	embedDir := flag.String("embed", "", "embed a directory of assets into the binary at compile time. `__fern_asset(\"NAME\")` in the source is replaced with a string literal holding that file's text, which must be valid UTF-8, and `__fern_asset_bytes(\"NAME\")` with a u8[] literal holding its bytes, where NAME is the file's slash-separated path relative to DIR; `__fern_assets()` and `__fern_assets_bytes()` enumerate the bundle the same two ways. Assets are immortal constants: no refcount traffic, zero-copy to hand to user code.")
 	emitDebug := flag.Bool("g", false, "emit a symbol table and DWARF into the native binary so debuggers, nm, backtraces, and profilers can map code addresses to function names and source lines")
 	doFmt := flag.Bool("fmt", false, "format the source files and write them to stdout in order (use -w to write back in place, -d to print a diff, -o OUT with a single file)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite each input file with its formatted output")
@@ -452,7 +452,8 @@ func main() {
 	showVersion := flag.Bool("version", false, "print the commit this binary was built from (plus the Go version and platform) and exit — the nightly tag rolls, so this is how to say which build you have")
 	showSelfhostKey := flag.Bool("selfhost-key", false, "print the key of the compiler and stdlib sources this binary embeds and exit. `make selfhost-cli` and `make bootstrap` write it to bin/fern-selfhost.key, and a fern uses the bin/fern-selfhost beside it only when that key is its own.")
 	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/pkg/platforms) as the canonical source of truth for what each target accepts.")
-	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
+	var explain explainFlag
+	flag.Var(&explain, "explain", "print the long-form explanation of an error code (`-explain E001`) and exit; a bare -explain lists the codes.")
 	colorMode := flag.String("color", "auto", "colourise diagnostics: auto (default — colour only when stderr is a terminal and NO_COLOR is unset), always, or never.")
 	asciiBoxes := flag.Bool("ascii", false, "with coloured diagnostics, draw the gutter with a plain `|` instead of the box-drawing `│` (also selected automatically when the locale isn't UTF-8).")
 	terseDiagnostics := flag.Bool("q", os.Getenv("FERN_DIAG_FORMAT") == "terse", "print one line per diagnostic without source context, notes, fixes or colour")
@@ -536,10 +537,13 @@ func main() {
 		return
 	}
 
-	explainSet := false
-	flag.Visit(func(f *flag.Flag) { explainSet = explainSet || f.Name == "explain" })
-	if explainSet {
-		os.Exit(runExplain(*explain, os.Stdout, os.Stderr))
+	if explain.set {
+		code, err := explain.codeWith(flag.Args())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fern:", err)
+			os.Exit(2)
+		}
+		os.Exit(runExplain(code, os.Stdout, os.Stderr))
 	}
 
 	if *repl {
@@ -998,6 +1002,39 @@ func execTool(tool string, args []string) (int, error) {
 		return cmd.ProcessState.ExitCode(), nil
 	}
 	return 1, err
+}
+
+// explainFlag is -explain. It is a boolean flag to the flag package, so a
+// bare -explain takes no value and the code is the argument after it, or the
+// value after `=`.
+type explainFlag struct {
+	set  bool
+	bare bool
+	code string
+}
+
+func (e *explainFlag) String() string   { return e.code }
+func (e *explainFlag) IsBoolFlag() bool { return true }
+
+func (e *explainFlag) Set(v string) error {
+	e.set = true
+	e.bare = v == "true"
+	if !e.bare {
+		e.code = v
+	}
+	return nil
+}
+
+// codeWith is the code to explain given the positional arguments, empty to
+// list them all.
+func (e *explainFlag) codeWith(args []string) (string, error) {
+	switch {
+	case len(args) == 0:
+		return e.code, nil
+	case e.bare && len(args) == 1:
+		return args[0], nil
+	}
+	return "", fmt.Errorf("-explain takes one error code (got %q)", args)
 }
 
 // runExplain prints the explanation for code, or the list of codes when

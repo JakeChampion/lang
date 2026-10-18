@@ -1,0 +1,47 @@
+// The library collections give `for` an Iterator through `iter()`, so
+// `for (k, v) in m` walks an OrdMap or a PMap as it walks a builtin Map,
+// and `for x in v` walks a PVec and each set, in each one's documented order.
+import "std/ordmap";
+import "std/ordset";
+import "std/pmap";
+import "std/pset";
+import "std/pvec";
+import "std/set";
+
+function main(): i32 {
+  let om: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
+  om = om.insert("pear", 3);
+  om = om.insert("apple", 1);
+  om = om.insert("fig", 2);
+  for (k, v) in om {
+    print(f"ordmap {k}={v}");
+  }
+  let pm: pmap.PMap[string, i32] = pmap.pmap_new();
+  pm = pm.insert("one", 1);
+  for (k, v) in pm {
+    print(f"pmap {k}={v}");
+  }
+  let pv: pvec.PVec[i32] = pvec.pvec_new();
+  pv = pv.append(7);
+  pv = pv.append(8);
+  for x in pv {
+    print(f"pvec {x}");
+  }
+  let os: ordset.OrdSet[i32] = ordset.ordset_new();
+  os = os.add(30);
+  os = os.add(10);
+  os = os.add(20);
+  for x in os {
+    print(f"ordset {x}");
+  }
+  let ps: pset.PSet[string] = pset.pset_new();
+  ps = ps.add("only");
+  for x in ps {
+    print(f"pset {x}");
+  }
+  let s: set.Set[string] = set.set_of(["b", "a", "b"]);
+  for x in s {
+    print(f"set {x}");
+  }
+  return 0;
+}

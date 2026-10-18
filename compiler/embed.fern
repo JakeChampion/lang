@@ -1,11 +1,14 @@
 // compiler/embed.fern — the `-embed DIR` asset bundle, and the pass
-// that resolves `__fern_asset("name")` / `__fern_assets()` against it.
+// that resolves the asset builtins against it.
 //
 // The self-host port of `internal/pkg/embed` plus the asset half of
-// `internal/check/constfold`: a directory is walked at compile time, each file
-// becomes an ordinary string literal, and nothing downstream — checker, IR,
-// any backend — learns that assets exist. `docs/EMBED.md` is the contract;
-// this file mirrors it name for name and message for message.
+// `internal/check/constfold`: a directory is walked at compile time, each use
+// of a file becomes an ordinary literal — a string literal for the text forms
+// (`__fern_asset`, `__fern_assets`), which refuse a file that is not valid
+// UTF-8, and a `u8[]` literal for the bytes forms (`__fern_asset_bytes`,
+// `__fern_assets_bytes`) — and nothing downstream — checker, IR, any backend —
+// learns that assets exist. `docs/EMBED.md` is the contract; this file mirrors
+// it name for name and message for message.
 //
 // Why the self-host needs it at all: a wasm-hosted compiler has no host
 // filesystem to read `internal/stdlib` from, and the CLI's stdlib root is a
@@ -25,6 +28,7 @@ import "./ast";
 import "./astwalk";
 import "./parser";
 import "./util";
+import "std/utf8";
 
 // ---- the bundle -------------------------------------------------------
 
@@ -37,7 +41,7 @@ import "./util";
 // directory holding no files is legitimate and makes `__fern_assets()` an
 // empty array, while omitting `-embed` makes any use of either builtin the
 // error.
-pub struct Assets { root: string, names: string[], contents: string[], present: boolean }
+pub struct Assets { root: string, names: string[], contents: u8[][], present: boolean }
 
 // no_assets is the "-embed was not passed" bundle.
 pub function no_assets(): Assets {
@@ -85,7 +89,7 @@ pub function load(dir: string): LoadResult {
     return LoadResult { assets: no_assets(), err: "-embed " + dir + ": not a directory" };
   }
   let names: string[] = [];
-  let contents: string[] = [];
+  let contents: u8[][] = [];
   // Relative subdirectories still to visit, "" being `dir` itself.
   let rels: string[] = [""];
   let ri: i32 = 0;
@@ -125,19 +129,18 @@ pub function load(dir: string): LoadResult {
       if (kind != ENTRY_FILE) {
         continue;
       }
-      // Bytes, not text. `read_file` validates UTF-8 and refuses a file
-      // holding any byte sequence that is not — which is most images,
-      // fonts and wasm modules, exactly what an asset bundle carries.
-      // Native reads assets with os.ReadFile and asks nothing of their
-      // contents, so anything narrower here would refuse directories the
-      // other compiler embeds. The string is never used code-point-wise:
-      // it becomes a literal whose explicit byte length bounds it, which
-      // is what makes an interior NUL a byte rather than a terminator.
-      let body: string = "";
+      // A name reaches the program as a string, so it must be text.
+      if (!utf8.is_valid_utf8(child_rel)) {
+        return LoadResult { assets: no_assets(), err: "-embed " + dir + ": file name \"" + utf8.from_bytes_lossy(child_rel.bytes()) + "\" is not valid UTF-8" };
+      }
+      // Bytes, not text: an image, a font or a wasm module is not UTF-8, and
+      // whether a file must be is the call site's question — the text forms
+      // ask it, the bytes forms do not.
+      let body: u8[] = [];
       let read_ok: boolean = false;
       match (read_file_bytes(child)) {
         Ok(bs) => {
-          body = string_from_bytes_unchecked(bs);
+          body = bs;
           read_ok = true;
         },
         Err(e) => {}
@@ -146,7 +149,7 @@ pub function load(dir: string): LoadResult {
         return LoadResult { assets: no_assets(), err: "-embed " + dir + ": cannot read " + child_rel };
       }
       names = names.append(child_rel + "");
-      contents = contents.append(body + "");
+      contents = contents.append(body);
     }
   }
   let (sn, sc) = sort_pairs(names, contents);
@@ -178,9 +181,9 @@ function classify(path: string): i32 {
 // sort_pairs orders `names` ascending, carrying `contents` along. Sorted order
 // is what makes `__fern_assets()` emit the same program on every host — a
 // filesystem-order walk would not.
-function sort_pairs(names: string[], contents: string[]): (string[], string[]) {
+function sort_pairs(names: string[], contents: u8[][]): (string[], u8[][]) {
   let on: string[] = [];
-  let oc: string[] = [];
+  let oc: u8[][] = [];
   let i: i32 = 0;
   while (i < names.len()) {
     let pos: i32 = 0;
@@ -188,7 +191,7 @@ function sort_pairs(names: string[], contents: string[]): (string[], string[]) {
       pos = pos + 1;
     }
     let nn: string[] = [];
-    let nc: string[] = [];
+    let nc: u8[][] = [];
     let j: i32 = 0;
     while (j < pos) {
       nn = nn.append(on[j]);
@@ -283,12 +286,17 @@ pub function format_available(a: Assets): string {
 
 // ---- the substitution pass --------------------------------------------
 
-// ASSET_ONE / ASSET_ALL are the two builtin spellings. Neither is declared
+// The builtin spellings, split the way read_file / read_file_bytes are: a text
+// form yielding `string` and a bytes form yielding `u8[]`. None is declared
 // anywhere: an occurrence this pass does not substitute reaches the checker as
 // an ordinary undefined callee.
 const ASSET_ONE: string = "__fern_asset";
 
+const ASSET_ONE_BYTES: string = "__fern_asset_bytes";
+
 const ASSET_ALL: string = "__fern_assets";
+
+const ASSET_ALL_BYTES: string = "__fern_assets_bytes";
 
 // Folded is the pass's result: the rewritten module and every asset error, in
 // source order.
@@ -329,11 +337,11 @@ function fa_expr(e: ast.Expr, a: FoldAcc): (ast.Expr, FoldAcc, boolean) {
   match (e) {
     ast.ExprCall(c) => {
       let name: string = callee_ident(c.callee);
-      if (name == ASSET_ALL) {
-        return resolve_all(c, a);
+      if (name == ASSET_ALL || name == ASSET_ALL_BYTES) {
+        return resolve_all(c, a, name);
       }
-      if (name == ASSET_ONE) {
-        return resolve_one(c, a);
+      if (name == ASSET_ONE || name == ASSET_ONE_BYTES) {
+        return resolve_one(c, a, name);
       }
       return (e, a, false);
     },
@@ -373,11 +381,49 @@ function fail(c: ast.ExprCall, a: FoldAcc, msg: string): (ast.Expr, FoldAcc, boo
   return (ast.ExprCall { ...c }, FoldAcc { ...a, errs: a.errs.append(msg) }, true);
 }
 
+// is_bytes_form reports whether `name` is a builtin yielding bytes.
+function is_bytes_form(name: string): boolean {
+  return name == ASSET_ONE_BYTES || name == ASSET_ALL_BYTES;
+}
+
+// Content is one asset as the literal a call form yields, or the reason the
+// text form refuses it.
+struct Content { lit: ast.Expr, err: string }
+
+// content turns asset `idx` into the literal `name` yields: its bytes as a
+// `u8[]` literal for a bytes form, its text as a string literal for a text
+// form, which refuses a file that is not valid UTF-8 and names it.
+function content(c: ast.ExprCall, a: Assets, idx: i32, name: string): Content {
+  let bs: u8[] = a.contents[idx];
+  if (is_bytes_form(name)) {
+    return Content { lit: bytes_literal(bs, c.line, c.col), err: "" };
+  }
+  match (utf8.from_bytes(bs)) {
+    Some(text) => {
+      return Content { lit: ast.ExprString { value: text, line: c.line, col: c.col }, err: "" };
+    },
+    None => {}
+  }
+  let msg: string = at(c.line, c.col) + name + ": embedded asset \"" + a.names[idx] + "\" under " + a.root;
+  return Content { lit: ast.ExprCall { ...c }, err: msg + " is not valid UTF-8 — read it as u8[] with " + name + "_bytes" };
+}
+
+// bytes_literal is the `u8[]` literal holding `bs`, one element per byte. The
+// element type is stamped so an empty file needs no annotation.
+function bytes_literal(bs: u8[], line: i32, col: i32): ast.Expr {
+  let elems: ast.Expr[] = [];
+  for b in bs {
+    elems = elems.append(ast.ExprNumber { text: util.i32_to_string(b as i32), suffix: "u8", raw: "", is_float: false, line: line, col: col });
+  }
+  return ast.ExprArray { elements: elems, elem_ty: "u8", line: line, col: col };
+}
+
 // resolve_one turns `__fern_asset("name")` into the string literal holding that
-// file's bytes.
-function resolve_one(c: ast.ExprCall, a: FoldAcc): (ast.Expr, FoldAcc, boolean) {
+// file's text, or `__fern_asset_bytes("name")` into the `u8[]` literal holding
+// its bytes.
+function resolve_one(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, FoldAcc, boolean) {
   if (c.args.len() != 1) {
-    return fail(c, a, at(c.line, c.col) + ASSET_ONE + " takes exactly one argument, got " + util.i32_to_string(c.args.len()));
+    return fail(c, a, at(c.line, c.col) + name + " takes exactly one argument, got " + util.i32_to_string(c.args.len()));
   }
   let lit: string = "";
   let is_lit: boolean = false;
@@ -389,10 +435,10 @@ function resolve_one(c: ast.ExprCall, a: FoldAcc): (ast.Expr, FoldAcc, boolean) 
     _ => {}
   }
   if (!is_lit) {
-    return fail(c, a, at(c.line, c.col) + ASSET_ONE + " needs a string literal — assets are resolved at compile time, so the name cannot be computed");
+    return fail(c, a, at(c.line, c.col) + name + " needs a string literal — assets are resolved at compile time, so the name cannot be computed");
   }
   if (!a.assets.present) {
-    return fail(c, a, at(c.line, c.col) + ASSET_ONE + "(\"" + lit + "\") but no assets were embedded — pass -embed DIR to the compiler");
+    return fail(c, a, at(c.line, c.col) + name + "(\"" + lit + "\") but no assets were embedded — pass -embed DIR to the compiler");
   }
   let idx: i32 = lookup(a.assets, lit);
   if (idx < 0) {
@@ -403,31 +449,45 @@ function resolve_one(c: ast.ExprCall, a: FoldAcc): (ast.Expr, FoldAcc, boolean) 
     }
     return fail(c, a, msg + " (" + format_available(a.assets) + ")");
   }
-  return (ast.ExprString { value: a.assets.contents[idx], line: c.line, col: c.col }, a, true);
+  let got: Content = content(c, a.assets, idx, name);
+  if (got.err.len() > 0) {
+    return fail(c, a, got.err);
+  }
+  return (got.lit, a, true);
 }
 
-// resolve_all turns `__fern_assets()` into `[(name, contents), …]` over the
-// whole bundle, sorted by name.
+// resolve_all turns `__fern_assets()` into `[(name, text), …]`, or
+// `__fern_assets_bytes()` into `[(name, bytes), …]`, over the whole bundle,
+// sorted by name. The text form refuses the bundle when any file in it is not
+// valid UTF-8, naming that file.
 //
 // `elem_ty` is stamped whether or not the bundle is empty. An unstamped empty
 // array literal has no element type for the checker or for the lowering's slot
 // widths, which is the one place the stamp is required — but stamping it
 // only there would make the empty bundle the odd case rather than the same one.
-function resolve_all(c: ast.ExprCall, a: FoldAcc): (ast.Expr, FoldAcc, boolean) {
+function resolve_all(c: ast.ExprCall, a: FoldAcc, name: string): (ast.Expr, FoldAcc, boolean) {
   if (c.args.len() != 0) {
-    return fail(c, a, at(c.line, c.col) + ASSET_ALL + " takes no arguments, got " + util.i32_to_string(c.args.len()));
+    return fail(c, a, at(c.line, c.col) + name + " takes no arguments, got " + util.i32_to_string(c.args.len()));
   }
   if (!a.assets.present) {
-    return fail(c, a, at(c.line, c.col) + ASSET_ALL + "() but no assets were embedded — pass -embed DIR to the compiler");
+    return fail(c, a, at(c.line, c.col) + name + "() but no assets were embedded — pass -embed DIR to the compiler");
   }
   let elems: ast.Expr[] = [];
   let i: i32 = 0;
   while (i < a.assets.names.len()) {
+    let got: Content = content(c, a.assets, i, name);
+    if (got.err.len() > 0) {
+      return fail(c, a, got.err);
+    }
     let pair: ast.Expr[] = [];
     pair = pair.append(ast.ExprString { value: a.assets.names[i], line: c.line, col: c.col });
-    pair = pair.append(ast.ExprString { value: a.assets.contents[i], line: c.line, col: c.col });
+    pair = pair.append(got.lit);
     elems = elems.append(ast.ExprTuple { elements: pair, line: c.line, col: c.col });
     i = i + 1;
   }
-  return (ast.ExprArray { elements: elems, elem_ty: "(string, string)", line: c.line, col: c.col }, a, true);
+  let elem_ty: string = "(string, string)";
+  if (is_bytes_form(name)) {
+    elem_ty = "(string, u8[])";
+  }
+  return (ast.ExprArray { elements: elems, elem_ty: elem_ty, line: c.line, col: c.col }, a, true);
 }

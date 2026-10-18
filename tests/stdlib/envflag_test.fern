@@ -1,0 +1,42 @@
+import "std/test";
+import "std/envflag";
+import "std/option";
+
+// tests/stdlib/envflag_test.fern — std/envflag's reading of a FERN_* switch.
+// internal/envflag's TestValueOn holds the Go reader to the same table.
+
+// The off spellings, in any case; every other value is on.
+function test_value_on_off_values(): test.TestOutcome {
+  for v in ["", "0", "false", "FALSE", "False", "off", "OFF", "Off"] {
+    if (envflag.value_on(v)) {
+      return test.fail("value_on(\"" + v + "\") is on");
+    }
+  }
+  return test.pass();
+}
+
+function test_value_on_other_values(): test.TestOutcome {
+  for v in ["1", "true", "on", "yes", "quiet", "00", " 0", "no", "offf", "fals"] {
+    if (!envflag.value_on(v)) {
+      return test.fail("value_on(\"" + v + "\") is off");
+    }
+  }
+  return test.pass();
+}
+
+function test_on_unset(): test.TestOutcome {
+  return test.assert_false(envflag.on("FERN_ENVFLAG_TEST_NEVER_SET"));
+}
+
+function test_value_unset(): test.TestOutcome {
+  return test.assert_true(envflag.value("FERN_ENVFLAG_TEST_NEVER_SET").is_none());
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/envflag");
+  r = r.it("value_on off values", test_value_on_off_values);
+  r = r.it("value_on other values", test_value_on_other_values);
+  r = r.it("on unset", test_on_unset);
+  r = r.it("value unset", test_value_unset);
+  return r.finish();
+}

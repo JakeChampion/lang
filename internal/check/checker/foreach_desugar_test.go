@@ -4,15 +4,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/pkg/modload"
 	"github.com/jakechampion/lang/internal/syntax/ast"
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
 // The plain `for x in expr` form parses to an ast.ForEach (parser tests), which
-// `desugarForEachProgram` lowers to the `.len()` + index C-style loop at the end
-// of the parse. These tests pin that the lowering reproduces it exactly (Block of
-// iter/len/idx + a For carrying a step so `continue` advances), and mints unique
-// slot names for nested loops.
+// the checker lowers by the iterand's type; over an array it is the `.len()` +
+// index C-style loop. These tests pin that the lowering reproduces it exactly
+// (Block of iter/len/idx + a For carrying a step so `continue` advances), and
+// mints unique slot names for nested loops.
 func TestForEachDesugarsToIndexLoop(t *testing.T) {
 	prog, err := parser.Parse(`function f(): i32 {
 		let sum: i32 = 0;
@@ -86,7 +87,7 @@ func TestForEachNestedDesugarUniqueSlots(t *testing.T) {
 // A nested named function is an *ast.FuncDecl STATEMENT, whose body is a block
 // the desugar walk has to enter on its own — nothing downstream lowers one, and
 // a surviving ForEach reaches IR, which has no case for it ("ir: unsupported
-// statement *ast.ForEach"). The switch in desugarForEachStmt used to have no
+// statement *ast.ForEach"). The parse-time desugar walk this replaced had no
 // FuncDecl arm, so every `for..in` inside a local function failed to compile.
 func TestForEachInsideNestedFuncDesugars(t *testing.T) {
 	prog, err := parser.Parse(`function total(xs: i32[]): i32 {
@@ -123,5 +124,114 @@ func TestForEachInsideNestedFuncDesugars(t *testing.T) {
 	}
 	if found(prog.Funcs[0].Body) {
 		t.Error("a ForEach survived inside the nested function's body; IR cannot lower one")
+	}
+}
+
+// A foreach over a core/iter Iterator lowers to the `next()` loop: the iterand
+// bound once, then a Loop whose match advances the iterator before the body
+// runs. A range held in a variable is such an Iterator.
+func TestForEachOverIteratorLowersToNextLoop(t *testing.T) {
+	prog, _, err := modload.LoadSource(`import "core/iter";
+function main(): i32 {
+	let n: i32 = 0;
+	let r = 0..3;
+	for x in r { n = n + x; }
+	return n;
+}`)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	var main *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "main" {
+			main = fn
+		}
+	}
+	blk, ok := main.Body.Stmts[2].(*ast.Block)
+	if !ok || len(blk.Stmts) != 2 {
+		t.Fatalf("the foreach should lower to a Block of the iterand binding and a loop, got %#v", main.Body.Stmts[2])
+	}
+	loop, ok := blk.Stmts[1].(*ast.Loop)
+	if !ok {
+		t.Fatalf("second statement should be the Loop, got %T", blk.Stmts[1])
+	}
+	pull, ok := loop.Body.(*ast.Block).Stmts[0].(*ast.Match)
+	if !ok || len(pull.Arms) != 2 || pull.Arms[0].VariantName != "Some" || pull.Arms[1].VariantName != "None" {
+		t.Fatalf("the loop should match next() on Some / None, got %#v", loop.Body)
+	}
+}
+
+// Whatever `for` cannot walk is E083 naming the type, in place of the array
+// lowering's `len` and index diagnostics. The same programs are rows of the
+// self-host's TestSelfHostCheckerCodesX86_64.
+func TestForEachNotIterableE083(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{"struct", "struct Point { x: i32, y: i32 }\nfunction main(): i32 { let p: Point = Point { x: 1, y: 2 }; for c in p { } return 0; }\n", "type Point"},
+		{"scalar", "function main(): i32 { for c in 42 { } return 0; }\n", "type i32"},
+		{"unbounded-type-parameter", "function each[T](v: T): i32 { for x in v { } return 0; }\nfunction main(): i32 { return each(1); }\n", "type T"},
+		{"iter-returns-no-iterator", "struct Counter { n: i32 }\nfunction (c: Counter) iter(): i32 { return c.n; }\nfunction main(): i32 { let k: Counter = Counter { n: 3 }; for n in k { } return 0; }\n", "type Counter"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkModuleSource(t, tc.src)
+			if err == nil {
+				t.Fatal("want E083, got a clean check")
+			}
+			msg := err.Error()
+			if !hasCode(err, "E083") || !strings.Contains(msg, "cannot iterate over a value of "+tc.want) {
+				t.Errorf("want E083 naming %q, got:\n%v", tc.want, msg)
+			}
+			if hasCode(err, "E034") || hasCode(err, "E043") {
+				t.Errorf("the array lowering's diagnostics leaked:\n%v", msg)
+			}
+		})
+	}
+}
+
+// What `for` walks through the iterator protocol checks clean: an adapter
+// chain, a tuple-yielding Iterator under a pattern header, a bounded type
+// parameter, a value whose iter() returns an Iterator, and an OrdMap's
+// entries. The element binds at the Iterator's element type.
+func TestForEachOverIteratorChecks(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"adapter-chain", "import \"core/iter\";\nfunction main(): i32 { let n: i32 = 0; for x in iter.range(0, 9).filter((v: i32): boolean => v > 2) { n = n + x; } return n; }\n"},
+		{"pattern-header", "import \"core/iter\";\nfunction main(): i32 { let n: i32 = 0; for (i, w) in iter.of([\"a\"]).enumerate() { n = n + i + w.len(); } return n; }\n"},
+		{"bounded-type-parameter", "import \"core/iter\";\nfunction total[I: iter.Iterator[i32]](it: I): i32 { let n: i32 = 0; for v in it { n = n + v; } return n; }\nfunction main(): i32 { return total(iter.range(0, 4)); }\n"},
+		{"iter-method", "import \"core/iter\";\nstruct Bag { xs: string[] }\nfunction (b: Bag) iter(): iter.ArrayIter[string] { return iter.of(b.xs); }\nfunction main(): i32 { let n: i32 = 0; let b: Bag = Bag { xs: [\"a\"] }; for s in b { n = n + s.len(); } return n; }\n"},
+		{"ordmap", "import \"std/ordmap\";\nfunction main(): i32 { let m: ordmap.OrdMap[string, i32] = ordmap.ordmap_new(); m = m.insert(\"a\", 1); let n: i32 = 0; for (k, v) in m { n = n + k.len() + v; } return n; }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := checkModuleSource(t, tc.src); err != nil {
+				t.Fatalf("want a clean check, got:\n%v", err)
+			}
+		})
+	}
+	err := checkModuleSource(t, "import \"core/iter\";\nfunction main(): i32 { for s in iter.of([\"a\"]) { let n: i32 = s; } return 0; }\n")
+	if !hasCode(err, "E003") {
+		t.Errorf("the element should bind at the Iterator's element type (string), got: %v", err)
+	}
+}
+
+// A `for x in xs` inside a `defer` block lowers like any other, so its body is
+// checked and no ForEach survives the check.
+func TestForEachInDeferLowers(t *testing.T) {
+	prog, err := parser.Parse(`function f(xs: i32[]): i32 { defer { for x in xs { let y: i32 = x; } } return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if _, ok := n.(*ast.ForEach); ok {
+			t.Fatalf("a ForEach survived the check inside a defer")
+		}
+		return true
+	})
+	err = checkSource(t, "struct S { n: i32 }\nfunction main(): i32 { let xs: i32[] = [1]; defer { for y in xs { let x: i32 = S { n: y }; } } return 0; }\n")
+	if !hasCode(err, "E003") {
+		t.Errorf("the loop body inside a defer should be checked, got: %v", err)
 	}
 }

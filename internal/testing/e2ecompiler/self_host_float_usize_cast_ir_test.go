@@ -5,8 +5,7 @@ import "testing"
 // `f64 as usize` and `usize as f64` (#10874). The typed lowering refused the
 // pair (`cast contract: f64 as usize`), and the SSA backends had no pointer-
 // width conversion. The cast saturates at the pointer width, as native's
-// does: at u64 on the register backends and at u32 on wasm, which is also
-// the interpreter's width.
+// does: at u64 on the register backends and at u32 on wasm.
 const floatUsizeCastSrc = `import "std/i64";
 function main(): i32 {
     let g: f64 = 2.5;
@@ -74,12 +73,9 @@ func TestSelfHostFloatUsizeCastWasmIR(t *testing.T) {
 	if code, out := runWasm(t, cli.emit(t, "wasm32-wasi", floatUsizeCastSrc)); code != 0 || out != want {
 		t.Fatalf("wasm: exit %d, stdout %q; want 0, %q", code, out, want)
 	}
-	// A 32-bit address saturates at u32::MAX, where the interpreter does too.
-	overflow, icode := runInterp(t, floatUsizeOverflowSrc)
-	if icode != 1 {
-		t.Fatalf("interpreter overflow: exit %d, want 1", icode)
-	}
-	if code, out := runWasm(t, cli.emit(t, "wasm32-wasi", floatUsizeOverflowSrc)); code != 1 || out != overflow {
-		t.Fatalf("wasm overflow: exit %d, stdout %q; want 1, %q", code, out, overflow)
+	// A 32-bit address saturates at u32::MAX. The interpreter models its
+	// 64-bit host, so this answer is wasm32's alone.
+	if code, out := runWasm(t, cli.emit(t, "wasm32-wasi", floatUsizeOverflowSrc)); code != 1 || out != "4294967295 4294967295\n" {
+		t.Fatalf("wasm overflow: exit %d, stdout %q; want 1, %q", code, out, "4294967295 4294967295\n")
 	}
 }
