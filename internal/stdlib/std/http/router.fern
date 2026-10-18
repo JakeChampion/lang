@@ -19,12 +19,24 @@
 // A route handler answers `Result[HttpResponse, dyn http.ToResponse]`: it
 // fails with `?` on any error that answers for itself (an `HttpError`, a
 // `BodyError`, a form's or a cookie's), and the router turns the failure
-// into the reply through `http.respond`. A pattern the router refuses, one
-// malformed or one that could tie with a registered pattern on some
-// request, is kept rather than returned, so registration chains: `check()`
-// hands the first refusal back as a value, `handler()` reports it and exits
-// the program, and `handle` answers 500 until it is fixed, so a program
-// learns at startup, never at a request.
+// into the reply through `http.respond`. A middleware, a function taking
+// the request, the platform and `next`, wraps one handler through `use`,
+// or every route through `wrap`, where it runs ahead of dispatch and so
+// sees a request no route admits: a CORS preflight is an OPTIONS the
+// routes do not register, answered by `cors.cors` from a `wrap` before
+// the router would answer 405.
+//
+//     router.new[platform.Host]().wrap(cross_origin).get("/users", users)
+//
+//     function cross_origin(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+//       return cors.cors(req, API, next);
+//     }
+//
+// A pattern the router refuses, one malformed or one that could tie with a
+// registered pattern on some request, is kept rather than returned, so
+// registration chains: `check()` hands the first refusal back as a value,
+// `handler()` reports it and exits the program, and `handle` answers 500
+// until it is fixed, so a program learns at startup, never at a request.
 //
 // Routes are tried in a scan, which fits the tables programs write by
 // hand.
@@ -96,9 +108,10 @@ pub enum Segment {
 // and the handler it dispatches to.
 pub struct Route[P] { method: string, pattern: string, segments: Segment[], handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse] }
 
-// Router — the routes, in registration order, and the first pattern it
-// refused, which every registration after it leaves as it is.
-pub struct Router[P] { routes: Route[P][], refused: Option[RouteError] }
+// Router — the routes, in registration order, the middleware wrapping
+// every route, outermost first, and the first pattern it refused, which
+// every registration after it leaves as it is.
+pub struct Router[P] { routes: Route[P][], wraps: ((HttpRequest, P, (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]) => Result[HttpResponse, dyn http.ToResponse])[], refused: Option[RouteError] }
 
 // RouteError — a pattern refused: malformed, or one a registered pattern
 // could tie with on some request.
@@ -121,7 +134,7 @@ pub function (e: RouteError) message(): string {
 
 // new() — a router with no routes.
 pub function new[P](): Router[P] {
-  return Router { routes: [], refused: None };
+  return Router { routes: [], wraps: [], refused: None };
 }
 
 // (r).route(pattern, handler) — the router with the pattern added, or
@@ -169,6 +182,14 @@ pub function (r: Router[P]) delete(path: string, handler: (HttpRequest, Params, 
   return r.route("DELETE " + path, handler);
 }
 
+// (r).wrap(middleware) — the router with every route, and every request
+// no route admits, wrapped in `middleware`, outside the middleware
+// wrapped so far: the first `wrap` runs first on the request and last on
+// the response.
+pub function (r: Router[P]) wrap(middleware: (HttpRequest, P, (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]) => Result[HttpResponse, dyn http.ToResponse]): Router[P] {
+  return Router { ...r, wraps: r.wraps.append(middleware) };
+}
+
 // (r).check() — the router, or the first pattern it refused, for a program
 // that would rather report the refusal itself than have `handler()` do it.
 pub function (r: Router[P]) check(): Result[Router[P], RouteError] {
@@ -183,25 +204,45 @@ pub function (r: Router[P]) check(): Result[Router[P], RouteError] {
   return Ok(r);
 }
 
-// (r).handle(req, plat) — the request answered by the most specific route
-// matching its path and method, its failure turned into the reply; by 405
-// when routes match the path alone, by 404 when none matches it; by 500
-// naming the pattern the router refused, while it has one.
+// (r).handle(req, plat) — the request answered, through the middleware
+// wrapped around the router, by the most specific route matching its path
+// and method, its failure turned into the reply; by 405 when routes match
+// the path alone, by 404 when none matches it; by 500 naming the pattern
+// the router refused, while it has one.
 pub function (r: Router[P]) handle(req: HttpRequest, plat: P): HttpResponse {
   if let Some(e) = r.refused {
     return http.problem(500, "", e.message());
   }
+  if (r.wraps.len() == 0) {
+    return http.respond(__dispatch(r, req, plat));
+  }
+  return http.respond(__wrapped(r, 0, req, plat));
+}
+
+// __wrapped runs the request through the middleware from `i` on, the
+// routes behind the last.
+function __wrapped[P](r: Router[P], i: i32, req: HttpRequest, plat: P): Result[HttpResponse, dyn http.ToResponse] {
+  if (i >= r.wraps.len()) {
+    return __dispatch(r, req, plat);
+  }
+  let middleware: (HttpRequest, P, (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]) => Result[HttpResponse, dyn http.ToResponse] = r.wraps[i];
+  return middleware(req, plat, (inner: HttpRequest): Result[HttpResponse, dyn http.ToResponse] => __wrapped(r, i + 1, inner, plat));
+}
+
+// __dispatch is the route's answer, or the 405 or 404 for a request no
+// route takes.
+function __dispatch[P](r: Router[P], req: HttpRequest, plat: P): Result[HttpResponse, dyn http.ToResponse] {
   let segs: string[] = __request_segments(req.path);
   let picked: (i32, string[]) = __pick(r, segs, req.method);
   if (picked.0 >= 0) {
     let route: Route[P] = r.routes[picked.0];
     let h: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse] = route.handler;
-    return http.respond(h(req, __bind(route.segments, segs), plat));
+    return h(req, __bind(route.segments, segs), plat);
   }
   if (picked.1.len() > 0) {
-    return http.problem(405, "", "").with_header("allow", picked.1.join(", "));
+    return Ok(http.problem(405, "", "").with_header("allow", picked.1.join(", ")));
   }
-  return http.not_found();
+  return Ok(http.not_found());
 }
 
 // (r).handler() — `handle` as the handler `serve.run` takes. A pattern the

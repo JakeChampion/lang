@@ -4,14 +4,16 @@
 //
 //     import "std/http/cors";
 //
-//     const API: cors.Policy = ...;   // or build it where the routes are built
-//
-//     function users(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-//       use req <- cors.cors(req, cors.policy(["https://app.example.com"]).with_credentials());
-//       return Ok(http.json_of(list()));
+//     function cross_origin(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+//       return cors.cors(req, cors.policy(["https://app.example.com"]).with_credentials(), next);
 //     }
 //
-// A middleware by std/http/router's convention. A request without an
+//     router.new[platform.Host]().wrap(cross_origin).get("/users", users)
+//
+// A middleware by std/http/router's convention, wrapped around the router
+// rather than one handler: a preflight is an OPTIONS no route registers,
+// so one inside a handler would never see it and the router would answer
+// 405. A request without an
 // `Origin` is not cross-origin and passes through untouched. A preflight
 // (`OPTIONS` with `Access-Control-Request-Method`) is answered here, 204,
 // without calling `next`: with the allow headers when the origin, the

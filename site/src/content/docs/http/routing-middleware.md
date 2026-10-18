@@ -83,9 +83,9 @@ methods, the answer is `405` with an `Allow` header; otherwise it is a
 ### Route errors happen at start-up
 
 A malformed pattern (`/a//b`, a `{rest...}` that is not last, a parameter
-bound twice) is a `BadPattern`, and two patterns that would match exactly
-the same requests — `/a/{x}` and `/{y}/b` — are a `PatternConflict`. The
-router keeps the first refusal through every registration after it, so
+bound twice) is a `BadPattern`, and two patterns that could both match
+some request with neither more specific than the other — `/a/{x}` and
+`/{y}/b` both take `/a/b` — are a `PatternConflict`. The router keeps the first refusal through every registration after it, so
 the table is built in one chain, and `handler()` reports the refusal on
 stderr and exits the program with status 2 before anything is served. A
 program that would rather handle it reads `r.check()`, which is `Ok(r)`
@@ -133,9 +133,9 @@ does above.
 
 ## Middleware
 
-There is no middleware type and nothing to register. **A middleware is a
-function whose last parameter is the handler it wraps**, and it answers
-the same `Result` a route handler does:
+There is no middleware type to implement. **A middleware is a function
+whose last parameter is the handler it wraps**, and it answers the same
+`Result` a route handler does:
 
 ```fern
 function timed(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
@@ -200,6 +200,27 @@ Because middleware is ordinary code, what wraps a route is decided per
 handler: the health check does not pay for authentication, and the
 admin routes can add a check the rest do not.
 
+### Wrapping the whole router
+
+A middleware in the shape above, `(req, plat, next)`, also goes around
+every route at once through `router.wrap`, where it runs before the
+router picks a route. That is where a middleware belongs when it must
+see requests no route admits: a CORS preflight is an `OPTIONS` the
+routes do not register, so a `cors.cors` inside a handler would never
+run on one and the router would answer `405`. The first `wrap` is the
+outermost: it sees the request first and the response last, and the
+`404` and `405` the router answers pass through it like any response.
+
+```fern
+function cross_origin(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+    return cors.cors(req, cors.policy(["https://app.example.com"]).with_methods(["GET", "POST", "DELETE"]).with_headers(["Content-Type"]).with_credentials(), next);
+}
+
+function routes(): router.Router[platform.Host] {
+    return router.new[platform.Host]().wrap(cross_origin).get("/users", users).delete("/users/{id}", users_delete);
+}
+```
+
 ## Stock middleware
 
 Three middleware ship with the standard library, each a function in the
@@ -209,16 +230,11 @@ shape above.
 (`https://app.example.com`), by subdomain (`https://*.example.com`) or
 `*`, plus the methods and request headers a preflight may ask for, the
 response headers a script may read, credentials and the preflight cache
-age. A preflight is answered without reaching the handler, bare when it
-asks for something the policy does not admit; an actual response from an
-admitted origin gains the allow headers.
-
-```fern
-function users(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-    use req <- cors.cors(req, cors.policy(["https://app.example.com"]).with_methods(["GET", "POST", "DELETE"]).with_headers(["Content-Type"]).with_credentials());
-    return Ok(http.json_of(list()));
-}
-```
+age. A preflight is answered without reaching the routes, bare when it asks
+for something the policy does not admit; an actual response from an
+admitted origin gains the allow headers. It goes around the router,
+through `wrap` as `cross_origin` does above, since a preflight is an
+`OPTIONS` no route registers.
 
 **Authentication** (`std/http/auth`): `bearer` and `basic` read
 `Authorization`, hand the credential to the program's check, and give
