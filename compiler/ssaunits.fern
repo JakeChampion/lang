@@ -2265,11 +2265,8 @@ function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
 // lowering pays for a weaker source with a runtime uniqueness test on the box
 // (`ssarc.steal`): a box somebody else also holds keeps its payload and the
 // read retains, exactly as a borrow did. So what this predicate has to prove
-// is only that THIS frame reads the slot no further.
-//
-// The builtin Option layout is refused: its box is a tag word and one payload
-// word the physical lowering reads with `op_opt_payload`, which has no store
-// form to null the slot with.
+// is only that THIS frame reads the slot no further. The builtin Option
+// layout's slot is nulled with `op_opt_set_payload`.
 function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
   let none: i32 = 0 - 1;
   let ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
@@ -2306,7 +2303,7 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec
   if (!slot_takeable(f, a, defs, f.values[ins.result], root, field, element, slot)) {
     return none;
   }
-  if (!owned[root] || projection(defs[root].kind_tag) && !taken_read(defs[root].kind_tag)) {
+  if (!owned[root] || projection(defs[root].kind_tag) && !taken_root(defs[root].kind_tag)) {
     return none;
   }
   // Another slot's read is let through, and so is what the taken value
@@ -2319,7 +2316,8 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec
 
 // Whether the box `root` can give up the slot the read `got` names: a
 // buffer, map or record field of a record, element of a tuple or element of
-// an owned array, or a reference payload of a union. A view, or the builtin Option layout, needs a box nobody else sees.
+// an owned array, or a reference payload of a union. A view, or a union whose
+// schema this function does not carry, needs a box nobody else sees.
 function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean, element: boolean, slot: boolean): boolean {
   let box: typeinfo.Type = f.values[root];
   if (field) {
@@ -2334,7 +2332,7 @@ function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], go
   if (!ssasem.reference(got) || !is_union(box)) {
     return false;
   }
-  return !(ssasem.is_view(got) || option_layout(f, box)) || sole_box(a, defs, root, __alloc_bool(f.graph.nvals));
+  return !(ssasem.is_view(got) || unknown_layout(f, box)) || sole_box(a, defs, root, __alloc_bool(f.graph.nvals));
 }
 
 // Whether the box the read `take` reads from is still needed past position
@@ -2352,7 +2350,7 @@ function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], go
 function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, take: ssa.SInst, strict: boolean, own_root: boolean, through_take: boolean): boolean {
   let root: i32 = take.args[0];
   let b: ssa.SBlock = f.graph.blocks[bi];
-  if (ssalive.live_out_has(a.flow, bi, root) && (strict || named_after(f, a, bi, root, take))) {
+  if (ssalive.live_out_has(a.flow, bi, root) && (strict || named_after(f, a, defs, bi, root, take))) {
     return true;
   }
   let stores: i32 = 0;
@@ -2363,7 +2361,7 @@ function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[],
         return true;
       }
       let later: ssa.SInst = b.insts[a.uses.at[u]];
-      if (same_slot_with(later, take)) {
+      if (same_slot_with(defs, later, take)) {
         if (a.uses.slot[u] == 0) {
           stores = stores + 1;
           if (stores > 1) {
@@ -2441,7 +2439,7 @@ function reaches_root(a: ssasem.Analysis, defs: ssa.SInst[], take: ssa.SInst, ro
 // on the same box is refused. The walk keeps to v's live range: a block v is
 // not live out of hands it to no successor, phi edges included, and a block v
 // is not live into reads it nowhere.
-function named_after(f: ssasem.Func, a: ssasem.Analysis, bi: i32, v: i32, take: ssa.SInst): boolean {
+function named_after(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, v: i32, take: ssa.SInst): boolean {
   let seen: boolean[] = __alloc_bool(f.graph.blocks.len());
   let work: i32[] = [bi];
   let next: i32 = 0;
@@ -2462,7 +2460,7 @@ function named_after(f: ssasem.Func, a: ssasem.Analysis, bi: i32, v: i32, take: 
         if (!seen[k]) {
           seen = seen.with(k, true);
           if (ssalive.live_in_has(a.flow, k, v) && !block_defines(blk, v)) {
-            if (block_reads(a.uses, blk, k, v, take)) {
+            if (block_reads(a.uses, defs, blk, k, v, take)) {
               return true;
             }
             work = work.append(k);
@@ -2497,17 +2495,21 @@ function phi_reads_on(u: ssasem.Uses, blk: ssa.SBlock, k: i32, pred: i32, v: i32
 }
 
 // A non-phi instruction or the terminator of blk, the block at index `k`,
-// reads v other than through another of its slots; a phi's reads are
-// `phi_reads_on`'s, edge by edge.
-function block_reads(u: ssasem.Uses, blk: ssa.SBlock, k: i32, v: i32, take: ssa.SInst): boolean {
+// reads v other than through another of its slots, or through the with that
+// stores back at the taken element; a phi's reads are `phi_reads_on`'s, edge
+// by edge.
+function block_reads(u: ssasem.Uses, defs: ssa.SInst[], blk: ssa.SBlock, k: i32, v: i32, take: ssa.SInst): boolean {
   let i: i32 = u.start[v];
   while (i < u.start[v + 1]) {
     if (u.block[i] == k) {
       if (u.kinds[i] == ssasem.term_use()) {
         return true;
       }
-      if (u.kinds[i] != 8 && !other_slot_get(blk.insts[u.at[i]], take)) {
-        return true;
+      if (u.kinds[i] != 8) {
+        let later: ssa.SInst = blk.insts[u.at[i]];
+        if (!other_slot_get(later, take) && !(u.slot[i] == 0 && same_slot_with(defs, later, take))) {
+          return true;
+        }
       }
     }
     i = i + 1;
@@ -2515,10 +2517,24 @@ function block_reads(u: ssasem.Uses, blk: ssa.SBlock, k: i32, v: i32, take: ssa.
   return false;
 }
 
-// The with that stores back at the array element `take` read, by the same
-// index value.
-function same_slot_with(later: ssa.SInst, take: ssa.SInst): boolean {
-  return take.kind_tag == ssasem.array_get() && later.kind_tag == ssasem.with() && later.args.len() == 3 && later.args[0] == take.args[0] && later.args[1] == take.args[1];
+// The with that stores back at the array element `take` read: the same
+// index value, or the same literal, since a `slots[1]` and a `.with(1, x)`
+// name their index with a literal each.
+function same_slot_with(defs: ssa.SInst[], later: ssa.SInst, take: ssa.SInst): boolean {
+  return take.kind_tag == ssasem.array_get() && later.kind_tag == ssasem.with() && later.args.len() == 3 && later.args[0] == take.args[0]
+    && same_index(defs, later.args[1], take.args[1]);
+}
+
+function same_index(defs: ssa.SInst[], x: i32, y: i32): boolean {
+  if (x == y) {
+    return true;
+  }
+  if (x < 0 || y < 0 || x >= defs.len() || y >= defs.len()) {
+    return false;
+  }
+  let a: ssa.SInst = defs[x];
+  let b: ssa.SInst = defs[y];
+  return a.kind_tag == 1 && b.kind_tag == 1 && a.imm == b.imm && a.str == b.str;
 }
 
 // A later read of the box `take` reads that names a DIFFERENT slot of it.
@@ -2532,28 +2548,38 @@ function other_slot_get(later: ssa.SInst, take: ssa.SInst): boolean {
   return other_payload_get(later, take.args[0], take.imm);
 }
 
-// A record field a take may move out: a buffer, a map or a record, whose slot
-// is one word the take can null. A string may be a view or a literal at run
-// time, and is left to the borrow.
+// A record field, tuple element or array element a take may move out: a
+// buffer, a map, a record or a union, whose slot is one word the take can
+// null. A string may be a view or a literal at run time, and is left to the
+// borrow.
 function field_takeable(t: typeinfo.Type): boolean {
   if (ssasem.is_view(t) || ssasem.is_text(t)) {
     return false;
   }
-  return is_array(t) || ssasem.is_map(t) || is_record(t) && !semtypes.is_env(t);
+  return is_array(t) || ssasem.is_map(t) || is_record(t) && !semtypes.is_env(t) || is_union(t);
 }
 
-// A projection whose read may itself be a take, and so a unit of the frame's
-// own that a nested read can take from in turn.
+// A one-operand slot read that may itself be a take: a record field, a
+// variant payload or a tuple element. The reuse tables read a donor's slot
+// reads through it.
 function taken_read(kind: i32): boolean {
   return kind == ssasem.record_get() || kind == ssasem.variant_get() || kind == ssasem.tuple_get();
+}
+
+// A projection whose read may be a take, and so a unit of the frame's own
+// that a nested read can take from in turn: the slot reads, and an array
+// element's.
+function taken_root(kind: i32): boolean {
+  return taken_read(kind) || kind == ssasem.array_get();
 }
 
 // A box nobody but this frame's tag tests and payload reads ever sees: built
 // here, or a phi of boxes that are, and never handed to anything else. Its
 // count is 1 when its payload is read, so the read may take the payload with no
 // runtime test — which a view needs, since the test's shared arm retains, and
-// the builtin Option layout needs, since it has no store to null the slot with.
-// The box's drop in that step then releases the box alone (`shell_root`).
+// a union whose schema this function does not carry, since its slot cannot be
+// nulled. The box's drop in that step then releases the box alone
+// (`shell_root`).
 function sole_box(a: ssasem.Analysis, defs: ssa.SInst[], v: i32, seen: boolean[]): boolean {
   if (v < 0 || v >= defs.len()) {
     return false;
@@ -2579,16 +2605,19 @@ function sole_box(a: ssasem.Analysis, defs: ssa.SInst[], v: i32, seen: boolean[]
   return true;
 }
 
-// The box whose drop at `ins` releases the box alone: the root of a payload
-// take out of the builtin Option layout, whose slot the take cannot null, or -1.
+// The box whose drop at `ins` releases the box alone: the root of an
+// untested payload take, one out of a box nobody else sees (`sole_box`),
+// which leaves the slot as it is, or -1. A tested take empties the slot
+// (ssarc.steal), so its box is released whole.
 pub function shell_root(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
   if (ins.kind_tag != ssasem.variant_get() || ins.result < 0 || ins.result >= p.payloads.len() || !p.payloads[ins.result]) {
     return 0 - 1;
   }
-  if (!option_layout(f, f.values[ins.args[0]])) {
+  let root: i32 = ins.args[0];
+  if (!(ssasem.is_view(f.values[ins.result]) || unknown_layout(f, f.values[root])) || !sole_box(p.unit_analysis, p.defs, root, __alloc_bool(f.graph.nvals))) {
     return 0 - 1;
   }
-  return ins.args[0];
+  return root;
 }
 
 function is_tuple(t: typeinfo.Type): boolean {
@@ -2606,13 +2635,19 @@ function is_union(t: typeinfo.Type): boolean {
 }
 
 // True for the builtin Option/Result layout, and for a union whose schema this
-// function does not carry — neither is a box a take may null a slot in.
+// function does not carry.
 function option_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
   let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0) {
     return true;
   }
   return f.enums[at].layout == semrecords.layout_option();
+}
+
+// A union whose schema this function does not carry: not a box a take may
+// null a slot in.
+function unknown_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
+  return semrecords.find_enum(f.enums, t) < 0;
 }
 
 // The variant and record reads that take their slot's unit, indexed by the

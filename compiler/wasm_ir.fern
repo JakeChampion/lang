@@ -6453,6 +6453,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 123) {  // opt_payload
     // i32 payload at offset 4 (matches opt_make + the runtime map-get box).
     parts = parts.append("    i32.const 4\n    i32.add\n    i32.load\n");
+  } else if (o.kind_tag == 124) {  // opt_set_payload
+    // stack: box, val -> store val over the i32 payload at offset 4.
+    parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   } else if (is_host_op_kind(o.kind_tag)) {
     parts = parts.append(emit_host_op_wat(o));
   } else if (o.kind_tag == 165) {  // putchar

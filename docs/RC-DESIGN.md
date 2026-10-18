@@ -133,13 +133,21 @@ allowances stated at the call, and folded into the ownership table the walk
 reads (`units_of`):
 
 - **Payload take** (`payload_takes`, `slot_takeable`, `needed_past_slot`): a read
-  of a reference payload out of an enum, or of a buffer, record or map out of
-  a record field, a tuple element or an owned array element, when the box is
-  the frame's unit and the frame reads it no further through that slot.
-  The lowering tests the box's uniqueness at the read (`ssarc.steal`): unique,
-  the slot is nulled and the read owns the unit; shared, the read is retained
-  as a borrow would be. Pinned by `TestSelfHostPayloadTakeIR` and the
-  payload rows of `TestSelfHostSSAPhysicalRC`.
+  of a reference payload out of an enum, or of a buffer, record, map or
+  union out of a record field, a tuple element or an owned array element,
+  when the box is the frame's unit and the frame reads it no further through
+  that slot. A `with` that stores back at the element read, by the same index
+  value or the same literal, is not a read of it. The takes chain: a taken
+  element or payload is a unit of the frame's own, so a read of one of its
+  slots may take in turn (`taken_root`), which is how an enum held in an
+  array hands its payload to the callee that rebuilds it. The lowering tests
+  the box's uniqueness at the read (`ssarc.steal`): unique, the slot is
+  nulled (`op_opt_set_payload` for the builtin Option layout) and the read
+  owns the unit; shared, the read is retained as a borrow would be. A take
+  out of a box nobody else sees (`sole_box`) nulls nothing and releases the
+  box as a shell (`shell_root`). Pinned by `TestSelfHostPayloadTakeIR`, the
+  payload rows of `TestSelfHostSSAPhysicalRC` and
+  `TestSelfHostRecordPathAllocs`.
 - **Tuple take** (`tuple_takes`, `takeable_root`): the untested form, for a
   tuple this frame allocated (`tuple_new`, `map_delete`'s pair) whose other
   elements are only read: the slot is nulled with no runtime test, since no

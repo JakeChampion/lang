@@ -2059,6 +2059,13 @@ pub function op_opt_payload_w(width: i32, is_i64: boolean): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 123, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
+// `opt_set_payload` pops [box, value] and stores the word-sized value over
+// the payload `opt_payload` reads, consuming the value as struct_set does.
+// The lowering's payload take nulls the slot with it (ssarc.steal).
+pub function op_opt_set_payload(): Op {
+  return op0(124);
+}
+
 // `print_str` pops a string value and writes its bytes to stdout (no newline),
 // pushing a dummy result so a statement-level drop balances. `write(s)` is a bare
 // print_str; `print(s)` is two of them, the payload then a "\n" literal.
@@ -3407,7 +3414,7 @@ pub function kind_count(): i32 {
 // transcendentals, string builder and map ops; 198 was the shallow struct
 // copy replaced by the typed lowering.
 pub function kind_retired(id: i32): boolean {
-  return id >= 62 && id <= 66 || id >= 117 && id <= 119 || id == 121 || id >= 124 && id <= 137 || id == 198;
+  return id >= 62 && id <= 66 || id >= 117 && id <= 119 || id == 121 || id >= 125 && id <= 137 || id == 198;
 }
 
 // kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
@@ -4855,6 +4862,9 @@ function kind_id_len15(name: string): i32 {
   if (c == b't' && name == "tcp_listen_with") {
     return 332;
   }
+  if (c == b'o' && name == "opt_set_payload") {
+    return 124;
+  }
   return 0;
 }
 
@@ -5352,6 +5362,9 @@ function kind_name_3(id: i32): string {
   }
   if (id == 123) {
     return "opt_payload";
+  }
+  if (id == 124) {
+    return "opt_set_payload";
   }
   if (id == 138) {
     return "struct_make";
@@ -6345,7 +6358,7 @@ function pops2_mem(t: i32): boolean {
     || t == 98 || t == 99 || t == 100 || t == 101  // str_concat, str_eq, str_cmp, str_index
     || t == 105 || t == 108  // str_split, str_repeat
     || pops2_kernel(t)
-    || t == 140 || t == 144;  // struct_set, tuple_set
+    || t == 124 || t == 140 || t == 144;  // opt_set_payload, struct_set, tuple_set
 }
 
 function pops2_io(t: i32): boolean {
@@ -6597,7 +6610,7 @@ pub function op_pushes(o: Op): i32 {
   // unlike the raw `__store_*` intrinsics next to them, which re-push it so
   // a statement-position drop balances. `struct_set_shape` is not among
   // them: it writes the shape word and leaves the box.
-  if (t == 89 || t == 140 || t == 144) {  // arr_set, struct_set, tuple_set
+  if (t == 89 || t == 124 || t == 140 || t == 144) {  // arr_set, opt_set_payload, struct_set, tuple_set
     return 0;
   }
   if (t == 152 || t == 153 || t == 154 || t == 155 || t == 156) {  // block, loop, if, else, end
@@ -8923,6 +8936,9 @@ pub function render_op(o: Op): string {
   }
   if (o.kind_tag == 123) {
     return "opt_payload";
+  }
+  if (o.kind_tag == 124) {
+    return "opt_set_payload";
   }
   if (o.kind_tag == 138) {
     return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm);

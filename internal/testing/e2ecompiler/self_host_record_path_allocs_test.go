@@ -37,6 +37,79 @@ function main(): i32 {
 }
 `
 
+// A three-deep record chain held behind an enum payload, read out of an
+// array slot and updated through a callee that rebuilds all three records:
+// the element is taken out of its slot and the payload out of the element,
+// so the callee updates every box in place and the rewrapped variant reuses
+// the box it came out of. The same chain behind a builtin Option pays the
+// fresh Some alone (#12781, first part).
+const enumPayloadTakeProgram = `struct P { bytes: u8[], n: i32 }
+struct C { p: P, k: i32 }
+struct S { c: C, id: i32 }
+enum T { Plain, Secured(S) }
+@noinline function mk(id: i32): S {
+  let b: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  return S { c: C { p: P { bytes: b, n: 0 }, k: 0 }, id: id };
+}
+@noinline function steps(s: S): S {
+  let p: P = P { ...s.c.p, n: s.c.p.n + 1 };
+  let c: C = C { ...s.c, p: p, k: s.c.k + 1 };
+  return S { ...s, c: c };
+}
+@noinline function match_slot(n: i32): i64 {
+  let slots: T[] = [Secured(mk(0)), Secured(mk(1)), Secured(mk(2))];
+  let before: i64 = __heap_alloc_count();
+  let i: i32 = 0;
+  while (i < n) {
+    match (slots[1]) {
+      Secured(sess) => { slots = slots.with(1, Plain); slots = slots.with(1, Secured(steps(sess))); },
+      Plain => {}
+    }
+    i = i + 1;
+  }
+  let d: i64 = __heap_alloc_count() - before;
+  match (slots[1]) { Secured(s) => { if (s.c.k != n) { return 0 - 1; } }, Plain => { return 0 - 2; } }
+  return d;
+}
+@noinline function match_local(n: i32): i64 {
+  let slots: T[] = [Secured(mk(0)), Secured(mk(1)), Secured(mk(2))];
+  let before: i64 = __heap_alloc_count();
+  let i: i32 = 0;
+  while (i < n) {
+    let t: T = slots[1];
+    slots = slots.with(1, Plain);
+    match (t) {
+      Secured(sess) => { slots = slots.with(1, Secured(steps(sess))); },
+      Plain => {}
+    }
+    i = i + 1;
+  }
+  let d: i64 = __heap_alloc_count() - before;
+  match (slots[1]) { Secured(s) => { if (s.c.k != n) { return 0 - 1; } }, Plain => { return 0 - 2; } }
+  return d;
+}
+@noinline function option_local(n: i32): i64 {
+  let opts: Option[S][] = [Some(mk(0)), Some(mk(1)), Some(mk(2))];
+  let before: i64 = __heap_alloc_count();
+  let i: i32 = 0;
+  while (i < n) {
+    let o: Option[S] = opts[1];
+    opts = opts.with(1, None);
+    if let Some(sess) = o { opts = opts.with(1, Some(steps(sess))); }
+    i = i + 1;
+  }
+  let d: i64 = __heap_alloc_count() - before;
+  if let Some(s) = opts[1] { if (s.c.k != n) { return 0 - 1; } } else { return 0 - 2; }
+  return d;
+}
+function main(): i32 {
+  if (match_slot(1000) > 2i64) { return 1; }
+  if (match_local(1000) > 2i64) { return 2; }
+  if (option_local(1000) > 1002i64) { return 3; }
+  return 0;
+}
+`
+
 func TestSelfHostRecordPathAllocs(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
@@ -48,6 +121,7 @@ func TestSelfHostRecordPathAllocs(t *testing.T) {
 			name, program string
 		}{
 			{"byte-view-slice", fmt.Sprintf(byteViewSliceProgram, sliceAllocs)},
+			{"enum-payload-take", enumPayloadTakeProgram},
 		} {
 			t.Run(target+"/"+probe.name, func(t *testing.T) {
 				stderr, code := cli.exitOf(t, probe.program, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
