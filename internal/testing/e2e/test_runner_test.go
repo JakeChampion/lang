@@ -1212,7 +1212,7 @@ func TestRunnerHTTPJsonOfExamplePasses(t *testing.T) {
 // std/http/hpack both ways, with the table sizes and evictions the RFC
 // shows, and holds a decoder to its list, field and table-size bounds.
 func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 10)
+	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 11)
 }
 
 // `tests/stdlib/http_qpack_test.fern` decodes RFC 9204 Appendix B's
@@ -1287,7 +1287,7 @@ func TestRunnerQUICRecoveryExamplePasses(t *testing.T) {
 // the idle timeout; then a stream echoed through small windows, and again
 // through loss and reordering.
 func TestRunnerQUICConnExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "quic_conn", "std/quic/conn", 25)
+	runnerSuitePasses(t, "quic_conn", "std/quic/conn", 26)
 }
 
 // `tests/stdlib/quic_streams_test.fern` drives std/quic/streams frame by
