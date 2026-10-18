@@ -504,6 +504,8 @@ func TestSelfHostLSPFormattingX86_64(t *testing.T) {
 		{"formatted", "function main(): i32 {\n  return 0;\n}\n", []lspEdit{}},
 		{"does-not-parse", "function main(): i32 { return", []lspEdit{}},
 		{"missing-last-brace", "function main(): i32 {\n  return 0;\n", []lspEdit{}},
+		{"missing-semicolon", "function main(): i32 {\n  let x: i32 = 1\n  return x;\n}\n", []lspEdit{}},
+		{"stray-token", "function main(): i32 {\n  return @;\n}\n", []lspEdit{}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "main.fern")
