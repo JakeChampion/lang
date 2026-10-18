@@ -377,10 +377,7 @@ pub function (c: Conn) read(bytes: u8[]): Step {
   // Joined onto bytes already held, the inbox is the connection's own;
   // otherwise it is `bytes` itself, and what is left of it is copied out.
   if (r.conn.inbox_at > 0 || !held && r.conn.inbox.len() > 0) {
-    let out: u8[] = r.out;
-    let events: Event[] = r.events;
-    let conn: Conn = r.conn;
-    r = __Run { conn: Conn { ...conn, inbox: __rest(conn.inbox, conn.inbox_at), inbox_at: 0 }, out: out, events: events };
+    r = __Run { ...r, conn: Conn { ...r.conn, inbox: __rest(r.conn.inbox, r.conn.inbox_at), inbox_at: 0 } };
   }
   return __step(r);
 }
@@ -446,25 +443,21 @@ function __next_frame(r: __Run): __Run {
 // __plain_headers takes the HEADERS frame of `len` payload bytes at the
 // inbox's head (`frame.plain_headers_at`) as `__headers` takes one from
 // the record `frame.read` builds: the frame taken off and counted, its
-// block copied out and read whole, since END_HEADERS came with it.
+// block read whole where it lies in the inbox, since END_HEADERS came
+// with it.
 function __plain_headers(r: __Run, len: i32): __Run {
   let at: i32 = r.conn.inbox_at;
   let stream: i32 = frame.stream_at(r.conn.inbox, at);
   let end_stream: boolean = frame.end_stream_at(r.conn.inbox, at);
-  let block: u8[] = __bytes_range(r.conn.inbox, at + frame.HEADER_LEN, at + frame.HEADER_LEN + len);
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
-  c = __frame_taken(c, frame.HEADER_LEN + len);
-  return __block_done(__Run { conn: c, out: out, events: events }, stream, block, end_stream);
+  let from: i32 = at + frame.HEADER_LEN;
+  return __block_done(__Run { ...r, conn: __frame_taken(r.conn, frame.HEADER_LEN + len) }, stream, true, from, from + len, end_stream);
 }
 
-// __frame_taken is c with the n bytes of the frame at inbox_at taken, the
-// inbox emptied when they were the last (which spares the read its cut at
-// the end), and the frame counted against the budgets' span, the counters
-// reset when the span is over.
+// __frame_taken is c with the n bytes of the frame at inbox_at taken and
+// the frame counted against the budgets' span, the counters reset when
+// the span is over. The inbox stays as it is, a header block read out of
+// it included; `read` cuts what is left at its end.
 function __frame_taken(c: Conn, n: i32): Conn {
-  let inbox_at: i32 = c.inbox_at + n;
   let frames: i32 = c.frames + 1;
   let resets: i32 = c.resets;
   let empty_data: i32 = c.empty_data;
@@ -473,10 +466,7 @@ function __frame_taken(c: Conn, n: i32): Conn {
     resets = 0;
     empty_data = 0;
   }
-  if (inbox_at >= c.inbox.len()) {
-    return Conn { ...c, inbox: [], inbox_at: 0, frames: frames, resets: resets, empty_data: empty_data };
-  }
-  return Conn { ...c, inbox_at: inbox_at, frames: frames, resets: resets, empty_data: empty_data };
+  return Conn { ...c, inbox_at: c.inbox_at + n, frames: frames, resets: resets, empty_data: empty_data };
 }
 
 // __past_frame is where the frame at `at` in the inbox ends, by its header.
@@ -614,8 +604,10 @@ function __block_part(r: __Run, part: u8[], end_headers: boolean): __Run {
   }
   let stream: i32 = c.block_stream;
   let end_stream: boolean = c.block_end;
-  c = Conn { ...c, block_stream: 0, block: [], block_frames: 0 };
-  return __block_done(__Run { conn: c, out: out, events: events }, stream, block, end_stream);
+  let n: i32 = block.len();
+  c = Conn { ...c, block_stream: 0, block: block, block_frames: 0 };
+  let done: __Run = __block_done(__Run { conn: c, out: out, events: events }, stream, false, 0, n, end_stream);
+  return __Run { ...done, conn: Conn { ...done.conn, block: [] } };
 }
 
 // __headers starts a request, or its trailers, on a stream.
@@ -631,32 +623,44 @@ function __headers(r: __Run, h: frame.HeadersFrame): __Run {
   return __block_part(__Run { conn: c, out: out, events: events }, h.block, h.end_headers);
 }
 
-// __block_done reads a whole header block as the stream it is on takes
-// it, one field at a time with none kept: a response's head or trailers
-// on a client connection, trailers on a stream whose body is arriving,
-// or a request on a new stream. A block is read whole whatever the stream
-// does with it, since the peer's table moves with it, and an HPACK error
-// closes the connection.
-function __block_done(r: __Run, stream: i32, block: u8[], end_stream: boolean): __Run {
+// __block_done reads the whole header block at [from, end) of the inbox
+// (`in_inbox`) or of the block assembled from CONTINUATION frames, as the
+// stream it is on takes it, one field at a time with none kept: a
+// response's head or trailers on a client connection, trailers on a
+// stream whose body is arriving, or a request on a new stream. A block is
+// read whole whatever the stream does with it, since the peer's table
+// moves with it, and an HPACK error closes the connection.
+function __block_done(r: __Run, stream: i32, in_inbox: boolean, from: i32, end: i32, end_stream: boolean): __Run {
   let at: i32 = __stream_at(r.conn, stream);
   if (r.conn.client) {
-    return __client_block(r, stream, at, block, end_stream);
+    return __client_block(r, stream, at, in_inbox, from, end, end_stream);
   }
   if (at >= 0) {
-    return __trailers(r, at, block, end_stream);
+    return __trailers(r, at, in_inbox, from, end, end_stream);
   }
-  return __request(r, stream, block, end_stream);
+  return __request(r, stream, in_inbox, from, end, end_stream);
 }
 
 // __skipped is `r` with its decoder past `block` and the fields dropped:
 // a block on a stream that takes none still moves the table.
-function __skipped(r: __Run, block: u8[]): __Run {
+function __skipped(r: __Run, in_inbox: boolean, from: i32, end: i32): __Run {
   let c: Conn = r.conn;
-  let st: hpack.Decoder = c.decoder.start(block);
+  let block: u8[] = __block_bytes(c, in_inbox);
+  let st: hpack.Decoder = c.decoder.start_in(from, end);
   while (st.more()) {
     st = st.next(block);
   }
   return __decoded(__Run { ...r, conn: Conn { ...c, decoder: st } });
+}
+
+// __block_bytes is where a header block's bytes lie: the inbox, when it
+// came whole in one HEADERS frame, else the block assembled from
+// CONTINUATION frames.
+function __block_bytes(c: Conn, in_inbox: boolean): u8[] {
+  if (in_inbox) {
+    return c.inbox;
+  }
+  return c.block;
 }
 
 // __decoded is `r`, whose connection has its decoder back from a block,
@@ -697,8 +701,8 @@ function __hpack_reason(error: Option[hpack.HpackError]): string {
 
 // __reset_past is a stream error on a block the stream takes nothing
 // from: the block read for the table, then RST_STREAM.
-function __reset_past(r: __Run, block: u8[], stream: i32, code: i32): __Run {
-  let past: __Run = __skipped(r, block);
+function __reset_past(r: __Run, in_inbox: boolean, from: i32, end: i32, stream: i32, code: i32): __Run {
+  let past: __Run = __skipped(r, in_inbox, from, end);
   if (past.conn.phase == CLOSED) {
     return past;
   }
@@ -710,7 +714,7 @@ function __reset_past(r: __Run, block: u8[], stream: i32, code: i32): __Run {
 // yet (an informational one stepped over), else its trailers; a block on
 // a stream the server would open is a protocol error, push being
 // disabled, and one on a stream that has closed a stream error.
-function __client_block(r: __Run, stream: i32, at: i32, block: u8[], end_stream: boolean): __Run {
+function __client_block(r: __Run, stream: i32, at: i32, in_inbox: boolean, from: i32, end: i32, end_stream: boolean): __Run {
   if (at < 0) {
     if (stream % 2 == 0) {
       return __fail(r, frame.PROTOCOL_ERROR, "HEADERS on a stream the server opened");
@@ -718,21 +722,22 @@ function __client_block(r: __Run, stream: i32, at: i32, block: u8[], end_stream:
     if (stream > r.conn.last_stream) {
       return __fail(r, frame.PROTOCOL_ERROR, "HEADERS on an idle stream");
     }
-    return __reset_past(r, block, stream, frame.STREAM_CLOSED);
+    return __reset_past(r, in_inbox, from, end, stream, frame.STREAM_CLOSED);
   }
   if (r.conn.streams[at].status != 0) {
-    return __trailers(r, at, block, end_stream);
+    return __trailers(r, at, in_inbox, from, end, end_stream);
   }
-  return __response_head(r, at, block, end_stream);
+  return __response_head(r, at, in_inbox, from, end, end_stream);
 }
 
 // __response_head reads a response's header block (§8.3.2): `:status`
 // first and alone among the pseudo-header fields, the rest regular. A 1xx
 // other than 101 is stepped over, the final response still to come.
-function __response_head(r: __Run, at: i32, block: u8[], end_stream: boolean): __Run {
+function __response_head(r: __Run, at: i32, in_inbox: boolean, from: i32, end: i32, end_stream: boolean): __Run {
   let s: __Stream = r.conn.streams[at];
   let c: Conn = r.conn;
-  let st: hpack.Decoder = c.decoder.start(block);
+  let block: u8[] = __block_bytes(c, in_inbox);
+  let st: hpack.Decoder = c.decoder.start_in(from, end);
   while (st.more()) {
     st = st.next(block);
     if (st.has && (s.seen & MALFORMED) == 0) {
@@ -829,17 +834,18 @@ function __answered(r: __Run, at: i32, trailers: HeaderMap): __Run {
 // __trailers ends a request with its trailers (§8.1): they must carry
 // END_STREAM and no pseudo-header, on a stream whose request has not
 // already ended, which is a STREAM_CLOSED error (§5.1).
-function __trailers(r: __Run, at: i32, block: u8[], end_stream: boolean): __Run {
+function __trailers(r: __Run, at: i32, in_inbox: boolean, from: i32, end: i32, end_stream: boolean): __Run {
   let id: i32 = r.conn.streams[at].id;
   let state: i32 = r.conn.streams[at].state;
   if (state != OPEN && state != HALF_LOCAL) {
-    return __reset_past(r, block, id, frame.STREAM_CLOSED);
+    return __reset_past(r, in_inbox, from, end, id, frame.STREAM_CLOSED);
   }
   if (!end_stream) {
-    return __reset_past(r, block, id, frame.PROTOCOL_ERROR);
+    return __reset_past(r, in_inbox, from, end, id, frame.PROTOCOL_ERROR);
   }
   let c: Conn = r.conn;
-  let st: hpack.Decoder = c.decoder.start(block);
+  let block: u8[] = __block_bytes(c, in_inbox);
+  let st: hpack.Decoder = c.decoder.start_in(from, end);
   let trailers: HeaderMap = headers.header_map_new();
   let pseudo: boolean = false;
   while (st.more()) {
@@ -875,16 +881,17 @@ function __trailed(r: __Run, at: i32, trailers: HeaderMap, pseudo: boolean): __R
 // __request opens a stream for a request's headers (§5.1.1, §8.3.1): an
 // odd id above every one before it, under the concurrency limit, with
 // the pseudo-headers a request needs and none it may not have.
-function __request(r: __Run, stream: i32, block: u8[], end_stream: boolean): __Run {
+function __request(r: __Run, stream: i32, in_inbox: boolean, from: i32, end: i32, end_stream: boolean): __Run {
   if (stream % 2 == 0 || stream <= r.conn.last_stream) {
     return __fail(r, frame.PROTOCOL_ERROR, "stream " + int.int_to_string(stream) + " is not a new client stream");
   }
   if (r.conn.peer_going_away || r.conn.handling + __waiting(r.conn) >= r.conn.config.max_concurrent_streams) {
-    return __declined(r, stream, block);
+    return __declined(r, stream, in_inbox, from, end);
   }
   let s: __Stream = __Stream { id: stream, state: OPEN, send_window: r.conn.peer_initial_window, recv_window: r.conn.config.initial_window, method: "", scheme: "", authority: "", path: "", fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: [], trailers: headers.header_map_new(), owes_end: false, streaming: false, received: 0, producing: false, status: 0, seen: 0 };
   let c: Conn = r.conn;
-  let st: hpack.Decoder = c.decoder.start(block);
+  let block: u8[] = __block_bytes(c, in_inbox);
+  let st: hpack.Decoder = c.decoder.start_in(from, end);
   while (st.more()) {
     st = st.next(block);
     if (st.has && (s.seen & MALFORMED) == 0) {
@@ -903,9 +910,9 @@ function __request(r: __Run, stream: i32, block: u8[], end_stream: boolean): __R
 // no stream for it: the peer is going away, or the concurrency limit is
 // reached, which refuses the stream. The block still moves the table, and
 // the stream still counts as seen.
-function __declined(r: __Run, stream: i32, block: u8[]): __Run {
+function __declined(r: __Run, stream: i32, in_inbox: boolean, from: i32, end: i32): __Run {
   let going_away: boolean = r.conn.peer_going_away;
-  let past: __Run = __skipped(r, block);
+  let past: __Run = __skipped(r, in_inbox, from, end);
   if (past.conn.phase == CLOSED) {
     return past;
   }
