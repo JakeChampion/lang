@@ -15619,6 +15619,17 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				c.settleNumeric(n.Init, widened)
 				got = widened
 			}
+			// A generic enum the init leaves uninstantiated (`let o = None;`)
+			// is not stamped: a re-check infers it again, where reading the
+			// stamp back as an annotation would fail its arity.
+			if et, ok := got.(ast.EnumType); ok && len(et.Args) == 0 {
+				if ed := c.info.Enums[et.Name]; ed != nil && len(ed.TypeParams) > 0 {
+					s.bindVar(n.Name, got, n)
+					c.info.VarTypes[n] = got
+					c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
+					return
+				}
+			}
 			n.Type = got
 			if litLocal {
 				s.bindVar(n.Name, n.Type, n)
