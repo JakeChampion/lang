@@ -27647,7 +27647,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
       let ct: typeinfo.Type = check_expr(e, s);
-      return Typed { e: ast.ExprCall { callee: annotate_callee(c, ct, s), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: type_to_irtag(ct) }, ty: ct, known: true };
+      return Typed { e: ast.ExprCall { callee: annotate_callee(c, ct, s), args: nargs, line: c.line, col: c.col, type_args: stamped_type_args(c, s), ty: type_to_irtag(ct) }, ty: ct, known: true };
     },
     ast.ExprFieldAccess(fa) => {
       let oa: Typed = annotate_typed(fa.obj, s);
@@ -27708,6 +27708,87 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
 // annotate_callee annotates a call's callee; a value block's lambda results in
 // `ct`, the block's type, which joins every arm where its first arm alone may
 // not: `if (c) { Full(1) } else { Full(2.5) }` is a Bx[f64].
+// A free generic call that writes no type arguments carries the ones its
+// arguments bind, so every later pass instantiates it as it would the written
+// `f[T](...)`. A variable only the destination or a literal's open width can
+// settle leaves the call unwritten, for those passes to settle.
+function stamped_type_args(c: ast.ExprCall, s: Scope): string[] {
+  let sig: FuncSig = free_generic_sig(c, s);
+  if (c.type_args.len() > 0 || sig.all_type_params.len() == 0 || c.args.len() != sig.param_types.len()) {
+    return c.type_args;
+  }
+  let (bn, bt) = call_type_bindings(sig, c, s);
+  let out: string[] = [];
+  for tp in sig.all_type_params {
+    let bi: i32 = util.index_of_str(bn, tp);
+    if (bi < 0 || type_contains_unknown(bt[bi]) || width_open(bt[bi])) {
+      return c.type_args;
+    }
+    let spelled: string = typeinfo.spelling(bt[bi]);
+    if (spelled.len() == 0) {
+      return c.type_args;
+    }
+    out = out.append(parser.canonicalise_type_args(spelled));
+  }
+  return out;
+}
+
+// free_generic_sig: the declaration a bare call names when it is a free
+// generic function rather than a local, or an empty signature.
+function free_generic_sig(c: ast.ExprCall, s: Scope): FuncSig {
+  if let ast.ExprIdent(cid) = c.callee {
+    let sig: FuncSig = s.lookup_sig(cid.name);
+    if (!s.is_bound(cid.name) && sig.receiver.len() == 0) {
+      return sig;
+    }
+  }
+  return s.lookup_sig("");
+}
+
+// width_open: does `t` hold an integer or float literal's type, whose width a
+// destination may still choose?
+function width_open(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeI32(_) => {
+      return is_poly_int(t);
+    },
+    typeinfo.TypeFloat(_) => {
+      return is_poly_float(t);
+    },
+    typeinfo.TypeArray(a) => {
+      return width_open(a.elem);
+    },
+    typeinfo.TypeMap(m) => {
+      return width_open(m.key) || width_open(m.value);
+    },
+    typeinfo.TypeTuple(tup) => {
+      return any_width_open(tup.elements);
+    },
+    typeinfo.TypeStruct(r) => {
+      return any_width_open(r.args);
+    },
+    typeinfo.TypeUnion(u) => {
+      return any_width_open(u.args);
+    },
+    typeinfo.TypeFunc(f) => {
+      return width_open(f.ret_type) || any_width_open(f.param_types);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function any_width_open(ts: typeinfo.Type[]): boolean {
+  for t in ts {
+    if (width_open(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function annotate_callee(c: ast.ExprCall, ct: typeinfo.Type, s: Scope): ast.Expr {
   if let ast.ExprLambda(lm) = c.callee {
     if (parser.is_value_block(c)) {
