@@ -1233,7 +1233,7 @@ func TestRunnerHTTPRequestIdExamplePasses(t *testing.T) {
 // std/http/hpack both ways, with the table sizes and evictions the RFC
 // shows, and holds a decoder to its list, field and table-size bounds.
 func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 11)
+	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 12)
 }
 
 // `tests/stdlib/http_qpack_test.fern` decodes RFC 9204 Appendix B's
