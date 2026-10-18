@@ -349,6 +349,35 @@ function main(): i32 { return 0; }`,
 		spelling: "got boolean",
 	},
 	{
+		// `?` on the Option a Writer's write returns, in a function returning
+		// Result: the message names the declared return with its arguments.
+		name: "E042 Option operand in a Result function names the return",
+		src: `function a(): Result[i32, IoError] {
+  let w: Writer = stdout();
+  w.write("hi\n")?;
+  return Ok(1);
+}
+function main(): i32 { return 0; }`,
+		code:     "E042",
+		spelling: "got Result[i32, IoError]",
+	},
+	{
+		// A Map builtin's arity is stated at the call, with the count the
+		// reader has to write.
+		name: "E004 Map get with no key",
+		src: `import "core/map";
+function main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.get(); return 0; }`,
+		code:     "E004",
+		spelling: "takes 1 argument but was given 0",
+	},
+	{
+		name: "E042 Option operand in a void function",
+		src: `function f(o: Option[i32]): void { let v: i32 = o?; }
+function main(): i32 { return 0; }`,
+		code:     "E042",
+		spelling: "got void",
+	},
+	{
 		// The message spells out the call that DOES work, so the reader is
 		// not left to guess that a receiver-less trait requirement is
 		// reached through the type parameter rather than through a value.

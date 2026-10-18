@@ -802,7 +802,7 @@ function main(): i32 {
 	// bailing the module.
 	//
 	// Gated by EXIT STATUS rather than by diagnostic code: the bail is an
-	// uncoded `error[type]`, so the checker-codes differential compares
+	// uncoded internal error, so the checker-codes differential compares
 	// nothing on these and passes whether or not the rule is right. Native
 	// accepts every program here.
 	t.Run("check-accepts-typed-field", func(t *testing.T) {

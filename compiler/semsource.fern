@@ -5495,35 +5495,8 @@ function stmt(st: ast.Stmt, s: State): State {
 // column, and a void value nothing reads. Renumbering consumes these markers
 // into side tables before assigning executable value IDs.
 function line_mark(st: ast.Stmt, s: State): State {
-  let v: Value = define(s, 35, [], ast.stmt_line(st), util.i32_to_string(stmt_col(st)), t_void());
+  let v: Value = define(s, 35, [], ast.stmt_line(st), util.i32_to_string(ast.stmt_col(st)), t_void());
   return v.s;
-}
-
-// stmt_col is a statement's column where the parser records one, else 0.
-function stmt_col(st: ast.Stmt): i32 {
-  match (st) {
-    ast.StmtVar(v) => {
-      return v.col;
-    },
-    ast.StmtReturn(r) => {
-      return r.col;
-    },
-    ast.StmtAssign(a) => {
-      return a.col;
-    },
-    ast.StmtMatch(m) => {
-      return m.col;
-    },
-    ast.StmtBreak(b) => {
-      return b.col;
-    },
-    ast.StmtContinue(c) => {
-      return c.col;
-    },
-    _ => {
-      return 0;
-    }
-  }
 }
 
 function stmts(body: ast.Stmt[], s: State): State {

@@ -217,6 +217,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// string's, a MapIter's, a Cell's. A Map read of a mistyped key is
 		// produced before it is refused, so these are the shapes that would
 		// strand without the E006.
+		// A Map builtin given the wrong number of arguments is E004 at the
+		// call; it used to type unknown with nothing coded.
+		{"map-get-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.get(); return 0; }\n", []string{"E004"}},
+		{"map-insert-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.insert(\"a\"); return 0; }\n", []string{"E004"}},
+		{"map-without-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.without(); return 0; }\n", []string{"E004"}},
+		{"map-keys-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.keys(1); return 0; }\n", []string{"E004"}},
+		{"map-iter-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.iter(1); return 0; }\n", []string{"E004"}},
 		{"map-has-redeclares-builtin", "import \"core/map\";\nfunction (m: Map[string, i32]) has(k: string): boolean { return false; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has(\"a\")) { return 1; } return 0; }\n", []string{"E006"}},
 		{"map-get-or-redeclares-builtin", "import \"core/map\";\nfunction (m: Map[string, i32]) get_or(k: string, d: i32): i32 { return d; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(\"a\", 2); }\n", []string{"E006"}},
 		{"map-get-or-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(5, 1); }\n", []string{"E038"}},
@@ -239,6 +246,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// they have none. The bundle differential holds the imported side.
 		{"option-method-without-import", "function main(): i32 { let x: Option[i32] = Some(3); return x.unwrap_or(0); }\n", []string{"E043"}},
 		{"result-method-without-import", "function main(): i32 { let r: Result[i32, string] = Ok(2); return r.unwrap_or(0); }\n", []string{"E043"}},
+		// A method is not a field: reading one as a value is E043.
+		{"struct-method-read-as-field", "struct P { a: i32 }\nfunction (p: P) f(): i32 { return 1; }\nfunction main(): i32 { let p = P { a: 1 }; let g = p.f; return 0; }\n", []string{"E043"}},
 		{"struct-destructure-unknown-field", "struct Point { x: i32, y: i32 }\nfunction main(): i32 { let p: Point = Point { x: 1, y: 2 }; let Point { x, z } = p; return x; }\n", []string{"E043"}},
 		{"enum-method-missing", "enum Color { Red, Green }\nfunction main(): i32 { let c: Color = Color.Red; return c.nope(); }\n", []string{"E043"}},
 		// A boolean has one builtin method, `to_string`, which needs no import
@@ -753,6 +762,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// them, even `print("a")` marked the function ill-typed under
 		// -check.
 		{"string-len-arity-e004", "function main(): i32 { let s: string = \"abc\"; return s.len(1); }\n", []string{"E004"}},
+		// A receiver method declared on a scalar type is held to its
+		// parameter count as a struct's is.
+		{"i32-declared-method-arity-e004", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { let n: i32 = 2; return n.twice(1); }\n", []string{"E004"}},
 		{"string-as-bytes-arity-e004", "function main(): i32 { let s: string = \"abc\"; return s.as_bytes(1).len(); }\n", []string{"E004"}},
 		{"print-arity-e004", "function main(): i32 { print(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
 		{"eprint-arity-e004", "function main(): i32 { eprint(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
@@ -1334,7 +1346,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// NEITHER half of that is gated here, and the rows below do not
 		// discriminate it:
 		//
-		// The accepting half bails the module with an UNCODED `error[type]`,
+		// The accepting half bails the module with an UNCODED internal error,
 		// which contributes no code, so a row expecting none passes either way.
 		// The refusing half is reported by call_diags_struct_lit, a separate
 		// coded pass that already resolves by name and already uses the
@@ -2171,17 +2183,22 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// An unannotated `?` binding takes the success payload's type.
 		{"try-binding-typed-sink", "function g(): Option[string] { return Some(\"a\"); }\nfunction f(): Option[i32] { let s = g()?; let n: i32 = s; return Some(n); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
 		{"try-binding-typed-clean", "function g(): Result[string, i32] { return Ok(\"a\"); }\nfunction f(): Result[i32, i32] { let s = g()?; return Ok(s.len()); }\nfunction main(): i32 { return 0; }\n", nil},
-		// E042 return-shape (#4363 item 1): `?` on a known Option/Result
-		// operand inside a function whose declared return type is a known
-		// primitive draws the return-shape E042 ("requires the surrounding
-		// function to return Option[_]/Result[_, E]"), matching native. The
-		// matching-return shapes stay clean, including inside a lambda whose
-		// own declared return supplies the context (not the enclosing fn's).
+		// E042 return-shape: `?` on a known Option/Result operand inside a
+		// function declared to return anything but that enum — a primitive,
+		// the other enum, a struct, void — draws the return-shape E042,
+		// matching native. The matching-return shapes stay clean, including
+		// inside a lambda whose own declared return supplies the context (not
+		// the enclosing fn's).
 		{"try-option-ret-i32", "function f(): i32 { let o: Option[i32] = Some(1); return o?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-result-ret-i32", "function get(): Result[i32, string] { return Ok(3); }\nfunction f(): i32 { return get()?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-option-ret-string", "function f(): string { return Some(3)?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-option-ret-bool", "function f(): boolean { let o: Option[i32] = Some(1); let v: i32 = o?; return v > 0; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-result-ret-ok", "function get(): Result[i32, string] { return Ok(3); }\nfunction f(): Result[i32, string] { let v: i32 = get()?; return Ok(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"try-option-ret-result", "function f(o: Option[i32]): Result[i32, string] { let v: i32 = o?; return Ok(v); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-result-ret-option", "function f(r: Result[i32, string]): Option[i32] { let v: i32 = r?; return Some(v); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-option-ret-struct", "struct P { a: i32 }\nfunction f(o: Option[i32]): P { let v: i32 = o?; return P { a: v }; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-option-ret-void", "function f(o: Option[i32]): void { let v: i32 = o?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-writer-write-ret-result", "function a(): Result[i32, IoError] {\n  let w: Writer = stdout();\n  w.write(\"hi\\n\")?;\n  return Ok(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-lambda-ret-i32", "function f(): Option[i32] {\n    let g = (): i32 => { let o: Option[i32] = Some(1); let v: i32 = o?; return v; };\n    return Some(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-lambda-ret-option-ok", "function f(): i32 {\n    let g = (): Option[i32] => { let o: Option[i32] = Some(1); let v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n", nil},
 		// E042 not-a-`?`-type on a NON-primitive operand (#9331). The rule
@@ -4522,6 +4539,8 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"string-contains-ok", "import \"std/string\";\nfunction main(): i32 { let s = \"abc\"; if (s.contains(\"b\")) { return 1; } return 0; }\n"},
 		{"string-starts-with-ok", "import \"std/string\";\nfunction main(): i32 { let s = \"abc\"; if (s.starts_with(\"a\")) { return 1; } return 0; }\n"},
 		{"string-is-empty-ok", "import \"std/string\";\nfunction main(): i32 { let s = \"\"; if (s.is_empty()) { return 1; } return 0; }\n"},
+		// The wrong argument count to one is E004 in both.
+		{"string-contains-arity-e004", "import \"std/string\";\nfunction main(): i32 { let s: string = \"abc\"; if (s.contains()) { return 1; } return 0; }\n"},
 		{"string-trim-ok", "import \"std/string\";\nfunction main(): i32 { let s = \"  a \"; let t = s.trim(); return 0; }\n"},
 		// `str` through an IMPORTED method's declared return (#7293): std/string's
 		// trim family returns the borrowed view, declared `str` and
