@@ -122,6 +122,44 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	e2eharness.CheckServeAllocsH2(t, addr, ServeAllocsH2Ceiling, e2eharness.ServeAllocsRounds)
 }
 
+// ServeAllocsTLSCeiling bounds what the serve loop and the TLS 1.3 record
+// layer allocate per hello request on one keep-alive TLS connection
+// (`Config.with_tls`), a ratchet like the HTTP/2 one: the connection's
+// handshake sits in the /count bracketing's intercept, so the mean is what
+// one record pair costs — a request record opened in, a response record
+// sealed out. The first reading was 56.0 on x86-64 (docs/benchmarks/
+// net-h2-tls-2026-10-18.md); 55.0 with `record.open` handing the decrypted
+// buffer back shortened in place rather than copying the content out; 53.0
+// here with the decrypted application data moved into the step and then
+// into the read buffer rather than copied at each layer. The count's small
+// variation between runs (how the client's records coalesce into reads) is
+// why it is a ceiling on the mean; a mean serveAllocsH2Drift or more under
+// it fails, to lower it. Most of the remaining count is the per-record
+// rebuild of the session and handshake state (docs/benchmarks/
+// net-h2-tls-2026-10-18.md, "Left").
+const ServeAllocsTLSCeiling = 53
+
+func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	certPEM, keyPEM, pool := e2eharness.TLSAllocsCert(t)
+	certPath := filepath.Join(dir, "cert.pem")
+	keyPath := filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsTLSServerSource(0, e2eharness.ServeAllocsRounds, certPath, keyPath)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1")
+	addr, _ := e2eharness.StartInheritedServer(t, runX86_64Bin(cli.runner, bin))
+	e2eharness.CheckServeAllocsTLS(t, addr, ServeAllocsTLSCeiling, e2eharness.ServeAllocsRounds, pool)
+}
+
 // ServeAllocsH3Ceiling bounds allocations per hello request over one HTTP/3
 // connection. The 100,000-request measurement and ratchet are recorded in
 // docs/benchmarks/net-h3-2026-10-17.md; 265.2 on arm64 since elements are
