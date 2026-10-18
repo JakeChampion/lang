@@ -30,6 +30,7 @@ parse:diag_p003
 parse:diag_p004
 parse:diag_p005
 parse:diag_p006
+parse:own_in_a_type_needs_a_resource_name
 parse:param_pattern_rejects_enum_variant
 parse:param_pattern_rejects_literal_tuple_elem
 parse:param_pattern_rejects_qualified_variant

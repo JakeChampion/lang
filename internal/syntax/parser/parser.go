@@ -77,7 +77,6 @@ func ParseContext(ctx context.Context, src string) (*ast.Program, error) {
 	if len(p.errors) > 0 {
 		return prog, diag.Errors(p.errors)
 	}
-	desugarForEachProgram(prog)
 	elideLenBoundedChecks(prog)
 	return prog, nil
 }
@@ -677,8 +676,6 @@ func (p *parser) parseProgram() *ast.Program {
 				continue
 			}
 			if rd != nil {
-				rd.Public = isPub
-				rd.PackageScoped = isPackage
 				rd.ImportIface = importIface
 				rd.ImportWITName = importWIT
 				prog.Resources = append(prog.Resources, rd)
@@ -1492,6 +1489,15 @@ func (p *parser) expectMemberName() (lexer.Token, error) {
 		return tok, nil
 	}
 	return p.expect(lexer.Ident, "")
+}
+
+// handleWordMisuse is the P001 for `own` / `borrow` in a type with no
+// resource name after it, such as `xs: own i32[]`.
+func handleWordMisuse(word string) string {
+	if word == "own" {
+		return "`own` in a type must be followed by a resource name (`own R` for a `resource R`); a consuming parameter is written `own name: T`"
+	}
+	return "`borrow` in a type must be followed by a resource name (`borrow R` for a `resource R`); a parameter borrows by default, written `name: T`"
 }
 
 // maybeQualify consumes an optional `.ident` suffix and returns the
@@ -2430,21 +2436,17 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 			break
 		}
 		base = ast.NewDynTraitTypeFull(traits, traitArgs, traitAssoc)
-	case (t.Kind == lexer.Ident) && (t.Text == "own" || t.Text == "borrow") &&
-		p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident:
+	case t.Kind == lexer.Ident && (t.Text == "own" || t.Text == "borrow"):
 		// `own R` / `borrow R` — a WIT resource-handle type (P5 —
 		// docs/WIT-BRING-YOUR-OWN.md). R names a `resource` declaration (the
-		// checker validates that). `own` is owned/consuming (dropped at scope
-		// exit, a later slice); `borrow` is a non-consuming view. Contextual:
-		// only a handle when an identifier (the resource name) follows, so
-		// `own`/`borrow` stay usable as ordinary type names otherwise. Falls
-		// through to the trailing-`[]` suffix loop like any base type.
-		borrowed := t.Text == "borrow"
+		// checker validates that). A consuming parameter is spelled
+		// `own xs: T`, never with `own` in its type.
 		p.advance() // own / borrow
-		nameTok, err := p.expect(lexer.Ident, "")
-		if err != nil {
-			return nil, err
+		nameTok, ok := p.accept(lexer.Ident, "")
+		if !ok {
+			return nil, p.errorfCode(t.Pos, "P001", "%s", handleWordMisuse(t.Text))
 		}
+		borrowed := t.Text == "borrow"
 		name := p.maybeQualify(nameTok.Text)
 		p.typeRefs = append(p.typeRefs, ast.TypeRef{P: nameTok.Pos, Name: name})
 		base = ast.HandleType{Resource: name, Borrowed: borrowed}
@@ -3547,11 +3549,9 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Emit the un-desugared ForEach; desugarForEachProgram (end of ParseContext)
-	// lowers it once all decls are known, so the choice can be decl-aware
-	// (array/string → `.len()` + index via ast.DesugarForEachArray; `stream[T]`
-	// → a lazy per-element read loop). The ID gives the lowering unique
-	// helper-var names, matching the old parse-time desugar.
+	// Emit the un-desugared ForEach: which loop it lowers to depends on the
+	// iterand's TYPE, so the checker chooses (checkForEach). The ID gives the
+	// lowering unique helper-var names.
 	return &ast.ForEach{
 		P:      kw.Pos,
 		ID:     p.nextForeachID(),
@@ -3561,122 +3561,6 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 		Body:   body,
 		Label:  label,
 	}, nil
-}
-
-// desugarForEachProgram lowers every `ast.ForEach` (the plain `for x in expr`
-// form) in a freshly-parsed program to its loop, right after parse and before
-// any downstream pass — so modload / constfold / the checker / codegen all see
-// the desugared block, exactly as the old parse-time desugar did. The ForEach
-// node exists only so a single decl-aware lowering owns the choice. Covers every
-// body root: functions, hoisted methods, trait default methods, and const
-// initialisers (lambdas / block-exprs within are reached through the expr walk).
-func desugarForEachProgram(prog *ast.Program) {
-	for _, fn := range prog.Funcs {
-		if fn.Body != nil {
-			desugarForEachStmt(fn.Body)
-		}
-	}
-	for _, tr := range prog.Traits {
-		for i := range tr.Methods {
-			if tr.Methods[i].Body != nil {
-				desugarForEachStmt(tr.Methods[i].Body)
-			}
-		}
-	}
-	for _, cn := range prog.Consts {
-		desugarForEachExpr(cn.Value)
-	}
-}
-
-// desugarForEachStmt recursively lowers every ForEach reachable from s, returning
-// the replacement for s. `*ast.Block`-typed fields are mutated in place (return
-// ignored); plain `ast.Stmt` fields (brace-less loop/if bodies can be a bare
-// ForEach) get the return assigned back by the caller.
-func desugarForEachStmt(s ast.Stmt) ast.Stmt {
-	switch x := s.(type) {
-	case nil:
-		return nil
-	case *ast.ForEach:
-		x.Body = desugarForEachStmt(x.Body)
-		desugarForEachExpr(x.Iter)
-		// A destructuring header keeps its ForEach node for the checker, whose
-		// lowering is chosen by the iterand's type; every other iterand lowers
-		// to the array `.len()`+index loop here.
-		if x.Pattern != nil {
-			return x
-		}
-		return ast.DesugarForEachArray(x)
-	case *ast.Block:
-		for i := range x.Stmts {
-			x.Stmts[i] = desugarForEachStmt(x.Stmts[i])
-		}
-	case *ast.If:
-		desugarForEachExpr(x.Cond)
-		x.Then = desugarForEachStmt(x.Then)
-		if x.Else != nil {
-			x.Else = desugarForEachStmt(x.Else)
-		}
-	case *ast.While:
-		desugarForEachExpr(x.Cond)
-		x.Body = desugarForEachStmt(x.Body)
-	case *ast.Loop:
-		x.Body = desugarForEachStmt(x.Body)
-	case *ast.For:
-		if x.Init != nil {
-			x.Init = desugarForEachStmt(x.Init)
-		}
-		desugarForEachExpr(x.Cond)
-		if x.Step != nil {
-			x.Step = desugarForEachStmt(x.Step)
-		}
-		x.Body = desugarForEachStmt(x.Body)
-	case *ast.Match:
-		desugarForEachExpr(x.Tag)
-		for _, arm := range x.Arms {
-			desugarForEachStmt(arm.Body)
-		}
-	case *ast.Var:
-		desugarForEachExpr(x.Init)
-	case *ast.ExprStmt:
-		desugarForEachExpr(x.Expr)
-	case *ast.Return:
-		desugarForEachExpr(x.Value)
-	case *ast.Destructure:
-		desugarForEachExpr(x.Init)
-	case *ast.Defer:
-		desugarForEachExpr(x.Expr)
-	case *ast.FuncDecl:
-		// A nested named function is a STATEMENT here, and its body is a
-		// separate block this walk has to enter: nothing else lowers it, and a
-		// ForEach left standing reaches IR, which has no case for one.
-		//
-		// Bodiless (`function A();` — the shape an @import declaration takes,
-		// and one the parser also produces for a nested `function A();`) has a
-		// nil Body, and a nil *ast.Block in an ast.Stmt is not `== nil`, so it
-		// reaches the Block case and dereferences. The top-level walks above
-		// guard the same way.
-		x.Body = desugarForEachStmt(x.Body).(*ast.Block)
-	}
-	return s
-}
-
-// desugarForEachExpr lowers for-in nested inside a block-expression or lambda
-// body within an expression tree.
-func desugarForEachExpr(e ast.Expr) {
-	if e == nil {
-		return
-	}
-	ast.Walk(e, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.BlockExpr:
-			for i := range x.Stmts {
-				x.Stmts[i] = desugarForEachStmt(x.Stmts[i])
-			}
-		case *ast.Lambda:
-			desugarForEachStmt(x.Body)
-		}
-		return true
-	})
 }
 
 // forHeaderPatternAhead reports whether the cursor opens a destructuring
@@ -3720,7 +3604,7 @@ func (p *parser) forHeaderPatternAhead() bool {
 // The pattern is carried on the ForEach node unlowered, because which loop it
 // becomes depends on the iterand's TYPE and the parser has none: an array binds
 // the pattern against each element, a Map against each entry. The checker owns
-// that choice (checkPatternForEach), and swaps its lowering into the statement
+// that choice (checkForEach), and swaps its lowering into the statement
 // slot this node stands in.
 func (p *parser) parseForEachPattern(kw lexer.Token, label string) (ast.Stmt, error) {
 	pos := p.peek().Pos
@@ -4230,12 +4114,12 @@ func (p *parser) freshDestructureName() string {
 }
 
 // fieldNamesOf returns a named-field pattern's projected field names, nil
-// for a positional one.
+// for a positional one — and non-nil for `V { .. }`, which names none.
 func fieldNamesOf(pat matchPattern) []string {
 	if !pat.NamedFields {
 		return nil
 	}
-	return append([]string(nil), pat.fieldNames...)
+	return append([]string{}, pat.fieldNames...)
 }
 
 // parseNamedFieldPattern parses a named-field variant pattern body
@@ -4252,9 +4136,7 @@ func (p *parser) parseNamedFieldPattern() (out namedFieldPattern, ok bool, err e
 	if !p.match(lexer.Punct, "}") {
 		for {
 			// A trailing `..` marks intentionally-omitted fields (a partial
-			// bind — `Point { x, .. }`). Named-field patterns already bind
-			// only the fields they list, so `..` is documentation; consume
-			// it and stop. Matches the destructure form and the self-host.
+			// bind — `Point { x, .. }`); nothing may follow it.
 			if p.match(lexer.Punct, "..") {
 				p.advance()
 				out.rest = true
@@ -4267,9 +4149,7 @@ func (p *parser) parseNamedFieldPattern() (out namedFieldPattern, ok bool, err e
 			bind := fieldTok.Text
 			var sub *matchPattern
 			// `field: <x>` is either a rename binding the field to a local
-			// (struct matches only — the checker rejects a rename in an enum
-			// named-field pattern) or a SUB-PATTERN matched against the
-			// field's value. isNestedPatternStart draws the same line it
+			// or a SUB-PATTERN matched against the field's value. isNestedPatternStart draws the same line it
 			// draws for a payload slot, so `field: local` stays a rename and
 			// only an unambiguous pattern recurses.
 			if _, isRename := p.accept(lexer.Punct, ":"); isRename {
@@ -4311,9 +4191,7 @@ func (p *parser) parseNamedFieldPattern() (out namedFieldPattern, ok bool, err e
 // namedFieldPattern is what a `{ … }` pattern body binds: the field
 // projected for each binding, the binding itself, an optional sub-pattern
 // matched against that field, and whether the source wrote the trailing
-// `..`. The `..` binds nothing — a named-field pattern already binds only
-// the fields it lists — so only the printer reads it, to put back what the
-// author wrote.
+// `..` (see ast.MatchArm.RestWritten).
 type namedFieldPattern struct {
 	fields   []string
 	bindings []string
@@ -4351,8 +4229,8 @@ type matchPattern struct {
 	// fieldNames runs parallel to Bindings for a named-field pattern:
 	// the field projected for each binding (== Bindings for shorthand).
 	fieldNames []string
-	// restWritten records the trailing `..` of a named-field pattern. It
-	// binds nothing, so it reaches only the printer — see namedFieldPattern.
+	// restWritten records the trailing `..` of a named-field pattern — see
+	// ast.MatchArm.RestWritten.
 	restWritten bool
 }
 

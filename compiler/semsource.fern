@@ -34,7 +34,7 @@ import "./semarrayreport";
 import "./semreach";
 import "./flatten";
 import "./treeshake";
-import "std/cli";
+import "std/envflag";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
 // — has no body of its own: it is produced once per instantiation its callers
@@ -4710,7 +4710,7 @@ function pattern_shape_error(pv: ast.PatVariant): string {
   if (pv.nested.len() > 0 || pv.has_lit_cond) {
     return "unsupported pattern";
   }
-  if (pv.tup_kinds.len() > 0 || pv.field_names.len() > 0) {
+  if (pv.tup_kinds.len() > 0 || parser.is_record_pattern(pv)) {
     return "unsupported pattern";
   }
   if (qualified(pv.type_name)) {
@@ -9425,7 +9425,7 @@ function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
 function inline_on(): boolean {
   match (env("FERN_SEM_INLINE")) {
     Some(v) => {
-      return cli.flag_on(v);
+      return envflag.value_on(v);
     },
     None => {
       return true;
@@ -9578,7 +9578,7 @@ function stdlib_names(all: Produced[], names: string[], decls: parser.FuncDecl[]
 }
 
 function kernel_switch_on(name: string): boolean {
-  return !cli.env_flag(name);
+  return !envflag.on(name);
 }
 
 function ndarray_open(all: Produced[], names: string[], mod: parser.Module, funcs: ssasem.Func[]): boolean[] {
@@ -9610,7 +9610,7 @@ function ndarray_open(all: Produced[], names: string[], mod: parser.Module, func
 }
 
 function fusion_on(): boolean {
-  return !cli.env_flag("FERN_NO_ARRAY_FUSION");
+  return !envflag.on("FERN_NO_ARRAY_FUSION");
 }
 
 // The implementations a dyn call on `method` over `traits` reaches: the

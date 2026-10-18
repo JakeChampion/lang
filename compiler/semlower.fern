@@ -36,7 +36,7 @@ import "./typeinfo";
 import "./util";
 import "./semarrayreport";
 import "./semndprune";
-import "std/cli";
+import "std/envflag";
 
 // Every body the substitution is considering, declarations first (aligned with
 // mod.funcs) and then the instances the declarations asked for. `n1` is the
@@ -63,7 +63,7 @@ struct Rows {
 // sem_report_on reports whether FERN_SEM_IR_REPORT asks for the per-module
 // tally. Nothing about the emitted program changes with it.
 pub function sem_report_on(): boolean {
-  return cli.env_flag("FERN_SEM_IR_REPORT");
+  return envflag.on("FERN_SEM_IR_REPORT");
 }
 
 // sem_reuse_on reports whether the lowering under the inferred modes keeps the
@@ -77,7 +77,7 @@ pub function sem_report_on(): boolean {
 function sem_reuse_on(): boolean {
   match (env("FERN_SEM_REUSE")) {
     Some(v) => {
-      return cli.flag_on(v);
+      return envflag.value_on(v);
     },
     None => {
       return true;
@@ -513,7 +513,7 @@ function instance_records(built: semsource.Built): parser.StructDecl[] {
           for fl in rec.fields {
             fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "" });
           }
-          out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: false, is_package: false });
+          out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
         }
       }
     }
@@ -542,7 +542,7 @@ function instance_variants(built: semsource.Built): parser.StructDecl[] {
         for fl in v.fields {
           fields = fields.append(parser.StructFieldDecl { name: fl.name, type_name: field_spelling(fl.ty), fn_ret: "", fn_param_types: "" });
         }
-        out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: ssasem.type_key(e.ty), must_consume: false, variant_field_names: [], is_pub: false, is_package: false });
+        out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: ssasem.type_key(e.ty), must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
       }
     }
   }

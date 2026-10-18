@@ -238,7 +238,7 @@ regression test where the bug lived:
   `TestSelfHostDynTraitIR` row `downcast-into-bounded-generic`.
 - **A `for` loop inside a `defer` went unchecked** (#12789, Go parser): the
   foreach desugar did not enter a `defer`, and the checker has no case for
-  a standing ForEach. `TestForEachInDeferDesugars`.
+  a standing ForEach. `TestForEachInDeferLowers`.
 - **A generator bug**: the ownership cluster reassigned a variable whose type
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.
