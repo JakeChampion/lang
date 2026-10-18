@@ -4803,6 +4803,9 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
           // (Scalar `unknown` is NOT treated as a wildcard — a
           // genuinely unresolved value should still surface its
           // assignment error, e.g. `let s: string = badcall()`.)
+          if (typevar_unknown(fe.elem) && !is_unknown(te.elem)) {
+            return false;
+          }
           if (is_unknown(fe.elem) || is_unknown(te.elem)) {
             return true;
           }
@@ -7402,7 +7405,25 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     }
     i = i + 1;
   }
+  for el in a.elements {
+    let et: typeinfo.Type = check_expr(el, s);
+    if (typevar_unknown(et)) {
+      return t_array(et);
+    }
+  }
   return t_array(first);
+}
+
+// typevar_unknown is whether `t` is a built-in variant's type argument its
+// constructor did not bind (`e` in `Err(e)` over an un-annotated `Ok(5)`): a
+// contract no sibling element makes concrete, where a type this checker does
+// not model gives way. A generic call's unbound parameter is not one, since
+// its destination may yet bind it.
+function typevar_unknown(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnknown(u) = t {
+    return util.str_has_prefix(u.reason, "unbound ");
+  }
+  return false;
 }
 
 // struct_lit_gives_way is whether `e`, a generic struct literal of type
@@ -13899,7 +13920,7 @@ function settles_or_assignable(e: ast.Expr, want: typeinfo.Type, s: Scope): bool
     return true;
   }
   let t: typeinfo.Type = check_expr(e, s);
-  return is_unknown(t) || type_assignable(t, want, s.unions.unions);
+  return is_unknown(t) && !typevar_unknown(t) || type_assignable(t, want, s.unions.unions);
 }
 
 // settles_or_nested: the same for a TUPLE literal's elements, which are not a
