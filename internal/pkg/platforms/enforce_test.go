@@ -52,25 +52,31 @@ func prepared(t *testing.T, src string, httpDropMain bool) *ast.Program {
 	return prog
 }
 
-// subprocess is interp-only: every compiled target rejects it, and the
-// message says so instead of listing zero providers.
-func TestEnforceSubprocessRejectedOnCompiledTargets(t *testing.T) {
+// `subprocess` is granted by the hosted native targets, whose backends lower
+// `__fern_subprocess`, and refused where there is no process model: both wasm
+// worlds and the freestanding pair.
+func TestEnforceSubprocessByTarget(t *testing.T) {
 	src := `function main(): i32 {
     let r = subprocess("/bin/echo", ["hi"], "");
     return r.exit_code;
 }`
-	for _, target := range []string{"wasm32-wasi", "x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android"} {
+		if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
+			t.Errorf("%s: unexpected violations: %+v", target, vs)
+		}
+	}
+	for _, target := range []string{"wasm32-wasi", "wasm32-wasi-http", "arm64-freestanding", "x86-64-freestanding"} {
 		t.Run(target, func(t *testing.T) {
-			prog := prepared(t, src, false)
-			vs := platforms.Enforce(prog, target)
+			vs := platforms.Enforce(prepared(t, src, false), target)
 			if len(vs) != 1 {
 				t.Fatalf("violations = %d, want 1: %+v", len(vs), vs)
 			}
 			if vs[0].Builtin != "subprocess" || vs[0].Capability != "subprocess" {
 				t.Errorf("violation = %+v, want subprocess/subprocess", vs[0])
 			}
-			if msg := vs[0].Message("<stdin>"); !strings.Contains(msg, "fern -interp") {
-				t.Errorf("interp-only hint missing from message: %s", msg)
+			want := "targets providing it: [arm64-android arm64-darwin arm64-linux x86-64-linux]"
+			if msg := vs[0].Message("<stdin>"); !strings.Contains(msg, want) {
+				t.Errorf("message does not list the hosted natives (%q): %s", want, msg)
 			}
 			if vs[0].Pos.Line != 2 {
 				t.Errorf("violation position line = %d, want 2", vs[0].Pos.Line)
@@ -257,8 +263,7 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 				if v.Builtin != "__heap_mark" && v.Builtin != "__heap_release_to" {
 					t.Errorf("unexpected gated builtin %q", v.Builtin)
 				}
-				// The message must point at the targets that DO provide it,
-				// not read as interp-only the way subprocess does.
+				// The message must point at the targets that DO provide it.
 				if msg := v.Message("<stdin>"); !strings.Contains(msg, "x86-64-linux") {
 					t.Errorf("message should list the providing targets: %s", msg)
 				}
@@ -555,30 +560,14 @@ func TestFreestandingDescriptorIsCheckOnly(t *testing.T) {
 	}
 }
 
-// Table consistency: every capability named in the gate table is
-// either provided by at least one target or is the documented
-// interp-only case (subprocess). Guards against typos like gating on
-// "filesystem" while descriptors say "fs".
+// Table consistency: every capability named in the gate table is provided
+// by at least one target. Guards against typos like gating on "filesystem"
+// while descriptors say "fs", and is what lets Violation.Message assume a
+// non-empty provider list.
 func TestGatedCapabilitiesResolvable(t *testing.T) {
-	caps := map[string]bool{}
-	for _, name := range []string{"subprocess", "read_line", "stdin", "tcp_listen", "read_file", "stat", "temp_dir", "udp_send", "proc_exec", "__heap_mark", "__heap_release_to", "print", "eprint", "write", "putchar", "stdout", "stderr", "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms"} {
-		c, ok := platforms.GatedBuiltin(name)
-		if !ok {
-			t.Errorf("expected %q to be gated", name)
-			continue
-		}
-		caps[c] = true
-	}
-	for c := range caps {
-		if c == "subprocess" {
-			// Interp-only by design — no compiled provider today.
-			if got := platforms.TargetsProviding(c); len(got) != 0 {
-				t.Errorf("subprocess should have no compiled providers until a backend lowers it; got %v", got)
-			}
-			continue
-		}
+	for builtin, c := range platforms.GatedBuiltins() {
 		if got := platforms.TargetsProviding(c); len(got) == 0 {
-			t.Errorf("gated capability %q is provided by no target — descriptor/gate-table drift", c)
+			t.Errorf("builtin %q is gated on `%s`, which no target provides — descriptor/gate-table drift", builtin, c)
 		}
 	}
 }

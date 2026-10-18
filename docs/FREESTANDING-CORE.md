@@ -75,7 +75,7 @@ costs a silent failure on the first target that lacks it.
 | `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `pipe`, `proc_waitpid`, `proc_waitpid_nohang`, `proc_waitpid_status`, `process_alive`, `signal_send`, `set_process_group` | processes |
 | `rlimit` | `rlimit_nofile`, `disable_core_dumps` | a kernel that enforces ceilings on this process's resources |
 | `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |
-| `subprocess` | `subprocess` | interp-only; no compiled target provides it |
+| `subprocess` | `subprocess` | spawning a child and collecting its output; the hosted natives only |
 | `arena` | `__heap_mark`, `__heap_release_to` | native-only cursor rewind |
 
 ### Core
@@ -649,9 +649,9 @@ that already rejects what it may not do.
 Two consequences worth knowing:
 
 - **`-check` only enforces when you pass `-target` explicitly.** The flag defaults to
-  `arm64`, so threading it unconditionally would silently start enforcing that
-  capability set against every `fern -check` — including `subprocess`, which no compiled
-  target grants. A bare `fern -check` still means "does this type-check".
+  `arm64-linux`, so threading it unconditionally would silently start enforcing that
+  capability set against every `fern -check` — refusing `sysctl`, which only Darwin
+  grants. A bare `fern -check` still means "does this type-check".
 - **`log` is no longer universal.** `TestNoTargetMissesLogCapability` exempts targets
   marked `NoBackend`. Keyed on the flag rather than the name, so the day something emits
   for freestanding the invariant applies again.
@@ -780,15 +780,11 @@ neither compiler can see the other's table, and the symptom is a program one bui
 the other refuses. The `std/` partition differential above is the second line — it
 catches a classification the two tables agree on but the two *scans* apply differently.
 
-The two tables differ in exactly one place, and it is a useful illustration of what a
-capability is: **`subprocess` is granted by the self-host's hosted profile and by no
-native target.** Both gate the builtin; they disagree on whether the target provides it,
-because native's answer is really about *its own codegen* — no Go backend lowers
-`subprocess` — while the self-host's x86-64 and arm64 emitters do. A capability is a
-property of the target, so an entry that encodes "my backend can't do this yet" will
-read as a target property forever after. The exception is listed in
-`profileExceptions` (`internal/pkg/platforms/selfhost_parity_test.go`) with the reason, any
-other difference still fails, and the entry goes the day native's backends lower it.
+The capability profiles are compared too (`TestSelfHostCapabilityProfilesMatch`), in
+order and with no exceptions, and `TestSelfHostListingMatches` pins the descriptions and
+handler kinds, so `fern -targets` prints the same listing from both binaries. A
+capability is a property of the target, never of one compiler's codegen: an entry that
+encodes "my backend can't do this yet" reads as a target property forever after.
 
 Note the **second, independent** capability system: `internal/pkg/caps` governs what a
 *package* may reach (`net`, `fs`, `env`, `random`, `subprocess`, `time`) for dependency
