@@ -4107,7 +4107,9 @@ function main(): i32 {
 	// the contract table for `Empty.to_string` and found nothing. Every other
 	// spelling of the same call already worked: a binding of the variant, an
 	// annotated binding, and a payloaded `Circle(1).to_string()`.
-	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 94, want: "77|", src: `
+	// The shake keeps only the derived methods something calls, so the tally
+	// is the live declarations alone, every one produced.
+	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 60, want: "77|", src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Display, cmp.Ord)
 enum Shape { Circle(i32), Square(i32), Empty }
