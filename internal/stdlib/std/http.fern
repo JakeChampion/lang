@@ -657,6 +657,9 @@ const CR_LF: u8[] = [
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8,
 ];
 
+// HTTP_SLASH is the `HTTP/` an HTTP-version starts with (RFC 9112 §2.3).
+const HTTP_SLASH: u8[] = [72u8, 84u8, 84u8, 80u8, 47u8];
+
 // `__is_token(buf, from, end)` — whether buf[from, end) is a non-empty
 // token.
 function __is_token(buf: u8[], from: i32, end: i32): boolean {
@@ -2456,7 +2459,7 @@ function __past_empty_line(buf: u8[], from: i32): i32 {
 // parser speaks HTTP/1, and cannot promise to read the framing of another
 // major version (RFC 9110 §15.6.6).
 function __version_status(buf: u8[], from: i32, end: i32): i32 {
-  if (end - from != 8 || !__bytes_are(buf, from, "HTTP/")) {
+  if (end - from != 8 || __mismatch_bytes(buf, from, HTTP_SLASH, 0, 5) != 5) {
     return 400;
   }
   if (!__is_digit(buf[from + 5]) || buf[from + 6] != 46 as u8 || !__is_digit(buf[from + 7])) {
