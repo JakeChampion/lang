@@ -1451,8 +1451,21 @@ function read_manifest(dir_slash: string): fern_toml.Manifest {
   let no_excl: string[] = [];
   return fern_toml.Manifest {
     name: "", lib: "lib.fern", index: "", deps: no_deps, members: no_members,
-    excl_pkg: no_excl, excl_ver: no_excl, lint_keys: no_excl, lint_vals: no_excl, lint_err: "",
+    excl_pkg: no_excl, excl_ver: no_excl, lint_keys: no_excl, lint_vals: no_excl, err: "",
   };
+}
+
+// manifest_error names the manifest read from `dir` and its diagnostic, as
+// native's manifest.Load does, or is "" when it parsed.
+function manifest_error(dir: string, man: fern_toml.Manifest): string {
+  if (man.err.len() == 0) {
+    return "";
+  }
+  let abs: string = pkggrants.canonical_dir(dir);
+  if (abs != "/") {
+    abs = abs + "/";
+  }
+  return abs + "fern.toml: " + man.err;
 }
 
 // manifest_reqs is a manifest's versioned ([package] index) dependencies as
@@ -1534,6 +1547,10 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
   }
   let mpath: string = mdir + "/fern.toml";
   let man: fern_toml.Manifest = read_manifest(mdir + "/");
+  if (man.err.len() > 0) {
+    eprint(manifest_error(mdir, man));
+    return 1;
+  }
   let roots: mvs.Req[] = manifest_reqs(man);
   if (roots.len() == 0) {
     eprint("resolve: " + mpath + " declares no versioned dependencies (nothing to resolve)");
@@ -1598,10 +1615,13 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
         },
         Err(e) => {}
       }
+      let dman: fern_toml.Manifest = fern_toml.parse(dsrc);
       if (!dok) {
         st = mvs.fail(st, st.need_pkg + "@" + st.need_ver + " has no fern.toml");
+      } else if (dman.err.len() > 0) {
+        st = mvs.fail(st, manifest_error(src.path, dman));
       } else {
-        st = mvs.supply(st, manifest_reqs(fern_toml.parse(dsrc)));
+        st = mvs.supply(st, manifest_reqs(dman));
       }
     }
   }
@@ -1648,7 +1668,7 @@ function run_add(pos: string[], fetcher: Fetcher): i32 {
     dir = pos[2];
   }
   dir = abs_dir(dir);
-  if (!valid_dep_name(name)) {
+  if (!fern_toml.valid_dep_name(name)) {
     eprint("add: invalid dependency name " + mvs.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
     return 1;
   }
@@ -1658,7 +1678,12 @@ function run_add(pos: string[], fetcher: Fetcher): i32 {
     return 1;
   }
   let mpath: string = mdir + "/fern.toml";
-  if (fern_toml.has_dep(read_manifest(mdir + "/"), name)) {
+  let man: fern_toml.Manifest = read_manifest(mdir + "/");
+  if (man.err.len() > 0) {
+    eprint(manifest_error(mdir, man));
+    return 1;
+  }
+  if (fern_toml.has_dep(man, name)) {
     eprint("add: " + mvs.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
     return 1;
   }
@@ -1681,13 +1706,11 @@ function run_add(pos: string[], fetcher: Fetcher): i32 {
     return 1;
   }
   let updated: string = insert_dependency(orig, line);
-  // Read the edit back before committing it. Native re-parses with a strict
-  // manifest parser and refuses to write a manifest that would not load;
-  // this reader never rejects, so the equivalent check is positive — the
-  // dependency the edit claims to add has to be there when the result is
-  // parsed again.
-  if (!fern_toml.has_dep(fern_toml.parse(updated), name)) {
-    eprint("add: the edit would not declare " + mvs.quoted(name) + " — no change written");
+  // Read the edit back before committing it: never write a manifest that
+  // would not load.
+  let edited: fern_toml.Manifest = fern_toml.parse(updated);
+  if (edited.err.len() > 0) {
+    eprint("add: the edit would produce an invalid manifest (" + edited.err + ") — no change written");
     return 1;
   }
   match (write_file(mpath, updated)) {
@@ -1764,28 +1787,6 @@ function insert_dependency(src: string, line: string): string {
   return src + sep + "\n[dependencies]\n" + line + "\n";
 }
 
-// valid_dep_name accepts letters, digits, `_` and `-`, and refuses a leading
-// digit — the manifest's own rule for a dependency key.
-function valid_dep_name(s: string): boolean {
-  if (s.len() == 0) {
-    return false;
-  }
-  if (s[0] >= b'0' && s[0] <= b'9') {
-    return false;
-  }
-  let i: i32 = 0;
-  while (i < s.len()) {
-    let c: i32 = s[i] as i32;
-    let alpha: boolean = c >= 97 && c <= 122 || c >= 65 && c <= 90;
-    let digit: boolean = c >= 48 && c <= 57;
-    if (!alpha && !digit && c != 95 && c != 45) {  // '_' '-'
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
 // VendorSrc is one dependency's resolved source directory, or the
 // diagnostic explaining why it has none.
 struct VendorSrc { dir: string, err: string }
@@ -1842,7 +1843,11 @@ function fetch_walk(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
     return w;
   }
   let out: FetchWalk = FetchWalk { ...w, seen: w.seen.append(mdir) };
-  for d in read_manifest(mdir + "/").deps {
+  let man: fern_toml.Manifest = read_manifest(mdir + "/");
+  if (man.err.len() > 0) {
+    return FetchWalk { ...out, err: manifest_error(mdir, man) };
+  }
+  for d in man.deps {
     if (out.err.len() > 0) {
       return out;
     }
@@ -1926,6 +1931,10 @@ function run_vendor(start: string): i32 {
     return 1;
   }
   let root: fern_toml.Manifest = read_manifest(mdir + "/");
+  if (root.err.len() > 0) {
+    eprint(manifest_error(mdir, root));
+    return 1;
+  }
 
   // A workspace root vendors the UNION of its members' external
   // dependencies into the root's vendor/ (members resolve out of it); a
@@ -1999,6 +2008,9 @@ function vendor_collect(starts: string[]): VendorSet {
     }
     seen = seen.append(mdir + "");
     let man: fern_toml.Manifest = read_manifest(mdir + "/");
+    if (man.err.len() > 0) {
+      return VendorSet { names: names, srcs: srcs, err: manifest_error(mdir, man) };
+    }
     let di: i32 = 0;
     while (di < man.deps.len()) {
       let d: fern_toml.Dep = man.deps[di];
@@ -2455,6 +2467,10 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let no_files: string[] = [];
   let maps: util.LineMap[] = [s.maps[0]];
   let srcs: string[] = [s.srcs[0]];
+  let bad_manifest: string = manifest_error(gov.dir, gov.man);
+  if (bad_manifest.len() > 0) {
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: "fern: " + bad_manifest };
+  }
   let missing: string = emitforms.http_entry_refused(entry_mod, target, entry_display(entry_path));
   if (missing.len() > 0) {
     return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: missing };
@@ -2516,6 +2532,10 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       // Attribute this file to its own governing package, including
       // local modules imported from a dependency.
       let module_gov: Governed = governing_manifest(mdir);
+      let bad_module_manifest: string = manifest_error(module_gov.dir, module_gov.man);
+      if (bad_module_manifest.len() > 0) {
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + bad_module_manifest };
+      }
       module_packages = module_packages.append(module_package_at(mdir, module_gov, gov.dir, root_package, is_stdlib));
       grant_mans = pkggrants.with_manifest(grant_mans, module_gov.dir, module_gov.man);
       q = queue_imports(q, m, shown, mdir, root, fern_toml.dep_names(module_gov.man), is_stdlib);
@@ -3380,6 +3400,10 @@ function check_dir(st: DiagStyle, dir: string, root: string, target: string, tar
     return 1;
   }
   let man: fern_toml.Manifest = read_manifest(mdir + "/");
+  if (man.err.len() > 0) {
+    eprint(manifest_error(mdir, man));
+    return 1;
+  }
   if (man.members.len() == 0) {
     let entry: string = package_entry(mdir);
     if (entry.len() == 0) {
@@ -4628,8 +4652,8 @@ function lint_config(first: string, sets: string[], opts: string[]): (lint.Confi
   }
   let g: Governed = governing_manifest(dir);
   let mpath: string = g.dir + "fern.toml";
-  if (g.man.lint_err.len() > 0) {
-    return (c, mpath + ": " + g.man.lint_err);
+  if (g.man.err.len() > 0) {
+    return (c, mpath + ": " + g.man.err);
   }
   let keys: string[] = [];
   let vals: string[] = [];

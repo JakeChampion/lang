@@ -207,10 +207,6 @@ function within(dir: string, parent: string): boolean {
 // Check every edge against its grantor, then apply the authorized union to
 // each module of the same package. Display names carry no authority.
 pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], prefixes: string[]): Checked {
-  let invalid: string = manifest_errors(mans);
-  if (invalid.len() > 0) {
-    return Checked { pkgs: [root], err: invalid };
-  }
   let held: Holding[] = holdings(mans, root.dir);
   let errors: string[] = [];
   for m in mans {
@@ -231,18 +227,6 @@ pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], pr
     i = i + 1;
   }
   return Checked { pkgs: pkgs, err: joined(sorted_unique(errors), "\n") };
-}
-
-function manifest_errors(mans: ManifestAt[]): string {
-  let errors: string[] = [];
-  for m in mans {
-    for dep in m.man.deps {
-      if (dep.cap_error.len() > 0) {
-        errors = errors.append(m.dir + "/fern.toml: dependency \"" + dep.name + "\": capabilities: " + dep.cap_error);
-      }
-    }
-  }
-  return joined(sorted_unique(errors), "\n");
 }
 
 // Resolve a module's boundary independently of its display name.
