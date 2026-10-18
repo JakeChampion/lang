@@ -303,3 +303,33 @@ bootstrap/x86-64-linux/stage2.size_bytes	12705264
 bootstrap/x86-64-linux/stage3.wall_s	16
 bootstrap/x86-64-linux/stage3.peak_rss_mb	1989
 bootstrap/x86-64-linux/stage3.size_bytes	12705264
+
+# lane: net-httplint
+httplint/hello.bad	0
+httplint/hello.warn	1
+httplint/head.bad	0
+httplint/head.warn	1
+httplint/method.bad	0
+httplint/method.warn	0
+httplint/user.bad	0
+httplint/user.warn	1
+httplint/redirect.bad	0
+httplint/redirect.warn	0
+httplint/problem.bad	0
+httplint/problem.warn	0
+httplint/unrouted.bad	0
+httplint/unrouted.warn	0
+httplint/echo.bad	0
+httplint/echo.warn	1
+httplint/compressed.bad	0
+httplint/compressed.warn	1
+httplint/identity.bad	0
+httplint/identity.warn	1
+httplint/file.bad	0
+httplint/file.warn	1
+httplint/conditional.bad	0
+httplint/conditional.warn	0
+httplint/range.bad	0
+httplint/range.warn	1
+httplint/fresh.bad	0
+httplint/fresh.warn	0
