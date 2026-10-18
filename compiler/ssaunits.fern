@@ -8,7 +8,7 @@ import "./semrecords";
 import "./semtypes";
 import "./typeinfo";
 import "./util";
-import "std/cli";
+import "std/envflag";
 
 pub function value_mode(): i32 {
   return ssasem.value_mode();
@@ -3934,7 +3934,7 @@ pub function no_reuse(): Reuse {
 // observationally identical (self_host_reuse_differential_test.go); off
 // trades only allocation count and peak heap.
 pub function reuse_layer_disabled(): boolean {
-  return cli.env_flag("FERN_SELFHOST_NO_REUSE");
+  return envflag.on("FERN_SELFHOST_NO_REUSE");
 }
 
 // `p` with its links and reuse tables. A static box, whose drop the lowering

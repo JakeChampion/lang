@@ -1,0 +1,44 @@
+// A bounded generic called with no written type arguments is instantiated at
+// what the checker binds from its arguments, whatever their shape: a bare or
+// payload variant, a pattern binding, a nested generic call, a literal
+// (#12786). `both` is promoted, so its type parameters run B, A in the
+// monomorphiser, and the written `both[i32, E]` still binds A to i32.
+import "core/cmp";
+import "std/i32";
+
+@derive(cmp.Display)
+enum E { A(i32), B }
+
+function show[T: cmp.Display](v: T): string {
+  return v.to_string();
+}
+
+function keep[T: cmp.Display](v: T): T {
+  return v;
+}
+
+function fwd[U](u: U): U {
+  return u;
+}
+
+function both[A, B: cmp.Display](a: A, b: B): string {
+  let x: A = fwd(a);
+  return b.to_string();
+}
+
+function main(): i32 {
+  print(show(B));
+  print(show(A(1)));
+  print(show(7));
+  print(show(keep(B)));
+  print(show(keep(A(2))));
+  let small: u8 = keep(200);
+  print(show(small));
+  let o: Option[E] = Some(A(3));
+  if let Some(v) = o {
+    print(show(v));
+  }
+  print(both(5, B));
+  print(both[i32, E](6, A(4)));
+  return small as i32 - 190;
+}

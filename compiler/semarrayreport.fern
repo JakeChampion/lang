@@ -1,12 +1,12 @@
 // Primary compiler array decisions. The rewriting passes supply the sites;
 // this module only formats them and counts their closed reason tags.
 import "./util";
-import "std/cli";
+import "std/envflag";
 
 pub struct Site { owner: string, stage: string, plan: string, reason: i32, storage: string }
 
 pub function enabled(): boolean {
-  return cli.env_flag("FERN_ARRAY_REPORT");
+  return envflag.on("FERN_ARRAY_REPORT");
 }
 
 // Named ordinals keep planner decisions tied to the closed diagnostic tags.

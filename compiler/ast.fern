@@ -642,11 +642,10 @@ pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32, guard
 // Empty on every ordinary match, where the lowered arms ARE the written ones.
 pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string, sugar: MatchArm[] }
 
-// StmtFor models `for VAR in EXPR { body }`. The iter expr
-// evaluates to an array (interp) / TypeArray (checker); the
-// loop binds `var_name` to each element in turn. break /
-// continue inside the body aren't modeled yet — a future
-// slice can add them as StmtBreak / StmtContinue.
+// StmtFor models `for VAR in EXPR { body }`, binding `var_name` to each
+// element in turn. Annotation replaces a loop over a core/iter Iterator with
+// its `next()` loop (parser.iterator_loop), so what reaches the lowering walks
+// an array, a string or a Map.
 pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string, line: i32 }
 
 // StmtBreak / StmtContinue model `break;` and `continue;`. The

@@ -1482,6 +1482,23 @@ func TestRunnerCliExamplePasses(t *testing.T) {
 	}
 }
 
+// `tests/stdlib/envflag_test.fern` covers std/envflag's reading of a FERN_*
+// switch: the off spellings in any case, everything else on, and an unset
+// variable off and valueless.
+func TestRunnerEnvflagExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/envflag_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: std/envflag", "# pass 4", "# fail 0", "1..4"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `tests/stdlib/option_combinators_test.fern` covers the std/option
 // COMBINATOR surface (distinct from option_and_set_ops_test, which covers the
 // std/test Option assertion helpers) — is_some / is_none / unwrap_or /
@@ -4563,7 +4580,8 @@ func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
 		"ok 8 - unknown status falls back to Status",
 		"ok 9 - HEAD response has no body",
 		"ok 10 - 204 has no Content-Length or body",
-		"# pass 11",
+		"ok 11 - Connection field where it carries meaning",
+		"# pass 12",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

@@ -3284,6 +3284,9 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
   if (sd.is_package) {
     out = out + "pub(package) ";
   }
+  if (sd.opaque) {
+    out = out + "opaque ";
+  }
   out = out + "struct " + sd.name;
   // Type parameters, for the same reason a function's matter: `struct Set { xs: T[] }`
   // leaves T unbound.

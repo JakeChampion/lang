@@ -15592,8 +15592,8 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			bs := newScope(s)
 			prevMutualRec := c.mutualRecSiblings
 			c.mutualRecSiblings = nil
-			for _, st := range blk.Stmts {
-				c.checkStmt(st, bs)
+			for i, st := range blk.Stmts {
+				blk.Stmts[i] = c.checkStmtLoweringForEach(st, bs)
 			}
 			c.mutualRecSiblings = prevMutualRec
 			if blk.Tail != nil {

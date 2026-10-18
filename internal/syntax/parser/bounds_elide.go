@@ -14,7 +14,7 @@ import (
 // widens the flag to the explicit index-loop idiom that parser-shaped stdlib /
 // compiler code leans on.
 //
-// It runs right after desugarForEachProgram — before the checker — so it works
+// It runs at the end of the parse — before the checker — so it works
 // on plain `ast.Binary` conditions (the checker only rewrites `<` into a CmpCall
 // for non-primitive operands, and an array's `.len()` is always i32). No type
 // information is consulted: the IR honours Unchecked on the array and string

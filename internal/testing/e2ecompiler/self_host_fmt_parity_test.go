@@ -67,6 +67,9 @@ var fmtParityCases = []struct {
 	// compile parse stamps the return type onto the lambda, and -fmt must print
 	// the lambda as written (#12359).
 	{"lambda-return-as-written", fmtLambdaAsWrittenSrc},
+	// `opaque` survives -fmt in every declaration arm; dropping it would make
+	// the fields readable from importing modules (#12658).
+	{"opaque-struct-kept", "pub opaque struct A { a: i32 }\npub(package) opaque struct B { b: i32 }\n@must_consume pub opaque struct C { c: i32 }\ntrait Default { function default(): Self; }\n@derive(Default) opaque struct D { d: i32 }\nfunction main(): i32 { return 0; }\n"},
 	// A function written without a return type (E081) prints without one;
 	// native used to fill in the parser's `: void` default.
 	{"omitted-return-type-as-written", "function helper() {}\n\nfunction main(): i32 {\n  return 0;\n}\n"},

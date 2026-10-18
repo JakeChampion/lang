@@ -36,7 +36,7 @@ import "./ssa";
 import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
-import "std/cli";
+import "std/envflag";
 
 // fr_ldr / fr_str load/store `reg` at the x29-relative frame offset `off`
 // (always <= 0 — locals live below the frame pointer). Inlined copies of
@@ -6705,6 +6705,7 @@ pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore
   let bodies: irtables.LowerResult[] = lowered.bodies;
   let physical = physicalbody.collection(lowered);
   let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical)), s.memo);
+  s = asmcore.export_runtime_fns(s, fns);
   let i: i32 = 0;
   while (i < fns.len()) {
     s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), asmcore.no_prelift(), fns[i], s, vgate);
@@ -7585,7 +7586,7 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
 // high_heap_probe_on: FERN_HIGH_HEAP raises the arena's mmap hint above
 // 4 GiB (see emit_rt_arena_and_alloc). Read at emit time like FERN_LEAKCHECK.
 function high_heap_probe_on(): boolean {
-  return cli.env_flag("FERN_HIGH_HEAP");
+  return envflag.on("FERN_HIGH_HEAP");
 }
 
 // The census (s.leak_check, #5362) counts at 8-byte-word granularity on both
