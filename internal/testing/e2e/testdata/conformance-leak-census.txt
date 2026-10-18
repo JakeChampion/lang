@@ -21,7 +21,7 @@
 # once and each record's save area, which a freed id hands to the next task
 # rather than returning to the heap. Three tasks run at once there.
 #
-# Measured 2026-10-04: 569 fixtures, 567 clean.
+# Measured 2026-10-18: 982 fixtures, 980 clean.
 a_builtin_method_does_not_see_the_programs_variants  0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
@@ -916,6 +916,7 @@ string_replace                                       0
 string_slice                                         0
 string_slice_option                                  0
 string_split                                         0
+string_unicode_escapes                               0
 struct_alias_thread_reclaim                          0
 struct_destructure_inside_an_imported_module         0
 struct_field_subpattern                              0
