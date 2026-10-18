@@ -213,8 +213,8 @@ func selfHostX86Sweep(t *testing.T, gcc, knownFile string, flags []string, passe
 				recordFinding(t, selfHostFinding{Test: legName(t), Seed: seed, Class: class, Pass: pass})
 			}
 			if gap != "" {
-				if semRefused(gap) {
-					t.Errorf("the typed lowering refused this seed:\n%s", gap)
+				if compilerRefused(gap) {
+					t.Errorf("the compiler refused this seed:\n%s", gap)
 					bisect(refusalClass(gap))
 					return
 				}
@@ -263,11 +263,24 @@ func selfHostX86Sweep(t *testing.T, gcc, knownFile string, flags []string, passe
 	})
 }
 
-// semRefused reports whether a compile failed because the typed lowering
-// refused part of the program, which the legs fail rather than skip as a
-// coverage gap.
-func semRefused(out string) bool {
-	return strings.Contains(out, "FERN_SEM_IR: the typed lowering refused")
+// compilerRefusals are the markers of a compile the compiler refused on a
+// finding of its own: the typed lowering refusing part of the program, the rc
+// certifier showing unbalanced reference counting in what was lowered, and
+// the IR verifier finding malformed IR. Each is a compiler bug on a valid
+// program, so the legs fail it rather than skip it as a coverage gap.
+var compilerRefusals = []string{
+	"FERN_SEM_IR: the typed lowering refused",
+	" emits unbalanced reference counting",
+	" lowered to malformed IR",
+}
+
+func compilerRefused(out string) bool {
+	for _, m := range compilerRefusals {
+		if strings.Contains(out, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // selfHostCompileTimeout bounds one compile of a generated program, which takes

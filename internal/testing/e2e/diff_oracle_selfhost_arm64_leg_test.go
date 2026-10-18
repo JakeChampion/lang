@@ -124,8 +124,8 @@ func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string, pas
 				recordFinding(t, selfHostFinding{Test: legName(t), Seed: seed, Class: class, Pass: pass})
 			}
 			if gap != "" {
-				if semRefused(gap) {
-					t.Errorf("the typed lowering refused this seed:\n%s", gap)
+				if compilerRefused(gap) {
+					t.Errorf("the compiler refused this seed:\n%s", gap)
 					bisect(refusalClass(gap))
 					return
 				}

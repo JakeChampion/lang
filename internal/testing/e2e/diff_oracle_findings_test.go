@@ -55,9 +55,15 @@ func failureClass(format string) string {
 	return strings.TrimRight(line, " =(—-:,")
 }
 
-// refusalClass is the reason the typed lowering gave for refusing a seed,
-// without the function it named.
+// refusalClass is the reason the compiler gave for refusing a seed, without
+// the function it named.
 func refusalClass(gap string) string {
+	switch {
+	case strings.Contains(gap, " emits unbalanced reference counting"):
+		return "refused: unbalanced reference counting"
+	case strings.Contains(gap, " lowered to malformed IR"):
+		return "refused: malformed IR"
+	}
 	for _, line := range strings.Split(gap, "\n") {
 		rest, ok := strings.CutPrefix(line, "FERN_SEM_IR: ")
 		if !ok || strings.HasPrefix(rest, "the typed lowering refused") {
@@ -89,8 +95,19 @@ func TestFailureClass(t *testing.T) {
 		}
 	}
 	gap := "exit status 3\nFERN_SEM_IR: main: copy or phi type\nFERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each\n"
-	if got := refusalClass(gap); got != "refused: copy or phi type" {
-		t.Errorf("refusalClass = %q", got)
+	if got := refusalClass(gap); got != "refused: copy or phi type" || !compilerRefused(gap) {
+		t.Errorf("refusalClass = %q, compilerRefused = %v", got, compilerRefused(gap))
+	}
+	for gap, want := range map[string]string{
+		"exit status 5\nFERN_RC_CERTIFY: gen_f0 emits unbalanced reference counting (#11908):\n    v3 released twice": "refused: unbalanced reference counting",
+		"exit status 4\nFERN_IR_VERIFY: main lowered to malformed IR (#6639):\n    op 7 pops past the stack":          "refused: malformed IR",
+	} {
+		if got := refusalClass(gap); got != want || !compilerRefused(gap) {
+			t.Errorf("refusalClass(%q) = %q, compilerRefused = %v; want %q and a refusal", gap, got, compilerRefused(gap), want)
+		}
+	}
+	if compilerRefused("exit status 3\nFERN_STRICT_IR: main: an op the subset does not lower") {
+		t.Error("a coverage gap read as a compiler refusal")
 	}
 }
 
