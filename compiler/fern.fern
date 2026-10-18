@@ -1830,8 +1830,9 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
   return write_file_exec(out_path, data);
 }
 
-// capability_findings is every call to a builtin the target does not grant
-// (E066 — platforms.fern), one finding per violation.
+// capability_diags is every call to a builtin the target does not grant
+// (E066 — platforms.fern), one diagnostic per violation. The playground
+// driver runs this same gate, so the browser refuses what the CLI does.
 //
 // Two passes, because reachability is the expensive half. The flat scan over
 // the whole bundle over-approximates: an imported stdlib wrapper nothing calls
@@ -1842,39 +1843,27 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
 // enforceTargetCapabilities); the cheap pre-pass is only about not shaking a
 // module whose answer cannot change. An empty shaken answer is an accept: the
 // pre-pass fired on a builtin only unreachable code reaches.
-function capability_findings(merged: parser.Module, target: string): Finding[] {
-  let out: Finding[] = [];
+pub function capability_diags(merged: parser.Module, target: string): util.Diag[] {
+  let out: util.Diag[] = [];
   if (platforms.enforce(merged, target).len() == 0) {
     return out;
   }
   for v in platforms.enforce(treeshake.treeshake(merged), target) {
-    out = out.append(violation_finding("E066", platforms.violation_message(v), v.fn_module, v.line, v.col));
+    out = out.append(platforms.violation_diag(v));
   }
   return out;
 }
 
-// ambient_findings is every host effect a handler reaches around its
+// ambient_diags is every host effect a handler reaches around its
 // platform (E080 — ambient.fern). Target-independent, so it runs on
 // every check and every build, on the bundle before the shake: a handler is
 // judged on what its body reaches.
-function ambient_findings(merged: parser.Module): Finding[] {
-  let out: Finding[] = [];
+pub function ambient_diags(merged: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
   for v in ambient.enforce(merged) {
-    out = out.append(violation_finding("E080", ambient.violation_message(v), v.fn_module, v.line, v.col));
+    out = out.append(util.violation_diag("E080", ambient.violation_message(v), v.fn_module, v.line, v.col));
   }
   return out;
-}
-
-// violation_finding places a reachability violation. Only the entry module's
-// positions index the file being reported on — an imported module's line
-// numbers index ITS source, so a violation from one degrades to a
-// position-less finding whose message names the function and module instead.
-// Native's renderer makes the same split.
-function violation_finding(code: string, msg: string, fn_module: string, line: i32, col: i32): Finding {
-  if (fn_module.len() > 0) {
-    line = 0;
-  }
-  return Finding { diag: util.Diag { related: [], code: code, message: msg, line: line, col: col, fix: None }, warning: false, path: "" };
 }
 
 // read_manifest parses `<dir>fern.toml`, or an empty manifest when the entry
@@ -3194,10 +3183,10 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   // built for.
   let bounds: Finding[] = [];
   if (target_given) {
-    bounds = capability_findings(merged, target);
+    bounds = errors_of(capability_diags(merged, target));
   }
   bounds = util.append_all(bounds, package_findings(merged, b.pkgs));
-  bounds = util.append_all(bounds, ambient_findings(merged));
+  bounds = util.append_all(bounds, errors_of(ambient_diags(merged)));
   let fs: Finding[] = util.append_all(errors_of(mt.diags), bounds);
   if (mt.all_well_typed) {
     if (has_error(bounds)) {
@@ -3269,7 +3258,7 @@ function interp_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
     fs = with_findings(fs, package_findings(merged, pkgs));
   }
   if (!has_error(fs)) {
-    fs = with_findings(fs, ambient_findings(merged));
+    fs = with_findings(fs, errors_of(ambient_diags(merged)));
   }
   return fs;
 }
@@ -4973,6 +4962,55 @@ function parse_tool_flag(tf: ToolFlags, f: CliArg): (ToolFlags, i32) {
   return (ToolFlags { ...tf, color_mode: f.value }, 0);
 }
 
+// target_refusal is why `target` cannot be compiled for, or "" when it names
+// a target: the one line listing every target the platforms table answers
+// for. The playground driver refuses with the same line.
+pub function target_refusal(target: string): string {
+  if (platforms.for_target(target).known) {
+    return "";
+  }
+  let msg: string = "fern: unknown -target: " + target + " (want one of:";
+  for t in platforms.targets() {
+    msg = msg + " " + t;
+  }
+  return msg + ")";
+}
+
+// emit_refusal is why `-emit emit` is not an output form for `target`, or ""
+// when it is ("" names the target's default form). The playground driver
+// takes the same vocabulary and refuses with the same lines.
+//
+// Native's `-emit command-module` is a WASI preview-1 command: the core
+// bytes plus a `_start` that runs main and exits with its value, and an
+// exported memory — the shape `wasmtime run` and a browser shim run. This
+// compiler's core module already has both (and exports `main`, #10768), so
+// the two forms are one artifact here (core_form) and the spelling is
+// accepted for the one target native gives it (#11408).
+pub function emit_refusal(target: string, emit: string): string {
+  if (emit == "command-module" && target != "wasm32-wasi") {
+    return "fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)";
+  }
+  if (emit.len() > 0 && emit != "asm" && emit != "core-module" && emit != "command-module") {
+    return "fern: unknown -emit: " + emit + " (want asm, core-module, command-module, or omit it for the target's default output form)";
+  }
+  if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
+    return "fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit";
+  }
+  return "";
+}
+
+// backend_refusal is why nothing can be emitted for `target`, or "" when a
+// backend lowers it. Native reports the same shape from its descriptor's
+// NoBackend flag. A freestanding target type-checks (against an empty
+// capability set) and has nothing to lower with, so refusing is the correct
+// answer — the alternative is an artifact built for the wrong machine.
+pub function backend_refusal(target: string): string {
+  if (platforms.emits_code(target)) {
+    return "";
+  }
+  return "fern: -target " + target + ": check-only — no backend emits for this target yet";
+}
+
 // output_form is the output form of a compile with `emit` asked for, or why
 // it cannot be written: stdout takes only a target's text, so a compile with
 // nowhere to write prints a native target's assembly rather than its
@@ -4993,7 +5031,7 @@ function output_form(target: string, emit: string, has_out: boolean): (string, s
 
 // core_form is the form `emit` names: a command module is this compiler's
 // core module.
-function core_form(emit: string): string {
+pub function core_form(emit: string): string {
   if (emit == "command-module") {
     return "core-module";
   }
@@ -5635,17 +5673,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     return run_add(pos, fetcher);
   }
 
-  if (!platforms.for_target(target).known) {
-    // One eprint, not one per name: eprint appends its own newline, so a
-    // loop of them prints the target list down the left margin.
-    let msg: string = "fern: unknown -target: " + target + " (want one of:";
-    let tn: string[] = platforms.targets();
-    let ti: i32 = 0;
-    while (ti < tn.len()) {
-      msg = msg + " " + tn[ti];
-      ti = ti + 1;
-    }
-    eprint(msg + ")");
+  let bad_target: string = target_refusal(target);
+  if (bad_target.len() > 0) {
+    eprint(bad_target);
     return 2;
   }
 
@@ -5700,22 +5730,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     eprint("fern: -cover: -target " + target + " has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover");
     return 2;
   }
-  // Native's `-emit command-module` is a WASI preview-1 command: the core
-  // bytes plus a `_start` that runs main and exits with its value, and an
-  // exported memory — the shape `wasmtime run` and a browser shim run. This
-  // compiler's core module already has both (and exports `main`, #10768), so
-  // the two forms are one artifact here (output_form) and the spelling is
-  // accepted for the one target native gives it (#11408).
-  if (emit == "command-module" && target != "wasm32-wasi") {
-    eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
-    return 2;
-  }
-  if (emit.len() > 0 && emit != "asm" && emit != "core-module" && emit != "command-module") {
-    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, command-module, or omit it for the target's default output form)");
-    return 2;
-  }
-  if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
-    eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit");
+  let bad_emit: string = emit_refusal(target, emit);
+  if (bad_emit.len() > 0) {
+    eprint(bad_emit);
     return 2;
   }
   let run_dir: string = "";
@@ -5934,7 +5951,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true }) };
     }
   }
-  if (eprint_findings(st, capability_findings(merged, target), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, errors_of(capability_diags(merged, target)), entry_path, b.files, b.maps)) {
     return 1;
   }
 
@@ -5947,7 +5964,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
 
   // The bag boundary (E080 — ambient.fern): a handler reaching a host
   // effect around its platform, on either compiler.
-  if (eprint_findings(st, ambient_findings(merged), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, errors_of(ambient_diags(merged)), entry_path, b.files, b.maps)) {
     return 1;
   }
 
@@ -6007,12 +6024,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // diagnostic moves.
   merged = treeshake.treeshake(merged);
 
-  if (!platforms.emits_code(target)) {
-    // Native reports the same shape from its descriptor's NoBackend flag.
-    // A freestanding target type-checks (against an empty capability set)
-    // and has nothing to lower with, so refusing here is the correct answer
-    // — the alternative is an artifact built for the wrong machine.
-    eprint("fern: -target " + target + ": check-only — no backend emits for this target yet");
+  let no_backend: string = backend_refusal(target);
+  if (no_backend.len() > 0) {
+    eprint(no_backend);
     return 2;
   }
 

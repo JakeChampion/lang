@@ -70,8 +70,7 @@ const procWaitpidNohangSelfHostSource = `function main(): i32 {
 }`
 
 // procWaitpidNohangWasmProbe is the refusal probe: the one builtin and nothing
-// else, because wasm_unsupported_builtin reports the FIRST unsupported name it
-// finds and the measuring probe above forks.
+// else, so the refusal it draws is that builtin's own.
 const procWaitpidNohangWasmProbe = `function main(): i32 {
     return proc_waitpid_nohang(1);
 }`
@@ -145,7 +144,7 @@ func TestSelfHostProcWaitpidNohangIRWasmRefused(t *testing.T) {
 	if code := cmd.ProcessState.ExitCode(); code == 0 {
 		t.Errorf("wasm driver accepted proc_waitpid_nohang; a component has no process model")
 	}
-	if !strings.Contains(stderr.String(), "proc_waitpid_nohang is not supported on the wasm target") {
+	if !strings.Contains(stderr.String(), "required by `proc_waitpid_nohang`; targets providing it") {
 		t.Errorf("wasm refusal does not name the builtin:\n%s", stderr.String())
 	}
 }

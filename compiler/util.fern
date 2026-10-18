@@ -1240,6 +1240,18 @@ pub struct Related { line: i32, col: i32, length: i32, message: string }
 // the quick fix.
 pub struct Fix { line: i32, col: i32, old: string, new_text: string, title: string }
 
+// violation_diag places a reachability violation found in `fn_module` ("" for
+// the entry). Only the entry module's positions index the file being reported
+// on — an imported module's line numbers index ITS source, so a violation from
+// one degrades to a position-less diagnostic whose message names the function
+// and module instead. Native's renderer makes the same split.
+pub function violation_diag(code: string, msg: string, fn_module: string, line: i32, col: i32): Diag {
+  if (fn_module.len() > 0) {
+    line = 0;
+  }
+  return Diag { related: [], code: code, message: msg, line: line, col: col, fix: None };
+}
+
 // is_diagnostic_code reports whether `code` is a real diagnostic code: `E` or
 // `P` followed by three digits. An uncoded diagnostic, such as the checker's
 // internal error (ill_typed_hint), does not state that the program is wrong,

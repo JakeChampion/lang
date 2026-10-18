@@ -70,8 +70,7 @@ const processAliveSelfHostSource = `function main(): i32 {
 }`
 
 // processAliveWasmProbe is the refusal probe: process_alive and nothing else,
-// because wasm_unsupported_builtin reports the FIRST unsupported name it finds
-// and the measuring probe above forks.
+// so the refusal it draws is process_alive's own.
 const processAliveWasmProbe = `function main(): i32 {
     if (process_alive(1)) { return 0; }
     return 1;
@@ -146,7 +145,7 @@ func TestSelfHostProcessAliveIRWasmRefused(t *testing.T) {
 	if code := cmd.ProcessState.ExitCode(); code == 0 {
 		t.Errorf("wasm driver accepted process_alive; a component has no process table")
 	}
-	if !strings.Contains(stderr.String(), "process_alive is not supported on the wasm target") {
+	if !strings.Contains(stderr.String(), "required by `process_alive`; targets providing it") {
 		t.Errorf("wasm refusal does not name the builtin:\n%s", stderr.String())
 	}
 }
