@@ -33,7 +33,8 @@ import (
 //	repeat:
 //	  mutate a corpus entry -> fernsmith turns the bytes into a program
 //	  run the instrumented compiler over it, read the counters it dumps
-//	  keep the entry when it reached a counter nothing had reached before
+//	  keep the entry when it reached a counter nothing had reached before,
+//	  and judge it: compiled and run, it must exit as the interpreter does
 //
 // Feedback comes from process EXIT, which is the right granularity here and
 // needs no live accessor: one input is one compiler process, so the report
@@ -287,7 +288,7 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 	if os.Getenv(selfHostCoverFuzzEnv) == "" {
 		t.Skip("set " + selfHostCoverFuzzEnv + "=1 to run the coverage-guided self-host fuzzer")
 	}
-	_, runner := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("the self-host CLI driver runs only natively (argv paths)")
 	}
@@ -307,6 +308,7 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	bin := buildInstrumentedSelfHost(t, dir)
+	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	work := t.TempDir()
 	srcPath := filepath.Join(work, "main.fern")
 
@@ -339,6 +341,7 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 		if total.addAll(bits) > 0 {
 			corpus = append(corpus, input)
 			discoveries++
+			judgeDiscovery(t, fernBin, stdlibRoot, discoveries, input)
 		}
 	}
 
@@ -359,6 +362,34 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 		iterations, budget, len(corpus), discoveries, total.count(), total.rows,
 		100*float64(total.count())/float64(total.rows))
 	saveCoverCorpus(t, corpusDir, corpus)
+}
+
+// judgeDiscovery runs the exit-byte differential over a program that reached
+// self-host coverage nothing before it had: the self-host-compiled binary must
+// exit as the interpreter does. A discovery is the input least like anything
+// already judged, and discoveries are rare enough that judging each costs
+// little beside the loop. A failure names the input bytes, which reproduce
+// the program through fernsmith.GenMainBytes.
+func judgeDiscovery(t *testing.T, fernBin, stdlibRoot string, n int, input []byte) {
+	t.Helper()
+	t.Run(fmt.Sprintf("discovery=%d", n), func(t *testing.T) {
+		src := fernsmith.GenMainBytes(input)
+		want := runInterpByteOrSkip(t, src)
+		failf := func(format string, args ...any) {
+			t.Errorf("input %x: "+format, append([]any{input}, args...)...)
+		}
+		r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, nil, nil, failf)
+		if gap != "" {
+			if semRefused(gap) {
+				failf("the typed lowering refused this program:\n%s", gap)
+				return
+			}
+			t.Skipf("self-host coverage gap: %s", gap)
+		}
+		if r != nil {
+			checkSelfHostSeedExit(*r, want, src, failf)
+		}
+	})
 }
 
 // TestSelfHostCoverageFeedbackBeatsBlindMutation is this issue's stated
