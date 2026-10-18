@@ -94,6 +94,18 @@ func TestOwnBorrowInTypeNeedsResourceName(t *testing.T) {
 	}
 }
 
+// A resource is module-local, so `pub` and `pub(package)` do not apply to one.
+// Both are refused rather than parsed and dropped, which would let a formatter
+// print the declaration without them.
+func TestPubResourceIsRejected(t *testing.T) {
+	for _, src := range []string{"pub resource Conn;\n", "pub(package) resource Conn;\n"} {
+		_, err := Parse(src)
+		if got := firstCode(err); got != "P001" {
+			t.Errorf("%q: got %v, want P001", src, err)
+		}
+	}
+}
+
 // A lambda spells a consuming parameter the way a declaration does.
 func TestArrowLambdaParsesOwnParam(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {

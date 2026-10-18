@@ -884,11 +884,6 @@ func (f *formatter) formatResourceDecl(rd *ast.ResourceDecl) {
 		f.b.WriteString(rd.ImportWITName)
 		f.b.WriteString("\")\n")
 	}
-	if rd.PackageScoped {
-		f.b.WriteString("pub(package) ")
-	} else if rd.Public {
-		f.b.WriteString("pub ")
-	}
 	f.b.WriteString("resource ")
 	f.b.WriteString(rd.Name)
 	f.b.WriteString(";\n")

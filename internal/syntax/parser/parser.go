@@ -677,8 +677,6 @@ func (p *parser) parseProgram() *ast.Program {
 				continue
 			}
 			if rd != nil {
-				rd.Public = isPub
-				rd.PackageScoped = isPackage
 				rd.ImportIface = importIface
 				rd.ImportWITName = importWIT
 				prog.Resources = append(prog.Resources, rd)

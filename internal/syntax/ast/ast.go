@@ -3538,20 +3538,13 @@ type EnumVariant struct {
 // call `[resource-drop]<wit-name>` when an owned handle goes out of scope. The
 // type is referenced as `own Name` / `borrow Name` (HandleType); values are
 // opaque i32 handles. The checker registers each in Info.Resources; no later
-// pass sees ResourceDecl (handles erase to i32 before IR lowering).
+// pass sees ResourceDecl (handles erase to i32 before IR lowering). A resource
+// is module-local and has no visibility: `pub resource` is a P001.
 type ResourceDecl struct {
 	P             Position
 	Name          string
 	ImportIface   string
 	ImportWITName string
-	// Public marks the resource as exported across modules — same semantics
-	// as FuncDecl.Public.
-	Public bool
-	// PackageScoped marks a `pub(package)` declaration — visible to other
-	// modules in the same package (same directory; the stdlib is one
-	// package) but not exported to outside consumers. Mutually exclusive
-	// with Public. See docs/PUB-PACKAGE.md.
-	PackageScoped bool
 	// SourceModule mirrors FuncDecl.SourceModule (modload stamps the
 	// declaring module path). Empty for parser-only single-file programs.
 	SourceModule string

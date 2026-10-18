@@ -43,6 +43,8 @@ func TestSelfHostOwnInTypePositionCheck(t *testing.T) {
 		{"borrow before a type parameter", "function f[T](x: borrow T): i32 { return 0; }", false},
 		{"own in a struct field", "struct Foo { v: i32 }\nstruct S { h: own Foo }", false},
 		{"own in an enum payload", "struct Foo { v: i32 }\nenum E { A(own Foo) }", false},
+		{"pub resource", "pub resource Conn;", false},
+		{"package-scoped resource", "pub(package) resource Conn;", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
