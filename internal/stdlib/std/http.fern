@@ -1003,7 +1003,7 @@ function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32 {
 function __field_at(h: HeaderMap, key: string, from: i32): i32 {
   let i: i32 = from;
   while (i < h.names.len()) {
-    if (h.names[i].eq_ignore_ascii_case(key)) {
+    if (h.names[i].len() == key.len() && h.names[i].eq_ignore_ascii_case(key)) {
       return i;
     }
     i = i + 1;
