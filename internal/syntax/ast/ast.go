@@ -1701,8 +1701,8 @@ type Index struct {
 	// Unchecked, when set, tells the IR to lower an ARRAY index
 	// (not string/slice) without the per-access bounds check —
 	// the caller has statically proven `0 <= Idx < len(Array)`.
-	// Currently set only by DesugarForEachArray on its synthetic
-	// `iter[idx]` element read: `idx` starts at 0, steps +1, the
+	// Set by ForEachArrayLoop on its synthetic `iter[idx]` element
+	// read: `idx` starts at 0, steps +1, the
 	// loop guard is `idx < iter.len()` (captured once), and both
 	// `iter` and `idx` are compiler-generated names user code
 	// cannot touch — and Fern arrays never shrink in place — so
@@ -2349,11 +2349,10 @@ type For struct {
 
 // ForEach is the un-desugared `for IDENT in Iter Body` loop (the plain,
 // non-range form). The parser emits it instead of desugaring at parse time, so
-// a later type-aware pass can choose the lowering by Iter's type: an
-// array/string/slice → the `.len()` + index loop; a `stream[T]` → a lazy
-// per-element read loop; a `Map` under a destructuring header → the entry
-// cursor. ID gives the desugar unique helper-var names.
-// See docs/STREAM-TYPE-SURFACE.md.
+// the checker can choose the lowering by Iter's type: an array/string/slice →
+// the `.len()` + index loop; a `Map` under a destructuring header → the entry
+// cursor; a core/iter Iterator, or a value whose `iter()` returns one → the
+// `next()` loop. ID gives the desugar unique helper-var names.
 type ForEach struct {
 	P      Position
 	ID     int
@@ -2391,16 +2390,6 @@ func ForEachIterName(id int) string { return fmt.Sprintf("%s%d", ForEachIterPref
 // name the source wrote — that element IS the whole value — so a stage asking
 // whether one was written compares Var against this.
 func ForEachElemName(id int) string { return fmt.Sprintf("__foreach_elem_%d", id) }
-
-// DesugarForEachArray lowers a ForEach over an array/string/slice to the
-// `.len()` + index C-style loop — the exact shape the parser used to build at
-// parse time (moved here so a type-aware pass owns the choice of lowering).
-func DesugarForEachArray(fe *ForEach) *Block {
-	iterName := ForEachIterName(fe.ID)
-	declIter := &Var{P: fe.P, Name: iterName, Init: fe.Iter}
-	stmts := append([]Stmt{declIter}, ForEachArrayLoop(fe, iterName)...)
-	return &Block{P: fe.P, Stmts: stmts, Sugar: fe}
-}
 
 // ForEachArrayLoop builds the array lowering's statements BELOW the iterand
 // binding — the caller supplies `iterName`, already bound to the iterand. The
@@ -2483,6 +2472,45 @@ func ForEachMapLoop(fe *ForEach, iterName string) []Stmt {
 		Label: fe.Label,
 	}
 	return []Stmt{forLoop}
+}
+
+// ForEachIteratorLoop builds the statements BELOW the iterand binding for a
+// foreach over a core/iter Iterator, `iterName` bound to that Iterator (the
+// iterand, or its `iter()`). The iterator advances before the body runs, so a
+// `continue` moves on too.
+//
+//	loop {
+//	  match (__foreach_iter_N.next()) {
+//	    Some(__foreach_step_N) => {
+//	      __foreach_iter_N = __foreach_step_N.1;
+//	      let VAR = __foreach_step_N.0;
+//	      <body>
+//	    },
+//	    None => { break; },
+//	  }
+//	}
+func ForEachIteratorLoop(fe *ForEach, iterName string) []Stmt {
+	kw := fe.P
+	stepName := fmt.Sprintf("__foreach_step_%d", fe.ID)
+	mkIdent := func(name string) *Ident { return &Ident{P: kw, Name: name} }
+	stepField := func(i string) *FieldAccess {
+		return &FieldAccess{P: kw, Target: mkIdent(stepName), Field: i, FieldPos: kw}
+	}
+	innerStmts := []Stmt{
+		&ExprStmt{P: kw, Expr: &Assign{P: kw, Target: mkIdent(iterName), Value: stepField("1")}},
+		&Var{P: fe.VarPos, Name: fe.Var, Init: stepField("0")},
+	}
+	if fe.Pattern != nil {
+		fe.Pattern.Init = mkIdent(fe.Var)
+		innerStmts = append(innerStmts, fe.Pattern)
+	}
+	innerStmts = append(innerStmts, foreachBodyStmts(fe)...)
+	next := &Call{P: kw, Callee: &FieldAccess{P: kw, Target: mkIdent(iterName), Field: "next", FieldPos: kw}}
+	pull := &Match{P: kw, Tag: next, Arms: []*MatchArm{
+		{P: kw, VariantName: "Some", Bindings: []string{stepName}, Body: &Block{P: kw, Stmts: innerStmts}},
+		{P: kw, VariantName: "None", Body: &Block{P: kw, Stmts: []Stmt{&Break{P: kw}}}},
+	}}
+	return []Stmt{&Loop{P: kw, Body: &Block{P: kw, Stmts: []Stmt{pull}}, Label: fe.Label}}
 }
 
 // foreachBodyStmts flattens a loop body into the statements a lowering splices

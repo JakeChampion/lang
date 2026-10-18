@@ -59,7 +59,7 @@ import "./ssa_lift";
 import "./rcsigs";
 import "./rccertify";
 import "./rcmemo";
-import "std/cli";
+import "std/envflag";
 
 // Gate is what the verifiers read beside the function: `sigs`, the
 // callee-arity index for the whole program being emitted, built once per emit
@@ -134,7 +134,7 @@ pub function close_memo(m: rcmemo.Memo): void {
 pub function report_on(): boolean {
   match (env("FERN_IR_VERIFY")) {
     Some(v) => {
-      return cli.flag_on(v) && v != "quiet";
+      return envflag.value_on(v) && v != "quiet";
     },
     None => {
       return false;

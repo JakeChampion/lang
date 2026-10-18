@@ -39,8 +39,8 @@ function callable_shape(t: typeinfo.Type): string {
 function main(): i32 {
   // Fixtures: two struct names, one union alias.
   let structs: checker.StructSig[] = [
-    checker.StructSig { name: "Foo", field_names: [], field_types: [], type_params: [], field_type_names: [], variant_field_names: [], derives: [], enum_owner: "" },
-    checker.StructSig { name: "Bar", field_names: [], field_types: [], type_params: [], field_type_names: [], variant_field_names: [], derives: [], enum_owner: "" },
+    checker.StructSig { name: "Foo", field_names: [], field_types: [], type_params: [], field_type_names: [], variant_field_names: [], derives: [], enum_owner: "", opaque: false, module: "" },
+    checker.StructSig { name: "Bar", field_names: [], field_types: [], type_params: [], field_type_names: [], variant_field_names: [], derives: [], enum_owner: "", opaque: false, module: "" },
   ];
   let unions: checker.UnionSig[] = [
     checker.UnionSig { name: "Shape", variants: [], is_try: false, is_enum: true, module: "", type_params: [], instance: "", visible_from: [] },

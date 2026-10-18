@@ -41,8 +41,8 @@
 // (which resolves through a `Type.cmp` lookup not visible from this
 // module, #6846), so a `@derive(cmp.Ord)` struct or enum works as a
 // key. Two keys are the same key when `cmp` returns 0. Iteration —
-// `keys()`, `values()`, `fold`, `for_each` — is always in ascending key
-// order, and `key_at(i)` / `index_of(k)` give O(log n) rank access
+// `for (k, v) in m`, `keys()`, `values()`, `fold`, `for_each` — is always
+// in ascending key order, and `key_at(i)` / `index_of(k)` give O(log n) rank access
 // because every node stores the size of its subtree.
 //
 // # Complexity
@@ -54,12 +54,14 @@
 //      Ordered Sets"), so merging a small map into a large one is
 //      O(m log n) rather than O(n + m).
 //   keys / values / fold / for_each / filter / map_values   O(n)
+//   iter                                                     O(n)
 //   from_arrays                                              O(n log n)
 //
 // The balance parameters are delta = 3, ratio = 2 (Hirai & Yamamoto,
 // "Balancing weight-balanced trees", 2011), the pair proven correct
 // for every rebalancing shape join-based union produces.
 import "core/cmp";
+import "core/iter";
 
 // The tree. `Bin` is (left, key, value, right, size); `Tip` is the
 // empty tree. The size field makes `len()` O(1) and rank queries
@@ -631,6 +633,20 @@ function __om_values_into[K, V](t: OrdNode[K, V], own acc: V[]): V[] {
   }
 }
 
+function __om_entries_into[K, V](t: OrdNode[K, V], own acc: (K, V)[]): (K, V)[] {
+  match (t) {
+    Tip => {
+      return acc;
+    },
+    Bin(l, k, v, r, s) => {
+      acc = __om_entries_into(l, acc);
+      acc = acc.append((k, v));
+      acc = __om_entries_into(r, acc);
+      return acc;
+    }
+  }
+}
+
 pub function __om_fold[K, V, A](t: OrdNode[K, V], init: A, f: (A, K, V) => A): A {
   match (t) {
     Tip => {
@@ -942,6 +958,14 @@ pub function (m: OrdMap[K, V]) values(): V[] {
   let acc: V[] = [];
   acc = __om_values_into(m.root, acc);
   return acc;
+}
+
+// `iter()` — an Iterator over the `(key, value)` entries in key order,
+// which is what `for (k, v) in m` walks.
+pub function (m: OrdMap[K, V]) iter(): iter.ArrayIter[(K, V)] {
+  let acc: (K, V)[] = [];
+  acc = __om_entries_into(m.root, acc);
+  return iter.of(acc);
 }
 
 // `fold(init, f)` — `f(f(f(init, k0, v0), k1, v1), …)` in key order.

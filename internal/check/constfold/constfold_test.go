@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
+	"github.com/jakechampion/lang/internal/syntax/diag"
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
@@ -306,6 +307,29 @@ func TestFoldCompositeConstRefusals(t *testing.T) {
 	} {
 		if got := foldErr(t, src); !strings.Contains(got, want) {
 			t.Errorf("%s\n  error %q, want it to contain %q", src, got, want)
+		}
+	}
+}
+
+// A const the folder refuses is a positioned diagnostic, so it renders with
+// the `error:` header and caret every other positioned diagnostic has.
+func TestFoldRefusalsRenderAsPositionedErrors(t *testing.T) {
+	for _, c := range []struct{ src, want string }{
+		{"const B: i32 = 6 /? 2;\n", "main.fern:1:1: error: const B: operator `/?` not allowed in integer constant expressions"},
+		{"const B: i32 = A + 1;\nconst A: i32 = 2;\n", "main.fern:1:1: error: const B: \"A\" is not a constant"},
+		{"const N: i32 = 1;\nconst N: i32 = 2;\n", "main.fern:2:1: error: const \"N\" redeclared"},
+		{"const N: i32 = 1;\nfunction main(): i32 { N = 3; return 0; }\n", "main.fern:2:24: error: cannot assign to const N"},
+	} {
+		prog, err := parser.Parse(c.src)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		err = Fold(prog, nil)
+		if err == nil {
+			t.Fatalf("%q: expected a fold error", c.src)
+		}
+		if got := diag.Format("main.fern", c.src, err); !strings.HasPrefix(got, c.want) {
+			t.Errorf("%q renders as\n%s\nwant it to start %q", c.src, got, c.want)
 		}
 	}
 }
