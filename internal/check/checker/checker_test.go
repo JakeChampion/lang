@@ -474,6 +474,12 @@ func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
 	mustErr(`struct Box[T] { v: T } function take(b: Box[string]): i32 { return 0; } function main(): i32 { return take(Box { v: 3 }); }`,
 		`field "v": expected string, got i32`)
 	mustOK(`struct Box[T] { v: T } function take(b: Box[i64]): i64 { return b.v; } function main(): i32 { let n: i64 = take(Box { v: 5 }); return 0; }`)
+	// A generic parameter's own T is still to be inferred, so it seeds
+	// nothing; an enclosing declaration's T does (#12739).
+	mustOK(`struct Box[T] { v: T } function take[T](b: Box[T]): T { return b.v; } function main(): i32 { return take(Box { v: 3 }); }`)
+	mustOK(`struct Box[T] { v: T } function wrap[T](x: T): Box[T] { let b: Box[T] = Box { v: x }; return b; } function main(): i32 { return wrap(3).v; }`)
+	mustErr(`struct Box[T] { v: T } function wrap[T](x: T): i32 { let b: Box[T] = Box { v: 3 }; return 0; } function main(): i32 { return wrap(3); }`,
+		`field "v": expected T, got i32`)
 }
 
 // TestArrayLitElementReadsElementDestination: an array literal's elements
