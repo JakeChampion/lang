@@ -18501,7 +18501,13 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
         return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: mv, line: c.line, col: c.col, ty: "" }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
       }
       let rc: RExpr = me_expr(me_block_at(c, expected, enums), "", env, enums, structs, funcs, cur);
-      return RExpr { rexpr: ast.ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: rc.rins };
+      let targs: string[] = [];
+      cur = rc.rins;
+      for ta in c.type_args {
+        cur = me_collect_anno(ta, enums, cur);
+        targs = targs.append(me_rewrite_ty(ta, enums));
+      }
+      return RExpr { rexpr: ast.ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_args: targs, ty: c.ty }, rins: cur };
     },
     ast.ExprIdent(id) => {
       return me_ident(id, expected, env, enums, funcs, ins);
