@@ -125,20 +125,15 @@ function blank_line_map(src: string): boolean[] {
 }
 
 // fmt_output_is_readable is the `-fmt -w` safety net, and an editor's: the
-// formatted text must come back through the formatter as itself, and keep what
-// the source says. The parser has no error list — a construct it refuses
-// becomes an Unknown node the printer spells `/*unknown*/` — so re-formatting
-// is the check that reaches both an unreadable node and a printer that is not a
-// fixed point on its own output. A fixed point can still have lost content (the
-// empty text is one), which content_print catches.
+// formatted text of a source that parsed must parse too, come back through the
+// formatter as itself, and keep what the source says. A fixed point can still
+// have lost content (the empty text is one), which content_print catches.
 function fmt_output_is_readable(path: string, src: string, formatted: string): boolean {
   if (is_literate(path)) {
     return literate_output_is_readable(src, formatted);
   }
-  // Marker text can be authored in a comment or string. Only the parse and
-  // print round trip distinguishes it from an unreadable node the printer
-  // emitted: those markers are not Fern syntax and do not round-trip.
-  return format_source(formatted) == formatted && content_print(src) == content_print(formatted);
+  let (again, errs) = format_source(formatted);
+  return errs.len() == 0 && again == formatted && content_print(src) == content_print(formatted);
 }
 
 // content_print lists what formatting must keep of a source: every comment,
@@ -177,18 +172,25 @@ function content_print(src: string): string {
   return util.str_join_chunks(out);
 }
 
-// format_source is what `-fmt` writes for a `.fern` file's text.
-function format_source(src: string): string {
+// format_source is what `-fmt` writes for a `.fern` file's text, or, when the
+// text does not parse, nothing and the parse errors `-check` reports for it.
+function format_source(src: string): (string, Finding[]) {
   let flex: lexer.LexResult = lexer.tokenize_full(src);
   let pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-  return printer.format_parsed(pf, flex.comments, blank_line_map(src));
+  let errs: Finding[] = parse_findings(pf.pmod);
+  if (errs.len() > 0) {
+    return ("", errs);
+  }
+  return (printer.format_parsed(pf, flex.comments, blank_line_map(src)), errs);
 }
 
-// format_text is what `-fmt` writes for the file at `path`: a literate
-// document's chunk bodies formatted, or the whole source.
-function format_text(path: string, src: string): string {
+// format_text is format_source for the file at `path`: a literate document
+// has its chunk bodies formatted, and a body that does not parse is kept as
+// written rather than refused.
+function format_text(path: string, src: string): (string, Finding[]) {
   if (is_literate(path)) {
-    return format_literate(src);
+    let none: Finding[] = [];
+    return (format_literate(src), none);
   }
   return format_source(src);
 }
@@ -245,11 +247,13 @@ function format_chunk_body(body: string): (boolean, string) {
     return (false, "");
   }
   if (parses_as_decls(body)) {
-    return (true, trim_trailing_newlines(format_source(body)));
+    let (formatted, _) = format_source(body);
+    return (true, trim_trailing_newlines(formatted));
   }
   let wrapped: string = fmt_wrap(body);
   if (parses_as_decls(wrapped)) {
-    return (true, unwrap_formatted(format_source(wrapped)));
+    let (formatted, _) = format_source(wrapped);
+    return (true, unwrap_formatted(formatted));
   }
   return (false, "");
 }
@@ -367,8 +371,10 @@ function read_failure(what: string, path: string, reason: string): string {
 // fmt_file is `-fmt` for ONE file: the formatted source goes to stdout, back
 // over the file (-w), to out_path (-o), or out as a unified diff (-d, exit 1
 // when it is non-empty). Formatting never loads imports, so a file is read and
-// formatted on its own. Returns the exit code for this file.
-function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
+// formatted on its own. A file that does not parse gets its parse errors and
+// exit 1 in every mode, and nothing is written. Returns the exit code for this
+// file.
+function fmt_file(st: DiagStyle, path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
   let esrc: string = "";
   match (read_file(path)) {
     Ok(s) => {
@@ -379,7 +385,11 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
       return 1;
     }
   }
-  let formatted: string = format_text(path, esrc);
+  let (formatted, errs) = format_text(path, esrc);
+  let no_files: string[] = [];
+  if (eprint_findings(st, errs, path, no_files, [util.no_line_map()])) {
+    return 1;
+  }
   if (fmt_diff) {
     let d: string = printer.unified_diff(esrc, formatted, path, path);
     if (d.len() == 0) {
@@ -389,18 +399,7 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
     return 1;
   }
   if (fmt_write) {
-    if (!fmt_output_is_readable(path, esrc, formatted)) {
-      eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse to the same content; this is a formatter bug, please report it");
-      return 1;
-    }
-    match (write_file(path, formatted)) {
-      Err(e) => {
-        eprint("fern: cannot write back " + path + ": " + util.io_error_reason(e));
-        return 1;
-      },
-      Ok(_) => {}
-    }
-    return 0;
+    return fmt_write_back(path, esrc, formatted);
   }
   if (out_path.len() > 0) {
     match (write_file(out_path, formatted)) {
@@ -412,6 +411,23 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
     }
   } else {
     write(formatted);
+  }
+  return 0;
+}
+
+// fmt_write_back is `-fmt -w` for a file that parsed: `formatted` replaces
+// `src` at `path` unless it fails the safety net.
+function fmt_write_back(path: string, src: string, formatted: string): i32 {
+  if (!fmt_output_is_readable(path, src, formatted)) {
+    eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse to the same content; this is a formatter bug, please report it");
+    return 1;
+  }
+  match (write_file(path, formatted)) {
+    Err(e) => {
+      eprint("fern: cannot write back " + path + ": " + util.io_error_reason(e));
+      return 1;
+    },
+    Ok(_) => {}
   }
   return 0;
 }
@@ -4350,16 +4366,17 @@ function lsp_message(msg: string): string {
 
 // lsp_formatting is a formatting request's answer: one edit replacing the
 // document with what `-fmt` writes for it, or none when that is the text it
-// already has, or when the formatted text would fail `-fmt -w`'s safety net —
-// a format the editor applies is a write-back.
+// already has, when the document does not parse (its published diagnostics
+// say why), or when the formatted text would fail `-fmt -w`'s safety net — a
+// format the editor applies is a write-back.
 function lsp_formatting(s: Server, uri: string): string {
   let i: i32 = util.index_of_str(s.uris, uri);
   if (i < 0) {
     return "[]";
   }
   let src: string = s.srcs[i];
-  let formatted: string = format_text(uri, src);
-  if (formatted == src || !fmt_output_is_readable(uri, src, formatted)) {
+  let (formatted, errs) = format_text(uri, src);
+  if (errs.len() > 0 || formatted == src || !fmt_output_is_readable(uri, src, formatted)) {
     return "[]";
   }
   return "[" + lsp.whole_document_edit(src, formatted) + "]";
@@ -5553,7 +5570,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     let code: i32 = 0;
     let fi: i32 = 0;
     while (fi < pos.len()) {
-      let fc: i32 = fmt_file(pos[fi], fmt_write, fmt_diff, out_path);
+      let fc: i32 = fmt_file(st, pos[fi], fmt_write, fmt_diff, out_path);
       if (fc > code) {
         code = fc;
       }
