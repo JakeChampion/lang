@@ -1812,6 +1812,11 @@ function main(): i32 {
 		"return s.len() + f.len();\n" +
 		"}\n"},
 
+	// An f-string inside a placeholder prints as written: the placeholder is
+	// sub-parsed in the formatter's verbatim mode, not desugared to a
+	// `+`-chain of `to_string()` calls.
+	{"nested-fstring-placeholder", "import \"std/i32\";\nimport \"std/string\";\n\nfunction main(): i32 {\n  let x = 5;\n  let s = f\"a {f\"b {x}\"} c {\"}{\"}\";\n  return s.len();\n}\n"},
+
 	// A byte escape that is not part of valid UTF-8 stays an escape on both
 	// sides; written raw it made the formatted file invalid UTF-8, which the
 	// self-host reader then refused. A real multibyte character stays itself.
