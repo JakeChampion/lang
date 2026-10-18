@@ -169,7 +169,7 @@ function main(): i32 {
   retainedtext.run();
   smallcallerflows.run();
   let mod = retained.module();
-  if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
+  if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
   let g = retained.program(mod);

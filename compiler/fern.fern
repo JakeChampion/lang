@@ -3050,26 +3050,6 @@ function load_checked(s: Sources, root: string, target: string, embed_dir: strin
   return Loaded { b: folded, refused: errors_of(vis) };
 }
 
-// parse_findings is what the gates on the parser's own output report: the
-// first of the three that finds anything, since each later one would describe
-// the debris of an earlier one. Shared by `-check` and the build path, so the
-// two cannot disagree about a program that did not parse. It runs on the
-// MERGED module, before tree-shaking, because a default on an uncalled
-// function is dead code: shaking drops the declaration, and with it the only
-// evidence the source did not parse.
-//
-// - Nameless declarations (#7447). The parser has no error channel, so a
-//   keyword written where a declaration name belongs leaves an EMPTY name and
-//   consumes nothing — asmcore.check_decl_names is where that is caught.
-// - The parser's ExprUnknown markers. Anything a later pass says about one
-//   describes the marker and not the program: `let x: i32 = ;` reached
-//   `-check` as the #9053 "cannot represent yet" catch-all, and a `= ;`
-//   parameter default reached both paths as E076's non-constant rule, which is
-//   not the rule the author broke (#8739).
-// - Statements outside any declaration in a module that declares `main`, dead
-//   code the self-host used to discard in silence (#8738). Last, because a
-//   malformed declaration parses on as top-level statements, so its debris must
-//   be named by the gate that understands it.
 // imported_parse_findings is what failed to parse at the top level of an
 // imported module. The merge keeps the entry's top-level statements only,
 // so these are not in the module parse_findings reads; each module's
@@ -3086,15 +3066,13 @@ function imported_parse_findings(b: Bundle): Finding[] {
   return ok;
 }
 
+// parse_findings is asmcore.parse_errors, shared by `-check`, `-fmt`, the
+// language server and the build path, so they cannot disagree about a program
+// that did not parse. It runs on the MERGED module, before tree-shaking,
+// because a default on an uncalled function is dead code: shaking drops the
+// declaration, and with it the only evidence the source did not parse.
 function parse_findings(mod: parser.Module): Finding[] {
-  let fs: Finding[] = errors_of(asmcore.check_decl_names(mod));
-  if (fs.len() == 0) {
-    fs = errors_of(asmcore.parse_unknown_errors_module(mod));
-  }
-  if (fs.len() == 0) {
-    fs = errors_of(asmcore.check_top_level_stmts(mod));
-  }
-  return fs;
+  return errors_of(asmcore.parse_errors(mod));
 }
 
 // fold_embedded_assets loads `-embed DIR` and substitutes every asset call in

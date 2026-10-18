@@ -28,7 +28,7 @@ function change(s: string, from: string, to: string): string {
 function emit(): ssaprepare.Output {
   let source = "struct Parent { left: i32, right: i32 } @noinline function parent(left: i32, right: i32): Parent { return Parent { left: left, right: right }; } function main(): i32 { return 0; }";
   let m = parser.parse_module(lexer.tokenize(source));
-  require(!asmcore.refuse_parse_unknowns([m]) && !asmcore.refuse_decl_names([m]), "source parsed");
+  require(!asmcore.refuse_parse_errors([m]), "source parsed");
   let g = semlower.program(semlower.driven(m, "x86-64-linux"));
   require(g.ok, "source lowered");
   let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false, shared: false, size: false, harden: false };

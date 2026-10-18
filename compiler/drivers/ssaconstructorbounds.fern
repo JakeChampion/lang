@@ -123,7 +123,7 @@ function graph(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
 function single(): void {
   let source = "struct Parent { only: i32 } @noinline function parent(value: i32): Parent { return Parent { only: value }; } function main(): i32 { return 0; }";
   let m = parser.parse_module(lexer.tokenize(source));
-  require(!asmcore.refuse_parse_unknowns([m]) && !asmcore.refuse_decl_names([m]), "single source parsed");
+  require(!asmcore.refuse_parse_errors([m]), "single source parsed");
   let g = semlower.program(semlower.driven(m, "x86-64-linux"));
   require(g.ok, "single source lowered");
   let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false, shared: false, size: false, harden: false };
