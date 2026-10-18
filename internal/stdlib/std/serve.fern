@@ -2072,15 +2072,16 @@ function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: Config, eof
   let keep: boolean = f.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
   let due: i64 = __backlog_due(c, at);
   let queued: i32[] = __unqueued(c.queued, c.fds[at], c.backlog[at]);
-  c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), due: due, queued: queued, backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), last: http.http_framed_kept(f) };
+  let off: i32 = c.offs[at] + f.len;
+  let last: http.HttpFramed = http.http_framed_kept(f);
   let parsed: (__Behind, http.HttpFramed) = (Idle, f);
-  if (c.offs[at] < c.bufs[at].len()) {
-    parsed = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), f);
+  if (off < c.bufs[at].len()) {
+    parsed = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], off, opts.limits, last), f);
   }
   if (keep) {
     keep = __tail_persists(parsed.0, eof);
   }
-  return (__Conns { ...c, keep: c.keep.with(at, keep) }, keep, parsed.0, parsed.1);
+  return (__Conns { ...c, offs: c.offs.with(at, off), served: c.served.with(at, served), due: due, queued: queued, backlog: c.backlog.with(at, false), continued: c.continued.with(at, false), last: last, keep: c.keep.with(at, keep) }, keep, parsed.0, parsed.1);
 }
 
 // __serve_compact(c, at) — the bytes the event's answered requests
