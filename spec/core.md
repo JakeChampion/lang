@@ -467,6 +467,7 @@ is the number of slots it leaves.
 | `raw_vdso` | 443 | 0 | 1 |
 | `aes_gcm_seal` | 444 | 5 | 1 |
 | `aes_gcm_open` | 445 | 5 | 1 |
+| `mismatch_bytes_str` | 446 | 5 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true
