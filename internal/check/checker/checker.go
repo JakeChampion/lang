@@ -17675,40 +17675,59 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	return result
 }
 
-// inferUseParam fills in `fn`'s first-parameter type by reading
-// the source-call's signature. The parser left the slot nil
-// when the user wrote `use IDENT <- EXPR;` (no `: TYPE`); this
-// function looks up the call's callee, finds the trailing
-// function-typed parameter (the callback slot the callback is
-// being passed into), and stamps the callback's first parameter
-// from there.
+// inferUseParam types the `use` callback `fn` from the source call's
+// callback slot: the callee's trailing function-typed parameter. Its first
+// parameter is the binding's type, when the user wrote `use IDENT <- EXPR;`
+// with no `: TYPE`, and its result is what the callback returns, so a `?`
+// or an `Ok` in the rest of the block is typed against what the callee
+// hands back rather than against the enclosing function's result, which
+// the parser stamped as a placeholder.
 //
-// For a generic callee (e.g. `each[T](items: T[], cb: (T) => U)`)
-// the callback's first param references a type parameter `T`.
-// We unify each non-callback arg's checked type against the
-// corresponding sig param to build a substitution map, then
-// apply the map to the callback's first param. The args get
-// type-checked here AND again when the surrounding call is
-// visited; `checkExpr` is idempotent for the shapes that reach
-// this path (literals settle once, identifiers look up the same
-// scope each time).
+// For a generic callee (e.g. `each[T](items: T[], cb: (T) => U)`) the slot
+// references type parameters. We unify each non-callback arg's checked type
+// against the corresponding sig param to build a substitution map, then
+// apply the map to the slot. A binding type a parameter leaves unbound is
+// E032; a result one leaves unbound keeps the enclosing function's. The
+// args get type-checked here AND again when the surrounding call is
+// visited; `checkExpr` is idempotent for the shapes that reach this path
+// (literals settle once, identifiers look up the same scope each time).
 //
-// On failure (callee not a bare identifier we can resolve, the
-// receiving param isn't function-typed, or generic inference
-// couldn't pin every type parameter the callback's first param
-// references) records an error pointing at the `use` site.
+// A slot that cannot be read (callee not a bare identifier we can resolve,
+// the receiving param isn't function-typed) is E032 when the binding needs
+// it, and leaves an annotated binding alone.
 func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
-	if len(fn.Params) == 0 || fn.Params[0].Type != nil {
+	if len(fn.Params) == 0 || fn.UseSource == nil {
 		return
 	}
+	untyped := fn.Params[0].Type == nil
+	cbSig := c.useCallbackSlot(fn, outer, untyped)
+	if cbSig == nil {
+		return
+	}
+	if untyped {
+		if containsParamType(cbSig.Params[0]) {
+			id := fn.UseSource.Callee.(*ast.Ident)
+			c.errfCode(fn.P, "E032", "use: could not infer binding type for %q from its arguments — add an explicit `: TYPE` annotation", id.Name)
+			return
+		}
+		fn.Params[0].Type = cbSig.Params[0]
+	}
+	if cbSig.Result != nil && !containsParamType(cbSig.Result) {
+		fn.ReturnType = cbSig.Result
+	}
+}
+
+// useCallbackSlot is the callback slot a `use` callback is passed into, a
+// generic callee's instantiated by the arguments written before it, or nil
+// when it cannot be read; `report` says whether that is an E032.
+func (c *checker) useCallbackSlot(fn *ast.FuncDecl, outer *scope, report bool) *ast.FuncType {
 	src := fn.UseSource
-	if src == nil {
-		return
-	}
 	id, ok := src.Callee.(*ast.Ident)
 	if !ok {
-		c.errfCode(fn.P, "E032", "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation")
-		return
+		if report {
+			c.errfCode(fn.P, "E032", "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation")
+		}
+		return nil
 	}
 	// A value binding — a fn-typed parameter, a `let` holding a
 	// closure, a local function — SHADOWS a module function of the
@@ -17724,45 +17743,47 @@ func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
 		sig = f
 	}
 	if sig == nil || len(sig.Params) == 0 {
-		c.errfCode(fn.P, "E032", "use: callee %q has no signature; add an explicit `: TYPE` annotation", id.Name)
-		return
+		if report {
+			c.errfCode(fn.P, "E032", "use: callee %q has no signature; add an explicit `: TYPE` annotation", id.Name)
+		}
+		return nil
 	}
 	last := sig.Params[len(sig.Params)-1]
 	cbSig, isFunc := last.(*ast.FuncType)
 	if !isFunc {
-		c.errfCode(fn.P, "E032", "use: callee %q's last parameter isn't a function — add an explicit `: TYPE` annotation", id.Name)
-		return
+		if report {
+			c.errfCode(fn.P, "E032", "use: callee %q's last parameter isn't a function — add an explicit `: TYPE` annotation", id.Name)
+		}
+		return nil
 	}
 	if len(cbSig.Params) == 0 {
-		c.errfCode(fn.P, "E032", "use: callee %q's callback takes no arguments — there's nothing to bind", id.Name)
-		return
+		if report {
+			c.errfCode(fn.P, "E032", "use: callee %q's callback takes no arguments — there's nothing to bind", id.Name)
+		}
+		return nil
 	}
-	bindType := cbSig.Params[0]
-
+	if _, isGen := c.info.GenericFuncs[id.Name]; !isGen {
+		return cbSig
+	}
 	// Generic callee: solve type parameters from the args the
 	// user already wrote. The callback arg is the LAST sig
 	// param (skipped — we're inferring its shape).
-	if _, isGen := c.info.GenericFuncs[id.Name]; isGen {
-		sub := map[string]ast.Type{}
-		for i, arg := range src.Args {
-			if i >= len(sig.Params)-1 {
-				break
-			}
-			argType := c.checkExpr(arg, outer)
-			if argType == nil {
-				continue
-			}
-			c.unifyType(sig.Params[i], argType, sub)
+	sub := map[string]ast.Type{}
+	for i, arg := range src.Args {
+		if i >= len(sig.Params)-1 {
+			break
 		}
-		resolved := substituteType(bindType, sub)
-		if containsParamType(resolved) {
-			c.errfCode(fn.P, "E032", "use: could not infer binding type for %q from its arguments — add an explicit `: TYPE` annotation", id.Name)
-			return
+		argType := c.checkExpr(arg, outer)
+		if argType == nil {
+			continue
 		}
-		bindType = resolved
+		c.unifyType(sig.Params[i], argType, sub)
 	}
-
-	fn.Params[0].Type = bindType
+	resolved, _ := substituteType(cbSig, sub).(*ast.FuncType)
+	if resolved == nil {
+		return cbSig
+	}
+	return resolved
 }
 
 // calleeIsGenericFunc reports whether `id` in callee position names a
@@ -18017,13 +18038,8 @@ func paramTypeNotIn(t ast.Type, inScope map[string]bool) (string, bool) {
 // its own params, plus a capture-sink that registers any outer-scope
 // name the body reads.
 func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
-	// `use IDENT <- EXPR;` synthesises a callback FuncDecl whose
-	// first parameter has no source-level type annotation. Infer
-	// it from the receiving call's signature: that call's last
-	// parameter is itself a FuncType (the callback slot we're
-	// being passed into), and its first parameter is the binding
-	// type. Generic-callee inference is a follow-up — for now we
-	// require the callee to resolve to a concrete signature.
+	// `use IDENT <- EXPR;` synthesises a callback FuncDecl typed from
+	// the receiving call's callback slot.
 	if fn.UseSource != nil {
 		c.inferUseParam(fn, outer)
 	}

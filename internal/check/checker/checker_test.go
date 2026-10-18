@@ -712,6 +712,40 @@ function main(): i32 { let d: dyn Named = Sq { s: 3 }; return doubled(d); }`
 	}
 }
 
+// A `use` callback returns what the callee's callback slot returns, not what
+// the enclosing function does: the rest of the block after `use v <- mk(3)`
+// is typed as the `(i32) => dyn Shape` it is passed as, so a struct in its
+// `return` boxes into the dyn where the enclosing `i32` would refuse it.
+func TestUseCallbackReturnsWhatTheSlotReturns(t *testing.T) {
+	src := `trait Shape { function area(self: Self): i32; }
+struct Sq { s: i32 }
+impl Shape for Sq { function area(self: Sq): i32 { return self.s * self.s; } }
+function mk(n: i32, k: (i32) => dyn Shape): i32 { return k(n).area(); }
+function a(): i32 {
+    use v <- mk(3);
+    return Sq { s: v };
+}
+function main(): i32 { return a(); }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+	// A body returning the enclosing function's type where the slot wants
+	// another is refused against the slot.
+	wrong := `function mk(n: i32, k: (i32) => string): i32 { return k(n).len(); }
+function a(): i32 {
+    use v <- mk(3);
+    return v + 1;
+}
+function main(): i32 { return a(); }`
+	err := checkSource(t, wrong)
+	if err == nil {
+		t.Fatalf("want E002 for an i32 returned where the slot returns string, got none")
+	}
+	if code := firstErrCode(err); code != "E002" {
+		t.Errorf("code = %q, want E002: %v", code, err)
+	}
+}
+
 // TestBinaryOperandErrorNoCascade guards two bugs in one: a binary
 // expression with an already-errored operand (here `q()`, an undefined
 // identifier, whose type is nil) must not emit a *second*, cascading E009
