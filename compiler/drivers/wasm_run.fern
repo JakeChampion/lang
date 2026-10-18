@@ -15,6 +15,7 @@ import "../lexer";
 import "../parser";
 import "./rundriver";
 import "../asmcore";
+import "../platforms";
 import "../wasm_ir";
 import "../util";
 import "../semlower";
@@ -52,13 +53,15 @@ function main(): i32 {
     eprint(util.format_diags(arity_errs));
     return 1;
   }
-  // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,
-  // the raw/syscall floor #6946). The emit below runs this same gate, but only
-  // on the emit path: the `-decide` probe returns before it, and answering
-  // "ir" or "refused" for a program neither path can compile would be wrong.
-  let unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
-  if (unsupported.len() > 0) {
-    eprint(wasm_ir.wasm_unsupported_message(unsupported));
+  // The CLI's target gate (E066 — platforms.fern), ahead of the `-decide`
+  // probe: answering "ir" or "refused" for a program no wasm target can
+  // build would be wrong.
+  let denied: util.Diag[] = [];
+  for v in platforms.enforce(mod, "wasm32-wasi") {
+    denied = denied.append(platforms.violation_diag(v));
+  }
+  if (denied.len() > 0) {
+    eprint(util.format_diags(denied));
     return 1;
   }
   let d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");

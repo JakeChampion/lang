@@ -1,7 +1,7 @@
 # Diagnostics
 
 Status: normative index. Every rejection the front-end can report has a
-stable code, an explanation (`fern explain E0NN`, sourced from
+stable code, an explanation (`fern -explain E0NN`, sourced from
 `internal/syntax/diag/explanations/`), and — where one exists — a conformance
 case that pins it.
 
@@ -67,7 +67,7 @@ argument-type errors. No `errfCode` site emits it, and `len` is a
 method — `xs.len()` — so the example in its own explanation could not
 compile, let alone produce E039. `docs/SELFHOST-CHECKER-PORT.md` had
 already noticed the code was dead without anyone removing the
-explanation, so `fern explain E039` went on describing a construct the
+explanation, so `fern -explain E039` went on describing a construct the
 language does not have. It is deleted.
 
 ## Codes

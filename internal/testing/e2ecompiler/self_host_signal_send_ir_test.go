@@ -86,9 +86,8 @@ const signalSendSelfHostSource = `function main(): i32 {
     return 0;
 }`
 
-// signalSendWasmProbe is the refusal probe: signal_send and nothing else,
-// because wasm_unsupported_builtin reports the FIRST unsupported name it finds
-// and the measuring probe above forks.
+// signalSendWasmProbe is the refusal probe: signal_send and nothing else, so
+// the refusal it draws is signal_send's own.
 const signalSendWasmProbe = `function main(): i32 {
     match (signal_send(1, 0)) {
         Ok(_) => { return 0; },
@@ -165,7 +164,7 @@ func TestSelfHostSignalSendIRWasmRefused(t *testing.T) {
 	if code := cmd.ProcessState.ExitCode(); code == 0 {
 		t.Errorf("wasm driver accepted signal_send; a component has no process table")
 	}
-	if !strings.Contains(stderr.String(), "signal_send is not supported on the wasm target") {
+	if !strings.Contains(stderr.String(), "required by `signal_send`; targets providing it") {
 		t.Errorf("wasm refusal does not name the builtin:\n%s", stderr.String())
 	}
 }

@@ -187,7 +187,7 @@ func TestSelfHostStatfsWasmIRRefused(t *testing.T) {
 	if code := cmd.ProcessState.ExitCode(); code == 0 {
 		t.Fatalf("the wasm driver accepted statfs (exit 0); it has no volume to measure\n--- stdout ---\n%s", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "statfs is not supported on the wasm target") {
+	if !strings.Contains(stderr.String(), "required by `statfs`; targets providing it") {
 		t.Fatalf("the wasm refusal does not name the builtin:\n%s", stderr.String())
 	}
 	if stdout.Len() != 0 {

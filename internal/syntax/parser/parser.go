@@ -22,7 +22,7 @@ type Error struct {
 	Pos     ast.Position
 	Msg     string
 	Path    string // source file path; populated by modload, empty otherwise
-	ErrCode string // optional: stable error code (P001…); surfaces in the header + `lang explain` output
+	ErrCode string // optional: stable error code (P001…); surfaces in the header + `fern -explain` output
 }
 
 func (e *Error) Error() string          { return fmt.Sprintf("parse error at %s: %s", e.Pos, e.Msg) }
@@ -281,7 +281,7 @@ func (p *parser) errorf(pos ast.Position, format string, args ...any) *Error {
 // per-code catalogue under `internal/syntax/diag/explanations/`;
 // surfacing them in the header lets users search for the
 // error + look up the long-form explanation via
-// `lang explain CODE`.
+// `fern -explain CODE`.
 func (p *parser) errorfCode(pos ast.Position, code, format string, args ...any) *Error {
 	return &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), ErrCode: code}
 }
@@ -676,8 +676,6 @@ func (p *parser) parseProgram() *ast.Program {
 				continue
 			}
 			if rd != nil {
-				rd.Public = isPub
-				rd.PackageScoped = isPackage
 				rd.ImportIface = importIface
 				rd.ImportWITName = importWIT
 				prog.Resources = append(prog.Resources, rd)
@@ -1491,6 +1489,15 @@ func (p *parser) expectMemberName() (lexer.Token, error) {
 		return tok, nil
 	}
 	return p.expect(lexer.Ident, "")
+}
+
+// handleWordMisuse is the P001 for `own` / `borrow` in a type with no
+// resource name after it, such as `xs: own i32[]`.
+func handleWordMisuse(word string) string {
+	if word == "own" {
+		return "`own` in a type must be followed by a resource name (`own R` for a `resource R`); a consuming parameter is written `own name: T`"
+	}
+	return "`borrow` in a type must be followed by a resource name (`borrow R` for a `resource R`); a parameter borrows by default, written `name: T`"
 }
 
 // maybeQualify consumes an optional `.ident` suffix and returns the
@@ -2429,21 +2436,17 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 			break
 		}
 		base = ast.NewDynTraitTypeFull(traits, traitArgs, traitAssoc)
-	case (t.Kind == lexer.Ident) && (t.Text == "own" || t.Text == "borrow") &&
-		p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident:
+	case t.Kind == lexer.Ident && (t.Text == "own" || t.Text == "borrow"):
 		// `own R` / `borrow R` — a WIT resource-handle type (P5 —
 		// docs/WIT-BRING-YOUR-OWN.md). R names a `resource` declaration (the
-		// checker validates that). `own` is owned/consuming (dropped at scope
-		// exit, a later slice); `borrow` is a non-consuming view. Contextual:
-		// only a handle when an identifier (the resource name) follows, so
-		// `own`/`borrow` stay usable as ordinary type names otherwise. Falls
-		// through to the trailing-`[]` suffix loop like any base type.
-		borrowed := t.Text == "borrow"
+		// checker validates that). A consuming parameter is spelled
+		// `own xs: T`, never with `own` in its type.
 		p.advance() // own / borrow
-		nameTok, err := p.expect(lexer.Ident, "")
-		if err != nil {
-			return nil, err
+		nameTok, ok := p.accept(lexer.Ident, "")
+		if !ok {
+			return nil, p.errorfCode(t.Pos, "P001", "%s", handleWordMisuse(t.Text))
 		}
+		borrowed := t.Text == "borrow"
 		name := p.maybeQualify(nameTok.Text)
 		p.typeRefs = append(p.typeRefs, ast.TypeRef{P: nameTok.Pos, Name: name})
 		base = ast.HandleType{Resource: name, Borrowed: borrowed}
@@ -4111,12 +4114,12 @@ func (p *parser) freshDestructureName() string {
 }
 
 // fieldNamesOf returns a named-field pattern's projected field names, nil
-// for a positional one.
+// for a positional one — and non-nil for `V { .. }`, which names none.
 func fieldNamesOf(pat matchPattern) []string {
 	if !pat.NamedFields {
 		return nil
 	}
-	return append([]string(nil), pat.fieldNames...)
+	return append([]string{}, pat.fieldNames...)
 }
 
 // parseNamedFieldPattern parses a named-field variant pattern body
@@ -4133,9 +4136,7 @@ func (p *parser) parseNamedFieldPattern() (out namedFieldPattern, ok bool, err e
 	if !p.match(lexer.Punct, "}") {
 		for {
 			// A trailing `..` marks intentionally-omitted fields (a partial
-			// bind — `Point { x, .. }`). Named-field patterns already bind
-			// only the fields they list, so `..` is documentation; consume
-			// it and stop. Matches the destructure form and the self-host.
+			// bind — `Point { x, .. }`); nothing may follow it.
 			if p.match(lexer.Punct, "..") {
 				p.advance()
 				out.rest = true
@@ -4148,9 +4149,7 @@ func (p *parser) parseNamedFieldPattern() (out namedFieldPattern, ok bool, err e
 			bind := fieldTok.Text
 			var sub *matchPattern
 			// `field: <x>` is either a rename binding the field to a local
-			// (struct matches only — the checker rejects a rename in an enum
-			// named-field pattern) or a SUB-PATTERN matched against the
-			// field's value. isNestedPatternStart draws the same line it
+			// or a SUB-PATTERN matched against the field's value. isNestedPatternStart draws the same line it
 			// draws for a payload slot, so `field: local` stays a rename and
 			// only an unambiguous pattern recurses.
 			if _, isRename := p.accept(lexer.Punct, ":"); isRename {
@@ -4192,9 +4191,7 @@ func (p *parser) parseNamedFieldPattern() (out namedFieldPattern, ok bool, err e
 // namedFieldPattern is what a `{ … }` pattern body binds: the field
 // projected for each binding, the binding itself, an optional sub-pattern
 // matched against that field, and whether the source wrote the trailing
-// `..`. The `..` binds nothing — a named-field pattern already binds only
-// the fields it lists — so only the printer reads it, to put back what the
-// author wrote.
+// `..` (see ast.MatchArm.RestWritten).
 type namedFieldPattern struct {
 	fields   []string
 	bindings []string
@@ -4232,8 +4229,8 @@ type matchPattern struct {
 	// fieldNames runs parallel to Bindings for a named-field pattern:
 	// the field projected for each binding (== Bindings for shorthand).
 	fieldNames []string
-	// restWritten records the trailing `..` of a named-field pattern. It
-	// binds nothing, so it reaches only the printer — see namedFieldPattern.
+	// restWritten records the trailing `..` of a named-field pattern — see
+	// ast.MatchArm.RestWritten.
 	restWritten bool
 }
 

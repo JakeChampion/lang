@@ -7,6 +7,7 @@ import "../parser";
 import "./rundriver";
 import "../util";
 import "../asmcore";
+import "../platforms";
 import "../wasm_ir";
 import "../semlower";
 
@@ -38,12 +39,15 @@ function run(): i32 {
     eprint(util.format_diags(arity_errs));
     return 1;
   }
-  // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,
-  // the raw/syscall floor #6946) are error endpoints, not deferrals, refused
-  // here before the typed lowering so the message names the builtin.
-  let unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
-  if (unsupported.len() > 0) {
-    eprint(wasm_ir.wasm_unsupported_message(unsupported));
+  // The CLI's target gate (E066 — platforms.fern): a builtin with no wasm
+  // meaning is refused by name before the typed lowering, rather than by the
+  // IR op instruction selection would refuse (#6946).
+  let denied: util.Diag[] = [];
+  for v in platforms.enforce(mod, "wasm32-wasi") {
+    denied = denied.append(platforms.violation_diag(v));
+  }
+  if (denied.len() > 0) {
+    eprint(util.format_diags(denied));
     return 1;
   }
   let d: semlower.Driven = semlower.driven(mod, "wasm32-wasi");

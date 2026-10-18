@@ -134,6 +134,7 @@ chained_array_methods                                0
 chained_methods                                      0
 char_byte_literals                                   0
 char_cast_receiver                                   0
+char_eq_ord_hash                                     0
 closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_builtin_record_binding              0
@@ -263,6 +264,7 @@ generic_call_infers_from_variant_argument            0
 generic_call_through_fn_value                        0
 generic_call_in_struct_field                         0
 generic_enum_bound_dispatch                          0
+generic_enum_named_without_arguments                 0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
 generic_fnarg_typevar                                0
@@ -317,6 +319,7 @@ if_let_struct_fields                                 0
 if_let_struct_rename                                 0
 if_let_tuple_elems                                   0
 if_let_tuple_literal_elem_else                       0
+if_let_variant_pattern_rename_rest                   0
 inclusive_range                                      0
 inclusive_range_type_max                             0
 indirect_call_owned_param                            0
@@ -899,6 +902,7 @@ sso_slice_len_1_inline                               0
 sso_slice_len_7_inline                               0
 sso_slice_len_8_heap                                 0
 sso_triple_concat_via_inline                         0
+static_variant_of_an_unsettled_generic_enum          0
 stdin_double                                         0
 stdin_line                                           0
 str_to_owned_into_own_param                          0
@@ -1006,6 +1010,10 @@ value_block_generic_call_arm                         0
 value_block_shadows_module_fn                        0
 value_block_width_call_arm                           0
 var_inference                                        0
+variant_pattern_nested                               0
+variant_pattern_rename                               0
+variant_pattern_rename_rest                          0
+variant_pattern_rest                                 0
 variant_payload_from_array_field                     0
 while_sum                                            0
 wide_array_append_grow                               0

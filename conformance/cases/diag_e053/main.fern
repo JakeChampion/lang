@@ -1,7 +1,7 @@
 // spec: ML-02
 //
 // Pins E053. The program is the example from that code's entry
-// in the diagnostic catalogue (`fern explain E053`), so this case
+// in the diagnostic catalogue (`fern -explain E053`), so this case
 // also checks the catalogue's example really does produce the error
 // it documents.
 // error[E053]: `fip` function "scale" may not allocate (array literal)

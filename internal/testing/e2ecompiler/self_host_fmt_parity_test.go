@@ -345,6 +345,9 @@ match (q) { Q { a: n, b, c: m } => { return n + b + m; } }
 function nested(w: W): i32 {
 match (w) { W { e: A(Ok2(v)), n } => { return v + n; }, _ => { return 0; } }
 }
+function payloadless(w: W): i32 {
+match (w) { W { e: B(), n } => { return n; }, W { n, .. } => { return 0 - n; } }
+}
 function guarded(p: P): i32 {
 match (p) { P { x, y } when x > y => { return x; }, P { x, y } => { return y; } }
 }
@@ -353,7 +356,7 @@ match (p) { w @ P { x, y } => { return w.x + x + y; } }
 }
 function main(): i32 {
 return plain(P { x: 1, y: 2 }) + lit(P { x: 0, y: 3 }) + rename(Q { a: 1, b: 2, c: 3 })
-+ nested(W { e: E.A(In.Ok2(4)), n: 5 }) + guarded(P { x: 9, y: 1 }) + at_bound(P { x: 1, y: 1 });
++ nested(W { e: E.A(In.Ok2(4)), n: 5 }) + payloadless(W { e: E.B, n: 2 }) + guarded(P { x: 9, y: 1 }) + at_bound(P { x: 1, y: 1 });
 }
 `},
 	// A destructuring PARAMETER is desugared away at parse time too — the
@@ -1961,6 +1964,20 @@ function multi(p: Result[(Result[i32, i32]), i32]): i32 { return 0; }
 function multifn(p: Result[((Result[i32, i32]) => i32), i32]): i32 { return 0; }
 function nestedfn(p: Result[(Option[(i32) => i32])[], i32]): i32 { return 0; }
 function generictup(p: Result[(Option[i32], i32), i32]): i32 { return 0; }
+function main(): i32 { return 0; }
+`},
+	// A `resource` declaration, with and without its `@import` binding. The
+	// self-host printer dropped both, leaving every handle naming them unknown.
+	{"resource-declaration", `@import("wasi:io/poll@0.2.0", "pollable")
+resource Pollable;
+
+resource Conn;
+
+@import("wasi:io/poll@0.2.0", "[method]pollable.ready")
+function ready(h: borrow Pollable): boolean;
+
+function hold(c: own Conn): i32 { return 0; }
+
 function main(): i32 { return 0; }
 `},
 }

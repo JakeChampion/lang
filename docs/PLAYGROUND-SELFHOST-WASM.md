@@ -13,14 +13,18 @@ compiles it once at boot and instantiates it afresh per call through
 `web/wasi-shim.js`, the program on stdin and the mode in argv: Run is
 `-interp`, Run (wasm) is `-emit core-module` and the shim running the result,
 View assembly is `-target x86-64-linux|arm64-linux|arm64-darwin`, Build
-component is `-emit component`. Every form is the CLI's own pipeline, and
+component is the driver's default form. The driver takes the CLI's `-target`
+names and `-emit` vocabulary (`asm`, `core-module`, `command-module`), and
+its default is what `fern` writes for the target: a wasm target's component,
+a native target's assembly text. Every form is the CLI's own pipeline,
+behind the CLI's own gates (E066 for what the target does not provide), and
 `TestSelfHostPlaygroundEmitsWhatTheCLIEmits` pins each byte for byte against
 `fern`. The page's examples and the docs' embeds run through the driver in
 `TestSelfHostPlaygroundExamples` / `TestSelfHostDocsPlaygroundEmbeds`.
 
 The wasi:http world runs on the same driver: Run (wasm) is `-target
 wasm32-wasi-http -emit core-module`, the handler core `web/wasi-http-shim.js`
-instantiates, and Build component is that target's `-emit component`
+instantiates, and Build component is that target's default form
 (#6636). `TestSelfHostPlaygroundExamples` drives the page's handler example
 through both forms.
 

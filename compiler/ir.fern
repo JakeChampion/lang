@@ -2221,8 +2221,8 @@ pub function op_lstat(): Op {
 //
 // Refused on wasm rather than deferred: neither preview has a volume to
 // measure, and a zero-filled record would claim a filesystem with no blocks
-// and no name length — a measurement nobody took. wasm_unsupported_builtin
-// names it, and `platforms.fern`'s `fsinfo` gate refuses it as E066.
+// and no name length — a measurement nobody took. `platforms.fern`'s `fsinfo`
+// gate refuses it as E066.
 pub function op_statfs(): Op {
   return op0(270);
 }
@@ -2602,7 +2602,7 @@ pub function op_sleep_ns(): Op {
 // convention ((status >> 8) & 0xff on a normal exit, 128 + signal on a signal
 // death), or -errno. Both lower to the __fern_proc_fork / __fern_proc_waitpid
 // helpers the native backends emit; no wasm (a component has no fork — see
-// wasm_unsupported_builtin). The crash-only supervision primitives
+// the `proc` gate in platforms.fern). The crash-only supervision primitives
 // (docs/CRASH-ONLY-SERVE.md D2'), mirroring the native builtins (#5686).
 pub function op_proc_fork(): Op {
   return op0(211);
@@ -2765,7 +2765,7 @@ pub function sha_builtin_op(tag: i32): Op {
 // push into. Completes the crash-only trio, mirroring the native builtin, and
 // is what lets a forked child become another program — the batched per-module
 // orchestrator in asm_modload_run needs exactly this. No wasm (a component has
-// no processes — see wasm_unsupported_builtin).
+// no processes — the `proc` gate in platforms.fern refuses it).
 pub function op_proc_exec(): Op {
   return op0(213);
 }

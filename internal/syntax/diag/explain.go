@@ -8,7 +8,7 @@ import (
 
 // explanations is the per-code long-form catalogue. One file
 // per code under `internal/syntax/diag/explanations/CODE.md`;
-// referenced by `lang explain CODE` (docs/DIAGNOSTIC-UX-
+// referenced by `fern -explain CODE` (docs/DIAGNOSTIC-UX-
 // RESEARCH.md Rec §4). Files are markdown so the same source
 // renders both at the CLI (plain text) and in future IDE
 // surfaces (rich text via the LSP).
@@ -38,7 +38,7 @@ func Explain(code string) string {
 }
 
 // AvailableCodes returns the catalogued error codes in sort
-// order. Used by `lang explain` (no-arg form) to print the
+// order. Used by `fern -explain` (no-arg form) to print the
 // available list and by tests that walk every code to verify
 // the catalogue is consistent with the checker's stamped
 // emissions.
@@ -61,11 +61,10 @@ func AvailableCodes() []string {
 	return codes
 }
 
-// FormatExplain renders an `Explain` result for CLI output.
-// Wraps the markdown body with a one-line header ("error
-// EXXX:") + a trailing newline, matching the shape `lang
-// explain CODE` writes to stdout. Empty input returns an
-// empty string — caller surfaces "unknown code" upstream.
+// FormatExplain renders an `Explain` result for CLI output: the page's
+// `# CODE — title` heading becomes an `error CODE: title` header over the
+// rest of the page. Empty input returns an empty string — caller surfaces
+// "unknown code" upstream.
 func FormatExplain(code, body string) string {
 	if body == "" {
 		return ""
@@ -74,5 +73,12 @@ func FormatExplain(code, body string) string {
 	// Colour the header to match the diagnostic renderer's error label
 	// (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §7); off by default, so piped /
 	// non-interactive output stays plain.
-	return fmt.Sprintf("%s\n\n%s\n", paint(ansiRedBld, "error "+canonical+":"), body)
+	header := paint(ansiRedBld, "error "+canonical+":")
+	if first, rest, ok := strings.Cut(body, "\n"); ok {
+		if title, found := strings.CutPrefix(first, "# "+canonical+" — "); found {
+			header += " " + title
+			body = strings.TrimLeft(rest, "\n")
+		}
+	}
+	return fmt.Sprintf("%s\n\n%s\n", header, body)
 }

@@ -5210,8 +5210,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     return v_string(target_arch());
   }
   // map_new(cap) — capacity arg is accepted but ignored
-  // since VMap uses dynamic parallel arrays.
-  if (name == "map_new") {
+  // since VMap uses dynamic parallel arrays. `__map_new_i32` is the
+  // constructor parse_map_lit names for a literal with scalar keys.
+  if (name == "map_new" || name == "__map_new_i32") {
     return v_map_new();
   }
   // `__alloc_u8(n)` — the stdlib's staging buffer for every

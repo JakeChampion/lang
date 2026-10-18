@@ -1804,201 +1804,6 @@ function all_lowered_ok(cache: irtables.LowerResult[]): boolean {
   return true;
 }
 
-// is_raw_floor_builtin reports whether name is one of the Tier-2 raw-memory /
-// syscall floor intrinsics (docs/RUNTIME-INTRINSICS.md). They exist so the
-// register backends' runtime helpers can be written in Fern (asmcore.rt_src_*);
-// wasm serves those helpers with hand-written WAT and has neither a raw address
-// space nor a syscall instruction to lower them onto.
-//
-// __raw_load8 / __raw_store8 / __raw_load_ptr / __raw_store_ptr are NOT in the
-// set — wasm selects them (kind_tag 83 / 82 / 84 / 85; raw_load8 and raw_store8
-// also back __load_u8 and __store_u8) — and neither are their type-only bridges: __raw_data
-// lowers to a raw_load_ptr, and __raw_array and __raw_arr_ptr emit nothing at all.
-function is_raw_floor_builtin(name: string): boolean {
-  if (name == "__raw_alloc") {
-    return true;
-  }
-  if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe" || name == "__raw_cover" || name == "__raw_task_state" || name == "__raw_vdso") {
-    return true;
-  }
-  if (name == "__raw_arr_box" || name == "__raw_vg_request") {
-    return true;
-  }
-  return name == "__syscall3" || name == "__syscall4" || name == "__syscall5" || name == "__syscall6";
-}
-
-// wasm_unsupported_builtin returns the name of the first builtin the module
-// calls that has NO wasm meaning at all, or "" when there is none. These are
-// error endpoints, not deferrals, and the diagnostic has to be raised here:
-// nothing downstream can name the builtin. Instruction selection sees only an IR
-// op, so it refuses with the op's name and frames a deliberate gap as the
-// miscompile-refusal it is not (#6946); the wasm loader, further on, names
-// nothing at all.
-//
-//   - subprocess — child-process spawning, unsupportable on wasm/WASI (#4320).
-//   - process_alive / signal_send / set_process_group / rlimit_nofile /
-//     disable_core_dumps — a process table to ask about pids in, deliver to,
-//     or group, and kernel-enforced resource ceilings. Neither preview has
-//     either.
-//   - timer_fd — the native fd-based CLOCK_MONOTONIC timerfd. wasm has no file
-//     descriptors to poll, and its analog already exists and lowers:
-//     wasm_timer_pollable, which returns a wasi:io/poll pollable instead of an
-//     fd (#4317).
-//   - the raw-memory / syscall floor — see is_raw_floor_builtin.
-//
-// Detection is syntactic: the bare callee ident as collected by astwalk (a
-// call's callee IS collected; a `.name` field access is not), the same pre-emit
-// gate shape check_call_arity uses.
-pub function wasm_unsupported_builtin(mod: parser.Module): string {
-  let fi: i32 = 0;
-  while (fi < mod.funcs.len()) {
-    let ids: string[] = [];
-    let si: i32 = 0;
-    while (si < mod.funcs[fi].body.len()) {
-      ids = astwalk.collect_idents_stmt(mod.funcs[fi].body[si], ids);
-      si = si + 1;
-    }
-    if (util.index_of_str(ids, "subprocess") >= 0) {
-      return "subprocess";
-    }
-    if (util.index_of_str(ids, "timer_fd") >= 0) {
-      return "timer_fd";
-    }
-    // write_file_exec (#6133) — WASI preview1's path_open has no mode
-    // argument and the component-model filesystem has no permission bits
-    // either, so the executable bit is simply not expressible. A clean
-    // endpoint naming the builtin, rather than silently writing a file
-    // that is not executable, which is the failure the builtin exists to
-    // remove.
-    if (util.index_of_str(ids, "write_file_exec") >= 0) {
-      return "write_file_exec";
-    }
-    // statfs (#9062) — the SIZE and the length limits of a filesystem.
-    // Neither preview has a volume interface: preview 1's
-    // path_filestat_get is per-file, the component model has no volume,
-    // and a preopen is a capability handle rather than a mount, so it has
-    // no length limit to report either. An endpoint rather than a
-    // zero-filled record, which would claim a filesystem with no blocks
-    // and no name length — a measurement nobody took.
-    if (util.index_of_str(ids, "statfs") >= 0) {
-      return "statfs";
-    }
-    // mounts (#9104) — the table of mounted filesystems. A preopen is a
-    // capability handle, not a mount, so there is no table to list.
-    if (util.index_of_str(ids, "mounts") >= 0) {
-      return "mounts";
-    }
-    // sysctl — Darwin's kernel variables. A component has no kernel.
-    if (util.index_of_str(ids, "sysctl") >= 0) {
-      return "sysctl";
-    }
-    // proc_fork / proc_waitpid / proc_exec (#5686) — the crash-only trio.
-    // A wasm component is a single instance with no process model: there is
-    // nothing to fork and no child to reap. Same endpoint treatment as
-    // subprocess rather than a deferral, so the diagnostic names the
-    // feature instead of the loader reporting `unknown func: $proc_fork`.
-    if (util.index_of_str(ids, "proc_fork") >= 0) {
-      return "proc_fork";
-    }
-    if (util.index_of_str(ids, "proc_waitpid") >= 0) {
-      return "proc_waitpid";
-    }
-    if (util.index_of_str(ids, "proc_waitpid_nohang") >= 0) {
-      return "proc_waitpid_nohang";
-    }
-    if (util.index_of_str(ids, "proc_waitpid_status") >= 0) {
-      return "proc_waitpid_status";
-    }
-    if (util.index_of_str(ids, "proc_exec") >= 0) {
-      return "proc_exec";
-    }
-    if (util.index_of_str(ids, "proc_exec_as") >= 0) {
-      return "proc_exec_as";
-    }
-    // chdir (#9090) — WASI resolves every path against a preopened
-    // descriptor, so there is no process working directory to move.
-    // The same absence that withholds getcwd.
-    if (util.index_of_str(ids, "chdir") >= 0) {
-      return "chdir";
-    }
-    // chroot and the three credential setters (#9678) — the same
-    // absence one level up and one level sideways: a component has no
-    // process root to move and no identity to change, which is what
-    // withholds them on `cwd` and `userid` in platforms.fern.
-    if (util.index_of_str(ids, "chroot") >= 0) {
-      return "chroot";
-    }
-    if (util.index_of_str(ids, "setuid") >= 0) {
-      return "setuid";
-    }
-    if (util.index_of_str(ids, "setgid") >= 0) {
-      return "setgid";
-    }
-    if (util.index_of_str(ids, "setgroups") >= 0) {
-      return "setgroups";
-    }
-    // process_alive (#8767) — the same missing process table. A component
-    // is one instance with no pids to ask about, which is why
-    // platforms.fern withholds it on the `proc` capability; naming it here
-    // keeps the wasm drivers that bypass that gate from reporting an
-    // unknown op instead of the feature.
-    if (util.index_of_str(ids, "process_alive") >= 0) {
-      return "process_alive";
-    }
-    // signal_send (#8377) — the same missing process table, named as a
-    // delivery target. `signal` is granted on wasi-cli only because
-    // ignoring a signal nothing can deliver is a correct no-op; there is
-    // no correct no-op for sending one.
-    if (util.index_of_str(ids, "signal_send") >= 0) {
-      return "signal_send";
-    }
-    // set_process_group (#8374) — the same missing process table, named
-    // as a grouping. There is no correct no-op either: succeeding claims
-    // a group that does not exist.
-    if (util.index_of_str(ids, "set_process_group") >= 0) {
-      return "set_process_group";
-    }
-    // rlimit_nofile (#8819) — neither WASI preview enforces a resource
-    // limit, and every constant that could stand in (a plausible 1024, or
-    // "unlimited") would be a measurement a component never took.
-    if (util.index_of_str(ids, "rlimit_nofile") >= 0) {
-      return "rlimit_nofile";
-    }
-    // disable_core_dumps — a component never dumps core, and answering true
-    // would claim a limit was set.
-    if (util.index_of_str(ids, "disable_core_dumps") >= 0) {
-      return "disable_core_dumps";
-    }
-    // priority / set_priority (#8375) — neither preview has a scheduler
-    // knob, and neither stand-in is honest: answering 0 from `priority`
-    // claims the default nice value was measured, and letting
-    // `set_priority` succeed claims a change that did not happen.
-    if (util.index_of_str(ids, "priority") >= 0) {
-      return "priority";
-    }
-    if (util.index_of_str(ids, "set_priority") >= 0) {
-      return "set_priority";
-    }
-    // FFI __c_call<n>(...) (#4375) is written directly as a builtin call, so
-    // its callee ident is collected here. Wasm has no C ABI — there is no
-    // __c_call runtime on any wasm path — so reject it with a clean diagnostic
-    // (before this it deferred to the AST emitter, which also had no __c_call
-    // and emitted a call to an undefined $__c_call<n>).
-    let ci: i32 = 0;
-    while (ci < ids.len()) {
-      if (ircore.is_c_call(ids[ci])) {
-        return ids[ci];
-      }
-      if (is_raw_floor_builtin(ids[ci])) {
-        return ids[ci];
-      }
-      ci = ci + 1;
-    }
-    fi = fi + 1;
-  }
-  return "";
-}
-
 // wasm_unsupported_import is the diagnostic for the first `@import` whose
 // record parameter or result the canonical-ABI bridge cannot flatten, or "".
 pub function wasm_unsupported_import(mod: parser.Module): string {
@@ -2025,63 +1830,6 @@ pub function wasm_unsupported_import(mod: parser.Module): string {
   return "";
 }
 
-// wasm_unsupported_message is the diagnostic every wasm entry prints for an
-// unsupported builtin, so the wording cannot drift between them. timer_fd gets
-// a pointer at its wasm analog; there is no analog to suggest for subprocess.
-pub function wasm_unsupported_message(name: string): string {
-  if (name == "timer_fd") {
-    return "error: timer_fd is not supported on the wasm target (wasm has no pollable file descriptors); use wasm_timer_pollable, which returns a wasi:io/poll pollable";
-  }
-  if (ircore.is_c_call(name)) {
-    return "error: " + name + " (C FFI) is not supported on the wasm target (wasm has no C ABI)";
-  }
-  if (name == "proc_fork" || name == "proc_waitpid"
-    || name == "proc_waitpid_nohang" || name == "proc_waitpid_status" || name == "proc_exec"
-    || name == "proc_exec_as") {
-    return "error: " + name + " is not supported on the wasm target (a component has no process model to fork, exec into, or reap)";
-  }
-  if (name == "process_alive") {
-    return "error: process_alive is not supported on the wasm target (a component has no process table, so there are no pids to ask about)";
-  }
-  if (name == "signal_send") {
-    return "error: signal_send is not supported on the wasm target (a component has no process table, so there are no pids to deliver a signal to)";
-  }
-  if (name == "set_process_group") {
-    return "error: set_process_group is not supported on the wasm target (a component has no process table, so there are no process groups to join)";
-  }
-  if (name == "rlimit_nofile") {
-    return "error: rlimit_nofile is not supported on the wasm target (neither WASI preview enforces resource limits, so there is no ceiling to report)";
-  }
-  if (name == "disable_core_dumps") {
-    return "error: disable_core_dumps is not supported on the wasm target (neither WASI preview has core dumps or resource limits to turn them off with)";
-  }
-  if (name == "priority" || name == "set_priority") {
-    return "error: " + name + " is not supported on the wasm target (neither WASI preview has a scheduler knob, so there is no nice value to read and nothing a change could move)";
-  }
-  if (name == "chdir") {
-    return "error: chdir is not supported on the wasm target (WASI resolves every path against a preopened descriptor, so there is no process working directory to change)";
-  }
-  if (name == "chroot") {
-    return "error: chroot is not supported on the wasm target (WASI resolves every path against a preopened descriptor, so there is no process root to move any more than there is a working directory)";
-  }
-  if (name == "setuid" || name == "setgid" || name == "setgroups") {
-    return "error: " + name + " is not supported on the wasm target (a component has no process identity: neither preview reports a uid, gid or group set, so there is nothing for a change to move)";
-  }
-  if (name == "statfs") {
-    return "error: statfs is not supported on the wasm target (neither preview has a volume to measure: a preopen is a capability handle, not a mount, so it reports neither a size nor a name-length limit)";
-  }
-  if (name == "mounts") {
-    return "error: mounts is not supported on the wasm target (a preopen is a capability handle, not a mount, so neither preview has a mount table to list)";
-  }
-  if (name == "sysctl") {
-    return "error: sysctl is not supported on the wasm target (a component has no kernel whose variables it could read)";
-  }
-  if (is_raw_floor_builtin(name)) {
-    return "error: " + name + " is not supported on the wasm target (a raw-memory / syscall floor intrinsic: wasm has neither a raw address space nor syscalls — these back the register backends' runtime helpers, which wasm serves with hand-written WAT)";
-  }
-  return "error: " + name + " is not supported on the wasm target";
-}
-
 pub function wasm_ir_deferrals_ok(cache: irtables.LowerResult[]): boolean {
   return true
     // Total backstop: any function that failed to lower refuses the module,
@@ -2100,8 +1848,8 @@ pub function wasm_ir_deferrals_ok(cache: irtables.LowerResult[]): boolean {
   // pollables through wasi:io/poll (wasm_poll_func), and sleep_ms / sleep_ns
   // block on one timer ($__fern_sleep_ms / $__fern_sleep_ns). No exclusion
   // here.
-  // timer_fd is NOT deferred — it is an error endpoint on
-  // wasm, rejected before emit by wasm_unsupported_builtin (#4317). It is
+  // timer_fd is NOT deferred — the E066 target gate refuses it before
+  // emit, since no wasm world grants `pollfd` (#4317). It is
   // the native fd-based timerfd, and wasm has no pollable file descriptors;
   // its analog wasm_timer_pollable already lowers. Deferring it only moved
   // the failure to the wasm loader, which reported the unhelpful
@@ -2144,9 +1892,9 @@ pub function wasm_ir_deferrals_ok(cache: irtables.LowerResult[]): boolean {
   // the bytes and boxes an Option[IoError] around the outcome (#7926) —
   // reusing file_imports' path_open + the fd_write import.
   // subprocess (#4320) and FFI __c_call<n> (#4375) are NOT deferred — both
-  // are unsupportable on wasm (no process spawn, no C ABI), so the driver
-  // rejects them with a clean diagnostic before emit (wasm_unsupported_builtin,
-  // wasm_unsupported_message). No exclusion here.
+  // are unsupportable on wasm (no process spawn, no C ABI), so the E066
+  // target gate refuses them before emit (`subprocess`, `cabi`). No
+  // exclusion here.
 }
 
 // The component-mode gate that refused `@import` / `@export` modules is GONE, not
@@ -4056,18 +3804,6 @@ pub struct EmittedCore { wat: string, needs: string[] }
 // emit_core_or_error_sub is emit_module_mode_or_error_sub keeping the needs.
 pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): EmittedCore {
   let lm: parser.Module = ircore.with_records(route_normalized(mod), sub);
-  // Builtins with no wasm meaning at all are rejected BEFORE the routing
-  // decision, so the diagnostic names the builtin rather than the IR op
-  // instruction selection would refuse, or nothing at all when the eligibility
-  // bail speaks first (#6946). The standalone drivers run this same gate
-  // themselves, since their IR path calls emit_ir_module directly; this is the
-  // one every other caller — the whole of the `fern` CLI's wasm surface —
-  // reaches.
-  let unsupported: string = wasm_unsupported_builtin(lm);
-  if (unsupported.len() > 0) {
-    eprint(wasm_unsupported_message(unsupported));
-    exit(1);
-  }
   let bad_import: string = wasm_unsupported_import(lm);
   if (bad_import.len() > 0) {
     eprint(bad_import);

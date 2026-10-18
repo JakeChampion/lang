@@ -193,7 +193,7 @@ a pre-shake that mirrors each backend's own treeshake (dyn roots,
 synthesised tcp_serve main), so unused imported stdlib wrappers
 never trip gates and bare `-check` stays target-neutral. E066 is
 positioned for entry-module call sites and position-less-but-named
-for imported-module sites; `fern explain E066` documents it. The
+for imported-module sites; `fern -explain E066` documents it. The
 diag catalogue-completeness gate now also scans cmd/fern +
 internal/pkg/platforms. Self-host parity: not needed by construction —
 E066 is emitted on the Go CLI's compile path only, never by either
@@ -279,7 +279,7 @@ port), the native E067 walk (at-least-once on every path;
 laundering into unmarked containers, closure capture, and
 unconsumed overwrite rejected at their sites; `own` params are the
 declared sinks — exempt, composing with the affine owned-param
-rule for exactly-once across own boundaries), `fern explain E067`,
+rule for exactly-once across own boundaries), `fern -explain E067`,
 and 21 checker tests pinning both directions per shape. Grounding
 corrections recorded in docs/MUST-CONSUME.md: the differential
 gate is opt-in per code (the port lands as its own slice, the
@@ -322,7 +322,7 @@ into lowerFunc against the DEFAULT pairing path per E3's
 verdict); (c) graded `fip(n)` / `fbip(n)` (`FuncDecl.FipAllowance`;
 the checker admits constructors when n > 0, the IR owns the
 count — n fresh un-paired sites permitted, more is an error);
-(d) docs (`fern explain E053` extended, new `fern explain E068`
+(d) docs (`fern -explain E053` extended, new `fern -explain E068`
 for the IR-verify failures; the runtime is_unique fallback
 branch does NOT count as an allocation — Koka's shape-guarantee
 stance — documented there). Verification is an op-scan over the

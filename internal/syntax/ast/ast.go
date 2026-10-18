@@ -2591,8 +2591,9 @@ type Destructure struct {
 	Names      []string
 	Fields     []string // struct destructure: field projected for Names[i]; nil = tuple mode
 	StructName string   // struct destructure: the named struct type in the pattern; "" = tuple mode
-	// RestWritten records the pattern's trailing `..`, for the printer.
-	// See MatchArm.RestWritten — it binds nothing at either site.
+	// RestWritten records the pattern's trailing `..`. A struct destructure
+	// binds only the fields it lists either way, so here only the printer
+	// reads it.
 	RestWritten bool
 	Init        Expr
 	// AtName is the `@` binding naming the WHOLE value beside the pattern —
@@ -2692,9 +2693,10 @@ type TuplePatElem struct {
 	VariantBindings     []string
 	VariantBindingTypes []Type
 	// VariantFieldNames runs parallel to VariantBindings for a
-	// named-field variant sub-pattern (`Some(Rect { w, h })`): the field
+	// named-field sub-pattern (`Some(Rect { w: ww, h })`): the field
 	// projected for each binding. nil for the positional form. Mirrors
-	// MatchArm.FieldNames, which is the same list at the arm position.
+	// MatchArm.FieldNames, which is the same list at the arm position, and
+	// is settled into declaration order the same way for an enum variant.
 	VariantFieldNames []string
 	// VariantPayloads runs parallel to VariantBindings: a non-nil entry is
 	// a SUB-PATTERN matched against that payload rather than a binder —
@@ -2730,8 +2732,7 @@ type TuplePatElem struct {
 	// test: it is refutable only through its own sub-patterns.
 	IsStruct bool
 	// RestWritten records a named-field pattern's trailing `..` at this
-	// position. It binds nothing, so it reaches only the printer — see
-	// MatchArm.RestWritten.
+	// position — see MatchArm.RestWritten.
 	RestWritten bool
 }
 
@@ -2763,25 +2764,22 @@ type MatchArm struct {
 	VariantModule string
 	Bindings      []string // payload binding names, in payload order
 	BindingTypes  []Type   // resolved by the checker; same length as Bindings
-	// NamedFields marks a named-field pattern (`Rect { w, h }`): each
-	// Bindings entry is a field name (the bound local takes that name).
-	// The checker validates the names against the variant's FieldNames
-	// and reorders Bindings + BindingTypes into declaration order, so
-	// every later stage treats them positionally like a `Rect(w, h)`
-	// pattern. False for the positional form.
+	// NamedFields marks a named-field pattern (`Rect { w: ww, h }`), whose
+	// fields are named by FieldNames. For an enum variant the checker
+	// validates the names against the variant's FieldNames and rewrites
+	// Bindings, Payloads and FieldNames into declaration order, so every
+	// later stage treats the arm positionally like `Rect(ww, h)`. False for
+	// the positional form.
 	NamedFields bool
 	// FieldNames runs parallel to Bindings for a named-field pattern
 	// (`S { field: local }`): FieldNames[i] is the struct/variant field
 	// projected, Bindings[i] the local it binds. For the shorthand
 	// `S { x }`, FieldNames[i] == Bindings[i]. nil for non-named patterns.
-	// (Rename is supported for struct matches; enum named-field variant
-	// patterns stay shorthand — the checker rejects a rename there.)
 	FieldNames []string
 	// RestWritten records the trailing `..` of a named-field pattern
-	// (`Rect { w, .. }`). A named-field pattern binds only the fields it
-	// lists either way, so the `..` is documentation and reaches only the
-	// printer — which has to put it back, or `-fmt -w` deletes what the
-	// author wrote.
+	// (`Rect { w, .. }`). An enum variant pattern must name every field
+	// unless it ends in `..`; a struct pattern binds only the fields it
+	// lists either way, so there only the printer reads it.
 	RestWritten bool
 	IsWildcard  bool // `_ => …`
 	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
@@ -3566,20 +3564,13 @@ type EnumVariant struct {
 // call `[resource-drop]<wit-name>` when an owned handle goes out of scope. The
 // type is referenced as `own Name` / `borrow Name` (HandleType); values are
 // opaque i32 handles. The checker registers each in Info.Resources; no later
-// pass sees ResourceDecl (handles erase to i32 before IR lowering).
+// pass sees ResourceDecl (handles erase to i32 before IR lowering). A resource
+// is module-local and has no visibility: `pub resource` is a P001.
 type ResourceDecl struct {
 	P             Position
 	Name          string
 	ImportIface   string
 	ImportWITName string
-	// Public marks the resource as exported across modules — same semantics
-	// as FuncDecl.Public.
-	Public bool
-	// PackageScoped marks a `pub(package)` declaration — visible to other
-	// modules in the same package (same directory; the stdlib is one
-	// package) but not exported to outside consumers. Mutually exclusive
-	// with Public. See docs/PUB-PACKAGE.md.
-	PackageScoped bool
 	// SourceModule mirrors FuncDecl.SourceModule (modload stamps the
 	// declaring module path). Empty for parser-only single-file programs.
 	SourceModule string

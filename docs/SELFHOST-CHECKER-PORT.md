@@ -1308,7 +1308,7 @@ TestSelfHostCheckerCodesX86_64. E039 turned out to be a dead catalogue
 entry (the Go checker never emits it — no `errfCode` site), so it needed
 no port for unfiltered parity. Its explanation file has since been
 deleted: it documented a bare `len(x)` builtin that no longer exists
-(`len` is a method), so `fern explain E039` described a construct the
+(`len` is a method), so `fern -explain E039` described a construct the
 language does not have.
 
 ## 2026-08-17 — a bare `const` reference gets a type
