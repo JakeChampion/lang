@@ -11,7 +11,9 @@ import (
 // un-annotated `Ok(5)`) is a payload the value never holds (#12788), so the
 // `Err(e)` arm is unreachable and `e` fits an `i32[]`, an `(i32, i32)`, an
 // `i32` variant payload or a `Map[string, i32]` alike, in both checkers.
-// Found by TestDifferential_CheckerMutants.
+// Found by TestDifferential_CheckerMutants. A user generic enum's payload
+// spelled with a parameter is unbound the same way, and one spelled without
+// keeps its type.
 func TestSelfHostUnboundPayloadCheck(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -38,6 +40,8 @@ func TestSelfHostUnboundPayloadCheck(t *testing.T) {
 		{"unbound payload in a map", "import \"core/map\";\nfunction main(): i32 {\n    let r = Ok(5);\n    match (r) { Ok(a) => { return a; }, Err(e) => { let m: Map[string, i32] = Map { \"a\": e }; return m.len(); } }\n}\n", true},
 		{"bound payload in a map", "import \"core/map\";\nfunction main(): i32 {\n    let r: Result[i32, i32] = Ok(5);\n    match (r) { Ok(a) => { return a; }, Err(e) => { let m: Map[string, i32] = Map { \"a\": e }; return m.len(); } }\n}\n", true},
 		{"bound payload of another type in an array", "function main(): i32 {\n    let r: Result[i32, string] = Ok(5);\n    match (r) { Ok(a) => { return a; }, Err(e) => { let xs: i32[] = [e, 1]; return xs[1]; } }\n}\n", false},
+		{"concrete payload of a generic enum named without arguments", "enum Shape[T] { Circle(i32), Blank }\nfunction area(s: Shape): i32 { match (s) { Circle(r) => { return r * r; }, Blank => { return 0; } } return 0; }\nfunction main(): i32 { return area(Circle(3)); }\n", true},
+		{"parameter payload of an unsettled generic enum", "enum Box[T] { Full(T), Empty }\nfunction main(): i32 {\n    let b = Empty;\n    match (b) { Full(x) => { let xs: i32[] = [x, 1]; return xs[1]; }, Empty => { return 0; } }\n}\n", true},
 		{"generic result bound by its destination", "function mk[T](): T[] { return []; }\nfunction main(): i32 {\n    let ys: i32[] = mk();\n    return ys.len();\n}\n", true},
 	}
 	for _, tc := range cases {

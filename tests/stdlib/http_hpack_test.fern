@@ -253,9 +253,9 @@ function test_field_by_field(): test.TestOutcome {
 // read_fields reads `block` one field at a time, as a connection does,
 // and answers the fields as `decoded` writes them with the table size.
 function read_fields(d: hpack.Decoder, block: u8[]): string {
-  let st: hpack.Decoding = d.start();
+  let st: hpack.Decoder = d.start(block);
   let out: string = "";
-  while (st.more(block)) {
+  while (st.more()) {
     st = st.next(block);
     if (st.has) {
       out = out + st.name + ": " + st.value;
@@ -271,7 +271,39 @@ function read_fields(d: hpack.Decoder, block: u8[]): string {
     },
     None => {}
   }
-  return out + "table " + int.int_to_string(d.finish(st).table_size());
+  return out + "table " + int.int_to_string(st.table_size());
+}
+
+// read_fields_in reads the block lying at [from, end) of `bytes` one
+// field at a time, as a connection reads one off its inbox.
+function read_fields_in(d: hpack.Decoder, bytes: u8[], from: i32, end: i32): string {
+  let st: hpack.Decoder = d.start_in(from, end);
+  let out: string = "";
+  while (st.more()) {
+    st = st.next(bytes);
+    if (st.has) {
+      out = out + st.name + ": " + st.value + "\n";
+    }
+  }
+  match (st.error) {
+    Some(e) => {
+      return e.message();
+    },
+    None => {}
+  }
+  return out + "table " + int.int_to_string(st.table_size());
+}
+
+// A block read where it lies among other bytes reads what the same block
+// reads alone, and stops at its end: C.3.1's request behind three bytes and
+// ahead of two, a literal cut by the end, and an integer cut by it.
+function test_in_place(): test.TestOutcome {
+  let d: hpack.Decoder = hpack.decoder(4096, 65536);
+  let bytes: u8[] = hex.hex_decode("ffffff" + "828684410f7777772e6578616d706c652e636f6d" + "0000");
+  let whole: string = read_fields_in(d, bytes, 3, bytes.len() - 2);
+  let cut: string = read_fields_in(d, bytes, 3, bytes.len() - 4);
+  let short: string = read_fields_in(d, hex.hex_decode("82867fff"), 0, 3);
+  return test.assert_eq(whole + "|" + cut + "|" + short, read_fields(d, hex.hex_decode("828684410f7777772e6578616d706c652e636f6d")) + "|hpack: header block ends inside a field|hpack: header block ends inside a field");
 }
 
 // A block read one field at a time gives the fields `decode` gives, the
@@ -357,5 +389,6 @@ function main(): i32 {
   r = r.it("every byte round-trips", test_round_trip);
   r = r.it("a block written field by field is the block encode writes", test_field_by_field);
   r = r.it("a block read one field at a time is the block decode reads", test_field_at_a_time);
+  r = r.it("a block read where it lies among other bytes", test_in_place);
   return r.finish();
 }

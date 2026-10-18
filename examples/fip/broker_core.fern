@@ -26,6 +26,13 @@ pub struct Broker {
   result_slot: i32,
 }
 
+// A field no constant folds, so each pool slot is a heap box reserve can
+// rebuild in place rather than one shared static box, which cannot donate.
+@noinline
+function no_topic(): i32 {
+  return -1;
+}
+
 pub function new_broker(topics: i32, subscribers: i32, pool: i32, queue_capacity: i32): Option[Broker] {
   if (topics < 1 || topics > 16 || subscribers < 1 || subscribers > 16
     || pool < 1 || pool > 4096 || queue_capacity < 1 || queue_capacity > 4096) {
@@ -36,7 +43,7 @@ pub function new_broker(topics: i32, subscribers: i32, pool: i32, queue_capacity
   let free: i32[] = __alloc_i32(pool);
   let i: i32 = 0;
   while (i < pool) {
-    slots = slots.append(Message { topic: -1, serial: 0i64, payload: 0i64 });
+    slots = slots.append(Message { topic: no_topic(), serial: 0i64, payload: 0i64 });
     free = free.with(i, pool - i - 1);
     i = i + 1;
   }

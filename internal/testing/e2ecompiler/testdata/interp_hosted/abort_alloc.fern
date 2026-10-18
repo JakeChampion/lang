@@ -1,0 +1,5 @@
+function main(): i32 {
+  let n: i32 = 0 - 4;
+  let b: u8[] = __alloc_u8(n);
+  return b.len();
+}

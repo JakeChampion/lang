@@ -50,7 +50,7 @@ function run_pipeline(src: string): interp.Value {
   let folded: parser.Module = constfold.fold_module(mod);
   let mt: checker.ModuleTypes = checker.check_module(folded);
   if (!mt.all_well_typed) {
-    return interp.VErr { msg: "pipeline: program does not type-check" };
+    return interp.VErr { msg: "pipeline: program does not type-check", abort: false };
   }
   return interp.eval_module(folded);
 }

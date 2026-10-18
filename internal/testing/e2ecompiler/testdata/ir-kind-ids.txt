@@ -109,6 +109,7 @@ tcp_close=116
 opt_make=120
 opt_tag=122
 opt_payload=123
+opt_set_payload=124
 struct_make=138
 struct_get=139
 struct_set=140

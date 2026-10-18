@@ -1636,8 +1636,8 @@ struct Plain { x: i32 }
 function find(): Result[i32, Plain] { return Err(Plain { x: 1 }); }
 function h(): Result[i32, dyn Error] { let v: i32 = find()?; return Ok(v); }
 function main(): i32 { return 0; }`)
-	if err == nil || !strings.Contains(err.Error(), "error types must match") {
-		t.Errorf("`?` with a non-implementing error type should be rejected, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "`?` cannot box Plain into dyn Error: Plain does not implement Error") {
+		t.Errorf("`?` with a non-implementing error type should be rejected, naming the missing impl, got: %v", err)
 	}
 	// Accepted (multi-trait dyn error): Both implements EVERY trait in
 	// `dyn A + B`, so the error converts via the impl-all gate.
@@ -1660,8 +1660,8 @@ impl A for OnlyA { function a(self: Self): i32 { return self.n; } }
 function find(): Result[i32, OnlyA] { return Err(OnlyA { n: 1 }); }
 function h(): Result[i32, dyn A + B] { let v: i32 = find()?; return Ok(v); }
 function main(): i32 { return 0; }`)
-	if err == nil || !strings.Contains(err.Error(), "error types must match") {
-		t.Errorf("`?` into `dyn A + B` with an error implementing only A should be rejected, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "`?` cannot box OnlyA into dyn A + B: OnlyA does not implement B") {
+		t.Errorf("`?` into `dyn A + B` with an error implementing only A should be rejected, naming B, got: %v", err)
 	}
 }
 
@@ -1689,8 +1689,8 @@ struct AppErr { msg: i32 }
 function read(): Result[i32, IoErr] { return Err(IoErr { code: 1 }); }
 function run(): Result[i32, AppErr] { let v: i32 = read()?; return Ok(v); }
 function main(): i32 { return 0; }`)
-	if err == nil || !strings.Contains(err.Error(), "error types must match") {
-		t.Errorf("`?` with no conversion should be rejected, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "AppErr has no `from(IoErr)` constructor to convert it") {
+		t.Errorf("`?` with no conversion should be rejected, naming the missing constructor, got: %v", err)
 	}
 }
 
@@ -9346,6 +9346,9 @@ func TestScalarModuleHintIsFollowable(t *testing.T) {
 		{"u8 points at std/i32", `let s: string = "A"; let b: u8 = s[0]; print(b.to_string());`, `std/i32`},
 		{"u32 still points at std/u32", `let x: u32 = 5; print(x.to_string());`, `std/u32`},
 		{"u64 still points at std/u64", `let x: u64 = 5; print(x.to_string());`, `std/u64`},
+		// usize's to_string is std/u64's, which every usize fits; the hint
+		// named std/u32, which has none.
+		{"usize points at std/u64", `let x: usize = 5; print(x.to_string());`, `std/u64`},
 		{"i64 still points at std/i64", `let x: i64 = 5; print(x.to_string());`, `std/i64`},
 		// A `str` view had NO hint at all: scalarModuleFor had no StrType case,
 		// so the message fell through to the builtin list ("it has: as_bytes,

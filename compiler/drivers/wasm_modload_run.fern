@@ -450,7 +450,7 @@ function main(): i32 {
       for lm in loaded {
         parsed = parsed.append(lm.mod);
       }
-      if (asmcore.refuse_decl_names(parsed) || asmcore.refuse_parse_unknowns(parsed)) {
+      if (asmcore.refuse_parse_errors(parsed)) {
         return 1;
       }
       return run_per_module(entry_path, entry, loaded, pm_mode, pm_index, pm_lo, pm_hi, cache_dir, plan_file);

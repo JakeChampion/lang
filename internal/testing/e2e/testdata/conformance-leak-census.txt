@@ -134,6 +134,7 @@ chained_array_methods                                0
 chained_methods                                      0
 char_byte_literals                                   0
 char_cast_receiver                                   0
+char_eq_ord_hash                                     0
 closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_builtin_record_binding              0
@@ -336,7 +337,8 @@ int_saturating_ops                                   0
 int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
-io_error_other_closed_stdout                         0
+io_and_fetch_errors_box_into_dyn_error               0
+io_error_other_closed_stdout                        0
 io_error_other_is_a_directory                        0
 io_error_other_not_a_directory                       0
 iter_build_consume                                   0
@@ -1003,6 +1005,8 @@ user_enum_mixed                                      0
 user_enum_payloaded_then_payloadless                 0
 user_enum_payloadless                                0
 user_fn_shadows_stdlib_param                         0
+usize_wraps_at_32_bits                               0
+usize_wraps_at_64_bits                               0
 utf8_codepoints                                      0
 value_block_branch_tail                              0
 value_block_generic_call_arm                         0

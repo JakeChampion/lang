@@ -102,10 +102,7 @@ function run(): i32 {
     return 2;
   }
   let mod: parser.Module = rundriver.parse_stdin("asm_ir_run");
-  if (asmcore.refuse_parse_unknowns([mod])) {
-    return 1;
-  }
-  if (asmcore.refuse_decl_names([mod])) {
+  if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
   let siblings: parser.Module[] = [];

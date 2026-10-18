@@ -472,7 +472,7 @@ function test_reset_budgets(): test.TestOutcome {
 function test_malformed(): test.TestOutcome {
   let o: Opened = opened(h2.config());
   let cl: Client = o.client;
-  let shapes: hpack.Field[][] = [get("/").append(hpack.field("connection", "close")), [hpack.field(":method", "GET"), hpack.field(":scheme", "http")], [hpack.field(":method", "GET"), hpack.field("x", "y"), hpack.field(":path", "/")], get("/").append(hpack.field("te", "gzip")), get("/").append(hpack.field(":method", "POST")), [hpack.field(":method", ""), hpack.field(":method", "GET"), hpack.field(":scheme", "http"), hpack.field(":path", "/")], get("/").append(hpack.field("bad name", "x")), get("/").append(hpack.field("x-Upper", "x"))];
+  let shapes: hpack.Field[][] = [get("/").append(hpack.field("connection", "close")), [hpack.field(":method", "GET"), hpack.field(":scheme", "http")], [hpack.field(":method", "GET"), hpack.field("x", "y"), hpack.field(":path", "/")], get("/").append(hpack.field("te", "gzip")), get("/").append(hpack.field(":method", "POST")), [hpack.field(":method", ""), hpack.field(":method", "GET"), hpack.field(":scheme", "http"), hpack.field(":path", "/")], get("/").append(hpack.field("bad name", "x")), get("/").append(hpack.field("x-Upper", "x")), get("/").append(hpack.field("x", "a\nb"))];
   let bytes: u8[] = [];
   let i: i32 = 0;
   while (i < shapes.len()) {
@@ -490,7 +490,24 @@ function test_malformed(): test.TestOutcome {
     let seen: h2.Step = o2.conn.read(r3.concat(closer));
     got = got + events_text(seen.events);
   }
-  return test.assert_eq(got, "RST_STREAM 1 1\nRST_STREAM 3 1\nRST_STREAM 5 1\nRST_STREAM 7 1\nRST_STREAM 9 1\nRST_STREAM 11 1\nRST_STREAM 13 1\nRST_STREAM 15 1\nopen 0\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 DATA on an idle stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 stream 2 is not a new client stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 PUSH_PROMISE with push disabled\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 CONTINUATION with no header block open\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 a frame inside a header block\n");
+  return test.assert_eq(got, "RST_STREAM 1 1\nRST_STREAM 3 1\nRST_STREAM 5 1\nRST_STREAM 7 1\nRST_STREAM 9 1\nRST_STREAM 11 1\nRST_STREAM 13 1\nRST_STREAM 15 1\nRST_STREAM 17 1\nopen 0\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 DATA on an idle stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 stream 2 is not a new client stream\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 PUSH_PROMISE with push disabled\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 CONTINUATION with no header block open\nrequest 3 GET / host=example.test body= trailer=-\nclosed 1 a frame inside a header block\n");
+}
+
+// HTTP/2 admits a field name only as a lower-case token and a value with
+// no control byte but HTAB and no DEL (§8.2.1): the checks the request and
+// response readers run on every regular field.
+function test_field_rules(): test.TestOutcome {
+  let names: string[] = ["accept", "x-trace-id", "Accept", "x trace", "", "a:b", "te"];
+  let values: string[] = ["a\tb", "", "gzip, deflate", "a\nb", string_from_bytes_unchecked([97u8, 127u8]), "a b"];
+  let got: string = "";
+  for n in names {
+    got = got + int.int_to_string(__bool(http.http_field_name_lower_ok(n)));
+  }
+  got = got + "|";
+  for v in values {
+    got = got + int.int_to_string(__bool(http.http_field_value_ok(v)));
+  }
+  return test.assert_eq(got, "1100001|111001");
 }
 
 // A frame on an idle stream the client never opened is a connection
@@ -735,6 +752,7 @@ function main(): i32 {
   r = r.it("header floods", test_header_floods);
   r = r.it("the reset and empty-DATA budgets", test_reset_budgets);
   r = r.it("malformed requests and connections", test_malformed);
+  r = r.it("the field names and values HTTP/2 admits", test_field_rules);
   r = r.it("idle streams and self-dependency", test_idle_and_self_dependency);
   r = r.it("HEADERS on a stream that has closed", test_headers_on_closed_streams);
   r = r.it("control frames", test_control_frames);

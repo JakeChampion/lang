@@ -409,7 +409,7 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_str_slice(cache)) {
     out = out.append("@uses_str_slice");
   }
-  if (module_calls_direct(cache, "__fern_str_borrow")) {
+  if (module_calls_direct(cache, "__fern_str_borrow") || module_uses_frame_string(cache)) {
     out = out.append("@uses_str_borrow");
   }
   if (module_uses_memchr(cache)) {
@@ -1389,6 +1389,16 @@ pub function module_uses_str_replace(cache: irtables.LowerResult[]): boolean {
 // wasm.str_lines_helper (and the str_split/substr it depends on) are emitted.
 pub function module_uses_str_lines(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "str_lines");
+}
+
+// module_uses_frame_string reports a raw_string in its frame form, which
+// wasm serves with $__fern_str_borrow's copy.
+pub function module_uses_frame_string(cache: irtables.LowerResult[]): boolean {
+  return any_op(cache, is_frame_string);
+}
+
+function is_frame_string(o: ir.Op): boolean {
+  return ir.frame_box_base(o) >= 0 && o.kind_tag == ir.K_RAW_STRING;
 }
 
 // module_calls_direct reports whether any function emits a call_direct to the
@@ -5711,6 +5721,24 @@ function wat_integer_text(text: string): string {
   return text;
 }
 
+// wasm_text_const is a text constant's literal, refusing a `usize` one past
+// the 32 bits an address has on wasm32: the checker admits a usize literal up
+// to u64::MAX, which only the 64-bit targets hold.
+function wasm_text_const(o: ir.Op): string {
+  if (o.width != ir.width_ptr()) {
+    return o.str;
+  }
+  let fits: boolean = parser.magnitude_fits(o.str, 0, "4294967295");
+  if (parser.is_hex_lit(o.str)) {
+    fits = parser.magnitude_fits(o.str, 2, "ffffffff");
+  }
+  if (!fits) {
+    eprint("error: literal " + o.str + " does not fit in usize on wasm32, where usize is 32 bits");
+    exit(1);
+  }
+  return o.str;
+}
+
 // emit_ir_op renders one IR op as WAT.
 //
 // The ladder moved here VERBATIM: the names it reads are rebound from the
@@ -5745,7 +5773,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 2) {  // const_i32_text
     // Integer literal source text — the wasm text parser handles the base
     // (hex `0x..`) and the full i32/u32 immediate range.
-    parts = parts.append("    i32.const " + wat_integer_text(o.str) + "\n");
+    parts = parts.append("    i32.const " + wat_integer_text(wasm_text_const(o)) + "\n");
   } else if (o.kind_tag == 3) {  // const_i64
     // 64-bit immediate (source text). load_local / store_local on i64
     // slots use the same local.get/local.set — the local's declared i64
@@ -6122,6 +6150,11 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 85) {  // raw_load_ptr
     // pop off (top), ptr; push the 4-byte word slot at ptr+off*4.
     parts = parts.append("    i32.const 4\n    i32.mul\n    i32.add\n    i32.load\n");
+  } else if (o.kind_tag == 86 && o.i32_imm > 0) {  // raw_string, frame form
+    // stack: data, len -> a fresh block holding a copy of the bytes, as the
+    // heap form of a byte view's sub-range makes; the frame's release of
+    // the view frees it.
+    parts = parts.append("    call $__fern_str_borrow\n");
   } else if (o.kind_tag == 87) {  // arr_make
     parts = emit_wasm_arr_make(arrtmp, eltmp, f64tmp, i64tmp, o, parts);
   } else if (o.kind_tag == 88) {  // arr_get
@@ -6209,6 +6242,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 123) {  // opt_payload
     // i32 payload at offset 4 (matches opt_make + the runtime map-get box).
     parts = parts.append("    i32.const 4\n    i32.add\n    i32.load\n");
+  } else if (o.kind_tag == 124) {  // opt_set_payload
+    // stack: box, val -> store val over the i32 payload at offset 4.
+    parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   } else if (is_host_op_kind(o.kind_tag)) {
     parts = parts.append(emit_host_op_wat(o));
   } else if (o.kind_tag == 165) {  // putchar

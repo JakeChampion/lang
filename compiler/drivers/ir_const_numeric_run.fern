@@ -82,7 +82,7 @@ function main(): i32 {
     target = av[2];
   }
   let mod: parser.Module = rundriver.parse_stdin("ir_const_numeric_run");
-  if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
+  if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
   let d: semlower.Driven = semlower.driven(mod, target);

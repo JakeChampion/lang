@@ -9,13 +9,51 @@
 //
 //     import "std/error" as error;
 //
-//     function handle(req: Request): Result[Response, dyn error.Error] {
-//         let body: string = read_body(req)?;   // boxes a ReadError
-//         let cfg: Config  = parse(body)?;       // boxes a ParseError
-//         return Ok(respond(cfg));
+//     function load(path: string): Result[Config, dyn error.Error] {
+//         let text: string = read_file(path)?;  // boxes an IoError
+//         let cfg: Config  = parse(text)?;       // boxes a ParseError
+//         return Ok(cfg);
 //     }
 //
 // A type opts in with `impl error.Error for MyError { function message(...) … }`.
+// The builtin `IoError` has no module of its own, so its impl is here, in the
+// trait's module, as `core/cmp` holds the primitive types' `Display` impls.
 pub trait Error {
   function message(self: Self): string;
 }
+
+// `e.message()` says why a filesystem or stream operation failed. Like
+// `NetError`'s, it does not repeat the operand: the path is the variant's
+// payload, for a caller that wants to name it.
+pub function (e: IoError) message(): string {
+  match (e) {
+    NotFound(_) => {
+      return "not found";
+    },
+    PermissionDenied(_) => {
+      return "permission denied";
+    },
+    AlreadyExists(_) => {
+      return "already exists";
+    },
+    InvalidUtf8(_) => {
+      return "invalid UTF-8";
+    },
+    Interrupted => {
+      return "interrupted";
+    },
+    Unsupported => {
+      return "unsupported";
+    },
+    Other(_, msg, _) => {
+      return msg;
+    }
+  }
+  return "";
+}
+
+pub function (e: IoError) to_string(): string {
+  return e.message();
+}
+
+impl Error for IoError {}

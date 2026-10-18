@@ -3647,7 +3647,7 @@ function push_count_test(unique: boolean, slow: asmcore.Lab, ok: asmcore.Lab, s:
   return ssa_tbz(s, false, "w3", 31, slow);
 }
 
-// ssa_view_slots gives each frame-resident string view (kind 51, imm 1) the
+// ssa_view_slots gives each frame-resident view box (kind 51, imm 1 or 2) the
 // index of its three frame words, in instruction order, and -1 to every other
 // value; ssa_view_count is how many there are. The words sit after the spill
 // slots.
@@ -3656,7 +3656,7 @@ function ssa_view_slots(f: ssa.SFunc): i32[] {
   let n: i32 = 0;
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == 51 && ins.imm == 1) {
+      if (ins.kind_tag == 51 && ins.imm >= 1) {
         out = out.with(ins.result, n);
         n = n + 1;
       }
@@ -3682,6 +3682,9 @@ function ssa_view_count(views: i32[]): i32 {
 // since the call clobbers every register they could live in.
 function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
+  if (ins.imm == 2) {
+    return ssa_frame_box(ins, reg_of, base_off, s);
+  }
   s = s.need("heap");
   s = ssa_load_abi_args(reg_of, ins.args, 3, s);
   s = ssa_ldst(s, true, "x3", "x0", 8);
@@ -3712,8 +3715,22 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
+// ssa_frame_box is the view kernel's frame arm over bytes already addressed
+// (kind 51, imm 2: a byte view's sub-range): the {-1, data, len} box in this
+// frame's words, no bounds check, since the lowering made them.
+function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_load_abi_args(reg_of, ins.args, 2, s);
+  s = fr_sub_imm(s, "x2", "x29", 0 - base_off);
+  s = ssa_mov_imm(s, "x3", "-1");
+  s = ssa_ldst0(s, false, "x3", "x2");
+  s = ssa_ldst(s, false, "x0", "x2", 8);
+  s = ssa_ldst(s, false, "x1", "x2", 16);
+  s = ssa_addsub_imm(s, false, "x0", "x2", 8);
+  return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+}
+
 // SsaFrame is the frame below the values: three words per frame-resident
-// string view after the values. ssa_view_off is the offset of a view's lowest
+// view box after the values. ssa_view_off is the offset of a view's lowest
 // word, the base the view kernel writes at.
 struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string }
 

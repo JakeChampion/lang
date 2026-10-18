@@ -247,8 +247,7 @@ function main(): i32 { return 0; }
 		t.Fatalf("census exited 0 on an unresolvable import; it must refuse to report a "+
 			"partial program:\n%s", out)
 	}
-	want := `semsource_census_run: cannot resolve import "std/definitely_not_a_module" in ` + orphan + ": " +
-		filepath.Join(dir, "std", "definitely_not_a_module.fern") + ": not found"
+	want := "semsource_census_run: " + orphan + `:1:1: error: unknown stdlib module "std/definitely_not_a_module"`
 	if !strings.Contains(string(out), want) {
 		t.Errorf("census did not name the unresolved import and its file:\n%s\nwant %s", out, want)
 	}

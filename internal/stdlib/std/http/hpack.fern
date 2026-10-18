@@ -8,9 +8,9 @@
 //
 //   let d: hpack.Decoder = hpack.decoder(4096, 65536);
 //   let got: hpack.Decoded = d.decode(block)?;      // got.fields, got.decoder
-//   let st: hpack.Decoding = d.start();              // or one field at a time, none kept:
-//   while (st.more(block)) { st = st.next(block); }   // st.has, st.name, st.value, st.sensitive; st.error
-//   d = d.finish(st);
+//   let st: hpack.Decoder = d.start(block);          // or one field at a time, none kept:
+//   while (st.more()) { st = st.next(block); }        // st.has, st.name, st.value, st.sensitive; st.error
+//   d = st;
 //   let e: hpack.Encoder = hpack.encoder(4096);
 //   let out: hpack.Encoded = e.encode([hpack.field(":status", "200")]);   // out.bytes, out.encoder
 //
@@ -166,7 +166,7 @@ function __resized(t: Table, max: i32): Table {
 const STATIC_LEN: i32 = 61;
 
 // __name_at is the name at `index` (1-based, the static table then the
-// dynamic one), empty when there is none.
+// dynamic one), empty when there is none: a literal field's indexed name.
 function __name_at(t: Table, index: i32): string {
   if (index >= 1 && index <= STATIC_LEN) {
     return STATIC_NAMES[index - 1];
@@ -174,17 +174,6 @@ function __name_at(t: Table, index: i32): string {
   let at: i32 = index - STATIC_LEN - 1;
   if (at >= 0 && at < t.names.len()) {
     return t.names[at];
-  }
-  return "";
-}
-
-function __value_at(t: Table, index: i32): string {
-  if (index >= 1 && index <= STATIC_LEN) {
-    return STATIC_VALUES[index - 1];
-  }
-  let at: i32 = index - STATIC_LEN - 1;
-  if (at >= 0 && at < t.names.len()) {
-    return t.values[at];
   }
   return "";
 }
@@ -242,16 +231,30 @@ function __find_static(name: string, value: string): i32 {
 // === decoding ==============================================================
 
 // Decoder — the dynamic table the peer's encoder fills, the size the
-// local settings let it have, and the caps on what one block may decode
-// to.
-pub struct Decoder { table: Table, settings_max: i32, max_list: i32, max_fields: i32 }
+// local settings let it have, the caps on what one block may decode to,
+// and the block being read one field at a time:
+//
+//   let st: hpack.Decoder = d.start(block);
+//   while (st.more()) {
+//     st = st.next(block);       // st.has: a field came, as st.name, st.value, st.sensitive
+//   }
+//   match (st.error) { Some(e) => ..., None => {} }
+//   d = st;
+//
+// A block's reading is the decoder's own state, so a block costs no record
+// beside it: the offset of the next representation and where the block
+// ends, the fields read so far and their size against the caps, the last
+// integer and string read (so a read hands back the decoder and nothing
+// else), the field the last `next` read, and the error that stopped the
+// block, after which `more` is false.
+pub struct Decoder { table: Table, settings_max: i32, max_list: i32, max_fields: i32, at: i32, end: i32, count: i32, total: i32, started: boolean, num: i32, text: string, has: boolean, name: string, value: string, sensitive: boolean, add: boolean, failed: boolean, error: Option[HpackError] }
 
 // decoder(max_table, max_list) — a decoder whose table may grow to
 // `max_table` (SETTINGS_HEADER_TABLE_SIZE, 4096 by default) and whose
 // blocks may decode to `max_list` bytes of fields, counted as
 // SETTINGS_MAX_HEADER_LIST_SIZE counts them, and at most 256 fields.
 pub function decoder(max_table: i32, max_list: i32): Decoder {
-  return Decoder { table: table(max_table), settings_max: max_table, max_list: max_list, max_fields: 256 };
+  return Decoder { table: table(max_table), settings_max: max_table, max_list: max_list, max_fields: 256, at: 0, end: 0, count: 0, total: 0, started: false, num: 0, text: "", has: false, name: "", value: "", sensitive: false, add: false, failed: false, error: None };
 }
 
 pub function (d: Decoder) with_max_fields(n: i32): Decoder {
@@ -277,12 +280,12 @@ pub function (d: Decoder) table_size(): i32 {
 pub struct Decoded { decoder: Decoder, fields: Field[] }
 
 // decode takes one whole header block (every CONTINUATION joined) and
-// answers its fields; `start`, `next` and `finish` read them one at a
-// time with no field kept.
+// answers its fields; `start`, `more` and `next` read them one at a time
+// with no field kept.
 pub function (d: Decoder) decode(block: u8[]): Result[Decoded, HpackError] {
-  let st: Decoding = d.start();
+  let st: Decoder = d.start(block);
   let fields: Field[] = [];
-  while (st.more(block)) {
+  while (st.more()) {
     st = st.next(block);
     if (st.has) {
       fields = fields.append(Field { name: st.name, value: st.value, sensitive: st.sensitive });
@@ -294,35 +297,24 @@ pub function (d: Decoder) decode(block: u8[]): Result[Decoded, HpackError] {
     },
     None => {}
   }
-  return Ok(Decoded { decoder: d.finish(st), fields: fields });
+  return Ok(Decoded { decoder: st, fields: fields });
 }
 
-// Decoding — a header block being read one field at a time:
-//
-//   let st: hpack.Decoding = d.start();
-//   while (st.more(block)) {
-//     st = st.next(block);       // st.has: a field came, as st.name, st.value, st.sensitive
-//   }
-//   match (st.error) { Some(e) => ..., None => {} }
-//   d = d.finish(st);
-//
-// It carries the table as the block changes it, the offset, the fields
-// read so far and their size against the caps, the last integer and
-// string read (so a read hands back the decoding and nothing else),
-// whether the table has changed, so a block that leaves it alone hands
-// the decoder back as it was, and whether an error stopped it and which,
-// after which `more` is false.
-pub struct Decoding { table: Table, at: i32, count: i32, total: i32, started: boolean, num: i32, text: string, touched: boolean, settings_max: i32, max_list: i32, max_fields: i32, has: boolean, name: string, value: string, sensitive: boolean, add: boolean, failed: boolean, error: Option[HpackError] }
-
-// start begins reading a block with `d`.
-pub function (d: Decoder) start(): Decoding {
-  return Decoding { table: d.table, at: 0, count: 0, total: 0, started: false, num: 0, text: "", touched: false, settings_max: d.settings_max, max_list: d.max_list, max_fields: d.max_fields, has: false, name: "", value: "", sensitive: false, add: false, failed: false, error: None };
+// start begins reading `block`, whole.
+pub function (d: Decoder) start(block: u8[]): Decoder {
+  return d.start_in(0, block.len());
 }
 
-// more is whether `block` has a representation left to read and nothing
+// start_in begins reading the block lying at [from, end) of the bytes each
+// `next` is handed, so a block is read where it arrived.
+pub function (d: Decoder) start_in(from: i32, end: i32): Decoder {
+  return Decoder { ...d, at: from, end: end, count: 0, total: 0, started: false, text: "", has: false, name: "", value: "", failed: false, error: None };
+}
+
+// more is whether the block has a representation left to read and nothing
 // has failed.
-pub function (st: Decoding) more(block: u8[]): boolean {
-  return st.at < block.len() && !st.failed;
+pub function (st: Decoder) more(): boolean {
+  return st.at < st.end && !st.failed;
 }
 
 // next reads one representation (§6): by its first bits, an indexed
@@ -330,7 +322,7 @@ pub function (st: Decoding) more(block: u8[]): boolean {
 // is not added, never indexed when the fourth bit is set. `has` says
 // whether a field came; a size update leaves it false. A field counts
 // against the caps as it is read.
-pub function (st: Decoding) next(block: u8[]): Decoding {
+pub function (st: Decoder) next(block: u8[]): Decoder {
   let b: i32 = block[st.at] as i32;
   if (b >= 32 && b < 64) {
     return __size_update(st, block);
@@ -355,43 +347,38 @@ pub function (st: Decoding) next(block: u8[]): Decoding {
     return __failed(st, TooMany(st.max_fields));
   }
   if (st.add) {
-    let t: Table = st.table;
     let name: string = st.name;
     let value: string = st.value;
-    return Decoding { ...st, table: __added(t, name, value), count: st.count + 1, total: total, started: true, touched: true, has: true };
+    return Decoder { ...st, table: __added(st.table, name, value), count: st.count + 1, total: total, started: true, has: true };
   }
-  return Decoding { ...st, count: st.count + 1, total: total, started: true, has: true };
+  return Decoder { ...st, count: st.count + 1, total: total, started: true, has: true };
 }
 
-// finish is the decoder after the block `st` read: `d` as it was when the
-// block left the table alone.
-pub function (d: Decoder) finish(st: Decoding): Decoder {
-  if (!st.touched) {
-    return d;
-  }
-  return Decoder { ...d, table: st.table };
+function __failed(st: Decoder, e: HpackError): Decoder {
+  return Decoder { ...st, failed: true, error: Some(e) };
 }
 
-function __failed(st: Decoding, e: HpackError): Decoding {
-  return Decoding { ...st, failed: true, error: Some(e) };
-}
-
-// __indexed reads an indexed field into `name` and `value`.
-function __indexed(st: Decoding, block: u8[]): Decoding {
+// __indexed reads an indexed field into `name` and `value`, the static
+// table's entry or the dynamic table's.
+function __indexed(st: Decoder, block: u8[]): Decoder {
   st = __integer(st, block, 7);
   if (st.failed) {
     return st;
   }
   let index: i32 = st.num;
-  if (index == 0 || __name_at(st.table, index).len() == 0 && index > STATIC_LEN) {
+  if (index >= 1 && index <= STATIC_LEN) {
+    return Decoder { ...st, name: STATIC_NAMES[index - 1], value: STATIC_VALUES[index - 1], sensitive: false, add: false };
+  }
+  let at: i32 = index - STATIC_LEN - 1;
+  if (at < 0 || at >= st.table.names.len()) {
     return __failed(st, BadIndex(index));
   }
-  return Decoding { ...st, name: __name_at(st.table, index), value: __value_at(st.table, index), sensitive: false, add: false };
+  return Decoder { ...st, name: st.table.names[at], value: st.table.values[at], sensitive: false, add: false };
 }
 
 // __size_update takes a dynamic table size update, allowed only before
 // the block's fields and only up to the settings.
-function __size_update(st: Decoding, block: u8[]): Decoding {
+function __size_update(st: Decoder, block: u8[]): Decoder {
   if (st.started) {
     return __failed(st, BadSizeUpdate(0 - 1));
   }
@@ -403,13 +390,13 @@ function __size_update(st: Decoding, block: u8[]): Decoding {
     return __failed(st, BadSizeUpdate(st.num));
   }
   let size: i32 = st.num;
-  return Decoding { ...st, table: __resized(st.table, size), touched: true, has: false };
+  return Decoder { ...st, table: __resized(st.table, size), has: false };
 }
 
 // __literal reads a literal field whose name is indexed by `prefix` bits
 // or follows as a string, then its value, into `name` and `value`, `add`
 // saying whether the table takes it.
-function __literal(st: Decoding, block: u8[], prefix: i32, add: boolean, sensitive: boolean): Decoding {
+function __literal(st: Decoder, block: u8[], prefix: i32, add: boolean, sensitive: boolean): Decoder {
   st = __integer(st, block, prefix);
   if (st.failed) {
     return st;
@@ -428,30 +415,30 @@ function __literal(st: Decoding, block: u8[], prefix: i32, add: boolean, sensiti
     name = st.text;
   }
   let total: i32 = st.total;
-  st = __string(Decoding { ...st, total: total + name.len() }, block);
+  st = __string(Decoder { ...st, total: total + name.len() }, block);
   if (st.failed) {
     return st;
   }
   let value: string = st.text;
-  return Decoding { ...st, total: total, name: name, value: value, sensitive: sensitive, add: add };
+  return Decoder { ...st, total: total, name: name, value: value, sensitive: sensitive, add: add };
 }
 
-// __integer reads an integer with an N-bit prefix (§5.1) at the decoding's
+// __integer reads an integer with an N-bit prefix (§5.1) at the decoder's
 // offset into its `num`, the offset moved past it.
-function __integer(st: Decoding, block: u8[], prefix: i32): Decoding {
+function __integer(st: Decoder, block: u8[], prefix: i32): Decoder {
   let at: i32 = st.at;
-  if (at >= block.len()) {
+  if (at >= st.end) {
     return __failed(st, Truncated);
   }
   let limit: i32 = (1 << prefix) - 1;
   let value: i32 = block[at] as i32 & limit;
   let i: i32 = at + 1;
   if (value < limit) {
-    return Decoding { ...st, num: value, at: i };
+    return Decoder { ...st, num: value, at: i };
   }
   let shift: i32 = 0;
   while (true) {
-    if (i >= block.len()) {
+    if (i >= st.end) {
       return __failed(st, Truncated);
     }
     let b: i32 = block[i] as i32;
@@ -465,17 +452,17 @@ function __integer(st: Decoding, block: u8[], prefix: i32): Decoding {
     }
     shift = shift + 7;
     if (b < 128) {
-      return Decoding { ...st, num: value, at: i };
+      return Decoder { ...st, num: value, at: i };
     }
   }
   return __failed(st, BadInteger);
 }
 
-// __string reads a string literal (§5.2) at the decoding's offset into
-// its `text`, Huffman-decoded when its first bit says, within the room the
+// __string reads a string literal (§5.2) at the decoder's offset into its
+// `text`, Huffman-decoded when its first bit says, within the room the
 // list size leaves.
-function __string(st: Decoding, block: u8[]): Decoding {
-  if (st.at >= block.len()) {
+function __string(st: Decoder, block: u8[]): Decoder {
+  if (st.at >= st.end) {
     return __failed(st, Truncated);
   }
   let huffman: boolean = block[st.at] as i32 >= 128;
@@ -485,7 +472,7 @@ function __string(st: Decoding, block: u8[]): Decoding {
   }
   let n: i32 = st.num;
   let from: i32 = st.at;
-  if (n > block.len() - from) {
+  if (n > st.end - from) {
     return __failed(st, Truncated);
   }
   let room: i32 = st.max_list - st.total - 32;
@@ -493,11 +480,11 @@ function __string(st: Decoding, block: u8[]): Decoding {
     if (n > room) {
       return __failed(st, TooLarge(st.max_list));
     }
-    return Decoding { ...st, text: string_from_bytes_range_unchecked(block, from, from + n), at: from + n };
+    return Decoder { ...st, text: string_from_bytes_range_unchecked(block, from, from + n), at: from + n };
   }
   match (huffman.decode(block[from:from + n], room)) {
     Ok(out) => {
-      return Decoding { ...st, text: string_from_bytes_unchecked(out), at: from + n };
+      return Decoder { ...st, text: string_from_bytes_unchecked(out), at: from + n };
     },
     Err(huffman.ExceedsRoom()) => {
       return __failed(st, TooLarge(st.max_list));

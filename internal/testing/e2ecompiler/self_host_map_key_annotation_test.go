@@ -148,6 +148,14 @@ function main(): i32 {
     return m.get_or(true, 0);
 }
 `, false},
+	{"char-key", `import "core/map";
+function main(): i32 {
+    let m: Map[char, i32] = map_new(8);
+    m = m.insert('a', 5);
+    let l = Map { 'b': 1 };
+    return m.get_or('a', 0) + l.len();
+}
+`, false},
 	{"borrowed-string-key", `import "core/map";
 function main(): i32 {
     let m: Map[str, i32] = map_new(8);

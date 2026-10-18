@@ -4,7 +4,7 @@
 // i32_to_string (and similar duplicates of digits_to_i32,
 // is_all_digits, string-membership, etc. — see SH-020 in
 // docs/SELF-HOST-AUDIT.md). This module is the single home for
-// those pure, dependency-free helpers; consumer modules
+// those helpers; consumer modules
 // `import "./util"` and call them qualified (`util.i32_to_string`).
 //
 // It imports no other compiler module, so any self-host
@@ -1905,33 +1905,6 @@ pub function to_u8(b: i32[]): u8[] {
     i = i + 1;
   }
   return o;
-}
-
-// io_error_reason is the reason part of a failed file operation's report.
-pub function io_error_reason(e: IoError): string {
-  match (e) {
-    NotFound(_) => {
-      return "not found";
-    },
-    PermissionDenied(_) => {
-      return "permission denied";
-    },
-    AlreadyExists(_) => {
-      return "already exists";
-    },
-    InvalidUtf8(_) => {
-      return "invalid UTF-8";
-    },
-    Interrupted => {
-      return "interrupted";
-    },
-    Unsupported => {
-      return "unsupported";
-    },
-    Other(_, msg, _) => {
-      return msg;
-    }
-  }
 }
 
 // cache_base is fern's per-user cache directory: $FERN_CACHE_DIR when that is

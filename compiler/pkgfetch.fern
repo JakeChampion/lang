@@ -12,6 +12,7 @@
 
 import "std/crypto";
 import "std/deflate";
+import "std/error";
 import "std/fetch";
 import "std/http";
 import "./fern";
@@ -125,7 +126,7 @@ function install(tmp: string, dir: string): string {
       if (util.is_dir(dir)) {
         return "";
       }
-      return "cannot install " + dir + ": " + util.io_error_reason(e);
+      return "cannot install " + dir + ": " + e.message();
     }
   }
   return "";
@@ -144,7 +145,7 @@ function write_entries(tmp: string, t: u8[]): string {
   match (create_dir_all(tmp)) {
     Ok(_) => {},
     Err(e) => {
-      return "cannot create " + tmp + ": " + util.io_error_reason(e);
+      return "cannot create " + tmp + ": " + e.message();
     }
   }
   let next_name: string = "";
@@ -211,7 +212,7 @@ function write_entry(tmp: string, t: u8[], e: Entry): string {
   match (write_file_bytes(dst, bytes(t, e.at, e.at + e.size))) {
     Ok(_) => {},
     Err(we) => {
-      return "cannot write " + dst + ": " + util.io_error_reason(we);
+      return "cannot write " + dst + ": " + we.message();
     }
   }
   return "";
@@ -229,7 +230,7 @@ function made(r: Result[void, IoError], path: string): string {
       return "";
     },
     Err(e) => {
-      return "cannot create " + path + ": " + util.io_error_reason(e);
+      return "cannot create " + path + ": " + e.message();
     }
   }
   return "";

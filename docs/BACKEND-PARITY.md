@@ -53,6 +53,26 @@ self-host appends `std/wasi_http`, the entry written in Fern over `@import`
 externs, and composes the core against the embedded proxy world
 (`compiler/wit_compose.fern`).
 
+## The interpreters
+
+`fern -interp` runs the self-host interpreter (`compiler/interp.fern`)
+inside `fern`. It answers a host builtin by calling the same builtin in its
+own build, so a program sees what a build for the host `fern` runs on would:
+the "Linux natives" or "arm64-darwin" column in the tables below. Where the
+Go interpreter keeps a contract of its own, this one keeps it too: no fork or
+exec (`proc_fork`, `proc_exec` and `proc_exec_as` answer -ENOSYS and the
+waits -ECHILD), no chroot or change of ids (-ENOSYS), no io_uring or kTLS
+(`ring_*` and `tcp_ktls` -ENOSYS), no splice (Unsupported), no arena rewind
+(`__heap_mark` answers 0), and no address space to hand the raw floor
+(`__syscall*`, `__c_call*` and the gated `__raw_*` are refused at run time). Both interpreters
+stop an index or slice out of range with the same message and exit status 1
+(docs/ARRAY-BOUNDS.md). `fern-oracle -interp` is the Go interpreter
+(`internal/oracle/interp`), the differential oracle; the `fern-oracle -interp`
+column below is its. `internal/testing/e2ecompiler/self_host_interp_hosted_builtins_test.go`
+holds the two to the same output, and
+`internal/pkg/platforms/selfhost_interp_test.go` fails when a builtin a hosted
+target provides has no self-host interpreter answer.
+
 ## Internal networking syscall floor
 
 `__syscall3` through `__syscall6` (#9853, #4451) pass a syscall number and
@@ -71,7 +91,7 @@ still need their own classifications.
 | arm64-linux | `svc #0`, number in `x8`, sixth argument in `x5` |
 | arm64-darwin | `svc #0x80`, number in `x16`, carry-flagged errno negated |
 | wasm32-wasi | E066: the target has no `syscall` capability |
-| interp | never reached: refused with the target, not at run time |
+| `fern -interp`, `fern-oracle -interp` | refused at run time: the interpreters have no address space |
 
 `FERN_SANDBOX=1` on x86-64 records a floor call whose number is a literal
 like any other syscall, and refuses a program whose number is a run-time
@@ -88,7 +108,7 @@ The Darwin legs run in the Apple Silicon lane.
 and `udp_recvfrom` are one Fern body each in `asmcore.fern` over this floor, on x86-64-linux,
 arm64-linux and arm64-darwin (the sockaddr's leading `sin_len` byte, the
 option numbers and `MSG_NOSIGNAL` are the Darwin differences); wasm has
-wasi:sockets bodies in `wasm_ir.fern`, and the interpreter Go ones.
+wasi:sockets bodies in `wasm_ir.fern`, and the Go interpreter has Go ones.
 
 Every socket primitive that takes an address takes it as a `u8[]` of its
 network-order bytes, four for IPv4 and sixteen for IPv6, and opens the
@@ -98,7 +118,7 @@ the WASI numbering). The unspecified address of either family takes
 every interface, and `::` both families: `IPV6_V6ONLY` is cleared on an
 IPv6 listener whatever the host's default, except on wasi:sockets 0.2,
 which keeps an IPv6 socket IPv6-only. A host without IPv6 refuses the family:
-`-EAFNOSUPPORT` from `socket(2)` natively and in the interpreter, and on
+`-EAFNOSUPPORT` from `socket(2)` natively and in both interpreters, and on
 wasm the `-ENOTSUP` wasmtime answers for create-socket.
 The IPv6 leg (`TestSocketV6*` and the self-host twin) runs where Go can
 listen on `::1` and skips, with the probe's own "nov6" answer required,
@@ -150,7 +170,7 @@ leaves the socket without streams until the next one succeeds, and
 block in recvfrom(2), so `set_nonblocking` has no udp arm there; on Darwin
 a `udp_sendto` naming an address on a connected socket is refused with
 `EISCONN` where Linux sends it, so a connected socket sends with an empty
-address on every target; and the interpreter keeps a raw descriptor per
+address on every target; and the Go interpreter keeps a raw descriptor per
 datagram socket, so its errnos are the host's like the natives'.
 
 `udp_bind_with(addr, port, reuse_port)` is `udp_bind` with `IPV6_V6ONLY`
@@ -172,7 +192,7 @@ attached, `-EINPROGRESS` while none is and no error is pending, else the
 connect is the record with kind 4 at offset 12 (start-connect done,
 finish-connect not yet), op 5 runs finish-connect (a `would-block` is
 `-EINPROGRESS`, 26 in the WASI numbering) and on success gives the record
-its streams; `tcp_close` on such a record drops the socket alone. The
+its streams; `tcp_close` on such a record drops the socket alone. The Go
 interpreter dials through the net package before answering, so its op 5
 is 0 at once and a refused dial is reported by `tcp_connect_with` itself.
 Waiting for a started connect is a loop over op 5 today: the readiness
@@ -186,14 +206,14 @@ address holds, 107 bytes on Linux and 103 on Darwin, before any socket
 exists; a held path is -EADDRINUSE, and the socket file is not unlinked
 first), which `tcp_accept`, `tcp_recv_into`, `tcp_send_bytes` and `tcp_close` take.
 Fern bodies in `asmcore.fern` (Darwin leads the address with sun_len) and
-the net package in the interpreter. Native only: the `unix` capability is
+the net package in the Go interpreter. Native only: the `unix` capability is
 in no wasi profile, so E066 refuses them on both wasm worlds at check time,
 and std/net's `listen_unix`, `connect_unix` and `accept` wrap them.
 
 The **reactor floor** is a readiness set that outlives one wait:
 `reactor_new()` (epoll on Linux, kqueue on Darwin, a table of wasi:io
 pollables on wasm, an epoll or kqueue set over the handles' descriptors in
-the interpreter), `reactor_ctl(r, op, fd, arg)` (op 1 watches `fd` for the
+the Go interpreter), `reactor_ctl(r, op, fd, arg)` (op 1 watches `fd` for the
 interest in `arg`, 1 readable and 2 writable, op 2 stops watching it, op 3
 closes the set) and `reactor_wait(r, events, timeout_ms)`, which fills
 `events` with (fd, readiness) pairs, readiness 1 readable, 2 writable and 4
@@ -215,10 +235,10 @@ wants back, and the set reports a delivery as the pair (-signal, 1). On
 Linux the signal is blocked and read through a signalfd the set holds
 beside -signal in its event's data word; on Darwin it is ignored, so its
 default action cannot end the process, and kqueue's EVFILT_SIGNAL records
-each delivery; the interpreter turns os/signal deliveries into bytes on a
+each delivery; the Go interpreter turns os/signal deliveries into bytes on a
 pipe the set watches; wasm, which has no signals, answers -ENOTSUP. Op 6
 reports the parent's exit as that SIGTERM pair: PR_SET_PDEATHSIG on
-Linux, EVFILT_PROC's NOTE_EXIT on Darwin (the interpreter waits on it in
+Linux, EVFILT_PROC's NOTE_EXIT on Darwin (the Go interpreter waits on it in
 a kqueue of its own and raises SIGTERM), -ENOTSUP on wasm. The
 Driver seam wraps the floor as `watch`, `unwatch`, `wait`, `watch_signal`,
 `unwatch_signal`, `watch_parent` and `close` (std/async), std/sim scripts readiness for
@@ -237,8 +257,8 @@ readable while the queue holds bytes, and the read takes them before the
 socket's. `ring_send_zc(ring, fd, data, from)` writes `data[from:]` by
 `IORING_OP_SEND_ZC` and answers the slot whose result, notification and
 release `ring_ctl` ops 8 to 10 read; the caller keeps `data` until the
-notification. Only Linux has a body; Darwin, wasm and the
-interpreter answer ENOSYS, as a kernel without io_uring or under a seccomp
+notification. Only Linux has a body; Darwin, wasm and both
+interpreters answer ENOSYS, as a kernel without io_uring or under a seccomp
 profile refusing it does, and `async.real_driver_io_uring()` keeps the
 reactor there. qemu-user implements no io_uring, so an arm64 binary under
 qemu takes the reactor too.
@@ -250,7 +270,7 @@ byte, option numbers and `MSG_NOSIGNAL` value. wasi-http is the proxy world,
 whose profile grants none of `tcp`, `unix` or `reactor`, so E066 refuses each
 of these at check time there.
 
-| Primitive | Linux natives | arm64-darwin | wasm32-wasi | wasi-http | interp |
+| Primitive | Linux natives | arm64-darwin | wasm32-wasi | wasi-http | `fern-oracle -interp` |
 | --- | --- | --- | --- | --- | --- |
 | `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_send_bytes` | Fern body; `tcp_pollable` answers the descriptor itself | Fern body; `tcp_pollable` answers the descriptor itself | wasi:sockets/tcp bodies (`wasm_ir.fern`); a "fd" is the 16-byte record | E066 | net package |
 | `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |

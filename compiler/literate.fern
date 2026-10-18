@@ -35,13 +35,6 @@
 
 // ─── byte classifiers ──────────────────────────────────────────────
 
-// is_hspace — horizontal whitespace (space or tab). Lines are split
-// on '\n' before any trimming, so newlines never reach here; '\r' is
-// folded in so CRLF documents trim cleanly.
-function is_hspace(b: i32): boolean {
-  return b == 32 || b == 9 || b == 13;
-}
-
 function is_backtick(b: u8): boolean {
   return b == b'`';
 }
@@ -70,33 +63,43 @@ function ends_with(s: string, suffix: string): boolean {
 
 // contains reports whether `sub` occurs anywhere in `s` (used to
 // reject a `>>` inside a chunk name).
-function contains(s: string, sub: string): boolean {
-  let sn: i32 = sub.len();
-  let n: i32 = s.len();
-  if (sn == 0) {
-    return true;
+function contains(haystack: string, needle: string): boolean {
+  return index_of_sub(haystack, needle) >= 0;
+}
+
+function index_of_sub(haystack: string, needle: string): i32 {
+  if (needle.len() == 0) {
+    return 0;
   }
-  if (sn > n) {
-    return false;
+  if (haystack.len() < needle.len()) {
+    return 0 - 1;
   }
   let i: i32 = 0;
-  while (i + sn <= n) {
-    if (slice_unchecked(s, i, i + sn) == sub) {
-      return true;
+  while (i <= haystack.len() - needle.len()) {
+    let j: i32 = 0;
+    let hit: boolean = true;
+    while (hit && j < needle.len()) {
+      if (haystack[i + j] != needle[j]) {
+        hit = false;
+      }
+      j = j + 1;
+    }
+    if (hit) {
+      return i;
     }
     i = i + 1;
   }
-  return false;
+  return 0 - 1;
 }
 
 // trim strips leading and trailing horizontal whitespace.
 pub function trim(s: string): string {
   let a: i32 = 0;
   let b: i32 = s.len();
-  while (a < b && is_hspace(s[a] as i32)) {
+  while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r')) {
     a = a + 1;
   }
-  while (b > a && is_hspace(s[b - 1] as i32)) {
+  while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r')) {
     b = b - 1;
   }
   return slice_unchecked(s, a, b) + "";
