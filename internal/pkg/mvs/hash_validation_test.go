@@ -57,3 +57,18 @@ func TestParseIndexRejectsMalformedHash(t *testing.T) {
 		})
 	}
 }
+
+// The wording is the self-hosted reader's too (compiler/drivers/mvs_run.fern
+// pins its side), so a lock both compilers refuse is refused in the same words.
+func TestReadLockMalformedHashMessage(t *testing.T) {
+	dir := t.TempDir()
+	lock := "[[package]]\nname = \"evil\"\nversion = \"1.0.0\"\nurl = \"https://example.invalid/x.tar.gz\"\nhash = \"sha256:../../outside/evil\"\n"
+	if err := os.WriteFile(filepath.Join(dir, LockFileName), []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ReadLock(dir)
+	want := "fern.lock line 5: hash must be `sha256:` + 64 lowercase hex digits of the archive bytes, got \"sha256:../../outside/evil\""
+	if err == nil || err.Error() != want {
+		t.Errorf("ReadLock error = %v, want %s", err, want)
+	}
+}

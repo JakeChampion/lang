@@ -51,11 +51,11 @@ func Root() (string, error) {
 func ValidateHash(hash string) error {
 	hexpart, ok := strings.CutPrefix(hash, "sha256:")
 	if !ok || len(hexpart) != 64 {
-		return fmt.Errorf("hash must be `sha256:` + 64 hex digits of the archive bytes, got %q", hash)
+		return fmt.Errorf("hash must be `sha256:` + 64 lowercase hex digits of the archive bytes, got %q", hash)
 	}
 	for _, r := range hexpart {
 		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return fmt.Errorf("hash must be `sha256:` + 64 hex digits of the archive bytes, got %q", hash)
+			return fmt.Errorf("hash must be `sha256:` + 64 lowercase hex digits of the archive bytes, got %q", hash)
 		}
 	}
 	return nil

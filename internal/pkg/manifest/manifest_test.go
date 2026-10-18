@@ -104,6 +104,18 @@ func TestParseDepCapabilitiesUnknownName(t *testing.T) {
 	}
 }
 
+// A comma or bracket inside a quoted value is part of the value, not an
+// inline-table separator.
+func TestParseDepQuotedSeparators(t *testing.T) {
+	m, err := Parse("[package]\nname = \"app\"\n[dependencies]\nkv = { path = \"a,b[c\", capabilities = [\"fs\"] }\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := m.Deps["kv"]; d.Path != "a,b[c" || len(d.Capabilities) != 1 || d.Capabilities[0] != "fs" {
+		t.Errorf("kv = %+v, want path a,b[c with capabilities [fs]", d)
+	}
+}
+
 func TestParseLib(t *testing.T) {
 	m, err := Parse("[package]\nname = \"h\"\nlib = \"src/api.fern\"\n")
 	if err != nil {
