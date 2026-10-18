@@ -1,0 +1,100 @@
+# Measured weights for the internal/testing/e2e catch-all shards
+# (test-e2e-other.yml), in seconds.
+#
+# `TestName seconds` per line; `#` comments and blanks ignored. A name with no
+# entry weighs 1, so this file steers BALANCE only: scripts/shard-tests
+# partitions the live list and cmd/ci-test-workers splits a shard between its
+# workers, and every listed name lands in exactly one bucket whatever its
+# weight. A stale weight costs an unevenly filled shard, nothing more.
+#
+# The lane's tests are mostly sub-second, except the TestRunner*ExamplePasses
+# suites, which run a tests/stdlib file under the Go interpreter: the TLS,
+# QUIC, compression and public-key suites take minutes each. Split by count
+# they bunched, and one x86 shard reached the 25m budget while another
+# finished in 7m (#12644's run 39113909934: 25.5, 14.4, 11.0 and 7.2 min).
+#
+# Measured 2026-10-18 on the 4-core dev container with other work beside it,
+# `go test ./internal/testing/e2e -run 'TestRunner.*ExamplePasses$' -v`; the
+# CI runner reads lower, and the ratio between rows is what the partition
+# uses. Every suite at 10 s or more is listed.
+TestRunnerAnsiExamplePasses 13
+TestRunnerArrayBatchExamplePasses 17
+TestRunnerArrayRotateExamplePasses 11
+TestRunnerBenchExamplePasses 15
+TestRunnerBrotliExamplePasses 185
+TestRunnerCoreutilsLongDoubleExamplePasses 84
+TestRunnerCoreutilsResolvExamplePasses 11
+TestRunnerCryptoExamplePasses 10
+TestRunnerCsvExamplePasses 11
+TestRunnerDeflateExamplePasses 69
+TestRunnerDigestBlake2bExamplePasses 45
+TestRunnerDigestMd5ExamplePasses 15
+TestRunnerDigestSha1ExamplePasses 22
+TestRunnerDigestSha224ExamplePasses 36
+TestRunnerDigestSha256ExamplePasses 74
+TestRunnerDigestSha384ExamplePasses 20
+TestRunnerDigestSha512ExamplePasses 30
+TestRunnerDigestSm3ExamplePasses 26
+TestRunnerEd25519ExamplePasses 120
+TestRunnerFetchProxyExamplePasses 11
+TestRunnerField25519ExamplePasses 11
+TestRunnerFormatDurationParseExamplePasses 11
+TestRunnerFormatExamplePasses 11
+TestRunnerHTTPCompressExamplePasses 26
+TestRunnerHTTPCookieExamplePasses 62
+TestRunnerHTTPH2ExamplePasses 15
+TestRunnerHTTPH3QExamplePasses 268
+TestRunnerHTTPJsonOfExamplePasses 14
+TestRunnerHTTPMultipartExamplePasses 30
+TestRunnerHTTPStaticExamplePasses 12
+TestRunnerHTTPWebSocketExamplePasses 20
+TestRunnerI32ToStringRadixExamplePasses 10
+TestRunnerI64RangeExamplePasses 10
+TestRunnerIoBufferedExamplePasses 17
+TestRunnerIterCombinatorsExamplePasses 13
+TestRunnerJsonDocumentExamplePasses 11
+TestRunnerJsonPointerExamplePasses 10
+TestRunnerMLKEM768ExamplePasses 38
+TestRunnerMontgomeryExamplePasses 73
+TestRunnerNdarrayExamplePasses 11
+TestRunnerNetExamplePasses 12
+TestRunnerOrdmapExamplePasses 21
+TestRunnerOrdsetExamplePasses 13
+TestRunnerP256ExamplePasses 107
+TestRunnerPathExamplePasses 10
+TestRunnerPegExamplePasses 10
+TestRunnerPmapExamplePasses 132
+TestRunnerPsetExamplePasses 15
+TestRunnerPublicSuffixExamplePasses 141
+TestRunnerPvecExamplePasses 26
+TestRunnerQUICConnExamplePasses 628
+TestRunnerRSAExamplePasses 101
+TestRunnerRegexExamplePasses 11
+TestRunnerSetExamplePasses 12
+TestRunnerSimFetchExamplePasses 11
+TestRunnerSortByAndCiExamplePasses 19
+TestRunnerStringClassifyTransformExamplePasses 13
+TestRunnerStringEscapeCountExamplePasses 12
+TestRunnerStringPartitionExamplePasses 13
+TestRunnerStringReplaceSplitExamplePasses 14
+TestRunnerStringSliceExtractExamplePasses 14
+TestRunnerStringSnapHelpersExamplePasses 10
+TestRunnerTLSClientExamplePasses 311
+TestRunnerTLSHandshakeExamplePasses 745
+TestRunnerTLSKeyScheduleExamplePasses 14
+TestRunnerTLSKeyshareExamplePasses 174
+TestRunnerTLSMozillaExamplePasses 182
+TestRunnerTLSRecordExamplePasses 29
+TestRunnerTLSRootsExamplePasses 103
+TestRunnerTLSServerExamplePasses 1169
+TestRunnerTLSVerifyExamplePasses 745
+TestRunnerTableExamplePasses 13
+TestRunnerTextwrapExamplePasses 11
+TestRunnerTzExamplePasses 10
+TestRunnerU32ArithExamplePasses 16
+TestRunnerU32ExamplePasses 18
+TestRunnerU64ExamplePasses 15
+TestRunnerUintRangeExamplePasses 17
+TestRunnerUrlExamplePasses 13
+TestRunnerX25519ExamplePasses 52
+TestRunnerZstdExamplePasses 188
