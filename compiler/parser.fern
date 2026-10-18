@@ -27847,7 +27847,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
 // isn't `self` is an associated function with an empty receiver_name),
 // and the impl's bounded type params merged in. Shared by parse_impl_decl
 // (written methods) and trait default-method synthesis in parse_module.
-function ident_byte(b: i32): boolean {
+pub function ident_byte(b: i32): boolean {
   return b >= 97 && b <= 122 || b >= 65 && b <= 90 || b >= 48 && b <= 57 || b == 95;
 }
 
