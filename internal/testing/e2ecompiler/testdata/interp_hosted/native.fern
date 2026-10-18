@@ -21,13 +21,6 @@ function done(what: string, r: Result[void, IoError]): void {
   }
 }
 
-function opt(what: string, r: Option[IoError]): void {
-  match (r) {
-    None => { print(what + ": ok"); },
-    Some(e) => { print(what + ": " + kind(e)); }
-  }
-}
-
 function perm(what: string, r: Result[FileStat, IoError]): void {
   match (r) {
     Ok(st) => {
@@ -86,13 +79,13 @@ function main(): i32 {
             Ok(es) => { print(f"sub entries: {es.len()}"); },
             Err(e) => { print("sub entries: " + kind(e)); }
           }
-          opt("sub close", sub.close());
+          done("sub close", sub.close());
         },
         Err(e) => { print("dir open_dir: " + kind(e)); }
       }
       done("dir remove_file", dir.remove_file("f"));
       done("dir remove_dir", dir.remove_dir("sub"));
-      opt("dir close", dir.close());
+      done("dir close", dir.close());
     },
     Err(e) => { print("open_dir: " + kind(e)); }
   }
@@ -129,13 +122,13 @@ function main(): i32 {
   print(f"subprocess2: [{r2.stdout}] [{r2.stderr}] {r2.exit_code}");
   match (pipe()) {
     Ok(p) => {
-      opt("pipe write", p.w.write("through"));
-      opt("pipe w close", p.w.close());
+      done("pipe write", p.w.write("through"));
+      done("pipe w close", p.w.close());
       match (p.r.read_chunk(100)) {
         Ok(s) => { print("pipe read: " + s); },
         Err(e) => { print("pipe read: " + kind(e)); }
       }
-      opt("pipe r close", p.r.close());
+      done("pipe r close", p.r.close());
     },
     Err(e) => { print("pipe: " + kind(e)); }
   }

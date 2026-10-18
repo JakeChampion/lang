@@ -21,13 +21,6 @@ function done(what: string, r: Result[void, IoError]): void {
   }
 }
 
-function opt(what: string, r: Option[IoError]): void {
-  match (r) {
-    None => { print(what + ": ok"); },
-    Some(e) => { print(what + ": " + kind(e)); }
-  }
-}
-
 function sorted(xs: string[]): string[] {
   let out: string[] = xs;
   let i: i32 = 1;
@@ -130,8 +123,8 @@ function main(): i32 {
   }
   match (open_writer(d + "/w.txt")) {
     Ok(w) => {
-      opt("write", w.write("one\n"));
-      opt("write_bytes", w.write_bytes([116u8, 119u8, 111u8, 10u8]));
+      done("write", w.write("one\n"));
+      done("write_bytes", w.write_bytes([116u8, 119u8, 111u8, 10u8]));
       match (w.write_some("three\n")) {
         Ok(n) => { print(f"write_some: {n}"); },
         Err(e) => { print("write_some: " + kind(e)); }
@@ -150,20 +143,20 @@ function main(): i32 {
         Err(e) => { print("writer flags: " + kind(e)); }
       }
       print(f"writer isatty: {w.isatty()}");
-      opt("writer fsync", w.fsync());
-      opt("writer fdatasync", w.fdatasync());
-      opt("writer syncfs", w.syncfs());
-      opt("writer drop_cache", w.drop_cache(0i64, 0i64));
-      opt("writer truncate", w.truncate(16i64));
-      opt("writer splice_forever", w.splice_forever("y\n"));
-      opt("writer close", w.close());
+      done("writer fsync", w.fsync());
+      done("writer fdatasync", w.fdatasync());
+      done("writer syncfs", w.syncfs());
+      done("writer drop_cache", w.drop_cache(0i64, 0i64));
+      done("writer truncate", w.truncate(16i64));
+      done("writer splice_forever", w.splice_forever("y\n"));
+      done("writer close", w.close());
     },
     Err(e) => { print("open_writer: " + kind(e)); }
   }
   match (open_appender(d + "/w.txt")) {
     Ok(w) => {
-      opt("append", w.write("five\n"));
-      opt("appender close", w.close());
+      done("append", w.write("five\n"));
+      done("appender close", w.close());
     },
     Err(e) => { print("open_appender: " + kind(e)); }
   }
@@ -172,11 +165,11 @@ function main(): i32 {
     Err(e) => { print("open_exclusive existing: " + kind(e)); }
   }
   match (open_exclusive(d + "/x.txt")) {
-    Ok(w) => { opt("open_exclusive new", w.close()); },
+    Ok(w) => { done("open_exclusive new", w.close()); },
     Err(e) => { print("open_exclusive new: " + kind(e)); }
   }
   match (open_writer_with(d + "/y.txt", 0)) {
-    Ok(w) => { opt("open_writer_with", w.close()); },
+    Ok(w) => { done("open_writer_with", w.close()); },
     Err(e) => { print("open_writer_with: " + kind(e)); }
   }
   match (open_reader(d + "/w.txt")) {
@@ -203,10 +196,10 @@ function main(): i32 {
         Ok(f) => { print(f"reader flags: {f & 3i64}"); },
         Err(e) => { print("reader flags: " + kind(e)); }
       }
-      opt("reader fsync", r.fsync());
-      opt("reader fdatasync", r.fdatasync());
-      opt("reader syncfs", r.syncfs());
-      opt("reader drop_cache", r.drop_cache(0i64, 0i64));
+      done("reader fsync", r.fsync());
+      done("reader fdatasync", r.fdatasync());
+      done("reader syncfs", r.syncfs());
+      done("reader drop_cache", r.drop_cache(0i64, 0i64));
       match (open_writer(d + "/z.txt")) {
         Ok(w) => {
           match (r.splice_to(w, 100)) {
@@ -217,16 +210,16 @@ function main(): i32 {
             Ok(n) => { print(f"copy_range_to: {n}"); },
             Err(e) => { print("copy_range_to: " + kind(e)); }
           }
-          opt("z close", w.close());
+          done("z close", w.close());
         },
         Err(e) => { print("open_writer z: " + kind(e)); }
       }
-      opt("reader close", r.close());
+      done("reader close", r.close());
     },
     Err(e) => { print("open_reader: " + kind(e)); }
   }
   match (open_reader_with(d + "/w.txt", 0)) {
-    Ok(r) => { opt("open_reader_with", r.close()); },
+    Ok(r) => { done("open_reader_with", r.close()); },
     Err(e) => { print("open_reader_with: " + kind(e)); }
   }
   match (temp_dir("fernt")) {
