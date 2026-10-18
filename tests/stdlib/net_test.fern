@@ -102,8 +102,40 @@ function test_embedded_v4(): test.TestOutcome {
   return test.assert_eq(carried("64:ff9b::c000:201", 96) + " " + carried("2001:db8:1:2:c0:2:100:0", 64) + " " + carried("64:ff9b:1:a9fe:a9:fe00::", 48) + " " + carried("64:ff9b::c000:201", 50) + " " + carried("192.0.2.1", 96), "192.0.2.1 192.0.2.1 169.254.169.254 none none");
 }
 
+// `quad(text)` — `yes` or `no` from `is_ipv4`, and `!` after it when
+// `ipv4_parse` disagrees.
+function quad(text: string): string {
+  let said: string = "no";
+  if (net.is_ipv4(text)) {
+    said = "yes";
+  }
+  let parsed: boolean = false;
+  match (net.ipv4_parse(text)) {
+    Some(a) => {
+      parsed = true;
+    },
+    None => {}
+  }
+  if (parsed != net.is_ipv4(text)) {
+    return said + "!";
+  }
+  return said;
+}
+
+function test_is_ipv4_agrees_with_the_parser(): test.TestOutcome {
+  let out: string = "";
+  for t in ["127.0.0.1", "255.255.255.255", "0.0.0.0", "1.2.3", "1.2.3.4.5", "1.2.3.4.", ".1.2.3.4", "01.2.3.4", "1.2.3.256", "1..2.3", "2130706433", "127.1", "a.b.c.d", "", "1.2.3.4 "] {
+    if (out.len() > 0) {
+      out = out + " ";
+    }
+    out = out + quad(t);
+  }
+  return test.assert_eq(out, "yes yes yes no no no no no no no no no no no no");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/net");
+  r = r.it("is_ipv4 agrees with the parser", test_is_ipv4_agrees_with_the_parser);
   r = r.it("public addresses are global", test_public_addresses);
   r = r.it("v4 loopback, private and link-local", test_v4_loopback_private_and_link_local);
   r = r.it("v4 other special blocks", test_v4_other_special_blocks);

@@ -396,14 +396,13 @@ function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] 
   let tls: boolean = u.scheme == "https";
   let host_field: string = __host_field(u.host, port, tls);
   let target: string = __request_target(u)?;
-  let authority: string = u.host + ":" + int.int_to_string(port);
+  let authority: string = "";
+  if (tls) {
+    authority = u.host + ":" + int.int_to_string(port);
+  }
   match (__proxy_for_url(policy.proxies, u)) {
     Some(spec) => {
-      let name: string = "http_proxy";
-      if (tls) {
-        name = "https_proxy";
-      }
-      let p: __Proxy = __proxy_of(spec, name)?;
+      let p: __Proxy = __proxy_named(policy.proxies, spec, tls)?;
       if (!tls) {
         target = "http://" + host_field + target;
       }
@@ -420,15 +419,18 @@ function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] 
 // to some resolvers and as a name to others, and an address that reads
 // two ways is how a block list is bypassed.
 function __http_url(raw: string): Result[Url, FetchError] {
-  let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(raw)) {
     Some(parsed) => {
-      u = parsed;
+      return __http_url_checked(raw, parsed);
     },
     None => {
       return Err(InvalidUrl(raw));
     }
   }
+  return Err(InvalidUrl(raw));
+}
+
+function __http_url_checked(raw: string, u: Url): Result[Url, FetchError] {
   if (u.scheme.len() == 0) {
     return Err(InvalidUrl("no scheme in " + raw));
   }
@@ -455,19 +457,14 @@ function __ambiguous_ipv4(host: string): boolean {
   if (end > 0 && host[end - 1] == 46) {
     end = end - 1;
   }
-  let start: i32 = slice_unchecked(host, 0, end).to_owned().last_index_of(".") + 1;
+  let start: i32 = end;
+  while (start > 0 && host[start - 1] != 46 as u8) {
+    start = start - 1;
+  }
   if (start >= end || host[start] < 48 || host[start] > 57) {
     return false;
   }
-  match (net.ipv4_parse(host)) {
-    Some(a) => {
-      return false;
-    },
-    None => {
-      return true;
-    }
-  }
-  return true;
+  return !net.is_ipv4(host);
 }
 
 // `__request_target(u)` — the origin-form request-target of `u`: its
@@ -533,17 +530,46 @@ function __host_field(host: string, port: i32, tls: boolean): string {
   return h;
 }
 
-// `__head(req, t, body_len)` — the request line and header block: the
-// caller's end-to-end fields, then what the client decides.
-function __head(req: Request, t: __Target, body_len: i32): string {
-  let out: string = req.method + " " + t.target + " HTTP/1.1\r\n" + "Host: " + t.host_field + "\r\n";
-  let fields: HeaderMap = __sent_fields(req, t, body_len);
+// `__wire(req, t, body)` — the request as the HTTP/1.1 connection takes
+// it, in one buffer: the request line, `Host`, the fields `__sent_fields`
+// lists, the empty line and the body.
+function __wire(req: Request, t: __Target, body: u8[]): u8[] {
+  let b: usize = buf_new(256 + body.len());
+  buf_push(b, req.method);
+  buf_push(b, " ");
+  buf_push(b, t.target);
+  buf_push(b, " HTTP/1.1\r\nHost: ");
+  buf_push(b, t.host_field);
+  buf_push(b, "\r\n");
+  let h: HeaderMap = req.headers;
   let i: i32 = 0;
-  while (i < fields.names.len()) {
-    out = out + fields.names[i] + ": " + fields.values[i] + "\r\n";
+  while (i < h.names.len()) {
+    if (__sent(h, i)) {
+      buf_push(b, h.names[i]);
+      buf_push(b, ": ");
+      buf_push(b, h.values[i]);
+      buf_push(b, "\r\n");
+    }
     i = i + 1;
   }
-  return out + "\r\n";
+  if (__carries_length(req, body.len())) {
+    buf_push(b, "Content-Length: ");
+    buf_push(b, int.int_to_string(body.len()));
+    buf_push(b, "\r\n");
+  }
+  if (__asks_codings(req)) {
+    buf_push(b, "Accept-Encoding: gzip, zstd, br\r\n");
+  }
+  if (__sends_proxy_auth(req, t)) {
+    buf_push(b, "Proxy-Authorization: ");
+    buf_push(b, t.proxy_auth);
+    buf_push(b, "\r\n");
+  }
+  buf_push(b, "\r\n");
+  buf_push_bytes_range(b, body, 0, body.len());
+  let out: u8[] = buf_take_bytes(b);
+  buf_free(b);
+  return out;
 }
 
 // `__sent_fields(req, t, body_len)` — the fields a request carries
@@ -553,17 +579,55 @@ function __head(req: Request, t: __Target, body_len: i32): string {
 // one), the `Accept-Encoding` it undoes itself, and the proxy's
 // credentials when the caller wrote none.
 function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
-  let out: HeaderMap = __without(http.http_end_to_end(req.headers), ["host", "content-length"]);
-  if (body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
+  let out: HeaderMap = headers.header_map_new();
+  let i: i32 = 0;
+  while (i < req.headers.names.len()) {
+    if (__sent(req.headers, i)) {
+      out = out.append(req.headers.names[i], req.headers.values[i]);
+    }
+    i = i + 1;
+  }
+  if (__carries_length(req, body_len)) {
     out = out.append("Content-Length", int.int_to_string(body_len));
   }
   if (__asks_codings(req)) {
     out = out.append("Accept-Encoding", "gzip, zstd, br");
   }
-  if (t.proxy_auth.len() > 0 && !t.tls && !__holds(req.headers.names, "proxy-authorization")) {
+  if (__sends_proxy_auth(req, t)) {
     out = out.append("Proxy-Authorization", t.proxy_auth);
   }
   return out;
+}
+
+// `__sent(h, i)` — whether the caller's field `i` goes on the wire: not
+// hop-by-hop, not named by the caller's `Connection`, and neither `Host`
+// nor `Content-Length`, which the client writes itself.
+function __sent(h: HeaderMap, i: i32): boolean {
+  let name: string = h.names[i];
+  if (http.http_hop_by_hop(name) || http.http_connection_names(h, name)) {
+    return false;
+  }
+  let n: i32 = name.len();
+  if (n == 4) {
+    return !name.eq_ignore_ascii_case("host");
+  }
+  if (n == 14) {
+    return !name.eq_ignore_ascii_case("content-length");
+  }
+  return true;
+}
+
+// `__carries_length(req, body_len)` — whether the request names its
+// body's length: a body, or a method that usually carries one.
+function __carries_length(req: Request, body_len: i32): boolean {
+  return body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH";
+}
+
+// `__sends_proxy_auth(req, t)` — whether the client writes the proxy's
+// credentials: a proxy with some, reached in the clear, and none of the
+// caller's own.
+function __sends_proxy_auth(req: Request, t: __Target): boolean {
+  return t.proxy_auth.len() > 0 && !t.tls && !__holds(req.headers.names, "proxy-authorization");
 }
 
 // `__asks_codings(req)` — whether the client writes its own
@@ -632,11 +696,11 @@ pub function (p: Idle) proxy_env(): ProxyEnv {
   return env;
 }
 
-// `Kept` — a connection the pool holds: where it reaches (`key`), the
+// `Kept` — a connection the pool holds: where it reaches (`place`), the
 // transport's number for it, the nanosecond it went idle, its TLS session
 // for `https`, and the HTTP/2 connection's state when the origin chose
 // `h2`.
-pub struct Kept { key: string, fd: i32, since: i64, tls: Option[client.Session], h2: Option[h2.Conn] }
+pub struct Kept { place: __Place, fd: i32, since: i64, tls: Option[client.Session], h2: Option[h2.Conn] }
 
 // `idle()` — an empty pool keeping up to 64 connections, each for 90 s
 // (Go's `IdleConnTimeout`).
@@ -1165,20 +1229,36 @@ pub function close_idle[T: Transport](tr: T): void {
   pool.kept.set(none);
 }
 
-// `__pool_key(t, guard, roots)` — where a connection reaches: the host and
-// port dialled, the origin a TLS connection reaches through it and the
-// roots its chain was checked against, and whether the block list judged
-// the addresses, so a connection the open route made is never handed to
-// the guarded one, nor one trusted under one store to a request naming
-// another.
-function __pool_key(t: __Target, guard: boolean, roots: Option[verify.Roots]): string {
+// `__Place` — where a kept connection reaches: the host and port dialled,
+// whether the block list judged the addresses (`guard`), and for TLS the
+// origin's authority and the roots its chain was checked against, joined
+// (empty for a connection in the clear), so a connection the open route
+// made is never handed to the guarded one, nor one trusted under one
+// store to a request naming another.
+struct __Place { guard: boolean, host: string, port: i32, tls: string }
+
+function __place_of(t: __Target, guard: boolean, roots: Option[verify.Roots]): __Place {
+  let tls: string = "";
+  if (t.tls) {
+    tls = t.authority + " " + __roots_key(roots);
+  }
+  return __Place { guard: guard, host: t.host, port: t.port, tls: tls };
+}
+
+function __place_eq(a: __Place, b: __Place): boolean {
+  return a.port == b.port && a.guard == b.guard && a.host == b.host && a.tls == b.tls;
+}
+
+// `__place_key(p)` — the place as the text the loop's shared HTTP/2
+// connections are keyed by (`Shared`).
+function __place_key(p: __Place): string {
   let route: string = "open ";
-  if (guard) {
+  if (p.guard) {
     route = "global ";
   }
-  let key: string = route + t.host + " " + int.int_to_string(t.port);
-  if (t.tls) {
-    key = key + " tls " + t.authority + " " + __roots_key(roots);
+  let key: string = route + p.host + " " + int.int_to_string(p.port);
+  if (p.tls.len() > 0) {
+    key = key + " tls " + p.tls;
   }
   return key;
 }
@@ -1201,13 +1281,13 @@ function __roots_key(roots: Option[verify.Roots]): string {
   return "system";
 }
 
-// `__take_idle(tr, key)` — the connection to `key` kept last, taken out
-// of the pool, or one numbered -1; any connection idle past the pool's
-// bound is closed on the way.
-function __take_idle[T: Transport](tr: T, key: string): __Conn {
+// `__take_idle(tr, place)` — the connection to `place` kept last, taken
+// out of the pool, or one numbered -1; any connection idle past the
+// pool's bound is closed on the way.
+function __take_idle[T: Transport](tr: T, place: __Place): __Conn {
   let rows: Kept[] = __live_kept(tr);
   let pick: i32 = rows.len() - 1;
-  while (pick >= 0 && rows[pick].key != key) {
+  while (pick >= 0 && !__place_eq(rows[pick].place, place)) {
     pick = pick - 1;
   }
   if (pick < 0) {
@@ -1218,11 +1298,11 @@ function __take_idle[T: Transport](tr: T, key: string): __Conn {
   return conn;
 }
 
-// `__park(tr, key, conn)` — `conn` kept for the next request to `key`, the
-// longest-idle connections closed while the pool holds more than its
-// `max`.
-function __park[T: Transport](tr: T, key: string, conn: __Conn): void {
-  let rows: Kept[] = __live_kept(tr).append(Kept { key: key, fd: conn.fd, since: tr.now_ns(), tls: conn.tls, h2: conn.h2 });
+// `__park(tr, place, conn)` — `conn` kept for the next request to
+// `place`, the longest-idle connections closed while the pool holds more
+// than its `max`.
+function __park[T: Transport](tr: T, place: __Place, conn: __Conn): void {
+  let rows: Kept[] = __live_kept(tr).append(Kept { place: place, fd: conn.fd, since: tr.now_ns(), tls: conn.tls, h2: conn.h2 });
   let from: i32 = 0;
   while (rows.len() - from > tr.idle().max) {
     __close(tr, __kept_conn(rows[from]));
@@ -1344,7 +1424,7 @@ impl Transport for Sockets {
     return tcp_send_bytes(conn, data);
   }
   function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): tcp.Recv {
-    return tcp.tcp_recv_deadline(conn, max, time.duration_millis(wait_ms));
+    return tcp.tcp_recv_within(conn, max, wait_ms);
   }
   function close(self: Sockets, conn: i32): i32 {
     tcp_close(conn);
@@ -1402,7 +1482,7 @@ function __send_closing(policy: Policy, req: Request): Result[HttpResponse, Fetc
 // so a wasi-http build imports no configuration store for it.
 function __proxies(): ProxyEnv {
   if (target_os() == "wasi-http") {
-    return ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" };
+    return proxies("", "", "");
   } else {
     return proxy_env();
   }
@@ -1824,49 +1904,49 @@ function __reset(e: FetchError): boolean {
 // the response read, and the connection kept when the response left it
 // reusable, closed otherwise.
 function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean, roots: Option[verify.Roots], reuse: boolean): Result[HttpResponse, FetchError] {
-  let key: string = __pool_key(t, guard, roots);
+  let place: __Place = __place_of(t, guard, roots);
   let conn: __Conn = __no_conn();
   if (reuse && http.http_method_idempotent(req.method)) {
-    conn = __take_idle(tr, key);
+    conn = __take_idle(tr, place);
   }
   if (conn.fd < 0) {
     if (t.tls && async.in_task()) {
       match (tr.idle().shared) {
         Some(sh) => {
-          return __attempt_shared(tr, req, t, started, key, guard, roots, sh);
+          return __attempt_shared(tr, req, t, started, place, guard, roots, sh);
         },
         None => {}
       }
     }
     conn = __connect(tr, t, req, guard, roots)?;
   }
-  return __attempt_opened(tr, req, t, started, key, conn);
+  return __attempt_opened(tr, req, t, started, place, conn);
 }
 
-// `__attempt_opened(tr, req, t, started, key, conn)` — `__attempt` on a
-// connection this task opened and speaks to itself, by the protocol the
-// origin chose.
-function __attempt_opened[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, conn: __Conn): Result[HttpResponse, FetchError] {
+// `__attempt_opened(tr, req, t, started, place, conn)` — `__attempt` on
+// a connection this task opened and speaks to itself, by the protocol
+// the origin chose.
+function __attempt_opened[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn): Result[HttpResponse, FetchError] {
   if let Some(hc) = conn.h2 {
-    return __attempt_h2(tr, req, t, started, key, conn, hc);
+    return __attempt_h2(tr, req, t, started, place, conn, hc);
   }
-  return __attempt_h1(tr, req, t, started, key, conn);
+  return __attempt_h1(tr, req, t, started, place, conn);
 }
 
-// `__attempt_shared(tr, req, t, started, key, guard, roots, sh)` — the
+// `__attempt_shared(tr, req, t, started, place, guard, roots, sh)` — the
 // request over a connection the loop drives: the origin's, when one has
 // room for a stream, else one opened here and handed to the loop (an
 // origin that chose `http/1.1` is spoken to as before, on this task).
 // The task parks on the stream's slot until the loop puts the answer in
 // it, under the request's bounds; a wait that passes resets the stream.
-function __attempt_shared[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, guard: boolean, roots: Option[verify.Roots], sh: Shared): Result[HttpResponse, FetchError] {
+function __attempt_shared[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, guard: boolean, roots: Option[verify.Roots], sh: Shared): Result[HttpResponse, FetchError] {
   let fd: i32 = 0 - 1;
-  match (__shared_socket(tr, req, t, started, key, guard, roots, sh)?) {
+  match (__shared_socket(tr, req, t, started, __place_key(place), guard, roots, sh)?) {
     OnLoop(socket) => {
       fd = socket;
     },
     OnTask(conn) => {
-      return __attempt_opened(tr, req, t, started, key, conn);
+      return __attempt_opened(tr, req, t, started, place, conn);
     }
   }
   let body: u8[] = req.body.bytes();
@@ -1975,11 +2055,10 @@ function __shared_wait[T: Transport](tr: T, req: Request, started: i64, sh: Shar
   return Err(Protocol("unreachable"));
 }
 
-// `__attempt_h1(tr, req, t, started, key, conn)` — `__attempt` on a
+// `__attempt_h1(tr, req, t, started, place, conn)` — `__attempt` on a
 // connection speaking HTTP/1.1: the request written, the response read.
-function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, conn: __Conn): Result[HttpResponse, FetchError] {
-  let body: u8[] = req.body.bytes();
-  match (__send_all(tr, conn, __head(req, t, body.len()).bytes().concat(body))) {
+function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn): Result[HttpResponse, FetchError] {
+  match (__send_all(tr, conn, __wire(req, t, req.body.bytes()))) {
     Ok(c) => {
       conn = c;
     },
@@ -1991,7 +2070,7 @@ function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i
   match (__read_response(tr, conn, req, started)) {
     Ok(read) => {
       if (read.keep) {
-        __park(tr, key, read.conn);
+        __park(tr, place, read.conn);
       } else {
         __close(tr, read.conn);
       }
@@ -2005,14 +2084,14 @@ function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i
   return Err(Protocol("unreachable"));
 }
 
-// `__attempt_h2(tr, req, t, started, key, conn, hc)` — `__attempt` on a
+// `__attempt_h2(tr, req, t, started, place, conn, hc)` — `__attempt` on a
 // connection speaking HTTP/2: the request on a stream of its own, the
 // frames read and fed to the state machine until the stream's response
 // comes back whole, and the connection kept for the next request unless
 // the server is going away. A connection that takes no stream is one the
 // server has since closed, reported as a reset so an idempotent request is
 // sent again on a new one.
-function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, conn: __Conn, hc: h2.Conn): Result[HttpResponse, FetchError] {
+function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn, hc: h2.Conn): Result[HttpResponse, FetchError] {
   let body: u8[] = req.body.bytes();
   let (sent, stream) = hc.request(h2.Outgoing { method: req.method, scheme: "https", authority: t.host_field, path: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.header_map_new() });
   if (stream < 0) {
@@ -2024,7 +2103,7 @@ function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i
       if (done.0.h2.closed() || done.0.h2.going_away()) {
         __close(tr, done.0.conn);
       } else {
-        __park(tr, key, __Conn { ...done.0.conn, h2: Some(done.0.h2) });
+        __park(tr, place, __Conn { ...done.0.conn, h2: Some(done.0.h2) });
       }
       return __decoded(HttpResponse { ...done.1, headers: http.http_end_to_end(done.1.headers) }, req);
     },
@@ -2753,8 +2832,12 @@ function __read_response[T: Transport](tr: T, conn: __Conn, req: Request, starte
 
 // `__append_bytes(buf, chunk)` — `buf` with `chunk` on its end, grown in
 // place: `buf` is owned here, so each push lands on a unique array and
-// the accumulation over a whole response is one linear pass.
+// the accumulation over a whole response is one linear pass. The first
+// chunk is the buffer itself, with the room its read left behind it.
 function __append_bytes(own buf: u8[], chunk: u8[]): u8[] {
+  if (buf.len() == 0) {
+    return chunk;
+  }
   let i: i32 = 0;
   while (i < chunk.len()) {
     buf = buf.append(chunk[i]);
@@ -3060,7 +3143,17 @@ function __rejected(code: i32): FetchError {
 // empty for none; `https_proxy`, the same for `https` URLs, which go
 // through a tunnel it opens; `no_proxy`, the comma-separated hosts reached
 // directly.
-pub struct ProxyEnv { http_proxy: string, https_proxy: string, no_proxy: string }
+pub struct ProxyEnv { http_proxy: string, https_proxy: string, no_proxy: string, rules: __Rule[], http: Option[__Proxy], https: Option[__Proxy] }
+
+// `proxies(http_proxy, https_proxy, no_proxy)` — the configuration from
+// the three variables' values, each as the environment would spell it.
+// The `no_proxy` entries are read into rules and each proxy spec into
+// where to dial it here, once, so a request matches and dials without
+// reading the text again; a spec that does not read as a proxy is
+// refused by the request that would use it (`InvalidUrl`).
+pub function proxies(http_proxy: string, https_proxy: string, no_proxy: string): ProxyEnv {
+  return ProxyEnv { http_proxy: http_proxy, https_proxy: https_proxy, no_proxy: no_proxy, rules: __rules_of(no_proxy), http: __proxy_read(http_proxy), https: __proxy_read(https_proxy) };
+}
 
 // `proxy_env()` — the configuration as the environment sets it, read
 // through `config_get` so it arrives the same way on every target (a
@@ -3079,14 +3172,14 @@ pub function proxy_env(): ProxyEnv {
 // `REQUEST_METHOD`, the sign of a CGI invocation, no proxy is read at all,
 // since there even the lowercase names may be the client's.
 pub function proxy_env_from(http_proxy: Option[string], https_proxy: Option[string], https_proxy_upper: Option[string], no_proxy: Option[string], no_proxy_upper: Option[string], request_method: Option[string]): ProxyEnv {
-  let env: ProxyEnv = ProxyEnv { http_proxy: __or_empty(http_proxy), https_proxy: __or_empty(__either(https_proxy, https_proxy_upper)), no_proxy: __or_empty(__either(no_proxy, no_proxy_upper)) };
+  let skip: string = __or_empty(__either(no_proxy, no_proxy_upper));
   match (request_method) {
     Some(m) => {
-      return ProxyEnv { ...env, http_proxy: "", https_proxy: "" };
+      return proxies("", "", skip);
     },
     None => {}
   }
-  return env;
+  return proxies(__or_empty(http_proxy), __or_empty(__either(https_proxy, https_proxy_upper)), skip);
 }
 
 function __either(first: Option[string], second: Option[string]): Option[string] {
@@ -3147,19 +3240,31 @@ function __proxy_for_url(p: ProxyEnv, u: Url): Option[string] {
     return None;
   }
   let host: string = __host_name(u.host);
-  let ip: Option[net.IpAddr] = __canonical_ip(host);
+  let ip: Option[net.IpAddr] = None;
+  if (__address_shaped(host)) {
+    ip = __canonical_ip(host);
+  }
   if (__never_proxied(host, ip)) {
     return None;
   }
-  if (p.no_proxy.len() == 0) {
-    return Some(proxy);
-  }
-  for entry in p.no_proxy.split(",") {
-    if (__no_proxy_matches(entry.trim(), host, __effective_port(u), ip)) {
+  let port: i32 = __effective_port(u);
+  for rule in p.rules {
+    if (__no_proxy_matches(rule, host, port, ip)) {
       return None;
     }
   }
   return Some(proxy);
+}
+
+// `__address_shaped(host)` — whether `host` can be an address literal: a
+// digit first (a dotted quad) or a colon anywhere (IPv6). A name shaped
+// so is parsed and found not to be one; every other name skips the parse.
+function __address_shaped(host: string): boolean {
+  if (host.len() == 0) {
+    return false;
+  }
+  let b: u8 = host[0];
+  return b >= 48 as u8 && b <= 57 as u8 || host.index_of(":") >= 0;
 }
 
 // `__never_proxied(host, ip)` — `localhost`, a name under it, or a
@@ -3181,11 +3286,18 @@ function __never_proxied(host: string, ip: Option[net.IpAddr]): boolean {
 
 // `__host_name(h)` — `h` ASCII case-folded, its trailing dot dropped.
 function __host_name(h: string): string {
-  let s: string = h.to_lower();
-  if (s.len() > 1 && s.ends_with(".")) {
-    return slice_unchecked(s, 0, s.len() - 1).to_owned();
+  let end: i32 = h.len();
+  if (end > 1 && h[end - 1] == 46 as u8) {
+    end = end - 1;
   }
-  return s;
+  let i: i32 = 0;
+  while (i < end && (h[i] < 65 as u8 || h[i] > 90 as u8)) {
+    i = i + 1;
+  }
+  if (i == end && end == h.len()) {
+    return h;
+  }
+  return slice_unchecked(h, 0, end).to_owned().to_lower();
 }
 
 // `__canonical_ip(text)` — `text` as an address, an IPv4 one unwrapped
@@ -3202,50 +3314,127 @@ function __canonical_ip(text: string): Option[net.IpAddr] {
   return None;
 }
 
-// One `no_proxy` entry: its name, address or block, and the port it is
-// limited to (0 for any, -1 for a port that does not read).
-struct __Rule { name: string, port: i32 }
+// One `no_proxy` entry as read once: what it names and the port it is
+// limited to (0 for any, -1 for a port that does not read, which no
+// request has). `Every` is `*`; `Named` a domain, matching the host and
+// its subdomains; `Under` a domain with its leading dot, the subdomains
+// only; `Addr` one address; `Block` the bytes of a CIDR prefix and its
+// length; `Nothing` an entry that reads as none of these.
+struct __Rule { what: __Match, port: i32 }
 
-// `__no_proxy_matches(entry, host, port, ip)` — whether one `no_proxy`
-// entry names `host` (an address `ip` when it is one) at `port`.
-function __no_proxy_matches(entry: string, host: string, port: i32, ip: Option[net.IpAddr]): boolean {
-  if (entry.len() == 0) {
-    return false;
+enum __Match { Every, Named(string), Under(string), Addr(net.IpAddr), Block(u8[], i32), Nothing }
+
+// `__rules_of(no_proxy)` — the variable's comma-separated entries as
+// rules, each trimmed, the empty ones dropped.
+function __rules_of(no_proxy: string): __Rule[] {
+  let out: __Rule[] = [];
+  if (no_proxy.len() == 0) {
+    return out;
   }
+  for entry in no_proxy.split(",") {
+    let e: string = entry.trim();
+    if (e.len() > 0) {
+      out = out.append(__rule_of(e));
+    }
+  }
+  return out;
+}
+
+// `__rule_of(entry)` — one non-empty entry read.
+function __rule_of(entry: string): __Rule {
   if (entry == "*") {
-    return true;
+    return __Rule { what: Every, port: 0 };
   }
-  let rule: __Rule = __entry_rule(entry);
-  if (rule.port != 0 && rule.port != port) {
-    return false;
-  }
-  let name: string = __host_name(rule.name);
+  let split: (string, i32) = __entry_split(entry);
+  let name: string = __host_name(split.0);
   if (name.index_of("/") >= 0) {
-    return __in_block(ip, name);
+    return __Rule { what: __block_of(name), port: split.1 };
   }
   match (__canonical_ip(name)) {
     Some(a) => {
-      return __same_ip(ip, a);
+      return __Rule { what: Addr(a), port: split.1 };
     },
     None => {}
   }
   if (name.starts_with(".")) {
-    return host.ends_with(name);
+    return __Rule { what: Under(name), port: split.1 };
   }
-  return host == name || host.ends_with("." + name);
+  return __Rule { what: Named(name), port: split.1 };
 }
 
-// `__entry_rule(entry)` — `entry` split into what it names and its
+// `__block_of(block)` — a CIDR entry's prefix bytes and length, or
+// `Nothing` when either does not read.
+function __block_of(block: string): __Match {
+  let slash: i32 = block.index_of("/");
+  let bits: i32 = -1;
+  match (int.parse_int_radix(slice_unchecked(block, slash + 1, block.len()).to_owned(), 10)) {
+    Some(n) => {
+      bits = n;
+    },
+    None => {}
+  }
+  match (__canonical_ip(slice_unchecked(block, 0, slash).to_owned())) {
+    Some(p) => {
+      let pb: u8[] = p.bytes();
+      if (bits < 0 || bits > pb.len() * 8) {
+        return Nothing;
+      }
+      return Block(pb, bits);
+    },
+    None => {
+      return Nothing;
+    }
+  }
+  return Nothing;
+}
+
+// `__no_proxy_matches(rule, host, port, ip)` — whether the rule names
+// `host` (the address `ip` when it is one) at `port`.
+function __no_proxy_matches(rule: __Rule, host: string, port: i32, ip: Option[net.IpAddr]): boolean {
+  if (rule.port != 0 && rule.port != port) {
+    return false;
+  }
+  match (rule.what) {
+    Every => {
+      return true;
+    },
+    Named(name) => {
+      return host == name || __under(host, name);
+    },
+    Under(suffix) => {
+      return host.ends_with(suffix);
+    },
+    Addr(a) => {
+      return __same_ip(ip, a);
+    },
+    Block(prefix, bits) => {
+      return __in_block(ip, prefix, bits);
+    },
+    Nothing => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `__under(host, name)` — whether `host` is a subdomain of `name`: ends
+// with it, after a dot.
+function __under(host: string, name: string): boolean {
+  let at: i32 = host.len() - name.len() - 1;
+  return at >= 0 && host[at] == 46 as u8 && host.ends_with(name);
+}
+
+// `__entry_split(entry)` — `entry` split into what it names and its
 // `:port`: a bracketed address keeps its brackets' contents, a bare one
 // with more than one colon is an IPv6 address with no port, and a zone
 // (`%eth0`) is dropped from either, a `/bits` after it kept.
-function __entry_rule(entry: string): __Rule {
+function __entry_split(entry: string): (string, i32) {
   let name: string = entry;
   let rest: string = "";
   if (entry.starts_with("[")) {
     let close: i32 = entry.index_of("]");
     if (close < 0) {
-      return __Rule { name: entry, port: -1 };
+      return (entry, -1);
     }
     name = slice_unchecked(entry, 1, close).to_owned();
     rest = slice_unchecked(entry, close + 1, entry.len()).to_owned();
@@ -3256,7 +3445,7 @@ function __entry_rule(entry: string): __Rule {
       rest = slice_unchecked(entry, colon, entry.len()).to_owned();
     }
   }
-  return __Rule { name: __without_zone(name), port: __rule_port(rest) };
+  return (__without_zone(name), __rule_port(rest));
 }
 
 // `__without_zone(name)` — `name` less its `%zone`, a `/bits` after the
@@ -3310,28 +3499,12 @@ function __same_ip(ip: Option[net.IpAddr], a: net.IpAddr): boolean {
   return false;
 }
 
-// `__in_block(ip, block)` — whether the host is an address in the CIDR
-// `block`.
-function __in_block(ip: Option[net.IpAddr], block: string): boolean {
-  let slash: i32 = block.index_of("/");
-  let bits: i32 = -1;
-  match (int.parse_int_radix(slice_unchecked(block, slash + 1, block.len()).to_owned(), 10)) {
-    Some(n) => {
-      bits = n;
-    },
-    None => {}
-  }
-  let prefix: Option[net.IpAddr] = __canonical_ip(slice_unchecked(block, 0, slash).to_owned());
+// `__in_block(ip, prefix, bits)` — whether the host is an address whose
+// first `bits` bits are `prefix`'s.
+function __in_block(ip: Option[net.IpAddr], prefix: u8[], bits: i32): boolean {
   match (ip) {
     Some(a) => {
-      match (prefix) {
-        Some(p) => {
-          return __prefix_matches(a, p, bits);
-        },
-        None => {
-          return false;
-        }
-      }
+      return __prefix_matches(a.bytes(), prefix, bits);
     },
     None => {
       return false;
@@ -3340,12 +3513,10 @@ function __in_block(ip: Option[net.IpAddr], block: string): boolean {
   return false;
 }
 
-// `__prefix_matches(a, p, bits)` — same family and the first `bits` bits
-// equal.
-function __prefix_matches(a: net.IpAddr, p: net.IpAddr, bits: i32): boolean {
-  let ab: u8[] = a.bytes();
-  let pb: u8[] = p.bytes();
-  if (ab.len() != pb.len() || bits < 0 || bits > ab.len() * 8) {
+// `__prefix_matches(ab, pb, bits)` — same family and the first `bits`
+// bits equal.
+function __prefix_matches(ab: u8[], pb: u8[], bits: i32): boolean {
+  if (ab.len() != pb.len()) {
     return false;
   }
   let i: i32 = 0;
@@ -3392,6 +3563,43 @@ function __proxy_of(spec: string, name: string): Result[__Proxy, FetchError] {
     port = 80;
   }
   return Ok(__Proxy { host: u.host, port: port, auth: __proxy_auth(full) });
+}
+
+// `__proxy_read(spec)` — the proxy `spec` names, when it reads as one.
+function __proxy_read(spec: string): Option[__Proxy] {
+  if (spec.len() == 0) {
+    return None;
+  }
+  match (__proxy_of(spec, "")) {
+    Ok(p) => {
+      return Some(p);
+    },
+    Err(e) => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// `__proxy_named(p, spec, tls)` — the proxy `p` read from `spec` (the
+// `https_proxy` under `tls`, else the `http_proxy`), or the refusal the
+// spec earns when it did not read.
+function __proxy_named(p: ProxyEnv, spec: string, tls: boolean): Result[__Proxy, FetchError] {
+  let read: Option[__Proxy] = p.http;
+  let name: string = "http_proxy";
+  if (tls) {
+    read = p.https;
+    name = "https_proxy";
+  }
+  match (read) {
+    Some(proxy) => {
+      return Ok(proxy);
+    },
+    None => {
+      return __proxy_of(spec, name);
+    }
+  }
+  return __proxy_of(spec, name);
 }
 
 // `__proxy_auth(full)` — `Basic` with the URL's userinfo as RFC 7617's

@@ -673,8 +673,11 @@ function __is_token(buf: u8[], from: i32, end: i32): boolean {
 // SIGN match `k`, and a byte-oriented intermediary would frame the
 // message differently.
 function __token_is(s: string, want: string): boolean {
-  let from: i32 = 0;
-  let end: i32 = s.len();
+  return __token_at(s, 0, s.len(), want);
+}
+
+// `__token_at(s, from, end, want)` — `__token_is` over s[from, end).
+function __token_at(s: string, from: i32, end: i32, want: string): boolean {
   while (from < end && __is_ows(s[from])) {
     from = from + 1;
   }
@@ -686,7 +689,7 @@ function __token_is(s: string, want: string): boolean {
   }
   let i: i32 = 0;
   while (i < want.len()) {
-    if (__ascii_lower(s[from + i]) != want[i] as i32) {
+    if (__ascii_lower(s[from + i]) != __ascii_lower(want[i])) {
       return false;
     }
     i = i + 1;
@@ -2511,13 +2514,11 @@ function __persists(version: string, h: HeaderMap, at: i32): boolean {
   let close: boolean = false;
   let keep: boolean = false;
   while (at >= 0) {
-    for tok in h.values[at].split(",") {
-      if (__token_is(tok, "close")) {
-        close = true;
-      }
-      if (__token_is(tok, "keep-alive")) {
-        keep = true;
-      }
+    if (__lists_token(h.values[at], "close")) {
+      close = true;
+    }
+    if (__lists_token(h.values[at], "keep-alive")) {
+      keep = true;
     }
     at = __field_at(h, "connection", at + 1);
   }
@@ -3476,22 +3477,37 @@ function __response_payload(buf: u8[], at: i32, h: HeaderMap, fields: (i32, i32,
 // strips these from what it sends and from what it hands back, since the
 // connection they describe is its own, not the caller's.
 pub function http_hop_by_hop(name: string): boolean {
-  return name.eq_ignore_ascii_case("connection") || name.eq_ignore_ascii_case("keep-alive") || name.eq_ignore_ascii_case("proxy-connection") || name.eq_ignore_ascii_case("transfer-encoding") || name.eq_ignore_ascii_case("te") || name.eq_ignore_ascii_case("trailer") || name.eq_ignore_ascii_case("upgrade");
+  let n: i32 = name.len();
+  if (n == 10) {
+    return name.eq_ignore_ascii_case("connection") || name.eq_ignore_ascii_case("keep-alive");
+  }
+  if (n == 17) {
+    return name.eq_ignore_ascii_case("transfer-encoding");
+  }
+  if (n == 16) {
+    return name.eq_ignore_ascii_case("proxy-connection");
+  }
+  if (n == 7) {
+    return name.eq_ignore_ascii_case("trailer") || name.eq_ignore_ascii_case("upgrade");
+  }
+  return n == 2 && name.eq_ignore_ascii_case("te");
 }
 
 // `http_end_to_end(h)` — `h` without its hop-by-hop fields and without
-// the fields its `Connection` names (§7.6.1: those are hop-by-hop too).
+// the fields its `Connection` names (§7.6.1: those are hop-by-hop too);
+// `h` itself when it holds none.
 pub function http_end_to_end(h: HeaderMap): HeaderMap {
-  let named: string[] = [];
-  for v in h.get_all("connection") {
-    for tok in v.split(",") {
-      named = named.append(tok.trim());
-    }
+  let i: i32 = 0;
+  while (i < h.names.len() && !http_hop_by_hop(h.names[i])) {
+    i = i + 1;
+  }
+  if (i == h.names.len()) {
+    return h;
   }
   let out: HeaderMap = headers.header_map_new();
-  let i: i32 = 0;
+  i = 0;
   while (i < h.names.len()) {
-    if (!http_hop_by_hop(h.names[i]) && !__names_hold(named, h.names[i])) {
+    if (!http_hop_by_hop(h.names[i]) && !http_connection_names(h, h.names[i])) {
       out = out.append(h.names[i], h.values[i]);
     }
     i = i + 1;
@@ -3499,11 +3515,35 @@ pub function http_end_to_end(h: HeaderMap): HeaderMap {
   return out;
 }
 
-function __names_hold(names: string[], name: string): boolean {
-  for n in names {
-    if (n.eq_ignore_ascii_case(name)) {
+// `http_connection_names(h, name)` — whether a `Connection` field of `h`
+// lists `name` (§7.6.1), the list's members compared as tokens: ASCII
+// case-folded, the whitespace around each ignored.
+pub function http_connection_names(h: HeaderMap, name: string): boolean {
+  let at: i32 = __field_at(h, "connection", 0);
+  while (at >= 0) {
+    if (__lists_token(h.values[at], name)) {
       return true;
     }
+    at = __field_at(h, "connection", at + 1);
+  }
+  return false;
+}
+
+// `__lists_token(value, want)` — whether the comma-separated list `value`
+// has a member that is the token `want`, compared as `__token_is` does,
+// each member read in place.
+function __lists_token(value: string, want: string): boolean {
+  let from: i32 = 0;
+  let n: i32 = value.len();
+  while (from <= n) {
+    let end: i32 = from;
+    while (end < n && value[end] != 44 as u8) {
+      end = end + 1;
+    }
+    if (__token_at(value, from, end, want)) {
+      return true;
+    }
+    from = end + 1;
   }
   return false;
 }

@@ -777,6 +777,23 @@ pub function ipv4_parse(s: string): Option[IpAddr] {
   return Some(V4([(a & 255) as u8, (b & 255) as u8, (c & 255) as u8, (d & 255) as u8]));
 }
 
+// `is_ipv4(s)` — whether `ipv4_parse(s)` would read an address, found
+// without building one: the same four octets, each `__octet` ending
+// where the next begins.
+pub function is_ipv4(s: string): boolean {
+  let at: i32 = 0;
+  let n: i32 = 0;
+  while (n < 4) {
+    let o: i32 = __octet(s, at, 46);
+    if (o < 0) {
+      return false;
+    }
+    at = (o >> 8) + 1;
+    n = n + 1;
+  }
+  return at == s.len() + 1;
+}
+
 function __hex_digit(c: i32): i32 {
   if (c >= 48 && c <= 57) {
     return c - 48;

@@ -262,7 +262,7 @@ function test_fetch_with_jar(): test.TestOutcome {
   let go: string = "HTTP/1.1 302 Status\r\nLocation: /ui/home\r\nSet-Cookie: hop=1; Path=/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
   let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).host("other.test", ["93.184.216.35"]).listen(ORIGIN, 80, 5).listen("93.184.216.35", 80, 5).route(ORIGIN, 80, "/login", [sim_fetch.raw(login)]).route(ORIGIN, 80, "/go", [sim_fetch.raw(go)]).route(ORIGIN, 80, "/ui/home", [sim_fetch.reply(200, "home")]).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "other")]);
   let j: cookie.Jar = cookie.jar();
-  let policy: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" }, roots: None, jar: Some(j), allow: None };
+  let policy: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxies("", "", ""), roots: None, jar: Some(j), allow: None };
   let r1: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/login"), policy);
   let r2: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://other.test/"), policy);
   let r3: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/go").with_header("Cookie", "given=1"), policy);

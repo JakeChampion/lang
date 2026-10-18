@@ -353,7 +353,7 @@ func TestRunnerNetExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/net", "# pass 10", "# fail 0", "1..10"} {
+	for _, w := range []string{"# Suite: std/net", "# pass 11", "# fail 0", "1..11"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -370,7 +370,7 @@ func TestRunnerFetchProxyExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/fetch proxies", "# pass 18", "# fail 0", "1..18"} {
+	for _, w := range []string{"# Suite: std/fetch proxies", "# pass 19", "# fail 0", "1..19"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

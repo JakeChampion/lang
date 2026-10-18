@@ -15,7 +15,7 @@ import "std/fetch";
 const PROXY: string = "http://proxy.example:3128";
 
 function skipping(skip: string): fetch.ProxyEnv {
-  return fetch.ProxyEnv { http_proxy: PROXY, https_proxy: "", no_proxy: skip };
+  return fetch.proxies(PROXY, "", skip);
 }
 
 // `via(p, url)` — the proxy `p` picks for `url`, or `direct`.
@@ -48,11 +48,11 @@ function routes(p: fetch.ProxyEnv, urls: string[]): string {
 }
 
 function test_no_proxy_configured(): test.TestOutcome {
-  return test.assert_eq(via(fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" }, "http://example.com/"), "direct");
+  return test.assert_eq(via(fetch.proxies("", "", ""), "http://example.com/"), "direct");
 }
 
 function test_each_scheme_has_its_proxy(): test.TestOutcome {
-  let both: fetch.ProxyEnv = fetch.ProxyEnv { http_proxy: PROXY, https_proxy: "http://tls-proxy.example:8080", no_proxy: "skip.example" };
+  let both: fetch.ProxyEnv = fetch.proxies(PROXY, "http://tls-proxy.example:8080", "skip.example");
   if (via(both, "http://example.com/") != PROXY || via(both, "https://example.com/") != "http://tls-proxy.example:8080" || via(both, "https://skip.example/") != "direct") {
     return test.fail("both set: " + via(both, "http://example.com/") + " " + via(both, "https://example.com/") + " " + via(both, "https://skip.example/"));
   }
@@ -129,8 +129,32 @@ function test_https_proxy_lowercase_wins_over_uppercase(): test.TestOutcome {
   return test.assert_eq(lower.https_proxy + "|" + upper.https_proxy, "http://a:1|http://b:2");
 }
 
+// `allocations(p, url, n)` — what `n` calls of `p.proxy_for(url)` allocate
+// after a first call, as the allocator counts them; 0 under -interp.
+function allocations(p: fetch.ProxyEnv, u: string, n: i32): i64 {
+  let warm: string = via(p, u);
+  let before: i64 = __heap_alloc_count();
+  let i: i32 = 0;
+  while (i < n) {
+    let picked: string = via(p, u);
+    i = i + 1;
+  }
+  return __heap_alloc_count() - before;
+}
+
+function test_a_no_proxy_list_is_read_once(): test.TestOutcome {
+  let long: fetch.ProxyEnv = skipping("a.example, .b.example, c.example:8080, 10.0.0.0/8, fd00::/8, 192.168.1.5, [fe80::1%eth0], d.example, e.example, f.example, g.example, h.example, i.example, j.example, k.example, 172.16.0.0/12, l.example, m.example, n.example, o.example");
+  if (routes(long, ["http://www.example.com/", "http://x.b.example/", "http://10.1.2.3/", "http://[fd12::1]/", "http://o.example/"]) != "proxy direct direct direct direct") {
+    return test.fail("the long list routes wrongly");
+  }
+  let name: i64 = allocations(long, "http://www.example.com/", 50) - allocations(skipping(""), "http://www.example.com/", 50);
+  let address: i64 = allocations(long, "http://11.0.0.1/", 50) - allocations(skipping(""), "http://11.0.0.1/", 50);
+  return test.assert_eq(name.to_string() + " " + address.to_string(), "0 0");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/fetch proxies");
+  r = r.it("a no_proxy list is read once", test_a_no_proxy_list_is_read_once);
   r = r.it("no proxy configured", test_no_proxy_configured);
   r = r.it("each scheme has its proxy", test_each_scheme_has_its_proxy);
   r = r.it("a proxy is the spec as given", test_a_proxy_is_the_spec_as_given);
