@@ -73,7 +73,9 @@ pub trait Debug {
 // ---- Display ---------------------------------------------------
 // Numeric + string types already have `to_string`; empty impls adopt
 // it. `boolean` and `u8` do not, so they get real bodies — `u8` is the
-// byte type (`s[i]`, #5629) and has no scalar module of its own.
+// byte type (`s[i]`, #5629) and has no scalar module of its own, and a
+// boolean's builtin `to_string` is no declaration a `dyn Display` can
+// dispatch to. The body below takes the builtin's place where it is loaded.
 
 impl Display for i32 {}
 

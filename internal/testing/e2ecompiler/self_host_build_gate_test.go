@@ -530,9 +530,9 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "error[E021]",
 		},
 		{
-			// The uncoded #9053 hint (`error[type]`) is a statement about what
-			// this checker can model, not about the program, so it must never
-			// reject a build. `is_diagnostic_code` is what keeps it out.
+			// The checker's uncoded internal error is a statement about the
+			// checker, not about the program, so it must never reject a build.
+			// `is_diagnostic_code` is what keeps it out.
 			name:     "uncoded-partial-checker-hint-does-not-gate",
 			src:      "enum W { Wrap(i32), Er2 }\nfunction main(): i32 { let w: W = W.Er2; match (w) { Wrap(Er2) => { return 1; }, Er2 => { return 2; } } }\n",
 			wantDiag: "",

@@ -411,7 +411,10 @@ pub function (p: Protection) open(r: Record): Result[Opened, RecordError] {
   let inner: u8[] = __open(p, r.fragment, header)?;
   let end: i32 = __content_end(inner)?;
   let t: ContentType = __inner_type(inner[end] as i32, end)?;
-  return Ok(Opened { content_type: t, content: __copy(inner, 0, end), next: next });
+  // The decrypted buffer is the frame's own; drop its type byte and padding
+  // by shortening it in place rather than copying the content out.
+  __arr_set_len(inner, end);
+  return Ok(Opened { content_type: t, content: inner, next: next });
 }
 
 // __content_end is where a decrypted record's content type sits: its last

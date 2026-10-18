@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-// Keep the fallback's examples paired with programs that still need it.
-// When the checker learns one of them, update the diagnostic as well as the
-// expected exit code. The other rows guard previously unsupported categories.
+// The fallback is the checker's internal error for a statement it could not
+// type. A row with a nonzero `fallback` is a valid program that still draws
+// it; the other rows guard previously unsupported categories.
 func TestSelfHostCheckerFallbackHint(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "fern.fern")
@@ -178,13 +178,72 @@ function main(): i32 { let c: boolean = true; let b = if (c) { Full(1) } else { 
 				t.Fatalf("self-host checker: %v, want exit %d\n%s", err, wantCode, out)
 			}
 			if tc.fallback != 0 {
-				want := `error[type]: "main": the self-host checker could not infer the type of the statement at line ` +
-					strconv.Itoa(tc.fallback) + " ("
-				if !strings.Contains(string(out), want) {
+				want := tc.name + ".fern:" + strconv.Itoa(tc.fallback) + ":"
+				if !strings.Contains(string(out), want) || !strings.Contains(string(out), `internal error: the checker could not type this statement in "main" (`) {
 					t.Errorf("diagnostic = %s, want %q", out, want)
 				}
 			} else if len(out) != 0 {
 				t.Errorf("accepted program emitted a diagnostic: %s", out)
+			}
+		})
+	}
+
+	// Programs both checkers reject, which this one used to report as the
+	// fallback: each must draw native's coded diagnostic, at native's
+	// position, and no internal error.
+	for _, tc := range []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{"try-option-in-result-fn", `function a(): Result[i32, IoError] {
+  let w: Writer = stdout();
+  w.write("hi\n")?;
+  return Ok(1);
+}
+function main(): i32 { return 0; }
+`, "3:18: error[E042]: `?` on Option requires the surrounding function to return Option, got Result[i32, IoError]"},
+		{"map-get-arity", `import "core/map";
+function main(): i32 {
+  let m: Map[string, i32] = map_new(4);
+  let z = m.get();
+  return 0;
+}
+`, `4:16: error[E004]: method "get" takes 1 argument but was given 0`},
+		{"string-method-arity", `import "std/string";
+function main(): i32 {
+  let s: string = "abc";
+  if (s.contains()) { return 1; }
+  return 0;
+}
+`, `4:17: error[E004]: method "contains" takes 1 argument but was given 0`},
+		{"method-read-as-field", `struct P { a: i32 }
+function (p: P) f(): i32 { return 1; }
+function main(): i32 {
+  let p = P { a: 1 };
+  let g = p.f;
+  return 0;
+}
+`, `5:12: error[E043]: struct P has no field or method "f"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, tc.name+".fern")
+			if err := os.WriteFile(path, []byte(tc.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			want := tc.name + ".fern:" + tc.want
+			nout, _ := exec.Command(native, "-check", path).CombinedOutput()
+			if !strings.Contains(string(nout), want) {
+				t.Fatalf("native checker no longer reports %q, so this row pins nothing:\n%s", want, nout)
+			}
+			cmd := runX86_64Bin(runner, driver)
+			cmd.Args = append(cmd.Args, "-check", path, stdlibRoot)
+			out, _ := cmd.CombinedOutput()
+			if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 1 {
+				t.Fatalf("self-host checker: want exit 1\n%s", out)
+			}
+			if !strings.Contains(string(out), want) || strings.Contains(string(out), "internal error") {
+				t.Errorf("diagnostic = %s, want %q and no internal error", out, want)
 			}
 		})
 	}
