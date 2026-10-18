@@ -1453,6 +1453,11 @@ func TestGenReachesOwnershipShapes(t *testing.T) {
 		{"bounded generic call (22%)", 0.10, regexp.MustCompile(`tg0\(`)},
 		{"call through a dyn parameter (21%)", 0.10, regexp.MustCompile(`(\(|, |\|> |= |return )dg0\(`)},
 		{"trait cluster: a dyn array and a reassigned dyn local (15%)", 0.07, regexp.MustCompile(`let __dyn_a\d+: dyn Tr0\[\] = `)},
+		{"associated function through a type parameter (9%)", 0.04, regexp.MustCompile(`(\(|, |\|> |= |return )tm0\(`)},
+		{"generic trait, static and dyn (11%)", 0.05, regexp.MustCompile(`(\(|, |\|> |= |return )(tcg0|dc0)\(`)},
+		{"trait object in a struct field (9%)", 0.04, regexp.MustCompile(`: DH0 = DH0 \{ d: `)},
+		{"trait object in a tuple (9%)", 0.04, regexp.MustCompile(`: \(dyn Tr0, i32\) = `)},
+		{"as? downcast of a trait object (5%)", 0.02, regexp.MustCompile(` as\? S\d+\) \{ Some\(`)},
 		{"generic struct and enum cluster (12%)", 0.06, regexp.MustCompile(`let __gen_a\d+: G0\[`)},
 		{"generic instance over a boxed type (9%)", 0.04, regexp.MustCompile(`let __gen_a\d+: G0\[(string|i32\[\]|i64\[\]|boolean\[\]|Pair|Xyz|Map|Option|Result|\(|S\d|E\d)`)},
 	}

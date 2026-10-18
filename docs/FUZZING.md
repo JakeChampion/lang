@@ -64,7 +64,14 @@ What a program can contain:
   `da0(ds: dyn Tr0[])` dispatch through the vtable. Concrete values reach
   them by coercion at the call site, and a cluster in a body builds a `dyn`
   array of mixed implementers and reassigns a `dyn` local from one
-  implementer to another, dropping the first object.
+  implementer to another, dropping the first object. The cluster also puts a
+  trait object in a struct field (`DH0 { d: dyn Tr0, k: i32 }`, then a
+  functional update that shares it) and in a tuple, and downcasts the
+  reassigned local or an array element with `as?` to a struct implementer.
+  Two optional traits sit beside it: `Mk0`, whose constructor is an
+  associated function the generic `tm0[T: Mk0]` calls as `T.mk0_new(x)`, and
+  the generic trait `Tc0[T]`, implemented at `i32` and reached through both
+  `tcg0[T: Tc0[i32]]` and `dyn Tc0[i32]`.
 - **Generic structs and enums** (`generics.go`): `G0[T]` and `GO0[T]` with
   methods, a functional update of the generic receiver inside a method, and a
   generic constructor, instantiated at a type drawn from main's pool, boxed
@@ -215,8 +222,6 @@ In order:
    failure bisects to one decision.
 3. Differential oracle inside the coverage-guided loop.
 4. Type-erasure / type-overwrite checker fuzzing, run against both checkers.
-5. The rest of the trait and generics surface in fernsmith: generic and
-   associated-type traits,
-   associated functions, consuming (`own`) receivers, `as?` downcasts, and
-   `dyn` in struct fields and tuples.
+5. The rest of the trait and generics surface in fernsmith: associated-type
+   traits and consuming (`own`) receivers.
 6. Signature-based nightly triage.
