@@ -122,8 +122,11 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 // ServeAllocsH3Ceiling bounds allocations per hello request over one HTTP/3
 // connection. The 100,000-request measurement and ratchet are recorded in
 // docs/benchmarks/net-h3-2026-10-17.md; 265.2 on arm64 since elements are
-// re-read where their record dies.
-const ServeAllocsH3Ceiling = 267
+// re-read where their record dies; 255.2 here and 256.2 on the CI runner
+// on x86-64 with the request target handed back when already normal and
+// the handler started from its request rather than a framed record built
+// around it.
+const ServeAllocsH3Ceiling = 257
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)
