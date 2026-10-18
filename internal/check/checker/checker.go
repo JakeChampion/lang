@@ -4740,6 +4740,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// `__method_string_len(s)` call and emits OpStrLen so a
 	// future SSO pass can change the encoding in one place.
 	registerStringMethod("len", nil, ast.NumberType{})
+	// A scalar builtin method is a signature with no Methods entry, so a
+	// declared method of the name takes over the dispatch and the signature
+	// (builtinScalarMethod, isScalarBuiltinMethod).
+	c.info.FuncSigs["__method_boolean_to_string"] = &ast.FuncType{Params: []ast.Type{ast.BoolType{}}, Result: ast.StringType{}}
 
 	// `string_from_bytes_unchecked(bs: u8[]): string` — build a
 	// string from bytes WITHOUT validating them. The contract is
@@ -5244,7 +5248,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			// See docs/TRAITS.md §4.
 			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
 		}
-		if _, dup := c.info.FuncSigs[fn.Name]; dup {
+		if _, dup := c.info.FuncSigs[fn.Name]; dup && !isScalarBuiltinMethod(fn.Name) {
 			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
 			continue
 		}
@@ -8787,11 +8791,27 @@ func (c *checker) typeImplementsDisplay(t ast.Type) bool {
 	if tn == "" {
 		return false
 	}
-	mangled, _, ok := c.resolveMethod(tn, "to_string", []string{"Display"})
-	if !ok {
-		return false
+	if mangled, _, ok := c.resolveMethod(tn, "to_string", []string{"Display"}); ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(tn, "to_string")) {
+		return true
 	}
-	return c.methodVisibleHere(mangled) || c.methodImplementsTrait(tn, "to_string")
+	_, builtin := builtinScalarMethod(tn, "to_string")
+	return builtin
+}
+
+// builtinScalarMethod is the builtin a scalar method call resolves to when no
+// declared method of that name is visible: a boolean's `to_string` needs no
+// import, the way the f-string desugar and the Display spine reach it.
+func builtinScalarMethod(typeName, name string) (string, bool) {
+	if typeName == "boolean" && name == "to_string" {
+		return "__method_boolean_to_string", true
+	}
+	return "", false
+}
+
+// isScalarBuiltinMethod reports whether mangled names a scalar builtin
+// method, whose signature a declaration of the same method replaces.
+func isScalarBuiltinMethod(mangled string) bool {
+	return mangled == "__method_boolean_to_string"
 }
 
 type checker struct {
@@ -19439,6 +19459,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// bytes into a real wide-stride result. Both
 					// share the same mangled name; the IR sees
 					// the receiver's V via `b.exprType(args[0])`.
+				} else if builtin, ok := builtinScalarMethod(typeName, fa.Field); ok {
+					n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tt}
+					n.Callee = &ast.Ident{P: fa.P, Name: builtin}
+					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
+					recvIsArg0 = true
 				}
 			}
 		}

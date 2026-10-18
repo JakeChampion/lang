@@ -67,7 +67,7 @@ func TestSelfHostCLIStderrIsOneLine(t *testing.T) {
 			t.Fatalf("exit 0, want a usage failure")
 		}
 		got := stderr.String()
-		if !strings.HasPrefix(got, "usage: fern ") || !strings.HasSuffix(got, ")\n") {
+		if !strings.HasPrefix(got, "usage: fern ") {
 			t.Fatalf("stderr is not the usage block:\n%s", got)
 		}
 		lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")

@@ -4249,6 +4249,15 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         fi = fi + 1;
       }
     },
+    VBool(bv) => {
+      // A boolean's builtin `to_string`, which a declared one takes over.
+      if (name == "to_string" && args.len() == 0) {
+        if (bv.v) {
+          return v_string("true");
+        }
+        return v_string("false");
+      }
+    },
     _ => {}
   }
   return v_err("undefined method `" + name + "` on `" + recv_type + "`");

@@ -14,12 +14,14 @@ the float edges are under-specified, the integer edges are pinned.
 ## Wrapping arithmetic
 
 `+`, `-`, `*`, and `<<` **wrap** (two's-complement modular arithmetic)
-at the operand's width. There is no overflow trap.
+at the operand's width. There is no overflow trap. Unary `-x` is `0 - x`,
+so on an unsigned type it wraps too.
 
 ```
 255u8 + 1   == 0          // wraps at 8 bits
 2147483647 + 1 == -2147483648   // i32
 100000 * 100000 == 1410065408   // i32, mod 2^32
+-(5 as u32) == 4294967291 // u32, mod 2^32
 ```
 
 Shift counts are masked to the operand width: a 32-bit (or sub-i32)

@@ -282,6 +282,33 @@ pub function stmt_line(st: Stmt): i32 {
   return 0;
 }
 
+// stmt_col is a statement's column where the parser records one, else 0.
+pub function stmt_col(st: Stmt): i32 {
+  match (st) {
+    StmtVar(v) => {
+      return v.col;
+    },
+    StmtReturn(r) => {
+      return r.col;
+    },
+    StmtAssign(a) => {
+      return a.col;
+    },
+    StmtMatch(m) => {
+      return m.col;
+    },
+    StmtBreak(b) => {
+      return b.col;
+    },
+    StmtContinue(c) => {
+      return c.col;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
 pub function expr_line(e: Expr): i32 {
   match (e) {
     ExprNumber(n) => {

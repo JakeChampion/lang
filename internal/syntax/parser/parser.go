@@ -488,6 +488,7 @@ func (p *parser) parseProgram() *ast.Program {
 		mustConsume := false
 		tryMarker := false
 		inlineHint := ast.InlineHintNone
+		attrName := ""
 		if p.match(lexer.Punct, "@") {
 			attr, err := p.parseAttribute()
 			if err != nil {
@@ -506,6 +507,7 @@ func (p *parser) parseProgram() *ast.Program {
 			mustConsume = attr.mustConsume
 			tryMarker = attr.tryMarker
 			inlineHint = attr.inlineHint
+			attrName = attr.name
 		}
 		// `pub` is an optional prefix on function, struct, enum, or
 		// const decls at the top level. Track it and consume; the
@@ -521,7 +523,7 @@ func (p *parser) parseProgram() *ast.Program {
 			// to outside consumers. `package` is a contextual ident.
 			if _, ok := p.accept(lexer.Punct, "("); ok {
 				if _, err := p.expect(lexer.Ident, "package"); err != nil {
-					p.errors = append(p.errors, p.errorf(pubTok.Pos, "`pub(...)` only supports `pub(package)`"))
+					p.errors = append(p.errors, p.errorfCode(pubTok.Pos, "P001", "`pub(...)` only supports `pub(package)`"))
 					p.syncToTopLevel()
 					if p.i == before {
 						p.advance()
@@ -542,6 +544,11 @@ func (p *parser) parseProgram() *ast.Program {
 			// rather than as a normal `pub <decl>` because it produces a
 			// PubUse, not a Public-flagged declaration.
 			if p.match(lexer.Keyword, "use") {
+				if attrName != "" {
+					p.errors = append(p.errors, p.errorfCode(p.peek().Pos, "P001", "%s", attrMisplaced(attrName)))
+					p.syncToTopLevel()
+					continue
+				}
 				pu, err := p.parsePubUse(pubTok.Pos)
 				if err != nil {
 					p.errors = append(p.errors, err)
@@ -566,7 +573,7 @@ func (p *parser) parseProgram() *ast.Program {
 				!p.match(lexer.Ident, "fip") &&
 				!p.match(lexer.Ident, "fbip") &&
 				!p.match(lexer.Ident, "async") {
-				p.errors = append(p.errors, p.errorf(pubTok.Pos,
+				p.errors = append(p.errors, p.errorfCode(pubTok.Pos, "P001",
 					"`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, `fbip`, or `async`"))
 				p.syncToTopLevel()
 				if p.i == before {
@@ -638,13 +645,28 @@ func (p *parser) parseProgram() *ast.Program {
 			p.advance() // opaque
 			isOpaque = true
 		}
+		isResource := p.match(lexer.Ident, "resource") && p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident
+		declKind := ""
+		if isResource {
+			declKind = "resource"
+		} else if p.peek().Kind == lexer.Keyword {
+			declKind = p.peek().Text
+		}
+		if !attrFits(attrName, declKind) {
+			p.errors = append(p.errors, p.errorfCode(p.peek().Pos, "P001", "%s", attrMisplaced(attrName)))
+			p.syncToTopLevel()
+			if p.i == before {
+				p.advance()
+			}
+			continue
+		}
 		// `resource Name;` — a nominal WIT resource-handle type (P5 —
 		// docs/WIT-BRING-YOUR-OWN.md), referenced as `own Name` / `borrow
 		// Name`. An optional preceding `@import(iface, wit-resource-name)`
 		// binds its WIT identity (used by the drop slice). Contextual keyword:
 		// `resource` followed by an identifier at decl position, so `resource`
 		// stays usable as an ordinary identifier elsewhere.
-		if p.match(lexer.Ident, "resource") && p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident {
+		if isResource {
 			rd, err := p.parseResourceDecl()
 			if err != nil {
 				p.errors = append(p.errors, err)
@@ -659,47 +681,7 @@ func (p *parser) parseProgram() *ast.Program {
 				rd.PackageScoped = isPackage
 				rd.ImportIface = importIface
 				rd.ImportWITName = importWIT
-				if len(derives) > 0 {
-					p.errors = append(p.errors, p.errorf(rd.P,
-						"@derive only applies to a `struct` or `enum` declaration"))
-				}
-				if exportIface != "" {
-					p.errors = append(p.errors, p.errorf(rd.P,
-						"@export only applies to a function declaration"))
-				}
 				prog.Resources = append(prog.Resources, rd)
-			}
-			continue
-		}
-		// `@import` binds a single body-less function or a `resource`
-		// declaration — once the optional `pub`/`fip` modifiers are consumed,
-		// the next token must be `function` (the `resource` case is handled
-		// above and `continue`s before reaching here).
-		if importIface != "" && !p.match(lexer.Keyword, "function") {
-			p.errors = append(p.errors, p.errorf(p.peek().Pos,
-				"@import only applies to a function or resource declaration"))
-			p.syncToTopLevel()
-			if p.i == before {
-				p.advance()
-			}
-			continue
-		}
-		if inlineHint != ast.InlineHintNone && !p.match(lexer.Keyword, "function") && !p.match(lexer.Keyword, "async") {
-			p.errors = append(p.errors, p.errorf(p.peek().Pos,
-				"@inline / @noinline only applies to a function declaration"))
-			p.syncToTopLevel()
-			if p.i == before {
-				p.advance()
-			}
-			continue
-		}
-		// `@export` binds a single function (with a body) to a WIT export (P6).
-		if exportIface != "" && !p.match(lexer.Keyword, "function") {
-			p.errors = append(p.errors, p.errorf(p.peek().Pos,
-				"@export only applies to a function declaration"))
-			p.syncToTopLevel()
-			if p.i == before {
-				p.advance()
 			}
 			continue
 		}
@@ -720,14 +702,6 @@ func (p *parser) parseProgram() *ast.Program {
 				sd.MustConsume = mustConsume
 				sd.Opaque = isOpaque
 				prog.Structs = append(prog.Structs, sd)
-			}
-			// `@try` needs the two-variant shape `?` lowers against, which
-			// a struct cannot have. Reported here rather than dropped: the
-			// marker is the whole opt-in, so silently ignoring it would
-			// leave the author thinking the type was `?`-able.
-			if tryMarker {
-				p.errors = append(p.errors, p.errorf(p.peek().Pos,
-					"@try only applies to an `enum` declaration"))
 			}
 			continue
 		}
@@ -773,33 +747,6 @@ func (p *parser) parseProgram() *ast.Program {
 				ed.MustConsume = mustConsume
 				ed.Try = tryMarker
 				prog.Enums = append(prog.Enums, ed)
-			}
-			continue
-		}
-		if len(derives) > 0 {
-			p.errors = append(p.errors, p.errorf(p.peek().Pos,
-				"@derive only applies to a `struct` or `enum` declaration"))
-			p.syncToTopLevel()
-			if p.i == before {
-				p.advance()
-			}
-			continue
-		}
-		if tryMarker {
-			p.errors = append(p.errors, p.errorf(p.peek().Pos,
-				"@try only applies to an `enum` declaration"))
-			p.syncToTopLevel()
-			if p.i == before {
-				p.advance()
-			}
-			continue
-		}
-		if mustConsume {
-			p.errors = append(p.errors, p.errorf(p.peek().Pos,
-				"@must_consume only applies to a `struct` or `enum` declaration"))
-			p.syncToTopLevel()
-			if p.i == before {
-				p.advance()
 			}
 			continue
 		}
@@ -1361,11 +1308,12 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	return id, methods, nil
 }
 
-// declAttr is the parsed result of a leading `@…` declaration attribute.
-// Exactly one flavour is set per attribute: Derives (from `@derive`),
+// declAttr is the parsed result of a leading `@…` declaration attribute: its
+// name, and exactly one flavour per attribute: Derives (from `@derive`),
 // (ImportIface, ImportWIT) (from `@import`), or (ExportIface, ExportWIT)
 // (from `@export`).
 type declAttr struct {
+	name        string
 	derives     []string
 	importIface string
 	importWIT   string
@@ -1423,27 +1371,27 @@ func (p *parser) parseAttribute() (declAttr, error) {
 		if _, err := p.expect(lexer.Punct, ")"); err != nil {
 			return declAttr{}, err
 		}
-		return declAttr{derives: derives}, nil
+		return declAttr{name: attr, derives: derives}, nil
 	case "must_consume":
 		// `@must_consume` — bare marker, no arguments. Applies to a
 		// struct or enum declaration; the checker's E067 walk
 		// enforces that values of the type are consumed on every
 		// path. See docs/MUST-CONSUME.md.
-		return declAttr{mustConsume: true}, nil
+		return declAttr{name: attr, mustConsume: true}, nil
 	case "try":
 		// `@try` — bare marker on an ENUM declaration: this type may be
 		// used with `?`. The checker enforces the two-variant shape the
 		// operator's lowering requires (E078). See docs/TRY.md.
-		return declAttr{tryMarker: true}, nil
+		return declAttr{name: attr, tryMarker: true}, nil
 	case "inline":
 		// `@inline` — bare marker on a function: lift the IR
 		// inliner's size cap for this callee (shape-safety
 		// exclusions still apply). #4412 Rec §14.
-		return declAttr{inlineHint: ast.InlineHintAlways}, nil
+		return declAttr{name: attr, inlineHint: ast.InlineHintAlways}, nil
 	case "noinline":
 		// `@noinline` — bare marker on a function: never inline
 		// this callee.
-		return declAttr{inlineHint: ast.InlineHintNever}, nil
+		return declAttr{name: attr, inlineHint: ast.InlineHintNever}, nil
 	case "import", "export":
 		// `@import(iface, name)` and `@export(iface, name)` share the same
 		// two-string shape; only the binding direction differs.
@@ -1452,12 +1400,45 @@ func (p *parser) parseAttribute() (declAttr, error) {
 			return declAttr{}, err
 		}
 		if attr == "import" {
-			return declAttr{importIface: iface, importWIT: name}, nil
+			return declAttr{name: attr, importIface: iface, importWIT: name}, nil
 		}
-		return declAttr{exportIface: iface, exportWIT: name}, nil
+		return declAttr{name: attr, exportIface: iface, exportWIT: name}, nil
 	default:
-		return declAttr{}, p.errorf(at.Pos, "unknown attribute @%s (only @derive, @import, @export, @must_consume, @try, @inline, and @noinline are supported)", attr)
+		return declAttr{}, p.errorfCode(at.Pos, "P001", "unknown attribute @%s (only @derive, @import, @export, @must_consume, @try, @inline, and @noinline are supported)", attr)
 	}
+}
+
+// attrFits reports whether attribute name may precede a declaration of kind
+// (its keyword, or "resource"). `@try` needs the two-variant shape `?` lowers
+// against, so it is enum-only.
+func attrFits(name, kind string) bool {
+	switch name {
+	case "":
+		return true
+	case "derive", "must_consume":
+		return kind == "struct" || kind == "enum"
+	case "try":
+		return kind == "enum"
+	case "import":
+		return kind == "function" || kind == "resource"
+	}
+	return kind == "function"
+}
+
+// attrMisplaced is the diagnostic for attribute name before a declaration it
+// does not apply to.
+func attrMisplaced(name string) string {
+	switch name {
+	case "derive", "must_consume":
+		return "@" + name + " only applies to a `struct` or `enum` declaration"
+	case "try":
+		return "@try only applies to an `enum` declaration"
+	case "import":
+		return "@import only applies to a function or resource declaration"
+	case "export":
+		return "@export only applies to a function declaration"
+	}
+	return "@inline / @noinline only applies to a function declaration"
 }
 
 // parseIfaceNamePair parses `("iface", "name")` — the argument shape shared by
