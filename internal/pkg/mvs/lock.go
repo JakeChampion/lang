@@ -99,7 +99,7 @@ func ReadLock(dir string) (map[string]Selected, error) {
 			cur.Source.URL = v
 		case "hash":
 			if !validHashShape(v) {
-				return nil, fmt.Errorf("%s line %d: hash must be `sha256:` + 64 hex digits, got %q", LockFileName, ln+1, v)
+				return nil, fmt.Errorf("%s line %d: hash must be `sha256:` + 64 lowercase hex digits of the archive bytes, got %q", LockFileName, ln+1, v)
 			}
 			cur.Source.Hash = v
 		default:

@@ -1,0 +1,34 @@
+// compiler/drivers/manifest_parse_run.fern — the self-host half of the
+// manifest parser parity test: for each fern.toml path argument, one line,
+// `ok` or `err <diagnostic>` from fern_toml.parse. The companion Go test
+// expects manifest.Parse's verdict on every row.
+
+import "../fern_toml";
+
+function verdict(path: string): string {
+  match (read_file(path)) {
+    Ok(src) => {
+      let m: fern_toml.Manifest = fern_toml.parse(src);
+      if (m.err.len() > 0) {
+        return "err " + m.err;
+      }
+      return "ok";
+    },
+    Err(e) => {
+      return "unreadable " + path;
+    }
+  }
+  return "";
+}
+
+function main(): i32 {
+  let av: string[] = args();
+  let out: string = "";
+  let i: i32 = 1;
+  while (i < av.len()) {
+    out = out + verdict(av[i]) + "\n";
+    i = i + 1;
+  }
+  write(out);
+  return 0;
+}

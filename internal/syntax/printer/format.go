@@ -865,7 +865,7 @@ func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 		wrote = true
 	}
 	f.b.WriteByte(')')
-	if fn.ReturnType != nil {
+	if fn.ReturnType != nil && !fn.ReturnUnannotated {
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(fn.ReturnType))
 	}
@@ -1003,7 +1003,7 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		}
 	}
 	f.b.WriteByte(')')
-	if fn.ReturnType != nil {
+	if fn.ReturnType != nil && !fn.ReturnUnannotated {
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(fn.ReturnType))
 	}

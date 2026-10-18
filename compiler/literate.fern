@@ -382,7 +382,7 @@ function header_index(lines: string[], first: i32, count: i32): i32 {
   return 0 - 1;
 }
 
-function join_range(lines: string[], from: i32, to: i32): string {
+pub function join_range(lines: string[], from: i32, to: i32): string {
   let s: string = "";
   let i: i32 = from;
   while (i < to) {

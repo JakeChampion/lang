@@ -67,6 +67,9 @@ var fmtParityCases = []struct {
 	// compile parse stamps the return type onto the lambda, and -fmt must print
 	// the lambda as written (#12359).
 	{"lambda-return-as-written", fmtLambdaAsWrittenSrc},
+	// A function written without a return type (E081) prints without one;
+	// native used to fill in the parser's `: void` default.
+	{"omitted-return-type-as-written", "function helper() {}\n\nfunction main(): i32 {\n  return 0;\n}\n"},
 	// A value block whose statements span lines prints one per line (#12393).
 	{"value-block-statements-span-lines", `function g(c: boolean, n: i32): i32 {
   let total: i32 = 0;

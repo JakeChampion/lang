@@ -13,6 +13,11 @@
 // ignoring case). Used by the `to_binary` / `to_oct` / `to_hex`
 // / `parse_hex_int` / etc. method-style sugar in std/i32.
 
+// SMALL_INTS is "0" to "99": a small number's string costs no allocation.
+const SMALL_INTS: string[] = [
+  "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89", "90", "91", "92", "93", "94", "95", "96", "97", "98", "99",
+];
+
 // __int_pair_table is "00", "01", … "99" concatenated: the two ASCII digits of
 // `d` (0..99) live at offsets `2*d` and `2*d + 1`. It is what lets the
 // conversion loops below consume TWO decimal digits per division.
@@ -92,6 +97,9 @@ function __int_u32_digits(u: u32): i32 {
 // (8-byte-slotted `u8[]`). The element-wise form is layout-agnostic, so it is
 // correct on every backend and lowers on the self-host IR path.
 pub function int_to_string(n: i32): string {
+  if (n >= 0 && n < 100) {
+    return SMALL_INTS[n];
+  }
   let neg: boolean = false;
   if (n < 0) {
     neg = true;

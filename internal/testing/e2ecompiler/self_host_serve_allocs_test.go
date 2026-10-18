@@ -104,9 +104,12 @@ func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 // in one allocation, a request target handed back when already normal, a
 // response that fits sent at once, the read buffer fed without a copy,
 // the Date carried by the connection and the handler started from its
-// request, 41.0 on x86-64 (docs/NET-P6-HTTP2-PLAN.md slice 4 has each);
-// the CI runner reads a few lower, as the note on serveAllocsH2Drift says.
-const ServeAllocsH2Ceiling = 42
+// request, 41.0 on x86-64; with a header block read one field at a time,
+// a response written in one buffer from the body's own bytes and the
+// request's HEADERS frame read off the inbox without its record, 21.0
+// (docs/NET-P6-HTTP2-PLAN.md slice 4 has each); the CI runner reads a
+// few lower, as the note on serveAllocsH2Drift says.
+const ServeAllocsH2Ceiling = 22
 
 func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	cli := buildSelfHostCLI(t)
