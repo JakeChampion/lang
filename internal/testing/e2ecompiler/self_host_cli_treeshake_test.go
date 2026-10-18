@@ -552,7 +552,9 @@ function main(): i32 {
 // holding a map roots core/map's runtime only when the program can reach the
 // struct. std/cli declares `CliArgs { opts: Map[string, string], … }`, and
 // importing std/cli for `flag_on` alone carried the whole map runtime into
-// every server, 30% of bench/http_hello's code.
+// every server, 30% of bench/http_hello's code. A struct named only as the
+// `Self` of an impl method kept for dynamic dispatch is live: the method's
+// release of `self` runs its drop glue.
 func TestSelfHostTreeshakeKeepsMapRuntimeOnlyForLiveMapsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -575,6 +577,15 @@ function main(): i32 { if (cli.flag_on("1")) { return 0; } return 1; }
 		{"live-map-struct", `import "core/map";
 struct Opts { m: Map[string, i32] }
 function main(): i32 { let o: Opts = Opts { m: map_new(4) }; let p: Opts = Opts { m: o.m.insert("a", 1) }; return p.m.len() - 1; }
+`, true},
+		{"self-of-dyn-method", `import "core/map";
+struct S { m: Map[i32, i32] }
+trait T { function get(self: Self): i32; }
+impl T for S { function get(self: Self): i32 { return 1; } }
+struct U { n: i32 }
+impl T for U { function get(self: Self): i32 { return self.n; } }
+function f(o: dyn T): i32 { return o.get(); }
+function main(): i32 { return f(U { n: 3 }) - 3; }
 `, true},
 	}
 	for _, c := range cases {
