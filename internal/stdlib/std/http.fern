@@ -642,6 +642,27 @@ const NOT_TCHAR: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
 ];
 
+// NOT_TCHAR with the capitals: the bytes a field name may not carry where
+// names are lower case, as HTTP/2 and HTTP/3 carry them.
+const NOT_LOWER_TCHAR: u8[] = [
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 1u8, 0u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+  1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
+];
+
 const FIELD_CTL: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 0u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
@@ -3610,6 +3631,12 @@ pub function http_field_name_ok(name: string): boolean {
   return __str_is_token(name);
 }
 
+// `http_field_name_lower_ok(name)` — whether `name` is a field name as
+// HTTP/2 and HTTP/3 carry one: a token with no capital (RFC 9113 §8.2.1).
+pub function http_field_name_lower_ok(name: string): boolean {
+  return name.len() > 0 && __scan_set(name, 0, NOT_LOWER_TCHAR) == name.len();
+}
+
 // `http_fields_ok(fields)` — whether every field of the map can be written
 // as a field line: a token name and a value `http_field_value_ok` admits.
 pub function http_fields_ok(fields: HeaderMap): boolean {
@@ -3627,12 +3654,5 @@ pub function http_fields_ok(fields: HeaderMap): boolean {
 // line: no control byte but HTAB and no DEL (RFC 9110 §5.5), the rule
 // `__field_value` reads a value by.
 pub function http_field_value_ok(value: string): boolean {
-  let i: i32 = 0;
-  while (i < value.len()) {
-    if (value[i] < 32 as u8 && value[i] != 9 as u8 || value[i] == 127 as u8) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
+  return __scan_set(value, 0, FIELD_CTL) == value.len();
 }

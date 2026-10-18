@@ -788,7 +788,7 @@ function __response_field(s: __Stream, name: string, value: string): __Stream {
     }
     return __Stream { ...s, status: __status_of(value) };
   }
-  if (__has_upper(name) || !http.http_field_name_ok(name) || !http.http_field_value_ok(value) || __connection_specific(name)) {
+  if (!http.http_field_name_lower_ok(name) || !http.http_field_value_ok(value) || __connection_specific(name)) {
     return __malformed(s);
   }
   if (name == "content-length") {
@@ -1025,7 +1025,7 @@ function __pseudo(s: __Stream, name: string, value: string): __Stream {
 }
 
 function __regular(s: __Stream, name: string, value: string): __Stream {
-  if (__has_upper(name) || !http.http_field_name_ok(name) || !http.http_field_value_ok(value) || __connection_specific(name)) {
+  if (!http.http_field_name_lower_ok(name) || !http.http_field_value_ok(value) || __connection_specific(name)) {
     return __malformed(s);
   }
   if (name == "te" && value != "trailers") {
@@ -1037,22 +1037,17 @@ function __regular(s: __Stream, name: string, value: string): __Stream {
   return __Stream { ...s, fields: s.fields.append(name, value) };
 }
 
-// __has_upper is whether a field name has an ASCII capital, which HTTP/2
-// refuses (§8.2.1).
-function __has_upper(name: string): boolean {
-  let i: i32 = 0;
-  while (i < name.len()) {
-    if (name[i] >= b'A' && name[i] <= b'Z') {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
-// __connection_specific names the fields HTTP/2 has no place for (§8.2.2).
+// __connection_specific names the fields HTTP/2 has no place for (§8.2.2),
+// told apart by length first.
 function __connection_specific(name: string): boolean {
-  return name == "connection" || name == "keep-alive" || name == "proxy-connection" || name == "transfer-encoding" || name == "upgrade";
+  let n: i32 = name.len();
+  if (n == 10) {
+    return name == "connection" || name == "keep-alive";
+  }
+  if (n == 16 || n == 17) {
+    return name == "proxy-connection" || name == "transfer-encoding";
+  }
+  return n == 7 && name == "upgrade";
 }
 
 // __with_length remembers a content-length, which must be a number and

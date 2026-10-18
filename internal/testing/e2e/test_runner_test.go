@@ -1272,7 +1272,7 @@ func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
 // refused, malformed requests reset and malformed connections closed, HEAD
 // answered without a body, and the control frames.
 func TestRunnerHTTPH2ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h2", "std/http/h2", 19)
+	runnerSuitePasses(t, "http_h2", "std/http/h2", 20)
 }
 
 // `tests/stdlib/quic_frames_test.fern` reads and writes every QUIC frame,
