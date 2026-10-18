@@ -3865,7 +3865,7 @@ answer is `Result[HttpResponse, FetchError]`.
   `plat.http`'s, and `public_policy_via(proxies)` the same route through
   `proxies` in place of the environment's.
   `sockets()` is the machine's (the system resolver, `dns.connect_race`,
-  `tcp_recv_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
+  `net.read_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
   scripts one in virtual time.
 - **HTTP/2:** an `https` origin that chooses `h2` by ALPN is spoken to
   over HTTP/2 (`std/http/h2`'s client side): the request on a stream of

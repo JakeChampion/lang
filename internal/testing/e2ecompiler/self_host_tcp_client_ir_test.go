@@ -78,8 +78,8 @@ func TestSelfHostTcpClientIRX86_64(t *testing.T) {
 	if strings.Contains(string(asm), "__fern_tcp_pollable") {
 		t.Fatal("native pollable identity still calls a runtime helper")
 	}
-	for _, sym := range []string{"call __fn___fern_tcp_connect", "call __fn___fern_tcp_send", "call __fn___fern_tcp_recv", "call __fn___fern_tcp_close"} {
-		if !strings.Contains(string(asm), sym) {
+	for _, sym := range []string{"__fn___fern_tcp_connect_with_u8", "__fn___fern_tcp_send_bytes_u8", "__fn___fern_tcp_recv_into_u8", "__fn___fern_tcp_close"} {
+		if !strings.Contains(string(asm), "call "+sym+"\n") {
 			t.Errorf("emitted asm missing %q (tcp op did not lower through the IR path)", sym)
 		}
 	}
