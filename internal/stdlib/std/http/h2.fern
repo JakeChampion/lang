@@ -651,21 +651,48 @@ function __block_done(r: __Run, stream: i32, block: u8[], end_stream: boolean): 
 // __skipped is `r` with its decoder past `block` and the fields dropped:
 // a block on a stream that takes none still moves the table.
 function __skipped(r: __Run, block: u8[]): __Run {
-  let st: hpack.Decoding = r.conn.decoder.start();
-  while (st.more(block)) {
+  let c: Conn = r.conn;
+  let st: hpack.Decoder = c.decoder.start(block);
+  while (st.more()) {
     st = st.next(block);
   }
-  match (st.error) {
-    Some(e) => {
-      return __fail(r, frame.COMPRESSION_ERROR, e.message());
-    },
-    None => {}
+  return __decoded(__Run { ...r, conn: Conn { ...c, decoder: st } });
+}
+
+// __decoded is `r`, whose connection has its decoder back from a block,
+// closed with COMPRESSION_ERROR when the block failed. A block's reader
+// takes the decoder out of the connection and puts it back in one
+// construction of the run, which it names nowhere else after the take:
+// that is what lets the reads update the decoder in place rather than
+// copy it.
+function __decoded(r: __Run): __Run {
+  if (!r.conn.decoder.failed) {
+    return r;
   }
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
-  c = Conn { ...c, decoder: c.decoder.finish(st) };
-  return __Run { conn: c, out: out, events: events };
+  let why: string = __hpack_reason(r.conn.decoder.error);
+  return __fail(r, frame.COMPRESSION_ERROR, why);
+}
+
+// __last_seen is the connection's last stream once a block opening
+// `stream` was read: unchanged when the block failed, since the
+// connection closes at it.
+function __last_seen(last: i32, stream: i32, failed: boolean): i32 {
+  if (failed) {
+    return last;
+  }
+  return __max(last, stream);
+}
+
+function __hpack_reason(error: Option[hpack.HpackError]): string {
+  match (error) {
+    Some(e) => {
+      return e.message();
+    },
+    None => {
+      return "";
+    }
+  }
+  return "";
 }
 
 // __reset_past is a stream error on a block the stream takes nothing
@@ -704,24 +731,19 @@ function __client_block(r: __Run, stream: i32, at: i32, block: u8[], end_stream:
 // other than 101 is stepped over, the final response still to come.
 function __response_head(r: __Run, at: i32, block: u8[], end_stream: boolean): __Run {
   let s: __Stream = r.conn.streams[at];
-  let st: hpack.Decoding = r.conn.decoder.start();
-  while (st.more(block)) {
+  let c: Conn = r.conn;
+  let st: hpack.Decoder = c.decoder.start(block);
+  while (st.more()) {
     st = st.next(block);
     if (st.has && (s.seen & MALFORMED) == 0) {
       s = __response_field(s, st.name, st.value);
     }
   }
-  match (st.error) {
-    Some(e) => {
-      return __fail(r, frame.COMPRESSION_ERROR, e.message());
-    },
-    None => {}
+  let read: __Run = __decoded(__Run { ...r, conn: Conn { ...c, decoder: st } });
+  if (read.conn.phase == CLOSED) {
+    return read;
   }
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
-  c = Conn { ...c, decoder: c.decoder.finish(st) };
-  return __response_headed(__Run { conn: c, out: out, events: events }, at, s, end_stream);
+  return __response_headed(read, at, s, end_stream);
 }
 
 // __response_headed keeps the response head `s` read off a block on the
@@ -816,10 +838,11 @@ function __trailers(r: __Run, at: i32, block: u8[], end_stream: boolean): __Run 
   if (!end_stream) {
     return __reset_past(r, block, id, frame.PROTOCOL_ERROR);
   }
-  let st: hpack.Decoding = r.conn.decoder.start();
+  let c: Conn = r.conn;
+  let st: hpack.Decoder = c.decoder.start(block);
   let trailers: HeaderMap = headers.header_map_new();
   let pseudo: boolean = false;
-  while (st.more(block)) {
+  while (st.more()) {
     st = st.next(block);
     if (st.has) {
       if (st.name.len() > 0 && st.name[0] == b':') {
@@ -829,17 +852,11 @@ function __trailers(r: __Run, at: i32, block: u8[], end_stream: boolean): __Run 
       }
     }
   }
-  match (st.error) {
-    Some(e) => {
-      return __fail(r, frame.COMPRESSION_ERROR, e.message());
-    },
-    None => {}
+  let read: __Run = __decoded(__Run { ...r, conn: Conn { ...c, decoder: st } });
+  if (read.conn.phase == CLOSED) {
+    return read;
   }
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
-  c = Conn { ...c, decoder: c.decoder.finish(st) };
-  return __trailed(__Run { conn: c, out: out, events: events }, at, trailers, pseudo);
+  return __trailed(read, at, trailers, pseudo);
 }
 
 // __trailed ends the request on the stream at `at` with `trailers`, or
@@ -866,24 +883,20 @@ function __request(r: __Run, stream: i32, block: u8[], end_stream: boolean): __R
     return __declined(r, stream, block);
   }
   let s: __Stream = __Stream { id: stream, state: OPEN, send_window: r.conn.peer_initial_window, recv_window: r.conn.config.initial_window, method: "", scheme: "", authority: "", path: "", fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: [], trailers: headers.header_map_new(), owes_end: false, streaming: false, received: 0, producing: false, status: 0, seen: 0 };
-  let st: hpack.Decoding = r.conn.decoder.start();
-  while (st.more(block)) {
+  let c: Conn = r.conn;
+  let st: hpack.Decoder = c.decoder.start(block);
+  while (st.more()) {
     st = st.next(block);
     if (st.has && (s.seen & MALFORMED) == 0) {
       s = __request_field(s, st.name, st.value);
     }
   }
-  match (st.error) {
-    Some(e) => {
-      return __fail(r, frame.COMPRESSION_ERROR, e.message());
-    },
-    None => {}
+  let failed: boolean = st.failed;
+  let read: __Run = __decoded(__Run { ...r, conn: Conn { ...c, decoder: st, last_stream: __last_seen(c.last_stream, stream, failed) } });
+  if (read.conn.phase == CLOSED) {
+    return read;
   }
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
-  c = Conn { ...c, last_stream: stream, decoder: c.decoder.finish(st) };
-  return __requested(__Run { conn: c, out: out, events: events }, s, end_stream);
+  return __requested(read, s, end_stream);
 }
 
 // __declined takes a new stream's header block on a connection that opens
