@@ -38,6 +38,22 @@ func TestFuncTypeParsesOwnParam(t *testing.T) {
 	}
 }
 
+// A consuming slot over a primitive is the marker and the primitive, never a
+// handle: `own` reads as a handle only where it does not open a slot.
+func TestFuncTypeOwnSlotOverPrimitive(t *testing.T) {
+	ty := parseTypeOfParam(t, `function f(g: (own string) => i32): void {}`)
+	ft, ok := ty.(*ast.FuncType)
+	if !ok {
+		t.Fatalf("expected a function type, got %T", ty)
+	}
+	if !ft.OwnAt(0) {
+		t.Fatalf("own flags = %v, want the slot consuming", ft.ParamOwn)
+	}
+	if _, ok := ft.Params[0].(ast.StringType); !ok {
+		t.Errorf("slot type = %T (%v), want string", ft.Params[0], ft.Params[0])
+	}
+}
+
 func TestFuncTypeWithoutOwnHasNoFlags(t *testing.T) {
 	ty := parseTypeOfParam(t, `function f(g: (i32[]) => i32): void {}`)
 	ft := ty.(*ast.FuncType)
@@ -75,6 +91,9 @@ func TestOwnBorrowInTypeNeedsResourceName(t *testing.T) {
 		{"view element", "function f(v: [own i32]): i32 { return 0; }", 1, 16},
 		{"empty function-type slot", "function f(g: (own) => i32): i32 { return 0; }", 1, 16},
 		{"bare word", "function main(): i32 { let x: own = 1; return 0; }", 1, 31},
+		{"bare word parameter", "function f(xs: own): i32 { return 0; }", 1, 16},
+		{"bare word array", "function main(): i32 { let x: own[] = []; return 0; }", 1, 31},
+		{"borrow in a function-type slot", "function f(g: (borrow i32) => i32): i32 { return 0; }", 1, 16},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

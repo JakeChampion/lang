@@ -8226,12 +8226,27 @@ function parse_type_handle(p: Par, base: string): (string, string, Par) {
   // defaults), and the spelling lets lower_defers_prepass_module find owned
   // handles and tell own from borrow for its move analysis.
   if (p.peek_ident_at(1).len() == 0) {
-    // The type after the misused word is read so the declaration parses on.
-    return parse_type_name(p.handle_word_misuse(base).advance());
+    // A type after the misused word is read so the declaration parses on;
+    // with none, the word alone stands in so nothing else is reported.
+    let rest: Par = p.handle_word_misuse(base).advance();
+    if (!starts_misused_handle_type(rest)) {
+      return consume_array_suffix(rest, base);
+    }
+    return parse_type_name(rest);
   }
   p = p.advance();  // consume `own` / `borrow`
   let (hinner_name, hinner_fn_ret, hinner_p) = parse_type_name(p);
   return (base + " " + hinner_name, "", hinner_p);
+}
+
+// starts_misused_handle_type reports whether the cursor, just past an `own` /
+// `borrow` with no resource name, opens a type: a primitive, `dyn`, `(` or a
+// `[T]` view. A `[]` there is the word's array suffix, not a type.
+function starts_misused_handle_type(p: Par): boolean {
+  if (is_type_keyword_tok(p, 0) || p.peek_keyword() == "dyn" || p.peek_punct() == "(") {
+    return true;
+  }
+  return p.peek_punct() == "[" && p.peek_punct_at(1) != "]";
 }
 
 // parse_type_punct_led handles the type forms that do not start with an
