@@ -9,7 +9,7 @@ import (
 // each one a second value covers the receiver's buffer, so a write in
 // place that skipped the owner count would be visible through it. Every
 // expected value is the one the compiled backends produce (probed with
-// `fern -target x86-64-linux --run`), so this is the oracle's contract
+// `fern -target x86-64-linux -run`), so this is the oracle's contract
 // and not just the interpreter agreeing with itself. #7287.
 var withAliasingCases = []struct {
 	name string

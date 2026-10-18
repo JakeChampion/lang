@@ -26,9 +26,9 @@ func runHelp(t *testing.T, bin string, env []string, args ...string) (string, st
 	return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
 }
 
-// -h, -help and --help print the help to stdout and succeed, wherever they
-// come among the driver flags; a malformed command line prints the same help
-// to stderr and exits 2.
+// -h and -help, with one dash or two, print the help to stdout and succeed,
+// wherever they come among the driver flags; no arguments at all prints the
+// same help to stderr and exits 2.
 func TestSelfHostCLIHelp(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	for _, args := range [][]string{{"-h"}, {"-help"}, {"--help"}, {"-check", "-target", "x86-64-linux", "-h"}} {
@@ -75,14 +75,11 @@ func usageFlags(t *testing.T, help string) map[string]string {
 	return flags
 }
 
-var parserFlagRes = []*regexp.Regexp{
-	regexp.MustCompile(`\ba == "(-[^"]+)"`),
-	regexp.MustCompile(`bool_flag\(a, "(-[^"]+)"\)`),
-	regexp.MustCompile(`str_has_prefix\(a, "(-[^"=]+)="\)`),
-}
+// parserFlagRe is one case of the dispatch over a flag read_flag has parsed.
+var parserFlagRe = regexp.MustCompile(`\bf\.name == "(-[^"]+)"`)
 
-// parserFlags is every flag spelling compiler/fern.fern's argument parser
-// compares an argument against, read from the functions that do the parsing.
+// parserFlags is every flag name compiler/fern.fern's dispatch has a case
+// for, read from the functions that do the dispatching.
 func parserFlags(t *testing.T) []string {
 	t.Helper()
 	src, err := os.ReadFile(e2eharness.RepoPath("compiler", "fern.fern"))
@@ -97,12 +94,8 @@ func parserFlags(t *testing.T) []string {
 		}
 		body := string(src[start:])
 		body = body[:strings.Index(body, "\n}\n")]
-		for _, re := range parserFlagRes {
-			for _, m := range re.FindAllStringSubmatch(body, -1) {
-				if m[1] != "--" {
-					seen[m[1]] = true
-				}
-			}
+		for _, m := range parserFlagRe.FindAllStringSubmatch(body, -1) {
+			seen[m[1]] = true
 		}
 	}
 	var out []string
@@ -113,22 +106,38 @@ func parserFlags(t *testing.T) []string {
 	return out
 }
 
-// The help lists exactly the flags the parser accepts. Every flag the parser
-// compares an argument against has a row, and every row's flag is accepted:
-// a probe passes it (with a value where it takes one) followed by an unknown
-// flag, so the refusal naming that unknown flag shows the listed one parsed.
+// The help lists exactly the flags the parser accepts. Every flag the
+// dispatch has a case for has a row, every row has a case, and every row's
+// flag is accepted: a probe passes it (with a value where it takes one)
+// followed by an unknown flag, so the refusal naming that unknown flag shows
+// the listed one parsed.
 func TestSelfHostCLIUsageListsEveryFlag(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	help, _, _ := runHelp(t, cli, nil, "-h")
 	listed := usageFlags(t, help)
+	dispatched := map[string]bool{}
 	for _, f := range parserFlags(t) {
+		dispatched[f] = true
 		if _, ok := listed[f]; !ok {
-			t.Errorf("the parser accepts %s but the help does not list it", f)
+			t.Errorf("the dispatch has a case for %s but the help does not list it", f)
+		}
+	}
+	for _, line := range strings.Split(help, "\n") {
+		m := usageRowRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		name := strings.Split(m[1], ", ")[0]
+		if i := strings.IndexAny(name, " ["); i >= 0 {
+			name = name[:i]
+		}
+		if !dispatched[name] {
+			t.Errorf("the help lists %s but the dispatch has no case for it", name)
 		}
 	}
 	const sentinel = "-no-such-flag-sentinel"
 	for name, value := range listed {
-		if name == "-h" || name == "-help" || name == "--help" {
+		if name == "-h" || name == "-help" {
 			continue
 		}
 		args := []string{name}

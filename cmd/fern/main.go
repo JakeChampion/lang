@@ -52,13 +52,13 @@
 // identical between the two for the same command tail:
 //
 //	fern -interp prog.fern -- --filter x   # args() = [prog.fern --filter x]
-//	fern --run prog.fern -- --filter x     # args() = [/tmp/…   --filter x]
+//	fern -run prog.fern -- --filter x      # args() = [/tmp/…   --filter x]
 //
 // A flag written after FILE with no `--` before it is refused (exit 2)
 // rather than handed to the program as data: `fern prog.fern -o out` is a
 // misplaced driver flag far more often than it is an argument named `-o`.
 //
-// -qemu names the emulator --run uses for a foreign ISA.
+// -qemu names the emulator -run uses for a foreign ISA.
 // The formatter preserves `//` line comments (leading, trailing, and
 // standalone) and an author's blank-line grouping between statements.
 package main
@@ -416,7 +416,7 @@ func main() {
 	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")
 	shared := flag.Bool("shared", false, "emit a shared object (.so) instead of an executable — a position-independent ET_DYN with a dynamic symbol table exporting the -export functions, loadable via dlopen / Android's System.loadLibrary. Native ELF targets only (x86-64, arm64, arm64-android); requires -o.")
 	export := flag.String("export", "", "with -shared: comma-separated function names to export in the .so (default: main). Each must be a defined top-level function; it becomes a dynamic symbol resolvable by the loader.")
-	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
+	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by -run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
 	backend := flag.String("backend", "", backendFlagUsage)
@@ -461,7 +461,7 @@ func main() {
 	harden := flag.Bool("harden", false, "arm64-linux executables: start every indirect-call target with a BTI landing pad, mark the image so the kernel traps an indirect branch anywhere else, and sign each frame's return address with pointer authentication.")
 	size := flag.Bool("size", false, "build for size over speed on the native backends: reference-count operations call their runtime helpers rather than testing the count inline, and the backtrace walk is dropped unless -backtrace is given. Same as FERN_SIZE=1.")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: fern [-target <isa>-<environment>] [-emit core-module] [-o OUTPUT] [--run] [-qemu QEMU] FILE.fern [-- ARGS...]\n       (targets: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, wasm32-wasi, wasm32-wasi-http; `fern -targets` for all)")
+		fmt.Fprintln(os.Stderr, "usage: fern [-target <isa>-<environment>] [-emit core-module] [-o OUTPUT] [-run] [-qemu QEMU] FILE.fern [-- ARGS...]\n       (targets: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, wasm32-wasi, wasm32-wasi-http; `fern -targets` for all)")
 		fmt.Fprintln(os.Stderr, "       fern -fmt [-w | -d | -o OUT] FILE...")
 		fmt.Fprintln(os.Stderr, "       fern -check FILE.fern | fern -check -      (type-check only; stdin form)")
 		fmt.Fprintln(os.Stderr, "       fern -repl")
