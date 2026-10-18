@@ -156,8 +156,8 @@ func TestSelfHostProcForkWasmRejected(t *testing.T) {
 			if code != 1 {
 				t.Errorf("driver exited %d, want 1 (reject)", code)
 			}
-			if !strings.Contains(string(errOut), "proc_fork is not supported on the wasm target") {
-				t.Errorf("stderr = %q, want the unsupported-builtin diagnostic naming proc_fork", errOut)
+			if !strings.Contains(string(errOut), "required by `proc_fork`; targets providing it") {
+				t.Errorf("stderr = %q, want E066 naming proc_fork", errOut)
 			}
 			if len(out) != 0 {
 				t.Errorf("driver emitted %d bytes for an unsupported builtin, want 0", len(out))

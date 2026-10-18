@@ -402,6 +402,17 @@ var gatedBuiltins = map[string]string{
 	// hosted-native profile has. wasm refuses it here rather than at
 	// codegen, and the interpreter never reaches it.
 	"__syscall3": "syscall", "__syscall4": "syscall", "__syscall5": "syscall", "__syscall6": "syscall",
+	// The raw-memory floor beside it: the native runtime's allocator block
+	// layout and its static slots, which the register backends' runtime
+	// helpers are written on. Only the self-host checker registers these;
+	// wasm serves the same helpers with hand-written WAT and has no lowering
+	// for any of them. The floor's loads, stores and type-only bridges
+	// (`__raw_load8`, `__raw_store_ptr`, `__raw_data`, …) lower everywhere
+	// and stay ungated.
+	"__raw_alloc": "rawmem", "__raw_string": "rawmem", "__raw_arr_box": "rawmem",
+	"__raw_scratch": "rawmem", "__raw_environ": "rawmem", "__raw_splice_pipe": "rawmem",
+	"__raw_cover": "rawmem", "__raw_task_state": "rawmem", "__raw_vdso": "rawmem",
+	"__raw_vg_request": "rawmem",
 }
 
 // coreBuiltins is the other half of the classification: user-callable
@@ -550,9 +561,18 @@ func (v Violation) Message(entryModule string) string {
 	}
 	// TestGatedCapabilitiesResolvable holds every gated capability to at
 	// least one provider, so the list is never empty.
-	return fmt.Sprintf("target %q does not provide `%s`, required by `%s`%s; targets providing it: %v",
+	msg := fmt.Sprintf("target %q does not provide `%s`, required by `%s`%s; targets providing it: %v",
 		v.Target, v.Capability, v.Builtin, where, TargetsProviding(v.Capability))
+	if alt, ok := equivalents[v.Builtin]; ok && HasCapability(v.Target, gatedBuiltins[alt]) {
+		msg += fmt.Sprintf("; use `%s`, which this target provides", alt)
+	}
+	return msg
 }
+
+// equivalents names, for a gated builtin, the builtin that reaches the same
+// thing on a target lacking the first: timer_fd's wakeup as a wasi:io/poll
+// pollable rather than a file descriptor.
+var equivalents = map[string]string{"timer_fd": "wasm_timer_pollable"}
 
 // Enforce scans the (already tree-shaken) program for calls to gated
 // builtins the target's descriptor does not grant. Unknown targets
