@@ -55,6 +55,7 @@
 //   union / intersection / difference         O(m log32 n) for the smaller side m
 //   keys / values / fold / for_each / filter / map_values   O(n)
 import "core/cmp";
+import "core/iter";
 import "std/i32";
 
 // The trie. `Leaf` is (hash, key, value). `Coll` holds the leaves of
@@ -479,6 +480,35 @@ function __hm_values_kids[K, V](kids: HNode[K, V][], i: i32, own acc: V[]): V[] 
   return acc;
 }
 
+function __hm_entries_into[K, V](n: HNode[K, V], own acc: (K, V)[]): (K, V)[] {
+  match (n) {
+    Empty => {
+      return acc;
+    },
+    Leaf(h, k, v) => {
+      acc = acc.append((k, v));
+      return acc;
+    },
+    Coll(h, leaves) => {
+      acc = __hm_entries_kids(leaves, 0, acc);
+      return acc;
+    },
+    Branch(bm, s, kids) => {
+      acc = __hm_entries_kids(kids, 0, acc);
+      return acc;
+    }
+  }
+}
+
+function __hm_entries_kids[K, V](kids: HNode[K, V][], i: i32, own acc: (K, V)[]): (K, V)[] {
+  if (i >= kids.len()) {
+    return acc;
+  }
+  acc = __hm_entries_into(kids[i], acc);
+  acc = __hm_entries_kids(kids, i + 1, acc);
+  return acc;
+}
+
 pub function __hm_fold[K, V, A](n: HNode[K, V], init: A, f: (A, K, V) => A): A {
   match (n) {
     Empty => {
@@ -788,6 +818,14 @@ pub function (m: PMap[K, V]) values(): V[] {
   let acc: V[] = [];
   acc = __hm_values_into(m.root, acc);
   return acc;
+}
+
+// `iter()` — an Iterator over the `(key, value)` entries in hash order,
+// which is what `for (k, v) in m` walks.
+pub function (m: PMap[K, V]) iter(): iter.ArrayIter[(K, V)] {
+  let acc: (K, V)[] = [];
+  acc = __hm_entries_into(m.root, acc);
+  return iter.of(acc);
 }
 
 // `fold(init, f)` — `f` over every entry in hash order.

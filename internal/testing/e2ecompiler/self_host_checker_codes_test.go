@@ -1598,6 +1598,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e082-use-callback", "function apply(x: i32, k: (i32) => i32): i32 { return k(x); }\nfunction f(s: str): i32 { use n <- apply(41); return n + s.len(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
 		{"e082-owned-copy", "function f(sep: str): i32 { let owned: string = sep + \"\"; let g = (): i32 => owned.len(); return g(); }\nfunction main(): i32 { return f(\",\"); }\n", nil},
 		{"e082-view-without-a-closure", "function f(s: string, c: boolean): i32 { let v: str = slice_unchecked(s, 0, 1); let n: i32 = if (c) { v.len() } else { 0 }; return n; }\nfunction main(): i32 { return f(\"ab\", true); }\n", nil},
+		// E083: `for` walks an array, a string, a Map, a range, a core/iter
+		// Iterator, or a value whose iter() returns one; anything else is
+		// refused naming its type, not the array lowering's `len` / index.
+		{"e083-struct", "struct Point { x: i32, y: i32 }\nfunction main(): i32 { let p: Point = Point { x: 1, y: 2 }; for c in p { } return 0; }\n", []string{"E083"}},
+		{"e083-scalar", "function main(): i32 { for c in 42 { } return 0; }\n", []string{"E083"}},
+		{"e083-unbounded-type-parameter", "function each[T](v: T): i32 { for x in v { } return 0; }\nfunction main(): i32 { return each(1); }\n", []string{"E083"}},
+		{"e083-iter-returns-no-iterator", "struct Counter { n: i32 }\nfunction (c: Counter) iter(): i32 { return c.n; }\nfunction main(): i32 { let k: Counter = Counter { n: 3 }; for n in k { } return 0; }\n", []string{"E083"}},
+		{"for-over-iterator", "import \"core/iter\";\nfunction main(): i32 { let n: i32 = 0; for x in iter.of([1, 2]) { n = n + x; } for (i, y) in iter.of([3]).enumerate() { n = n + i + y; } return n; }\n", nil},
+		{"for-over-range-value", "import \"core/iter\";\nfunction upto(k: i32): iter.Range { return 0..k; }\nfunction main(): i32 { let n: i32 = 0; let r = 0..3; for x in r { n = n + x; } for y in upto(2) { n = n + y; } return n; }\n", nil},
+		{"for-over-bounded-type-parameter", "import \"core/iter\";\nfunction total[I: iter.Iterator[i32]](it: I): i32 { let n: i32 = 0; for v in it { n = n + v; } return n; }\nfunction main(): i32 { return total(iter.range(0, 4)); }\n", nil},
+		{"for-over-iter-method", "import \"core/iter\";\nstruct Bag { xs: string[] }\nfunction (b: Bag) iter(): iter.ArrayIter[string] { return iter.of(b.xs); }\nfunction main(): i32 { let n: i32 = 0; let b: Bag = Bag { xs: [\"a\"] }; for s in b { n = n + s.len(); } return n; }\n", nil},
+		{"for-element-type-from-iterator", "import \"core/iter\";\nfunction main(): i32 { for s in iter.of([\"a\"]) { let n: i32 = s; } return 0; }\n", []string{"E003"}},
 		{"e082-parameter-shadows-a-view", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (v: i32): i32 => v + 1; return g(v.len()); }\nfunction main(): i32 { return f(\"ab\"); }\n", nil},
 		{"e082-shared-struct-graph", e082SharedChain("i32"), nil},
 		{"e082-shared-struct-graph-view", e082SharedChain("str"), []string{"E082"}},

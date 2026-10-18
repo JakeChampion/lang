@@ -377,11 +377,9 @@ func TestForProducesForNode(t *testing.T) {
 	}
 }
 
-// `for x in arr { body }` desugars to a Block containing a few
-// synthetic `let` declarations and a For loop (not a While, so
-// `continue` advances the index via the For's step slot rather
-// than skipping it).
-func TestForEachOverArrayDesugars(t *testing.T) {
+// `for x in arr { body }` parses to an un-lowered ForEach: which loop it
+// becomes depends on the iterand's type, so the checker lowers it.
+func TestForEachParsesUnlowered(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
 		let sum: i32 = 0;
 		for x in [1, 2, 3] {
@@ -392,20 +390,15 @@ func TestForEachOverArrayDesugars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := prog.Funcs[0].Body.Stmts
-	blk, ok := body[1].(*ast.Block)
+	fe, ok := prog.Funcs[0].Body.Stmts[1].(*ast.ForEach)
 	if !ok {
-		t.Fatalf("foreach should desugar to Block, got %T", body[1])
+		t.Fatalf("foreach should parse to *ast.ForEach, got %T", prog.Funcs[0].Body.Stmts[1])
 	}
-	if len(blk.Stmts) != 4 {
-		t.Fatalf("expected 4 inner stmts (iter / len / idx / for), got %d", len(blk.Stmts))
+	if fe.Var != "x" {
+		t.Errorf("binder = %q, want x", fe.Var)
 	}
-	loop, ok := blk.Stmts[3].(*ast.For)
-	if !ok {
-		t.Fatalf("last stmt should be a For loop (so continue hits the step), got %T", blk.Stmts[3])
-	}
-	if loop.Step == nil {
-		t.Errorf("desugared For must carry a step so `continue` advances the index")
+	if _, ok := fe.Iter.(*ast.ArrayLit); !ok {
+		t.Errorf("iterand = %T, want the array literal", fe.Iter)
 	}
 }
 
@@ -414,7 +407,7 @@ func TestForEachOverArrayDesugars(t *testing.T) {
 // literal. Regression for the struct-lit clash: a `.field` postfix followed by
 // `{` was parsed as a qualified struct literal even in a `noStructLit` (for /
 // if / while header) position, mis-reading the body brace.
-func TestForEachOverStructFieldDesugars(t *testing.T) {
+func TestForEachOverStructFieldParses(t *testing.T) {
 	prog, err := Parse(`struct Bag { items: i32[] }
 	function f(): i32 {
 		let b = Bag { items: [1, 2, 3] };
@@ -427,19 +420,13 @@ func TestForEachOverStructFieldDesugars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := prog.Funcs[0].Body.Stmts
-	blk, ok := body[2].(*ast.Block)
+	fe, ok := prog.Funcs[0].Body.Stmts[2].(*ast.ForEach)
 	if !ok {
-		t.Fatalf("foreach over a struct field should desugar to Block, got %T", body[2])
+		t.Fatalf("foreach over a struct field should parse to *ast.ForEach, got %T", prog.Funcs[0].Body.Stmts[2])
 	}
-	// The iter (first synthetic var) binds the field access `b.items`, not a
-	// struct literal.
-	iterVar, ok := blk.Stmts[0].(*ast.Var)
-	if !ok {
-		t.Fatalf("first inner stmt should bind the iter, got %T", blk.Stmts[0])
-	}
-	if _, ok := iterVar.Init.(*ast.FieldAccess); !ok {
-		t.Fatalf("foreach iter should be a FieldAccess (b.items), got %T", iterVar.Init)
+	// The iterand is the field access `b.items`, not a struct literal.
+	if _, ok := fe.Iter.(*ast.FieldAccess); !ok {
+		t.Fatalf("foreach iter should be a FieldAccess (b.items), got %T", fe.Iter)
 	}
 }
 
@@ -604,28 +591,9 @@ func labelOf(s ast.Stmt) string {
 	return ""
 }
 
-// `for c in "hi"` works the same way — strings support `len()` and
-// indexing, so the desugar applies identically.
-func TestForEachOverStringDesugars(t *testing.T) {
-	prog, err := Parse(`function f(): i32 {
-		let sum: i32 = 0;
-		for c in "abc" {
-			sum = sum + c;
-		}
-		return sum;
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := prog.Funcs[0].Body.Stmts
-	if _, ok := body[1].(*ast.Block); !ok {
-		t.Fatalf("foreach over string should desugar to Block, got %T", body[1])
-	}
-}
-
-// Nested foreach loops use unique synthetic slot names so the inner
-// loop can't shadow the outer's iterator / length / index.
-func TestForEachNestedHasUniqueSlots(t *testing.T) {
+// Nested foreach loops carry distinct IDs, which name the lowering's synthetic
+// slots, so the inner loop can't shadow the outer's iterator / length / index.
+func TestForEachNestedHasUniqueIDs(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
 		let s: i32 = 0;
 		for a in [1, 2] {
@@ -638,32 +606,16 @@ func TestForEachNestedHasUniqueSlots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seen := map[string]bool{}
-	var walk func(s ast.Stmt)
-	walk = func(s ast.Stmt) {
-		switch x := s.(type) {
-		case *ast.Block:
-			for _, c := range x.Stmts {
-				walk(c)
-			}
-		case *ast.For:
-			walk(x.Body)
-		case *ast.While:
-			walk(x.Body)
-		case *ast.Var:
-			if strings.HasPrefix(x.Name, "__foreach_") {
-				if seen[x.Name] {
-					t.Errorf("duplicate synthetic name %q", x.Name)
-				}
-				seen[x.Name] = true
-			}
-		}
+	outer, ok := prog.Funcs[0].Body.Stmts[1].(*ast.ForEach)
+	if !ok {
+		t.Fatalf("outer loop should be *ast.ForEach, got %T", prog.Funcs[0].Body.Stmts[1])
 	}
-	for _, s := range prog.Funcs[0].Body.Stmts {
-		walk(s)
+	inner, ok := outer.Body.(*ast.Block).Stmts[0].(*ast.ForEach)
+	if !ok {
+		t.Fatalf("inner loop should be *ast.ForEach, got %T", outer.Body.(*ast.Block).Stmts[0])
 	}
-	if len(seen) != 6 {
-		t.Errorf("expected 6 synthetic names (3 per nested loop), got %d: %v", len(seen), seen)
+	if outer.ID == inner.ID {
+		t.Errorf("nested loops share ID %d", outer.ID)
 	}
 }
 
@@ -733,26 +685,6 @@ func TestForHeaderParenDisambiguation(t *testing.T) {
 	_, err = Parse(`function f(): i32 { for (x) in xs { } return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "tuple pattern needs at least 2 elements") {
 		t.Errorf("for (x) in xs should report the shared tuple-pattern error, got %v", err)
-	}
-}
-
-// `break` and `continue` inside a foreach body target the desugared
-// while loop — same semantics as a hand-written index loop.
-func TestForEachBreakContinue(t *testing.T) {
-	prog, err := Parse(`function f(): i32 {
-		let sum: i32 = 0;
-		for x in [1, 2, 3, 4] {
-			if (x == 2) { continue; }
-			if (x == 4) { break; }
-			sum = sum + x;
-		}
-		return sum;
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := prog.Funcs[0].Body.Stmts[1].(*ast.Block); !ok {
-		t.Errorf("foreach with break/continue should still desugar to Block")
 	}
 }
 

@@ -16960,36 +16960,146 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
   return [];
 }
 
-// for_iter_diags reports a `for` over a value that is not an array, string or
-// map. Native lowers such a loop to `ITER.len()` and `ITER[i]`, so the iterand
-// draws exactly that shape's E043 and E034 here, on the loop's line.
+// for_iter_diags reports E083 for a `for` over a value it cannot walk: no
+// array, string, Map or range, no Iterator, and no `iter()` returning one.
 function for_iter_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
   let none: util.Diag[] = [];
   if (for_iter_is_range(fr.iter)) {
     return none;
   }
   let it: typeinfo.Type = check_expr(fr.iter, s);
-  match (it) {
-    typeinfo.TypeArray(_) => {
-      return none;
-    },
-    typeinfo.TypeString(_) => {
-      return none;
-    },
-    typeinfo.TypeMap(_) => {
-      return none;
-    },
-    _ => {}
-  }
-  if (is_unknown(it)) {
+  if (builtin_iterable(it) || is_unknown(it) && tvar_name(it).len() == 0 || iter_subject(it, s).ok) {
     return none;
   }
+  return [dg_at("E083", "cannot iterate over a value of type " + util.demangle_all(util.show_type_vars(type_label_or_tvar(it))) + ": `for` walks an array, a string, a Map, a range, an iter.Iterator, or a value whose iter() returns one", expr_line(fr.iter), expr_col(fr.iter))];
+}
+
+// builtin_iterable: the subjects `for` walks without the Iterator protocol.
+function builtin_iterable(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeArray(_) => {
+      return true;
+    },
+    typeinfo.TypeString(_) => {
+      return true;
+    },
+    typeinfo.TypeMap(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function type_label_or_tvar(t: typeinfo.Type): string {
+  let tv: string = tvar_name(t);
+  if (tv.len() > 0) {
+    return tv;
+  }
+  return type_label(t);
+}
+
+// IterSubject is how a `for` walks a subject `builtin_iterable` refuses: the
+// element its Iterator yields, and `via_iter` when that Iterator is the
+// subject's `iter()` rather than the subject itself. `ok` is false for a
+// subject that is neither.
+struct IterSubject { ok: boolean, elem: typeinfo.Type, via_iter: boolean }
+
+function iter_subject(t: typeinfo.Type, s: Scope): IterSubject {
+  let direct: typeinfo.Type = iterator_elem(t, s);
+  if (!is_unknown(direct) || tvar_name(direct).len() > 0) {
+    return IterSubject { ok: true, elem: direct, via_iter: false };
+  }
+  if (is_unknown(t) || is_type_variable(t)) {
+    return IterSubject { ok: false, elem: direct, via_iter: false };
+  }
+  let via: typeinfo.Type = iterator_elem(probe_method(t, "iter", s), s);
+  if (!is_unknown(via) || tvar_name(via).len() > 0) {
+    return IterSubject { ok: true, elem: via, via_iter: true };
+  }
+  return IterSubject { ok: false, elem: via, via_iter: false };
+}
+
+// iterator_elem is the `T` of the `Iterator[T]` that `t` implements, read off
+// its `next()`; unknown when `t` implements no core/iter Iterator.
+function iterator_elem(t: typeinfo.Type, s: Scope): typeinfo.Type {
+  if (!implements_iterator(t, s)) {
+    return t_unknown("not an Iterator");
+  }
+  if let typeinfo.TypeUnion(u) = probe_method(t, "next", s) {
+    if (u.name == "Option" && u.args.len() == 1) {
+      if let typeinfo.TypeTuple(tp) = u.args[0] {
+        if (tp.elements.len() == 2) {
+          return tp.elements[0];
+        }
+      }
+    }
+  }
+  return t_unknown("not an Iterator");
+}
+
+// implements_iterator: an impl of core/iter's Iterator for `t`, or for a type
+// parameter, a bound naming it.
+function implements_iterator(t: typeinfo.Type, s: Scope): boolean {
+  let tv: string = tp_receiver(t, s);
+  if (tv.len() == 0) {
+    tv = tvar_name(t);
+  }
+  if (tv.len() > 0) {
+    for tr in tp_bound_traits(s, tv) {
+      if (tr == CORE_ITERATOR) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (is_unknown(t)) {
+    return false;
+  }
+  let base: string = util.base_type_name(type_label(t));
+  for imp in s.impls {
+    if (parser.impl_trait_key(imp) == CORE_ITERATOR && util.base_type_name(imp.impl_type) == base) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// core/iter's Iterator as an impl key or a bound spells it.
+const CORE_ITERATOR: string = "iter.Iterator";
+
+// iterator_lowering is the loop over core/iter's Iterator protocol a `for`
+// lowers to, or None for a range or a builtin iterable, which keep their
+// counted loops.
+function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
+  if (for_iter_is_range(fr.iter)) {
+    return None;
+  }
+  let it: typeinfo.Type = check_expr(fr.iter, s);
+  if (builtin_iterable(it)) {
+    return None;
+  }
+  let sub: IterSubject = iter_subject(it, s);
+  if (!sub.ok) {
+    return None;
+  }
+  let line: i32 = expr_line(fr.iter);
   let col: i32 = expr_col(fr.iter);
-  let bound: Scope = s.bind("__for_iter", it);
-  let iter: ast.Expr = ast.ExprIdent { name: "__for_iter", line: fr.line, col: col, ty: "" };
-  let len_call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: iter, field: "len", line: fr.line, col: col, ty: "" }, args: [], line: fr.line, col: col, type_args: [], ty: "" };
-  let first: ast.Expr = ast.ExprIndex { array: iter, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: fr.line, col: col }, unchecked: false, ty: "", line: fr.line, col: col };
-  return util.append_diags(call_diags(len_call, bound), call_diags(first, bound));
+  let subject: ast.Expr = fr.iter;
+  if (sub.via_iter) {
+    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "" }, args: [], line: line, col: col, type_args: [], ty: "" };
+  }
+  return Some(parser.iterator_loop(fr, subject, col));
+}
+
+// probe_method is the type of a zero-argument call of method `name` on a value
+// of type `t`; unknown when `t` has no such method.
+function probe_method(t: typeinfo.Type, name: string, s: Scope): typeinfo.Type {
+  let recv: ast.Expr = ast.ExprIdent { name: "__for_iter", line: 0, col: 0, ty: "" };
+  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+  return check_expr(call, s.bind("__for_iter", t));
 }
 
 // ---- exhaustiveness of a desugared match --------------------------------------
@@ -27675,8 +27785,9 @@ function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
       return ForBinding { scope: bind_tuple_destr_names(body, names, t_tuple([tm.key, tm.value])), valid: names.len() == 2 };
     },
     _ => {
+      let sub: IterSubject = iter_subject(it, s);
       // An invalid iterator still introduces names for diagnostic recovery.
-      return ForBinding { scope: bind_for_element(body, fr.var_name, t_unknown("invalid iterator")), valid: false };
+      return ForBinding { scope: bind_for_element(body, fr.var_name, sub.elem), valid: sub.ok };
     }
   }
   return ForBinding { scope: bind_for_element(body, fr.var_name, t_unknown("invalid iterator")), valid: false };
@@ -27791,6 +27902,9 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
     },
     ast.StmtFor(fr) => {
+      if let Some(lowered) = iterator_lowering(fr, s) {
+        return annotate_stmt(lowered, s, after);
+      }
       return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line };
     },
     ast.StmtDefer(d) => {

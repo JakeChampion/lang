@@ -647,7 +647,7 @@ first-inserted order.
 - `(s).add(x)`, `(s).remove(x)` — insert / delete, returning a
   new set (a no-op returns the receiver)
 - `(s).contains(x)`, `(s).len()`, `(s).is_empty()`,
-  `(s).to_array()`
+  `(s).to_array()`, `(s).iter()` (what `for x in s` walks)
 - `(s).union(o)`, `(s).intersect(o)`, `(s).difference(o)`,
   `(s).symmetric_difference(o)` (elements in exactly one set)
 - `(s).is_subset(o)`, `(s).is_superset(o)`, `(s).is_disjoint(o)`,
@@ -677,6 +677,8 @@ queries are O(log n).
   `(m).len()`, `(m).is_empty()`
 - `(m).min_key()`, `(m).max_key()`, `(m).remove_min()`, `(m).remove_max()`
 - `(m).key_at(i)`, `(m).value_at(i)`, `(m).index_of(k)` — rank access
+- `(m).iter()` — an `iter.ArrayIter[(K, V)]` over the entries, which is what
+  `for (k, v) in m` walks
 - `(m).keys()`, `(m).values()`, `(m).fold(init, f)`, `(m).for_each(f)`,
   `(m).map_values(f)`, `(m).filter(pred)` — key order
 - `(m).union(o)` (left-biased), `(m).intersection(o)`, `(m).difference(o)`
@@ -686,7 +688,7 @@ queries are O(log n).
 ### `std/ordset`
 
 `OrdSet[T: cmp.Ord]`: `std/ordmap`'s tree with unit values — sorted
-`to_array()`, `min` / `max` / `at(i)` / `index_of`, `add` / `remove` /
+`to_array()` and `iter()` (so `for x in s` walks it in order), `min` / `max` / `at(i)` / `index_of`, `add` / `remove` /
 `contains`, the join-based `union` / `intersection` / `difference`,
 `is_subset` / `equals`, `filter` / `fold` / `for_each`. `ordset_new()`,
 `ordset_of(xs)`.
@@ -707,6 +709,8 @@ caches its size, so `len()` is O(1).
 - `(m).insert(k, v)`, `(m).remove(k)`, `(m).update(k, f)` — O(log32 n)
 - `(m).get(k): Option[V]`, `(m).get_or(k, fallback)`, `(m).contains(k)`,
   `(m).len()`, `(m).is_empty()`
+- `(m).iter()` — an `iter.ArrayIter[(K, V)]` over the entries, which is what
+  `for (k, v) in m` walks
 - `(m).keys()`, `(m).values()`, `(m).fold(init, f)`, `(m).for_each(f)`,
   `(m).map_values(f)`, `(m).filter(pred)`
 - `(m).union(o)` (left-biased; the smaller side is folded into the larger),
@@ -716,7 +720,8 @@ caches its size, so `len()` is O(1).
 ### `std/pset`
 
 `PSet[T: cmp.Hash + cmp.Eq]`: `std/pmap`'s trie with unit values — `add` /
-`remove` / `contains`, `to_array()` (hash order), `union` / `intersection` /
+`remove` / `contains`, `to_array()` and `iter()` (hash order; `for x in s`
+walks it), `union` / `intersection` /
 `difference`, `is_subset` / `equals`, `filter` / `fold` / `for_each`.
 `pset_new()`, `pset_of(xs)`.
 
@@ -778,6 +783,7 @@ written, `PVec` copies a path of small nodes.
   `(v).last()`, `(v).len()`, `(v).is_empty()`
 - `(v).to_array()`, `(v).fold(init, f)`, `(v).for_each(f)`, `(v).map(f)`,
   `(v).filter(pred)`
+- `(v).iter()` — an `iter.ArrayIter[T]`, which is what `for x in v` walks
 - `(v).concat(o)` — O(len(o)); `(v).slice(lo, hi)` — O(hi - lo), clamped
 - `(v).is_valid()` — the invariant checker, for tests
 
