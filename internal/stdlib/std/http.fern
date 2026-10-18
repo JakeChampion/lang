@@ -1008,12 +1008,88 @@ function __field_at(h: HeaderMap, key: string, from: i32): i32 {
   return -1;
 }
 
-function __http_content_length(h: HeaderMap): Option[i32] {
-  let at: i32 = __field_at(h, "content-length", 0);
-  if (at < 0) {
+// `__fields_of(h)` — where the fields the framing and connection rules
+// read sit in `h`, found in one pass over its names: the index of the
+// first `Content-Length`, `Transfer-Encoding`, `Host`, `Expect` and
+// `Connection`, -1 for none, and -2 for a repeated `Content-Length`,
+// `Transfer-Encoding` or `Host`, whose rules refuse the repeat wherever
+// it sits.
+function __fields_of(h: HeaderMap): (i32, i32, i32, i32, i32) {
+  let cl: i32 = -1;
+  let te: i32 = -1;
+  let host: i32 = -1;
+  let expect: i32 = -1;
+  let conn: i32 = -1;
+  let i: i32 = 0;
+  while (i < h.names.len()) {
+    let kind: i32 = __field_kind(h.names[i]);
+    if (kind == 1) {
+      cl = __once(cl, i);
+    }
+    if (kind == 2) {
+      te = __once(te, i);
+    }
+    if (kind == 3) {
+      host = __once(host, i);
+    }
+    if (kind == 4 && expect < 0) {
+      expect = i;
+    }
+    if (kind == 5 && conn < 0) {
+      conn = i;
+    }
+    i = i + 1;
+  }
+  return (cl, te, host, expect, conn);
+}
+
+// `__once(at, i)` — `i` for a field seen for the first time, -2 once it
+// repeats.
+function __once(at: i32, i: i32): i32 {
+  if (at == -1) {
+    return i;
+  }
+  return -2;
+}
+
+// `__field_kind(name)` — which of the fields the rules read `name` is,
+// under ASCII case folding: 1 `Content-Length`, 2 `Transfer-Encoding`,
+// 3 `Host`, 4 `Expect`, 5 `Connection`, 0 any other. The length picks
+// the one candidate, so a name costs at most one comparison.
+function __field_kind(name: string): i32 {
+  let n: i32 = name.len();
+  if (n == 4) {
+    return __kind_if(name, "host", 3);
+  }
+  if (n == 6) {
+    return __kind_if(name, "expect", 4);
+  }
+  if (n == 10) {
+    return __kind_if(name, "connection", 5);
+  }
+  if (n == 14) {
+    return __kind_if(name, "content-length", 1);
+  }
+  if (n == 17) {
+    return __kind_if(name, "transfer-encoding", 2);
+  }
+  return 0;
+}
+
+function __kind_if(name: string, want: string, kind: i32): i32 {
+  if (name.eq_ignore_ascii_case(want)) {
+    return kind;
+  }
+  return 0;
+}
+
+// `__http_content_length(h, at)` — with `at` the `Content-Length` of
+// `__fields_of`.
+function __http_content_length(h: HeaderMap, at: i32): Option[i32] {
+  if (at == -1) {
     return Some(0);
   }
-  if (__field_at(h, "content-length", at + 1) >= 0) {
+  if (at == -2) {
     return None;
   }
   let value: string = h.values[at];
@@ -1042,8 +1118,10 @@ function __http_content_length(h: HeaderMap): Option[i32] {
 // transfer coding.
 enum __BodyFraming { Length(i32), Chunked }
 
-// `__http_body_framing(h)` — the body's framing from the parsed headers,
-// or the status that refuses the request (RFC 9112 §6.1, §6.3): 400 for
+// `__http_body_framing(h, cl, te)` — the body's framing from the parsed
+// headers, `cl` and `te` the `Content-Length` and `Transfer-Encoding` of
+// `__fields_of`, or the status that refuses the request (RFC 9112 §6.1,
+// §6.3): 400 for
 // `Transfer-Encoding` beside `Content-Length` (the request-smuggling
 // shape), for a coding list whose last coding is not `chunked` (its
 // length cannot be determined), for `chunked` applied twice, or for a
@@ -1051,10 +1129,9 @@ enum __BodyFraming { Length(i32), Chunked }
 // under the final `chunked`, which this parser cannot decode. A lenient
 // reading of any of them would be a framing disagreement with the next
 // parser on the path.
-function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
-  let te: i32 = __field_at(h, "transfer-encoding", 0);
-  if (te < 0) {
-    match (__http_content_length(h)) {
+function __http_body_framing(h: HeaderMap, cl: i32, te: i32): Result[__BodyFraming, i32] {
+  if (te == -1) {
+    match (__http_content_length(h, cl)) {
       Some(n) => {
         return Ok(Length(n));
       },
@@ -1064,7 +1141,7 @@ function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
     }
     return Err(400);
   }
-  if (__field_at(h, "content-length", 0) >= 0 || __field_at(h, "transfer-encoding", te + 1) >= 0) {
+  if (cl != -1 || te == -2) {
     return Err(400);
   }
   let codings: string[] = h.values[te].split(",");
@@ -1084,17 +1161,16 @@ function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
   return Ok(Chunked);
 }
 
-// `__host_ok(h, version)` — the `Host` rule (RFC 9112 §3.2): an
-// HTTP/1.1 request carries exactly one, any request at most one, and
-// its value is a host with an optional port, so it holds nothing but
-// visible ASCII (an empty value is the request-target's authority, and
-// allowed).
-function __host_ok(h: HeaderMap, version: string): boolean {
-  let at: i32 = __field_at(h, "host", 0);
-  if (at < 0) {
+// `__host_ok(h, at, version)` — the `Host` rule (RFC 9112 §3.2), `at`
+// the `Host` of `__fields_of`: an HTTP/1.1 request carries exactly one,
+// any request at most one, and its value is a host with an optional
+// port, so it holds nothing but visible ASCII (an empty value is the
+// request-target's authority, and allowed).
+function __host_ok(h: HeaderMap, at: i32, version: string): boolean {
+  if (at == -1) {
     return version != "HTTP/1.1";
   }
-  if (__field_at(h, "host", at + 1) >= 0) {
+  if (at == -2) {
     return false;
   }
   let host: string = h.values[at];
@@ -1627,11 +1703,10 @@ pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean, ver
 // malformed as soon as the cap is passed, before its end has arrived.
 pub enum HttpFraming { Framed(HttpFramed), Incomplete, Continue, Malformed(i32) }
 
-// `__expectation(h)` — what the `Expect` field asks (RFC 9110 §10.1.1):
-// 0 with none, 1 for `100-continue`, 417 for anything else, which this
-// server cannot meet.
-function __expectation(h: HeaderMap): i32 {
-  let at: i32 = __field_at(h, "expect", 0);
+// `__expectation(h, at)` — what the `Expect` field asks (RFC 9110
+// §10.1.1), `at` the first `Expect` of `__fields_of`: 0 with none, 1 for
+// `100-continue`, 417 for anything else, which this server cannot meet.
+function __expectation(h: HeaderMap, at: i32): i32 {
   if (at < 0) {
     return 0;
   }
@@ -1644,29 +1719,30 @@ function __expectation(h: HeaderMap): i32 {
   return 1;
 }
 
-// `__header_rules(h, version)` — the status that refuses a parsed header
-// block on its own terms, or 0: 400 for the `Host` rule, 417 for an
+// `__header_rules(h, host, expectation, version)` — the status that
+// refuses a parsed header block on its own terms, or 0: 400 for the
+// `Host` rule (`host` its `Host` of `__fields_of`), 417 for an
 // expectation the server cannot meet.
-function __header_rules(h: HeaderMap, version: string): i32 {
-  if (!__host_ok(h, version)) {
+function __header_rules(h: HeaderMap, host: i32, expectation: i32, version: string): i32 {
+  if (!__host_ok(h, host, version)) {
     return 400;
   }
-  if (__expectation(h) == 417) {
+  if (expectation == 417) {
     return 417;
   }
   return 0;
 }
 
-// `__unframed(kind, h, version)` — the answer for a body that has not
-// framed: `Malformed` with `kind` when it is a status, `Continue` when an
+// `__unframed(kind, head)` — the answer for a body that has not framed:
+// `Malformed` with `kind` when it is a status, `Continue` when an
 // HTTP/1.1 request expects `100 Continue` before sending its body,
 // `Incomplete` otherwise. An HTTP/1.0 request's `100-continue` is
 // ignored (RFC 9110 §10.1.1): its client cannot read the interim answer.
-function __unframed(kind: i32, h: HeaderMap, version: string): HttpFraming {
+function __unframed(kind: i32, head: __Head): HttpFraming {
   if (kind >= 400) {
     return HttpFraming.Malformed(kind);
   }
-  if (version != "HTTP/1.0" && __expectation(h) == 1) {
+  if (head.version != "HTTP/1.0" && head.expectation == 1) {
     return Continue;
   }
   return Incomplete;
@@ -1752,7 +1828,7 @@ pub function http_parse_request_framed(buf: u8[]): HttpFraming {
     Ok(head) => {
       let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, head.len, head.framing, head.version, limits);
       if (body.0 != 2) {
-        return __unframed(body.0, head.headers, head.version);
+        return __unframed(body.0, head);
       }
       return Framed(__framed_new(head, body.1, body.3, body.2));
     },
@@ -1794,7 +1870,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLi
     Ok(head) => {
       let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + head.len, head.framing, head.version, limits);
       if (body.0 != 2) {
-        return __unframed(body.0, head.headers, head.version);
+        return __unframed(body.0, head);
       }
       let len: i32 = body.2 - from;
       if (len == prev.len && head.keep_alive == prev.keep_alive && head.version == prev.version && __repeats(prev.request, head, body.1, body.3)) {
@@ -1857,7 +1933,7 @@ pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimi
       }
       let empty: u8[] = [];
       let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(empty), headers: head.headers, trailers: headers.header_map_new() };
-      let expects: boolean = head.version != "HTTP/1.0" && __expectation(head.headers) == 1;
+      let expects: boolean = head.version != "HTTP/1.0" && head.expectation == 1;
       return Headed(HttpHead { request: req, len: head.len, keep_alive: head.keep_alive, version: head.version, length: length, expects_continue: expects });
     },
     Err(status) => {
@@ -1872,9 +1948,9 @@ pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimi
 
 // `__Head` — a request head as parsed, before either public shape is
 // built from it: the method and path, the headers, the version, the
-// bytes the head occupies from where the parse started, its persistence
-// and its body framing.
-struct __Head { method: string, path: string, headers: HeaderMap, version: string, len: i32, keep_alive: boolean, framing: __BodyFraming }
+// bytes the head occupies from where the parse started, its persistence,
+// its body framing and what its `Expect` asks (`__expectation`).
+struct __Head { method: string, path: string, headers: HeaderMap, version: string, len: i32, keep_alive: boolean, framing: __BodyFraming, expectation: i32 }
 
 // `__request_head(buf, from, limits, prev)` — the request line and header
 // block at `from`, read and checked (the request line's rules, the header
@@ -1934,12 +2010,14 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
     }
   }
   let version: string = __version_of(buf, sp2 + 1);
-  let refused: i32 = __header_rules(req_headers, version);
+  let fields: (i32, i32, i32, i32, i32) = __fields_of(req_headers);
+  let expectation: i32 = __expectation(req_headers, fields.3);
+  let refused: i32 = __header_rules(req_headers, fields.2, expectation, version);
   if (refused > 0) {
     return Err(refused);
   }
   let framing: __BodyFraming = Length(0);
-  match (__http_body_framing(req_headers)) {
+  match (__http_body_framing(req_headers, fields.0, fields.1)) {
     Ok(f) => {
       framing = f;
     },
@@ -1947,7 +2025,7 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
       return Err(status);
     }
   }
-  return Ok(__Head { method: __shared_string(buf, from, sp1, prev.method), path: path, headers: req_headers, version: version, len: from + headers_len - start, keep_alive: __persists(version, req_headers), framing: framing });
+  return Ok(__Head { method: __shared_string(buf, from, sp1, prev.method), path: path, headers: req_headers, version: version, len: from + headers_len - start, keep_alive: __persists(version, req_headers, fields.4), framing: framing, expectation: expectation });
 }
 
 // `__head_bounded(first_crlf, headers_end, bare)` — 0 when the request
@@ -2425,11 +2503,10 @@ function __bytes_are(buf: u8[], from: i32, want: string): boolean {
 // connection where one carrying `keep-alive` extends an HTTP/1.0 one.
 // The header is a comma-separated token list, and only a whole token
 // counts: `x-close` neither closes nor keeps. `version` is one of the two
-// `__version_of` gives.
-function __persists(version: string, h: HeaderMap): boolean {
+// `__version_of` gives, `at` the first `Connection` of `__fields_of`.
+function __persists(version: string, h: HeaderMap, at: i32): boolean {
   let close: boolean = false;
   let keep: boolean = false;
-  let at: i32 = __field_at(h, "connection", 0);
   while (at >= 0) {
     for tok in h.values[at].split(",") {
       if (__token_is(tok, "close")) {
@@ -3348,7 +3425,8 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
   }
   let version: string = __version_of(buf, from);
   let at: i32 = headers_end + 4;
-  let body: (i32, u8[], i32, HeaderMap) = __response_payload(buf, at, h, status, method, eof, version, limits);
+  let fields: (i32, i32, i32, i32, i32) = __fields_of(h);
+  let body: (i32, u8[], i32, HeaderMap) = __response_payload(buf, at, h, fields, status, method, eof, version, limits);
   if (body.0 == 1) {
     return Unfinished;
   }
@@ -3356,20 +3434,21 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
     return Rejected(body.0);
   }
   let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(body.1), headers: h, trailers: body.3, background: None };
-  return Complete(HttpResponseFramed { response: resp, len: body.2 - from, version: version, keep_alive: __persists(version, h) });
+  return Complete(HttpResponseFramed { response: resp, len: body.2 - from, version: version, keep_alive: __persists(version, h, fields.4) });
 }
 
-// `__response_payload(buf, at, h, status, method, eof, version)` — the
-// response's body from `at`, as `__framed_body` answers: none for a
-// bodiless response, the rest of the buffer at the close for one its
-// headers do not delimit, and the declared framing otherwise.
-function __response_payload(buf: u8[], at: i32, h: HeaderMap, status: i32, method: string, eof: boolean, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
+// `__response_payload(buf, at, h, fields, status, method, eof, version)`
+// — the response's body from `at`, `fields` the `__fields_of` its
+// headers, as `__framed_body` answers: none for a bodiless response, the
+// rest of the buffer at the close for one its headers do not delimit,
+// and the declared framing otherwise.
+function __response_payload(buf: u8[], at: i32, h: HeaderMap, fields: (i32, i32, i32, i32, i32), status: i32, method: string, eof: boolean, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
   let empty: u8[] = [];
   let none: HeaderMap = headers.header_map_new();
   if (method == "HEAD" || http_bodiless(status)) {
     return (2, empty, at, none);
   }
-  if (__field_at(h, "transfer-encoding", 0) < 0 && __field_at(h, "content-length", 0) < 0) {
+  if (fields.1 == -1 && fields.0 == -1) {
     if (!eof) {
       return (1, empty, 0, none);
     }
@@ -3378,7 +3457,7 @@ function __response_payload(buf: u8[], at: i32, h: HeaderMap, status: i32, metho
     }
     return (2, __bytes_range(buf, at, buf.len()), buf.len(), none);
   }
-  match (__http_body_framing(h)) {
+  match (__http_body_framing(h, fields.0, fields.1)) {
     Ok(framing) => {
       return __framed_body(buf, at, framing, version, limits);
     },
