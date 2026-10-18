@@ -200,6 +200,61 @@ Because middleware is ordinary code, what wraps a route is decided per
 handler: the health check does not pay for authentication, and the
 admin routes can add a check the rest do not.
 
+## Stock middleware
+
+Three middleware ship with the standard library, each a function in the
+shape above.
+
+**CORS** (`std/http/cors`): a policy names the origins it admits, exactly
+(`https://app.example.com`), by subdomain (`https://*.example.com`) or
+`*`, plus the methods and request headers a preflight may ask for, the
+response headers a script may read, credentials and the preflight cache
+age. A preflight is answered without reaching the handler, bare when it
+asks for something the policy does not admit; an actual response from an
+admitted origin gains the allow headers.
+
+```fern
+function users(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+    use req <- cors.cors(req, cors.policy(["https://app.example.com"]).with_methods(["GET", "POST", "DELETE"]).with_headers(["Content-Type"]).with_credentials());
+    return Ok(http.json_of(list()));
+}
+```
+
+**Authentication** (`std/http/auth`): `bearer` and `basic` read
+`Authorization`, hand the credential to the program's check, and give
+the rest of the handler the principal it answered; anything else is a
+401 with its `WWW-Authenticate` challenge, as problem details. A static
+secret is compared with `auth.token_eq`, whose time does not depend on
+where the two differ.
+
+```fern
+function by_token(token: string): Option[string] {
+    if (auth.token_eq(token, "s3cret")) {
+        return Some("alice");
+    }
+    return None;
+}
+
+function me(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+    use user <- auth.bearer(req, by_token);
+    return Ok(http.plain("you are " + user + "\n"));
+}
+```
+
+**Request ids** (`std/http/requestid`): `stamped` keeps a well-formed
+`X-Request-Id` the request arrived with and mints one otherwise, hands
+the handler the request carrying it and puts the same id on the
+response; `requestid.of(req)` reads it for a log line or an upstream
+call.
+
+```fern
+function users(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+    use req <- requestid.stamped(req, plat);
+    use req <- accesslog.logged(req, plat);
+    return Ok(http.json_of(list()));
+}
+```
+
 ## Access logs
 
 `std/http/accesslog` writes one JSON line per request through
