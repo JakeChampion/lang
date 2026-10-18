@@ -16,7 +16,8 @@
 #
 #   EXACT   a name terminated by `$`, `|` or `)` — the `^(A|B|C)$` and `^A$`
 #           forms, plus the `ISOLATED_DRIVER_TESTS` alternation — and every
-#           entry in selfhost-test-weights.txt, whose lookup is exact. These
+#           entry in selfhost-test-weights.txt and other-test-weights.txt,
+#           whose lookup is exact. These
 #           must BE a test function; being a prefix of one is not enough
 #           (deleting `TestFoo` while `TestFooBar` lives would otherwise pass).
 #   PREFIX  everything else, i.e. deliberate prefix filters like
@@ -41,7 +42,7 @@ fi
 # Whole-line comments are prose and may name a test that was legitimately
 # retired; only the machine-read parts of these files select anything.
 lanes=$(grep -hvE '^[[:space:]]*#' .github/workflows/*.yml scripts/netlify-smoke-test)
-weights=$(grep -hvE '^[[:space:]]*#' .github/selfhost-test-weights.txt)
+weights=$(grep -hvE '^[[:space:]]*#' .github/selfhost-test-weights.txt .github/other-test-weights.txt)
 
 {
 	printf '%s\n' "$lanes" | grep -oE '\bTest[A-Za-z0-9_]+[$|)]' | sed -E 's/.$//'
