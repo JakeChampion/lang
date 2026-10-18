@@ -939,34 +939,36 @@ function __requested(r: __Run, s: __Stream, end_stream: boolean): __Run {
     let authority: string = s.authority;
     s = __Stream { ...s, fields: s.fields.append("host", authority) };
   }
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
   if (s.method != "CONNECT") {
     match (http.http_request_target(s.method, s.path)) {
       Ok(path) => {
         s = __Stream { ...s, path: path };
       },
       Err(status) => {
-        let encoded: hpack.Encoded = c.encoder.encode([hpack.field(":status", int.int_to_string(status))]);
-        let rejected: __Run = __header_frames(__Run { conn: Conn { ...c, encoder: encoded.encoder }, out: out, events: events }, s.id, encoded.bytes, true);
-        if (!end_stream) {
-          return __send(rejected, frame.RstStream(s.id, frame.NO_ERROR));
-        }
-        return rejected;
+        return __rejected(r, s.id, status, end_stream);
       }
     }
   }
-  let streaming: boolean = c.config.stream_bodies;
   if (end_stream) {
-    return __finished_at_headers(__Run { conn: c, out: out, events: events }, s);
+    return __finished_at_headers(r, s);
   }
-  c = Conn { ...c, streams: c.streams.append(s) };
-  let at: i32 = c.streams.len() - 1;
+  let streaming: boolean = r.conn.config.stream_bodies;
+  let opened: __Run = __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.append(s) } };
   if (streaming) {
-    return __streamed(__Run { conn: c, out: out, events: events }, at);
+    return __streamed(opened, opened.conn.streams.len() - 1);
   }
-  return __Run { conn: c, out: out, events: events };
+  return opened;
+}
+
+// __rejected answers a request whose target is refused with `status` and
+// no body, the stream reset as well when its body is still to come.
+function __rejected(r: __Run, stream: i32, status: i32, end_stream: boolean): __Run {
+  let encoded: hpack.Encoded = r.conn.encoder.encode([hpack.field(":status", int.int_to_string(status))]);
+  let rejected: __Run = __header_frames(__Run { ...r, conn: Conn { ...r.conn, encoder: encoded.encoder } }, stream, encoded.bytes, true);
+  if (!end_stream) {
+    return __send(rejected, frame.RstStream(stream, frame.NO_ERROR));
+  }
+  return rejected;
 }
 
 // __waiting is how many streams have a request still arriving: they take
@@ -1199,13 +1201,9 @@ function __finished(r: __Run, at: i32, trailers: HeaderMap): __Run {
   if (s.length >= 0 && s.length != s.body.len()) {
     return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
   }
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
   let req: HttpRequest = __request_of(s, trailers);
   let handed: __Stream = __Stream { ...s, state: HALF_REMOTE, body: [], handling: true };
-  c = Conn { ...c, streams: c.streams.with(at, handed), handling: c.handling + 1 };
-  return __Run { conn: c, out: out, events: events.append(Request(s.id, req)) };
+  return __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.with(at, handed), handling: r.conn.handling + 1 }, events: r.events.append(Request(s.id, req)) };
 }
 
 // __finished_at_headers is `__finished` for a request whose END_STREAM
@@ -1215,14 +1213,10 @@ function __finished_at_headers(r: __Run, s: __Stream): __Run {
   if (s.length > 0) {
     return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
   }
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
   let id: i32 = s.id;
-  let req: HttpRequest = __request_of(s, headers.header_map_new());
   let handed: __Stream = __Stream { ...s, state: HALF_REMOTE, handling: true };
-  c = Conn { ...c, streams: c.streams.append(handed), handling: c.handling + 1 };
-  return __Run { conn: c, out: out, events: events.append(Request(id, req)) };
+  let req: HttpRequest = __request_of(handed, headers.header_map_new());
+  return __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.append(handed), handling: r.conn.handling + 1 }, events: r.events.append(Request(id, req)) };
 }
 
 // __request_of is the request a stream's header block and body make.
@@ -1728,16 +1722,11 @@ function __ended(r: __Run, at: i32): __Run {
     c = Conn { ...c, encoder: enc.encoder };
     r = __header_frames(__Run { conn: c, out: out, events: events }, s.id, enc.bytes, true);
   }
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
   if (s.state == HALF_REMOTE) {
-    c = Conn { ...c, streams: __without(c.streams, at) };
-    return __Run { conn: c, out: out, events: events };
+    return __Run { ...r, conn: Conn { ...r.conn, streams: __without(r.conn.streams, at) } };
   }
   let done: __Stream = __Stream { ...s, state: HALF_LOCAL, handling: false, pending: [], trailers: headers.header_map_new(), owes_end: false };
-  c = Conn { ...c, streams: c.streams.with(at, done) };
-  return __Run { conn: c, out: out, events: events };
+  return __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.with(at, done) } };
 }
 
 // reset ends a stream the server will not answer: RST_STREAM with `code`,
