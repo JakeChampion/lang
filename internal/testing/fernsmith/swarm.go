@@ -34,6 +34,7 @@ const (
 	featClosure
 	featTraits
 	featGenericDecl
+	featOwnRecv
 	numFeatures
 )
 

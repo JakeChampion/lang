@@ -22,6 +22,29 @@ type traitShape struct {
 //	function tg0[T: Tr0](a: T, b: T, x: i32): i32 { ... }   // static dispatch
 //	function dg0(d: dyn Tr0, x: i32): i32 { ... }           // dynamic dispatch
 //	function da0(ds: dyn Tr0[], x: i32): i32 { ... }        // a vtable per element
+//	struct DH0 { d: dyn Tr0, k: i32 }                       // a trait object in a field
+//
+// and, optionally, a second trait whose constructor is an associated
+// function, reached through the type parameter of a generic:
+//
+//	trait Mk0 { function mk0_new(x: i32): Self; function mk0_v(self: Self): i32; }
+//	impl Mk0 for S1 { function mk0_new(x: i32): Self { return <S1 expr>; } ... }
+//	function tm0[T: Mk0](a: T, x: i32): i32 { let b: T = T.mk0_new(x); ... }
+//
+// and, optionally, a generic trait instantiated at i32, reached both ways:
+//
+//	trait Tc0[T] { function tc0_get(self: Self, d: T): T; }
+//	impl Tc0[i32] for S1 { function tc0_get(self: Self, d: i32): i32 { return <expr>; } }
+//	function tcg0[T: Tc0[i32]](o: T, d: i32): i32 { ... }    // static dispatch
+//	function dc0(o: dyn Tc0[i32], d: i32): i32 { ... }      // dynamic dispatch
+//
+// and, optionally, a trait with an associated type each implementer binds
+// to i32, i64 or string:
+//
+//	trait Pr0 { type Item; function pr0_get(self: Self): Self::Item; }
+//	impl Pr0 for S1 { type Item = i64; function pr0_get(self: Self): Self::Item { return <i64 expr>; } }
+//	function tp0[H: Pr0](h: H): H::Item { return h.pr0_get(); }  // per implementer's Item
+//	function dp0(d: dyn Pr0[Item = i32]): i32 { ... }          // the i32 implementers
 //
 // The impl bodies are generated expressions over `self` and `x`, so each
 // implementer computes something different and a call dispatched to the
@@ -48,6 +71,15 @@ func (g *Generator) declareTrait(b *strings.Builder) {
 		ts.overrides = append(ts.overrides, !g.flip(0.6))
 	}
 	k1, k2 := g.ch.intN(64), g.ch.intN(64)
+	// `true` = no Mk0, no Tc0, no Pr0; an exhausted stream binds Item to i32.
+	assoc := !g.flip(0.5)
+	generic := !g.flip(0.5)
+	var items []gtype
+	if !g.flip(0.5) {
+		for range ts.impls {
+			items = append(items, []gtype{tI32, tI64, tString}[g.ch.intN(3)])
+		}
+	}
 	if g.ch.exhausted() {
 		return
 	}
@@ -78,10 +110,98 @@ func (g *Generator) declareTrait(b *strings.Builder) {
 	b.WriteString("function dg0(d: dyn Tr0, x: i32): i32 { return (d.t0_m(x) - d.t0_d()); }\n")
 	b.WriteString("function da0(ds: dyn Tr0[], x: i32): i32 { let t: i32 = x; " +
 		"for d in ds { t = ((t * 31i32) + d.t0_m(x)); } return (t ^ ds.len()); }\n")
+	b.WriteString("struct DH0 { d: dyn Tr0, k: i32 }\n")
 	for _, t := range ts.impls {
 		g.helpers = append(g.helpers,
 			helperSig{name: "tg0", params: []gtype{t, t, tI32}, retType: tI32},
 			helperSig{name: "dg0", params: []gtype{t, tI32}, retType: tI32})
+	}
+	if assoc {
+		g.declareAssocTrait(b, ts.impls)
+	}
+	if generic {
+		g.declareGenericTrait(b, ts.impls)
+	}
+	if items != nil {
+		g.declareAssocTypeTrait(b, ts.impls, items)
+	}
+}
+
+// declareAssocTypeTrait writes Pr0, an impl per implementer binding Item to
+// items[i], tp0, and dp0, and registers tp0 at every implementer and dp0 at
+// the ones whose Item is i32.
+func (g *Generator) declareAssocTypeTrait(b *strings.Builder, impls, items []gtype) {
+	b.WriteString("trait Pr0 { type Item; function pr0_get(self: Self): Self::Item; }\n")
+	prevRet := g.currentReturnType
+	for i, t := range impls {
+		fmt.Fprintf(b, "impl Pr0 for %s { type Item = %s; function pr0_get(self: Self): Self::Item { return ",
+			g.typeName(t), g.typeName(items[i]))
+		g.currentReturnType = items[i]
+		sc := newScope(nil)
+		sc.declare(t, "self")
+		g.expr(b, sc, items[i], 1)
+		b.WriteString("; } }\n")
+	}
+	g.currentReturnType = prevRet
+	b.WriteString("function tp0[H: Pr0](h: H): H::Item { return h.pr0_get(); }\n")
+	b.WriteString("function dp0(d: dyn Pr0[Item = i32]): i32 { return (d.pr0_get() * 9i32); }\n")
+	for i, t := range impls {
+		g.helpers = append(g.helpers, helperSig{name: "tp0", params: []gtype{t}, retType: items[i]})
+		if items[i] == tI32 {
+			g.helpers = append(g.helpers, helperSig{name: "dp0", params: []gtype{t}, retType: tI32})
+		}
+	}
+}
+
+// declareGenericTrait writes Tc0[T], its impls at i32 for the given types,
+// and tcg0 and dc0, and registers both as helpers at each implementer.
+func (g *Generator) declareGenericTrait(b *strings.Builder, impls []gtype) {
+	b.WriteString("trait Tc0[T] { function tc0_get(self: Self, d: T): T; }\n")
+	prevRet := g.currentReturnType
+	g.currentReturnType = tI32
+	for _, t := range impls {
+		fmt.Fprintf(b, "impl Tc0[i32] for %s { function tc0_get(self: Self, d: i32): i32 { return ", g.typeName(t))
+		sc := newScope(nil)
+		sc.declare(t, "self")
+		sc.declare(tI32, "d")
+		g.expr(b, sc, tI32, 1)
+		b.WriteString("; } }\n")
+	}
+	g.currentReturnType = prevRet
+	b.WriteString("function tcg0[T: Tc0[i32]](o: T, d: i32): i32 { return (o.tc0_get(d) - (d * 5i32)); }\n")
+	b.WriteString("function dc0(o: dyn Tc0[i32], d: i32): i32 { return (o.tc0_get(d) ^ 77i32); }\n")
+	for _, t := range impls {
+		g.helpers = append(g.helpers,
+			helperSig{name: "tcg0", params: []gtype{t, tI32}, retType: tI32},
+			helperSig{name: "dc0", params: []gtype{t, tI32}, retType: tI32})
+	}
+}
+
+// declareAssocTrait writes Mk0, its impls for the given types, and tm0, and
+// registers tm0 as a helper at each of them. Each impl's constructor and
+// accessor are generated expressions, so tm0 at the wrong implementer, or
+// T.mk0_new resolved to the wrong impl, changes the answer.
+func (g *Generator) declareAssocTrait(b *strings.Builder, impls []gtype) {
+	b.WriteString("trait Mk0 { function mk0_new(x: i32): Self; function mk0_v(self: Self): i32; }\n")
+	prevRet := g.currentReturnType
+	for _, t := range impls {
+		fmt.Fprintf(b, "impl Mk0 for %s { function mk0_new(x: i32): Self { return ", g.typeName(t))
+		g.currentReturnType = t
+		sc := newScope(nil)
+		sc.declare(tI32, "x")
+		g.expr(b, sc, t, 1)
+		b.WriteString("; } function mk0_v(self: Self): i32 { return ")
+		g.currentReturnType = tI32
+		sc = newScope(nil)
+		sc.declare(t, "self")
+		g.expr(b, sc, tI32, 1)
+		b.WriteString("; } }\n")
+	}
+	g.currentReturnType = prevRet
+	b.WriteString("function tm0[T: Mk0](a: T, x: i32): i32 { let b: T = T.mk0_new(x); " +
+		"return ((a.mk0_v() * 7i32) ^ b.mk0_v()); }\n")
+	for _, t := range impls {
+		g.helpers = append(g.helpers, helperSig{name: "tm0", params: []gtype{t, tI32}, retType: tI32})
 	}
 }
 
@@ -91,8 +211,17 @@ func (g *Generator) declareTrait(b *strings.Builder) {
 //	let __dyn_a0: dyn Tr0[] = [<S1 expr>, <i32 expr>];   // mixed vtables
 //	let __dyn_v0: dyn Tr0 = <S1 expr>;
 //	__dyn_v0 = <i32 expr>;                                // the old object dropped
-//	let __dyn_r0: i32 = (da0(__dyn_a0, <i32>) + (__dyn_a0[1i32].t0_d() ^ dg0(__dyn_v0, <i32>)));
+//	let __dyn_h0: DH0 = DH0 { d: <S1 expr>, k: <i32> };   // optional
+//	let __dyn_g0: DH0 = DH0 { ...__dyn_h0, k: <i32> };    //   shares h0's object
+//	let __dyn_e0: dyn Tr0 = <i32 expr>;                   // optional; a tuple
+//	let __dyn_p0: (dyn Tr0, i32) = (__dyn_e0, <i32>);     //   literal coerces nothing
+//	let __dyn_c0: i32 = (match (__dyn_v0 as? S1) {        // optional
+//	    Some(__dyn_s0) => <i32 expr over __dyn_s0>, None => <i32> });
+//	let __dyn_r0: i32 = (da0(__dyn_a0, <i32>) + (__dyn_a0[1i32].t0_d() ^ dg0(__dyn_v0, <i32>)))
+//	    + (__dyn_g0.d.t0_m(__dyn_h0.k) ^ __dyn_g0.k) + __dyn_p0.0.t0_d() + __dyn_c0;
 //
+// The downcast's subject is the reassigned object or an array element, and
+// its target a struct implementer, which the subject may or may not be.
 // Only the result joins the scope: a `dyn` value reaches a function, so a
 // later closure capturing the reassigned local would be E049.
 func (g *Generator) maybeEmitTraitCluster(b *strings.Builder, sc *scope) bool {
@@ -111,6 +240,23 @@ func (g *Generator) maybeEmitTraitCluster(b *strings.Builder, sc *scope) bool {
 	}
 	first, second := impls[g.ch.intN(len(impls))], impls[g.ch.intN(len(impls))]
 	at := g.ch.intN(len(elems))
+	// `true` = the part is left out.
+	var held, tupled, downTo gtype
+	hold := !g.flip(0.5)
+	if hold {
+		held = impls[g.ch.intN(len(impls))]
+	}
+	tuple := !g.flip(0.5)
+	if tuple {
+		tupled = impls[g.ch.intN(len(impls))]
+	}
+	structs := structImpls(impls)
+	down := len(structs) > 0 && !g.flip(0.3)
+	downFromArr := false
+	if down {
+		downTo = structs[g.ch.intN(len(structs))]
+		downFromArr = !g.flip(0.5)
+	}
 	if g.ch.exhausted() {
 		return false
 	}
@@ -132,13 +278,61 @@ func (g *Generator) maybeEmitTraitCluster(b *strings.Builder, sc *scope) bool {
 	g.expr(b, sc, first, 1)
 	fmt.Fprintf(b, "; %s = ", v)
 	g.expr(b, sc, second, 1)
-	fmt.Fprintf(b, "; let %s: i32 = (da0(%s, ", r, arr)
+	b.WriteString("; ")
+	tail := ""
+	if hold {
+		h, h2 := fmt.Sprintf("__dyn_h%d", idx), fmt.Sprintf("__dyn_g%d", idx)
+		fmt.Fprintf(b, "let %s: DH0 = DH0 { d: ", h)
+		g.expr(b, sc, held, 1)
+		b.WriteString(", k: ")
+		g.expr(b, sc, tI32, 1)
+		fmt.Fprintf(b, " }; let %s: DH0 = DH0 { ...%s, k: ", h2, h)
+		g.expr(b, sc, tI32, 1)
+		b.WriteString(" }; ")
+		tail += fmt.Sprintf(" + (%s.d.t0_m(%s.k) ^ %s.k)", h2, h, h2)
+	}
+	if tuple {
+		p, e := fmt.Sprintf("__dyn_p%d", idx), fmt.Sprintf("__dyn_e%d", idx)
+		fmt.Fprintf(b, "let %s: dyn Tr0 = ", e)
+		g.expr(b, sc, tupled, 1)
+		fmt.Fprintf(b, "; let %s: (dyn Tr0, i32) = (%s, ", p, e)
+		g.expr(b, sc, tI32, 1)
+		b.WriteString("); ")
+		tail += fmt.Sprintf(" + (%s.0.t0_d() - %s.1)", p, p)
+	}
+	if down {
+		c, bind := fmt.Sprintf("__dyn_c%d", idx), fmt.Sprintf("__dyn_s%d", idx)
+		subject := v
+		if downFromArr {
+			subject = fmt.Sprintf("%s[%di32]", arr, at)
+		}
+		fmt.Fprintf(b, "let %s: i32 = (match (%s as? %s) { Some(%s) => ", c, subject, g.typeName(downTo), bind)
+		inner := newScope(sc)
+		inner.declare(downTo, bind)
+		g.expr(b, inner, tI32, 1)
+		b.WriteString(", None => ")
+		g.expr(b, sc, tI32, 1)
+		b.WriteString(" }); ")
+		tail += " + " + c
+	}
+	fmt.Fprintf(b, "let %s: i32 = ((da0(%s, ", r, arr)
 	g.expr(b, sc, tI32, 1)
 	fmt.Fprintf(b, ") + (%s[%di32].t0_d() ^ dg0(%s, ", arr, at, v)
 	g.expr(b, sc, tI32, 1)
-	b.WriteString("))); ")
+	fmt.Fprintf(b, ")))%s); ", tail)
 	sc.declare(tI32, r)
 	return true
+}
+
+// structImpls is the implementers an `as?` can name: structs, not i32.
+func structImpls(impls []gtype) []gtype {
+	var out []gtype
+	for _, t := range impls {
+		if t != tI32 {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func minInt(a, b int) int {

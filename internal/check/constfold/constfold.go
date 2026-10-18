@@ -861,6 +861,18 @@ func isLiteralOperand(e ast.Expr) bool {
 	return false
 }
 
+// PruneDeadArms drops the arm each `if` on a literal never takes, so the
+// capability gates and the shake judge only the arm a target runs. It runs
+// after the checker: a dead arm is still type-checked.
+func PruneDeadArms(prog *ast.Program) {
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if x, ok := n.(*ast.If); ok && !x.IsAssert {
+			pruneLiteralIf(x)
+		}
+		return true
+	})
+}
+
 // pruneLiteralIf drops the arm an `if` on a literal never takes: the live
 // arm stays under `if (true)`, the shape the IR fold erases, so a block's
 // scope is kept and nothing is spliced into the enclosing one.
@@ -903,9 +915,6 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 	case *ast.If:
 		s.walkExpr(&x.Cond)
 		x.Cond = foldLiteralCond(x.Cond)
-		if !x.IsAssert {
-			pruneLiteralIf(x)
-		}
 		s.walkStmt(x.Then)
 		if x.Else != nil {
 			s.walkStmt(x.Else)
