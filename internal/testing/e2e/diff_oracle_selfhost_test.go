@@ -255,13 +255,17 @@ func semRefused(out string) bool {
 	return strings.Contains(out, "FERN_SEM_IR: the typed lowering refused")
 }
 
+// selfHostCompileTimeout bounds one compile of a generated program, which takes
+// a second or two; a compiler that runs past it is hung.
+var selfHostCompileTimeout = 2 * time.Minute
+
 // runSelfHostSeed compiles src with the self-host CLI, links it, and runs it.
 //
 // Returns (run, "") when the program ran, (nil, gapMessage) when the compiler
-// bailed, and (nil, "") when the LINK failed — a link failure has already been
-// reported through failf, because the compiler emitted asm the assembler
-// rejected and the artifact never ran, which is a finding this leg exists to
-// report rather than a coverage gap to skip.
+// bailed, and (nil, "") when the compile hung or the LINK failed. Both are
+// already reported through failf: a hung compiler, or asm the assembler
+// rejected, is a finding this leg exists to report rather than a coverage gap
+// to skip.
 //
 // It reports the bail rather than calling t.Skip itself. A skip unwinds the
 // subtest goroutine immediately, which silently bypassed the caller's
@@ -273,10 +277,6 @@ func semRefused(out string) bool {
 // selfHostRunTimeout and reported as such, rather than spending the lane's
 // budget. That matters more here than on the fixture legs: these programs are
 // generated, so nobody has ever eyeballed one to know it should terminate.
-// selfHostCompileTimeout bounds one compile of a generated program, which takes
-// a second or two; a compiler that runs past it is hung.
-var selfHostCompileTimeout = 2 * time.Minute
-
 func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env []string, failf failFunc) (*selfHostRun, string) {
 	t.Helper()
 	// Absolute paths throughout: a relative one was unopenable from an
