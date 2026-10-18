@@ -108,7 +108,11 @@ func blankLineNumbers(src string) []int {
 func parseExprFromText(text string, base ast.Position) (ast.Expr, error) {
 	tokens, _, err := lexer.Tokenize(text)
 	if err != nil {
-		return nil, &Error{Pos: base, Msg: fmt.Sprintf("f-string interpolation: %v", err)}
+		var le *lexer.Error
+		if errors.As(err, &le) {
+			return nil, &lexer.Error{Pos: offsetPos(base, le.Pos), Msg: le.Msg, Numeric: le.Numeric}
+		}
+		return nil, err
 	}
 	for i := range tokens {
 		tokens[i].Pos = offsetPos(base, tokens[i].Pos)

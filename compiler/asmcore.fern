@@ -9737,6 +9737,15 @@ pub function assignable(want: Ty, got: Ty): boolean {
 }
 
 function parse_unknown_error(where: string, kind: string, line: i32, col: i32): util.Diag {
+  // A lex error has no enclosing construct to name: it carries its own code
+  // and is worded as native's lexer words it.
+  let lex: string = kind;
+  if (util.str_has_prefix(lex, "stmt: ")) {
+    lex = slice_unchecked(lex, 6, lex.len()) + "";
+  }
+  if (util.str_has_prefix(lex, "lex:")) {
+    return util.Diag { related: [], code: slice_unchecked(lex, 4, 8) + "", message: slice_unchecked(lex, 9, lex.len()) + "", line: line, col: col, fix: None };
+  }
   // An out-of-range float literal is P002, the numeric-literal code native's
   // parser reports for it, not the generic parser-side-unknown P001 (#6842).
   if (util.is_f64_range_kind(kind)) {
@@ -9775,9 +9784,6 @@ function sentinel_message(kind: string): string {
   }
   if (util.str_has_prefix(k, "keyword:")) {
     return "expected an expression, got \"" + slice_unchecked(k, 8, k.len()) + "\"";
-  }
-  if (util.str_has_prefix(k, "lex error: ")) {
-    return slice_unchecked(k, 11, k.len()) + "";
   }
   if (util.str_has_prefix(k, "missing ")) {
     return missing_message(slice_unchecked(k, 8, k.len()) + "");
