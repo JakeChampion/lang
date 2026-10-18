@@ -1080,6 +1080,10 @@ first differing offset within those ranges, or the clamped count. Packed
 native arrays share the string range-comparison vector kernels; unpacked
 arrays use bounded slot reads. Tests cover every mismatch position around
 vector boundaries, all byte values, extreme bounds, aliases and allocations.
+`__mismatch_bytes_str(a, ao, s, bo, n)` is the same comparison between a byte
+array and a string, with the same clamps and the same kernels, for a parser
+matching wire bytes against a string it already holds (std/http's
+`__bytes_are`).
 
 `install -C` uses raw byte comparison. Target, ownership, bootstrap and GNU
 parity checks pass. Current size and native measurements are recorded in

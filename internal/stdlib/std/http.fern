@@ -2488,17 +2488,7 @@ function __is_digit(b: u8): boolean {
 // `__bytes_are(buf, from, want)` — whether the bytes at `from` start with
 // `want`.
 function __bytes_are(buf: u8[], from: i32, want: string): boolean {
-  if (from + want.len() > buf.len()) {
-    return false;
-  }
-  let i: i32 = 0;
-  while (i < want.len()) {
-    if (buf[from + i] != want[i]) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
+  return __mismatch_bytes_str(buf, from, want, 0, want.len()) == want.len();
 }
 
 // __persists(version, h) — whether the connection outlives this

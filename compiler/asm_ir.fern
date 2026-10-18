@@ -5263,11 +5263,17 @@ function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let lb: string = mlo.name;
   s = mlo.state;
   s = s.write("    popq %r8\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rax\n");
-  if (o.kind_tag == 378) {
+  // A packed array holds its length at 0 and its bytes from 8; a string box
+  // holds its data pointer at 0 and its length at 8. mismatch_bytes_str
+  // takes an array as `a` and a string as `b`.
+  if (o.kind_tag == 378 || o.kind_tag == 446) {
     s = s.write("    movq (%rax), %r9\n    addq $8, %rax\n");
-    s = s.write("    movq (%rdx), %r10\n    addq $8, %rdx\n");
   } else {
     s = s.write("    movq 8(%rax), %r9\n    movq (%rax), %rax\n");
+  }
+  if (o.kind_tag == 378) {
+    s = s.write("    movq (%rdx), %r10\n    addq $8, %rdx\n");
+  } else {
     s = s.write("    movq 8(%rdx), %r10\n    movq (%rdx), %rdx\n");
   }
   // Each offset clamps into [0, len] of its own string.
@@ -5989,7 +5995,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(a_done + ":\n    pushq %rdx\n");
     return s;
   }
-  if (o.kind_tag == 245 || o.kind_tag == 378) {  // mismatch / mismatch_bytes
+  if (o.kind_tag == 245 || o.kind_tag == 378 || o.kind_tag == 446) {  // mismatch / mismatch_bytes / mismatch_bytes_str
     return emit_mismatch_x86(o, s);
   }
   if (o.kind_tag == 104) {  // str_bytes

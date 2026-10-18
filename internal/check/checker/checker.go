@@ -1879,6 +1879,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __mismatch_bytes_str(a, ao, s, bo, n) → i32: __mismatch_bytes with a
+	// string as the second range, for a parser matching wire bytes against a
+	// string it holds.
+	c.info.FuncSigs["__mismatch_bytes_str"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.StringType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __ascii_run(s, from) → i32: the index of the first high-bit byte at or
 	// after `from`, or len(s). Same (string, i32) shape as __memchr minus the
 	// needle — the test is the high bit itself.
@@ -12473,7 +12480,7 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // (the byte-scan kernels, the bit counts, a constant, the heap counters, the
 // clock). verifyFipAllocs (E068) stays the backstop for what they emit.
 var fipNonAllocBuiltins = map[string]bool{
-	"__memchr": true, "__mismatch_bytes": true, "__count_byte_bytes": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
+	"__memchr": true, "__mismatch_bytes": true, "__mismatch_bytes_str": true, "__count_byte_bytes": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
 	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
 	"__crc32_cksum": true, "__crc32_cksum_array": true,
 	"__clz32": true, "__ctz32": true, "__popcount32": true,
