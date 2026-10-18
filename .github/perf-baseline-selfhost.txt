@@ -248,6 +248,6 @@ selfhost/wasm32-wasi/perceus_nqueens.emit	1254
 selfhost/x86-64-linux/perceus_rbtree.emit	2697
 selfhost/arm64-linux/perceus_rbtree.emit	2961
 selfhost/wasm32-wasi/perceus_rbtree.emit	3587
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	2960
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3223
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4059
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	2878
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3145
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4011

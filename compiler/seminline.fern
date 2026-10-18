@@ -1991,23 +1991,24 @@ function count_insts(g: ssa.SFunc): i32 {
   return n;
 }
 
-// Constructions, and phis and copies of a type one builds, that nothing reads.
-// A box whose type has a finalizer is kept: dropping it would skip the drop.
+// Constructions, and phis and copies of a type one builds, that nothing needs
+// (needed_values). A box whose type has a finalizer is kept: dropping it would
+// skip the drop.
 function drop_unread(f: ssasem.Func): Rewrite {
   let g: ssa.SFunc = f.graph;
   let built: typeinfo.Type[] = built_types(g, f);
   if (built.len() == 0 && !has_static_closure(g)) {
     return Rewrite { f: f, changed: false };
   }
-  let reads: i32[] = read_counts(f);
-  if (!any_unread(f, built, reads)) {
+  let needed: boolean[] = needed_values(f, built);
+  if (!any_unread(f, built, needed)) {
     return Rewrite { f: f, changed: false };
   }
   let blocks: ssa.SBlock[] = [];
   for b in g.blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
-      if (!unread_build(f, built, reads, ins)) {
+      if (!unread_build(f, built, needed, ins)) {
         insts = insts.append(ins);
       }
     }
@@ -2027,10 +2028,10 @@ function has_static_closure(g: ssa.SFunc): boolean {
   return false;
 }
 
-function any_unread(f: ssasem.Func, built: typeinfo.Type[], reads: i32[]): boolean {
+function any_unread(f: ssasem.Func, built: typeinfo.Type[], needed: boolean[]): boolean {
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (unread_build(f, built, reads, ins)) {
+      if (unread_build(f, built, needed, ins)) {
         return true;
       }
     }
@@ -2050,40 +2051,49 @@ function built_types(g: ssa.SFunc, f: ssasem.Func): typeinfo.Type[] {
   return built;
 }
 
-// How often each value is read as an operand or by a terminator.
-function read_counts(f: ssasem.Func): i32[] {
+// The values an instruction drop_unread keeps, or a terminator, reads, and
+// what a needed droppable one reads in turn: the phis a nested loop carries a
+// box through read only each other and the update, and are not needed.
+function needed_values(f: ssasem.Func, built: typeinfo.Type[]): boolean[] {
   let g: ssa.SFunc = f.graph;
-  let reads: i32[] = [];
-  let v: i32 = 0;
-  while (v < g.nvals) {
-    reads = reads.append(0);
-    v = v + 1;
-  }
+  let work: i32[] = [];
   for b in g.blocks {
     for ins in b.insts {
-      for a in ins.args {
-        reads = counted(reads, a);
+      if (!droppable(f, built, ins)) {
+        work = util.append_all(work, ins.args);
       }
     }
     if (b.term.kind_tag == 1) {
-      reads = counted(reads, b.term.value);
+      work = work.append(b.term.value);
     }
     if (b.term.kind_tag == 3) {
-      reads = counted(reads, b.term.cond);
+      work = work.append(b.term.cond);
     }
   }
-  return reads;
-}
-
-function counted(own reads: i32[], v: i32): i32[] {
-  if (v < 0 || v >= reads.len()) {
-    return reads;
+  let defs: Defs = defs_of(g);
+  let needed: boolean[] = __alloc_bool(g.nvals);
+  let at: i32 = 0;
+  while (at < work.len()) {
+    let v: i32 = work[at];
+    at = at + 1;
+    if (v >= 0 && v < needed.len() && !needed[v]) {
+      needed = needed.with(v, true);
+      let d: ssa.SInst = def_inst(defs, v);
+      if (droppable(f, built, d)) {
+        work = util.append_all(work, d.args);
+      }
+    }
   }
-  return reads.with(v, reads[v] + 1);
+  return needed;
 }
 
-function unread_build(f: ssasem.Func, built: typeinfo.Type[], reads: i32[], ins: ssa.SInst): boolean {
-  if (ins.result < 0 || ins.result >= reads.len() || reads[ins.result] != 0) {
+function unread_build(f: ssasem.Func, built: typeinfo.Type[], needed: boolean[], ins: ssa.SInst): boolean {
+  return droppable(f, built, ins) && ins.result < needed.len() && !needed[ins.result];
+}
+
+// Whether drop_unread may remove `ins` once nothing needs it.
+function droppable(f: ssasem.Func, built: typeinfo.Type[], ins: ssa.SInst): boolean {
+  if (ins.result < 0) {
     return false;
   }
   // Capture-free closure constants have no capture lifetime to preserve.

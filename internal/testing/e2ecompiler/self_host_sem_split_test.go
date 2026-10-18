@@ -16,7 +16,11 @@ import (
 // variants with a phi, record and tuple hold the string beside a scalar, and
 // held passes its record to a call, so that record is still a box a round.
 // threaded carries a record through the loop by rebuilding it, building its
-// string once: the rebuilds join in a phi, so no box is left at all.
+// string once: the rebuilds join in a phi, so no box is left at all. nested
+// and nested_unread rebuild it in the inner of two loops, so the box is
+// carried through a phi at each header that reads only the other phi and the
+// rebuild; nothing else needs it, and it goes with them (#12820; 100 boxes
+// while the two phis kept each other).
 // kept_variant hands its option to a call and matches it too, so the option
 // is still built and its test and payload read both stay on the box.
 // gate joins two records holding the same call result and reads that field
@@ -97,6 +101,28 @@ struct Gate { s: St, from: i32 }
     }
     return (p.name.len() + p.n) * 1000 + ((__heap_alloc_count() - before) as i32);
 }
+@noinline function nested_rounds(): i32 {
+    let before: i64 = __heap_alloc_count();
+    let p: Pair = Pair { name: ids("a") + "b", n: 0 };
+    let r: i32 = 0;
+    while (r < 10) {
+        let i: i32 = 0;
+        while (i < 10) { p = Pair { ...p, n: p.n + 1 }; i = i + 1; }
+        r = r + 1;
+    }
+    return (p.name.len() + p.n) * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+@noinline function nested_unread_rounds(): i32 {
+    let before: i64 = __heap_alloc_count();
+    let p: Pair = Pair { name: ids("a") + "b", n: 0 };
+    let r: i32 = 0;
+    while (r < 10) {
+        let i: i32 = 0;
+        while (i < 10) { p = Pair { ...p, n: p.n + 1 }; i = i + 1; }
+        r = r + 1;
+    }
+    return r * 1000 + ((__heap_alloc_count() - before) as i32);
+}
 @noinline function shown(o: Option[string]): i32 {
     match (o) { Some(s) => { return s.len(); }, None => { return 0; } }
 }
@@ -141,24 +167,26 @@ function main(): i32 {
     print_int(tuple_rounds()); print("");
     print_int(held_rounds()); print("");
     print_int(threaded_rounds()); print("");
+    print_int(nested_rounds()); print("");
+    print_int(nested_unread_rounds()); print("");
     print_int(kept_variant_rounds()); print("");
     print_int(gate_rounds()); print("");
     return 0;
 }
 `
 
-var semSplitProduced = []string{"ids", "held", "option_rounds", "result_rounds", "record_rounds", "tuple_rounds", "held_rounds", "threaded_rounds", "shown", "kept_variant_rounds", "mk", "gate_rounds"}
+var semSplitProduced = []string{"ids", "held", "option_rounds", "result_rounds", "record_rounds", "tuple_rounds", "held_rounds", "threaded_rounds", "nested_rounds", "nested_unread_rounds", "shown", "kept_variant_rounds", "mk", "gate_rounds"}
 
 func TestSelfHostSemanticSplit(t *testing.T) {
 	runSemanticProgram(t, "semsplit", semSplitProgram, semSplitProduced,
-		semInlineWants("150100\n2600100\n5150100\n5150100\n5150200\n102001\n250100\n10100200\n"))
+		semInlineWants("150100\n2600100\n5150100\n5150100\n5150200\n102001\n102001\n10001\n250100\n10100200\n"))
 }
 
 // FERN_SEM_INLINE= turns the pass off, and every construction is a box again.
 func TestSelfHostSemanticSplitOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	runSemanticProgram(t, "semsplit-off", semSplitProgram, semSplitProduced,
-		semInlineWants("150150\n2600250\n5150200\n5150200\n5150200\n102002\n250100\n10100350\n"))
+		semInlineWants("150150\n2600250\n5150200\n5150200\n5150200\n102002\n102002\n10002\n250100\n10100350\n"))
 }
 
 // A function spliced into its one caller leaves no body behind, on any
