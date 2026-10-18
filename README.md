@@ -95,7 +95,8 @@ fern -repl                           # interactive session
 `fern` is the self-hosted compiler, one binary with the standard library
 inside it. It assembles, links and (for Darwin) code-signs in-process with no
 external toolchain. `fern -targets` lists every target with the capabilities
-its host provides; `fern -explain E030` explains an error code.
+its host provides; `fern -explain E030` explains an error code; `fern -h`
+lists every flag.
 
 Diagnostics include source context, related locations and applicable fixes.
 Use `fern -q -check FILE.fern` or `FERN_DIAG_FORMAT=terse` for one plain line per
