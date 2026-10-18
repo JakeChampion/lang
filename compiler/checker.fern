@@ -26371,12 +26371,13 @@ pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
 
 // untyped_code is ill_typed_hint's report that the checker could not type
 // `what`, positioned at `line`, `col`; `col` 0 is a statement the parser keeps
-// no column for, reported from its line's start.
+// no column for, reported from its line's start. A positioned uncoded
+// diagnostic prints as `error: internal: ...`, like the compiler's others.
 function untyped_code(line: i32, col: i32, what: string): util.Diag {
   if (col <= 0) {
     col = 1;
   }
-  return dg_at("", "internal error: the checker could not type " + what + " and has no diagnostic for it; this is a compiler bug, please report it", line, col);
+  return dg_at("", "internal: the checker could not type " + what + " and has no diagnostic for it; this is a compiler bug, please report it", line, col);
 }
 
 // =================== VALIDATION ====================

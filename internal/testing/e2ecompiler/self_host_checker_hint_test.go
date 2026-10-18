@@ -179,7 +179,7 @@ function main(): i32 { let c: boolean = true; let b = if (c) { Full(1) } else { 
 			}
 			if tc.fallback != 0 {
 				want := tc.name + ".fern:" + strconv.Itoa(tc.fallback) + ":"
-				if !strings.Contains(string(out), want) || !strings.Contains(string(out), `internal error: the checker could not type this statement in "main" (`) {
+				if !strings.Contains(string(out), want) || !strings.Contains(string(out), `error: internal: the checker could not type this statement in "main" (`) {
 					t.Errorf("diagnostic = %s, want %q", out, want)
 				}
 			} else if len(out) != 0 {
@@ -245,7 +245,7 @@ function main(): i32 {
 			if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 1 {
 				t.Fatalf("self-host checker: want exit 1\n%s", out)
 			}
-			if !strings.Contains(string(out), want) || strings.Contains(string(out), "internal error") {
+			if !strings.Contains(string(out), want) || strings.Contains(string(out), "internal: ") {
 				t.Errorf("diagnostic = %s, want %q and no internal error", out, want)
 			}
 		})
