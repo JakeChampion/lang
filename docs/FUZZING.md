@@ -200,6 +200,20 @@ regression test where the bug lived:
 - **A generic literal passed to a generic parameter took the callee's `T`**
   (#12739, Go checker), so `b(G { v: 1 })` was refused.
   `TestGenericStructLitFieldCheckedAgainstDestination`.
+- **A type parameter was a wildcard in its own generic's body** (#12656,
+  self-host checker). `return 0` into a `T`, an `if` joining a `T` with an
+  `i32`, a field of type `T` given an `i32`, and `H::Item` returned as a
+  `string` were all accepted. A body's type parameters are now
+  `TypeErased`, equal only to themselves (`rigid_tparams`); a caller's
+  reading of the signature still erases them to unknown for inference. Rows
+  `rigid-tparam-*` in `TestSelfHostCheckerCodesX86_64`.
+- **An array literal fitted any `T[]` in a generic body** (Go checker; found
+  with #12656). `elemSettleable` let a destination element naming the
+  enclosing declaration's own parameter take any literal. Only a callee's
+  parameter does now. `TestArrayLiteralSettlingStillWorks`.
+- **A missing method on a `boolean` had no diagnostic** (self-host checker;
+  found with #12656), so a generic body, which gets no well-typedness hint,
+  accepted it. Row `bool-method-missing-in-generic`.
 - **A generator bug**: the ownership cluster reassigned a variable whose type
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.

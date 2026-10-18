@@ -476,6 +476,9 @@ function resolved(t: typeinfo.Type, template: boolean, b: ssasem.Binding, scope:
     }
     return t;
   }
+  if let typeinfo.TypeErased(_) = t {
+    return ssasem.substitute(t, b);
+  }
   return resolved_within(t, b, scope);
 }
 

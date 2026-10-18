@@ -11904,7 +11904,7 @@ function tv_word_char(c: i32): boolean {
 // spelling, appended to `acc` (deduped): each maximal `[A-Za-z0-9_]` run
 // looks_type_var accepts, so it finds `T` in `T[]` and both `K` and `V` in
 // `Map[K, V]`.
-function type_str_vars(ty: string, acc: string[]): string[] {
+pub function type_str_vars(ty: string, acc: string[]): string[] {
   let out: string[] = acc;
   let i: i32 = 0;
   let n: i32 = ty.len();
