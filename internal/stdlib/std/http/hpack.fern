@@ -275,18 +275,22 @@ pub struct Decoded { decoder: Decoder, fields: Field[] }
 
 // decode takes one whole header block (every CONTINUATION joined).
 pub function (d: Decoder) decode(block: u8[]): Result[Decoded, HpackError] {
-  let st: __Dec = __Dec { table: d.table, at: 0, fields: [], total: 0, started: false, value: 0, text: "" };
+  let st: __Dec = __Dec { table: d.table, at: 0, fields: [], total: 0, started: false, value: 0, text: "", touched: false };
   while (st.at < block.len()) {
     st = __field(d, st, block)?;
+  }
+  if (!st.touched) {
+    return Ok(Decoded { decoder: d, fields: st.fields });
   }
   return Ok(Decoded { decoder: Decoder { ...d, table: st.table }, fields: st.fields });
 }
 
 // __Dec — a decode in progress: the table, the offset, the fields so far,
 // their size, whether a field has come (after which no size update may),
-// and the last integer and string read, so a read hands back the decode
-// and nothing else.
-struct __Dec { table: Table, at: i32, fields: Field[], total: i32, started: boolean, value: i32, text: string }
+// the last integer and string read, so a read hands back the decode and
+// nothing else, and whether the table has changed, so a block that leaves
+// it alone hands the decoder back as it was.
+struct __Dec { table: Table, at: i32, fields: Field[], total: i32, started: boolean, value: i32, text: string, touched: boolean }
 
 // __field reads one representation (§6): by its first bits, an indexed
 // field, a literal added to the table, a size update, or a literal that
@@ -325,7 +329,7 @@ function __size_update(d: Decoder, st: __Dec, block: u8[]): Result[__Dec, HpackE
     return Err(BadSizeUpdate(st.value));
   }
   let size: i32 = st.value;
-  return Ok(__Dec { ...st, table: __resized(st.table, size) });
+  return Ok(__Dec { ...st, table: __resized(st.table, size), touched: true });
 }
 
 // __literal reads a literal field whose name is indexed by `prefix` bits
@@ -359,11 +363,11 @@ function __taken(d: Decoder, st: __Dec, f: Field, index: boolean): Result[__Dec,
   if (st.fields.len() >= d.max_fields) {
     return Err(TooMany(d.max_fields));
   }
-  let t: Table = st.table;
   if (index) {
-    t = __added(t, f.name, f.value);
+    let t: Table = st.table;
+    return Ok(__Dec { ...st, table: __added(t, f.name, f.value), fields: st.fields.append(f), total: total, started: true, touched: true });
   }
-  return Ok(__Dec { ...st, table: t, fields: st.fields.append(f), total: total, started: true });
+  return Ok(__Dec { ...st, fields: st.fields.append(f), total: total, started: true });
 }
 
 // __integer reads an integer with an N-bit prefix (§5.1) at the decode's
@@ -420,7 +424,7 @@ function __string(d: Decoder, st: __Dec, block: u8[]): Result[__Dec, HpackError]
     if (n > room) {
       return Err(TooLarge(d.max_list));
     }
-    return Ok(__Dec { ...st, text: string_from_bytes_unchecked(__bytes_range(block, from, from + n)), at: from + n });
+    return Ok(__Dec { ...st, text: string_from_bytes_range_unchecked(block, from, from + n), at: from + n });
   }
   match (huffman.decode(block[from:from + n], room)) {
     Ok(out) => {
@@ -483,11 +487,10 @@ pub struct Encoding { encoder: Encoder, out: u8[] }
 // `(e).begin()` — a header block started: the size update the encoder
 // owes, if any, goes first.
 pub function (e: Encoder) begin(): Encoding {
-  let out: u8[] = [];
-  if (e.update >= 0) {
-    out = __put_integer(out, 32, 5, e.update);
+  if (e.update < 0) {
+    return Encoding { encoder: e, out: [] };
   }
-  return Encoding { encoder: Encoder { ...e, update: 0 - 1 }, out: out };
+  return Encoding { encoder: Encoder { ...e, update: 0 - 1 }, out: __put_integer([], 32, 5, e.update) };
 }
 
 // `(en).put(name, value, sensitive)` — one field written as `encode`
