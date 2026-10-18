@@ -174,18 +174,37 @@ SETTINGS timeout is optional and not enforced).
    HEADERS frame read off the inbox without the record `frame.read`
    builds (`frame.plain_headers_at`), a frame taken off and counted in
    one update, and a block's readers keeping their run whole until they
-   rebuild it. What is left, 21 a request: the two literal strings; the
+   rebuild it; and 21.0 to 20.0 under 21, with the instructions per
+   request from 12,592 to 11,995 (oha's hello, seven fields of which
+   four are dynamic-table hits in the steady state, 15,060 to 13,510):
+   the decoder reads a block as its own state (`hpack.Decoder.start`,
+   `start_in`, `more`, `next`; the `Decoding` record and `finish` are
+   gone) with an indexed field's entry looked up once, the block read
+   where it lies in the inbox (`start_in`'s offsets; `__frame_taken`
+   leaves the inbox on the connection and `read` cuts it at its end), a
+   regular field's name and value checked by the `__scan_set` kernels
+   (`http.http_field_name_lower_ok`, `http_field_value_ok`), and the run
+   rebuilt around its connection in one nested construction where a
+   request opens, since the planner keeps a record's unchanged fields in
+   place only while no other reuse token is live across the update
+   (#12795). What is left, 20 a request: the two literal strings; the
    request handed over (its record, body, event and the events array,
    the stream's record and the streams array, the `host` map and its two
-   arrays, and `http_request_target`'s copy of the target); the decoding
-   and encoding records, the response buffer and the two steps; the
-   serve loop's `__H2Answered` and `Http2` box; the block copied out of
-   the inbox, which wants a string made from a view; and the connection
-   copied out of the loop's table at each turn, which wants a take out of
-   an array slot the language does not have: reading the slot's element
-   and overwriting the slot anchors the table to the element, so the
-   table's rebuild copies all of it (650 instructions and a box more a
-   request, measured again on this round).
+   arrays, and `http_request_target`'s copy of the target); the decoder,
+   copied at a block's start because the loop reading the block lies
+   between taking the decoder out of the connection and putting it back,
+   which keeps the planner from taking it (#12795); the encoding record,
+   the response buffer and the two steps; the serve
+   loop's `__H2Answered` and `Http2` box; and the connection copied out
+   of the loop's table at each turn, which wants a take out of an array
+   slot the language does not have: reading the slot's element and
+   overwriting the slot anchors the table to the element, so the table's
+   rebuild copies all of it (650 instructions and a box more a request).
+   Measured on this round and not kept: the encoder carrying its block in
+   place of the `Encoding` record (+51 instructions with the Go client,
+   the allocation unchanged, the encoder reaching `begin_in` shared), and
+   the static-table lookup comparing lengths and end bytes before strings
+   (+238).
 5. **h2spec nightly (landed).** `scripts/net-h2spec` on `net-nightly.yml`:
    h2spec 2.6.0 strict over h2c against `scripts/net-h2spec.d/server.fern`,
    146 cases, every one green or the job fails, the counts recorded under

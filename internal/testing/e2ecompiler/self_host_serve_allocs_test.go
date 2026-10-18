@@ -87,29 +87,13 @@ func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 }
 
 // ServeAllocsH2Ceiling bounds what the loop allocates per hello request
-// on one HTTP/2 connection (docs/NET-P6-HTTP2-PLAN.md slice 4), a ratchet
-// like the HTTP/1.1 zero above, as a ceiling on the mean since the count
-// varies from request to request: the frames of a request and its
-// response, the HPACK blocks, the stream's slot and the request handed
-// over. The first readings were 99.0 to 100.0 on x86-64; with the state
-// machine updating its connection in place, the HPACK decode threaded
-// through one record and a response's fields written straight into the
-// encoder, 72.0 to 72.4 here; with the loop closing an incomplete
-// preface at EOF, an arm that hands the table on, 60.0 (the loop's
-// splices unchanged, so the plan's doing: the table through the HTTP/2
-// turn no longer copied); with the connection, its stream array and a
-// stream rebuilt in their own boxes when a stream read in one block is
-// updated in another, 55.0 on arm64; with a literal string read in one
-// allocation and the HPACK tables handed back unchanged, a frame written
-// in one allocation, a request target handed back when already normal, a
-// response that fits sent at once, the read buffer fed without a copy,
-// the Date carried by the connection and the handler started from its
-// request, 41.0 on x86-64; with a header block read one field at a time,
-// a response written in one buffer from the body's own bytes and the
-// request's HEADERS frame read off the inbox without its record, 21.0
-// (docs/NET-P6-HTTP2-PLAN.md slice 4 has each); the CI runner reads a
-// few lower, as the note on serveAllocsH2Drift says.
-const ServeAllocsH2Ceiling = 22
+// on one HTTP/2 connection, a ratchet like the HTTP/1.1 zero above, as a
+// ceiling on the mean since the count varies from request to request with
+// how the client's frames coalesce into reads. The mean reads 20.0 on
+// x86-64 (from 99.0 on the first reading; docs/NET-P6-HTTP2-PLAN.md slice
+// 4 records each cut and what the 20 are); the CI runner reads a few
+// lower, as the note on serveAllocsH2Drift says.
+const ServeAllocsH2Ceiling = 21
 
 func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	cli := buildSelfHostCLI(t)
