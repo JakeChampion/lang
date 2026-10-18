@@ -1920,7 +1920,7 @@ function __kernel_record(c: __Conns, at: i32): (__Conns, boolean) {
   if let InKernel(sess) = c.tls[at] {
     match (ktls.read_now(fd)) {
       ktls.Opened(t, content) => {
-        match (sess.read(ktls.framed(t, content))) {
+        match (sess.read(ktls.framed(t, content), now_unix_ms())) {
           Ok(step) => {
             let c2: __Conns = __Conns { ...c, tls: c.tls.with(at, InKernel(step.session)) };
             if (ktls.send_records(fd, step.output) < 0 || ktls.install(fd, step.rekeyed) < 0) {
@@ -1958,7 +1958,7 @@ function __kernel_record(c: __Conns, at: i32): (__Conns, boolean) {
 // alert is written as far as the socket takes it.
 function __tls_taken[D: async.Driver](drv: D, c: __Conns, at: i32, sess: server.Session, raw: [u8], opts: Config): (__Conns, server.Session, u8[], boolean) {
   let none: u8[] = [];
-  match (sess.read(raw)) {
+  match (sess.read(raw, now_unix_ms())) {
     Ok(step) => {
       let done: boolean = step.closed;
       if (step.output.len() > 0) {
@@ -4264,7 +4264,7 @@ function __pull_read(p: __Pull, raw: u8[]): u8[] {
 // refused, its alert written. What the session answers is written as far
 // as the socket takes it.
 function __pull_opened(p: __Pull, sess: server.Session, raw: u8[]): Option[u8[]] {
-  match (sess.read(raw)) {
+  match (sess.read(raw, now_unix_ms())) {
     Ok(step) => {
       p.body.tls.set(Some(step.session));
       if (step.output.len() > 0) {

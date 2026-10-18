@@ -57,7 +57,7 @@ func TestSelfHostFmtWriteDiagnosticMarkers(t *testing.T) {
 			t.Fatalf("refused source changed: %q, %v", got, err)
 		}
 	}
-	// The compiler's parser source itself documents these markers.
+	// A large source that is already formatted comes back unchanged.
 	path := filepath.Join(dir, "parser.fern")
 	before, err := os.ReadFile(path)
 	if err != nil {

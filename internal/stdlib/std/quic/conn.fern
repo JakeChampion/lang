@@ -2,7 +2,7 @@
 // the caller feeds it is datagrams received and the time, and what it gives
 // back is datagrams to send, events, and when it next needs the time.
 //
-//     let c: conn.Conn = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now)?;
+//     let c: conn.Conn = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now, now_unix_ms())?;
 //     c = c.receive(datagram, now);          // each datagram that arrives
 //     let evs: conn.Event[] = c.events;      // what happened
 //     c = c.events_taken();
@@ -190,6 +190,9 @@ pub struct Conn {
   key_discard_at: i64,
   key_sent: i64,
   failed_auth: i64,
+  // Unix nanoseconds minus the caller's clock, at a client: what turns
+  // `now` into the time the server's chain is judged at.
+  wall_offset: i64,
 }
 
 function __space(): Space {
@@ -223,11 +226,14 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r: recovery.Recovery = recovery.new(c.max_datagram, server).with_max_ack_delay(25000000 as i64);
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plan: __no_plan(0), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64 };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plan: __no_plan(0), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64 };
 }
 
-// client starts a connection: its first Initial is ready to `transmit`.
-pub function client(c: Config, entropy: [u8], now: i64): Result[Conn, string] {
+// client starts a connection at `now` on the caller's clock, when the wall
+// clock reads `unix_ms` in Unix milliseconds: the server's chain is judged
+// at `unix_ms` plus however far `now` has moved by then. Its first Initial
+// is ready to `transmit`.
+pub function client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn, string] {
   let scid: u8[] = __bytes_range(entropy, 0, c.cid_len);
   let dcid: u8[] = __bytes_range(entropy, c.cid_len, c.cid_len + 8);
   let p: params.Params = params.Params { ...c.params, initial_source_connection_id: Some(scid) };
@@ -235,7 +241,7 @@ pub function client(c: Config, entropy: [u8], now: i64): Result[Conn, string] {
   match (handshake.client_start(cc, entropy[c.cid_len + 8:entropy.len()])) {
     Ok(step) => {
       let conn: Conn = __base(c, false, scid, dcid, dcid, now).__initial_keys(dcid);
-      conn = Conn { ...conn, tls: TlsClient(step.client) };
+      conn = Conn { ...conn, tls: TlsClient(step.client), wall_offset: unix_ms * 1000000 - now };
       return Ok(conn.__tls_events(step.events, now));
     },
     Err(e) => {
@@ -1257,7 +1263,7 @@ function (c: Conn) __tls_question(e: handshake.Event, now: i64): Conn {
     TlsClient(t) => {
       match (e) {
         handshake.VerifyServer(v) => {
-          return c.__client_step(t.verdict(__trusted(c.config, v, now)), now);
+          return c.__client_step(t.verdict(__trusted(c.config, v, (now + c.wall_offset) / 1000000000)), now);
         },
         _ => {
           return c;
@@ -1301,9 +1307,9 @@ function (c: Conn) __server_question(t: handshake.Server, e: handshake.Event, no
 }
 
 // __trusted judges the server's chain against the client's roots for the
-// name it asked for, at the wall-clock second `now` falls in.
-function __trusted(cfg: Config, v: handshake.Verification, now: i64): boolean {
-  match (verify.verify_server(v.chain, cfg.roots, cfg.server_name, now_unix_ms() / 1000)) {
+// name it asked for, at `unix_sec`.
+function __trusted(cfg: Config, v: handshake.Verification, unix_sec: i64): boolean {
+  match (verify.verify_server(v.chain, cfg.roots, cfg.server_name, unix_sec)) {
     Ok(leaf) => {
       return verify.verify_signed(leaf, v.scheme, v.signed, v.signature);
     },

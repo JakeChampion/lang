@@ -56,11 +56,11 @@ pub struct TokString { value: string, line: i32, col: i32 }
 // TokError surfaces a lex failure (bad numeric suffix, unterminated
 // string, bare `0x`, unexpected character, …) as a first-class
 // token rather than being reported as EOF. The Go lexer returns a
-// `*lexer.Error` through a side channel; Fern has no exception /
-// multi-return-with-error idiom in this port, so the error is carried in
-// the token stream and `tokenize` stops at the first one. Parser
-// consumers already fall through these via their `_` match arms.
-pub struct TokError { msg: string, line: i32, col: i32 }
+// `*lexer.Error` through a side channel; here the error is carried in
+// the token stream, `tokenize` stops at the first one, and the parser
+// turns a stream ending in one into that error alone. `code` is the
+// diagnostic code: P002 for a numeric literal, P001 for the rest.
+pub struct TokError { msg: string, code: string, line: i32, col: i32 }
 
 // FStringPart is one piece of an f-string. Exactly one of the two
 // payload fields is meaningful, selected by `is_expr`: a literal
@@ -619,7 +619,11 @@ pub function quoted_tok(text: string, suffix: string, raw: string, line: i32, co
 }
 
 pub function error_tok(msg: string, line: i32, col: i32): Token {
-  return TokError { msg: msg, line: line, col: col };
+  return TokError { msg: msg, code: "P001", line: line, col: col };
+}
+
+function num_error_tok(msg: string, line: i32, col: i32): Token {
+  return TokError { msg: msg, code: "P002", line: line, col: col };
 }
 
 pub function fstring_tok(parts: FStringPart[], line: i32, col: i32): Token {
@@ -694,7 +698,7 @@ pub function rebase_tokens(toks: Token[], base_line: i32, base_col: i32): Token[
         out = out.append(string_tok(x.value, offset_line(base_line, x.line), offset_col(base_col, x.line, x.col)));
       },
       TokError(x) => {
-        out = out.append(error_tok(x.msg, offset_line(base_line, x.line), offset_col(base_col, x.line, x.col)));
+        out = out.append(TokError { msg: x.msg, code: x.code, line: offset_line(base_line, x.line), col: offset_col(base_col, x.line, x.col) });
       },
       TokFString(x) => {
         out = out.append(fstring_tok(rebase_parts(x.parts, base_line, base_col), offset_line(base_line, x.line), offset_col(base_col, x.line, x.col)));
@@ -770,7 +774,7 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
     }
     l = l.advance_in_line(he);
     if (l.i == hex_start) {
-      return NumResult { lex: l, tok: error_tok("hex literal needs at least one digit after 0x", start_line, start_col) };
+      return NumResult { lex: l, tok: num_error_tok("hex literal needs at least one digit after 0x", start_line, start_col) };
     }
   } else if (radix_prefix(l.src, l.i, l.n) != 0) {
     // `0o` octal / `0b` binary integer literal: no float upgrades either.
@@ -835,10 +839,10 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
     l = l.advance_in_line(se);
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
     if (!is_valid_numeric_suffix(suffix)) {
-      return NumResult { lex: l, tok: error_tok("unknown numeric suffix", start_line, start_col) };
+      return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + quoted(suffix) + " on " + quoted(text + ""), start_line, start_col) };
     }
     if (is_float && suffix[0] != b'f') {
-      return NumResult { lex: l, tok: error_tok("integer suffix on float literal", start_line, start_col) };
+      return NumResult { lex: l, tok: num_error_tok("integer suffix " + quoted(suffix) + " on float literal " + quoted(text + ""), start_line, start_col) };
     }
   }
   // `42f32` / `42f64` — integer text with float suffix promotes
@@ -884,10 +888,10 @@ function scan_radix_number(own l0: Lex, base: i32, start_line: i32, start_col: i
   }
   l = l.advance_in_line(e);
   if (digits.len() == 0) {
-    return NumResult { lex: l, tok: error_tok("integer literal needs at least one digit after " + prefix, start_line, start_col) };
+    return NumResult { lex: l, tok: num_error_tok("integer literal needs at least one digit after " + prefix, start_line, start_col) };
   }
   if (!l.at_end() && is_digit(l.peek_byte())) {
-    return NumResult { lex: l, tok: error_tok("invalid digit in a " + prefix + " literal", start_line, start_col) };
+    return NumResult { lex: l, tok: num_error_tok("invalid digit " + quote_char(l.src, l.i, l.n) + " in a " + prefix + " literal", start_line, start_col) };
   }
   let suffix: string = "";
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
@@ -900,7 +904,7 @@ function scan_radix_number(own l0: Lex, base: i32, start_line: i32, start_col: i
     l = l.advance_in_line(se);
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
     if (!is_valid_numeric_suffix(suffix) || suffix[0] == b'f') {
-      return NumResult { lex: l, tok: error_tok("unknown numeric suffix", start_line, start_col) };
+      return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + quoted(suffix) + " on " + quoted(slice_unchecked(l.src, begin, s_begin) + ""), start_line, start_col) };
     }
   }
   let raw: string = slice_unchecked(l.src, begin, l.i) + "";
@@ -1065,6 +1069,65 @@ function decode_utf8(src: string, i: i32, n: i32): Utf8 {
     k = k + 1;
   }
   return Utf8 { val: val, len: need + 1 };
+}
+
+// rune_of_byte is byte `b` read as the code point of the same value, the
+// character Go's `%c` prints for a byte.
+function rune_of_byte(b: i32): string {
+  if (b < 128) {
+    return string_from_bytes_unchecked([b as u8]);
+  }
+  return string_from_bytes_unchecked([(192 | b >> 6) as u8, (128 | b & 63) as u8]);
+}
+
+// quoted is `s` double-quoted, as Go's `%q` prints a numeric literal's text
+// or suffix, neither of which can hold a character it would escape.
+function quoted(s: string): string {
+  return "\"" + s + "\"";
+}
+
+// quote_char is the character starting a valid UTF-8 sequence at src[i] as
+// Go's `%q` prints a rune: single-quoted, `'` and `\` escaped, an ASCII
+// control escaped, and anything else as written.
+function quote_char(src: string, i: i32, n: i32): string {
+  let b: i32 = src[i] as i32;
+  if (b == 39 || b == 92) {
+    return "'\\" + string_from_bytes_unchecked([b as u8]) + "'";
+  }
+  if (b >= 32 && b < 127) {
+    return "'" + string_from_bytes_unchecked([b as u8]) + "'";
+  }
+  if (b < 128) {
+    return "'" + control_escape(b) + "'";
+  }
+  return "'" + slice_unchecked(src, i, i + decode_utf8(src, i, n).len) + "'";
+}
+
+// control_escape spells an ASCII control byte the way Go's quoting does. The
+// whitespace controls never reach it: they are trivia, not tokens.
+function control_escape(b: i32): string {
+  if (b == 7) {
+    return "\\a";
+  }
+  if (b == 8) {
+    return "\\b";
+  }
+  return "\\x" + hex_digit(b >> 4, "0123456789abcdef") + hex_digit(b & 15, "0123456789abcdef");
+}
+
+function hex_digit(d: i32, digits: string): string {
+  return slice_unchecked(digits, d, d + 1) + "";
+}
+
+// bad_char_message words the byte at src[i] that starts no token, as the Go
+// lexer's badCharError does. A byte that starts no valid UTF-8 sequence is
+// named the way the Go lexer's whole-source UTF-8 check names it.
+function bad_char_message(src: string, i: i32, n: i32): string {
+  let b: i32 = src[i] as i32;
+  if (b >= 128 && decode_utf8(src, i, n).len == 0) {
+    return "invalid UTF-8 byte 0x" + hex_digit(b >> 4, "0123456789ABCDEF") + hex_digit(b & 15, "0123456789ABCDEF");
+  }
+  return "unexpected character " + quote_char(src, i, n);
 }
 
 // EscVal is one decoded escape inside a quoted literal: the advanced
@@ -1254,7 +1317,7 @@ function scan_string(own l: Lex, start_line: i32, start_col: i32): NumResult {
         return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
       }
       if (er.unknown) {
-        return NumResult { lex: l, tok: error_tok("unknown escape in string literal", start_line, start_col) };
+        return NumResult { lex: l, tok: error_tok("unknown escape \\" + rune_of_byte(esc), start_line, start_col) };
       }
       out = out + er.frag;
       continue;
@@ -1321,7 +1384,7 @@ function scan_fstring(own l: Lex, start_line: i32, start_col: i32): NumResult {
         return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
       }
       if (fer.unknown) {
-        return NumResult { lex: l, tok: error_tok("unknown escape in f-string", start_line, start_col) };
+        return NumResult { lex: l, tok: error_tok("unknown escape \\" + rune_of_byte(esc), start_line, start_col) };
       }
       lit = lit + fer.frag;
       have_lit = true;
@@ -1540,9 +1603,7 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       after_dot = b == 46;
       continue;
     }
-    // Unknown byte — surface a TokError and stop, matching the
-    // Go lexer's `unexpected character` error.
-    out = out.append(error_tok("unexpected character", start_line, start_col));
+    out = out.append(error_tok(bad_char_message(src, l.i, l.n), start_line, start_col));
     return LexResult { tokens: out, comments: l.comments };
   }
   return LexResult { tokens: out, comments: l.comments };
@@ -2050,15 +2111,59 @@ function test_string_errors(): i32 {
   return 0;
 }
 
-// test_unknown_char — an unexpected byte surfaces a TokError. `@` is a
-// valid punctuator now (it introduces the `@derive` attribute, matching
-// the Go lexer), so the unknown-char case uses `$`.
+// lex_error_is reports whether lexing `src` ends in the error `msg` with
+// diagnostic code `code`.
+function lex_error_is(src: string, msg: string, code: string): boolean {
+  let toks: Token[] = tokenize(src);
+  if let TokError(e) = toks[toks.len() - 1] {
+    return e.msg == msg && e.code == code;
+  }
+  return false;
+}
+
+// test_unknown_char — an unexpected character surfaces a TokError worded as
+// the Go lexer words it. `@` is a punctuator (it introduces an attribute).
 function test_unknown_char(): i32 {
-  if (!has_error(tokenize("$"))) {
+  if (!lex_error_is("$", "unexpected character '$'", "P001")) {
     return 1900;
   }
   if (has_error(tokenize("@"))) {
     return 1901;
+  }
+  if (!lex_error_is("a # b", "unexpected character '#'", "P001")) {
+    return 1902;
+  }
+  if (!lex_error_is("`", "unexpected character '`'", "P001")) {
+    return 1903;
+  }
+  if (!lex_error_is("~~", "unexpected character '~'", "P001")) {
+    return 1904;
+  }
+  if (!lex_error_is("\\", "unexpected character '\\\\'", "P001")) {
+    return 1905;
+  }
+  if (!lex_error_is("x §", "unexpected character '§'", "P001")) {
+    return 1906;
+  }
+  if (!lex_error_is("\x01", "unexpected character '\\x01'", "P001")) {
+    return 1907;
+  }
+  if (!lex_error_is("a \xff", "invalid UTF-8 byte 0xFF", "P001")) {
+    return 1908;
+  }
+  // The rest of the lexer's errors carry their codes too: a numeric literal's
+  // is P002.
+  if (!lex_error_is("42i33", "unknown numeric suffix \"i33\" on \"42\"", "P002")) {
+    return 1909;
+  }
+  if (!lex_error_is("1.5i32", "integer suffix \"i32\" on float literal \"1.5\"", "P002")) {
+    return 1910;
+  }
+  if (!lex_error_is("0o19", "invalid digit '9' in a 0o literal", "P002")) {
+    return 1911;
+  }
+  if (!lex_error_is("\"a\\qb\"", "unknown escape \\q", "P001")) {
+    return 1912;
   }
   return 0;
 }
@@ -2539,7 +2644,7 @@ function test_multibyte(): i32 {
   }
   match (t2[2]) {
     TokError(t) => {
-      if (t.msg != "unexpected character") {
+      if (t.msg != "unexpected character 'é'") {
         return 2215;
       }
     },

@@ -1381,14 +1381,17 @@ address is checked against the certificate's addresses and not sent as SNI
   identity (`std/tls/identity`), a server asking for a client certificate
   is sent the chain and a CertificateVerify under its key; without one, an
   empty Certificate, and the server decides.
-- `Session` is sans-IO, so any transport can carry it: `start(config)` draws
-  its entropy from `random_bytes` and returns a `Step { session, output,
-  data, closed, tickets }`; `(s).read(input)` takes what arrived,
+- `Session` is sans-IO, so any transport can carry it: `start(config, now)`
+  draws its entropy from `random_bytes` and returns a `Step { session,
+  output, data, closed, tickets }`; `(s).read(input, now)` takes what arrived,
   `(s).write(data)` seals application data and `(s).close()` is the
   close_notify. `read` passes whole records to the handshake one at a time,
   so on failure it returns a `Failure { error, alert }` whose alert is
   sealed under the keys in force when it failed; send it, then close.
-  `(s).alpn()` is the protocol the server chose.
+  `(s).alpn()` is the protocol the server chose. `now` is the wall-clock
+  time in Unix milliseconds, the caller's to give: the server's chain is
+  judged and a ticket's age measured at it, and the session reads no clock.
+  `Connection` gives `now_unix_ms()`.
 - Resumption: `Step.tickets` are the `Ticket`s the server issued (identity,
   the PSK it stands for, suite, lifetime, age_add, when it was received and
   the server's name); keep one and offer it with `with_ticket` to the same
@@ -1768,16 +1771,18 @@ crypto/tls client in `TestTLSServerAgainstGo`).
   the chosen suite's hash, and is within its lifetime; otherwise the
   handshake is a full one. `(s).resumed()` says which.
 - Client certificates: `with_client_roots(roots)` asks every client for a
-  certificate and requires a chain reaching the roots now, allowed a TLS
-  client (`verify.verify_client`), with a CertificateVerify under its key;
-  a client sending none is refused with certificate_required, one with a
-  bad chain with bad_certificate. `(s).client_chain()` is the chain shown,
-  leaf first. A resumed session shows none: the ticket stands for the
-  certificate shown when it was issued.
+  certificate and requires a chain reaching the roots at `read`'s `now`,
+  allowed a TLS client (`verify.verify_client`), with a CertificateVerify
+  under its key; a client sending none is refused with
+  certificate_required, one with a bad chain with bad_certificate.
+  `(s).client_chain()` is the chain shown, leaf first. A resumed session
+  shows none: the ticket stands for the certificate shown when it was
+  issued.
 - `Session`: `start(config)` draws its entropy from `random_bytes` and
-  returns a session with nothing to send until `(s).read(input)` has taken a
-  ClientHello; `read` signs the CertificateVerify when the handshake reaches
-  it and returns a `Step { session, output, data, closed }`, or on failure a
+  returns a session with nothing to send until `(s).read(input, now)` has
+  taken a ClientHello; `read` signs the CertificateVerify when the handshake
+  reaches it, judges a client's chain and a ticket at `now` (Unix
+  milliseconds, the session reads no clock), and returns a `Step { session, output, data, closed }`, or on failure a
   `Failure { error, alert }` whose alert is sealed under the keys in force
   when it failed. `(s).write(data)`, `(s).close()`, `(s).connected()`,
   `(s).alpn()` (the protocol chosen) and `(s).server_name()` (the SNI the

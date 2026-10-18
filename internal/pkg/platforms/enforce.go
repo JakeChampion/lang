@@ -26,7 +26,7 @@ import (
 
 // gatedBuiltins maps each capability-gated runtime builtin to the
 // capability a target must list in Descriptor.Capabilities for the
-// builtin to be callable. Builtins NOT in this table (env, math,
+// builtin to be callable. Builtins NOT in this table (math, the
 // map/array/string runtime, …) are ungated — every target provides
 // them. In the async/readiness set only the pollable CONSTRUCTORS are
 // gated; the helpers that wait on one are core (see coreBuiltins).
@@ -548,13 +548,10 @@ func (v Violation) Message(entryModule string) string {
 	if v.FuncModule != "" && v.FuncModule != entryModule {
 		where = fmt.Sprintf(" (reached via %q from module %q)", v.FuncName, v.FuncModule)
 	}
-	providers := TargetsProviding(v.Capability)
-	if len(providers) == 0 {
-		return fmt.Sprintf("target %q does not provide `%s`, required by `%s`%s; no compiled target provides it (available under `fern -interp` only)",
-			v.Target, v.Capability, v.Builtin, where)
-	}
+	// TestGatedCapabilitiesResolvable holds every gated capability to at
+	// least one provider, so the list is never empty.
 	return fmt.Sprintf("target %q does not provide `%s`, required by `%s`%s; targets providing it: %v",
-		v.Target, v.Capability, v.Builtin, where, providers)
+		v.Target, v.Capability, v.Builtin, where, TargetsProviding(v.Capability))
 }
 
 // Enforce scans the (already tree-shaken) program for calls to gated

@@ -105,29 +105,10 @@ func TestSelfHostCoreBuiltinsMatch(t *testing.T) {
 	}
 }
 
-// profileExceptions records, per profile, the capabilities the self-host
-// grants and this package does not — deliberately, and with a reason.
-//
-// There is exactly one capability, on both hosted profiles. `subprocess` is
-// gated in both tables, but no Go backend lowers it, so native grants it
-// nowhere: its table records a codegen
-// limitation as a target property. The self-host's x86-64 and arm64 emitters
-// DO lower it (`__fern_subprocess`; TestSelfHostArm64DarwinBuilds runs four
-// spawn cases end-to-end), so its hosted profile grants what its artifacts can
-// actually reach. The wasi profiles grant it on neither side.
-//
-// Listing it here rather than relaxing the comparison is the point: any OTHER
-// difference, in either direction, still fails — and this entry is removed the day
-// native's backends lower it.
-var profileExceptions = map[string]map[string]bool{
-	"hosted-native": {"subprocess": true},
-	"hosted-darwin": {"subprocess": true},
-}
-
-// TestSelfHostCapabilityProfilesMatch compares the capability sets themselves,
-// per profile. The target NAMES differ until #6635 lands, but a profile is the
-// same object on both sides — which host grants what — so a capability added
-// to a profile here and not there changes what one compiler will build.
+// TestSelfHostCapabilityProfilesMatch compares the capability lists
+// themselves, per profile and in order: a capability added to a profile here
+// and not there changes what one compiler will build, and the order is what
+// `fern -targets` prints.
 func TestSelfHostCapabilityProfilesMatch(t *testing.T) {
 	src := readSelfHostPlatforms(t)
 	profRe := regexp.MustCompile(`(?s)if \(profile == "([a-z-]+)"\) \{.*?return \[(.*?)\];`)
@@ -149,24 +130,9 @@ func TestSelfHostCapabilityProfilesMatch(t *testing.T) {
 			t.Errorf("profile %q is missing from the self-host's capability_profile()", name)
 			continue
 		}
-		w := append([]string(nil), want...)
-		var g []string
-		for _, c := range got {
-			if profileExceptions[name][c] {
-				continue
-			}
-			g = append(g, c)
-		}
-		sort.Strings(w)
-		sort.Strings(g)
-		if strings.Join(w, ",") != strings.Join(g, ",") {
-			t.Errorf("profile %q: native grants [%s], the self-host grants [%s] (documented exceptions aside)",
-				name, strings.Join(w, " "), strings.Join(g, " "))
-		}
-		for c := range profileExceptions[name] {
-			if !slices.Contains(got, c) {
-				t.Errorf("profile %q: the self-host no longer grants %q, so its exception entry in profileExceptions is stale — delete it", name, c)
-			}
+		if !slices.Equal(want, got) {
+			t.Errorf("profile %q: native grants [%s], the self-host grants [%s]",
+				name, strings.Join(want, " "), strings.Join(got, " "))
 		}
 	}
 	for name := range found {
@@ -202,6 +168,43 @@ func TestSelfHostTargetNamesMatch(t *testing.T) {
 	for _, name := range got {
 		if !slices.Contains(want, name) {
 			t.Errorf("the self-host declares target %q, which does not exist here", name)
+		}
+	}
+}
+
+// TestSelfHostListingMatches pins the rest of what `fern -targets` prints —
+// each target's description and its environment's handler kinds — so the two
+// binaries list the same thing.
+func TestSelfHostListingMatches(t *testing.T) {
+	src := readSelfHostPlatforms(t)
+	descBody := regexp.MustCompile(`(?s)pub function description\(name: string\): string \{(.*?)\n\}`).FindStringSubmatch(src)
+	if descBody == nil {
+		t.Fatalf("no description() found in %s — the extraction pattern has gone stale", selfHostPlatformsSrc)
+	}
+	descs := map[string]string{}
+	for _, m := range regexp.MustCompile(`if \(name == "([^"]+)"\) \{\s*return "([^"]*)";`).FindAllStringSubmatch(descBody[1], -1) {
+		descs[m[1]] = m[2]
+	}
+	kindsBody := regexp.MustCompile(`(?s)pub function handler_kinds\(name: string\): string\[\] \{(.*?)\n\}`).FindStringSubmatch(src)
+	if kindsBody == nil {
+		t.Fatalf("no handler_kinds() found in %s — the extraction pattern has gone stale", selfHostPlatformsSrc)
+	}
+	kinds := map[string][]string{}
+	for _, m := range regexp.MustCompile(`(?s)if \(([^{]*)\) \{\s*return \[(.*?)\];`).FindAllStringSubmatch(kindsBody[1], -1) {
+		for _, env := range fernStringList(m[1]) {
+			kinds[env] = fernStringList(m[2])
+		}
+	}
+	if len(descs) == 0 || len(kinds) == 0 {
+		t.Fatalf("extracted %d descriptions and %d handler-kind lists from %s — the extraction pattern has gone stale", len(descs), len(kinds), selfHostPlatformsSrc)
+	}
+	for _, name := range Targets() {
+		d := ForTarget(name)
+		if descs[name] != d.Description {
+			t.Errorf("target %q: description here %q, in the self-host %q", name, d.Description, descs[name])
+		}
+		if !slices.Equal(d.HandlerKinds, kinds[d.Environment]) {
+			t.Errorf("target %q: handler kinds here %v, in the self-host %v", name, d.HandlerKinds, kinds[d.Environment])
 		}
 	}
 }
