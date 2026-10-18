@@ -6568,7 +6568,6 @@ function bound_entry_diag(sig: FuncSig, tp: string, at: typeinfo.Type, bref: par
   return [dg_at("E021", "type argument " + tp + " = " + util.demangle(type_label(at)) + " implements " + tr + trait_args_label(iargs) + " but the bound requires " + tr + trait_args_label(want) + " (in " + util.demangle(sig.name) + ")", c.line, c.col)];
 }
 
-
 function trait_args_label(args: typeinfo.Type[]): string {
   let out: string = "";
   for a in args {
