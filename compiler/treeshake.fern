@@ -917,10 +917,10 @@ function ts_mentions_map(types: string[]): boolean {
 }
 
 // ts_named_types are the types a function names: its parameter, return and
-// receiver types, those of every lambda or nested function in its body, and
-// the type of every struct literal there.
+// receiver types (a `self: Self` parameter names the receiver), those of every
+// lambda or nested function in its body, and the type of every struct literal
+// there.
 function ts_named_types(fd: parser.FuncDecl): string[] {
-  // A method's receiver, which a trait method spells only as `Self`.
   let types: string[] = [fd.ret_type, fd.receiver_type];
   for p in fd.params {
     types = types.append(p.type_name);

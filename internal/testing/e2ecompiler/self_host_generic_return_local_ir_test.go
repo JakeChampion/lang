@@ -81,6 +81,16 @@ function main(): i32 {
         Node(l, r) => { return 90; }
     }
 }`, 6},
+	{"written_generic_enum_type_argument", `enum Tree[T] { Leaf(T), Node(Tree[T], Tree[T]) }
+function whole[C](c: C): C { return c; }
+function main(): i32 {
+    let t: Tree[string] = Leaf("abcd");
+    let w = whole[Tree[string]](t);
+    match (w) {
+        Leaf(v) => { return v.len(); },
+        Node(l, r) => { return 90; }
+    }
+}`, 4},
 }
 
 func TestSelfHostGenericReturnLocalIR(t *testing.T) {

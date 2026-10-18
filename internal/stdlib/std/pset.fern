@@ -17,6 +17,7 @@
 // order — for a sorted set use `std/ordset`; for the small, insertion-
 // ordered array-backed set use `std/set`.
 import "core/cmp";
+import "core/iter";
 import "std/pmap";
 
 // The public handle: the trie root directly (not a `PMap` inside a
@@ -66,6 +67,12 @@ pub function (s: PSet[T]) remove[T: cmp.Hash + cmp.Eq](x: T): PSet[T] {
 pub function (s: PSet[T]) contains[T: cmp.Hash + cmp.Eq](x: T): boolean {
   let hit: pmap.HNode[T, i32] = pmap.__hm_find(s.root, pmap.__hm_mix(x.hash()), x);
   return pmap.__hm_holds(hit);
+}
+
+// `iter()` — an Iterator over the elements in hash order, which is what
+// `for x in s` walks.
+pub function (s: PSet[T]) iter(): iter.ArrayIter[T] {
+  return iter.of(s.to_array());
 }
 
 // `to_array()` — the elements, in hash order.

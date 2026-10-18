@@ -551,9 +551,11 @@ function main(): i32 {
 // TestSelfHostTreeshakeKeepsMapRuntimeOnlyForLiveMapsX86_64 pins that a struct
 // holding a map roots core/map's runtime only when the program can reach the
 // struct. std/cli declares `CliArgs { opts: Map[string, string], … }`, and
-// importing std/cli for `flag_on` alone carried the whole map runtime into
-// every server, 30% of bench/http_hello's code. A trait method reached through
-// a vtable makes its receiver live (#12817).
+// importing std/cli for one helper carried the whole map runtime into every
+// server, 30% of bench/http_hello's code. A struct named only in the
+// signature of a nested function nothing calls, or only as the `Self` of an
+// impl method kept for dynamic dispatch, still has its drop glue emitted,
+// which reaches __map_drop_impl, so the runtime must stay for those.
 func TestSelfHostTreeshakeKeepsMapRuntimeOnlyForLiveMapsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -570,23 +572,32 @@ func TestSelfHostTreeshakeKeepsMapRuntimeOnlyForLiveMapsX86_64(t *testing.T) {
 		name, src string
 		maps      bool
 	}{
-		{"flag-only", `import "std/cli";
-function main(): i32 { if (cli.flag_on("1")) { return 0; } return 1; }
+		{"cli-without-maps", `import "std/cli";
+function main(): i32 { if (cli.cli_dim("a").len() == 0) { return 1; } return 0; }
+`, false},
+		{"unused-map-struct", `import "core/map";
+struct S { m: Map[string, string] }
+function main(): i32 { return 0; }
 `, false},
 		{"live-map-struct", `import "core/map";
 struct Opts { m: Map[string, i32] }
 function main(): i32 { let o: Opts = Opts { m: map_new(4) }; let p: Opts = Opts { m: o.m.insert("a", 1) }; return p.m.len() - 1; }
 `, true},
-		// Nothing builds an S2, but its vtable entry is kept and drops one: the
-		// method names it only as Self.
-		{"dyn-impl-receiver", `import "core/map";
-struct S2 { f: f32, m: Map[i32, i32] }
-struct S0 { a: i32 }
-trait Tc { function get(self: Self, d: i32): i32; }
-impl Tc for S2 { function get(self: Self, d: i32): i32 { return d; } }
-impl Tc for S0 { function get(self: Self, d: i32): i32 { return d + self.a; } }
-function dc(o: dyn Tc, d: i32): i32 { return o.get(d); }
-function main(): i32 { return dc(S0 { a: 1 }, 3) - 4; }
+		{"signature-only", `import "core/map";
+struct S { m: Map[string, string] }
+function main(): i32 {
+    function g(s: S): i32 { return 1; }
+    return 0;
+}
+`, true},
+		{"self-only", `import "core/map";
+struct S { m: Map[i32, i32] }
+trait T { function get(self: Self): i32; }
+impl T for S { function get(self: Self): i32 { return 1; } }
+struct U { n: i32 }
+impl T for U { function get(self: Self): i32 { return self.n; } }
+function f(o: dyn T): i32 { return o.get(); }
+function main(): i32 { return f(U { n: 0 }); }
 `, true},
 	}
 	for _, c := range cases {
@@ -604,7 +615,7 @@ function main(): i32 { return dc(S0 { a: 1 }, 3) - 4; }
 				t.Fatalf("read asm: %v", err)
 			}
 			asm := string(asmBytes)
-			if got := strings.Contains(asm, "\n__fn___map_put_impl:"); got != c.maps {
+			if got := strings.Contains(asm, "\n__fn_map_new_impl:"); got != c.maps {
 				t.Errorf("map runtime emitted = %v, want %v", got, c.maps)
 			}
 			bin := buildBin(t, gcc, dir, "ts_map_"+c.name, asm)

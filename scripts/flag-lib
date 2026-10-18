@@ -1,6 +1,6 @@
 # flag-lib — fern_flag, sourced (`. "$(dirname "${BASH_SOURCE[0]}")/flag-lib"`)
 # by the scripts that read a boolean FERN_* variable, so they agree with the
-# compiler's std/cli flag_on and Go's internal/envflag on what turns one on.
+# compiler's std/envflag value_on and Go's internal/envflag on what turns one on.
 # shellcheck shell=bash
 
 # fern_flag NAME [UNSET] — succeeds when the variable NAME is on: "", 0, false
