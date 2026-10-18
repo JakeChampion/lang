@@ -538,3 +538,57 @@ function main(): i32 {
 		t.Errorf("program exited %d, want 3", code)
 	}
 }
+
+// TestSelfHostTreeshakeMapStructRootsMapsOnlyWhenLive pins that a struct
+// with a map field roots the map runtime only when the struct is live. One
+// nothing names, like std/cli's parse results in a program that imports
+// std/cli for one helper, used to keep all of it: std/http reaches std/cli
+// through std/fetch, so every HTTP program carried the map runtime.
+// The second program names the struct only in the signature of a nested
+// function nothing calls, which still releases its parameter, so its drop
+// glue reaches __map_drop_impl and the runtime must stay.
+func TestSelfHostTreeshakeMapStructRootsMapsOnlyWhenLive(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+	for _, c := range []struct {
+		name     string
+		src      string
+		wantMaps bool
+	}{
+		{"unused", "import \"core/map\";\nstruct S { m: Map[string, string] }\nfunction main(): i32 {\n    return 3;\n}\n", false},
+		{"signature", "import \"core/map\";\nstruct S { m: Map[string, string] }\nfunction main(): i32 {\n    function g(s: S): i32 { return 1; }\n    return 3;\n}\n", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			prog := filepath.Join(dir, "ts_map_struct_"+c.name+".fern")
+			if err := os.WriteFile(prog, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write program: %v", err)
+			}
+			asmPath := filepath.Join(dir, "ts_map_struct_"+c.name+".s")
+			if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
+				t.Fatalf("self-host compile failed: %v\n%s", err, out)
+			}
+			asm, err := os.ReadFile(asmPath)
+			if err != nil {
+				t.Fatalf("read asm: %v", err)
+			}
+			if got := strings.Contains(string(asm), "\n__fn_map_new_impl:"); got != c.wantMaps {
+				t.Errorf("map runtime emitted = %v, want %v", got, c.wantMaps)
+			}
+			bin := buildBin(t, gcc, dir, "ts_map_struct_"+c.name, string(asm))
+			run := exec.Command(bin)
+			_ = run.Run()
+			if code := run.ProcessState.ExitCode(); code != 3 {
+				t.Errorf("program exited %d, want 3", code)
+			}
+		})
+	}
+}
