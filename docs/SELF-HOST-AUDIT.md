@@ -215,10 +215,7 @@ findings. Ranked by leverage.
   `irlower`/`printer` pair.
 
   **Naming hazard — a naive `util.`-qualification sweep binds the wrong
-  function.** `index_of_str` names **two different functions**: array index-of
-  (`util.fern:330`, `watbin.fern:330`, `(xs: string[], s: string)`) and
-  **substring** index-of (`fern_toml.fern:86`, `(s: string, sub: string)`).
-  Similarly `contains` is substring search (`util.fern:342`, `literate.fern:74`)
+  function.** `contains` is substring search (`util.fern:342`, `literate.fern:74`)
   while array membership is the differently-named `contains_str`
   (`ssa.fern:1773`). Check the parameter shape, not the name.
 
