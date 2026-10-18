@@ -34,7 +34,7 @@ test("HTTP guide sidebar group lists its pages in order", async ({ page }) => {
   await expect(sidebar.getByText("Your first server", { exact: true })).toBeVisible();
   await expect(sidebar.getByText("Testing HTTP code", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Routing and middleware" }).first().click();
-  await expect(page.locator("main")).toContainText("router.new()");
+  await expect(page.locator("main")).toContainText("router.new[P]()");
 });
 
 test("reference > tooling page describes the language server", async ({ page }) => {
