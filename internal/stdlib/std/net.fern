@@ -1359,23 +1359,37 @@ pub function read_deadline(sock: i32, max: i32, deadline: Duration): Result[Recv
 // `read_watched(sock, max, ms, interest)` — `read_deadline` with the wait
 // in milliseconds and its interest word given: readable (1), with
 // `async.KEEP` or `async.WATCHED` from a caller whose descriptor stays
-// watched across its waits.
+// watched across its waits. A wake that finds nothing to read (`WouldBlock`,
+// which wasi:sockets answers after a readiness it reported) waits again for
+// what is left of the deadline.
 pub function read_watched(sock: i32, max: i32, ms: i64, interest: i32): Result[Recv, NetError] {
-  let wait_ms: i32 = ms as i32;
-  if (wait_ms < 1) {
-    wait_ms = 1;
-  }
+  let until: i64 = monotonic_ns() + ms * 1000000i64;
   let set: i32[] = [sock, interest];
-  let woke: i32 = async.wait_any(set, wait_ms);
-  if (woke == async.cancelled()) {
-    return Ok(Abandoned);
-  }
-  if (woke != 0) {
-    return Ok(Elapsed);
-  }
   let buf: u8[] = __alloc_u8(max);
-  let n: i32 = read(sock, buf)?;
-  return Ok(Chunk(buf.take(n)));
+  while (true) {
+    let wait_ms: i32 = ((until - monotonic_ns()) / 1000000i64) as i32;
+    if (wait_ms < 1) {
+      wait_ms = 1;
+    }
+    let woke: i32 = async.wait_any(set, wait_ms);
+    if (woke == async.cancelled()) {
+      return Ok(Abandoned);
+    }
+    if (woke != 0) {
+      return Ok(Elapsed);
+    }
+    match (read(sock, buf)) {
+      Ok(n) => {
+        return Ok(Chunk(buf.take(n)));
+      },
+      Err(e) => {
+        if (!e.eq(WouldBlock)) {
+          return Err(e);
+        }
+      }
+    }
+  }
+  return Ok(Elapsed);
 }
 
 // Shutdown — the half of a connection `shutdown` closes: `Read` stops

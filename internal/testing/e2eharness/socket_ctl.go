@@ -20,12 +20,25 @@ function fail(n: i32): i32 {
     return n;
 }
 
+function eagain(): i32 {
+    if (target_os() == "darwin") { return 35; }
+    if (target_os() == "wasi") { return 6; }
+    return 11;
+}
+
 // recv waits for c to be readable, since a wasi:sockets read never blocks,
-// then reads once into buf: the count, 0 at the end of the stream, or -errno.
+// then reads into buf: the count, 0 at the end of the stream, or -errno. A
+// wake that finds nothing yet (-EAGAIN) waits again.
 function recv(c: i32, buf: u8[]): i32 {
     let set: i32[] = [c, 1];
-    async.wait_any(set, 5000);
-    return tcp_recv_into(c, buf);
+    let n: i32 = 0 - eagain();
+    let tries: i32 = 0;
+    while (n == 0 - eagain() && tries < 100) {
+        async.wait_any(set, 5000);
+        n = tcp_recv_into(c, buf);
+        tries = tries + 1;
+    }
+    return n;
 }
 
 function main(): i32 {

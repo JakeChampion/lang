@@ -181,12 +181,16 @@ func wasiTCPStreamCensusProbe(t *testing.T, data string, receive bool) (string, 
 }`, listener.Addr().(*net.TCPAddr).Port, data, len(data))
 	if receive {
 		src = fmt.Sprintf(`// read waits for c to be readable, since a wasi:sockets read never
-// blocks, then reads once into buf.
+// blocks, then reads into buf, waiting again while a wake finds nothing
+// (-EAGAIN, 6 in the WASI numbering).
 function read(c: i32, buf: u8[]): i32 {
-    let p: i32 = tcp_pollable(c);
-    wasm_block(p);
-    wasm_pollable_drop(p);
-    let n: i32 = tcp_recv_into(c, buf);
+    let n: i32 = 0 - 6;
+    while (n == 0 - 6) {
+        let p: i32 = tcp_pollable(c);
+        wasm_block(p);
+        wasm_pollable_drop(p);
+        n = tcp_recv_into(c, buf);
+    }
     let i: i32 = 0;
     while (i < n) {
         if (buf[i] != 120u8) { return 0 - 1000; }

@@ -205,14 +205,18 @@ func TestSelfHostWasmIRTcpStream(t *testing.T) {
 }
 
 // wasmRecvHelper is a Fern recv(c, max): it waits for c to be readable,
-// since a wasi:sockets read never blocks, then reads once, answering the
+// since a wasi:sockets read never blocks, then reads, waiting again while a
+// wake finds nothing (-EAGAIN, 6 in the WASI numbering), and answers the
 // bytes as text, none at the end of the stream or on an error.
 const wasmRecvHelper = `function recv(c: i32, max: i32): string {
-    let p: i32 = tcp_pollable(c);
-    wasm_block(p);
-    wasm_pollable_drop(p);
     let buf: u8[] = __alloc_u8(max);
-    let n: i32 = tcp_recv_into(c, buf);
+    let n: i32 = 0 - 6;
+    while (n == 0 - 6) {
+        let p: i32 = tcp_pollable(c);
+        wasm_block(p);
+        wasm_pollable_drop(p);
+        n = tcp_recv_into(c, buf);
+    }
     let out: u8[] = [];
     let i: i32 = 0;
     while (i < n) { out = out.append(buf[i]); i = i + 1; }
