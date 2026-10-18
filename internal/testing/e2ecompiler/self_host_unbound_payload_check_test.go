@@ -9,7 +9,7 @@ import (
 
 // A built-in variant's type argument its constructor did not bind (`E` in an
 // un-annotated `Ok(5)`) is a contract, not a type the checker failed to model:
-// the `Err(e)` payload it types cannot sit in an `i32[]`. The self-host let
+// the `Err(e)` payload it types cannot sit in an `i32[]` or an `(i32, i32)`. The self-host let
 // the unknown element give way to its concrete siblings and accepted it (#12638).
 // Found by TestDifferential_CheckerMutants.
 func TestSelfHostUnboundPayloadCheck(t *testing.T) {
@@ -31,6 +31,8 @@ func TestSelfHostUnboundPayloadCheck(t *testing.T) {
 	}{
 		{"unbound payload in an array", "function main(): i32 {\n    let r = Ok(5);\n    match (r) { Ok(a) => { return a; }, Err(e) => { let xs: i32[] = [e, 1]; return xs[1]; } }\n}\n", false},
 		{"bound payload in an array", "function main(): i32 {\n    let r: Result[i32, i32] = Ok(5);\n    match (r) { Ok(a) => { return a; }, Err(e) => { let xs: i32[] = [e, 1]; return xs[1]; } }\n}\n", true},
+		{"unbound payload in a tuple", "function main(): i32 {\n    let r = Ok(5);\n    match (r) { Ok(a) => { return a; }, Err(e) => { let p: (i32, i32) = (e, 1); return p.1; } }\n}\n", false},
+		{"bound payload in a tuple", "function main(): i32 {\n    let r: Result[i32, i32] = Ok(5);\n    match (r) { Ok(a) => { return a; }, Err(e) => { let p: (i32, i32) = (e, 1); return p.1; } }\n}\n", true},
 		{"generic result bound by its destination", "function mk[T](): T[] { return []; }\nfunction main(): i32 {\n    let ys: i32[] = mk();\n    return ys.len();\n}\n", true},
 	}
 	for _, tc := range cases {
