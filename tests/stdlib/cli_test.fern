@@ -298,40 +298,8 @@ function test_manpage_roff_escapes_leading_dot(): test.TestOutcome {
     && !m.contains("\n./build first"));
 }
 
-// The off spellings of an environment switch, in any case; every other value
-// is on. internal/envflag's TestValueOn holds the Go reader to the same table.
-function test_flag_on_off_values(): test.TestOutcome {
-  for v in ["", "0", "false", "FALSE", "False", "off", "OFF", "Off"] {
-    if (cli.flag_on(v)) {
-      return test.fail("flag_on(\"" + v + "\") is on");
-    }
-  }
-  return test.pass();
-}
-
-function test_flag_on_other_values(): test.TestOutcome {
-  for v in ["1", "true", "on", "yes", "quiet", "00", " 0", "no"] {
-    if (!cli.flag_on(v)) {
-      return test.fail("flag_on(\"" + v + "\") is off");
-    }
-  }
-  return test.pass();
-}
-
-function test_env_flag_unset(): test.TestOutcome {
-  return test.assert_false(cli.env_flag("FERN_CLI_TEST_NEVER_SET"));
-}
-
-function test_env_value_unset(): test.TestOutcome {
-  return test.assert_true(cli.env_value("FERN_CLI_TEST_NEVER_SET").is_none());
-}
-
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/cli");
-  r = r.it("flag_on off values", test_flag_on_off_values);
-  r = r.it("flag_on other values", test_flag_on_other_values);
-  r = r.it("env_flag unset", test_env_flag_unset);
-  r = r.it("env_value unset", test_env_value_unset);
   r = r.it("option --long V", test_option_long);
   r = r.it("option --long=V", test_option_equals);
   r = r.it("option -short V", test_option_short);

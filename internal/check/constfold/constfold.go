@@ -101,7 +101,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 
 	for _, cd := range prog.Consts {
 		if _, dup := values[cd.Name]; dup {
-			errs = append(errs, &Error{Pos: cd.P, Msg: fmt.Sprintf("const %q redeclared", cd.Name)})
+			errs = append(errs, &Error{Pos: cd.P, Path: cd.SourceModule, Msg: fmt.Sprintf("const %q redeclared", cd.Name)})
 			continue
 		}
 		if rangeErrs := checkLiteralRange(cd); len(rangeErrs) > 0 {
@@ -110,13 +110,13 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		}
 		val, err := evalConstTyped(cd.Value, cd.Type, values, types, in.Assets)
 		if err != nil {
-			errs = append(errs, &Error{Pos: cd.P, Msg: fmt.Sprintf("const %s: %s", cd.Name, err)})
+			errs = append(errs, constError(cd, err))
 			continue
 		}
 		gotT := litType(val)
 		if cd.Type != nil {
 			if err := settleConstLit(cd.Type, val); err != nil {
-				errs = append(errs, &Error{Pos: cd.P, Msg: fmt.Sprintf("const %s: %s", cd.Name, err)})
+				errs = append(errs, constError(cd, err))
 				continue
 			}
 			// The declared type is the const's type once the literal has
@@ -147,6 +147,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 	sub := substituter{values: values, assets: in.Assets, targetOS: in.TargetOS, targetArch: in.TargetArch}
 	for _, fn := range prog.Funcs {
 		sub.values = values
+		sub.module = fn.BodyModule()
 		if body := fn.BodyModule(); body != "" && body != prog.EntryModule {
 			sub.values = libValues
 		}
@@ -532,6 +533,15 @@ func foldFloatBinary(n *ast.Binary, l, r float64) (ast.Expr, error) {
 	return nil, fmt.Errorf("operator `%s` not allowed in float constant expressions", n.Op)
 }
 
+// constError places err, met folding cd's initialiser, at the declaration.
+func constError(cd *ast.ConstDecl, err error) error {
+	msg := err.Error()
+	if e, ok := err.(*Error); ok {
+		msg = e.Msg
+	}
+	return &Error{Pos: cd.P, Path: cd.SourceModule, Msg: "const " + cd.Name + ": " + msg}
+}
+
 // checkLiteralRange judges every integer literal written in a const's
 // initialiser against the declared type before anything folds. Folding wraps
 // at the declared width, as `+`, `-` and `*` do at run time, so a literal that
@@ -707,6 +717,8 @@ type substituter struct {
 	targetOS   string
 	targetArch string
 	errs       []error
+	// module is the module of the body being walked, for its diagnostics.
+	module string
 	// bound is the scope stack of names a BINDER has introduced — params,
 	// var / destructure declarations, match and for-each bindings, lambda
 	// params. A const is a module-level name, so any of these shadows it,
@@ -1079,7 +1091,7 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 		// not an lvalue the parser can produce (compiler bug)` (#8443).
 		if id, ok := x.Target.(*ast.Ident); ok {
 			if _, isConst := s.values[id.Name]; isConst && !s.isBound(id.Name) {
-				s.errs = append(s.errs, fmt.Errorf("%s: cannot assign to const %s", id.P, id.Name))
+				s.errs = append(s.errs, &Error{Pos: id.P, Path: s.module, Msg: "cannot assign to const " + id.Name})
 				s.walkExpr(&x.Value)
 				return
 			}

@@ -58,7 +58,7 @@ set +e
 # FERN_RC_CERTIFY=0: the count is the lowering's; the emitted-RC certifier
 # runs by default and its own appends are not the subject.
 FERN_CLIFF_REPORT=1 FERN_RC_CERTIFY=0 ./bin/fern-selfhost -target "$TARGET" "$SUBJECT" \
-  > /dev/null 2> "$work/cliff"
+  "$PWD/internal/stdlib" > /dev/null 2> "$work/cliff"
 status=$?
 set -e
 if [ "$status" -ne 0 ]; then

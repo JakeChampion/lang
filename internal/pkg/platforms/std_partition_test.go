@@ -65,6 +65,7 @@ var stdModuleReach = map[string]string{
 	"std/deflate":       "",
 	"std/dns":           "fs,host,now,random,reactor,tcp,unix",
 	"std/dotenv":        "",
+	"std/envflag":       "env",
 	"std/errno":         "",
 	"std/error":         "",
 	"std/fetch":         "config,env,fs,host,log,now,random,reactor,tcp,unix",

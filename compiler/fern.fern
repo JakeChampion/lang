@@ -103,7 +103,7 @@ import "./lspassist";
 import "./lspquery";
 import "./lsprefs";
 import "./lsptokens";
-import "std/cli";
+import "std/envflag";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
@@ -5442,7 +5442,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   let harden: boolean = false;
   // `-cover` (or FERN_COVER) instruments the program with line and branch
   // counters it reports to stderr at exit (cover.fern).
-  let cover_on: boolean = cli.env_flag("FERN_COVER");
+  let cover_on: boolean = envflag.on("FERN_COVER");
   let have_entry: boolean = false;
   // Whether -target was given, as distinct from the default above. It only
   // matters to `-check`: native type-checks against a capability set only
