@@ -200,6 +200,41 @@ function test_middleware_chain(): test.TestOutcome {
   return test.assert_eq(got, "401 {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"no token\"} r-1|200 request r-1 r-1");
 }
 
+// tagged is a router-wide middleware: it marks the request for the routes
+// and the response on the way out, with the order the wraps ran in.
+function tagged(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+  let resp: HttpResponse = http.respond(next(req.with_header("x-seen", req.headers.get("x-seen").unwrap_or("") + "t")));
+  return Ok(resp.with_header("x-order", resp.headers.get("x-order").unwrap_or("") + "t"));
+}
+
+function counted(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+  let resp: HttpResponse = http.respond(next(req.with_header("x-seen", req.headers.get("x-seen").unwrap_or("") + "c")));
+  return Ok(resp.with_header("x-order", resp.headers.get("x-order").unwrap_or("") + "c"));
+}
+
+// options_for answers any OPTIONS itself, ahead of the routes, the way a
+// CORS preflight is answered.
+function options_for(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+  if (req.method == "OPTIONS") {
+    return Ok(http.no_content().with_header("x-preflight", req.path));
+  }
+  return next(req);
+}
+
+function seen(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(http.ok(req.headers.get("x-seen").unwrap_or("-")));
+}
+
+function test_wrapped(): test.TestOutcome {
+  let r: router.Router[platform.Host] = router.new[platform.Host]().wrap(tagged).wrap(counted).wrap(options_for).get("/seen", seen);
+  let hit: HttpResponse = r.handle(http.request("GET", "/seen"), platform.host());
+  let missed: HttpResponse = r.handle(http.request("GET", "/nope"), platform.host());
+  let wrong: HttpResponse = r.handle(http.request("POST", "/seen"), platform.host());
+  let pre: HttpResponse = r.handle(http.request("OPTIONS", "/seen"), platform.host());
+  let got: string = hit.status.to_string() + " " + hit.body_string() + " " + hit.headers.get("x-order").unwrap_or("-") + "|" + missed.status.to_string() + " " + missed.headers.get("x-order").unwrap_or("-") + "|" + wrong.status.to_string() + " " + wrong.headers.get("allow").unwrap_or("-") + " " + wrong.headers.get("x-order").unwrap_or("-") + "|" + pre.status.to_string() + " " + pre.headers.get("x-preflight").unwrap_or("-") + " " + pre.headers.get("x-order").unwrap_or("-");
+  return test.assert_eq(got, "200 tc ct|404 ct|405 GET, HEAD ct|204 /seen ct");
+}
+
 function test_handler_closure(): test.TestOutcome {
   let h: (HttpRequest, platform.Host) => HttpResponse = fixture().handler();
   return test.assert_eq(h(http.request("GET", "/users/me"), platform.host()).body_string(), "me");
@@ -216,6 +251,7 @@ function main(): i32 {
   r = r.it("typed parameters", test_typed_params);
   r = r.it("errors of two types", test_errors_of_two_types);
   r = r.it("a middleware chain", test_middleware_chain);
+  r = r.it("wrapped", test_wrapped);
   r = r.it("the handler closure", test_handler_closure);
   return r.finish();
 }

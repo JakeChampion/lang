@@ -14,8 +14,10 @@ import (
 )
 
 // std/http/router under std/serve's loop: a route with a typed parameter,
-// one taking the rest of the path, 405 with Allow, 404, and HEAD answered
-// by a GET route. The interpreter and the x86-64 backend.
+// one taking the rest of the path, 405 with Allow, 404, HEAD answered by a
+// GET route, and a CORS preflight answered by the middleware the router
+// wraps, for a path whose routes do not register OPTIONS. The interpreter
+// and the x86-64 backend.
 func TestRouterServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeRouterServeSource(t)
@@ -45,9 +47,14 @@ func writeRouterServeSource(t *testing.T) string {
 }
 
 const routerServeSource = `import "std/http";
+import "std/http/cors";
 import "std/http/router";
 import "std/platform";
 import "std/serve";
+
+function cross_origin(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+  return cors.cors(req, cors.policy(["https://app.example.com"]).with_methods(["GET", "POST"]), next);
+}
 
 function show(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   let id: i32 = params.int("id")?;
@@ -72,7 +79,7 @@ function files(req: HttpRequest, params: router.Params, plat: platform.Host): Re
 }
 
 function main(): i32 {
-  return serve.run(0, serve.config(), router.new[platform.Host]().get("/users/{id}", show).post("/users", create).get("/files/{path...}", files).handler());
+  return serve.run(0, serve.config(), router.new[platform.Host]().wrap(cross_origin).get("/users/{id}", show).post("/users", create).get("/files/{path...}", files).handler());
 }
 `
 
@@ -148,24 +155,34 @@ func checkRouterServe(t *testing.T, addr string) {
 		method, path, body string
 		status             int
 		allow, want        string
+		origin, acao       string
 	}{
-		{"GET", "/users/42", "", 200, "", `{"id":42}`},
-		{"GET", "/users/x1", "", 400, "", `"detail":"path parameter id is not an integer: x1"`},
-		{"HEAD", "/users/42", "", 200, "", ""},
-		{"PUT", "/users/42", "", 405, "GET, HEAD", ""},
-		{"PUT", "/users", "", 405, "POST", ""},
-		{"POST", "/users", "ann", 201, "", "made ann"},
-		{"GET", "/files/a/b%20c.txt", "", 200, "", "file a/b c.txt"},
-		{"GET", "/files/a%2541", "", 200, "", "file a%41"},
-		{"GET", "/files/", "", 200, "", "file "},
-		{"GET", "/files", "", 404, "", ""},
-		{"GET", "/nope?x=1", "", 404, "", ""},
+		{"GET", "/users/42", "", 200, "", `{"id":42}`, "", ""},
+		{"GET", "/users/42", "", 200, "", `{"id":42}`, "https://app.example.com", "https://app.example.com"},
+		{"OPTIONS", "/users", "", 204, "", "", "https://app.example.com", "https://app.example.com"},
+		{"OPTIONS", "/users", "", 405, "POST", "", "", ""},
+		{"GET", "/users/x1", "", 400, "", `"detail":"path parameter id is not an integer: x1"`, "", ""},
+		{"HEAD", "/users/42", "", 200, "", "", "", ""},
+		{"PUT", "/users/42", "", 405, "GET, HEAD", "", "", ""},
+		{"PUT", "/users", "", 405, "POST", "", "", ""},
+		{"POST", "/users", "ann", 201, "", "made ann", "", ""},
+		{"GET", "/files/a/b%20c.txt", "", 200, "", "file a/b c.txt", "", ""},
+		{"GET", "/files/a%2541", "", 200, "", "file a%41", "", ""},
+		{"GET", "/files/", "", 200, "", "file ", "", ""},
+		{"GET", "/files", "", 404, "", "", "", ""},
+		{"GET", "/nope?x=1", "", 404, "", "", "", ""},
 	}
 	client := &http.Client{}
 	for _, c := range cases {
 		req, err := http.NewRequest(c.method, "http://"+addr+c.path, strings.NewReader(c.body))
 		if err != nil {
 			t.Fatal(err)
+		}
+		if c.origin != "" {
+			req.Header.Set("Origin", c.origin)
+			if c.method == "OPTIONS" {
+				req.Header.Set("Access-Control-Request-Method", "POST")
+			}
 		}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -178,6 +195,9 @@ func checkRouterServe(t *testing.T, addr string) {
 		}
 		if a := resp.Header.Get("Allow"); a != c.allow {
 			t.Errorf("%s %s: Allow %q, want %q", c.method, c.path, a, c.allow)
+		}
+		if a := resp.Header.Get("Access-Control-Allow-Origin"); a != c.acao {
+			t.Errorf("%s %s (Origin %q): Access-Control-Allow-Origin %q, want %q", c.method, c.path, c.origin, a, c.acao)
 		}
 		if c.want != "" && !strings.Contains(string(got), c.want) {
 			t.Errorf("%s %s: body %q, want it to contain %q", c.method, c.path, got, c.want)

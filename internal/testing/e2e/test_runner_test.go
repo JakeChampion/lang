@@ -1197,9 +1197,10 @@ func TestRunnerTLSMozillaExamplePasses(t *testing.T) {
 // `tests/stdlib/http_router_test.fern` refuses malformed and conflicting
 // patterns and keeps the refusal, dispatches by precedence with 404 and 405,
 // binds parameters, answers a handler's failures of two types and runs a
-// `use` chain of middleware over a route.
+// `use` chain of middleware over a route and a `wrap` chain over the router,
+// ahead of dispatch.
 func TestRunnerHTTPRouterExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_router", "std/http/router", 10)
+	runnerSuitePasses(t, "http_router", "std/http/router", 11)
 }
 
 // `tests/stdlib/http_json_of_test.fern` answers a struct through its

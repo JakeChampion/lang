@@ -2449,9 +2449,9 @@ A response body in the content coding the client ranks highest
 handler asks for it:
 
 ```fern
-function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+function page_show(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   use req <- compress.compressed(req);
-  return http.ok(page()).with_content_type("text/html");
+  return Ok(http.ok(page()).with_content_type("text/html"));
 }
 ```
 
@@ -2572,9 +2572,9 @@ One JSON line per request, in the OpenTelemetry log data model's shape as
 OTLP/JSON spells it, written through `plat.log`:
 
 ```fern
-function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   use req <- accesslog.logged(req, plat);
-  return http.respond(show(params));
+  return show(params);
 }
 ```
 
@@ -2812,6 +2812,11 @@ function main(): i32 {
   with `Allow` (HEAD listed beside GET) when routes match the path under
   other methods, 404 when none matches it. `handler()` is the closure
   `serve.run` takes.
+- `wrap(middleware)` puts a middleware in the shape below around every
+  route, ahead of dispatch, so it sees every request, those no route
+  admits included, and the 404 and 405 pass through it; the first `wrap`
+  is the outermost. A CORS preflight is an OPTIONS the routes do not
+  register, so `cors.cors` goes here, not in a handler.
 - `Params` holds the values a pattern bound, in its order, as the
   request's path holds them (decoded once already, by the serve loop or
   the wasi-http entry):
@@ -2831,7 +2836,17 @@ function main(): i32 {
 ### `std/http/cors`
 
 Cross-Origin Resource Sharing, as a middleware by std/http/router's
-convention (`tests/stdlib/http_cors_test.fern`).
+convention, wrapped around the router rather than one handler, since a
+preflight is an OPTIONS no route registers
+(`tests/stdlib/http_cors_test.fern`):
+
+```fern
+function cross_origin(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+  return cors.cors(req, cors.policy(["https://app.example.com"]).with_credentials(), next);
+}
+
+router.new[platform.Host]().wrap(cross_origin).get("/users", users)
+```
 
 - `policy(origins)` admits the origins named exactly, by subdomain
   (`https://*.example.com`) or all (`*`, `any_origin()`), with the simple

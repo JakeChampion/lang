@@ -1,6 +1,8 @@
 import "std/test";
 import "std/http";
 import "std/http/cors";
+import "std/http/router";
+import "std/platform";
 import "std/option";
 
 // tests/stdlib/http_cors_test.fern — std/http/cors: a request with no
@@ -8,7 +10,9 @@ import "std/option";
 // marked and one from another is not, a preflight is answered without
 // reaching the handler, with the allow headers only when everything asked
 // for is admitted, credentials replace the wildcard, and a failure behind
-// the middleware is marked like any answer.
+// the middleware is marked like any answer, and a preflight reaches the
+// middleware through a router it wraps, for a path whose routes do not
+// register OPTIONS.
 
 function header(resp: HttpResponse, name: string): string {
   return resp.headers.get(name).unwrap_or("-");
@@ -93,6 +97,23 @@ function test_a_failure_is_marked_too(): test.TestOutcome {
   return test.assert_eq(summary(resp), "404 origin=https://app.example.com vary=Origin creds=-");
 }
 
+function cross_origin(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+  return cors.cors(req, app(), next);
+}
+
+function users(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(http.ok("user " + params.get("id").unwrap_or("?")));
+}
+
+function test_a_preflight_through_the_router(): test.TestOutcome {
+  let r: router.Router[platform.Host] = router.new[platform.Host]().wrap(cross_origin).get("/users/{id}", users).delete("/users/{id}", users);
+  let pre: HttpResponse = r.handle(preflight("https://app.example.com", "DELETE", "x-token"), platform.host());
+  let actual: HttpResponse = r.handle(http.request("DELETE", "/users/1").with_header("Origin", "https://app.example.com"), platform.host());
+  let plain: HttpResponse = r.handle(http.request("OPTIONS", "/users/1"), platform.host());
+  let got: string = pre.status.to_string() + " " + header(pre, "access-control-allow-methods") + " " + header(pre, "allow") + "|" + summary(actual) + " " + actual.body_string() + "|" + plain.status.to_string() + " " + header(plain, "allow");
+  return test.assert_eq(got, "204 DELETE -|200 origin=https://app.example.com vary=Origin creds=- user 1|405 GET, HEAD, DELETE");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/cors");
   r = r.it("no Origin passes through", test_no_origin_passes_through);
@@ -103,5 +124,6 @@ function main(): i32 {
   r = r.it("a preflight is answered here", test_a_preflight_is_answered_here);
   r = r.it("a preflight asking too much is bare", test_a_preflight_asking_too_much_is_bare);
   r = r.it("a failure is marked too", test_a_failure_is_marked_too);
+  r = r.it("a preflight through the router", test_a_preflight_through_the_router);
   return r.finish();
 }

@@ -58,9 +58,11 @@ the reply; a middleware answers the same, reading the response through
 
 A middleware that stops the chain returns without calling `next`; one that
 produces a value gives it to `next` as a second argument, and the handler
-behind it takes it as a parameter. There is no middleware type to implement
-and nothing to register: the router dispatches to handlers, and a handler
-decides what wraps it.
+behind it takes it as a parameter. There is no middleware type to
+implement: a handler decides what wraps it, and `router.wrap` puts one in
+the `(req, plat, next)` shape around every route, ahead of dispatch, for
+the middleware that must see a request no route admits, a CORS preflight
+first among them.
 
 ## Slices
 
@@ -70,13 +72,14 @@ decides what wraps it.
    takes precedence; 405 with `Allow` when the path is known and the method
    is not, 404 otherwise; a GET route answers HEAD. Two patterns that could
    both match a request with neither more specific are refused when the
-   second is registered, as a `RouteError` the registering call returns, so
-   a program learns at startup, never at the request. `Params` carries the
-   bound values percent-decoded, with `param` and `int` answering a 500 for
-   a name the pattern does not bind and a 400 for a value that is not an
-   integer, so a handler returning `Result[HttpResponse, http.HttpError]`
-   writes `params.int("id")?` and `http.respond` turns the failure into
-   problem+json. `Router[P]` is generic over the platform, so one router
+   second is registered, as a `RouteError` the router keeps through the
+   registrations after it: `check()` hands it back, `handler()` reports it
+   and exits 2, so a program learns at startup, never at the request.
+   `Params` carries the bound values percent-decoded, with `param` and
+   `int` answering a 500 for a name the pattern does not bind and a 400
+   for a value that is not an integer, so a handler, returning
+   `Result[HttpResponse, dyn http.ToResponse]`, writes `params.int("id")?`
+   and the router turns the failure into problem+json. `Router[P]` is generic over the platform, so one router
    serves `serve.run` (`platform.Host`) and a wasi-http `handle`
    (`platform.Platform`); `.handler()` is the closure `serve.run` takes.
    Dispatch is a scan of the registered routes, which is right for the
