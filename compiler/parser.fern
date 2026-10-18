@@ -139,8 +139,9 @@ pub struct TypeAlias { name: string, variants: string[], variant_args: string[],
 // Two modules can spell the same file differently (`./lib/gnu` and `./gnu`)
 // and two files can share a basename (`std/sort` and `coreutils/sort`), so
 // the basename is not an identity and flatten cannot recover one. Empty when
-// no loader filled it, which is every single-file driver.
-pub struct Import { path: string, is_reexport: boolean, reexport_names: string[], alias: string, line: i32, resolved: string }
+// no loader filled it, which is every single-file driver. `line` and `col`
+// locate the declaration's first token: `import`, or the `pub` of a `pub use`.
+pub struct Import { path: string, is_reexport: boolean, reexport_names: string[], alias: string, line: i32, col: i32, resolved: string }
 
 // warn_unresolved_imports prints a stderr diagnostic when `mod` declares imports
 // that the CALLER has no module loader to resolve, and reports whether it did.
@@ -10117,6 +10118,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
 
 function parse_import(p: Par): (Import, ast.Stmt[], Par) {
   let imp_line: i32 = p.peek_line();
+  let imp_col: i32 = p.peek_col();
   p = p.advance();  // consume `import`
   let path: string = "";
   let bad: ast.Stmt[] = [];
@@ -10128,7 +10130,7 @@ function parse_import(p: Par): (Import, ast.Stmt[], Par) {
     },
     _ => {
       bad = bad.append(decl_sentinel(p, "malformed import: its path could not be read"));
-      return (Import { path: "", is_reexport: false, reexport_names: [], alias: "", line: imp_line, resolved: "" }, bad, sync_to_top_level(p));
+      return (Import { path: "", is_reexport: false, reexport_names: [], alias: "", line: imp_line, col: imp_col, resolved: "" }, bad, sync_to_top_level(p));
     }
   }
   // Optional `as <ident>` alias clause (`import "std/io_buffered" as io`): the
@@ -10147,7 +10149,7 @@ function parse_import(p: Par): (Import, ast.Stmt[], Par) {
     }
   }
   p = p.expect_semi();
-  return (Import { path: path, is_reexport: false, reexport_names: [], alias: alias, line: imp_line, resolved: "" }, bad, p);
+  return (Import { path: path, is_reexport: false, reexport_names: [], alias: alias, line: imp_line, col: imp_col, resolved: "" }, bad, p);
 }
 
 // parse_pubuse consumes `use "path".{name1, name2, …};` (cursor on the
@@ -10156,9 +10158,9 @@ function parse_import(p: Par): (Import, ast.Stmt[], Par) {
 // loader pulls in the target module and the bundler can redirect a
 // consumer's `facade.name` to the target's mangled symbol. A missing path
 // is reported, the rest of the declaration is skipped, and the caller
-// records no import for it.
-function parse_pubuse(p: Par): (Import, ast.Stmt[], Par) {
-  let pu_line: i32 = p.peek_line();
+// records no import for it. `pu_line` / `pu_col` locate the declaration's
+// leading `pub`.
+function parse_pubuse(p: Par, pu_line: i32, pu_col: i32): (Import, ast.Stmt[], Par) {
   p = p.advance();  // consume `use`
   let path: string = "";
   let bad: ast.Stmt[] = [];
@@ -10170,7 +10172,7 @@ function parse_pubuse(p: Par): (Import, ast.Stmt[], Par) {
     },
     _ => {
       bad = bad.append(decl_sentinel(p, "malformed re-export: its path could not be read"));
-      return (Import { path: "", is_reexport: true, reexport_names: [], alias: "", line: pu_line, resolved: "" }, bad, sync_to_top_level(p));
+      return (Import { path: "", is_reexport: true, reexport_names: [], alias: "", line: pu_line, col: pu_col, resolved: "" }, bad, sync_to_top_level(p));
     }
   }
   if (p.at_path_sep()) {
@@ -10203,7 +10205,7 @@ function parse_pubuse(p: Par): (Import, ast.Stmt[], Par) {
     }
   }
   p = p.expect_semi();
-  return (Import { path: path, is_reexport: true, reexport_names: names, alias: "", line: pu_line, resolved: "" }, bad, p);
+  return (Import { path: path, is_reexport: true, reexport_names: names, alias: "", line: pu_line, col: pu_col, resolved: "" }, bad, p);
 }
 
 // parse_const_decl consumes `const NAME[: T] = EXPR;` (cursor on the
@@ -29722,6 +29724,8 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     // visibility is not carried yet, so those stay unrestricted.
     let decl_pub: boolean = false;
     let decl_package: boolean = false;
+    let decl_line: i32 = p.peek_line();
+    let decl_col: i32 = p.peek_col();
     if (kw == "pub") {
       p = p.advance();
       let (mpk, mpk_p) = consume_pub_package(p);
@@ -30090,7 +30094,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     // re-export Import so the loader pulls in the target module and the
     // bundler redirects `facade.name` to the target's mangled symbol.
     if (kw == "use") {
-      let (ur_imp, ur_bad, ur_p) = parse_pubuse(p);
+      let (ur_imp, ur_bad, ur_p) = parse_pubuse(p, decl_line, decl_col);
       p = ur_p;
       if (ur_imp.path.len() > 0 || ur_bad.len() == 0) {
         imports = imports.append(ur_imp);
