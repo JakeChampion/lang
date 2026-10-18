@@ -542,13 +542,28 @@ function __absorb(c: Conn, r: record.Record, ccs: boolean, app: boolean, out: Ou
   }
   match (c.read.open(r)) {
     Ok(o) => {
-      return __content(Conn { ...c, read: o.next }, o.content_type.code(), o.content, app, out);
+      return __opened(Conn { ...c, read: o.next }, o, app, out);
     },
     Err(e) => {
       return Err(Record(e));
     }
   }
   return Err(UnexpectedRecord(23));
+}
+
+// __opened acts on a record the read key opened. Application data is the
+// decrypted record's own buffer, owned here: it becomes the step's data
+// unmoved when nothing precedes it in the read, rather than being copied onto
+// an empty accumulator. Every other content (a post-handshake message, an
+// alert) goes through __content as the pre-key records do.
+function __opened(c: Conn, o: record.Opened, app: boolean, out: Out): Result[Absorbed, HandshakeError] {
+  if (o.content_type.code() == 23 && app && c.reading == 2) {
+    if (out.data.len() == 0) {
+      return Ok(Absorbed { conn: c, out: Out { ...out, data: o.content } });
+    }
+    return Ok(Absorbed { conn: c, out: Out { ...out, data: __join(out.data, o.content) } });
+  }
+  return __content(c, o.content_type.code(), o.content, app, out);
 }
 
 // __content acts on a record's content once it is in the clear.
@@ -560,18 +575,9 @@ function __content(c: Conn, code: i32, content: u8[], app: boolean, out: Out): R
     return __peer_alert(c, content, out);
   }
   if (code == 23 && app && c.reading == 2) {
-    return Ok(Absorbed { conn: c, out: Out { ...out, data: __gathered(out.data, content) } });
+    return Ok(Absorbed { conn: c, out: Out { ...out, data: __join(out.data, content) } });
   }
   return Err(UnexpectedRecord(code));
-}
-
-// __gathered is `acc` followed by `more`: `more` itself, not a copy of it,
-// when nothing precedes it.
-function __gathered(acc: u8[], more: u8[]): u8[] {
-  if (acc.len() == 0) {
-    return more;
-  }
-  return __join(acc, more);
 }
 
 // close_notify closes the connection, user_canceled is a warning, and any

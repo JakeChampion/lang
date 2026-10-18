@@ -1826,6 +1826,16 @@ function __serve_read_plain[D: async.Driver](drv: D, c: __Conns, at: i32, scratc
 // peer's close_notify, a refused record and a failed write all finish
 // the connection. The scratch is never lent: the plaintext is the
 // session's own array.
+// __read_onto is `buf` followed by a record's plaintext. The first record of a
+// read is the session's own decrypted buffer, taken as is rather than copied
+// onto an empty one.
+function __read_onto(buf: u8[], plain: u8[]): u8[] {
+  if (buf.len() == 0) {
+    return plain;
+  }
+  return buf.concat(plain);
+}
+
 function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: server.Session, scratch: u8[], opts: Config): (__Conns, boolean) {
   let buf: u8[] = c.bufs[at];
   let was_idle: boolean = buf.len() == 0;
@@ -1844,7 +1854,7 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
       let took: (__Conns, server.Session, u8[], boolean) = __tls_taken(drv, c, at, s, scratch[0:n], opts);
       c = took.0;
       s = took.1;
-      buf = __gathered(buf, took.2);
+      buf = __read_onto(buf, took.2);
       done = took.3;
       more = !done && n == __recv_room() && buf.len() <= http.http_request_bytes_cap(opts.limits);
       if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
@@ -1861,16 +1871,6 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
   }
   let deadline: i64 = monotonic_ns() + opts.recv_deadline.as_nanos();
   return (__Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) }, false);
-}
-
-// __gathered(buf, more) — `buf` followed by `more`: `more` itself, not a
-// copy of it, when the buffer is empty, as it is for the first record of a
-// read, which is the session's own decrypted array.
-function __gathered(buf: u8[], more: u8[]): u8[] {
-  if (buf.len() == 0) {
-    return more;
-  }
-  return buf.concat(more);
 }
 
 // __serve_handshook(c, at, was, sess, done, opts) — a TLS read's `(conns,

@@ -4785,11 +4785,6 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
           // (Scalar `unknown` is NOT treated as a wildcard — a
           // genuinely unresolved value should still surface its
           // assignment error, e.g. `let s: string = badcall()`.)
-          // A built-in variant's unbound argument is not a wildcard; a
-          // generic parameter erased to unknown is.
-          if (unbound_enum_argument(fe.elem) && !is_unknown(te.elem)) {
-            return false;
-          }
           if (is_unknown(fe.elem) || is_unknown(te.elem)) {
             return true;
           }
@@ -4804,9 +4799,8 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
       match (from) {
         typeinfo.TypeTuple(fe) => {
           // Same arity, element-wise assignable. An unknown element on
-          // EITHER side is a wildcard, as in the array arm above; a
-          // built-in variant's unbound argument is not. A generic tuple
-          // `(T, U)` — whose params erase to `unknown` — flows into any
+          // EITHER side is a wildcard, as in the array arm above. A generic
+          // tuple `(T, U)` — whose params erase to `unknown` — flows into any
           // concrete tuple slot, a literal whose element infers `unknown` doesn't false-positive,
           // and a DESTINATION element this resolver cannot name is not a
           // rejection. That last direction is what a spelling like
@@ -4818,9 +4812,6 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
           }
           let i: i32 = 0;
           while (i < te.elements.len()) {
-            if (unbound_enum_argument(fe.elements[i]) && !is_unknown(te.elements[i])) {
-              return false;
-            }
             if (!is_unknown(fe.elements[i]) && !is_unknown(te.elements[i]) && !nested_assignable(fe.elements[i], te.elements[i], unions)) {
               return false;
             }
@@ -4856,11 +4847,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
           // same wildcard for the same reason the array and tuple arms
           // give it: a generic parameter erases to unknown there, so
           // `assert_eq_map[K, V](Map[K, V], …)` takes a concrete
-          // `Map[i32, i32]`. A built-in variant's unbound argument is not a
-          // wildcard, as in the array arm.
-          if (unbound_enum_argument(fm.key) && !is_unknown(tm.key) || unbound_enum_argument(fm.value) && !is_unknown(tm.value)) {
-            return false;
-          }
+          // `Map[i32, i32]`.
           let kok: boolean = is_unknown(fm.key) || is_unknown(tm.key) || nested_assignable(fm.key, tm.key, unions);
           let vok: boolean = is_unknown(fm.value) || is_unknown(tm.value) || nested_assignable(fm.value, tm.value, unions);
           return kok && vok;
@@ -7418,20 +7405,24 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
   }
   // An unsuffixed literal takes a concrete sibling's type, as in
   // call_diags_array's E034 rule.
-  // A built-in variant's argument its constructor left unbound (`e` in
-  // `Err(e)` over an un-annotated `Ok(5)`) is a contract no sibling makes
-  // concrete, so it types the literal.
+  // A payload its constructor left unbound (`e` in `Err(e)` over an
+  // un-annotated `Ok(5)`) is never held, so it constrains no sibling.
   let first: typeinfo.Type = check_expr(a.elements[0], s);
-  if (unbound_enum_argument(first)) {
-    return t_array(first);
-  }
   let first_lit: i32 = numeric_literal_kind(a.elements[0]);
   let first_expr: ast.Expr = a.elements[0];
   let i: i32 = 1;
   while (i < a.elements.len()) {
     let et: typeinfo.Type = check_expr(a.elements[i], s);
     if (unbound_enum_argument(et)) {
-      return t_array(et);
+      i = i + 1;
+      continue;
+    }
+    if (unbound_enum_argument(first)) {
+      first = et;
+      first_lit = numeric_literal_kind(a.elements[i]);
+      first_expr = a.elements[i];
+      i = i + 1;
+      continue;
     }
     let lit: i32 = numeric_literal_kind(a.elements[i]);
     // A mismatch is call_diags_array's E034; the literal keeps its
@@ -13965,7 +13956,7 @@ function settles_or_assignable(e: ast.Expr, want: typeinfo.Type, s: Scope): bool
     return true;
   }
   let t: typeinfo.Type = check_expr(e, s);
-  return is_unknown(t) && !unbound_enum_argument(t) || type_assignable(t, want, s.unions.unions);
+  return is_unknown(t) || type_assignable(t, want, s.unions.unions);
 }
 
 // settles_or_nested: the same for a TUPLE literal's elements, which are not a
@@ -13977,7 +13968,7 @@ function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean 
     return true;
   }
   let t: typeinfo.Type = check_expr(e, s);
-  return is_unknown(t) && !unbound_enum_argument(t) || nested_assignable(t, want, s.unions.unions);
+  return is_unknown(t) || nested_assignable(t, want, s.unions.unions);
 }
 
 // variant_ctor_diags checks a variant-constructor call's ARGUMENTS against the
@@ -14022,8 +14013,7 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
     let at: typeinfo.Type = check_expr(c.args[i], s);
     let pt: typeinfo.Type = variant_pattern_payload_type(s, qname, whole, i);
     out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
-    let checked: boolean = !is_unknown(at) || unbound_enum_argument(at);
-    if (checked && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !coercible(at, pt, s)) {
+    if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !coercible(at, pt, s)) {
       out = out.append(dg_at("E036", "variant " + vname + " payload " + util.i32_to_string(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
     }
     i = i + 1;
@@ -15995,7 +15985,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
             // matches native, which prints the operand's enum in both
             // slots (#9344).
             if (try_ret_other_type(s.try_ret, tu.name)) {
-              out = out.append(dg_at("E042", "`?` on " + tu.name + " requires the surrounding function to return " + tu.name + ", got " + type_label(s.try_ret), u.line, u.col));
+              out = out.append(dg_at("E042", "`?` on " + tu.name + " requires the surrounding function to return " + tu.name + ", got " + try_ret_label(s.try_ret), u.line, u.col));
             } else {
               out = util.append_diags(out, try_residual_diags(s, trt, u));
             }
@@ -16079,9 +16069,12 @@ function e033_cast(u: ast.ExprUnary, cot: typeinfo.Type, tgt: typeinfo.Type): ut
 }
 
 // try_ret_other_type reports whether `ret`, the type a `?` propagates to, is
-// resolved and is not the enum `name`. An unresolved or still-inferred result
-// says nothing.
+// resolved and is not the enum `name`: a type variable of the enclosing
+// generic is resolved. An unresolved or still-inferred result says nothing.
 function try_ret_other_type(ret: typeinfo.Type, name: string): boolean {
+  if (is_type_variable(ret)) {
+    return true;
+  }
   match (ret) {
     typeinfo.TypeUnion(ru) => {
       return ru.name != name;
@@ -16094,6 +16087,14 @@ function try_ret_other_type(ret: typeinfo.Type, name: string): boolean {
     }
   }
   return false;
+}
+
+// try_ret_label spells the type a `?` propagates to, a type variable by its name.
+function try_ret_label(ret: typeinfo.Type): string {
+  if (is_type_variable(ret)) {
+    return callable_typevar_name(ret);
+  }
+  return type_label(ret);
 }
 
 // try_residual_diags: E042 for a `?` on a Result whose error type is not the
@@ -26360,9 +26361,9 @@ pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
     if (!check_func_body(func, fs)) {
       let site: UnknownSite = unknown_site(func.body, fs);
       if (site.found) {
-        return [untyped_statement(site.line, site.col, "in \"" + func.name + "\" (" + site.reason + ")")];
+        return [untyped_code(site.line, site.col, "this statement in \"" + func.name + "\" (" + site.reason + ")")];
       }
-      return [untyped_statement(func.line, func.col, "in the body of \"" + func.name + "\"")];
+      return [untyped_code(func.line, func.col, "the body of \"" + func.name + "\"")];
     }
   }
   let s: Scope = new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
@@ -26370,20 +26371,21 @@ pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
     let r: CheckResult = check_stmt(top_stmt, s);
     s = r.scope;
     if let typeinfo.TypeUnknown(u) = r.ty {
-      return [untyped_statement(ast.stmt_line(top_stmt), ast.stmt_col(top_stmt), "at top level (" + u.reason + ")")];
+      return [untyped_code(ast.stmt_line(top_stmt), ast.stmt_col(top_stmt), "this top-level statement (" + u.reason + ")")];
     }
   }
   return [dg_at("", "internal error: the checker rejected this module without a diagnostic; this is a compiler bug, please report it", 0, 0)];
 }
 
-// untyped_statement is ill_typed_hint's report of a statement at `line`, `col`
-// the checker could not type; `col` 0 is a statement the parser keeps no
-// column for, reported from its line's start.
-function untyped_statement(line: i32, col: i32, place: string): util.Diag {
+// untyped_code is ill_typed_hint's report that the checker could not type
+// `what`, positioned at `line`, `col`; `col` 0 is a statement the parser keeps
+// no column for, reported from its line's start. A positioned uncoded
+// diagnostic prints as `error: internal: ...`, like the compiler's others.
+function untyped_code(line: i32, col: i32, what: string): util.Diag {
   if (col <= 0) {
     col = 1;
   }
-  return dg_at("", "internal error: the checker could not type this statement " + place + " and has no diagnostic for it; this is a compiler bug, please report it", line, col);
+  return dg_at("", "internal: the checker could not type " + what + " and has no diagnostic for it; this is a compiler bug, please report it", line, col);
 }
 
 // =================== VALIDATION ====================

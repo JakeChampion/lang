@@ -47,7 +47,7 @@ func arm64Runner() (string, bool) {
 }
 
 // `fern -target arm64-linux` builds with no external toolchain. This
-// exercises the default path end to end and the --run temp-binary path (which
+// exercises the default path end to end and the -run temp-binary path (which
 // must be chmod'd executable).
 func TestArm64NativeIsCLIDefault(t *testing.T) {
 	bin := buildFernCLI(t)
@@ -85,10 +85,10 @@ func TestArm64NativeIsCLIDefault(t *testing.T) {
 		// arch (cmd/fern's runIt path) and only shells out to qemu-aarch64 for
 		// the cross case, so this needs the emulator to EXIST but not the path.
 		arm64QemuOrEmpty(t)
-		cmd := exec.Command(bin, "-target", "arm64-linux", "--run", src)
+		cmd := exec.Command(bin, "-target", "arm64-linux", "-run", src)
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != 42 {
-			t.Errorf("fern --run exit = %d, want 42", code)
+			t.Errorf("fern -run exit = %d, want 42", code)
 		}
 	})
 
