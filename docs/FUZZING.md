@@ -122,7 +122,8 @@ the language.
 time in the lowering, rc and x86-64 emission sources — an operator swap or a
 deleted assignment — builds the faulty compiler, and checks whether any of
 `FERN_MUTATION_SEEDS` generated programs, built under `-sanitize`, tells it
-apart from the interpreter. A fault the compiler cannot even build is
+apart from the interpreter. A mutant compiler that runs past two minutes on
+one program is killed as a hang. A fault the compiler cannot even build is
 "stillborn" and not scored; one that breaks a trivial program is reported apart.
 The score is the share of the rest that fernsmith kills, and the list of
 survivors is the generator's to-do list: each is a fault no generated program

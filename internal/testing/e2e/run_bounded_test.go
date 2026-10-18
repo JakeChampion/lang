@@ -2,8 +2,12 @@ package e2e
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -90,4 +94,27 @@ func x86_64RunnerOrEmpty() (runner []string, ok bool) {
 		return []string{p}, true
 	}
 	return nil, false
+}
+
+// TestRunSelfHostSeedBoundsAHungCompiler pins that a compiler which never
+// finishes is reported, not waited on: a mutant compiler that loops held the
+// nightly mutation score until its job timed out, with every result lost.
+func TestRunSelfHostSeedBoundsAHungCompiler(t *testing.T) {
+	saved := selfHostCompileTimeout
+	selfHostCompileTimeout = 200 * time.Millisecond
+	defer func() { selfHostCompileTimeout = saved }()
+	fake := filepath.Join(t.TempDir(), "fern")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nsleep 600\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	failed := ""
+	start := time.Now()
+	r, gap := runSelfHostSeed(t, fake, t.TempDir(), "function main(): i32 { return 0; }\n", nil, nil,
+		func(format string, args ...any) { failed = fmt.Sprintf(format, args...) })
+	if r != nil || gap != "" || !strings.Contains(failed, "did not finish") {
+		t.Fatalf("got run %v, gap %q, failure %q; want a reported hang", r, gap, failed)
+	}
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
+		t.Fatalf("returned after %v, want about the timeout", elapsed)
+	}
 }

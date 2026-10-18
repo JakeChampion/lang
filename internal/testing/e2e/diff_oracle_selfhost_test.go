@@ -39,6 +39,7 @@
 package e2e
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -272,6 +273,10 @@ func semRefused(out string) bool {
 // selfHostRunTimeout and reported as such, rather than spending the lane's
 // budget. That matters more here than on the fixture legs: these programs are
 // generated, so nobody has ever eyeballed one to know it should terminate.
+// selfHostCompileTimeout bounds one compile of a generated program, which takes
+// a second or two; a compiler that runs past it is hung.
+var selfHostCompileTimeout = 2 * time.Minute
+
 func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env []string, failf failFunc) (*selfHostRun, string) {
 	t.Helper()
 	// Absolute paths throughout: a relative one was unopenable from an
@@ -285,8 +290,16 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env [
 	asmPath := filepath.Join(dir, "prog.s")
 	args := append([]string{"-target", "x86-64-linux"}, flags...)
 	args = append(args, "-emit", "asm", "-o", asmPath, srcPath, stdlibRoot)
-	out, err := selfHostCompileCmd(fernBin, env, args...).CombinedOutput()
+	cmd := selfHostCompileCmd(fernBin, env, args...)
+	var compiled bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &compiled, &compiled
+	hung, err := runBounded(cmd, selfHostCompileTimeout)
+	if hung {
+		failf("the self-host compiler did not finish in %v:\nsrc:\n%s", selfHostCompileTimeout, src)
+		return nil, ""
+	}
 	if err != nil {
+		out := compiled.Bytes()
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
 			strictIRBailSite(fernBin, "x86-64-linux", append(flags, "-emit", "asm"), env, srcPath, stdlibRoot, out))
 	}
