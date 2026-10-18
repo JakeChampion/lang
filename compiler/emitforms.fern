@@ -88,7 +88,7 @@ pub function wasm_http_component(full: parser.Module, sub: ircore.Sub): wit_comp
     return wit_compose.Composed { bytes: [], refused: "" };
   }
   let core: i32[] = watbin.wat_to_binary(wat);
-  let tbody: i32[] = wit_decode.wit_section_body(watbin.blob_to_bytes(wit_proxy_world.proxy_world_payload()), 7);
+  let tbody: i32[] = wit_decode.wit_section_body(watbin.hex_to_bytes(wit_proxy_world.proxy_world_payload()), 7);
   return wit_compose.compose_http(tbody, core);
 }
 
@@ -130,7 +130,7 @@ pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.C
   if (framed && wasm_ir.component_framable(core.needs)) {
     return wit_compose.Composed { bytes: framed_component(watbin.wat_to_binary(core.wat), shape), refused: "" };
   }
-  let tbody: i32[] = wit_decode.wit_section_body(watbin.blob_to_bytes(wit_fern_world.fern_world_payload()), 7);
+  let tbody: i32[] = wit_decode.wit_section_body(watbin.hex_to_bytes(wit_fern_world.fern_world_payload()), 7);
   let c: wit_compose.Composed = wit_compose.compose_run(tbody, watbin.wat_to_binary(core.wat), ap.asy);
   if (c.bytes.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: the fern world cannot take this program: " + c.refused };

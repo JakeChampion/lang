@@ -1,0 +1,8 @@
+// A string literal is always valid UTF-8, so `\xNN` stops at 0x7F there as it
+// does in a character literal: `"\xE9"` would be a lone byte that starts no
+// character. `\u{E9}` names the scalar; bytes above ASCII belong in a `u8[]`.
+function main(): i32 {
+    let ok: string = "caf\u{E9}";
+    let bad: string = "caf\xE9";
+    return ok.len() + bad.len();
+}

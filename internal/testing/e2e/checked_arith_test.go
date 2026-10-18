@@ -91,14 +91,16 @@ function main(): i32 {
 `
 
 // checkedShiftProgram exercises `<<?` / `>>?` (#5542): `None` when the shift
-// count is out of range (`< 0` or `>= width`), else `Some(a << b)` with the
-// value masked to the operand width exactly like `<<` (`255u8 <<? 1 == 254`).
-// `>>` stays arithmetic for signed and logical for unsigned. Returns 0 on
-// all-pass, else the failing case index.
+// count is out of range (`< 0` or `>= width`), and for `<<?` also when bits are
+// shifted out (`255u8 <<? 1` is None), else `Some(a << b)`. `>>` stays
+// arithmetic for signed and logical for unsigned. Returns 0 on all-pass, else
+// the failing case index.
 const checkedShiftProgram = `
 function main(): i32 {
     match (1 <<? 4)         { Some(v) => { if (v != 16) { return 1; } }, None => { return 2; } }
-    match (1 <<? 31)        { Some(v) => { if (v != (0 - 2147483647 - 1)) { return 3; } }, None => { return 4; } }
+    match (1 <<? 31)        { Some(v) => { return 3; }, None => {} }
+    match ((0 - 1) <<? 31)  { Some(v) => { if (v != (0 - 2147483647 - 1)) { return 4; } }, None => { return 12; } }
+    match (1073741824 <<? 2) { Some(v) => { return 13; }, None => {} }
     match (1 <<? 32)        { Some(v) => { return 5; }, None => {} }
     match (1 <<? (0 - 1))   { Some(v) => { return 6; }, None => {} }
     match (256 >>? 4)       { Some(v) => { if (v != 16) { return 7; } }, None => { return 8; } }
@@ -106,14 +108,18 @@ function main(): i32 {
     // signed >> is arithmetic.
     match ((0 - 16) >>? 2)  { Some(v) => { if (v != (0 - 4)) { return 10; } }, None => { return 11; } }
 
-    // u8: value wraps to the width, count range is [0, 8).
+    // u8: the top bit shifted out is lost, count range is [0, 8).
     let b: u8 = 255;
-    match (b <<? (1 as u8)) { Some(v) => { if ((v as i32) != 254) { return 20; } }, None => { return 21; } }
+    match (b <<? (1 as u8)) { Some(v) => { return 20; }, None => {} }
+    let b2: u8 = 127;
+    match (b2 <<? (1 as u8)) { Some(v) => { if ((v as i32) != 254) { return 21; } }, None => { return 23; } }
     match (b <<? (8 as u8)) { Some(v) => { return 22; }, None => {} }
 
-    // u32: value wraps, >> is logical.
+    // u32: a lost top bit is None, >> is logical.
     let p: u32 = 4294967295;
-    match (p <<? (1 as u32)) { Some(v) => { if (v != 4294967294) { return 30; } }, None => { return 31; } }
+    match (p <<? (1 as u32)) { Some(v) => { return 30; }, None => {} }
+    let p2: u32 = 2147483647;
+    match (p2 <<? (1 as u32)) { Some(v) => { if (v != 4294967294) { return 31; } }, None => { return 35; } }
     match (p <<? (32 as u32)) { Some(v) => { return 32; }, None => {} }
     let q: u32 = 4294967288;
     match (q >>? (2 as u32)) { Some(v) => { if (v != 1073741822) { return 33; } }, None => { return 34; } }
@@ -125,6 +131,8 @@ function main(): i32 {
     let m: u64 = 1;
     match (m <<? (64 as u64)) { Some(v) => { return 43; }, None => {} }
     match (m <<? (10 as u64)) { Some(v) => { if (v != 1024) { return 44; } }, None => { return 45; } }
+    match (x <<? (63 as i64)) { Some(v) => { return 46; }, None => {} }
+    match (m <<? (63 as u64)) { Some(v) => { if (v != 9223372036854775808) { return 47; } }, None => { return 48; } }
     return 0;
 }
 `

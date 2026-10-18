@@ -1141,10 +1141,10 @@ pub function float_map_value(v: typeinfo.Type): boolean {
 }
 
 // A key column of boxes: a record or a union the runtime hashes and compares
-// through the key type's derived `hash` and `eq` — the checker admits no
-// other nominal as a map key — and owns one unit of per entry. A generic
-// instance is spelled with its arguments, which the derived methods are not
-// named by here, so only an argument-free nominal is admitted.
+// through the key type's cmp.Hash `hash` and cmp.Eq `eq` — the checker admits
+// no other nominal as a map key — and owns one unit of per entry. A generic
+// instance is spelled with its arguments, which those methods are not named by
+// here, so only an argument-free nominal is admitted.
 pub function keyed_map_key(k: typeinfo.Type): boolean {
   if (semtypes.is_handle(k) || semtypes.is_map_iter(k) || semtypes.is_env(k) || semtypes.is_cell(k)) {
     return false;
@@ -1200,9 +1200,9 @@ function structural_key_element(e: typeinfo.Type): boolean {
 }
 
 // The function a keyed column's probes call, `which` being "eq" or "hash": the
-// receiver method `K.eq` / `K.hash` that `@derive(cmp.Eq, cmp.Hash)`
-// synthesises, or for a structural key the generated free function `K__eq` /
-// `K__hash`.
+// receiver method `K.eq` / `K.hash` of K's cmp.Eq / cmp.Hash impl, derived or
+// written by hand, or for a structural key the generated free function
+// `K__eq` / `K__hash`.
 pub function keyed_map_key_fn(k: typeinfo.Type, which: string): string {
   if (structural_map_key(k)) {
     return keyed_map_key_name(k) + "__" + which;
@@ -1210,7 +1210,7 @@ pub function keyed_map_key_fn(k: typeinfo.Type, which: string): string {
   return keyed_map_key_name(k) + "." + which;
 }
 
-// The nominal a keyed column's derived methods hang off, or the name a
+// The nominal a keyed column's eq and hash hang off, or the name a
 // structural key's generated helpers are declared under.
 pub function keyed_map_key_name(k: typeinfo.Type): string {
   if let typeinfo.TypeStruct(r) = k {

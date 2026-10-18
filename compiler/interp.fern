@@ -2041,12 +2041,29 @@ function sat_exact(op: string, a: i64, b: i64): i64 {
   if (op == "-|") {
     return a - b;
   }
-  // The count is masked to the 32-bit lane the callers work in, so the
-  // widest exact product here is (2^32-1) * 2^31 — still inside i64.
+  // An out-of-range count saturates any non-zero value, so it answers a
+  // value past every 32-bit bound with `a`'s sign. In range, the widest
+  // exact result is (2^32-1) * 2^31, still inside i64.
   if (op == "<<|") {
-    return a << (b & 31);
+    if (b < 0 || b >= 32) {
+      return sat_shl_oor(a);
+    }
+    return a << b;
   }
   return a * b;
+}
+
+// sat_shl_oor is `a <<| n` for a count past the width at host i64: zero stays
+// zero, anything else lands beyond the clamp bound on its own side.
+function sat_shl_oor(a: i64): i64 {
+  let big: i64 = 4611686018427387904;
+  if (a > 0) {
+    return big;
+  }
+  if (a < 0) {
+    return 0 - big;
+  }
+  return 0;
 }
 
 // sat_clamp clamps an exact result into [minv, maxv].
@@ -2092,13 +2109,17 @@ function sat_i64(op: string, a: i64, b: i64): i64 {
     // bound would need a ceiling division an arithmetic shift cannot
     // give. `>>` is arithmetic, so it restores `a` iff nothing was
     // shifted out.
-    let sc: i64 = b & 63;
-    let sh: i64 = a << sc;
-    if (sh >> sc == a) {
-      return sh;
+    if (b >= 0 && b < 64) {
+      let sh: i64 = a << b;
+      if (sh >> b == a) {
+        return sh;
+      }
     }
     if (a < 0) {
       return minv;
+    }
+    if (a == 0) {
+      return 0;
     }
     return maxv;
   }
@@ -2146,10 +2167,14 @@ function sat_u64(op: string, a: u64, b: u64): i64 {
     return d as i64;
   }
   if (op == "<<|") {
-    let sc: u64 = b & 63 as u64;
-    let sh: u64 = a << sc;
-    if (sh >> sc == a) {
-      return sh as i64;
+    if (b < 64 as u64) {
+      let sh: u64 = a << b;
+      if (sh >> b == a) {
+        return sh as i64;
+      }
+    }
+    if (a == 0 as u64) {
+      return 0;
     }
     return maxv as i64;
   }
@@ -3905,6 +3930,40 @@ function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: pars
   return parser.dyn_provider_name(funcs, value_type_name(recv), traits, name);
 }
 
+// map_key_index is the slot of `m` whose key equals `k`, or -1. A struct or
+// enum key compares through its type's cmp.Eq `eq`, derived or written by
+// hand, as the compiled map's keyed probe does; any other key by value.
+function map_key_index(m: VMap, k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): i32 {
+  let by_eq: boolean = has_key_eq(k, funcs, aliases);
+  let i: i32 = 0;
+  while (i < m.keys.len()) {
+    if (by_eq) {
+      if let VBool(b) = call_method(m.keys[i], "eq", [k], funcs, aliases, type_decls, argv) {
+        if (b.v) {
+          return i;
+        }
+      }
+    } else if (value_eq(m.keys[i], k)) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// has_key_eq reports a struct or enum value whose type has a cmp.Eq `eq`.
+function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[]): boolean {
+  if let VStruct(sv) = k {
+    for fd in funcs {
+      let base: string = util.base_type_name(fd.receiver_type);
+      if (fd.name == "eq" && fd.impl_trait == "Eq" && (base == sv.type_name || is_variant_of_alias_interp(sv.type_name, base, aliases))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
   // `i32.zero()` / `T.zero()` — the receiver is a TYPE, not a value, so no
   // value-receiver method can match and only the associated table applies.
@@ -4015,23 +4074,20 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 2) {
           return v_err("map.set: need 2 args");
         }
-        let i: i32 = 0;
-        while (i < m.keys.len()) {
-          if (value_eq(m.keys[i], args[0])) {
-            // Replace value at slot i.
-            let nvs: Value[] = [];
-            let j: i32 = 0;
-            while (j < m.values.len()) {
-              if (j == i) {
-                nvs = nvs.append(args[1]);
-              } else {
-                nvs = nvs.append(m.values[j]);
-              }
-              j = j + 1;
+        let i: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, argv);
+        if (i >= 0) {
+          // Replace value at slot i.
+          let nvs: Value[] = [];
+          let j: i32 = 0;
+          while (j < m.values.len()) {
+            if (j == i) {
+              nvs = nvs.append(args[1]);
+            } else {
+              nvs = nvs.append(m.values[j]);
             }
-            return VMap { keys: m.keys, values: nvs };
+            j = j + 1;
           }
-          i = i + 1;
+          return VMap { keys: m.keys, values: nvs };
         }
         return VMap { keys: m.keys.append(args[0]), values: m.values.append(args[1]) };
       }
@@ -4039,12 +4095,9 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 1) {
           return v_err("map.get: need 1 arg");
         }
-        let oi: i32 = 0;
-        while (oi < m.keys.len()) {
-          if (value_eq(m.keys[oi], args[0])) {
-            return v_variant("Some", [m.values[oi]]);
-          }
-          oi = oi + 1;
+        let oi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, argv);
+        if (oi >= 0) {
+          return v_variant("Some", [m.values[oi]]);
         }
         let no_payload: Value[] = [];
         return v_variant("None", no_payload);
@@ -4053,12 +4106,9 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 2) {
           return v_err("map.get_or: need 2 args");
         }
-        let gi: i32 = 0;
-        while (gi < m.keys.len()) {
-          if (value_eq(m.keys[gi], args[0])) {
-            return m.values[gi];
-          }
-          gi = gi + 1;
+        let gi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, argv);
+        if (gi >= 0) {
+          return m.values[gi];
         }
         return args[1];
       }
@@ -4066,31 +4116,24 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 1) {
           return v_err("map.has: need 1 arg");
         }
-        let hi: i32 = 0;
-        while (hi < m.keys.len()) {
-          if (value_eq(m.keys[hi], args[0])) {
-            return v_bool(true);
-          }
-          hi = hi + 1;
-        }
-        return v_bool(false);
+        return v_bool(map_key_index(m, args[0], funcs, aliases, type_decls, argv) >= 0);
       }
       if (name == "without") {
         if (args.len() != 1) {
           return v_err("map.delete: need 1 arg");
         }
+        let at: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, argv);
         let nk: Value[] = [];
         let nv: Value[] = [];
         let di: i32 = 0;
         while (di < m.keys.len()) {
-          if (!value_eq(m.keys[di], args[0])) {
+          if (di != at) {
             nk = nk.append(m.keys[di]);
             nv = nv.append(m.values[di]);
           }
           di = di + 1;
         }
-        let found: boolean = nk.len() != m.keys.len();
-        return v_tuple([v_map(nk, nv), v_bool(found)]);
+        return v_tuple([v_map(nk, nv), v_bool(at >= 0)]);
       }
       if (name == "len") {
         return v_int(m.keys.len());

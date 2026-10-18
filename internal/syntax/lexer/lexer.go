@@ -605,7 +605,7 @@ func (l *lexer) next() (Token, error) {
 		return Token{Kind: kind, Text: text, Pos: start, Suffix: suffix}, nil
 	}
 
-	// String literal: "..." with C-style escapes \\, \", \n, \t, \r, \0.
+	// String literal: "..." with the escapes scanQuotedEscape decodes.
 	if r == '"' {
 		l.advance() // opening "
 		var b strings.Builder
@@ -615,35 +615,11 @@ func (l *lexer) next() (Token, error) {
 				return Token{}, &Error{Pos: start, Msg: "newline inside string literal"}
 			}
 			if c == '\\' {
-				l.advance()
-				if l.i >= len(l.src) {
-					return Token{}, &Error{Pos: start, Msg: "unterminated string literal"}
+				v, err := l.scanQuotedEscape(start, false, "string")
+				if err != nil {
+					return Token{}, err
 				}
-				esc := rune(l.src[l.i])
-				l.advance()
-				switch esc {
-				case 'n':
-					b.WriteByte('\n')
-				case 't':
-					b.WriteByte('\t')
-				case 'r':
-					b.WriteByte('\r')
-				case '0':
-					b.WriteByte(0)
-				case '"':
-					b.WriteByte('"')
-				case '\\':
-					b.WriteByte('\\')
-				case 'x':
-					if l.i+1 >= len(l.src) || !isHexDigit(rune(l.src[l.i])) || !isHexDigit(rune(l.src[l.i+1])) {
-						return Token{}, &Error{Pos: start, Msg: "\\x escape needs two hex digits"}
-					}
-					b.WriteByte(byte(hexVal(rune(l.src[l.i]))<<4 | hexVal(rune(l.src[l.i+1]))))
-					l.advance()
-					l.advance()
-				default:
-					return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("unknown escape \\%c", esc)}
-				}
+				b.WriteRune(rune(v))
 				continue
 			}
 			// Write the raw source byte, not WriteRune(c): c is
@@ -785,13 +761,15 @@ func (l *lexer) closingQuoteAhead() bool {
 }
 
 // scanQuotedEscape decodes the escape at the current `\`, which it
-// consumes along with the escape body.
+// consumes along with the escape body. Character, string and f-string
+// literals share it, so their escapes are one set.
 //
-// `\u{...}` is a Unicode scalar, so it is accepted only in a character
-// literal; `\xNN` reaches the full byte range in a byte literal but
-// stops at 0x7F in a character literal, where anything above ASCII has
-// two plausible readings (the byte, or the scalar with that value) and
-// `\u{...}` says which unambiguously.
+// `\u{...}` is a Unicode scalar, so a byte literal refuses it; `\xNN`
+// reaches the full byte range in a byte literal but stops at 0x7F
+// everywhere else, where anything above ASCII has two plausible readings
+// (the byte, or the scalar with that value) and `\u{...}` says which
+// unambiguously. Stopping there is also what keeps every string literal
+// valid UTF-8.
 func (l *lexer) scanQuotedEscape(start ast.Position, isByte bool, kindName string) (int32, error) {
 	l.advance() // backslash
 	if l.i >= len(l.src) {
@@ -822,7 +800,7 @@ func (l *lexer) scanQuotedEscape(start ast.Position, isByte bool, kindName strin
 		l.advance()
 		l.advance()
 		if !isByte && v > 0x7F {
-			return 0, &Error{Pos: start, Msg: fmt.Sprintf("\\x%02X is above ASCII in a character literal; write \\u{%X} for the scalar", v, v)}
+			return 0, &Error{Pos: start, Msg: fmt.Sprintf("\\x%02X is above ASCII in %s; write \\u{%X} for the scalar", v, literalName(kindName), v)}
 		}
 		return v, nil
 	case 'u':
@@ -861,6 +839,14 @@ func (l *lexer) scanQuotedEscape(start ast.Position, isByte bool, kindName strin
 	return 0, &Error{Pos: start, Msg: fmt.Sprintf("unknown escape \\%c in %s literal", rune(esc), kindName)}
 }
 
+// literalName is the kind of literal with its article, for a message.
+func literalName(kindName string) string {
+	if kindName == "f-string" {
+		return "an f-string literal"
+	}
+	return "a " + kindName + " literal"
+}
+
 // scanFString consumes the body of an f-string starting at the
 // current `"`, including the closing `"`. It returns the parts
 // (alternating literal segments + raw-text interpolant
@@ -871,10 +857,9 @@ func (l *lexer) scanQuotedEscape(start ast.Position, isByte bool, kindName strin
 //	f"plain"               → [Lit:"plain"]
 //	f""                    → []
 //
-// `{{` and `}}` escape literal braces. Standard string escapes
-// (`\n`, `\t`, `\"`, `\\`, `\r`, `\0`) are honoured in the literal
-// portions; inside `{...}` the bytes pass through verbatim for the
-// parser to sub-parse.
+// `{{` and `}}` escape literal braces. The string escapes are honoured
+// in the literal portions; inside `{...}` the bytes pass through
+// verbatim for the parser to sub-parse.
 func (l *lexer) scanFString(start ast.Position) ([]FStringPart, error) {
 	if l.i >= len(l.src) || l.src[l.i] != '"' {
 		return nil, &Error{Pos: start, Msg: "expected `\"` after `f`"}
@@ -900,35 +885,11 @@ func (l *lexer) scanFString(start ast.Position) ([]FStringPart, error) {
 			return nil, &Error{Pos: start, Msg: "newline inside f-string literal"}
 		}
 		if c == '\\' {
-			l.advance()
-			if l.i >= len(l.src) {
-				return nil, &Error{Pos: start, Msg: "unterminated f-string literal"}
+			v, err := l.scanQuotedEscape(start, false, "f-string")
+			if err != nil {
+				return nil, err
 			}
-			esc := rune(l.src[l.i])
-			l.advance()
-			switch esc {
-			case 'n':
-				lit.WriteByte('\n')
-			case 't':
-				lit.WriteByte('\t')
-			case 'r':
-				lit.WriteByte('\r')
-			case '0':
-				lit.WriteByte(0)
-			case '"':
-				lit.WriteByte('"')
-			case '\\':
-				lit.WriteByte('\\')
-			case 'x':
-				if l.i+1 >= len(l.src) || !isHexDigit(rune(l.src[l.i])) || !isHexDigit(rune(l.src[l.i+1])) {
-					return nil, &Error{Pos: start, Msg: "\\x escape needs two hex digits"}
-				}
-				lit.WriteByte(byte(hexVal(rune(l.src[l.i]))<<4 | hexVal(rune(l.src[l.i+1]))))
-				l.advance()
-				l.advance()
-			default:
-				return nil, &Error{Pos: start, Msg: fmt.Sprintf("unknown escape \\%c", esc)}
-			}
+			lit.WriteRune(rune(v))
 			continue
 		}
 		if c == '{' {

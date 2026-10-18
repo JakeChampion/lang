@@ -1,0 +1,67 @@
+// spec: IS-12
+//
+// `<<?` answers None whenever the shift loses information: when the
+// count is negative or at least the width, and when bits are shifted
+// out, which for a signed operand includes the sign bit changing. So
+// `a <<? n` is Some exactly when `a * 2^n` fits the operand type.
+// Each width is taken at both edges of its range: the last shift that
+// fits and the first that does not, including the signed MIN that a
+// negative value reaches without losing anything.
+import "std/i32";
+import "std/i64";
+import "std/u32";
+import "std/u64";
+
+function si(o: Option[i32]): string { match (o) { Some(v) => { return v.to_string(); }, None => { return "none"; } } }
+function sl(o: Option[i64]): string { match (o) { Some(v) => { return v.to_string(); }, None => { return "none"; } } }
+function sb(o: Option[u8]): string { match (o) { Some(v) => { return (v as i32).to_string(); }, None => { return "none"; } } }
+function su(o: Option[u32]): string { match (o) { Some(v) => { return v.to_string(); }, None => { return "none"; } } }
+function sw(o: Option[u64]): string { match (o) { Some(v) => { return v.to_string(); }, None => { return "none"; } } }
+
+function i(n: i32): i32 { return n; }
+function l(n: i64): i64 { return n; }
+function b(n: u8): u8 { return n; }
+function u(n: u32): u32 { return n; }
+function w(n: u64): u64 { return n; }
+
+function main(): i32 {
+    print("i32");
+    print(si(i(1) <<? 0));
+    print(si(i(1) <<? 30));
+    print(si(i(1) <<? 31));
+    print(si(i(1073741824) <<? 2));
+    print(si(i(3) <<? 30));
+    print(si(i(0 - 1) <<? 31));
+    print(si(i(0 - 2) <<? 30));
+    print(si(i(0 - 3) <<? 30));
+    print(si(i(0) <<? 31));
+    print(si(i(1) <<? 32));
+    print(si(i(0) <<? 32));
+    print(si(i(1) <<? (0 - 1)));
+    print("i64");
+    print(sl(l(1) <<? 62));
+    print(sl(l(1) <<? 63));
+    print(sl(l(3) <<? 62));
+    print(sl(l(0 - 1) <<? 63));
+    print(sl(l(1) <<? 64));
+    print(sl(l(1) <<? (0 - 1)));
+    print("u8");
+    print(sb(b(127) <<? 1));
+    print(sb(b(255) <<? 1));
+    print(sb(b(1) <<? 7));
+    print(sb(b(2) <<? 7));
+    print(sb(b(1) <<? 8));
+    print(sb(b(0) <<? 8));
+    print("u32");
+    print(su(u(1) <<? 31));
+    print(su(u(2) <<? 31));
+    print(su(u(2147483647) <<? 1));
+    print(su(u(4294967295) <<? 1));
+    print(su(u(1) <<? 32));
+    print("u64");
+    print(sw(w(1) <<? 63));
+    print(sw(w(3) <<? 63));
+    print(sw(w(18446744073709551615) <<? 1));
+    print(sw(w(1) <<? 64));
+    return 0;
+}

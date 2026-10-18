@@ -31,6 +31,18 @@ func TestSignatureTypeSpans(t *testing.T) {
 	}
 }
 
+func TestTypeArgSpans(t *testing.T) {
+	src := "let a: i32 = id[i32](1); let b = pick[i32[]](true, xs, ys); let c = q.id[i32](2); let d = xid[u8](3); let e = id[Map[i32, i32]][0]; let f = pick[(i32) => i32](true, g, h);"
+	var got []string
+	for _, sp := range typeArgSpans(src) {
+		got = append(got, src[sp[0]:sp[1]])
+	}
+	want := []string{"i32", "i32[]", "(i32) => i32"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("spans = %q, want %q", got, want)
+	}
+}
+
 func TestTypeMutants(t *testing.T) {
 	withMutants := 0
 	for seed := uint64(0); seed < 64; seed++ {

@@ -447,9 +447,9 @@ function main(): i32 {
     if (i32_cabs(min32) == ((0 as i64) - 2147483648)) { r = r + 11; }  // MIN sentinel
     return r;
 }`},
-	// checked_shl / checked_shr (the std/i32 · i64 · u32 · u64 additions): a
-	// shift guarded to the amount range [0, width) — the bare << / >> mask the
-	// amount, so 1 << 32 silently yields 1. The inlined i32 form returns an
+	// The amount guard of checked_shl / checked_shr: a shift guarded to the
+	// amount range [0, width) — the bare << / >> mask the amount, so 1 << 32
+	// silently yields 1. The inlined i32 form returns an
 	// out-of-i32-range i64 sentinel for the None case. Exercises i32 << / >>
 	// (arithmetic shr) + i64 compare + branch on the IR path. Oracle-checked.
 	// Five hits → 42.

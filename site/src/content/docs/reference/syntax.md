@@ -123,7 +123,8 @@ clamp to the operand type's `[MIN, MAX]` instead of wrapping. `+?` / `-?` / `*?`
 `/?` / `%?` / `<<?` / `>>?` are the **checked** integer operators: they
 evaluate to `Some(result)` when it fits the operand type and `None` on
 overflow (for `/?` / `%?`, on a zero divisor or the signed `MIN / -1`;
-for `<<?` / `>>?`, on an out-of-range shift count). Both families are
+for `<<?` / `>>?`, on an out-of-range shift count; for `<<?`, also when
+bits are shifted out). Both families are
 integer-only and otherwise behave exactly like their wrapping
 counterparts — see [Integer arithmetic](../types/#integer-arithmetic).
 

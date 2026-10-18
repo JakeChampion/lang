@@ -738,21 +738,14 @@ function settled(t: typeinfo.Type): typeinfo.Type {
 // A bare `None` names no payload, so as a payload itself (`Some(None)` with no
 // annotation) the checker leaves it `Option` alone. Nothing can build its
 // `Some` without settling the payload, so the value is only ever None and it
-// settles at a void payload, which carries nothing.
+// settles at a never payload, as an unbound argument does.
 function settled_payload(t: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeUnion(u) = t {
     if (u.name == "Option" && u.args.len() == 0) {
-      return typeinfo.TypeUnion { ...u, args: [t_void()] };
+      return typeinfo.TypeUnion { ...u, args: [typeinfo.TypeNever { tag: 0 }] };
     }
   }
   return settled(t);
-}
-
-function is_none_only(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeUnion(u) = t {
-    return u.name == "Option" && u.args.len() == 1 && semtypes.equal(u.args[0], t_void());
-  }
-  return false;
 }
 
 // ---- expressions ------------------------------------------------------------
@@ -4073,11 +4066,6 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   let completed: i32 = completing_variant(s.values[v.id], expected, s);
   if (completed >= 0) {
     return complete_variant(v, expected, completed);
-  }
-  // An Option with a void payload is only ever None, so it reads as the None
-  // of any Option the destination names.
-  if (is_none_only(s.values[v.id]) && union_name(expected) == "Option" && semtypes.concrete(expected, false)) {
-    return define(s, ssasem.variant_new(), [], 0, "None", expected);
   }
   if (semtypes.lends_array(s.values[v.id], expected)) {
     return define(s, ssasem.array_lend(), [v.id], 0, "", expected);

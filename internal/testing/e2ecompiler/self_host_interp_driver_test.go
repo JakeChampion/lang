@@ -439,7 +439,9 @@ var interpProgs = []struct {
 	// round-trip has to accept it.
 	{"sat-shl-exact-min", "function main(): i32 { let a: i32 = 0 - 1; if ((a <<| 31) == (0 - 2147483647 - 1)) { return 7; } return 0; }", 7},
 	{"sat-shl-plain", "function main(): i32 { return 21 <<| 1; }", 42},
-	{"sat-shl-mask", "function main(): i32 { return 42 <<| 32; }", 42},
+	{"sat-shl-oor", "function main(): i32 { let a: i32 = 42; if ((a <<| 32) == 2147483647) { return 7; } return 0; }", 7},
+	{"sat-shl-oor-zero", "function main(): i32 { let a: i32 = 0; if ((a <<| 40) == 0) { return 7; } return 0; }", 7},
+	{"sat-shl-neg-count", "function main(): i32 { let a: i32 = 0 - 3; if ((a <<| (0 - 1)) == (0 - 2147483647 - 1)) { return 7; } return 0; }", 7},
 	// `slice_unchecked(s, a, b)` (#5634): the byte-slice builtin the compiler's
 	// own sources now call. call_func evaluates it like the ExprSlice arm;
 	// before the case existed it fell through to "undefined function" → 254.
