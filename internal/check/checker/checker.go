@@ -11952,8 +11952,13 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 		if se, sok := src.(ast.EnumType); sok && de.Name == se.Name && len(de.Args) == len(se.Args) {
 			allOk := true
 			for i := range de.Args {
-				if unboundEnumArg(de.Args[i]) || unboundEnumArg(se.Args[i]) {
+				if unboundEnumArg(se.Args[i]) {
 					continue
+				}
+				// A binding's unsettled argument is a payload it never holds.
+				if unboundEnumArg(de.Args[i]) {
+					allOk = false
+					break
 				}
 				if !c.assignableWith(de.Args[i], se.Args[i], false) {
 					allOk = false
@@ -16131,8 +16136,33 @@ func (c *checker) bindArmPayloads(pos ast.Position, bindings []string, types []a
 			continue
 		}
 		seen[name] = true
+		if _, unreachable := bt.(ast.NeverType); unreachable {
+			// A value of never does not exist, so any use of it checks.
+			armScope.poison(name)
+			continue
+		}
 		armScope.names[name] = bt
 	}
+}
+
+// scrutineeSub binds a generic enum's type parameters to a scrutinee's
+// arguments, so `Some(v)` on an `Option[i32]` types `v` as i32. An argument
+// no construction settled (`let o = None;`, `let r = Ok(1);`) is a payload the
+// value never holds, so a binding of it is unreachable and typed never.
+func scrutineeSub(ed *ast.EnumDecl, et ast.EnumType) map[string]ast.Type {
+	sub := map[string]ast.Type{}
+	if len(et.Args) != 0 && len(et.Args) != len(ed.TypeParams) {
+		return sub
+	}
+	for i, p := range ed.TypeParams {
+		sub[p] = ast.NeverType{}
+		if len(et.Args) > 0 {
+			if _, open := et.Args[i].(ast.UnboundType); !open {
+				sub[p] = et.Args[i]
+			}
+		}
+	}
+	return sub
 }
 
 // resolveVariantBindings validates a variant pattern's bindings and
@@ -16386,14 +16416,7 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 			el.VariantName, ed.Name, variantSpellingHint(el.VariantName, ed))
 		return
 	}
-	var sub map[string]ast.Type
-	if len(ed.TypeParams) > 0 && len(et.Args) == len(ed.TypeParams) {
-		sub = make(map[string]ast.Type, len(ed.TypeParams))
-		for i, tp := range ed.TypeParams {
-			sub[tp] = et.Args[i]
-		}
-	}
-	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, variant, el.VariantBindings, false, sub)
+	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, variant, el.VariantBindings, false, scrutineeSub(ed, et))
 	for i, name := range el.VariantBindings {
 		// A slot carrying a sub-pattern binds nothing itself — its pattern
 		// does, under the same element rules, so it routes back through
@@ -16665,16 +16688,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		c.errfCode(n.Tag.Pos(), "E023", "unknown enum %q", et.Name)
 		return
 	}
-	// For generic enums, build a substitution map from the
-	// scrutinee's concrete type arguments. `match (o: Option[number])`
-	// gives us T=number, so the arm `Some(v)` types `v` as
-	// `number` rather than the unresolved `T`.
-	sub := map[string]ast.Type{}
-	if len(ed.TypeParams) == len(et.Args) {
-		for i, p := range ed.TypeParams {
-			sub[p] = et.Args[i]
-		}
-	}
+	sub := scrutineeSub(ed, et)
 	covered := map[string]bool{}
 	literalLocals := c.enumLiteralLocals(n.Tag, et, s)
 	refutableByVariant := map[string][]structArmPat{}
@@ -17567,12 +17581,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		c.errfCode(n.Tag.Pos(), "E023", "unknown enum %q", et.Name)
 		return nil
 	}
-	sub := map[string]ast.Type{}
-	if len(ed.TypeParams) == len(et.Args) {
-		for i, p := range ed.TypeParams {
-			sub[p] = et.Args[i]
-		}
-	}
+	sub := scrutineeSub(ed, et)
 	covered := map[string]bool{}
 	literalLocals := c.enumLiteralLocals(n.Tag, et, s)
 	refutableByVariant := map[string][]structArmPat{}

@@ -276,6 +276,12 @@ function is_poly_int(t: typeinfo.Type): boolean {
 // Merge literal commitments before default-width equality, including tuples.
 // An unsettled integer takes a float sibling's type, as in unifyIfArms.
 function join_result_types(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
+  if (unbound_enum_argument(a)) {
+    return b;
+  }
+  if (unbound_enum_argument(b)) {
+    return a;
+  }
   if (integer_literal_widens(a, b) || is_poly_int(a) && is_float(b)) {
     return b;
   }
@@ -3834,11 +3840,15 @@ function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Ty
       if (index == 0 && bare != "None" && arg < u.args.len()) {
         return u.args[arg];
       }
+      // An Option no construction settled (`let o = None;`) never holds Some.
+      if (index == 0 && bare == "Some" && u.args.len() == 0) {
+        return t_unknown("unbound T");
+      }
       return t_unknown("unresolved generic pattern payload");
     }
   }
   let g: typeinfo.Type = generic_variant_payload_type(s, name, whole, index);
-  if (!is_unknown(g) || lit_id(g) >= 0) {
+  if (!is_unknown(g) || lit_id(g) >= 0 || unbound_enum_argument(g)) {
     return g;
   }
   return variant_payload_type_at(s, name, index);
@@ -3856,6 +3866,10 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
     return t_unknown("not a union");
   }
   let us: UnionSig = s.lookup_union(u.name);
+  // An instance no construction settled (`E.B`) never holds a payload.
+  if (us.type_params.len() > 0 && u.args.len() == 0) {
+    return t_unknown("unbound payload");
+  }
   if (us.type_params.len() == 0 || us.type_params.len() != u.args.len()) {
     return t_unknown("not a generic enum instance");
   }
@@ -8341,6 +8355,28 @@ function nominal_args(t: typeinfo.Type): typeinfo.Type[] {
 function is_dyn_slot(t: typeinfo.Type): boolean {
   if let typeinfo.TypeDyn(_) = t {
     return true;
+  }
+  return false;
+}
+
+// fills_unsettled_argument reports whether `from` settles an enum argument that
+// `to` leaves unsettled: a binding of `None` or `Ok(1)` never holds the payload
+// its construction did not name, so `Some(3)` or `Err(2)` cannot be stored in it.
+function fills_unsettled_argument(from: typeinfo.Type, to: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(fu) = from {
+    if let typeinfo.TypeUnion(tu) = to {
+      if (fu.name != tu.name) {
+        return false;
+      }
+      let i: i32 = 0;
+      while (i < fu.args.len()) {
+        let open: boolean = tu.args.len() == 0 || i < tu.args.len() && unbound_enum_argument(tu.args[i]);
+        if (open && !is_unknown(fu.args[i])) {
+          return true;
+        }
+        i = i + 1;
+      }
+    }
   }
   return false;
 }
@@ -17925,7 +17961,8 @@ function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.D
     // annotation's is.
     let abound: util.Diag[] = dest_bound_diags(a.value, tt, cur);
     out = util.append_diags(out, abound);
-    if (abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur))) {
+    let misfit: boolean = !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur));
+    if (abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && (misfit || fills_unsettled_argument(vt, tt))) {
       out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
     }
   }
@@ -28254,9 +28291,18 @@ function vb_arms_unified(ts: typeinfo.Type[], es: ast.Expr[]): typeinfo.Type {
 
 // vb_stores_unified is vb_unified over the stores themselves, so an untyped
 // literal settles to the width another arm needs.
-function vb_stores_unified(ss: VbStore[]): typeinfo.Type {
-  if (ss.len() == 0) {
+function vb_stores_unified(ss0: VbStore[]): typeinfo.Type {
+  if (ss0.len() == 0) {
     return t_unknown("value block stores nothing");
+  }
+  let ss: VbStore[] = [];
+  for st in ss0 {
+    if (!unbound_enum_argument(st.t)) {
+      ss = ss.append(st);
+    }
+  }
+  if (ss.len() == 0) {
+    return ss0[0].t;
   }
   let acc: VbStore = ss[0];
   let i: i32 = 1;
@@ -28276,11 +28322,15 @@ function vb_unified(ts: typeinfo.Type[]): typeinfo.Type {
   if (ts.len() == 0) {
     return t_unknown("value block stores nothing");
   }
-  let first: typeinfo.Type = ts[0];
+  let k: i32 = 0;
+  while (k < ts.len() - 1 && unbound_enum_argument(ts[k])) {
+    k = k + 1;
+  }
+  let first: typeinfo.Type = ts[k];
   if (is_unknown(first)) {
     return first;
   }
-  let i: i32 = 1;
+  let i: i32 = k + 1;
   while (i < ts.len()) {
     first = join_result_types(first, ts[i]);
     if (is_unknown(first)) {
