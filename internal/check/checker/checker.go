@@ -29,7 +29,7 @@ type Error struct {
 	Note    string // optional: free-text hint rendered as `note:`
 	Msg     string
 	Path    string // source file path; filled by errf from c.current.SourceModule
-	ErrCode string // optional: stable error code (E001…), surfaces in the header + `lang explain` output
+	ErrCode string // optional: stable error code (E001…), surfaces in the header + `fern -explain` output
 	// Fix is an optional machine-applicable suggestion rendered as a
 	// `help:` line (diag.Suggestion — span + replacement + title). Only
 	// attached when applying the replacement is guaranteed to re-parse.
@@ -12081,7 +12081,7 @@ func arityMsg(subject string, want, got int, unit string) string {
 // to the emission. Codes line up with the per-code catalogue
 // under `internal/syntax/diag/explanations/`; surfacing them in the
 // header lets users search for the error + look up the
-// long-form explanation via `lang explain CODE`.
+// long-form explanation via `fern -explain CODE`.
 //
 // Phase 1: codes stamped on a handful of common error sites
 // (undefined identifier, type mismatches, missing struct

@@ -22,7 +22,7 @@ type Error struct {
 	Pos     ast.Position
 	Msg     string
 	Path    string // source file path; populated by modload, empty otherwise
-	ErrCode string // optional: stable error code (P001…); surfaces in the header + `lang explain` output
+	ErrCode string // optional: stable error code (P001…); surfaces in the header + `fern -explain` output
 }
 
 func (e *Error) Error() string          { return fmt.Sprintf("parse error at %s: %s", e.Pos, e.Msg) }
@@ -282,7 +282,7 @@ func (p *parser) errorf(pos ast.Position, format string, args ...any) *Error {
 // per-code catalogue under `internal/syntax/diag/explanations/`;
 // surfacing them in the header lets users search for the
 // error + look up the long-form explanation via
-// `lang explain CODE`.
+// `fern -explain CODE`.
 func (p *parser) errorfCode(pos ast.Position, code, format string, args ...any) *Error {
 	return &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), ErrCode: code}
 }

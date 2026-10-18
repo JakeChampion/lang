@@ -844,7 +844,7 @@ Worth stating, because effort has gone the wrong way here before.
 - **The `LowerState` rebuild.** Also measured and ruled out (same doc's 2026-06-21
   correction): clean self-reassign threading is in-place even at 45 fields and 20
   parallel arrays. The clone fires only on a read-after-thread.
-- **Diagnostics as a whole.** 63 codes with `fern explain` pages, aggregated
+- **Diagnostics as a whole.** 63 codes with `fern -explain` pages, aggregated
   errors, Levenshtein hints, caret rendering. The defects in §4 are defects *in* a
   good system, not evidence against it.
 - **The machine-code encoders.** `x86_native`, `arm64_native`, `elf` — small,
