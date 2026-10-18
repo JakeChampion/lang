@@ -4230,12 +4230,12 @@ func (p *parser) freshDestructureName() string {
 }
 
 // fieldNamesOf returns a named-field pattern's projected field names, nil
-// for a positional one.
+// for a positional one — and non-nil for `V { .. }`, which names none.
 func fieldNamesOf(pat matchPattern) []string {
 	if !pat.NamedFields {
 		return nil
 	}
-	return append([]string(nil), pat.fieldNames...)
+	return append([]string{}, pat.fieldNames...)
 }
 
 // parseNamedFieldPattern parses a named-field variant pattern body
@@ -4252,9 +4252,7 @@ func (p *parser) parseNamedFieldPattern() (out namedFieldPattern, ok bool, err e
 	if !p.match(lexer.Punct, "}") {
 		for {
 			// A trailing `..` marks intentionally-omitted fields (a partial
-			// bind — `Point { x, .. }`). Named-field patterns already bind
-			// only the fields they list, so `..` is documentation; consume
-			// it and stop. Matches the destructure form and the self-host.
+			// bind — `Point { x, .. }`); nothing may follow it.
 			if p.match(lexer.Punct, "..") {
 				p.advance()
 				out.rest = true
@@ -4267,9 +4265,7 @@ func (p *parser) parseNamedFieldPattern() (out namedFieldPattern, ok bool, err e
 			bind := fieldTok.Text
 			var sub *matchPattern
 			// `field: <x>` is either a rename binding the field to a local
-			// (struct matches only — the checker rejects a rename in an enum
-			// named-field pattern) or a SUB-PATTERN matched against the
-			// field's value. isNestedPatternStart draws the same line it
+			// or a SUB-PATTERN matched against the field's value. isNestedPatternStart draws the same line it
 			// draws for a payload slot, so `field: local` stays a rename and
 			// only an unambiguous pattern recurses.
 			if _, isRename := p.accept(lexer.Punct, ":"); isRename {
@@ -4311,9 +4307,7 @@ func (p *parser) parseNamedFieldPattern() (out namedFieldPattern, ok bool, err e
 // namedFieldPattern is what a `{ … }` pattern body binds: the field
 // projected for each binding, the binding itself, an optional sub-pattern
 // matched against that field, and whether the source wrote the trailing
-// `..`. The `..` binds nothing — a named-field pattern already binds only
-// the fields it lists — so only the printer reads it, to put back what the
-// author wrote.
+// `..` (see ast.MatchArm.RestWritten).
 type namedFieldPattern struct {
 	fields   []string
 	bindings []string
@@ -4351,8 +4345,8 @@ type matchPattern struct {
 	// fieldNames runs parallel to Bindings for a named-field pattern:
 	// the field projected for each binding (== Bindings for shorthand).
 	fieldNames []string
-	// restWritten records the trailing `..` of a named-field pattern. It
-	// binds nothing, so it reaches only the printer — see namedFieldPattern.
+	// restWritten records the trailing `..` of a named-field pattern — see
+	// ast.MatchArm.RestWritten.
 	restWritten bool
 }
 

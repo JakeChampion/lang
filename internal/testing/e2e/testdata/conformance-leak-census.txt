@@ -312,6 +312,7 @@ if_let_struct_fields                                 0
 if_let_struct_rename                                 0
 if_let_tuple_elems                                   0
 if_let_tuple_literal_elem_else                       0
+if_let_variant_pattern_rename_rest                   0
 inclusive_range                                      0
 inclusive_range_type_max                             0
 indirect_call_owned_param                            0
@@ -1001,6 +1002,10 @@ value_block_generic_call_arm                         0
 value_block_shadows_module_fn                        0
 value_block_width_call_arm                           0
 var_inference                                        0
+variant_pattern_nested                               0
+variant_pattern_rename                               0
+variant_pattern_rename_rest                          0
+variant_pattern_rest                                 0
 variant_payload_from_array_field                     0
 while_sum                                            0
 wide_array_append_grow                               0

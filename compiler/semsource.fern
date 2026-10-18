@@ -4710,7 +4710,7 @@ function pattern_shape_error(pv: ast.PatVariant): string {
   if (pv.nested.len() > 0 || pv.has_lit_cond) {
     return "unsupported pattern";
   }
-  if (pv.tup_kinds.len() > 0 || pv.field_names.len() > 0) {
+  if (pv.tup_kinds.len() > 0 || parser.is_record_pattern(pv)) {
     return "unsupported pattern";
   }
   if (qualified(pv.type_name)) {

@@ -89,6 +89,28 @@ function main(): i32 { return f(Rect(2, 5)); }`},
 	{"at_binding", `enum Shape { Rect { w: i32, h: i32 }, Unit }
 function f(s: Shape): i32 { match (s) { r @ Rect { h, w } => { return w * h; }, Unit => { return 0; } } return 0; }
 function main(): i32 { return f(Rect(6, 7)) + f(Unit); }`},
+	// `field: local` renames, `..` leaves fields out, and a field may carry a
+	// sub-pattern; each slot still lands on its DECLARED payload.
+	{"rename_and_rest", `enum Shape { Rect { w: i32, h: i32, d: i32 }, Unit }
+function f(s: Shape): i32 {
+  match (s) {
+    Rect { d: 0, h: hh, .. } => { return hh; },
+    Rect { d: depth, w: ww, .. } => { return ww * 10 + depth; },
+    Unit => { return 0; },
+  }
+  return 0 - 1;
+}
+function main(): i32 { return f(Rect(1, 7, 0)) + f(Rect(3, 9, 4)) + f(Unit); }`},
+	{"nested_rename_rest", `enum Shape { Rect { w: i32, h: i32 }, Unit }
+function f(o: Option[Shape]): i32 {
+  match (o) {
+    Some(Rect { h: hh, .. }) => { return hh; },
+    Some(Unit()) => { return 1; },
+    None => { return 0; },
+  }
+  return 0 - 1;
+}
+function main(): i32 { return f(Some(Rect(2, 9))) * 10 + f(Some(Unit)) + f(None); }`},
 }
 
 func TestSelfHostRecordVariantX86_64(t *testing.T) {

@@ -1497,6 +1497,9 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
       if (pv.at_binding.len() > 0) {
         head = pv.at_binding + " @ " + pv.type_name;
       }
+      if (parser.is_record_pattern(pv)) {
+        return head + " " + print_record_fields(pv);
+      }
       // A NESTED payload (`Some(Ok(n))`) binds nothing itself, so the
       // empty binding below is not "no payload list" — printing `head`
       // there would drop the sub-pattern and re-parse as a payload-less
@@ -1751,11 +1754,33 @@ function print_tup_arm(a: ast.TupArm): string {
   return pat;
 }
 
+// print_record_fields renders a record-form variant pattern that has not been
+// settled into positional form — its variant is declared in another module —
+// as written: `{ w, h: hh, d: 0, .. }`. A settled one prints positionally.
+function print_record_fields(pv: ast.PatVariant): string {
+  let out: string = "{ ";
+  let i: i32 = 0;
+  while (i < pv.field_names.len()) {
+    if (i > 0) {
+      out = out + ", ";
+    }
+    let field: string = pv.field_names[i];
+    let slot: string = payload_slot(pv, nested_slot_binder(pv, i));
+    if (i < pv.nested.len() && pv_pattern_name(pv.nested[i]).len() > 0) {
+      slot = print_pattern_ctx(pv.nested[i], true);
+    }
+    out = out + field;
+    if (slot != field) {
+      out = out + ": " + slot;
+    }
+    i = i + 1;
+  }
+  return out + rest_suffix(pv.rest_written, pv.field_names.len()) + " }";
+}
+
 // rest_suffix is the `..` a partial pattern wrote, with the separator it needs
-// after `n` already-printed fields. The `..` binds nothing — a named-field
-// pattern binds only the fields it lists — so it survives only by being
-// carried to here, and dropping it made `-fmt -w` delete what the author
-// wrote.
+// after `n` already-printed fields. It survives only by being carried to
+// here, and dropping it made `-fmt -w` delete what the author wrote.
 function rest_suffix(rest_written: boolean, n: i32): string {
   if (!rest_written) {
     return "";
@@ -1786,7 +1811,7 @@ function print_struct_arm(a: ast.StructArm): string {
     if (a.field_kinds[i] == 2) {
       out = out + ": " + print_lit(a.field_lits[i]);
     } else if (a.field_kinds[i] == 3) {
-      out = out + ": " + print_pattern(a.field_pats[i]);
+      out = out + ": " + print_pattern_ctx(a.field_pats[i], true);
     } else if (a.binds[i] != a.fields[i]) {
       out = out + ": " + a.binds[i];
     }
@@ -4081,6 +4106,10 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
+  rc = check_record_patterns();
+  if (rc != 0) {
+    return rc;
+  }
   rc = check_const_and_for_sugar();
   if (rc != 0) {
     return rc;
@@ -5021,6 +5050,38 @@ function check_enums(): i32 {
   }
 
   return 0;
+}
+
+function check_record_patterns(): i32 {
+  // A record pattern on a variant this file does not declare stays in record
+  // form, so it must print as written: positionally, `Rect { h: hh, .. }`
+  // would come back as `Rect(hh)` and bind the wrong field.
+  let src: string = "function f(s: Shape): i32 { match (s) { Rect { h: hh, .. } => { return hh; }, Circle { .. } => { return 0; } } return 0; } function main(): i32 { return 0; }";
+  let rt: parser.Module = roundtrip_module(src);
+  if (rt.funcs.len() < 1) {
+    return 377;
+  }
+  if let ast.StmtMatch(m) = rt.funcs[0].body[0] {
+    if (m.arms.len() != 2) {
+      return 378;
+    }
+    if let ast.PatVariant(rect) = m.arms[0].pattern {
+      if (rect.field_names.len() != 1 || rect.field_names[0] != "h" || rect.binding != "hh" || !rect.rest_written) {
+        return 379;
+      }
+    } else {
+      return 380;
+    }
+    if let ast.PatVariant(circle) = m.arms[1].pattern {
+      if (circle.field_names.len() != 0 || !circle.rest_written) {
+        return 381;
+      }
+    } else {
+      return 382;
+    }
+    return 0;
+  }
+  return 383;
 }
 
 function check_const_and_for_sugar(): i32 {

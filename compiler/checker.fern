@@ -4067,17 +4067,14 @@ function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, w
   // itself — a qualified name handed to a bare-keyed table misses and fails
   // open, which is how a qualified payload came to bind as unknown (#8783).
   let pv: ast.PatVariant = pvin;
-  // A record pattern that named every field but renamed one binds the DECLARED
-  // names, as native does after rejecting the rename — so the body's reference
-  // to the renamed local is the undefined-name error native also reports.
-  if (pv.field_names.len() > 0) {
+  // A record pattern that did not settle (record_pattern_diags reports why)
+  // still binds the locals of the fields it named correctly, so the body does
+  // not cascade into undefined-name errors.
+  if (parser.is_record_pattern(pv)) {
     // The struct table IS keyed bare, unlike the payload-type lookups below,
-    // so this one strips. Handed a qualified `E.Wrap` it would miss, leave
-    // rss.variant_field_names empty, and record_fields_cover would answer
-    // false — silently skipping the rebind and the E015 native reports for a
-    // renamed or positional-variant record pattern.
+    // so this one strips: a qualified `E.Wrap` would miss it.
     let rss: StructSig = variant_payload_struct(look, pv.type_name);
-    if (parser.record_fields_cover(rss.variant_field_names, pv.field_names)) {
+    if (rss.variant_field_names.len() > 0) {
       pv = parser.rebind_record_positional(pv, rss.variant_field_names);
     }
   }
@@ -12837,9 +12834,9 @@ function variant_payload_count(name: string, structs: StructTable): i32 {
 
 // record_pattern_diags explains a record-form pattern (`Rect { h, x }`) that
 // resolve_variant_fields_module left unresolved: it named a field the variant
-// does not declare, named one twice, or missed one — or the variant carries
-// positional payloads and cannot be matched by name at all. Mirrors native's
-// resolveVariantBindings (checker.go:9363-9397).
+// does not declare, named one twice, or missed one without `..` — or the
+// variant carries positional payloads and cannot be matched by name at all.
+// Mirrors native's settleNamedVariantPattern.
 function record_pattern_diags(pvin: ast.PatVariant, structs: StructTable, line: i32, col: i32): util.Diag[] {
   // Native's wording uses the BARE variant name, so the pattern is stripped at
   // entry and every message below reads off `pv`. The SIG is still resolved
@@ -12855,11 +12852,6 @@ function record_pattern_diags(pvin: ast.PatVariant, structs: StructTable, line: 
   if (decl.len() == 0) {
     return out.append(dg_at("E015", "variant " + pv.type_name + " has positional payloads; match it as " + pv.type_name + "(...), not " + pv.type_name + " { ... }", line, col));
   }
-  // A pattern that survived with a covering field set renamed one of them —
-  // resolve_record_pattern rebound it to the declared names, as native does.
-  if (parser.record_fields_cover(decl, pv.field_names)) {
-    return out.append(dg_at("E015", "enum named-field pattern for " + pv.type_name + " does not support renaming (`field: local`) — bind the field by name (`" + pv.type_name + " { " + pv.field_names[0] + " }`)", line, col));
-  }
   let bound: string[] = [];
   for field_name in pv.field_names {
     let nm: string = field_name;
@@ -12871,7 +12863,7 @@ function record_pattern_diags(pvin: ast.PatVariant, structs: StructTable, line: 
       bound = bound.append(nm);
     }
   }
-  if (bound.len() != decl.len()) {
+  if (bound.len() != decl.len() && !pv.rest_written) {
     let listed: string = "";
     let d: i32 = 0;
     while (d < decl.len()) {
@@ -12881,7 +12873,7 @@ function record_pattern_diags(pvin: ast.PatVariant, structs: StructTable, line: 
       listed = listed + decl[d];
       d = d + 1;
     }
-    out = out.append(dg_at("E015", "named-field pattern for " + pv.type_name + " must bind all " + util.i32_to_string(decl.len()) + " field(s) (" + listed + ")", line, col));
+    out = out.append(dg_at("E015", "named-field pattern for " + pv.type_name + " must bind all " + util.i32_to_string(decl.len()) + " field(s) (" + listed + "), or end in `..` to leave the rest out", line, col));
   }
   return out;
 }
@@ -13088,7 +13080,7 @@ function match_diags(stmts: ast.Stmt[], structs: StructTable, unions: UnionTable
                   // arm. Mirrors native checker.go:8318-8331 (#4344).
                   seen = seen.append(pv.type_name);
                 }
-                if (pv.field_names.len() > 0) {
+                if (parser.is_record_pattern(pv)) {
                   // A record-form pattern that resolve_variant_fields_module
                   // could not settle against the variant's declared fields.
                   out = util.append_diags(out, record_pattern_diags(pv, structs, m.arms[a].line, m.arms[a].col));
