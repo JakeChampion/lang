@@ -2322,27 +2322,27 @@ function main(): i32 {
 	}
 }
 
-// `tests/stdlib/lang_binary_e2e_test.fern` is the canonical
-// migration-pattern example: a Lang test file spawns the
-// `lang` binary itself (path read from `$LANG_BIN`), drives
+// `tests/stdlib/fern_binary_e2e_test.fern` is the canonical
+// migration-pattern example: a Fern test file spawns the
+// `fern` binary itself (path read from `$FERN_BIN`), drives
 // it through `-interp` / `-check` against inline source +
 // tempdir fixtures, and asserts on the (exit, stdout,
 // stderr) triple. This is the shape the migrated Go-side
 // e2e suite will adopt.
 //
 // We exercise both paths the example handles:
-//  1. With `$LANG_BIN` pointing at a fresh build of the
+//  1. With `$FERN_BIN` pointing at a fresh build of the
 //     compiler — every case runs and passes.
-//  2. With `$LANG_BIN` unset — the suite skips cleanly
+//  2. With `$FERN_BIN` unset — the suite skips cleanly
 //     rather than failing, so dev laptops without an
 //     explicit env setup don't see false negatives.
-func TestRunnerLangBinaryE2EExample(t *testing.T) {
+func TestRunnerFernBinaryE2EExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "tests/stdlib/lang_binary_e2e_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/fern_binary_e2e_test.fern")
 
-	t.Run("with LANG_BIN set", func(t *testing.T) {
+	t.Run("with FERN_BIN set", func(t *testing.T) {
 		cmd := exec.Command(bin, "-interp", src)
-		cmd.Env = append(os.Environ(), "LANG_BIN="+bin)
+		cmd.Env = append(os.Environ(), "FERN_BIN="+bin)
 		var out, errb bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &errb
@@ -2366,13 +2366,13 @@ func TestRunnerLangBinaryE2EExample(t *testing.T) {
 		}
 	})
 
-	t.Run("without LANG_BIN — skips cleanly", func(t *testing.T) {
+	t.Run("without FERN_BIN — skips cleanly", func(t *testing.T) {
 		cmd := exec.Command(bin, "-interp", src)
-		// Drop LANG_BIN from the environment explicitly —
+		// Drop FERN_BIN from the environment explicitly —
 		// the parent process may have it set.
 		env := []string{}
 		for _, kv := range os.Environ() {
-			if !strings.HasPrefix(kv, "LANG_BIN=") {
+			if !strings.HasPrefix(kv, "FERN_BIN=") {
 				env = append(env, kv)
 			}
 		}
@@ -2387,7 +2387,7 @@ func TestRunnerLangBinaryE2EExample(t *testing.T) {
 		}
 		gotOut := out.String()
 		for _, w := range []string{
-			"# SKIP LANG_BIN not set",
+			"# SKIP FERN_BIN not set",
 			"# skip 1",
 		} {
 			if !strings.Contains(gotOut, w) {
@@ -2395,7 +2395,7 @@ func TestRunnerLangBinaryE2EExample(t *testing.T) {
 			}
 		}
 		if strings.Contains(gotOut, "# fail 1") {
-			t.Errorf("missing LANG_BIN should skip, not fail\noutput:\n%s", gotOut)
+			t.Errorf("missing FERN_BIN should skip, not fail\noutput:\n%s", gotOut)
 		}
 	})
 }

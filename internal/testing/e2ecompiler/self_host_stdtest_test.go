@@ -369,7 +369,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"batch8", langSrcAbs(t, "tests/stdlib/batch8_test.fern"), "# golden file bootstrapped at "},
 		{"process_assertions", langSrcAbs(t, "tests/stdlib/process_assertions_test.fern"), ""},
 		{"process_output_shortcuts", langSrcAbs(t, "tests/stdlib/process_output_shortcuts_test.fern"), ""},
-		{"lang_binary_e2e", langSrcAbs(t, "tests/stdlib/lang_binary_e2e_test.fern"), ""},
+		{"fern_binary_e2e", langSrcAbs(t, "tests/stdlib/fern_binary_e2e_test.fern"), ""},
 		{"sort_wider", langSrcAbs(t, "tests/stdlib/sort_wider_test.fern"), ""},
 		{"array_reductions", langSrcAbs(t, "tests/stdlib/array_reductions_test.fern"), ""},
 		{"array_structural_verbs", langSrcAbs(t, "tests/stdlib/array_structural_verbs_test.fern"), ""},
