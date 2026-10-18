@@ -113,6 +113,17 @@ func TestFormatEmptyBlockStaysCompact(t *testing.T) {
 	}
 }
 
+// A function written without a return type prints without one: the parser's
+// void default is not something the source said, and writing it would turn
+// the E081 error into a different program.
+func TestFormatOmittedReturnTypeAsWritten(t *testing.T) {
+	got := formatSrc(t, "function f() {}\nfunction g(): void {}\n")
+	want := "function f() {}\n\nfunction g(): void {}\n"
+	if got != want {
+		t.Errorf("got:\n%q\nwant:\n%q", got, want)
+	}
+}
+
 // Operator precedence drives parenthesisation: `1 + 2 * 3` formats
 // without parens (mul binds tighter), but `(1 + 2) * 3` keeps them
 // because the parser's tree groups + on the left.
