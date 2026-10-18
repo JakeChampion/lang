@@ -117,9 +117,11 @@ jobs:
         #
         # The partition is scripts/shard-tests, the same greedy LPT the
         # self-host lane uses — it reads names on stdin and is not specific to
-        # that suite. No weights file is passed, so every test weighs 1 and
-        # the partition is a balanced split by count, which is right for
-        # mostly-sub-second tests with no dominating outlier.
+        # that suite. The weights are .github/other-test-weights.txt: most
+        # tests here are sub-second and weigh 1, but the TestRunner*ExamplePasses
+        # suites run a stdlib test file under the Go interpreter and the crypto
+        # and TLS ones take minutes each; by count they bunched into one shard,
+        # which reached the 25m budget while another finished in 7m.
         #
         # SELECTION IS STILL BY NEGATION. `go test -list` enumerates the whole
         # package and CATCH_ALL_SKIP removes the lanes that have a workflow of
@@ -130,12 +132,13 @@ jobs:
         # cost it.
         run: |
           set -euo pipefail
+          W="$PWD/.github/other-test-weights.txt"
           mapfile -t MINE < <(
             go test -list '.' ./internal/testing/e2e/ |
               grep -E '^Test' |
               grep -vE "$CATCH_ALL_SKIP" |
               sort |
-              scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}"
+              scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}" "$W"
           )
           if [ ${#MINE[@]} -eq 0 ]; then
             echo "no tests for shard ${{ matrix.shard }}/${{ matrix.nshard }} — the list or the filter is wrong" >&2
@@ -149,7 +152,7 @@ jobs:
           "$RUNNER_TEMP/ci-test-workers" \
             -binary "$RUNNER_TEMP/e2e-other.test" \
             -output "$RUNNER_TEMP/other-test-results" \
-            -workers 2 -timeout 25m -run "$PAT"
+            -weights "$W" -workers 2 -timeout 25m -run "$PAT"
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$RUNNER_TEMP"/other-test-results/worker-*.jsonl
