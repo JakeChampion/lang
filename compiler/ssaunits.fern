@@ -1239,9 +1239,9 @@ function text_lens(f: ssasem.Func): i32[] {
 }
 
 // Per record, variant or array construction whose every field or element is a
-// narrow scalar constant, or an array's a 64-bit integer or f64 constant: "|"
-// and its words, which is a static box's whole content; "" for any other
-// value. An empty array literal is one whatever its element type. A field or element may also hold another such box, as the
+// scalar constant, a 64-bit integer or f64 constant among them: "|" and its
+// words, which is a static box's whole content; "" for any other value. An
+// empty array literal is one whatever its element type. A field or element may also hold another such box, as the
 // word `@<value>`, a string literal's static box, as `$<value>`, or a
 // payloadless Option or Result's, as its packing in braces. A static
 // box's rc is immortal, so its releases and uniqueness tests leave it alone.
@@ -1303,8 +1303,8 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
   let j: i32 = 0;
   while (j < fields.len()) {
     let w: string = constant_word(f, defs, ins.args[j], fields[j].ty);
-    if (w == "" && ins.kind_tag == ssasem.array_new()) {
-      w = wide_word(defs, ins.args[j], fields[j].ty);
+    if (w == "") {
+      w = wide_word(f, defs, ins.args[j], fields[j].ty);
     }
     if (w == "") {
       w = literal_word(defs, ins.args[j]);
@@ -1515,13 +1515,13 @@ function integer_literal(f: ssasem.Func, ins: ssa.SInst): boolean {
   return ssasem.is_integer(from) || ssasem.is_char(from);
 }
 
-// A 64-bit element's word: an i64 or u64 literal's value, or an f64 literal's
-// bit pattern, as signed decimal; a negation of one negated; "" for anything
-// else. Only an array's elements take one, since a record's field words are
-// laid out at the narrow width on wasm.
-function wide_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
-  let f: boolean = ssasem.is_f64(t);
-  if (!f && !ssasem.is_wide(t)) {
+// A 64-bit field's or element's word: an i64 or u64 literal's value, or an f64
+// literal's bit pattern, as signed decimal; a negation of one negated; "" for
+// anything else. Every backend keeps a record's field and a wide array's
+// element in an 8-byte slot, so the word is the slot's bytes on each.
+function wide_word(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
+  let float: boolean = ssasem.is_f64(t);
+  if (!float && !ssasem.is_wide(t)) {
     return "";
   }
   let d: ssa.SInst = through_copies(defs, v);
@@ -1530,21 +1530,40 @@ function wide_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
     neg = true;
     d = through_copies(defs, d.args[0]);
   }
+  if (!float) {
+    d = wide_literal(f, defs, d);
+  }
   if (d.kind_tag != 1) {
     return "";
   }
   let bits: i64 = d.imm as i64;
-  if (f) {
+  if (float) {
     bits = util.parse_f64_bits(d.str);
   } else if (d.str != "") {
     bits = util.lit_to_i64(d.str);
   }
-  if (neg && f) {
+  if (neg && float) {
     bits = bits ^ 1i64 << 63i64;
   } else if (neg) {
     bits = 0 - bits;
   }
   return util.i64_to_string(bits);
+}
+
+// `wide_literal(f, defs, d)` — the integer literal under a cast to the wide
+// type, `10i32 as i64`, which is the literal at that width (an unsuffixed
+// one the typed lowering already ascribes); `d` itself for anything else,
+// a cast of a computed value among them, which is no literal.
+function wide_literal(f: ssasem.Func, defs: ssa.SInst[], d: ssa.SInst): ssa.SInst {
+  let arg: i32 = constant_cast_arg(d);
+  if (arg < 0) {
+    return d;
+  }
+  let src: ssa.SInst = through_copies(defs, arg);
+  if (integer_literal(f, src)) {
+    return src;
+  }
+  return d;
 }
 
 function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {

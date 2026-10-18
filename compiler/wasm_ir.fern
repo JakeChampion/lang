@@ -12403,15 +12403,16 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
         body = body + le32_escape(0);
       }
     } else {
+      // A record's field is an 8-byte slot: a scalar word's 64 bits, or a
+      // box's address in the low half.
       body = body + le32_escape(struct_type_id(structs, ir.const_struct_type(cv[i]))) + le32_escape(0);
       let vi: i32 = 0;
       while (vi < vals.len()) {
-        let w: i32 = const_agg_field(sv, cv, vals[vi]);
-        body = body + le32_escape(w);
-        if (w < 0) {
-          body = body + le32_escape(0 - 1);
+        if (ir.const_struct_ref(vals[vi]).len() == 0) {
+          let w: i64 = util.lit_to_i64(vals[vi]);
+          body = body + le32_escape((w & 0xffffffff) as i32) + le32_escape((w >> 32) as i32);
         } else {
-          body = body + le32_escape(0);
+          body = body + le32_escape(const_agg_field(sv, cv, vals[vi])) + le32_escape(0);
         }
         vi = vi + 1;
       }

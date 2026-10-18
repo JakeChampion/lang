@@ -4,9 +4,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// constAggBlockLabel is a static constant block's label; a field holding
+// another block is labelled `.K<n>_<field>` and is not a block.
+var constAggBlockLabel = regexp.MustCompile(`(?m)^\.K\d+:$`)
 
 // An aggregate literal whose every field is a compile-time scalar literal is a
 // CONSTANT, and #6149 measured the checker's nullary type constructors —
@@ -93,12 +98,24 @@ var constAggCases = []struct {
 	{"folded-field-admitted",
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 0 - 3, b: 0x10 }; } function main(): i32 { let p: P = mk(); return (p.a + p.b + 100) % 200; }`,
 		113, 0, 1},
-	// NOT admitted: a wide (i64) field. The static block writes one word per
-	// field, so a field whose box slot is 8 bytes of a different kind stays on
-	// struct_make until the encoding widens.
-	{"wide-field-not-admitted",
+	// A wide (i64) field: the block's word is the field's 8-byte slot, so a
+	// value past 32 bits reads back whole.
+	{"wide-field-admitted",
 		`struct W { n: i64, k: i32 } function mk(): W { return W { n: 5000000000, k: 3 }; } function main(): i32 { let w: W = mk(); if (w.n > 4000000000) { return w.k + 10; } return 0; }`,
-		13, 1, 0},
+		13, 0, 1},
+	// An f64 field's word is the literal's bit pattern.
+	{"f64-field-admitted",
+		`struct F { x: f64, k: i32 } function mk(): F { return F { x: 2.5, k: 1 }; } function main(): i32 { let f: F = mk(); if (f.x > 2.0 && f.x < 3.0) { return f.k + 20; } return 0; }`,
+		21, 0, 1},
+	// A record of records with wide fields (std/fetch's `Timeouts` of
+	// std/time's `Duration`s): each inner record is a static box and the
+	// outer one holds their addresses. Three blocks, no allocation. The
+	// record crosses a call, or the reads would be scalar-replaced and no
+	// box built at all. The same shape through a constructor leaf is
+	// TestSelfHostConstructorLeafWide; this probe runs with splicing off.
+	{"nested-wide-records",
+		`struct D { sec: i64, nsec: i64 } struct T { a: D, b: D } function mk(): T { return T { a: D { sec: 10 as i64, nsec: 0 }, b: D { sec: 30 as i64, nsec: 0 } }; } @noinline function keep(t: T): i64 { return t.a.sec + t.b.sec + t.a.nsec; } function main(): i32 { return keep(mk()) as i32; }`,
+		40, 0, 3},
 }
 
 // TestSelfHostConstAggregateIRX86_64 compiles each case through the self-hosted
@@ -123,7 +140,7 @@ func TestSelfHostConstAggregateIRX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			if got := strings.Count(asm, "\n.K"); got != tc.kBlocks {
+			if got := len(constAggBlockLabel.FindAllString(asm, -1)); got != tc.kBlocks {
 				t.Errorf("%s: %d static-constant blocks emitted, want %d — the const_struct admission moved, or interning stopped collapsing identical literals", tc.name, got, tc.kBlocks)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, asm)
