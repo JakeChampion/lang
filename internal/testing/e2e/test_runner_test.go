@@ -4563,7 +4563,8 @@ func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
 		"ok 8 - unknown status falls back to Status",
 		"ok 9 - HEAD response has no body",
 		"ok 10 - 204 has no Content-Length or body",
-		"# pass 11",
+		"ok 11 - Connection field where it carries meaning",
+		"# pass 12",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
