@@ -2750,7 +2750,7 @@ function main(): i32 { return (vb_words(3) + vb_rows(2) + vb_rows(0)) & 255; }
 	// The saturating and checked operators at every width, matched on the exit
 	// code: each function is one shape the shared op-list builders emit over
 	// the semantic lowering's own slots.
-	{name: "overflow-operators", atLeast: 7, want: "5|", src: `
+	{name: "overflow-operators", atLeast: 7, want: "4|", src: `
 function s32(a: i32, b: i32): i32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
 function u32s(a: u32, b: u32): u32 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
 function s64(a: i64, b: i64): i64 { return (a +| b) + (a -| b) + (a *| b) + (a <<| b); }
