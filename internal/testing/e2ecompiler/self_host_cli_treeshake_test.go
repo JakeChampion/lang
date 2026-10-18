@@ -555,7 +555,8 @@ function main(): i32 {
 // through std/fetch, so every HTTP program carried the map runtime.
 // The second program names the struct only in the signature of a nested
 // function nothing calls, which still releases its parameter, so its drop
-// glue reaches __map_drop_impl and the runtime must stay.
+// glue reaches __map_drop_impl and the runtime must stay. The third names it
+// only as the `Self` of an impl method kept for dynamic dispatch.
 func TestSelfHostTreeshakeMapStructRootsMapsOnlyWhenLive(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -575,6 +576,7 @@ func TestSelfHostTreeshakeMapStructRootsMapsOnlyWhenLive(t *testing.T) {
 	}{
 		{"unused", "import \"core/map\";\nstruct S { m: Map[string, string] }\nfunction main(): i32 {\n    return 3;\n}\n", false},
 		{"signature", "import \"core/map\";\nstruct S { m: Map[string, string] }\nfunction main(): i32 {\n    function g(s: S): i32 { return 1; }\n    return 3;\n}\n", true},
+		{"self", "import \"core/map\";\nstruct S { m: Map[i32, i32] }\ntrait T { function get(self: Self): i32; }\nimpl T for S { function get(self: Self): i32 { return 1; } }\nstruct U { n: i32 }\nimpl T for U { function get(self: Self): i32 { return self.n; } }\nfunction f(o: dyn T): i32 { return o.get(); }\nfunction main(): i32 { return f(U { n: 3 }); }\n", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			prog := filepath.Join(dir, "ts_map_struct_"+c.name+".fern")
