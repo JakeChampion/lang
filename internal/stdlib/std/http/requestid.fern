@@ -1,0 +1,91 @@
+// std/http/requestid — a request id on every request and its response: the
+// `X-Request-Id` a proxy or client sent when it is well formed, a fresh one
+// from the platform's randomness otherwise, so a log line, an upstream call
+// and the client's own record can be matched up.
+//
+//     import "std/http/requestid";
+//
+//     function users(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+//       use req <- requestid.stamped(req, plat);
+//       plat.log("serving " + requestid.of(req));
+//       return Ok(http.json_of(list()));
+//     }
+//
+// A middleware by std/http/router's convention: `stamped` hands `next` the
+// request carrying the id in `X-Request-Id` and puts the same id on the
+// response. An inbound id is kept when it is 1 to 128 bytes of visible
+// ASCII, which rules out a header a client could use to split a log line
+// or smuggle control bytes into one; anything else is replaced. A fresh id
+// is 32 lowercase hex digits from 128 random bits.
+
+import "std/http";
+import "std/platform";
+import "std/headers";
+import "std/string";
+import "std/option";
+
+// `HEADER` — the field name, as written on the wire.
+pub const HEADER: string = "X-Request-Id";
+
+// `stamped(req, plat, next)` — the middleware.
+pub function stamped[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+  let id: string = incoming(req).unwrap_or_else((): string => fresh((): i32 => plat.random_i32()));
+  let resp: HttpResponse = http.respond(next(req.with_header(HEADER, id)));
+  return Ok(resp.with_header(HEADER, id));
+}
+
+// `of(req)` — the id `stamped` put on the request, "" outside the
+// middleware.
+pub function of(req: HttpRequest): string {
+  match (req.headers.get("x-request-id")) {
+    Some(id) => {
+      return id;
+    },
+    None => {
+      return "";
+    }
+  }
+  return "";
+}
+
+// `incoming(req)` — the id the request arrived with, when it is one worth
+// keeping: a single `X-Request-Id` of 1 to 128 visible ASCII bytes.
+pub function incoming(req: HttpRequest): Option[string] {
+  let all: string[] = req.headers.get_all("x-request-id");
+  if (all.len() != 1) {
+    return None;
+  }
+  let id: string = all[0].trim();
+  if (id.len() == 0 || id.len() > 128) {
+    return None;
+  }
+  for b in id.bytes() {
+    if (b < 33 as u8 || b > 126 as u8) {
+      return None;
+    }
+  }
+  return Some(id);
+}
+
+// `fresh(random)` — a new id: 32 lowercase hex digits from four draws of
+// `random`.
+pub function fresh(random: () => i32): string {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < 4) {
+    let r: i32 = random();
+    let k: i32 = 0;
+    while (k < 8) {
+      let shift: i32 = 28 - 4 * k;
+      let nibble: i32 = r >> shift & 15;
+      if (nibble < 10) {
+        out = out.append((48 + nibble) as u8);
+      } else {
+        out = out.append((87 + nibble) as u8);
+      }
+      k = k + 1;
+    }
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}

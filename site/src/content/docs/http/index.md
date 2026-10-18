@@ -24,7 +24,7 @@ build.
 |---|---|
 | [Your first server](./first-server/) | `handle`, responses, requests, building for native and for `wasi-http` |
 | [Requests and responses](./requests-responses/) | Headers, query strings, typed JSON bodies, forms, cookies, errors that answer for themselves |
-| [Routing and middleware](./routing-middleware/) | `std/http/router`, writing middleware with `use`, access logs, compression, static files, caching |
+| [Routing and middleware](./routing-middleware/) | `std/http/router`, writing middleware with `use`, CORS, authentication, request ids, access logs, compression, static files, caching |
 | [State and the server](./server/) | `init`, per-worker state, `serve.Config`, the supervisor, deadlines, graceful shutdown |
 | [Calling other services](./client/) | `std/fetch`, `plat.http`, timeouts, allow lists, connection pooling, HTTP/2 upstreams |
 | [Streaming](./streaming/) | Streamed request bodies, uploads, produced responses, trailers, files, Server-Sent Events, WebSockets |
@@ -49,6 +49,7 @@ so `import "std/http/router";` gives you `router.new()`.
 | `std/http/form`, `std/http/multipart` | URL-encoded forms and streamed `multipart/form-data` |
 | `std/http/cookie` | `Set-Cookie`, the request `Cookie` header, and a client cookie jar |
 | `std/http/accesslog` | One structured log line per request |
+| `std/http/cors`, `std/http/auth`, `std/http/requestid` | CORS, bearer and basic authentication, request ids |
 | `std/http/compress` | `gzip` / `zstd` response compression |
 | `std/http/static` | Directory serving with ETags, ranges and precompressed files |
 | `std/http/cache` | Validators, conditional requests and `Cache-Control` |

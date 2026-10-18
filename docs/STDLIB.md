@@ -2828,6 +2828,50 @@ function main(): i32 {
   `http.respond(next(req))`, so a failure behind it is the answer it
   becomes (`tests/stdlib/http_router_test.fern`).
 
+### `std/http/cors`
+
+Cross-Origin Resource Sharing, as a middleware by std/http/router's
+convention (`tests/stdlib/http_cors_test.fern`).
+
+- `policy(origins)` admits the origins named exactly, by subdomain
+  (`https://*.example.com`) or all (`*`, `any_origin()`), with the simple
+  methods; `with_methods`, `with_headers` (`*` for any), `with_exposed`,
+  `with_credentials` and `with_max_age` fill the rest.
+- `cors(req, p, next)`: a request with no `Origin` passes through; a
+  preflight (`OPTIONS` with `Access-Control-Request-Method`) is answered
+  204 here, with the allow headers when the origin, method and requested
+  headers are all admitted and bare otherwise; an actual request runs
+  `next`, its response marked (`allowed`) when the origin is admitted and
+  carrying `Vary: Origin` either way. With credentials, `*` is answered as
+  the request's origin. `preflight` and `allowed` are the two halves for a
+  handler that wants them apart.
+
+### `std/http/auth`
+
+The HTTP authentication framework for a handler, a middleware producing
+a value (`tests/stdlib/http_auth_test.fern`).
+
+- `bearer(req, verify, next)` reads `Authorization: Bearer TOKEN` and
+  `basic(req, realm, verify, next)` the base64 `user:password` of RFC
+  7617; `verify` is the program's check answering `Option[U]`, and `next`
+  takes the `U`. A missing or refused credential is a 401 problem with
+  the challenge (`Bearer`, `Bearer error="invalid_token"`, `Basic
+  realm="…", charset="UTF-8"`), a malformed one a 400.
+- `credential(req, scheme)` is the raw credential after a scheme;
+  `token_eq(a, b)` compares two secrets in time independent of where they
+  differ.
+
+### `std/http/requestid`
+
+A request id on every request and its response
+(`tests/stdlib/http_requestid_test.fern`).
+
+- `stamped(req, plat, next)` keeps a single inbound `X-Request-Id` of 1 to
+  128 visible ASCII bytes and mints one otherwise (32 hex digits from
+  `plat.random_i32()`), hands `next` the request carrying it and puts it
+  on the response; `of(req)` reads it; `incoming` and `fresh` are the two
+  halves.
+
 ### `std/http/hpack`
 
 HPACK, the header compression of HTTP/2 (RFC 7541), as two values a

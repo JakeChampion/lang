@@ -1,0 +1,107 @@
+import "std/test";
+import "std/http";
+import "std/http/cors";
+import "std/option";
+
+// tests/stdlib/http_cors_test.fern — std/http/cors: a request with no
+// Origin passes through, an actual request from an admitted origin is
+// marked and one from another is not, a preflight is answered without
+// reaching the handler, with the allow headers only when everything asked
+// for is admitted, credentials replace the wildcard, and a failure behind
+// the middleware is marked like any answer.
+
+function header(resp: HttpResponse, name: string): string {
+  return resp.headers.get(name).unwrap_or("-");
+}
+
+function ok_next(req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(http.ok("hello " + req.method));
+}
+
+function never_next(req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
+  return Err(http.fail(500, "the handler ran on a preflight"));
+}
+
+function failing_next(req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
+  return Err(http.fail(404, "no such thing"));
+}
+
+function app(): cors.Policy {
+  return cors.policy(["https://app.example.com", "https://*.preview.example.com"]).with_methods(["GET", "DELETE"]).with_headers(["X-Token"]).with_exposed(["X-Total"]).with_max_age(600 as i64);
+}
+
+function summary(resp: HttpResponse): string {
+  return resp.status.to_string() + " origin=" + header(resp, "access-control-allow-origin") + " vary=" + header(resp, "vary") + " creds=" + header(resp, "access-control-allow-credentials");
+}
+
+function test_no_origin_passes_through(): test.TestOutcome {
+  let resp: HttpResponse = http.respond(cors.cors(http.request("GET", "/"), app(), ok_next));
+  return test.assert_eq(summary(resp) + " " + resp.body_string(), "200 origin=- vary=- creds=- hello GET");
+}
+
+function test_an_admitted_origin_is_marked(): test.TestOutcome {
+  let req: HttpRequest = http.request("GET", "/").with_header("Origin", "https://app.example.com");
+  let resp: HttpResponse = http.respond(cors.cors(req, app(), ok_next));
+  return test.assert_eq(summary(resp) + " expose=" + header(resp, "access-control-expose-headers"), "200 origin=https://app.example.com vary=Origin creds=- expose=X-Total");
+}
+
+function test_a_subdomain_wildcard(): test.TestOutcome {
+  let yes: HttpResponse = http.respond(cors.cors(http.request("GET", "/").with_header("Origin", "https://pr-7.preview.example.com"), app(), ok_next));
+  let no: HttpResponse = http.respond(cors.cors(http.request("GET", "/").with_header("Origin", "https://preview.example.com"), app(), ok_next));
+  let scheme: HttpResponse = http.respond(cors.cors(http.request("GET", "/").with_header("Origin", "http://pr-7.preview.example.com"), app(), ok_next));
+  return test.assert_eq(header(yes, "access-control-allow-origin") + "|" + header(no, "access-control-allow-origin") + "|" + header(scheme, "access-control-allow-origin"), "https://pr-7.preview.example.com|-|-");
+}
+
+function test_another_origin_still_runs_unmarked(): test.TestOutcome {
+  let req: HttpRequest = http.request("GET", "/").with_header("Origin", "https://evil.example");
+  let resp: HttpResponse = http.respond(cors.cors(req, app(), ok_next));
+  return test.assert_eq(summary(resp) + " " + resp.body_string(), "200 origin=- vary=Origin creds=- hello GET");
+}
+
+function test_any_origin_is_the_wildcard(): test.TestOutcome {
+  let req: HttpRequest = http.request("GET", "/").with_header("Origin", "https://anywhere.example");
+  let plain: HttpResponse = http.respond(cors.cors(req, cors.any_origin(), ok_next));
+  let creds: HttpResponse = http.respond(cors.cors(req, cors.any_origin().with_credentials(), ok_next));
+  return test.assert_eq(summary(plain) + "|" + summary(creds), "200 origin=* vary=Origin creds=-|200 origin=https://anywhere.example vary=Origin creds=true");
+}
+
+function preflight(origin: string, method: string, asked: string): HttpRequest {
+  let req: HttpRequest = http.request("OPTIONS", "/users/1").with_header("Origin", origin).with_header("Access-Control-Request-Method", method);
+  if (asked.len() > 0) {
+    return req.with_header("Access-Control-Request-Headers", asked);
+  }
+  return req;
+}
+
+function test_a_preflight_is_answered_here(): test.TestOutcome {
+  let resp: HttpResponse = http.respond(cors.cors(preflight("https://app.example.com", "DELETE", "x-token, content-type"), app().with_headers(["X-Token", "Content-Type"]), never_next));
+  let got: string = resp.status.to_string() + " " + header(resp, "access-control-allow-origin") + " " + header(resp, "access-control-allow-methods") + " " + header(resp, "access-control-allow-headers") + " " + header(resp, "access-control-max-age") + " vary=" + header(resp, "vary") + " body=" + resp.body_string().len().to_string();
+  return test.assert_eq(got, "204 https://app.example.com DELETE x-token, content-type 600 vary=Origin, Access-Control-Request-Method, Access-Control-Request-Headers body=0");
+}
+
+function test_a_preflight_asking_too_much_is_bare(): test.TestOutcome {
+  let method: HttpResponse = http.respond(cors.cors(preflight("https://app.example.com", "PATCH", ""), app(), never_next));
+  let hdr: HttpResponse = http.respond(cors.cors(preflight("https://app.example.com", "GET", "x-secret"), app(), never_next));
+  let origin: HttpResponse = http.respond(cors.cors(preflight("https://evil.example", "GET", ""), app(), never_next));
+  let any_hdr: HttpResponse = http.respond(cors.cors(preflight("https://app.example.com", "GET", "x-secret, x-other"), app().with_headers(["*"]), never_next));
+  return test.assert_eq(summary(method) + "|" + summary(hdr) + "|" + summary(origin) + "|" + header(any_hdr, "access-control-allow-headers"), "204 origin=- vary=Origin, Access-Control-Request-Method, Access-Control-Request-Headers creds=-|204 origin=- vary=Origin, Access-Control-Request-Method, Access-Control-Request-Headers creds=-|204 origin=- vary=Origin, Access-Control-Request-Method, Access-Control-Request-Headers creds=-|x-secret, x-other");
+}
+
+function test_a_failure_is_marked_too(): test.TestOutcome {
+  let req: HttpRequest = http.request("GET", "/").with_header("Origin", "https://app.example.com");
+  let resp: HttpResponse = http.respond(cors.cors(req, app(), failing_next));
+  return test.assert_eq(summary(resp), "404 origin=https://app.example.com vary=Origin creds=-");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/cors");
+  r = r.it("no Origin passes through", test_no_origin_passes_through);
+  r = r.it("an admitted origin is marked", test_an_admitted_origin_is_marked);
+  r = r.it("a subdomain wildcard", test_a_subdomain_wildcard);
+  r = r.it("another origin still runs, unmarked", test_another_origin_still_runs_unmarked);
+  r = r.it("any origin is the wildcard, credentials the origin", test_any_origin_is_the_wildcard);
+  r = r.it("a preflight is answered here", test_a_preflight_is_answered_here);
+  r = r.it("a preflight asking too much is bare", test_a_preflight_asking_too_much_is_bare);
+  r = r.it("a failure is marked too", test_a_failure_is_marked_too);
+  return r.finish();
+}

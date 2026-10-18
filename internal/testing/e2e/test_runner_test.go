@@ -1208,6 +1208,24 @@ func TestRunnerHTTPJsonOfExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_json_of", "std/http json_of", 3)
 }
 
+// `tests/stdlib/http_cors_test.fern` answers preflights and marks actual
+// responses for the origins a policy admits.
+func TestRunnerHTTPCorsExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_cors", "std/http/cors", 8)
+}
+
+// `tests/stdlib/http_auth_test.fern` reads bearer and basic credentials,
+// hands the principal on and answers the challenges.
+func TestRunnerHTTPAuthExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_auth", "std/http/auth", 5)
+}
+
+// `tests/stdlib/http_requestid_test.fern` keeps a well-formed inbound
+// request id, replaces a bad one and puts the id on both sides.
+func TestRunnerHTTPRequestIdExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_requestid", "std/http/requestid", 4)
+}
+
 // `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C through
 // std/http/hpack both ways, with the table sizes and evictions the RFC
 // shows, and holds a decoder to its list, field and table-size bounds.

@@ -1,0 +1,65 @@
+import "std/test";
+import "std/http";
+import "std/http/requestid";
+import "std/mock_platform";
+import "std/option";
+
+// tests/stdlib/http_requestid_test.fern — std/http/requestid: a fresh id
+// when the request brings none, the one it brings when that is well
+// formed, a replacement when it is not, the same id on the request the
+// handler sees and on the response, and the id's spelling.
+
+function header(resp: HttpResponse, name: string): string {
+  return resp.headers.get(name).unwrap_or("-");
+}
+
+// The handler answers the id it saw, so the test can compare it with the
+// response's.
+function echo(req: HttpRequest, plat: mock_platform.MockPlatform): Result[HttpResponse, dyn http.ToResponse] {
+  use req <- requestid.stamped(req, plat);
+  return Ok(http.ok(requestid.of(req)));
+}
+
+function plat(): mock_platform.MockPlatform {
+  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  m.random_set(169552957);
+  return m;
+}
+
+function test_a_fresh_id(): test.TestOutcome {
+  let resp: HttpResponse = http.respond(echo(http.request("GET", "/"), plat()));
+  return test.assert_eq(resp.body_string() + "|" + header(resp, "x-request-id"), "0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d|0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d");
+}
+
+function test_an_inbound_id_is_kept(): test.TestOutcome {
+  let resp: HttpResponse = http.respond(echo(http.request("GET", "/").with_header("X-Request-Id", " req-7.b "), plat()));
+  return test.assert_eq(resp.body_string() + "|" + header(resp, "x-request-id"), "req-7.b|req-7.b");
+}
+
+function test_a_bad_inbound_id_is_replaced(): test.TestOutcome {
+  let long: string = "";
+  while (long.len() < 129) {
+    long = long + "x";
+  }
+  let spaced: HttpResponse = http.respond(echo(http.request("GET", "/").with_header("X-Request-Id", "a b"), plat()));
+  let too_long: HttpResponse = http.respond(echo(http.request("GET", "/").with_header("X-Request-Id", long), plat()));
+  let twice: HttpResponse = http.respond(echo(HttpRequest { ...http.request("GET", "/"), headers: http.request("GET", "/").headers.append("X-Request-Id", "one").append("X-Request-Id", "two") }, plat()));
+  let got: string = spaced.body_string() + "|" + too_long.body_string() + "|" + twice.body_string();
+  return test.assert_eq(got, "0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d|0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d|0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d");
+}
+
+function test_fresh_spells_hex(): test.TestOutcome {
+  let n: i32 = 0;
+  let id: string = requestid.fresh((): i32 => 0 - 1);
+  let zero: string = requestid.fresh((): i32 => 0);
+  return test.assert_eq(id + "|" + zero + "|" + requestid.of(http.request("GET", "/")), "ffffffffffffffffffffffffffffffff|00000000000000000000000000000000|");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/requestid");
+  r = r.it("a fresh id", test_a_fresh_id);
+  r = r.it("an inbound id is kept", test_an_inbound_id_is_kept);
+  r = r.it("a bad inbound id is replaced", test_a_bad_inbound_id_is_replaced);
+  r = r.it("fresh spells hex", test_fresh_spells_hex);
+  return r.finish();
+}

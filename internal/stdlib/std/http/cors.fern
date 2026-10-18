@@ -1,0 +1,228 @@
+// std/http/cors — Cross-Origin Resource Sharing (the Fetch standard's CORS
+// protocol): a preflight answered, an actual response marked for the
+// origins a policy admits, and everything else left as it is.
+//
+//     import "std/http/cors";
+//
+//     const API: cors.Policy = ...;   // or build it where the routes are built
+//
+//     function users(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+//       use req <- cors.cors(req, cors.policy(["https://app.example.com"]).with_credentials());
+//       return Ok(http.json_of(list()));
+//     }
+//
+// A middleware by std/http/router's convention. A request without an
+// `Origin` is not cross-origin and passes through untouched. A preflight
+// (`OPTIONS` with `Access-Control-Request-Method`) is answered here, 204,
+// without calling `next`: with the allow headers when the origin, the
+// method and the requested headers are all admitted, and bare when any is
+// not, so the browser refuses the actual request and the server never sees
+// it. An actual request from an admitted origin runs `next` and its
+// response gains `Access-Control-Allow-Origin` and the rest; one from an
+// origin the policy does not admit runs `next` as well, since the policy
+// guards browsers, not clients, and the response carries no allow headers.
+// `Vary: Origin` is added wherever the answer depends on the origin.
+//
+// `Policy.origins` lists serialised origins (`https://app.example.com`),
+// `*` for any, or `https://*.example.com` for any one subdomain. With
+// `credentials` set, `*` is answered as the request's own origin, since
+// the browser refuses the wildcard with credentials.
+
+import "std/http";
+import "std/http/cache";
+import "std/headers";
+import "std/string";
+import "std/i64";
+
+// `Policy` — the origins admitted, the methods and request headers a
+// preflight may ask for (`*` in `headers` admits any), the response headers
+// a script may read, whether credentials may be sent, and how long a
+// browser may cache a preflight, in seconds, -1 to say nothing.
+pub struct Policy { origins: string[], methods: string[], headers: string[], exposed: string[], credentials: boolean, max_age: i64 }
+
+// `policy(origins)` — the origins named, the simple methods (GET, HEAD,
+// POST), no request headers past the CORS-safelisted ones, nothing
+// exposed, no credentials, and no preflight cache directive.
+pub function policy(origins: string[]): Policy {
+  return Policy { origins: origins, methods: ["GET", "HEAD", "POST"], headers: [], exposed: [], credentials: false, max_age: 0 - 1 as i64 };
+}
+
+// `any_origin()` — `policy(["*"])`.
+pub function any_origin(): Policy {
+  return policy(["*"]);
+}
+
+// `with_methods(methods)` — the methods a preflight may ask for, replacing
+// the simple ones.
+pub function (p: Policy) with_methods(methods: string[]): Policy {
+  return Policy { ...p, methods: methods };
+}
+
+// `with_headers(names)` — the request headers a preflight may ask for, `*`
+// for any.
+pub function (p: Policy) with_headers(names: string[]): Policy {
+  return Policy { ...p, headers: names };
+}
+
+// `with_exposed(names)` — the response headers a script may read beyond the
+// CORS-safelisted ones.
+pub function (p: Policy) with_exposed(names: string[]): Policy {
+  return Policy { ...p, exposed: names };
+}
+
+// `with_credentials()` — cookies and authorization may be sent.
+pub function (p: Policy) with_credentials(): Policy {
+  return Policy { ...p, credentials: true };
+}
+
+// `with_max_age(seconds)` — how long a browser may cache the preflight.
+pub function (p: Policy) with_max_age(seconds: i64): Policy {
+  return Policy { ...p, max_age: seconds };
+}
+
+// `cors(req, p, next)` — the middleware.
+pub function cors(req: HttpRequest, p: Policy, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+  match (req.headers.get("origin")) {
+    Some(origin) => {
+      match (preflight(req, origin, p)) {
+        Some(answer) => {
+          return Ok(answer);
+        },
+        None => {
+          return Ok(allowed(http.respond(next(req)), origin, p));
+        }
+      }
+    },
+    None => {
+      return next(req);
+    }
+  }
+  return next(req);
+}
+
+// `allows_origin(p, origin)` — whether the policy admits the origin.
+pub function (p: Policy) allows_origin(origin: string): boolean {
+  for o in p.origins {
+    if (o == "*" || o == origin || __wildcard_origin(o, origin)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// `preflight(req, origin, p)` — the answer to a preflight, or None when
+// `req` is not one: 204 with the allow headers when everything asked for
+// is admitted, 204 with `Vary` alone when not.
+pub function preflight(req: HttpRequest, origin: string, p: Policy): Option[HttpResponse] {
+  if (req.method != "OPTIONS") {
+    return None;
+  }
+  let method: string = "";
+  match (req.headers.get("access-control-request-method")) {
+    Some(m) => {
+      method = m.trim();
+    },
+    None => {
+      return None;
+    }
+  }
+  let bare: HttpResponse = http.no_content().with_vary("Origin").with_vary("Access-Control-Request-Method").with_vary("Access-Control-Request-Headers");
+  if (!p.allows_origin(origin) || !__has_ci(p.methods, method)) {
+    return Some(bare);
+  }
+  let asked: string[] = __asked_headers(req);
+  if (!__has_str(p.headers, "*")) {
+    for h in asked {
+      if (!__has_ci(p.headers, h)) {
+        return Some(bare);
+      }
+    }
+  }
+  let out: HttpResponse = __origin_headers(bare, origin, p).with_header("Access-Control-Allow-Methods", method);
+  if (asked.len() > 0) {
+    out = out.with_header("Access-Control-Allow-Headers", asked.join(", "));
+  }
+  if (p.max_age >= 0 as i64) {
+    out = out.with_header("Access-Control-Max-Age", p.max_age.to_string());
+  }
+  return Some(out);
+}
+
+// `allowed(resp, origin, p)` — `resp` marked for `origin` when the policy
+// admits it: the allow-origin, credentials and expose headers, and `Vary:
+// Origin` either way.
+pub function allowed(resp: HttpResponse, origin: string, p: Policy): HttpResponse {
+  let out: HttpResponse = resp.with_vary("Origin");
+  if (!p.allows_origin(origin)) {
+    return out;
+  }
+  out = __origin_headers(out, origin, p);
+  if (p.exposed.len() > 0) {
+    out = out.with_header("Access-Control-Expose-Headers", p.exposed.join(", "));
+  }
+  return out;
+}
+
+// __origin_headers adds the allow-origin and credentials headers: the
+// wildcard when the policy says `*` and sends no credentials, the request's
+// origin otherwise.
+function __origin_headers(resp: HttpResponse, origin: string, p: Policy): HttpResponse {
+  let value: string = origin;
+  if (!p.credentials && __has_str(p.origins, "*")) {
+    value = "*";
+  }
+  let out: HttpResponse = resp.with_header("Access-Control-Allow-Origin", value);
+  if (p.credentials) {
+    out = out.with_header("Access-Control-Allow-Credentials", "true");
+  }
+  return out;
+}
+
+// __asked_headers is `Access-Control-Request-Headers` as a list, trimmed,
+// the empty members dropped.
+function __asked_headers(req: HttpRequest): string[] {
+  let out: string[] = [];
+  for raw in req.headers.get_all("access-control-request-headers") {
+    for name in raw.split(",") {
+      let t: string = name.trim();
+      if (t.len() > 0) {
+        out = out.append(t);
+      }
+    }
+  }
+  return out;
+}
+
+// __wildcard_origin: `pattern` is `scheme://*.domain` and `origin` is that
+// scheme with one or more labels before `.domain`.
+function __wildcard_origin(pattern: string, origin: string): boolean {
+  let star: i32 = pattern.index_of("://*.");
+  if (star < 0) {
+    return false;
+  }
+  let scheme: string = pattern.slice_snap(0, star + 3);
+  let domain: string = pattern.slice_snap(star + 4, pattern.len());
+  if (!origin.starts_with(scheme) || !origin.ends_with(domain)) {
+    return false;
+  }
+  let host: string = origin.slice_snap(scheme.len(), origin.len() - domain.len());
+  return host.len() > 0 && host.index_of("/") < 0 && host.index_of(":") < 0;
+}
+
+function __has_str(xs: string[], x: string): boolean {
+  for y in xs {
+    if (y == x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __has_ci(xs: string[], x: string): boolean {
+  for y in xs {
+    if (y.eq_ignore_case(x)) {
+      return true;
+    }
+  }
+  return false;
+}
