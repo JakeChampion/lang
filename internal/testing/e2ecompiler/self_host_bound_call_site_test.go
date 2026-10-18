@@ -61,6 +61,20 @@ var boundCallSiteCases = []struct {
 	{"generic-into-generic-ok",
 		"import \"core/cmp\";\nfunction need[T: cmp.Eq](a: T): i32 { return 1; }\nfunction outer[U](x: U): i32 { return need(x); }\nfunction main(): i32 { return 0; }\n",
 		nil},
+	// A bound naming no trait is reported at the function, and each call
+	// still reports the bound it cannot meet; so is a bound supplying the
+	// wrong number of trait arguments.
+	{"unknown-trait-in-bound",
+		"function need[T: Bogus](a: T): i32 { return 1; }\nfunction need2[T: zz.Bogus](a: T): i32 { return 1; }\nfunction main(): i32 { return need(3) + need2(4); }\n",
+		[]string{
+			"1:1 unknown trait \"Bogus\" in bound on type parameter T",
+			"2:1 unknown trait \"zz.Bogus\" in bound on type parameter T",
+			"3:35 type argument T = i32 does not implement trait Bogus required by need",
+			"3:46 type argument T = i32 does not implement trait zz.Bogus required by need2",
+		}},
+	{"bound-trait-arity",
+		"trait Conv[U] { function conv(self: Self): U; }\nstruct P { x: i32 }\nimpl Conv[i32] for P { function conv(self: P): i32 { return self.x; } }\nfunction f[T: Conv](x: T): i32 { return 1; }\nfunction main(): i32 { return f(P { x: 3 }); }\n",
+		[]string{"4:1 trait Conv takes 1 type argument(s), 0 supplied in bound on type parameter T"}},
 	{"generic-fn-value",
 		"import \"core/cmp\";\nstruct Pt { x: i32 }\nfunction need[T: cmp.Eq](a: T): i32 { return 1; }\nfunction main(): i32 { let f: (Pt) => i32 = need; return f(Pt { x: 1 }); }\n",
 		[]string{"4:45 type argument T = Pt does not implement trait cmp.Eq required by need"}},

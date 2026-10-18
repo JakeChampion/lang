@@ -3412,8 +3412,8 @@ function tp_bound_diags(tp: string, bound: string, module: string, site: string,
   let out: util.Diag[] = [];
   for entry in parser.split_plus_bounds(bound) {
     let base: string = util.base_type_name(entry);
-    if (!type_implements(s, at, base, module)) {
-      out = out.append(dg_at("E021", "type argument " + tp + " = " + util.demangle(type_label(at)) + " does not implement trait " + bound_trait_display(base, module, s) + " required by " + site, ln, cl));
+    if (!bound_import_unloaded(base, s.imports, s.trait_reqs) && !type_implements(s, at, base, module)) {
+      out = out.append(dg_at("E021", "type argument " + tp + " = " + util.demangle(type_label(at)) + " does not implement trait " + bound_trait_display(base, module, s.trait_reqs) + " required by " + site, ln, cl));
     }
   }
   return out;
@@ -3492,7 +3492,7 @@ function spelling_qualifier(spelling: string, name: string): string {
 // bound_trait_display names the trait that bound `base`, written in `module`,
 // names as native prints it: qualified by the module that declares it, bare
 // for the entry's own.
-function bound_trait_display(base: string, module: string, s: Scope): string {
+function bound_trait_display(base: string, module: string, reqs: parser.TraitReq[]): string {
   let name: string = parser.derive_simple_name(base);
   if (util.index_of_sub(base, ".") < 0) {
     if (module.len() == 0) {
@@ -3500,11 +3500,93 @@ function bound_trait_display(base: string, module: string, s: Scope): string {
     }
     return module + "." + name;
   }
-  let idx: i32 = trait_req_idx(base, s.trait_reqs);
-  if (idx >= 0 && s.trait_reqs[idx].module.len() > 0) {
-    return s.trait_reqs[idx].module + "." + name;
+  let idx: i32 = bound_trait_req(base, module, reqs);
+  if (idx >= 0) {
+    return reqs[idx].module + "." + name;
   }
   return base;
+}
+
+// bound_trait_req is the index of the requirement record of the trait that
+// bound `base`, written in `module`, names, or -1: the writing module's own
+// for a bare name, an import's for a qualified one (bound_names_trait).
+function bound_trait_req(base: string, module: string, reqs: parser.TraitReq[]): i32 {
+  let name: string = parser.derive_simple_name(base);
+  let q: string = spelling_qualifier(base, name);
+  let want: string = module;
+  if (q.len() > 0) {
+    want = q;
+  }
+  let found: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < reqs.len()) {
+    if (reqs[i].trait_name == name && reqs[i].module == want) {
+      return i;
+    }
+    if (found < 0 && reqs[i].trait_name == name && q.len() > 0 && reqs[i].module.len() > 0) {
+      found = i;
+    }
+    i = i + 1;
+  }
+  return found;
+}
+
+// bound_import_unloaded reports a qualified bound whose qualifier names one of
+// the program's imports but whose module was never loaded — a single-module
+// driver checks without its imports, so nothing can say what that module
+// declares.
+function bound_import_unloaded(base: string, imports: string[], reqs: parser.TraitReq[]): boolean {
+  let q: string = spelling_qualifier(base, parser.derive_simple_name(base));
+  if (q.len() == 0) {
+    return false;
+  }
+  for r in reqs {
+    if (r.module == q) {
+      return false;
+    }
+  }
+  for path in imports {
+    if (path == q || util.str_has_suffix(path, "/" + q)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// bound_decl_diags is E021 for each trait a function's type-parameter bounds
+// name that nothing declares, and for a bound supplying the wrong number of
+// trait arguments, at the function (native's bound validation).
+function bound_decl_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let imports: string[] = import_paths_of(mod);
+  for fd in mod.funcs {
+    let i: i32 = 0;
+    while (i < fd.type_params.len() && i < fd.bound_traits.len()) {
+      for entry in parser.split_plus_bounds(fd.bound_traits[i]) {
+        out = util.append_diags(out, bound_entry_decl_diags(entry, fd, fd.type_params[i], imports, mod.trait_reqs));
+      }
+      i = i + 1;
+    }
+  }
+  return out;
+}
+
+function bound_entry_decl_diags(entry: string, fd: parser.FuncDecl, tp: string, imports: string[], reqs: parser.TraitReq[]): util.Diag[] {
+  let none: util.Diag[] = [];
+  let bref: parser.TypeRef = parser.parse_type_ref(entry);
+  if (bound_import_unloaded(bref.base, imports, reqs)) {
+    return none;
+  }
+  let display: string = bound_trait_display(bref.base, fd.module, reqs);
+  let idx: i32 = bound_trait_req(bref.base, fd.module, reqs);
+  if (idx < 0) {
+    return [dg_at("E021", "unknown trait \"" + util.demangle(display) + "\" in bound on type parameter " + tp, fd.line, fd.col)];
+  }
+  let want: i32 = reqs[idx].type_params.len();
+  if (bref.args.len() != want) {
+    return [dg_at("E021", "trait " + util.demangle(display) + " takes " + util.i32_to_string(want) + " type argument(s), " + util.i32_to_string(bref.args.len()) + " supplied in bound on type parameter " + tp, fd.line, fd.col)];
+  }
+  return none;
 }
 
 // array_recv_method resolves an ARRAY-RECEIVER method — one written
@@ -6449,7 +6531,7 @@ function bound_entry_diag(sig: FuncSig, tp: string, at: typeinfo.Type, bref: par
   if (!clash) {
     return none;
   }
-  let tr: string = bound_trait_display(bref.base, sig.module, s);
+  let tr: string = bound_trait_display(bref.base, sig.module, s.trait_reqs);
   return [dg_at("E021", "type argument " + tp + " = " + util.demangle(type_label(at)) + " implements " + tr + trait_args_label(iargs) + " but the bound requires " + tr + trait_args_label(want) + " (in " + util.demangle(sig.name) + ")", c.line, c.col)];
 }
 
@@ -25849,7 +25931,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   // template module's, which the first pass found clean.
   let decl_diags: util.Diag[] = [];
   if (focus_names.len() == 0) {
-    decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), e021_diags(mod))), derive_diags);
+    decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), util.append_diags(e021_diags(mod), bound_decl_diags(mod)))), derive_diags);
   }
   let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, env, focus)), e049_diags(mod, env, focus)), e021_object_safety_diags(mod, focus)), e060_e062_diags(mod, focus)));
   if (dd.len() > 0) {
