@@ -738,13 +738,13 @@ function __serve_wire(out: usize, method: string, version: string, answer: HttpR
     },
     BodyChunks(producer) => {
       if (answer.status == 101) {
-        http.http_serialize_response_head_into(out, answer, false, date);
+        http.http_serialize_response_head_into(out, version, answer, false, date);
         return ChunkTail(producer, 0, "");
       }
       return __wire_chunks(out, version, answer, producer, headless, keep_alive, date);
     },
     _ => {
-      http.http_serialize_response_into(out, method, answer, keep_alive, date);
+      http.http_serialize_response_into(out, method, version, answer, keep_alive, date);
       return NoTail;
     }
   }
@@ -773,12 +773,12 @@ function __wire_file(out: usize, method: string, version: string, resp: HttpResp
       let framing: string = date + "Content-Length: " + http.file_ranges_len(ranges, body.seams).to_string() + "\r\n";
       if (headless) {
         r.close();
-        http.http_serialize_response_head_into(out, resp, keep_alive, framing);
+        http.http_serialize_response_head_into(out, version, resp, keep_alive, framing);
         return NoTail;
       }
       match (__range_tail(r, __Spans { ranges: ranges, seams: __from(body.seams, 1) })) {
         Some(t) => {
-          http.http_serialize_response_head_into(out, resp, keep_alive, framing);
+          http.http_serialize_response_head_into(out, version, resp, keep_alive, framing);
           buf_push_bytes_range(out, body.seams[0], 0, body.seams[0].len());
           return t;
         },
@@ -999,18 +999,18 @@ function __read_n(r: Reader, n: i32): Option[u8[]] {
 // ending with it.
 function __wire_chunks(out: usize, version: string, resp: HttpResponse, producer: ChunkProducer, headless: boolean, keep_alive: boolean, date: string): __Tail {
   if (headless) {
-    http.http_serialize_response_head_into(out, resp, keep_alive, date);
+    http.http_serialize_response_head_into(out, version, resp, keep_alive, date);
     return NoTail;
   }
   if (version == "HTTP/1.0") {
-    http.http_serialize_response_head_into(out, resp, false, date);
+    http.http_serialize_response_head_into(out, version, resp, false, date);
     return ChunkTail(producer, 0, "");
   }
   let framing: string = date + "Transfer-Encoding: chunked\r\n";
   if (resp.trailers.names.len() > 0) {
     framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n";
   }
-  http.http_serialize_response_head_into(out, resp, keep_alive, framing);
+  http.http_serialize_response_head_into(out, version, resp, keep_alive, framing);
   return ChunkTail(producer, 0, http.http_serialize_fields(resp.trailers) + "\r\n");
 }
 
@@ -3565,7 +3565,7 @@ function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Con
 // response into the loop's builder, by `__zc_wire` where its body goes
 // without a copy and `__serve_wire` otherwise: the tail it leaves.
 function __serve_tail_wire(c: __Conns, at: i32, method: string, version: string, resp: HttpResponse, keep_alive: boolean, clk: __Clock): __Tail {
-  match (__zc_wire(c, at, method, resp, keep_alive, clk)) {
+  match (__zc_wire(c, at, method, version, resp, keep_alive, clk)) {
     Some(t) => {
       return t;
     },
@@ -3574,12 +3574,12 @@ function __serve_tail_wire(c: __Conns, at: i32, method: string, version: string,
   return __serve_wire(c.out, method, version, resp, keep_alive, clk);
 }
 
-// __zc_wire(c, at, method, resp, keep_alive, clk) — a bytes body of at
+// __zc_wire(c, at, method, version, resp, keep_alive, clk) — a bytes body of at
 // least `__Conns.zc_bytes` on a plain HTTP/1.1 connection: its head into
 // the loop's builder and the body as a tail written without a copy
 // (`__zc_tail_send`). None for any other response, which `__serve_wire`
 // writes whole.
-function __zc_wire(c: __Conns, at: i32, method: string, resp: HttpResponse, keep_alive: boolean, clk: __Clock): Option[__Tail] {
+function __zc_wire(c: __Conns, at: i32, method: string, version: string, resp: HttpResponse, keep_alive: boolean, clk: __Clock): Option[__Tail] {
   if (c.zc_bytes <= 0 || method == "HEAD" || http.http_bodiless(resp.status) || !__zc_conn(c, at)) {
     return None;
   }
@@ -3591,7 +3591,7 @@ function __zc_wire(c: __Conns, at: i32, method: string, resp: HttpResponse, keep
     if (resp.headers.has("date")) {
       date = "";
     }
-    http.http_serialize_response_head_sized_into(c.out, resp, keep_alive, date, body.len());
+    http.http_serialize_response_head_sized_into(c.out, version, resp, keep_alive, date, body.len());
     return Some(ZcTail(body, 0, 0 - 1));
   }
   return None;
