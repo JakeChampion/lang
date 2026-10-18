@@ -3197,12 +3197,12 @@ function conforms_to_dyn_trait(s: Scope, tyname: string, tr: string): boolean {
 }
 
 // map_key_type_error returns the E045 message describing why `kt` cannot be a
-// map key, or "" if it is usable. Usable keys are integers, strings, struct /
-// enum types deriving both Eq and Hash (#2671), and tuples and arrays of
-// usable scalar keys (#10020) — the same set native accepts.
+// map key, or "" if it is usable. Usable keys are integers, chars, strings,
+// struct / enum types deriving both Eq and Hash (#2671), and tuples and arrays
+// of usable scalar keys (#10020) — the same set native accepts.
 function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
   // A type variable's key is checked where it is instantiated.
-  if (is_unknown(kt) || is_type_variable(kt) || is_integer(kt) || type_eq(kt, t_string()) || type_eq(kt, t_str())) {
+  if (is_unknown(kt) || is_type_variable(kt) || is_integer(kt) || type_eq(kt, t_char()) || type_eq(kt, t_string()) || type_eq(kt, t_str())) {
     return "";
   }
   if (is_tuple_or_array(kt)) {

@@ -1097,17 +1097,16 @@ pub function map_value(t: typeinfo.Type): typeinfo.Type {
   return typeinfo.unchecked();
 }
 
-// The map shapes this boundary admits: a string, narrow integer or keyed KEY
-// column over a value column the runtime's free family releases — a narrow
-// scalar column freed whole, or a counted column walked entry by entry. A
-// string key column is walked through the string dec, a keyed one through the
-// function the physical lowering names for the key type; an integer one is
-// freed whole.
+// The map shapes this boundary admits: a string, scalar or keyed KEY column
+// over a value column the runtime's free family releases — a narrow scalar
+// column freed whole, or a counted column walked entry by entry. A string key
+// column is walked through the string dec, a keyed one through the function
+// the physical lowering names for the key type; a scalar one is freed whole.
 pub function is_supported_map(t: typeinfo.Type): boolean {
   if (!is_map(t)) {
     return false;
   }
-  if (!is_text(map_key(t)) && !narrow_map_key(map_key(t)) && !wide_map_key(map_key(t)) && !keyed_map_key(map_key(t))) {
+  if (!is_text(map_key(t)) && !narrow_map_value(map_key(t)) && !wide_map_key(map_key(t)) && !keyed_map_key(map_key(t))) {
     return false;
   }
   return narrow_map_value(map_value(t)) || wide_map_value(map_value(t)) || float_map_value(map_value(t)) || counted_map_value(map_value(t));
@@ -1117,12 +1116,6 @@ pub function is_supported_map(t: typeinfo.Type): boolean {
 // bytes; wasm boxes each value into a cell of its own (the `_w64` helpers).
 pub function wide_map_value(v: typeinfo.Type): boolean {
   return is_integer(v) && is_wide(v);
-}
-
-// A boolean, 32-bit or pointer-width integer key column. The checker refuses
-// a char key (E045), so a char reaching here is a value.
-pub function narrow_map_key(k: typeinfo.Type): boolean {
-  return narrow_map_value(k) && !is_char(k);
 }
 
 // An i64 or u64 key column (#10005). The register runtimes' integer column is
@@ -1238,7 +1231,9 @@ function narrow_column(t: typeinfo.Type): boolean {
   return is_i32(t) || is_char(t) || is_u8(t) || is_u32(t) || is_bool(t) || is_usize(t);
 }
 
-// A value column the map releases by freeing the buffer alone.
+// A key or value column held in the slot itself, which the map releases by
+// freeing the buffer alone: a boolean, a char, or an integer up to pointer
+// width.
 pub function narrow_map_value(v: typeinfo.Type): boolean {
   return is_bool(v) || is_char(v) || is_integer(v) && !is_wide(v);
 }

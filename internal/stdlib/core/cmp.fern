@@ -159,6 +159,12 @@ impl Eq for boolean {
   }
 }
 
+impl Eq for char {
+  function eq(self: char, other: char): boolean {
+    return self == other;
+  }
+}
+
 // Float equality is IEEE `==` with ONE correction: a NaN equals itself.
 //
 // The operator cannot make that concession — `nan == nan` is false and has to
@@ -187,9 +193,6 @@ impl Eq for f32 {
 }
 
 // ---- Ord -------------------------------------------------------
-// Relational comparison for the integer types. (string / boolean
-// ordering isn't needed by the assertion helpers, so it's left for a
-// follow-up.)
 
 impl Ord for i32 {
   function cmp(self: i32, other: i32): i32 {
@@ -257,6 +260,21 @@ impl Ord for u8 {
       return 0 - 1;
     }
     if (self > other) {
+      return 1;
+    }
+    return 0;
+  }
+}
+
+// By scalar value, which is also UTF-8 byte order.
+impl Ord for char {
+  function cmp(self: char, other: char): i32 {
+    let a: i32 = self as i32;
+    let b: i32 = other as i32;
+    if (a < b) {
+      return 0 - 1;
+    }
+    if (a > b) {
       return 1;
     }
     return 0;
@@ -376,6 +394,12 @@ impl Hash for u8 {
 
 impl Hash for u32 {
   function hash(self: u32): i32 {
+    return __hash_mix_i32(self as i32);
+  }
+}
+
+impl Hash for char {
+  function hash(self: char): i32 {
     return __hash_mix_i32(self as i32);
   }
 }

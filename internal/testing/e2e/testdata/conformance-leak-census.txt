@@ -134,6 +134,7 @@ chained_array_methods                                0
 chained_methods                                      0
 char_byte_literals                                   0
 char_cast_receiver                                   0
+char_eq_ord_hash                                     0
 closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_builtin_record_binding              0
