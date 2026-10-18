@@ -19,7 +19,7 @@ function main(): i32 {
 
 function run(): i32 {
   let mod: parser.Module = rundriver.parse_stdin("wasm_ir_run");
-  if (asmcore.refuse_parse_unknowns([mod])) {
+  if (asmcore.refuse_parse_errors([mod])) {
     return 1;
   }
   // Call-arity gate (#4360): shared with wasm_run — an arg-count mismatch
@@ -34,10 +34,6 @@ function run(): i32 {
   // against a symbol nothing defines — an opaque load-time `unknown func`
   // instead of a diagnostic pointing at the source.
   arity_errs = util.append_diags(arity_errs, asmcore.check_undefined_calls(mod));
-  // Nameless-declaration gate: the permissive parser leaves an empty name
-  // where a keyword was used (`function use()`), and nothing downstream
-  // notices — see asmcore.check_decl_names for what that cost.
-  arity_errs = util.append_diags(arity_errs, asmcore.check_decl_names(mod));
   if (arity_errs.len() > 0) {
     eprint(util.format_diags(arity_errs));
     return 1;

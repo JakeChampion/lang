@@ -168,10 +168,7 @@ function report_diags(diags: util.Diag[], files: string[]): boolean {
 // this under-reports where the port is incomplete rather than rejecting valid
 // programs, which is the right side to err on for an editor-facing check.
 function check(merged: parser.Module, files: string[]): i32 {
-  if (report_diags(asmcore.parse_unknown_errors_module(merged), files)) {
-    return 1;
-  }
-  if (report_diags(asmcore.check_decl_names(merged), files)) {
+  if (report_diags(asmcore.parse_errors(merged), files)) {
     return 1;
   }
   if (report_diags(checker.check_module(merged).diags, files)) {
@@ -324,13 +321,12 @@ function run(): i32 {
 function emit(merged: parser.Module, files: string[], target: string, form: string): i32 {
   // The same gates the CLI and wasm_ir_run put ahead of emit: each rejects a
   // shape the emitter would otherwise miscompile rather than refuse.
-  if (report_diags(asmcore.parse_unknown_errors_module(merged), files)) {
+  if (report_diags(asmcore.parse_errors(merged), files)) {
     return 1;
   }
   let errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(merged));
   errs = util.append_diags(errs, asmcore.check_map_new_chain(merged));
   errs = util.append_diags(errs, asmcore.check_undefined_calls(merged));
-  errs = util.append_diags(errs, asmcore.check_decl_names(merged));
   if (errs.len() > 0) {
     eprint(util.format_diags_in(errs, files));
     return 1;

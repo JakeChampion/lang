@@ -9996,12 +9996,6 @@ pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
   while (fi < mod.funcs.len()) {
     let where: string = "in fn '" + mod.funcs[fi].name + "'";
     if (mod.funcs[fi].name.len() == 0) {
-      errs = errs.append(util.Diag {
-        related: [],
-        code: "P001", message: parser.malformed_fn_decl_message(),
-        line: mod.funcs[fi].line, col: mod.funcs[fi].col,
-        fix: None,
-      });
       where = "in malformed function declaration";
     }
     // Parameter defaults before the body: they are written to the left of
@@ -11090,31 +11084,54 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
   return errs;
 }
 
-// refuse_decl_names prints check_decl_names' diagnostics for every module and
-// reports whether there were any. It reads modules as parsed: the
-// local-function lift adds capture parameters with no type, so a module past
-// module_with_builtins would be refused for them.
-pub function refuse_decl_names(mods: parser.Module[]): boolean {
-  let errs: util.Diag[] = [];
-  for m in mods {
-    errs = util.append_diags(errs, check_decl_names(m));
+// parse_errors is what the gates on the parser's own output report, in source
+// order, so the first is the earliest mistake, as on native (#12773):
+//
+// - The parser's ExprUnknown / StmtUnknown sentinels.
+// - Nameless declarations and untyped parameters (check_decl_names).
+// - Statements outside any declaration in a module that declares `main`
+//   (check_top_level_stmts).
+//
+// Findings at one position keep that order: a sentinel names the token the
+// parser stopped at, and a nameless declaration starting at that same token
+// is its consequence.
+pub function parse_errors(mod: parser.Module): util.Diag[] {
+  let errs: util.Diag[] = util.append_diags(parse_unknown_errors_module(mod), check_decl_names(mod));
+  errs = util.append_diags(errs, check_top_level_stmts(mod));
+  let ordered: util.Diag[] = [];
+  for d in errs {
+    ordered = insert_by_position(ordered, d);
   }
-  if (errs.len() == 0) {
-    return false;
-  }
-  eprint(util.format_diags(errs));
-  return true;
+  return ordered;
 }
 
-// refuse_parse_unknowns prints the parser's sentinel diagnostics for every
-// module and reports whether there were any. It is for the driver paths that
-// return without reaching the checker or the emitters' prologue, which report
-// sentinels otherwise; a stdin driver runs it ahead of refuse_decl_names, the
-// order that prologue uses.
-pub function refuse_parse_unknowns(mods: parser.Module[]): boolean {
+// insert_by_position inserts `d` into the position-ordered `ds`, after every
+// diagnostic at or before its position.
+function insert_by_position(ds: util.Diag[], d: util.Diag): util.Diag[] {
+  let out: util.Diag[] = [];
+  let placed: boolean = false;
+  for e in ds {
+    if (!placed && (d.line < e.line || d.line == e.line && d.col < e.col)) {
+      out = out.append(d);
+      placed = true;
+    }
+    out = out.append(e);
+  }
+  if (!placed) {
+    out = out.append(d);
+  }
+  return out;
+}
+
+// refuse_parse_errors prints parse_errors for every module and reports whether
+// there were any. It is for the driver paths that do not go through the CLI's
+// gates. It reads modules as parsed: the local-function lift adds capture
+// parameters with no type, so a module past module_with_builtins would be
+// refused for them.
+pub function refuse_parse_errors(mods: parser.Module[]): boolean {
   let errs: util.Diag[] = [];
   for m in mods {
-    errs = util.append_diags(errs, parse_unknown_errors_module(m));
+    errs = util.append_diags(errs, parse_errors(m));
   }
   if (errs.len() == 0) {
     return false;
@@ -11188,15 +11205,31 @@ pub function check_top_level_stmts(mod: parser.Module): util.Diag[] {
     return errs;
   }
   for st in mod.top_stmts {
-    errs = errs.append(util.Diag {
-      related: [],
-      code: "P001",
-      message: "statement at top level: a module declaring `main` runs that, so this never executes — move it inside a function",
-      line: ast.stmt_line(st), col: 0,
-      fix: None,
-    });
+    if (!is_parse_sentinel(st)) {
+      errs = errs.append(util.Diag {
+        related: [],
+        code: "P001",
+        message: "statement at top level: a module declaring `main` runs that, so this never executes — move it inside a function",
+        line: ast.stmt_line(st), col: ast.stmt_col(st),
+        fix: None,
+      });
+    }
   }
   return errs;
+}
+
+// is_parse_sentinel reports a StmtUnknown, which parse_unknown_errors_module
+// reports as the parse error it stands for.
+function is_parse_sentinel(st: ast.Stmt): boolean {
+  match (st) {
+    ast.StmtUnknown(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
 }
 
 pub function check_undefined_calls(mod: parser.Module): util.Diag[] {

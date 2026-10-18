@@ -333,8 +333,8 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 }
 
 // TestSelfHostEmittingDriversRunDeclGates pins that every self-host driver
-// calling an emitter entry point also reports parser sentinels and runs the
-// declaration gate. The gates cannot live in the emitters, which see the module
+// calling an emitter entry point also runs the parse gates
+// (asmcore.parse_errors), the declaration gate among them. The gates cannot live in the emitters, which see the module
 // after the local-function lift has added untyped capture parameters, so each
 // driver carries its own call and a new driver must too. A driver is a file
 // with a main; emitforms.fern is a library its drivers reach the wasm emitter
@@ -342,8 +342,7 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 func TestSelfHostEmittingDriversRunDeclGates(t *testing.T) {
 	emits := regexp.MustCompile(`\b(asm_ir|asm_arm64_ir|wasm_ir)\.emit_\w*\(|\bemitforms\.wasm_component\(`)
 	hasMain := regexp.MustCompile(`(?m)^(pub )?function main\(`)
-	declGate := regexp.MustCompile(`\b(refuse_decl_names|check_decl_names)\(`)
-	sentinelGate := regexp.MustCompile(`\b(refuse_parse_unknowns|parse_unknown_errors_module)\(`)
+	parseGate := regexp.MustCompile(`\b(refuse_parse_errors|parse_errors)\(`)
 	files, err := filepath.Glob(filepath.Join("..", "..", "..", "compiler", "*.fern"))
 	inDrivers, _ := filepath.Glob(filepath.Join("..", "..", "..", "compiler", "drivers", "*.fern"))
 	files = append(files, inDrivers...)
@@ -367,11 +366,8 @@ func TestSelfHostEmittingDriversRunDeclGates(t *testing.T) {
 			continue
 		}
 		drivers++
-		if !declGate.MatchString(src) {
-			t.Errorf("%s calls an emitter but never runs the declaration gate", filepath.Base(f))
-		}
-		if !sentinelGate.MatchString(src) {
-			t.Errorf("%s calls an emitter but never reports parser sentinels", filepath.Base(f))
+		if !parseGate.MatchString(src) {
+			t.Errorf("%s calls an emitter but never runs the parse gates", filepath.Base(f))
 		}
 	}
 	if drivers < 10 {

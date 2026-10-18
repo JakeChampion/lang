@@ -80,13 +80,16 @@ func TestSelfHostPlaygroundEmitsWhatTheCLIEmits(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(cli, append(tc.cli, tc.path, stdlib)...)
-			var want, cliErr bytes.Buffer
-			cmd.Stdout = &want
-			cmd.Stderr = &cliErr
-			if err := cmd.Run(); err != nil {
-				t.Fatalf("fern %s: %v\n%s", strings.Join(tc.cli, " "), err, cliErr.String())
+			// Through -o: the CLI writes a wasm binary nowhere else.
+			out := filepath.Join(t.TempDir(), "out")
+			if cliOut, err := exec.Command(cli, append(tc.cli, "-o", out, tc.path, stdlib)...).CombinedOutput(); err != nil {
+				t.Fatalf("fern %s: %v\n%s", strings.Join(tc.cli, " "), err, cliOut)
 			}
+			wantBytes, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := bytes.NewBuffer(wantBytes)
 			got, stderr, code := runPlayground(t, drv, t.TempDir(), tc.src, tc.drv...)
 			if code != 0 {
 				t.Fatalf("playground_run %s exited %d\n%s", strings.Join(tc.drv, " "), code, stderr)
