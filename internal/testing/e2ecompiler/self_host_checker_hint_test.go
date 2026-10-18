@@ -203,6 +203,9 @@ function main(): i32 { let c: boolean = true; let b = if (c) { Full(1) } else { 
 }
 function main(): i32 { return 0; }
 `, "3:18: error[E042]: `?` on Option requires the surrounding function to return Option, got Result[i32, IoError]"},
+		{"try-option-in-generic-fn", `function h[T](o: Option[i32]): T { let v: i32 = o?; return h[T](o); }
+function main(): i32 { return 0; }
+`, "1:50: error[E042]: `?` on Option requires the surrounding function to return Option, got T"},
 		{"map-get-arity", `import "core/map";
 function main(): i32 {
   let m: Map[string, i32] = map_new(4);
