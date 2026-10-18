@@ -175,8 +175,8 @@ SETTINGS timeout is optional and not enforced).
    builds (`frame.plain_headers_at`), a frame taken off and counted in
    one update, and a block's readers keeping their run whole until they
    rebuild it; and 21.0 to 20.0 under 21, with the instructions per
-   request from 12,592 to 11,995 (oha's hello, seven fields of which
-   four are dynamic-table hits in the steady state, 15,060 to 13,510):
+   request from 12,811 to 11,995 (oha's hello, seven fields of which
+   four are dynamic-table hits in the steady state, 15,032 to 13,510):
    the decoder reads a block as its own state (`hpack.Decoder.start`,
    `start_in`, `more`, `next`; the `Decoding` record and `finish` are
    gone) with an indexed field's entry looked up once, the block read
