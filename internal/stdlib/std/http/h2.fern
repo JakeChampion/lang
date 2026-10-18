@@ -156,8 +156,9 @@ pub struct Conn {
   phase: i32,
   // Bytes read and not yet framed, the next frame at `inbox_at`. Within one
   // `read` the frames are taken by moving inbox_at; a frame that ends the
-  // inbox empties it, and a partial frame left over is cut off once at the
-  // read's end, so it is 0 between calls.
+  // inbox empties it, and what is left over is copied out once at the
+  // read's end, so it is 0 between calls and the caller has its buffer
+  // back.
   inbox: u8[],
   inbox_at: i32,
   decoder: hpack.Decoder,
@@ -185,6 +186,9 @@ pub struct Conn {
   // opens next, odd for a client (§5.1.1).
   client: boolean,
   next_stream: i32,
+  // The Date a response carries when it names none (`with_date`); "" for
+  // none.
+  date: string,
 }
 
 // server is a new connection and the SETTINGS it opens with (§3.4).
@@ -208,7 +212,7 @@ function __opened(cfg: Config, client: boolean): Step {
   if (client) {
     phase = AWAITING_SETTINGS;
   }
-  let c: Conn = Conn { config: cfg, phase: phase, inbox: [], inbox_at: 0, decoder: hpack.decoder(cfg.header_table_size, cfg.max_header_list), encoder: hpack.encoder(4096), peer_max_frame: frame.MIN_FRAME_SIZE, peer_initial_window: 65535, settings_acked: false, send_window: 65535, recv_window: 65535, streams: [], last_stream: 0, handling: 0, block_stream: 0, block: [], block_end: false, block_frames: 0, resets: 0, empty_data: 0, frames: 0, peer_going_away: false, client: client, next_stream: 1 };
+  let c: Conn = Conn { config: cfg, phase: phase, inbox: [], inbox_at: 0, decoder: hpack.decoder(cfg.header_table_size, cfg.max_header_list), encoder: hpack.encoder(4096), peer_max_frame: frame.MIN_FRAME_SIZE, peer_initial_window: 65535, settings_acked: false, send_window: 65535, recv_window: 65535, streams: [], last_stream: 0, handling: 0, block_stream: 0, block: [], block_end: false, block_frames: 0, resets: 0, empty_data: 0, frames: 0, peer_going_away: false, client: client, next_stream: 1, date: "" };
   let settings: frame.Setting[] = [frame.Setting { id: frame.SETTINGS_HEADER_TABLE_SIZE, value: cfg.header_table_size }, frame.Setting { id: frame.SETTINGS_ENABLE_PUSH, value: 0 }, frame.Setting { id: frame.SETTINGS_MAX_CONCURRENT_STREAMS, value: cfg.max_concurrent_streams }, frame.Setting { id: frame.SETTINGS_INITIAL_WINDOW_SIZE, value: cfg.initial_window }, frame.Setting { id: frame.SETTINGS_MAX_FRAME_SIZE, value: cfg.max_frame_size }, frame.Setting { id: frame.SETTINGS_MAX_HEADER_LIST_SIZE, value: cfg.max_header_list }];
   let out: u8[] = frame.encode(frame.Settings(false, settings));
   if (cfg.initial_window > 65535) {
@@ -216,6 +220,13 @@ function __opened(cfg: Config, client: boolean): Step {
     return Step { conn: Conn { ...c, recv_window: cfg.initial_window }, output: out, events: [] };
   }
   return Step { conn: c, output: out, events: [] };
+}
+
+// with_date is the connection with the Date (RFC 9110 §6.6.1) its
+// responses carry when they name none, as the serve loop keeps it; ""
+// for none.
+pub function (c: Conn) with_date(date: string): Conn {
+  return Conn { ...c, date: date };
 }
 
 // Outgoing — a request a client sends: the method, scheme, authority and
@@ -339,11 +350,14 @@ function __joined(a: u8[], b: u8[]): u8[] {
 // === reading ===============================================================
 
 // read takes bytes from the client: the frames they complete are acted
-// on, the rest kept for the next call. Nothing is read after a close.
+// on, and what is left is kept for the next call in bytes of the
+// connection's own, so `bytes` is the caller's to reuse once the call
+// returns. Nothing is read after a close.
 pub function (c: Conn) read(bytes: u8[]): Step {
   if (c.phase == CLOSED) {
     return Step { conn: c, output: [], events: [] };
   }
+  let held: boolean = c.inbox.len() > 0;
   let r: __Run = __run(Conn { ...c, inbox: __joined(c.inbox, bytes) });
   if (r.conn.phase == AWAITING_PREFACE) {
     r = __preface(r);
@@ -355,8 +369,13 @@ pub function (c: Conn) read(bytes: u8[]): Step {
       break;
     }
   }
-  if (r.conn.inbox_at > 0) {
-    r = __Run { ...r, conn: Conn { ...r.conn, inbox: __rest(r.conn.inbox, r.conn.inbox_at), inbox_at: 0 } };
+  // Joined onto bytes already held, the inbox is the connection's own;
+  // otherwise it is `bytes` itself, and what is left of it is copied out.
+  if (r.conn.inbox_at > 0 || !held && r.conn.inbox.len() > 0) {
+    let out: u8[] = r.out;
+    let events: Event[] = r.events;
+    let conn: Conn = r.conn;
+    r = __Run { conn: Conn { ...conn, inbox: __rest(conn.inbox, conn.inbox_at), inbox_at: 0 }, out: out, events: events };
   }
   return __step(r);
 }
@@ -802,11 +821,11 @@ function __request(r: __Run, stream: i32, fields: hpack.Field[], end_stream: boo
         }
       }
       let streaming: boolean = c.config.stream_bodies;
+      if (end_stream) {
+        return __finished_at_headers(__Run { conn: c, out: out, events: events }, s);
+      }
       c = Conn { ...c, streams: c.streams.append(s) };
       let at: i32 = c.streams.len() - 1;
-      if (end_stream) {
-        return __finished(__Run { conn: c, out: out, events: events }, at, headers.header_map_new());
-      }
       if (streaming) {
         return __streamed(__Run { conn: c, out: out, events: events }, at);
       }
@@ -1075,10 +1094,32 @@ function __finished(r: __Run, at: i32, trailers: HeaderMap): __Run {
   let out: u8[] = r.out;
   let events: Event[] = r.events;
   let c: Conn = r.conn;
-  let req: HttpRequest = HttpRequest { method: s.method, path: s.path, body: Stream { data: s.body, pos: 0, source: None }, headers: s.fields, trailers: trailers };
+  let req: HttpRequest = __request_of(s, trailers);
   let handed: __Stream = __Stream { ...s, state: HALF_REMOTE, body: [], handling: true };
   c = Conn { ...c, streams: c.streams.with(at, handed), handling: c.handling + 1 };
   return __Run { conn: c, out: out, events: events.append(Request(s.id, req)) };
+}
+
+// __finished_at_headers is `__finished` for a request whose END_STREAM
+// came with its header block: the stream, not yet among the connection's,
+// joins them handed over.
+function __finished_at_headers(r: __Run, s: __Stream): __Run {
+  if (s.length > 0) {
+    return __reset_stream(r, s.id, frame.PROTOCOL_ERROR);
+  }
+  let out: u8[] = r.out;
+  let events: Event[] = r.events;
+  let c: Conn = r.conn;
+  let id: i32 = s.id;
+  let req: HttpRequest = __request_of(s, headers.header_map_new());
+  let handed: __Stream = __Stream { ...s, state: HALF_REMOTE, handling: true };
+  c = Conn { ...c, streams: c.streams.append(handed), handling: c.handling + 1 };
+  return __Run { conn: c, out: out, events: events.append(Request(id, req)) };
+}
+
+// __request_of is the request a stream's header block and body make.
+function __request_of(s: __Stream, trailers: HeaderMap): HttpRequest {
+  return HttpRequest { method: s.method, path: s.path, body: Stream { data: s.body, pos: 0, source: None }, headers: s.fields, trailers: trailers };
 }
 
 // __settings applies the client's settings and acknowledges them (§6.5).
@@ -1223,27 +1264,41 @@ pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
   if (!s.handling) {
     return Step { conn: c, output: [], events: [] };
   }
-  c = Conn { ...c, handling: c.handling - 1 };
   if (s.reset) {
-    return Step { conn: Conn { ...c, streams: __without(c.streams, at) }, output: [], events: [] };
+    return Step { conn: Conn { ...c, handling: c.handling - 1, streams: __without(c.streams, at) }, output: [], events: [] };
   }
+  // What the stream decides is read before the connection is rebuilt, so
+  // the rebuild reuses its box rather than copying it under the read.
+  let headless: boolean = __headless(s, resp);
+  let stream_window: i32 = s.send_window;
   let body: u8[] = resp.body_bytes();
   let length: i32 = body.len();
-  if (__headless(s, resp)) {
+  if (headless) {
     body = [];
   }
   if (resp.trailers.len() > 0) {
     length = 0 - 1;
   }
-  let enc: hpack.Encoded = __response_block(c.encoder, resp, length);
-  let last: boolean = body.len() == 0 && resp.trailers.len() == 0;
-  let owed: __Stream = __Stream { ...s, handling: false, pending: body, trailers: resp.trailers, owes_end: !last };
-  c = Conn { ...c, encoder: enc.encoder, streams: c.streams.with(at, owed) };
-  let r: __Run = __header_frames(__run(c), stream, enc.bytes, last);
-  if (last) {
+  let enc: hpack.Encoded = __response_block(c.encoder, resp, length, c.date);
+  c = Conn { ...c, handling: c.handling - 1, encoder: enc.encoder };
+  // A body both windows and the frame size take goes out now, in one
+  // DATA frame after the HEADERS, and the stream is done with; the rest
+  // is owed to the stream and sent as the windows allow.
+  let n: i32 = __min(__min(body.len(), c.peer_max_frame), __min(stream_window, c.send_window));
+  if (n == body.len() && resp.trailers.len() == 0) {
+    let r: __Run = __header_frames(__run(c), stream, enc.bytes, n == 0);
+    if (n > 0) {
+      let out: u8[] = r.out;
+      let events: Event[] = r.events;
+      let sent: Conn = r.conn;
+      r = __send_bytes(__Run { conn: Conn { ...sent, send_window: sent.send_window - n }, out: out, events: events }, frame.data_bytes(stream, true, body));
+    }
     return __step(__ended(r, at));
   }
-  return __step(__flushed(r));
+  let kept: __Stream = c.streams[at];
+  let owed: __Stream = __Stream { ...kept, handling: false, pending: body, trailers: resp.trailers, owes_end: true };
+  c = Conn { ...c, streams: c.streams.with(at, owed) };
+  return __step(__flushed(__header_frames(__run(c), stream, enc.bytes, false)));
 }
 
 // respond_head begins answering the request on `stream` with the
@@ -1265,7 +1320,7 @@ pub function (c: Conn) respond_head(stream: i32, resp: HttpResponse): Step {
     return Step { conn: Conn { ...freed, streams: __without(freed.streams, at) }, output: [], events: [] };
   }
   let headless: boolean = __headless(s, resp);
-  let enc: hpack.Encoded = __response_block(freed.encoder, resp, 0 - 1);
+  let enc: hpack.Encoded = __response_block(freed.encoder, resp, 0 - 1, freed.date);
   let r: __Run = __header_frames(__run(Conn { ...freed, encoder: enc.encoder }), stream, enc.bytes, headless);
   let owed: __Stream = __Stream { ...s, handling: false, pending: [], trailers: headers.header_map_new(), owes_end: !headless, producing: !headless };
   r = __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.with(at, owed) } };
@@ -1350,18 +1405,23 @@ function __credited(r: __Run, at: i32, n: i32, stream_too: boolean): __Run {
   return __send(__Run { ...out, conn: Conn { ...out.conn, streams: out.conn.streams.with(at, filled) } }, frame.WindowUpdate(s.id, n));
 }
 
-// __response_fields is the response's header list: `:status` first, then
+// __response_block is the response's header block: `:status` first, then
 // each field in lower case, connection-specific ones dropped (§8.2.2),
-// cookies never indexed, and the body's length when it is known (`length`
-// below 0 when it is not: trailers follow, or the body comes in parts).
-function __response_block(e: hpack.Encoder, resp: HttpResponse, length: i32): hpack.Encoded {
+// cookies never indexed, the body's length when it is known (`length`
+// below 0 when it is not: trailers follow, or the body comes in parts),
+// and `date` when the response names no Date and `date` is not "".
+function __response_block(e: hpack.Encoder, resp: HttpResponse, length: i32, date: string): hpack.Encoded {
   let en: hpack.Encoding = e.begin().put(":status", __status_text(resp.status), false);
   let i: i32 = 0;
   let has_length: boolean = false;
+  let has_date: boolean = false;
   while (i < resp.headers.names.len()) {
     let name: string = __lowered(resp.headers.names[i]);
     if (name == "content-length") {
       has_length = true;
+    }
+    if (name == "date") {
+      has_date = true;
     }
     if (!__connection_specific(name)) {
       en = en.put(name, resp.headers.values[i], __sensitive(name));
@@ -1370,6 +1430,9 @@ function __response_block(e: hpack.Encoder, resp: HttpResponse, length: i32): hp
   }
   if (!has_length && length >= 0 && !http.http_bodiless(resp.status)) {
     en = en.put("content-length", int.int_to_string(length), false);
+  }
+  if (!has_date && date.len() > 0) {
+    en = en.put("date", date, false);
   }
   return en.finish();
 }
@@ -1516,7 +1579,7 @@ function __ended(r: __Run, at: i32): __Run {
     c = Conn { ...c, streams: __without(c.streams, at) };
     return __Run { conn: c, out: out, events: events };
   }
-  let done: __Stream = __Stream { ...s, state: HALF_LOCAL, pending: [], trailers: headers.header_map_new(), owes_end: false };
+  let done: __Stream = __Stream { ...s, state: HALF_LOCAL, handling: false, pending: [], trailers: headers.header_map_new(), owes_end: false };
   c = Conn { ...c, streams: c.streams.with(at, done) };
   return __Run { conn: c, out: out, events: events };
 }

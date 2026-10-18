@@ -2576,7 +2576,11 @@ function __h2_after_pulls[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
 // its HTTP/2 state machine (`__h2_opened` first): the step, its output
 // what the connection has to say.
 function __h2_fed(c: __Conns, at: i32): h2.Step {
-  let bytes: u8[] = __bytes_from(c.bufs[at], c.offs[at]);
+  let bytes: u8[] = c.bufs[at];
+  let from: i32 = c.offs[at];
+  if (from > 0) {
+    bytes = __bytes_from(bytes, from);
+  }
   match (c.framing[at]) {
     Http2(conn) => {
       return conn.read(bytes);
@@ -2636,13 +2640,12 @@ function __h2_turn_with[D: async.Driver, S](drv: D, c: __Conns, at: i32, st: S, 
 // the table, the connection, the state and the bytes to send.
 function __h2_step_with[S](c: __Conns, at: i32, conn: h2.Conn, stream: i32, req: HttpRequest, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), opts: Config, stop: __Stop): (__Conns, h2.Conn, S, u8[]) {
   c = __serve_started(c, at);
-  let f: http.HttpFramed = http.HttpFramed { request: req, len: 0, keep_alive: true, version: "HTTP/2" };
   let stepped: (S, HttpResponse) = (st, http.text(503, ""));
-  if (!__serve_not_ready(f, opts, stop)) {
+  if (!__serve_not_ready(req, opts, stop)) {
     stepped = __serve_step(handler, st, req, c.hosts[at], opts);
   }
   c = __serve_count(c, at, req.method, stepped.1.status);
-  let r: h2.Step = conn.respond(stream, __dated(c, __with_alt_svc(c, stepped.1)));
+  let r: h2.Step = conn.with_date(c.date).respond(stream, __with_alt_svc(c, stepped.1));
   return (c, r.conn, stepped.0, r.output);
 }
 
@@ -2978,10 +2981,11 @@ function __joined(a: u8[], b: u8[]): u8[] {
 // chunks as the producer answers and the windows allow (`__h2_produce`),
 // the producer never asked when the response carries no body.
 function __h2_respond[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i32, resp: HttpResponse): __H2Answered {
-  resp = __dated(a.conns, __with_alt_svc(a.conns, resp));
+  resp = __with_alt_svc(a.conns, resp);
   let conn: h2.Conn = a.conn;
   let conns: __Conns = a.conns;
   let fls: __Flight[] = a.fls;
+  conn = conn.with_date(conns.date);
   let out: u8[] = a.out;
   let answer: HttpResponse = __file_chunks(resp);
   match (answer.body) {
@@ -3203,8 +3207,7 @@ function __h2_request[D: async.Driver](drv: D, a: __H2Answered, at: i32, stream:
   let out: u8[] = a.out;
   let conns: __Conns = a.conns;
   conns = __serve_started(conns, at);
-  let f: http.HttpFramed = http.HttpFramed { request: req, len: 0, keep_alive: true, version: "HTTP/2" };
-  match (__serve_start(handler, conns.hosts[at], f, true, Idle, opts, stop)) {
+  match (__serve_start(handler, conns.hosts[at], req, "HTTP/2", true, Idle, opts, stop)) {
     HandlerDone(resp) => {
       conns = __serve_count(conns, at, req.method, resp.status);
       return __h2_respond(drv, __H2Answered { conn: conn, conns: conns, fls: fls, out: out }, at, stream, resp);
@@ -4011,8 +4014,8 @@ function __stop_reason(stop: __Stop): string {
 // __serve_not_ready(f, opts, stop) — whether the request is the
 // readiness probe of a loop that is stopping, to be answered 503 by the
 // loop itself so whoever routes to it stops.
-function __serve_not_ready(f: http.HttpFramed, opts: Config, stop: __Stop): boolean {
-  return __serve_stopping(stop) && opts.readiness_path.len() > 0 && f.request.path == opts.readiness_path;
+function __serve_not_ready(req: HttpRequest, opts: Config, stop: __Stop): boolean {
+  return __serve_stopping(stop) && opts.readiness_path.len() > 0 && req.path == opts.readiness_path;
 }
 
 // __serve_gate(drv, listener, c, opts, accepting) — whether the listener
@@ -4621,15 +4624,15 @@ function __started_again(s: __Started): __Started {
   return s;
 }
 
-// __serve_start(handler, plat, f, kept, behind, opts, stop) — the handler run
-// for the request as a task: its response when it returns, the flight and
-// the wait it parked on otherwise, for the loop to watch. The readiness
-// probe of a stopping loop is answered 503 without running it.
-function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, plat: platform.Host, f: http.HttpFramed, kept: boolean, behind: __Behind, opts: Config, stop: __Stop): __Started {
-  if (__serve_not_ready(f, opts, stop)) {
+// __serve_start(handler, plat, req, version, kept, behind, opts, stop) —
+// the handler run for the request as a task: its response when it
+// returns, the flight and the wait it parked on otherwise, for the loop to
+// watch. The readiness probe of a stopping loop is answered 503 without
+// running it.
+function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, plat: platform.Host, req: HttpRequest, version: string, kept: boolean, behind: __Behind, opts: Config, stop: __Stop): __Started {
+  if (__serve_not_ready(req, opts, stop)) {
     return HandlerDone(http.text(503, ""));
   }
-  let req: HttpRequest = f.request;
   let held: (platform.Host, i64) = __request_host(plat, req, opts);
   plat = held.0;
   let ends: i64 = held.1;
@@ -4639,7 +4642,7 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
     },
     Suspended(w) => {
       let none: i32[] = [];
-      return HandlerParked(__Flight { job: Handler(async.call_of(w, handler, req, plat)), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: f.version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends, stream: 0, since: 0 - 1 as i64, grpc: grpc.is_grpc(req), quic: 0 - 1 });
+      return HandlerParked(__Flight { job: Handler(async.call_of(w, handler, req, plat)), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends, stream: 0, since: 0 - 1 as i64, grpc: grpc.is_grpc(req), quic: 0 - 1 });
     },
     Cancelled => {}
   }
@@ -5370,7 +5373,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
   // the start apart and builds it again so the loop's own call, which
   // takes it apart, gets it in two words; the box is paid here, on the
   // streamed path, where the handler parks anyway.
-  let start: (http.HttpFramed, boolean, __Stop, platform.Host) => __Started = (f: http.HttpFramed, kept: boolean, st: __Stop, host: platform.Host): __Started => __started_again(__serve_start(handler, host, f, kept, Idle, opts, st));
+  let start: (http.HttpFramed, boolean, __Stop, platform.Host) => __Started = (f: http.HttpFramed, kept: boolean, st: __Stop, host: platform.Host): __Started => __started_again(__serve_start(handler, host, f.request, f.version, kept, Idle, opts, st));
   conns = __Conns { ...conns, quic: __quic_open(drv, listener, opts) };
   while (true) {
     let now: i64 = monotonic_ns();
@@ -5508,7 +5511,7 @@ function __serve_burst[D: async.Driver](drv: D, own c: __Conns, own fls: __Fligh
         let took: (__Conns, boolean, __Behind, http.HttpFramed) = __serve_took(conns, at, f, opts, eof, stop);
         conns = __serve_started(took.0, at);
         count = count + 1;
-        match (__serve_start(handler, conns.hosts[at], f, took.1, took.2, opts, stop)) {
+        match (__serve_start(handler, conns.hosts[at], f.request, f.version, took.1, took.2, opts, stop)) {
           HandlerDone(resp) => {
             let answered: (__Conns, boolean) = __serve_respond(drv, conns, at, f.request.method, f.version, resp, took.1, opts, count, took.2, clk);
             conns = answered.0;
@@ -5640,7 +5643,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
             count = count + 1;
             conns = __serve_started(conns, at);
             let stepped: (S, HttpResponse) = (st, http.text(503, ""));
-            if (!__serve_not_ready(f, opts, stop)) {
+            if (!__serve_not_ready(f.request, opts, stop)) {
               stepped = __serve_step(handler, st, f.request, conns.hosts[at], opts);
             }
             st = stepped.0;
@@ -6428,11 +6431,6 @@ function __quic_timeout(q: __Quic, now: i64): i32 {
   return ((best - now) / 1000000 + 1) as i32;
 }
 
-// __h3_framed(req) — an HTTP/3 request as the handler start takes it.
-function __h3_framed(req: HttpRequest): http.HttpFramed {
-  return http.HttpFramed { request: req, len: 0, keep_alive: true, version: "HTTP/3" };
-}
-
 // __with_alt_svc(c, resp) — the response naming the worker's HTTP/3 port
 // (RFC 7838), unless it names one itself.
 function __with_alt_svc(c: __Conns, resp: HttpResponse): HttpResponse {
@@ -6443,8 +6441,9 @@ function __with_alt_svc(c: __Conns, resp: HttpResponse): HttpResponse {
 }
 
 // __dated(c, resp) — the response with the loop's `Date` (RFC 9110
-// §6.6.1) unless the handler set one: HTTP/2 and HTTP/3 carry it as a
-// field, where HTTP/1.1 writes the clock's line into the head.
+// §6.6.1) unless the handler set one: HTTP/3 carries it as a field, where
+// HTTP/1.1 writes the clock's line into the head and an HTTP/2 connection
+// carries the date itself (`h2.Conn.with_date`).
 function __dated(c: __Conns, resp: HttpResponse): HttpResponse {
   if (c.date.len() == 0 || resp.headers.has("date")) {
     return resp;
@@ -6616,7 +6615,7 @@ function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], bu
   let cur: __Conns = c;
   let fs: __Flight[] = fls;
   for r in burst.reqs {
-    let started: __Started = __serve_start(handler, host_for(Some(r.peer)), __h3_framed(r.req), true, Idle, opts, stop);
+    let started: __Started = __serve_start(handler, host_for(Some(r.peer)), r.req, "HTTP/3", true, Idle, opts, stop);
     let done: (__Conns, __Flight[]) = __h3_request(drv, cur, fs, r.serial, r.id, r.req, started);
     cur = done.0;
     fs = done.1;

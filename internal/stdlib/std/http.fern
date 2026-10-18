@@ -1898,7 +1898,26 @@ function __declared(f: __BodyFraming): i32 {
 // something else). The query is not decoded: its encoding depends on
 // what reads it (`form_decode` folds `+`, `url_decode` does not).
 pub function http_request_target(method: string, target: string): Result[string, i32] {
-  return __target_path(target.bytes(), 0, target.len(), method == "OPTIONS", "");
+  let buf: u8[] = target.bytes();
+  let end: i32 = target.len();
+  let path_from: i32 = __target_start(buf, 0, end, method == "OPTIONS");
+  if (path_from == BAD_TARGET) {
+    return Err(400);
+  }
+  if (path_from == ASTERISK_FORM) {
+    return Ok("*");
+  }
+  let path_end: i32 = __path_end(buf, path_from, end);
+  if (path_end < 0) {
+    return Err(400);
+  }
+  if (path_from < path_end && __plain_path(buf, path_from, path_end)) {
+    if (path_from == 0) {
+      return Ok(target);
+    }
+    return Ok(slice_unchecked(target, path_from, end).to_owned());
+  }
+  return __decoded_path(buf, path_from, path_end, end);
 }
 
 // `__target_path(buf, from, end, options, prev)` — `http_request_target`
@@ -1907,20 +1926,15 @@ pub function http_request_target(method: string, target: string): Result[string,
 // decoding, so such a target is copied out whole, or is `prev` when it
 // holds the same bytes.
 function __target_path(buf: u8[], from: i32, end: i32, options: boolean, prev: string): Result[string, i32] {
-  if (end == from + 1 && buf[from] == 42 as u8) {
-    return __asterisk_form(options);
+  let path_from: i32 = __target_start(buf, from, end, options);
+  if (path_from == BAD_TARGET) {
+    return Err(400);
   }
-  let path_from: i32 = from;
-  if (end == from || buf[from] != 47 as u8) {
-    path_from = __absolute_form_path(buf, from, end);
-    if (path_from < 0) {
-      return Err(400);
-    }
+  if (path_from == ASTERISK_FORM) {
+    return Ok("*");
   }
-  let path_end: i32 = __find_char(buf, path_from, end, 63 as u8);
+  let path_end: i32 = __path_end(buf, path_from, end);
   if (path_end < 0) {
-    path_end = end;
-  } else if (!__query_ok(buf, path_end + 1, end)) {
     return Err(400);
   }
   if (path_from < path_end && __plain_path(buf, path_from, path_end)) {
@@ -1929,13 +1943,47 @@ function __target_path(buf: u8[], from: i32, end: i32, options: boolean, prev: s
   return __decoded_path(buf, path_from, path_end, end);
 }
 
-// `__asterisk_form(options)` — the target `*`, which only OPTIONS may
-// send.
-function __asterisk_form(options: boolean): Result[string, i32] {
-  if (options) {
-    return Ok("*");
+// What `__target_start` answers for the target `*`, and for a target of
+// no shape it knows. Plain integers rather than a Result: these run on
+// every request, and a Result here cost the HTTP/1.1 hello path 1.8% of
+// its instructions.
+const ASTERISK_FORM: i32 = 0 - 1;
+
+const BAD_TARGET: i32 = 0 - 2;
+
+// `__target_start(buf, from, end, options)` — where the path of the target
+// buf[from, end) starts: `ASTERISK_FORM` for `*`, which only OPTIONS may
+// send, past the scheme and authority of an absolute-form target, or
+// `BAD_TARGET` for a target of neither shape.
+function __target_start(buf: u8[], from: i32, end: i32, options: boolean): i32 {
+  if (end == from + 1 && buf[from] == 42 as u8) {
+    if (options) {
+      return ASTERISK_FORM;
+    }
+    return BAD_TARGET;
   }
-  return Err(400);
+  if (end > from && buf[from] == 47 as u8) {
+    return from;
+  }
+  let path_from: i32 = __absolute_form_path(buf, from, end);
+  if (path_from < 0) {
+    return BAD_TARGET;
+  }
+  return path_from;
+}
+
+// `__path_end(buf, from, end)` — where the path starting at `from` ends:
+// at its `?`, with the query after it checked, or at `end`; -1 when the
+// query is ill-formed.
+function __path_end(buf: u8[], from: i32, end: i32): i32 {
+  let q: i32 = __find_char(buf, from, end, 63 as u8);
+  if (q < 0) {
+    return end;
+  }
+  if (!__query_ok(buf, q + 1, end)) {
+    return 0 - 1;
+  }
+  return q;
 }
 
 // `__absolute_form_path(target, from, end)` — where the path of an
