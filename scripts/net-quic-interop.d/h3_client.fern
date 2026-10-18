@@ -126,7 +126,7 @@ function opened(argv: string[]): Option[(h3q.Conn, i32)] {
     return None;
   };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side(argv[2], roots));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now()) else {
+  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), now_unix_ms()) else {
     return None;
   };
   let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
