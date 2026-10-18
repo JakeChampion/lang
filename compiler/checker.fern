@@ -6622,6 +6622,9 @@ function impl_trait_args(bound: parser.TypeRef, module: string, at: typeinfo.Typ
   if (bound.args.len() == 0 || type_contains_unknown(at)) {
     return none;
   }
+  if let typeinfo.TypeDyn(d) = at {
+    return dyn_trait_args(bound, d.traits, s);
+  }
   let base: string = util.base_type_name(type_label(at));
   for imp in s.impls {
     if (bound_names_impl_trait(bound.base, module, imp) && util.base_type_name(imp.impl_type) == base) {
@@ -6629,6 +6632,30 @@ function impl_trait_args(bound: parser.TypeRef, module: string, at: typeinfo.Typ
       let out: typeinfo.Type[] = [];
       for targ in parser.parse_type_ref(imp.trait_ref).args {
         let ty: typeinfo.Type = type_from_ref_subst(targ, in_, it_, s.type_names());
+        if (type_contains_unknown(ty)) {
+          return none;
+        }
+        out = out.append(ty);
+      }
+      return out;
+    }
+  }
+  return none;
+}
+
+// dyn_trait_args are the trait arguments a `dyn` spells for the trait a bound
+// names, the arguments it conforms with (native DynTraitType.ArgsFor): for
+// `dyn Container[i32]` against `C: Container[string]`, [i32]. None when the
+// dyn does not name the trait or an argument stays unknown.
+function dyn_trait_args(bound: parser.TypeRef, traits: string, s: Scope): typeinfo.Type[] {
+  let none: typeinfo.Type[] = [];
+  let want: string = parser.derive_simple_name(bound.base);
+  for tr in parser.dyn_trait_set("dyn " + traits) {
+    let ref: parser.TypeRef = parser.parse_type_ref(tr);
+    if (parser.derive_simple_name(ref.base) == want) {
+      let out: typeinfo.Type[] = [];
+      for targ in ref.args {
+        let ty: typeinfo.Type = type_from_ref_subst(targ, [], [], s.type_names());
         if (type_contains_unknown(ty)) {
           return none;
         }
