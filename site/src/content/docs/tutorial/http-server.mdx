@@ -308,41 +308,29 @@ import "std/http/accesslog";
 import "std/serve";
 import "std/platform";
 import "std/fetch";
-import "std/result";
 
-pub function routes[P: platform.Platform](): Result[router.Router[P], router.RouteError] {
-  let r: router.Router[P] = router.new();
-  r = r.get("/users/{id}", user)?;
-  return Ok(r.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): HttpResponse => http.ok("ok"))?);
+pub function routes[P: platform.Platform](): router.Router[P] {
+  return router.new[P]().get("/users/{id}", user).get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
 }
 
-function user[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): HttpResponse {
+function user[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] {
   use logged <- accesslog.logged(req, plat);
-  return http.respond(lookup(params, plat));
-}
-
-function lookup[P: platform.Platform](params: router.Params, plat: P): Result[HttpResponse, http.HttpError] {
   let id: string = params.param("id")?;
-  let resp: HttpResponse = plat.http(fetch.get("http://directory.internal/users/" + id)).map_err((e: fetch.FetchError): http.HttpError => http.fail(502, "the directory did not answer"))?;
+  let resp: HttpResponse = plat.http(fetch.get("http://directory.internal/users/" + id))?;
   return Ok(http.json_status(resp.status, resp.body_string()));
 }
 
 function main(): i32 {
-  match (routes[platform.Host]()) {
-    Ok(r) => {
-      return serve.supervise_shutdown(8080, serve.config(), r.handler(), (reason: string): void => eprint("api: stopped, " + reason));
-    },
-    Err(e) => {
-      eprint(e.message());
-      return 1;
-    }
-  }
+  return serve.supervise_shutdown(8080, serve.config(), routes[platform.Host]().handler(), (reason: string): void => eprint("api: stopped, " + reason));
 }
 ```
 
 `routes` is generic over the platform, so the same router serves the
-native loop and a test. A route pattern that could never be reached is a
-`RouteError` at startup, never a surprise at the request. The middleware
+native loop and a test. A route pattern that could never be reached is
+refused when the router is built, and `handler()` reports it and exits
+before anything is served, never a surprise at the request. The handler
+fails with `?` on a missing parameter or a directory that did not answer,
+and the router turns each into its reply. The middleware
 is an ordinary function whose last parameter is the handler it wraps,
 composed with `use`; every request leaves one JSON line through `plat.log`.
 

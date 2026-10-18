@@ -194,6 +194,18 @@ pub function json_status(status: i32, body: string): HttpResponse {
   return __http_response_typed(status, body, "application/json");
 }
 
+// `json_of(v)` — 200 with `v` serialised through its `json.Json` impl, so a
+// `@derive(json.Json)` struct answers as `http.json_of(user)`; an array of
+// them goes through `json(users.to_json())`.
+pub function json_of[T: json.Json](v: T): HttpResponse {
+  return __http_response_typed(200, v.to_json(), "application/json");
+}
+
+// `json_of_status(status, v)` — `json_of` with an explicit status code.
+pub function json_of_status[T: json.Json](status: i32, v: T): HttpResponse {
+  return __http_response_typed(status, v.to_json(), "application/json");
+}
+
 // `html(body)` — 200 with `Content-Type:
 // text/html; charset=utf-8`.
 pub function html(body: string): HttpResponse {

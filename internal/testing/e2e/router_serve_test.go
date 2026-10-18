@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"os"
@@ -48,60 +49,98 @@ import "std/http/router";
 import "std/platform";
 import "std/serve";
 
-function show(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-  return http.respond(show_result(params));
-}
-
-function show_result(params: router.Params): Result[HttpResponse, http.HttpError] {
+function show(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   let id: i32 = params.int("id")?;
   return Ok(http.json("{\"id\":" + id.to_string() + "}"));
 }
 
-function create(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-  match (req.body_string()) {
-    Ok(b) => {
-      return http.created("made " + b);
-    },
-    Err(e) => {
-      return http.bad_request("body");
-    }
-  }
-  return http.bad_request("body");
+function create(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  let b: string = req.body_string()?;
+  return Ok(http.created("made " + b));
 }
 
-function files(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+function files(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   match (params.get("path")) {
     Some(p) => {
-      return http.ok("file " + p);
+      return Ok(http.ok("file " + p));
     },
     None => {
-      return http.ok("files");
+      return Ok(http.ok("files"));
     }
   }
-  return http.ok("");
-}
-
-function routes(): Result[router.Router[platform.Host], router.RouteError] {
-  let r: router.Router[platform.Host] = router.new();
-  r = r.get("/users/{id}", show)?;
-  r = r.post("/users", create)?;
-  r = r.get("/files/{path...}", files)?;
-  return Ok(r);
+  return Ok(http.ok(""));
 }
 
 function main(): i32 {
-  match (routes()) {
-    Ok(r) => {
-      return serve.run(0, serve.config(), r.handler());
-    },
-    Err(e) => {
-      print(e.message());
-      return 2;
-    }
-  }
-  return 2;
+  return serve.run(0, serve.config(), router.new[platform.Host]().get("/users/{id}", show).post("/users", create).get("/files/{path...}", files).handler());
 }
 `
+
+// A router whose pattern was refused: `handler()` reports the pattern on
+// stderr and exits 2 before anything is served, under the interpreter and
+// the x86-64 build.
+func TestRouterRefusedPatternExitsInterp(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := writeRouterRefusedSource(t)
+	checkRouterRefusedExit(t, exec.Command(bin, "-interp", src))
+}
+
+func TestRouterRefusedPatternExitsX86_64(t *testing.T) {
+	bin := buildFernCLI(t)
+	qemu := x86QemuOrEmpty(t)
+	src := writeRouterRefusedSource(t)
+	out := filepath.Join(filepath.Dir(src), "router_refused.bin")
+	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, src).CombinedOutput(); err != nil {
+		t.Fatalf("build failed: %v\n%s", err, o)
+	}
+	checkRouterRefusedExit(t, runX86Bin(qemu, out))
+}
+
+func writeRouterRefusedSource(t *testing.T) string {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), "router_refused.fern")
+	if err := os.WriteFile(src, []byte(routerRefusedSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return src
+}
+
+const routerRefusedSource = `import "std/http";
+import "std/http/router";
+import "std/platform";
+import "std/serve";
+
+function hello(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(http.ok("hello"));
+}
+
+function main(): i32 {
+  let r: router.Router[platform.Host] = router.new[platform.Host]().get("/hello", hello).get("/a/{x...}/b", hello).get("/late", hello);
+  print("built");
+  let h: (HttpRequest, platform.Host) => HttpResponse = r.handler();
+  print("served");
+  return serve.run(0, serve.config(), h);
+}
+`
+
+func checkRouterRefusedExit(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	code := cmd.ProcessState.ExitCode()
+	if code != 2 {
+		t.Fatalf("exit = %d (%v), want 2\nstdout: %s\nstderr: %s", code, err, stdout.String(), stderr.String())
+	}
+	if got := stdout.String(); got != "built\n" {
+		t.Errorf("stdout = %q, want only the line before handler()", got)
+	}
+	want := "http router: pattern GET /a/{x...}/b: {name...} must be the last segment"
+	if !strings.Contains(stderr.String(), want) {
+		t.Errorf("stderr = %q, want it to name the pattern: %q", stderr.String(), want)
+	}
+}
 
 func checkRouterServe(t *testing.T, addr string) {
 	t.Helper()

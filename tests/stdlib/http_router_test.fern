@@ -2,58 +2,50 @@ import "std/test";
 import "std/http";
 import "std/http/router";
 import "std/platform";
+import "std/json";
+import "std/option";
 
 // tests/stdlib/http_router_test.fern — std/http/router: the patterns it
-// refuses, which route answers a request and with what status, the
-// parameters a pattern binds, and a `use` chain of middleware over a route.
+// refuses and keeps, which route answers a request and with what status,
+// the parameters a pattern binds, a handler failing with `?` on errors of
+// more than one type, and a `use` chain of middleware over a route.
 
-function answer(label: string): (HttpRequest, router.Params, platform.Host) => HttpResponse {
-  return (req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse => http.ok(label);
+function answer(label: string): (HttpRequest, router.Params, platform.Host) => Result[HttpResponse, dyn http.ToResponse] {
+  return (req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok(label));
 }
 
-function echo_params(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+function echo_params(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   let out: string = "";
   let i: i32 = 0;
   while (i < params.names.len()) {
     out = out + params.names[i] + "=" + params.values[i] + ";";
     i = i + 1;
   }
-  return http.ok(out);
+  return Ok(http.ok(out));
 }
 
-function user_by_id(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-  return http.respond(user_result(params));
-}
-
-function user_result(params: router.Params): Result[HttpResponse, http.HttpError] {
+function user_by_id(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   let id: i32 = params.int("id")?;
   let missing: string = params.param("nope")?;
   return Ok(http.ok("user " + id.to_string() + missing));
 }
 
-function fixture(): router.Router[platform.Host] {
-  match (fixture_result()) {
-    Ok(r) => {
-      return r;
-    },
-    Err(e) => {
-      return router.new();
-    }
+@derive(json.Json, json.FromJson)
+struct Note { id: i32, text: string }
+
+// A handler whose failures are of two types: the body's (`BodyError`) and
+// the route's (`HttpError`), each boxed by `?` into the one error the
+// handler answers.
+function note_create(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  let n: Note = http.body_json[Note](req)?;
+  if (n.id < 0) {
+    return Err(http.fail(422, "a note's id is not negative"));
   }
-  return router.new();
+  return Ok(http.json_of_status(201, n));
 }
 
-function fixture_result(): Result[router.Router[platform.Host], router.RouteError] {
-  let r: router.Router[platform.Host] = router.new();
-  r = r.get("/users/{id}", answer("get user"))?;
-  r = r.get("/users/me", answer("me"))?;
-  r = r.post("/users", answer("create"))?;
-  r = r.route("/users", answer("users any"))?;
-  r = r.route("/files/{path...}", answer("file"))?;
-  r = r.route("/static/", answer("static below"))?;
-  r = r.route("/static/{$}", answer("static index"))?;
-  r = r.delete("/users/{id}", answer("delete user"))?;
-  return Ok(r);
+function fixture(): router.Router[platform.Host] {
+  return router.new[platform.Host]().get("/users/{id}", answer("get user")).get("/users/me", answer("me")).post("/users", answer("create")).route("/users", answer("users any")).route("/files/{path...}", answer("file")).route("/static/", answer("static below")).route("/static/{$}", answer("static index")).delete("/users/{id}", answer("delete user"));
 }
 
 function status_of(r: router.Router[platform.Host], method: string, path: string): string {
@@ -72,9 +64,8 @@ function status_of(r: router.Router[platform.Host], method: string, path: string
   return "";
 }
 
-function refused(pattern: string): string {
-  let r: router.Router[platform.Host] = router.new();
-  match (r.route(pattern, answer("x"))) {
+function checked(r: router.Router[platform.Host]): string {
+  match (r.check()) {
     Ok(_) => {
       return "accepted";
     },
@@ -83,6 +74,10 @@ function refused(pattern: string): string {
     }
   }
   return "";
+}
+
+function refused(pattern: string): string {
+  return checked(router.new[platform.Host]().route(pattern, answer("x")));
 }
 
 function test_patterns_refused(): test.TestOutcome {
@@ -95,28 +90,21 @@ function test_patterns_refused(): test.TestOutcome {
 }
 
 function conflict(first: string, second: string): string {
-  let r: router.Router[platform.Host] = router.new();
-  match (r.route(first, answer("a"))) {
-    Ok(r1) => {
-      match (r1.route(second, answer("b"))) {
-        Ok(_) => {
-          return "accepted";
-        },
-        Err(e) => {
-          return e.message();
-        }
-      }
-    },
-    Err(e) => {
-      return e.message();
-    }
-  }
-  return "";
+  return checked(router.new[platform.Host]().route(first, answer("a")).route(second, answer("b")));
 }
 
 function test_conflicts(): test.TestOutcome {
   let got: string = conflict("GET /a", "GET /a") + "\n" + conflict("/a/{x}", "/{y}/b") + "\n" + conflict("GET /a/{x}", "HEAD /a/{x}") + "\n" + conflict("/a/{x}", "/a/b") + "\n" + conflict("/a/", "/a/b/{c}") + "\n" + conflict("/a/", "/a") + "\n" + conflict("GET /a", "POST /a") + "\n" + conflict("/a/{x}", "/a/{$}") + "\n" + conflict("/a/{x...}", "/a/{$}");
   return test.assert_eq(got, "http router: pattern GET /a conflicts with GET /a\nhttp router: pattern /{y}/b conflicts with /a/{x}\naccepted\naccepted\naccepted\naccepted\naccepted\naccepted\naccepted");
+}
+
+// A refusal is the first one, kept through every registration after it,
+// and the router answers 500 naming it until it is fixed.
+function test_a_refusal_is_kept(): test.TestOutcome {
+  let r: router.Router[platform.Host] = router.new[platform.Host]().get("/ok", answer("ok")).route("/a//b", answer("x")).route("/a//b", answer("y")).get("/ok", answer("again"));
+  let resp: HttpResponse = r.handle(http.request("GET", "/ok"), platform.host());
+  let got: string = checked(r) + "|" + resp.status.to_string() + " " + resp.body_string() + "|" + checked(fixture());
+  return test.assert_eq(got, "http router: pattern /a//b: empty segment|500 {\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500,\"detail\":\"http router: pattern /a//b: empty segment\"}|accepted");
 }
 
 function test_dispatch(): test.TestOutcome {
@@ -132,99 +120,84 @@ function test_rest_and_end(): test.TestOutcome {
 }
 
 function test_params(): test.TestOutcome {
-  let r: router.Router[platform.Host] = router.new();
-  match (r.route("/{kind}/{id}/{rest...}", echo_params)) {
-    Ok(r1) => {
-      let a: string = status_of(r1, "GET", "/user s/100%41/a b/c");
-      let b: string = status_of(r1, "GET", "/x/y/");
-      return test.assert_eq(a + "|" + b, "kind=user s;id=100%41;rest=a b/c;|kind=x;id=y;rest=;");
-    },
-    Err(e) => {
-      return test.fail(e.message());
-    }
-  }
-  return test.fail("unreachable");
+  let r: router.Router[platform.Host] = router.new[platform.Host]().route("/{kind}/{id}/{rest...}", echo_params);
+  let a: string = status_of(r, "GET", "/user s/100%41/a b/c");
+  let b: string = status_of(r, "GET", "/x/y/");
+  return test.assert_eq(a + "|" + b, "kind=user s;id=100%41;rest=a b/c;|kind=x;id=y;rest=;");
 }
 
 function test_typed_params(): test.TestOutcome {
-  let r: router.Router[platform.Host] = router.new();
-  match (r.get("/users/{id}", user_by_id)) {
-    Ok(r1) => {
-      let bad: HttpResponse = r1.handle(http.request("GET", "/users/x1"), platform.host());
-      let wide: HttpResponse = r1.handle(http.request("GET", "/users/99999999999999999999"), platform.host());
-      let unbound: HttpResponse = r1.handle(http.request("GET", "/users/7"), platform.host());
-      let got: string = bad.status.to_string() + " " + bad.body_string() + "|" + wide.status.to_string() + "|" + unbound.status.to_string() + " " + unbound.body_string();
-      return test.assert_eq(got, "400 {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"path parameter id is not an integer: x1\"}|400|500 {\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500,\"detail\":\"the route binds no path parameter nope\"}");
+  let r: router.Router[platform.Host] = router.new[platform.Host]().get("/users/{id}", user_by_id);
+  let bad: HttpResponse = r.handle(http.request("GET", "/users/x1"), platform.host());
+  let wide: HttpResponse = r.handle(http.request("GET", "/users/99999999999999999999"), platform.host());
+  let unbound: HttpResponse = r.handle(http.request("GET", "/users/7"), platform.host());
+  let got: string = bad.status.to_string() + " " + bad.body_string() + "|" + wide.status.to_string() + "|" + unbound.status.to_string() + " " + unbound.body_string();
+  return test.assert_eq(got, "400 {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"path parameter id is not an integer: x1\"}|400|500 {\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500,\"detail\":\"the route binds no path parameter nope\"}");
+}
+
+function test_errors_of_two_types(): test.TestOutcome {
+  let r: router.Router[platform.Host] = router.new[platform.Host]().post("/notes", note_create);
+  let untyped: HttpResponse = r.handle(http.request("POST", "/notes").with_body("{}"), platform.host());
+  let negative: HttpResponse = r.handle(http.request("POST", "/notes").with_json("{\"id\":-1,\"text\":\"x\"}"), platform.host());
+  let made: HttpResponse = r.handle(http.request("POST", "/notes").with_json("{\"id\":7,\"text\":\"hi\"}"), platform.host());
+  let ct: string = "";
+  match (made.headers.get("content-type")) {
+    Some(v) => {
+      ct = v;
     },
-    Err(e) => {
-      return test.fail(e.message());
-    }
+    None => {}
   }
-  return test.fail("unreachable");
+  let got: string = untyped.status.to_string() + "|" + negative.status.to_string() + " " + negative.body_string() + "|" + made.status.to_string() + " " + ct + " " + made.body_string();
+  return test.assert_eq(got, "415|422 {\"type\":\"about:blank\",\"title\":\"Unprocessable Entity\",\"status\":422,\"detail\":\"a note's id is not negative\"}|201 application/json {\"id\":7,\"text\":\"hi\"}");
 }
 
 // stamped is a middleware: it tags the request for the handler and the
-// response for the client.
-function stamped(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => HttpResponse): HttpResponse {
-  let resp: HttpResponse = next(req.with_header("x-request-id", "r-1"));
-  return resp.with_header("x-request-id", "r-1");
+// response for the client, a failure's answer included.
+function stamped(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+  let resp: HttpResponse = http.respond(next(req.with_header("x-request-id", "r-1")));
+  return Ok(resp.with_header("x-request-id", "r-1"));
 }
 
 // gated is a middleware that stops the chain without a token.
-function gated(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => HttpResponse): HttpResponse {
+function gated(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   match (req.headers.get("x-token")) {
     Some(t) => {
       return next(req);
     },
     None => {
-      return http.text(401, "no token");
+      return Err(http.fail(401, "no token"));
     }
   }
-  return http.text(401, "no token");
+  return Err(http.fail(401, "no token"));
 }
 
-function whoami(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+function whoami(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   use req1 <- stamped(req, plat);
   use req2 <- gated(req1, plat);
-  match (req2.headers.get("x-request-id")) {
-    Some(id) => {
-      return http.ok("request " + id);
-    },
-    None => {
-      return http.ok("no id");
-    }
-  }
-  return http.ok("");
+  let who: string = req2.headers.get("x-request-id").ok_or(http.fail(500, "unstamped"))?;
+  return Ok(http.ok("request " + who));
 }
 
 function test_middleware_chain(): test.TestOutcome {
-  let r: router.Router[platform.Host] = router.new();
-  match (r.get("/whoami", whoami)) {
-    Ok(r1) => {
-      let denied: HttpResponse = r1.handle(http.request("GET", "/whoami"), platform.host());
-      let allowed: HttpResponse = r1.handle(http.request("GET", "/whoami").with_header("x-token", "t"), platform.host());
-      let stamp: string = "";
-      match (allowed.headers.get("x-request-id")) {
-        Some(s) => {
-          stamp = s;
-        },
-        None => {}
-      }
-      let denied_stamp: string = "";
-      match (denied.headers.get("x-request-id")) {
-        Some(s) => {
-          denied_stamp = s;
-        },
-        None => {}
-      }
-      let got: string = denied.status.to_string() + " " + denied.body_string() + " " + denied_stamp + "|" + allowed.status.to_string() + " " + allowed.body_string() + " " + stamp;
-      return test.assert_eq(got, "401 no token r-1|200 request r-1 r-1");
+  let r: router.Router[platform.Host] = router.new[platform.Host]().get("/whoami", whoami);
+  let denied: HttpResponse = r.handle(http.request("GET", "/whoami"), platform.host());
+  let allowed: HttpResponse = r.handle(http.request("GET", "/whoami").with_header("x-token", "t"), platform.host());
+  let stamp: string = "";
+  match (allowed.headers.get("x-request-id")) {
+    Some(s) => {
+      stamp = s;
     },
-    Err(e) => {
-      return test.fail(e.message());
-    }
+    None => {}
   }
-  return test.fail("unreachable");
+  let denied_stamp: string = "";
+  match (denied.headers.get("x-request-id")) {
+    Some(s) => {
+      denied_stamp = s;
+    },
+    None => {}
+  }
+  let got: string = denied.status.to_string() + " " + denied.body_string() + " " + denied_stamp + "|" + allowed.status.to_string() + " " + allowed.body_string() + " " + stamp;
+  return test.assert_eq(got, "401 {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"no token\"} r-1|200 request r-1 r-1");
 }
 
 function test_handler_closure(): test.TestOutcome {
@@ -236,10 +209,12 @@ function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/router");
   r = r.it("patterns refused", test_patterns_refused);
   r = r.it("conflicts", test_conflicts);
+  r = r.it("a refusal is kept", test_a_refusal_is_kept);
   r = r.it("dispatch", test_dispatch);
   r = r.it("the rest and the end", test_rest_and_end);
   r = r.it("parameters", test_params);
   r = r.it("typed parameters", test_typed_params);
+  r = r.it("errors of two types", test_errors_of_two_types);
   r = r.it("a middleware chain", test_middleware_chain);
   r = r.it("the handler closure", test_handler_closure);
   return r.finish();

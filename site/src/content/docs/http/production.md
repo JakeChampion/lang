@@ -82,11 +82,11 @@ function init(): serve.Config {
     return serve.Config { ...serve.config(), trace: true };
 }
 
-function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, dyn http.ToResponse] {
     use req <- accesslog.logged(req, plat);
     match (plat.trace()) {
-        Some(span) => { return http.plain("trace " + span.trace_id + "\n"); },
-        None => { return http.plain("untraced\n"); }
+        Some(span) => { return Ok(http.plain("trace " + span.trace_id + "\n")); },
+        None => { return Ok(http.plain("untraced\n")); }
     }
 }
 ```

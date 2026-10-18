@@ -1,0 +1,46 @@
+import "std/test";
+import "std/http";
+import "std/json";
+
+// tests/stdlib/http_json_of_test.fern — std/http's typed JSON answers:
+// `json_of` and `json_of_status` serialise a value through its `json.Json`
+// impl and set the media type, so a handler answers a struct without
+// spelling the encoding itself.
+
+@derive(json.Json)
+struct User { id: i32, name: string, admin: boolean }
+
+function header(resp: HttpResponse, name: string): string {
+  match (resp.headers.get(name)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return "";
+    }
+  }
+  return "";
+}
+
+function test_json_of_answers_200(): test.TestOutcome {
+  let resp: HttpResponse = http.json_of(User { id: 7, name: "Glóin", admin: true });
+  return test.assert_eq(resp.status.to_string() + " " + header(resp, "content-type") + " " + resp.body_string(), "200 application/json {\"id\":7,\"name\":\"Glóin\",\"admin\":true}");
+}
+
+function test_json_of_status_names_its_status(): test.TestOutcome {
+  let resp: HttpResponse = http.json_of_status(201, User { id: 8, name: "Ori", admin: false });
+  return test.assert_eq(resp.status.to_string() + " " + header(resp, "content-type") + " " + resp.body_string(), "201 application/json {\"id\":8,\"name\":\"Ori\",\"admin\":false}");
+}
+
+function test_a_scalar_is_json_too(): test.TestOutcome {
+  let resp: HttpResponse = http.json_of("quoted \"text\"");
+  return test.assert_eq(resp.body_string() + " " + http.json_of(42).body_string() + " " + http.json_of(true).body_string(), "\"quoted \\\"text\\\"\" 42 true");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http json_of");
+  r = r.it("json_of answers 200 application/json", test_json_of_answers_200);
+  r = r.it("json_of_status names its status", test_json_of_status_names_its_status);
+  r = r.it("a scalar is JSON too", test_a_scalar_is_json_too);
+  return r.finish();
+}

@@ -44,7 +44,7 @@ function test_a_produced_body_is_not_counted(): test.TestOutcome {
 
 function test_the_middleware_logs_and_passes_the_response_on(): test.TestOutcome {
   let m: mock_platform.MockPlatform = plat();
-  let resp: HttpResponse = accesslog.logged(get("/"), m, (r: HttpRequest): HttpResponse => http.ok("done"));
+  let resp: HttpResponse = http.respond(accesslog.logged(get("/"), m, (r: HttpRequest): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("done"))));
   if (resp.body_string() != "done") {
     return test.fail("the response changed: " + resp.body_string());
   }
@@ -61,11 +61,30 @@ function test_the_middleware_logs_and_passes_the_response_on(): test.TestOutcome
   return test.pass();
 }
 
+// A failure behind the middleware is logged as the answer it becomes.
+function test_a_failure_is_logged_as_its_answer(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = plat();
+  let resp: HttpResponse = http.respond(accesslog.logged(get("/gone"), m, (r: HttpRequest): Result[HttpResponse, dyn http.ToResponse] => Err(http.fail(404, "no such page"))));
+  if (resp.status != 404) {
+    return test.fail("answered " + resp.status.to_string());
+  }
+  match (m.find_call("log")) {
+    Some(c) => {
+      return test.assert_contains(c.args, "\"body\":\"GET /gone 404\"");
+    },
+    None => {
+      return test.fail("nothing was logged");
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/accesslog");
   r = r.it("a record carries every field", test_a_record_carries_every_field);
   r = r.it("absent fields are left out and a 5xx is an error", test_absent_fields_are_left_out_and_a_5xx_is_an_error);
   r = r.it("a produced body is not counted", test_a_produced_body_is_not_counted);
   r = r.it("the middleware logs and passes the response on", test_the_middleware_logs_and_passes_the_response_on);
+  r = r.it("a failure is logged as its answer", test_a_failure_is_logged_as_its_answer);
   return r.finish();
 }

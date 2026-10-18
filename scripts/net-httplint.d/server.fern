@@ -11,37 +11,30 @@ import "std/serve";
 import "std/platform";
 import "core/int";
 
-function hello(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-  return http.ok("hello");
+function hello(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(http.ok("hello"));
 }
 
-function user(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-  return http.json("{\"id\":" + params.values[0] + "}");
+function user(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(http.json("{\"id\":" + params.values[0] + "}"));
 }
 
-function moved(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-  return http.redirect("/hello");
+function moved(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(http.redirect("/hello"));
 }
 
-function missing(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-  return http.problem(404, "Not Found", "there is no " + req.path);
+function missing(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(http.problem(404, "Not Found", "there is no " + req.path));
 }
 
-function echo(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-  match (req.body_string()) {
-    Ok(body) => {
-      return http.text(200, body);
-    },
-    Err(e) => {
-      return http.text(400, "the body did not arrive");
-    }
-  }
-  return http.text(400, "the body did not arrive");
+function echo(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  let body: string = req.body_string()?;
+  return Ok(http.text(200, body));
 }
 
 // A body past the compressor's minimum, so `Accept-Encoding: gzip` gets a
 // coded one.
-function essay(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+function essay(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   use req2 <- compress.compressed(req);
   let text: string = "";
   let i: i32 = 0;
@@ -49,15 +42,15 @@ function essay(req: HttpRequest, params: router.Params, plat: platform.Host): Ht
     text = text + "Line " + int.int_to_string(i) + ": the quick brown fox jumps over the lazy dog.\n";
     i = i + 1;
   }
-  return http.text(200, text).with_header("Content-Type", "text/plain; charset=utf-8");
+  return Ok(http.text(200, text).with_header("Content-Type", "text/plain; charset=utf-8"));
 }
 
-function files(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-  return static.serve(req, static.dir(www(plat)), plat);
+function files(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(static.serve(req, static.dir(www(plat)), plat));
 }
 
-function fresh(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-  return http.ok("fresh for a minute").with_header("Cache-Control", "max-age=60");
+function fresh(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(http.ok("fresh for a minute").with_header("Cache-Control", "max-age=60"));
 }
 
 function www(plat: platform.Host): string {
@@ -91,28 +84,10 @@ function port(): i32 {
   return 8080;
 }
 
-function routes(): Result[router.Router[platform.Host], router.RouteError] {
-  let r: router.Router[platform.Host] = router.new();
-  r = r.get("/hello", hello)?;
-  r = r.get("/users/{id}", user)?;
-  r = r.get("/moved", moved)?;
-  r = r.get("/missing", missing)?;
-  r = r.post("/echo", echo)?;
-  r = r.get("/essay", essay)?;
-  r = r.get("/files/{path...}", files)?;
-  r = r.get("/fresh", fresh)?;
-  return Ok(r);
+function routes(): router.Router[platform.Host] {
+  return router.new[platform.Host]().get("/hello", hello).get("/users/{id}", user).get("/moved", moved).get("/missing", missing).post("/echo", echo).get("/essay", essay).get("/files/{path...}", files).get("/fresh", fresh);
 }
 
 function main(): i32 {
-  match (routes()) {
-    Ok(r) => {
-      return serve.run(port(), serve.config(), r.handler());
-    },
-    Err(e) => {
-      eprint(e.message());
-      return 1;
-    }
-  }
-  return 1;
+  return serve.run(port(), serve.config(), routes().handler());
 }

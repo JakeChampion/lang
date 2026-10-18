@@ -3,15 +3,28 @@
 // path, `{$}` for the end, no method for any, a trailing `/` for every path
 // below it. The most specific pattern takes precedence; a path some pattern
 // knows under another method is 405 with `Allow`, any other path 404; a GET
-// route answers HEAD. Two patterns that could both match a request with
-// neither more specific are refused when the second is registered. The
-// parameters a pattern binds reach the handler as `Params`, beside the
-// request (docs/NET-P5-FRAMEWORK-PLAN.md).
+// route answers HEAD. The parameters a pattern binds reach the handler as
+// `Params`, beside the request (docs/NET-P5-FRAMEWORK-PLAN.md).
 //
-//     let r: router.Router[platform.Host] = router.new();
-//     r = r.get("/users/{id}", users_show)?;
-//     r = r.post("/users", users_create)?;
+//     let r: router.Router[platform.Host] = router.new()
+//       .get("/users/{id}", users_show)
+//       .post("/users", users_create);
 //     serve.run(8080, serve.config(), r.handler());
+//
+//     function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
+//       let id: i32 = params.int("id")?;
+//       return Ok(http.json_of(find(id)?));
+//     }
+//
+// A route handler answers `Result[HttpResponse, dyn http.ToResponse]`: it
+// fails with `?` on any error that answers for itself (an `HttpError`, a
+// `BodyError`, a form's or a cookie's), and the router turns the failure
+// into the reply through `http.respond`. A pattern the router refuses, one
+// malformed or one that could tie with a registered pattern on some
+// request, is kept rather than returned, so registration chains: `check()`
+// hands the first refusal back as a value, `handler()` reports it and exits
+// the program, and `handle` answers 500 until it is fixed, so a program
+// learns at startup, never at a request.
 //
 // Routes are tried in a scan, which fits the tables programs write by
 // hand.
@@ -81,10 +94,11 @@ pub enum Segment {
 
 // Route — a pattern as registered: its method ("" for any), its segments
 // and the handler it dispatches to.
-pub struct Route[P] { method: string, pattern: string, segments: Segment[], handler: (HttpRequest, Params, P) => HttpResponse }
+pub struct Route[P] { method: string, pattern: string, segments: Segment[], handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse] }
 
-// Router — the routes, in registration order.
-pub struct Router[P] { routes: Route[P][] }
+// Router — the routes, in registration order, and the first pattern it
+// refused, which every registration after it leaves as it is.
+pub struct Router[P] { routes: Route[P][], refused: Option[RouteError] }
 
 // RouteError — a pattern refused: malformed, or one a registered pattern
 // could tie with on some request.
@@ -107,53 +121,82 @@ pub function (e: RouteError) message(): string {
 
 // new() — a router with no routes.
 pub function new[P](): Router[P] {
-  return Router { routes: [] };
+  return Router { routes: [], refused: None };
 }
 
-// (r).route(pattern, handler) — the router with the pattern added, or the
-// error that refuses it.
-pub function (r: Router[P]) route(pattern: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
-  let parsed: (string, Segment[]) = __parse(pattern)?;
-  let route: Route[P] = Route { method: parsed.0, pattern: pattern, segments: parsed.1, handler: handler };
-  for other in r.routes {
-    if (__conflicts(__relation(route.method, route.segments, other.method, other.segments))) {
-      return Err(PatternConflict(pattern, other.pattern));
+// (r).route(pattern, handler) — the router with the pattern added, or
+// keeping the refusal: the pattern's own when it is malformed or could tie
+// with a registered one, an earlier pattern's otherwise.
+pub function (r: Router[P]) route(pattern: string, handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse]): Router[P] {
+  if let Some(_) = r.refused {
+    return r;
+  }
+  match (__parse(pattern)) {
+    Ok(parsed) => {
+      let route: Route[P] = Route { method: parsed.0, pattern: pattern, segments: parsed.1, handler: handler };
+      for other in r.routes {
+        if (__conflicts(__relation(route.method, route.segments, other.method, other.segments))) {
+          return Router { ...r, refused: Some(PatternConflict(pattern, other.pattern)) };
+        }
+      }
+      return Router { ...r, routes: r.routes.append(route) };
+    },
+    Err(e) => {
+      return Router { ...r, refused: Some(e) };
     }
   }
-  return Ok(Router { routes: r.routes.append(route) });
+  return r;
 }
 
 // (r).get(path, handler) and the rest — `route` under one method.
-pub function (r: Router[P]) get(path: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
+pub function (r: Router[P]) get(path: string, handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse]): Router[P] {
   return r.route("GET " + path, handler);
 }
 
-pub function (r: Router[P]) post(path: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
+pub function (r: Router[P]) post(path: string, handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse]): Router[P] {
   return r.route("POST " + path, handler);
 }
 
-pub function (r: Router[P]) put(path: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
+pub function (r: Router[P]) put(path: string, handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse]): Router[P] {
   return r.route("PUT " + path, handler);
 }
 
-pub function (r: Router[P]) patch(path: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
+pub function (r: Router[P]) patch(path: string, handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse]): Router[P] {
   return r.route("PATCH " + path, handler);
 }
 
-pub function (r: Router[P]) delete(path: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
+pub function (r: Router[P]) delete(path: string, handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse]): Router[P] {
   return r.route("DELETE " + path, handler);
 }
 
+// (r).check() — the router, or the first pattern it refused, for a program
+// that would rather report the refusal itself than have `handler()` do it.
+pub function (r: Router[P]) check(): Result[Router[P], RouteError] {
+  match (r.refused) {
+    Some(e) => {
+      return Err(e);
+    },
+    None => {
+      return Ok(r);
+    }
+  }
+  return Ok(r);
+}
+
 // (r).handle(req, plat) — the request answered by the most specific route
-// matching its path and method, by 405 when routes match the path alone,
-// by 404 when none matches it.
+// matching its path and method, its failure turned into the reply; by 405
+// when routes match the path alone, by 404 when none matches it; by 500
+// naming the pattern the router refused, while it has one.
 pub function (r: Router[P]) handle(req: HttpRequest, plat: P): HttpResponse {
+  if let Some(e) = r.refused {
+    return http.problem(500, "", e.message());
+  }
   let segs: string[] = __request_segments(req.path);
   let picked: (i32, string[]) = __pick(r, segs, req.method);
   if (picked.0 >= 0) {
     let route: Route[P] = r.routes[picked.0];
-    let h: (HttpRequest, Params, P) => HttpResponse = route.handler;
-    return h(req, __bind(route.segments, segs), plat);
+    let h: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse] = route.handler;
+    return http.respond(h(req, __bind(route.segments, segs), plat));
   }
   if (picked.1.len() > 0) {
     return http.problem(405, "", "").with_header("allow", picked.1.join(", "));
@@ -161,8 +204,14 @@ pub function (r: Router[P]) handle(req: HttpRequest, plat: P): HttpResponse {
   return http.not_found();
 }
 
-// (r).handler() — `handle` as the handler `serve.run` takes.
+// (r).handler() — `handle` as the handler `serve.run` takes. A pattern the
+// router refused is reported on stderr and exits the program with status 2
+// here, before anything is served.
 pub function (r: Router[P]) handler(): (HttpRequest, P) => HttpResponse {
+  if let Some(e) = r.refused {
+    eprint(e.message());
+    exit(2);
+  }
   return (req: HttpRequest, plat: P): HttpResponse => r.handle(req, plat);
 }
 

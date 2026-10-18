@@ -9,7 +9,9 @@ sidebar:
 
 `std/http/router` matches a method and a path pattern, in the shape Go
 1.22 uses. A route handler takes the request, the route's parameters and
-the platform:
+the platform, and answers a `Result`: `Ok` with the response, or `Err`
+with any error that answers for itself, so a handler fails with `?` and
+the router turns the failure into the reply.
 
 ```fern
 import "std/http";
@@ -18,44 +20,33 @@ import "std/serve";
 import "std/option";
 import "std/platform";
 
-function routes[P: platform.Platform](): Result[router.Router[P], router.RouteError] {
-    let r: router.Router[P] = router.new();
-    r = r.get("/{$}", home)?;   // "/" alone would match every path
-    r = r.get("/users/{id}", show_user)?;
-    r = r.delete("/users/{id}", delete_user)?;
-    r = r.get("/files/{path...}", show_file)?;
-    return Ok(r);
+function routes[P: platform.Platform](): router.Router[P] {
+    return router.new[P]()
+        .get("/{$}", home)   // "/" alone would match every path
+        .get("/users/{id}", show_user)
+        .delete("/users/{id}", delete_user)
+        .get("/files/{path...}", show_file);
 }
 
-function home[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): HttpResponse {
-    return http.plain("home\n");
+function home[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] {
+    return Ok(http.plain("home\n"));
 }
 
-function show_user[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): HttpResponse {
-    return http.respond(user_page(params));
-}
-
-function user_page(params: router.Params): Result[HttpResponse, http.HttpError] {
+function show_user[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] {
     let id: i32 = params.int("id")?;
     return Ok(http.plain("user " + id.to_string() + "\n"));
 }
 
-function delete_user[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): HttpResponse {
-    return http.no_content();
+function delete_user[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] {
+    return Ok(http.no_content());
 }
 
-function show_file[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): HttpResponse {
-    return http.plain("file " + params.get("path").unwrap_or("") + "\n");
+function show_file[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] {
+    return Ok(http.plain("file " + params.get("path").unwrap_or("") + "\n"));
 }
 
 function main(): i32 {
-    match (routes[platform.Host]()) {
-        Ok(r) => { return serve.supervise(8080, serve.config(), r.handler()); },
-        Err(e) => {
-            eprint(e.message());
-            return 1;
-        }
-    }
+    return serve.supervise(8080, serve.config(), routes[platform.Host]().handler());
 }
 ```
 
@@ -91,12 +82,43 @@ methods, the answer is `405` with an `Allow` header; otherwise it is a
 
 ### Route errors happen at start-up
 
-Adding a route returns a `Result`. A malformed pattern (`/a//b`, a
-`{rest...}` that is not last, a parameter bound twice) is a
-`BadPattern`, and two patterns that would match exactly the same
-requests — `/a/{x}` and `/{y}/b` — are a `PatternConflict`. Both surface
-when the router is built, before the first request, never as a
-surprising match later.
+A malformed pattern (`/a//b`, a `{rest...}` that is not last, a parameter
+bound twice) is a `BadPattern`, and two patterns that would match exactly
+the same requests — `/a/{x}` and `/{y}/b` — are a `PatternConflict`. The
+router keeps the first refusal through every registration after it, so
+the table is built in one chain, and `handler()` reports the refusal on
+stderr and exits the program with status 2 before anything is served. A
+program that would rather handle it reads `r.check()`, which is `Ok(r)`
+or `Err(RouteError)`; until the pattern is fixed, `r.handle` answers
+every request `500` naming it. Either way the mistake surfaces at
+start-up, never as a surprising match later.
+
+### Errors that answer for themselves
+
+A handler's error type is `dyn http.ToResponse`: any value whose type
+implements `ToResponse` fits, and `?` boxes it. `http.HttpError` answers
+as problem details, `http.BodyError` as the 400, 413 or 415 the body
+earned, `form.FormError`, `cookie.CookieError` and `multipart.MultipartError`
+as their own statuses, and `fetch.FetchError` as a 502 or 504. One
+handler mixes them freely:
+
+```fern
+import "std/http";
+import "std/http/router";
+import "std/json";
+import "std/platform";
+
+@derive(json.Json, json.FromJson)
+struct Note { id: i32, text: string }
+
+function create[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] {
+    let n: Note = http.body_json[Note](req)?;        // 415, 400 or 413 when the body is wrong
+    if (n.id < 0) {
+        return Err(http.fail(422, "a note's id is not negative"));
+    }
+    return Ok(http.json_of_status(201, n));           // the struct, serialised
+}
+```
 
 ### Parameters
 
@@ -106,27 +128,31 @@ surprising match later.
 | `params.param(name)` | `Result[string, http.HttpError]` — a 500 if the pattern binds no such name |
 | `params.int(name)` | `Result[i32, http.HttpError]` — a 400 if the value is not an integer |
 
-The `Result` forms are meant for `?` inside a function returning
-`Result[HttpResponse, http.HttpError]`, as `user_page` does above.
+The `Result` forms are meant for `?` inside the handler, as `show_user`
+does above.
 
 ## Middleware
 
 There is no middleware type and nothing to register. **A middleware is a
-function whose last parameter is the handler it wraps**:
+function whose last parameter is the handler it wraps**, and it answers
+the same `Result` a route handler does:
 
 ```fern
-function timed(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => HttpResponse): HttpResponse {
+function timed(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
     let started: i64 = plat.elapsed_ns();
-    let resp: HttpResponse = next(req);
+    let resp: HttpResponse = http.respond(next(req));
     plat.log(req.path + " took " + (plat.elapsed_ns() - started).to_string() + "ns");
-    return resp;
+    return Ok(resp);
 }
 ```
 
 It can change the request before calling `next`, change the response
-after, or not call `next` at all. A handler composes the middleware it
-wants with `use`, which turns the rest of the block into the `next`
-callback, so a chain reads top to bottom:
+after, or not call `next` at all. `http.respond` turns a failure behind
+it into the response it will become, so a middleware that reads the
+status sees the one the client gets; one that does not care passes the
+`Result` straight through. A handler composes the middleware it wants
+with `use`, which turns the rest of the block into the `next` callback,
+so a chain reads top to bottom:
 
 ```fern
 import "std/http";
@@ -134,14 +160,14 @@ import "std/http/router";
 import "std/serve";
 import "std/platform";
 
-function stamped(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => HttpResponse): HttpResponse {
+function stamped(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
     let id: string = plat.random_i32().to_string();
-    let resp: HttpResponse = next(req.with_header("x-request-id", id));
-    return resp.with_header("x-request-id", id);
+    let resp: HttpResponse = http.respond(next(req.with_header("x-request-id", id)));
+    return Ok(resp.with_header("x-request-id", id));
 }
 
 // A middleware that produces a value hands it to the rest of the handler.
-function authed(req: HttpRequest, plat: platform.Host, next: (string) => HttpResponse): HttpResponse {
+function authed(req: HttpRequest, plat: platform.Host, next: (string) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
     match (req.headers.get("authorization")) {
         Some(token) => {
             if (token == "Bearer s3cret") {
@@ -150,24 +176,18 @@ function authed(req: HttpRequest, plat: platform.Host, next: (string) => HttpRes
         },
         None => {}
     }
-    return http.problem(401, "", "a bearer token is required")
-        .with_header("www-authenticate", "Bearer");
+    return Ok(http.problem(401, "", "a bearer token is required")
+        .with_header("www-authenticate", "Bearer"));
 }
 
-function whoami(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+function whoami(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
     use req <- stamped(req, plat);
     use user <- authed(req, plat);
-    return http.plain("you are " + user + "\n");
+    return Ok(http.plain("you are " + user + "\n"));
 }
 
 function main(): i32 {
-    match (router.new[platform.Host]().get("/me", whoami)) {
-        Ok(r) => { return serve.supervise(8080, serve.config(), r.handler()); },
-        Err(e) => {
-            eprint(e.message());
-            return 1;
-        }
-    }
+    return serve.supervise(8080, serve.config(), router.new[platform.Host]().get("/me", whoami).handler());
 }
 ```
 
@@ -189,9 +209,9 @@ and span ids when [tracing](../production/#tracing) is on. A 5xx is
 logged at `ERROR`, the rest at `INFO`.
 
 ```fern
-function show(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+function show(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
     use req <- accesslog.logged(req, plat);
-    return http.plain("ok\n");
+    return Ok(http.plain("ok\n"));
 }
 ```
 
@@ -205,9 +225,9 @@ response alone when it is already encoded, marked `no-transform`, a
 get smaller. A compressed response's `ETag` becomes weak.
 
 ```fern
-function page(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+function page(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
     use req <- compress.compressed(req);
-    return http.html(render());
+    return Ok(http.html(render()));
 }
 ```
 
@@ -232,26 +252,18 @@ import "std/http/cache";
 import "std/serve";
 import "std/platform";
 
-function assets(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+function assets(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
     let cc: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), public: true, max_age: Some(3600 as i64) };
     let d: static.Dir = static.Dir {
         ...static.dir("public"),
         options: static.Options { ...static.options(), cache_control: Some(cc) },
     };
-    match (params.get("file")) {
-        Some(f) => { return static.serve_path(req, d, f, plat); },
-        None => { return http.not_found(); }
-    }
+    let file: string = params.param("file")?;
+    return Ok(static.serve_path(req, d, file, plat));
 }
 
 function main(): i32 {
-    match (router.new[platform.Host]().get("/assets/{file...}", assets)) {
-        Ok(r) => { return serve.supervise(8080, serve.config(), r.handler()); },
-        Err(e) => {
-            eprint(e.message());
-            return 1;
-        }
-    }
+    return serve.supervise(8080, serve.config(), router.new[platform.Host]().get("/assets/{file...}", assets).handler());
 }
 ```
 
