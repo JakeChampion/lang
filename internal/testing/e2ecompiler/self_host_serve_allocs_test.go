@@ -99,9 +99,14 @@ func TestSelfHostServeAllocsPerRequestWasm(t *testing.T) {
 // splices unchanged, so the plan's doing: the table through the HTTP/2
 // turn no longer copied); with the connection, its stream array and a
 // stream rebuilt in their own boxes when a stream read in one block is
-// updated in another, 55.0 on arm64; the CI runner reads a few lower, as
-// the note on serveAllocsH2Drift says.
-const ServeAllocsH2Ceiling = 56
+// updated in another, 55.0 on arm64; with a literal string read in one
+// allocation and the HPACK tables handed back unchanged, a frame written
+// in one allocation, a request target handed back when already normal, a
+// response that fits sent at once, the read buffer fed without a copy,
+// the Date carried by the connection and the handler started from its
+// request, 41.0 on x86-64 (docs/NET-P6-HTTP2-PLAN.md slice 4 has each);
+// the CI runner reads a few lower, as the note on serveAllocsH2Drift says.
+const ServeAllocsH2Ceiling = 42
 
 func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 	cli := buildSelfHostCLI(t)

@@ -142,10 +142,33 @@ SETTINGS timeout is optional and not enforced).
    one record instead of a record per integer and string read, a
    response's fields written straight into the encoder (`begin`, `put`,
    `finish`) with no `Field[]` built, the common status texts as
-   literals, and a frame's header written in one allocation. What is
-   left is the request handed over (its record, header map and strings),
-   the stream's slot, the HPACK fields, the frame payloads and the
-   response body's bytes.
+   literals, and a frame's header written in one allocation; the planner
+   re-reading a stream where its connection dies, so the connection, its
+   stream array and a stream were no longer copied twice a request, took
+   it to 55.0; and 55.0 to 41.0 under 42, one change a commit: a
+   literal string read out of the block in one allocation and the HPACK
+   tables handed back as they were when a block leaves them alone, a frame
+   written in one allocation and a padded payload read without a record,
+   the request target handed back when already its normal form (still
+   read through the parser's own byte array: reading it through a view
+   cost the HTTP/1.1 hello benchmark 1.8% of its instructions, a view
+   conversion being about fifty instructions in today's compiler), a
+   response both windows and the frame
+   size take sent at once rather than owed to a stream rebuilt around it
+   and flushed, a request complete at its header block handed over from
+   the stream parsed, the read buffer fed to the connection without a copy
+   (`read` copies out what it keeps), the connection carrying the Date its
+   responses get (`with_date`) in place of a response rebuilt around a
+   header map, and the handler started from its request rather than a
+   framed record built around it. What is left is the request handed over
+   (its record, header map and strings), the HPACK fields (a box each),
+   the result boxes and run records the state machine's steps rebuild
+   where the planner carries no reuse token across the branch, the frame
+   records, the body's bytes copied out of its string, `int_to_string`'s
+   two allocations for content-length, and the connection copied out of
+   the loop's table at each turn, which wants a take out of an array slot
+   the language does not have (lifting the slot by hand cost two boxes
+   more, not one less).
 5. **h2spec nightly (landed).** `scripts/net-h2spec` on `net-nightly.yml`:
    h2spec 2.6.0 strict over h2c against `scripts/net-h2spec.d/server.fern`,
    146 cases, every one green or the job fails, the counts recorded under
