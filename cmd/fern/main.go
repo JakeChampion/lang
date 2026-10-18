@@ -754,47 +754,6 @@ func main() {
 	os.Exit(code)
 }
 
-// formatChunkBody formats one literate chunk body. A body is formattable
-// when it parses either as a complete program (top-level declarations) or
-// — wrapped in a synthetic function — as a statement list. Bodies that
-// parse as neither (fragments split mid-construct, or bodies containing
-// `<<ref>>` chunk references, which aren't valid Fern) are declined with
-// ok=false so FormatCode keeps them verbatim. Whitespace-only bodies are
-// left as-is.
-func formatChunkBody(code string) (string, bool) {
-	if strings.TrimSpace(code) == "" {
-		return "", false
-	}
-	if prog, err := parser.Parse(code); err == nil {
-		return strings.TrimRight(printer.Format(prog), "\n"), true
-	}
-	// Retry as a statement list wrapped in a throwaway function.
-	const open = "function __fern_fmt_wrap__() {\n"
-	if prog, err := parser.Parse(open + code + "\n}\n"); err == nil {
-		return unwrapFormattedBody(printer.Format(prog)), true
-	}
-	return "", false
-}
-
-// unwrapFormattedBody strips the synthetic `function __fern_fmt_wrap__()`
-// wrapper that formatChunkBody added, returning the body de-indented by
-// one level so it sits at the chunk's own column.
-func unwrapFormattedBody(formatted string) string {
-	lines := strings.Split(strings.TrimRight(formatted, "\n"), "\n")
-	if len(lines) < 2 {
-		return "" // empty wrapped block: `function …() {}`
-	}
-	inner := lines[1 : len(lines)-1] // drop the `function …{` and `}` lines
-	for i, ln := range inner {
-		inner[i] = strings.TrimPrefix(ln, formatIndentUnit)
-	}
-	return strings.Join(inner, "\n")
-}
-
-// formatIndentUnit is one level of the formatter's indentation, stripped
-// when unwrapping a wrapped chunk body.
-const formatIndentUnit = "  "
-
 // formatFiles is `-fmt` over a file list, gofmt-style: every file is
 // processed in order even when an earlier one fails, and the exit code is
 // the worst one seen (1 for any error or, under -d, any non-empty diff).
@@ -831,10 +790,7 @@ func formatFile(srcPath string, writeBack, diffMode bool, outPath string) (int, 
 	src := string(srcBytes)
 	var formatted string
 	if isLiterate(srcPath) {
-		// A literate document reformats the fern code inside each chunk
-		// (leaving prose, fences, and headers untouched); fragments /
-		// `<<ref>>`-bearing chunks the formatter can't parse stay verbatim.
-		formatted = literate.Parse(src).FormatCode(formatChunkBody)
+		formatted = fmtsource.FormatLiterate(src)
 	} else {
 		formatted, err = fmtsource.Format(src)
 		if err != nil {

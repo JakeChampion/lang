@@ -124,23 +124,234 @@ function blank_line_map(src: string): boolean[] {
   return out;
 }
 
-// fmt_output_is_readable is the `-fmt -w` safety net: the formatted text must
-// come back through the formatter as itself. The parser has no error list — a
-// construct it refuses becomes an Unknown node the printer spells `/*unknown*/`
-// — so re-formatting is the check that reaches both halves at once, an
-// unreadable node and a printer that is not a fixed point on its own output.
-function fmt_output_is_readable(formatted: string): boolean {
+// fmt_output_is_readable is the `-fmt -w` safety net, and an editor's: the
+// formatted text must come back through the formatter as itself, and keep what
+// the source says. The parser has no error list — a construct it refuses
+// becomes an Unknown node the printer spells `/*unknown*/` — so re-formatting
+// is the check that reaches both an unreadable node and a printer that is not a
+// fixed point on its own output. A fixed point can still have lost content (the
+// empty text is one), which content_print catches.
+function fmt_output_is_readable(path: string, src: string, formatted: string): boolean {
+  if (is_literate(path)) {
+    return literate_output_is_readable(src, formatted);
+  }
   // Marker text can be authored in a comment or string. Only the parse and
   // print round trip distinguishes it from an unreadable node the printer
   // emitted: those markers are not Fern syntax and do not round-trip.
-  return format_source(formatted) == formatted;
+  return format_source(formatted) == formatted && content_print(src) == content_print(formatted);
 }
 
-// format_source is what `-fmt` writes for a file's text.
+// content_print lists what formatting must keep of a source: every comment,
+// and every declaration, a function with its statement count. Tokens are not
+// compared: the printer respells some (`()` as `void`, `Self` in an impl as
+// the type, a one-return lambda body as an arrow).
+function content_print(src: string): string {
+  let lx: lexer.LexResult = lexer.tokenize_full(src);
+  let m: parser.Module = parser.parse_module(lx.tokens);
+  let out: string[] = [];
+  for c in lx.comments {
+    out = out.append("//" + literate.trim(c.text) + "\n");
+  }
+  for im in m.imports {
+    out = out.append("import " + im.path + " " + im.alias + "\n");
+  }
+  for f in m.funcs {
+    out = out.append("function " + f.receiver_type + "." + f.name + " " + util.i32_to_string(f.body.len()) + "\n");
+  }
+  for s in m.structs {
+    out = out.append("struct " + s.name + " " + util.i32_to_string(s.fields.len()) + "\n");
+  }
+  for e in m.enums {
+    out = out.append("enum " + e.name + " " + util.i32_to_string(e.variant_names.len()) + "\n");
+  }
+  for a in m.aliases {
+    out = out.append("type " + a.name + "\n");
+  }
+  for t in m.trait_decls {
+    out = out.append("trait " + t.name + " " + util.i32_to_string(t.methods.len()) + "\n");
+  }
+  for ii in m.impls {
+    out = out.append("impl " + ii.trait_name + " " + ii.impl_type + " " + util.i32_to_string(ii.method_names.len()) + "\n");
+  }
+  out = out.append("statements " + util.i32_to_string(m.top_stmts.len()));
+  return util.str_join_chunks(out);
+}
+
+// format_source is what `-fmt` writes for a `.fern` file's text.
 function format_source(src: string): string {
   let flex: lexer.LexResult = lexer.tokenize_full(src);
   let pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
   return printer.format_parsed(pf, flex.comments, blank_line_map(src));
+}
+
+// format_text is what `-fmt` writes for the file at `path`: a literate
+// document's chunk bodies formatted, or the whole source.
+function format_text(path: string, src: string): string {
+  if (is_literate(path)) {
+    return format_literate(src);
+  }
+  return format_source(src);
+}
+
+// FMT_WRAP_OPEN opens the function a chunk body that is a statement list is
+// formatted inside.
+const FMT_WRAP_OPEN: string = "function __fern_fmt_wrap__() {\n";
+
+function fmt_wrap(body: string): string {
+  return FMT_WRAP_OPEN + body + "\n}\n";
+}
+
+// parses_as_decls reports whether `src` parses cleanly as top-level
+// declarations alone.
+function parses_as_decls(src: string): boolean {
+  let m: parser.Module = parser.parse_module(lexer.tokenize(src));
+  return m.top_stmts.len() == 0 && parse_findings(m).len() == 0;
+}
+
+function trim_trailing_newlines(s: string): string {
+  let n: i32 = s.len();
+  while (n > 0 && s[n - 1] == b'\n') {
+    n = n - 1;
+  }
+  return slice_unchecked(s, 0, n) + "";
+}
+
+// unwrap_formatted drops the wrapper fmt_wrap added from its formatted text,
+// moving the body back out by one indent level.
+function unwrap_formatted(formatted: string): string {
+  let lines: string[] = literate.split_lines(trim_trailing_newlines(formatted));
+  let out: string[] = [];
+  let i: i32 = 1;
+  while (i < lines.len() - 1) {
+    if (i > 1) {
+      out = out.append("\n");
+    }
+    let ln: string = lines[i];
+    if (util.str_has_prefix(ln, "  ")) {
+      ln = slice_unchecked(ln, 2, ln.len()) + "";
+    }
+    out = out.append(ln);
+    i = i + 1;
+  }
+  return util.str_join_chunks(out);
+}
+
+// format_chunk_body formats one literate chunk body: as top-level
+// declarations, or else as a statement list. A body that parses as neither —
+// a fragment split mid-construct, or one holding a `<<reference>>` line — is
+// declined (false) and kept as written, as is a blank one.
+function format_chunk_body(body: string): (boolean, string) {
+  if (literate.trim(body).len() == 0) {
+    return (false, "");
+  }
+  if (parses_as_decls(body)) {
+    return (true, trim_trailing_newlines(format_source(body)));
+  }
+  let wrapped: string = fmt_wrap(body);
+  if (parses_as_decls(wrapped)) {
+    return (true, unwrap_formatted(format_source(wrapped)));
+  }
+  return (false, "");
+}
+
+// formats_body reports whether `-fmt` formats a block's body: a chunk
+// definition's or a file root's. Prose, display-only snippets and `test`
+// examples are kept byte for byte.
+function formats_body(b: literate.Block): boolean {
+  return b.kind == literate.CHUNK || b.kind == literate.FILE;
+}
+
+// format_literate is what `-fmt` writes for a `.fern.md` document: each chunk
+// and file-root body formatted, every other line — prose, fences, chunk
+// headers — kept byte for byte.
+function format_literate(src: string): string {
+  let d: literate.Doc = literate.parse(src);
+  let parts: string[] = [];
+  let next: i32 = 0;
+  for b in d.blocks {
+    if (formats_body(b) && b.count > 0) {
+      let (ok, formatted) = format_chunk_body(literate.join_range(d.lines, b.first, b.first + b.count));
+      if (ok) {
+        parts = append_lines(parts, d.lines, next, b.first);
+        parts = append_line(parts, formatted);
+        next = b.first + b.count;
+      }
+    }
+  }
+  parts = append_lines(parts, d.lines, next, d.lines.len());
+  return util.str_join_chunks(parts);
+}
+
+// append_line adds one line to a newline-joined text under construction.
+function append_line(parts: string[], line: string): string[] {
+  if (parts.len() > 0) {
+    parts = parts.append("\n");
+  }
+  return parts.append(line);
+}
+
+function append_lines(parts: string[], lines: string[], from: i32, to: i32): string[] {
+  let i: i32 = from;
+  while (i < to) {
+    parts = append_line(parts, lines[i]);
+    i = i + 1;
+  }
+  return parts;
+}
+
+// literate_output_is_readable is fmt_output_is_readable for a document: the
+// output is a fixed point, every line outside a formatted body is unchanged,
+// and each body that changed kept its content.
+function literate_output_is_readable(src: string, formatted: string): boolean {
+  if (format_literate(formatted) != formatted) {
+    return false;
+  }
+  let a: literate.Doc = literate.parse(src);
+  let b: literate.Doc = literate.parse(formatted);
+  if (doc_outside_bodies(a) != doc_outside_bodies(b)) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.blocks.len()) {
+    let x: literate.Block = a.blocks[i];
+    let y: literate.Block = b.blocks[i];
+    if (formats_body(x)) {
+      let before: string = literate.join_range(a.lines, x.first, x.first + x.count);
+      let after: string = literate.join_range(b.lines, y.first, y.first + y.count);
+      if (before != after && !chunk_keeps_content(before, after)) {
+        return false;
+      }
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// doc_outside_bodies is a document with each formatted body cut out: its
+// block kinds and names, then every line no body holds.
+function doc_outside_bodies(d: literate.Doc): string {
+  let parts: string[] = [];
+  for b in d.blocks {
+    parts = append_line(parts, util.i32_to_string(b.kind) + " " + b.name);
+  }
+  let next: i32 = 0;
+  for b in d.blocks {
+    if (formats_body(b)) {
+      parts = append_lines(parts, d.lines, next, b.first);
+      next = b.first + b.count;
+    }
+  }
+  parts = append_lines(parts, d.lines, next, d.lines.len());
+  return util.str_join_chunks(parts);
+}
+
+// chunk_keeps_content compares a chunk body before and after formatting the
+// way format_chunk_body read it: as declarations, or inside the wrapper.
+function chunk_keeps_content(before: string, after: string): boolean {
+  if (parses_as_decls(before)) {
+    return content_print(before) == content_print(after);
+  }
+  return content_print(fmt_wrap(before)) == content_print(fmt_wrap(after));
 }
 
 // read_failure is the one-line report for a file that could not be read:
@@ -168,7 +379,7 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
       return 1;
     }
   }
-  let formatted: string = format_source(esrc);
+  let formatted: string = format_text(path, esrc);
   if (fmt_diff) {
     let d: string = printer.unified_diff(esrc, formatted, path, path);
     if (d.len() == 0) {
@@ -178,8 +389,8 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
     return 1;
   }
   if (fmt_write) {
-    if (!fmt_output_is_readable(formatted)) {
-      eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse; this is a formatter bug, please report it");
+    if (!fmt_output_is_readable(path, esrc, formatted)) {
+      eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse to the same content; this is a formatter bug, please report it");
       return 1;
     }
     match (write_file(path, formatted)) {
@@ -4123,8 +4334,8 @@ function lsp_formatting(s: Server, uri: string): string {
     return "[]";
   }
   let src: string = s.srcs[i];
-  let formatted: string = format_source(src);
-  if (formatted == src || !fmt_output_is_readable(formatted)) {
+  let formatted: string = format_text(uri, src);
+  if (formatted == src || !fmt_output_is_readable(uri, src, formatted)) {
     return "[]";
   }
   return "[" + lsp.whole_document_edit(src, formatted) + "]";

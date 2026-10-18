@@ -525,6 +525,25 @@ func TestSelfHostLSPFormattingX86_64(t *testing.T) {
 	}
 }
 
+// TestSelfHostLSPFormattingLiterateX86_64 wants a `.fern.md` document
+// formatted as `-fmt` formats it — its chunk bodies, not the whole Markdown
+// file read as Fern, which answered with an edit emptying the document (#12645).
+func TestSelfHostLSPFormattingLiterateX86_64(t *testing.T) {
+	s := buildLSPServers(t)
+	src := "# Doc\n\nfunction   prose( ){}\n\n```fern\n<<*>>=\nfunction   main( ):i32{return 0;}\n```\n"
+	want := []lspEdit{{span(0, 0, 8, 0), "# Doc\n\nfunction   prose( ){}\n\n```fern\n<<*>>=\nfunction main(): i32 {\n  return 0;\n}\n```\n"}}
+	path := filepath.Join(t.TempDir(), "doc.fern.md")
+	writeTree(t, filepath.Dir(path), map[string]string{"doc.fern.md": src})
+	sf, _ := runLSP(t, s.selfHost(), session(lspOpen(fileURI(path), src), lspFormat(2, fileURI(path))))
+	var got []lspEdit
+	if err := json.Unmarshal(response(t, sf, "2").Result, &got); err != nil {
+		t.Fatalf("formatting: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("formatting answered %+v\nwant %+v", got, want)
+	}
+}
+
 // checkLine matches one line of `-check` output that names a position in the
 // entry module; a position in another module carries its path first, as a
 // `todo` warning carries the entry's.
