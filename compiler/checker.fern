@@ -6335,6 +6335,34 @@ function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, 
   return out;
 }
 
+// uninferred_recv_diags reports E040 for a variable of the receiver's type
+// that the receiver itself leaves unbound: `let o = GNil;` gives `o` no type
+// argument, so nothing binds `T` in `o.count()` unless an argument, the result
+// or a bound does, as in uninferred_method_diags.
+function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, args: typeinfo.Type[]): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (c.type_args.len() > 0 || msig.name.len() == 0 || c.args.len() != msig.param_type_names.len()) {
+    return out;
+  }
+  let rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
+  let ret: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
+  let k: i32 = 0;
+  while (k < rref.args.len()) {
+    let ar: parser.TypeRef = rref.args[k];
+    let tp: string = ar.base;
+    let bare: boolean = ar.args.len() == 0 && ar.array_depth == 0 && !ar.is_tuple && !ar.is_fn;
+    let bound: boolean = k < args.len() && !type_contains_unknown(args[k]);
+    if (bare && !bound && !type_ref_names_any(ret, [tp]) && !bound_names_tp(msig.type_bounds, tp)) {
+      let (_, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp);
+      if (all_empty) {
+        out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + recv + "." + method + " — supply it explicitly at the call site (e.g. ." + method + "[i32](...)) or annotate the binding", c.line, c.col));
+      }
+    }
+    k = k + 1;
+  }
+  return out;
+}
+
 // empty_array_positions reads the values whose declared type spells `tp`:
 // whether any does, and whether every one binds nothing: an empty array
 // literal (#10499), or a `use` callback whose binding has no type (#10833).
@@ -15382,6 +15410,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                 out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
                 out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
                 out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig));
+                out = util.append_diags(out, uninferred_recv_diags(c, sn.name, mfa.field, msig, sn.args));
               }
             } else {
               // A call `obj.m(...)` on a known struct with no
@@ -15436,6 +15465,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));
             out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
             out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig));
+            out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args));
           }
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
