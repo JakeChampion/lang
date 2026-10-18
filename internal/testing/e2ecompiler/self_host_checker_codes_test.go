@@ -224,7 +224,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"map-without-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.without(); return 0; }\n", []string{"E004"}},
 		{"map-keys-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.keys(1); return 0; }\n", []string{"E004"}},
 		{"map-iter-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.iter(1); return 0; }\n", []string{"E004"}},
-		{"map-has-redeclares-builtin","import \"core/map\";\nfunction (m: Map[string, i32]) has(k: string): boolean { return false; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has(\"a\")) { return 1; } return 0; }\n", []string{"E006"}},
+		{"map-has-redeclares-builtin", "import \"core/map\";\nfunction (m: Map[string, i32]) has(k: string): boolean { return false; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has(\"a\")) { return 1; } return 0; }\n", []string{"E006"}},
 		{"map-get-or-redeclares-builtin", "import \"core/map\";\nfunction (m: Map[string, i32]) get_or(k: string, d: i32): i32 { return d; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(\"a\", 2); }\n", []string{"E006"}},
 		{"map-get-or-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(5, 1); }\n", []string{"E038"}},
 		{"map-has-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has(5)) { return 1; } return 0; }\n", []string{"E038"}},
@@ -248,7 +248,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"result-method-without-import", "function main(): i32 { let r: Result[i32, string] = Ok(2); return r.unwrap_or(0); }\n", []string{"E043"}},
 		// A method is not a field: reading one as a value is E043.
 		{"struct-method-read-as-field", "struct P { a: i32 }\nfunction (p: P) f(): i32 { return 1; }\nfunction main(): i32 { let p = P { a: 1 }; let g = p.f; return 0; }\n", []string{"E043"}},
-		{"struct-destructure-unknown-field","struct Point { x: i32, y: i32 }\nfunction main(): i32 { let p: Point = Point { x: 1, y: 2 }; let Point { x, z } = p; return x; }\n", []string{"E043"}},
+		{"struct-destructure-unknown-field", "struct Point { x: i32, y: i32 }\nfunction main(): i32 { let p: Point = Point { x: 1, y: 2 }; let Point { x, z } = p; return x; }\n", []string{"E043"}},
 		{"enum-method-missing", "enum Color { Red, Green }\nfunction main(): i32 { let c: Color = Color.Red; return c.nope(); }\n", []string{"E043"}},
 		{"union-method-missing", "struct Circle { r: i32 }\nstruct Square { s: i32 }\ntype Shape = Circle | Square;\nfunction main(): i32 { let sh: Shape = Circle { r: 1 }; return sh.area(); }\n", []string{"E043"}},
 		{"enum-and-union-methods-ok", "enum Color { Red, Green }\nfunction (c: Color) n(): i32 { return 1; }\nenum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) size(): i32 { return 1; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\ntype Shape = Circle | Square;\nfunction (sh: Shape) area(): i32 { return 1; }\nfunction (o: Option[T]) mine(): i32 { return 2; }\nfunction main(): i32 { let c: Color = Color.Red; let b: Box[i32] = Full(1); let sh: Shape = Circle { r: 1 }; let x: Option[i32] = Some(3); return c.n() + b.size() + sh.area() + x.mine(); }\n", nil},
@@ -758,8 +758,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"string-len-arity-e004", "function main(): i32 { let s: string = \"abc\"; return s.len(1); }\n", []string{"E004"}},
 		// A receiver method declared on a scalar type is held to its
 		// parameter count as a struct's is.
-		{"i32-declared-method-arity-e004","function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { let n: i32 = 2; return n.twice(1); }\n", []string{"E004"}},
-		{"string-as-bytes-arity-e004","function main(): i32 { let s: string = \"abc\"; return s.as_bytes(1).len(); }\n", []string{"E004"}},
+		{"i32-declared-method-arity-e004", "function (n: i32) twice(): i32 { return n * 2; }\nfunction main(): i32 { let n: i32 = 2; return n.twice(1); }\n", []string{"E004"}},
+		{"string-as-bytes-arity-e004", "function main(): i32 { let s: string = \"abc\"; return s.as_bytes(1).len(); }\n", []string{"E004"}},
 		{"print-arity-e004", "function main(): i32 { print(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
 		{"eprint-arity-e004", "function main(): i32 { eprint(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
 		{"write-arity-e004", "function main(): i32 { write(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
