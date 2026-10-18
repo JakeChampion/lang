@@ -104,6 +104,35 @@ func TestParseDepCapabilitiesUnknownName(t *testing.T) {
 	}
 }
 
+// A repeated table or key is refused, never resolved to one of the values: a
+// second, ungoverned entry for a dependency must not override its grant.
+func TestParseDuplicates(t *testing.T) {
+	for src, want := range map[string]string{
+		"[package]\nname = \"a\"\n[dependencies]\n[package]\n":                                                     `line 4: duplicate section [package]`,
+		"[package]\nname = \"a\"\nname = \"b\"\n":                                                                  `line 3: duplicate key "name" in [package]`,
+		"[package]\nname = \"a\"\n[dependencies]\nh = { path = \"h\", capabilities = [] }\nh = { path = \"h\" }\n": `line 5: duplicate key "h" in [dependencies]`,
+	} {
+		if _, err := Parse(src); err == nil || err.Error() != want {
+			t.Errorf("Parse(%q) error = %v, want %s", src, err, want)
+		}
+	}
+	if _, err := Parse("[package]\nname = \"a\"\n[dependencies]\nname = { path = \"n\" }\n"); err != nil {
+		t.Errorf("one key in two sections: %v", err)
+	}
+}
+
+// A comma or bracket inside a quoted value is part of the value, not an
+// inline-table separator.
+func TestParseDepQuotedSeparators(t *testing.T) {
+	m, err := Parse("[package]\nname = \"app\"\n[dependencies]\nkv = { path = \"a,b[c\", capabilities = [\"fs\"] }\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := m.Deps["kv"]; d.Path != "a,b[c" || len(d.Capabilities) != 1 || d.Capabilities[0] != "fs" {
+		t.Errorf("kv = %+v, want path a,b[c with capabilities [fs]", d)
+	}
+}
+
 func TestParseLib(t *testing.T) {
 	m, err := Parse("[package]\nname = \"h\"\nlib = \"src/api.fern\"\n")
 	if err != nil {

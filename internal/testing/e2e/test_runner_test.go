@@ -1233,7 +1233,7 @@ func TestRunnerHTTPRequestIdExamplePasses(t *testing.T) {
 // std/http/hpack both ways, with the table sizes and evictions the RFC
 // shows, and holds a decoder to its list, field and table-size bounds.
 func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 11)
+	runnerSuitePasses(t, "http_hpack", "std/http/hpack", 12)
 }
 
 // `tests/stdlib/http_qpack_test.fern` decodes RFC 9204 Appendix B's
@@ -1263,7 +1263,7 @@ func TestRunnerHTTPH3QExamplePasses(t *testing.T) {
 // frame as it arrives in pieces, and answers each malformed shape RFC 9113
 // §6 names with its error.
 func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h2_frame", "std/http/h2/frame", 5)
+	runnerSuitePasses(t, "http_h2_frame", "std/http/h2/frame", 7)
 }
 
 // `tests/stdlib/http_h2_test.fern` drives the server's HTTP/2 connection as

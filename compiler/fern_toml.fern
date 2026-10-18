@@ -1,27 +1,18 @@
-// compiler/fern_toml.fern — a fern.toml / fern.lock reader for
-// the self-hosted compiler's module loader, mirroring the native
-// internal/pkg/manifest + internal/pkg/mvs for the DISK-resolvable dependency
-// forms.
+// compiler/fern_toml.fern — the fern.toml / fern.lock reader for the
+// self-hosted compiler's module loader, mirroring the Go oracle's
+// internal/pkg/manifest + internal/pkg/mvs.
 //
-// Covered: [package] name/lib; [dependencies] `path`, `workspace = true`,
-// and `version` (bare "1.2.0" or { version = "…" }) deps; [workspace]
-// members; and fern.lock `[[package]]` entries with a `path` source. All
-// of these resolve from disk with no network or cache lookup.
-//
-// Covered since #4949: url+hash deps, and versioned deps whose lock
-// source is a `url` — both parse to their `sha256:<hex>` hash here, and
-// the loader (modloader.store_dir) resolves them from the
-// per-machine content-addressed store via the `env` runtime builtin
-// (read-only; population + verification stay `fern -fetch`).
-//
-// Uses only the self-host emitter's subset (string index/slice/len/
-// append, ==, match, Option, while, structs), so it compiles with either
-// compiler. Additive: the loader consults it only when a fern.toml /
-// fern.lock is present, so a manifest-less build (every current compiler
-// source) is byte-for-byte unchanged.
+// The manifest parser accepts exactly the manifests manifest.Parse accepts
+// and refuses the rest with the same message: [package], [dependencies] (path,
+// workspace, version and url+hash forms, each with an optional capabilities
+// grant), [workspace], [exclude], [lint] and [lint.options]. A url dependency
+// and a url-sourced lock entry parse to their `sha256:<hex>` hash, which
+// modloader.store_dir resolves from the per-machine content-addressed store;
+// populating and verifying that store is `fern -fetch` (#4949).
 
 import "./util";
 import "./capvocab";
+import "./docsummary";
 
 // Dep is one declared dependency. `kind` tags the form the loader must
 // resolve: "path" (dir given by `path`), "workspace" (a sibling
@@ -45,12 +36,12 @@ pub struct Dep {
   version: string,
   governed: boolean,
   caps: string[],
-  cap_error: string,
 }
 
 // Manifest is the subset the loader reads: the [package] name + lib
 // module (empty lib ⇒ default "lib.fern"), the declared dependencies,
-// and the [workspace] members list (empty ⇒ not a workspace).
+// and the [workspace] members list (empty ⇒ not a workspace). `err` is the
+// first diagnostic, worded as manifest.Parse words it, or "".
 //
 // `index` is the [package] index path — the version authority MVS resolves
 // versioned dependencies against (empty ⇒ none). `excl_pkg` / `excl_ver`
@@ -67,10 +58,9 @@ pub struct Manifest {
   excl_ver: string[],
   // lint_keys / lint_vals are the [lint] and [lint.options] tables as raw
   // `key = value` pairs, in file order; a dotted key is a rule option.
-  // lint_err names the first malformed one.
   lint_keys: string[],
   lint_vals: string[],
-  lint_err: string,
+  err: string,
 }
 
 // index_of returns the first index of the single-char needle `c` in `s`
@@ -79,21 +69,6 @@ function index_of(s: string, c: u8, from: i32): i32 {
   let i: i32 = from;
   while (i < s.len()) {
     if (s[i] == c) {
-      return i;
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
-}
-
-// index_of_str returns the first index of substring `sub` in `s`, or -1.
-function index_of_str(s: string, sub: string): i32 {
-  if (sub.len() == 0) {
-    return 0;
-  }
-  let i: i32 = 0;
-  while (i + sub.len() <= s.len()) {
-    if (slice_unchecked(s, i, i + sub.len()) == sub) {
       return i;
     }
     i = i + 1;
@@ -115,13 +90,13 @@ function quoted_value(s: string, from: i32): Option[string] {
   return Some(slice_unchecked(s, q1 + 1, q2) + "");
 }
 
-// split_lines splits `src` on '\n'.
-function split_lines(src: string): string[] {
+// split_char splits `src` on the byte `c`, keeping empty fields.
+function split_char(src: string, c: u8): string[] {
   let out: string[] = [];
   let start: i32 = 0;
   let i: i32 = 0;
   while (i < src.len()) {
-    if (src[i] == b'\n') {
+    if (src[i] == c) {
       out = out.append(slice_unchecked(src, start, i) + "");
       start = i + 1;
     }
@@ -163,121 +138,259 @@ function is_integer_text(s: string): boolean {
   return s.len() > 0;
 }
 
-// parse reads a fern.toml source into a Manifest: the [package] lib key
-// and every [dependencies] `name = { path = "..." }` entry. Non-path
-// dependency forms (url/workspace/version) are skipped here — the loader
-// handles those natively or falls back to on-disk resolution.
+// parse reads a fern.toml source into a Manifest. It accepts exactly what
+// native manifest.Parse accepts and refuses the rest in its words: `err` is
+// the first diagnostic, and the other fields are partial when it is set.
 pub function parse(src: string): Manifest {
-  let name: string = "";
-  let lib: string = "lib.fern";
-  let index: string = "";
-  let deps: Dep[] = [];
-  let members: string[] = [];
-  let excl_pkg: string[] = [];
-  let excl_ver: string[] = [];
-  let lint_keys: string[] = [];
-  let lint_vals: string[] = [];
-  let lint_err: string = "";
+  let m: Manifest = Manifest {
+    name: "", lib: "lib.fern", index: "", deps: [], members: [],
+    excl_pkg: [], excl_ver: [], lint_keys: [], lint_vals: [], err: "",
+  };
+  let workspace: boolean = false;
   let section: string = "";
-  let lines: string[] = split_lines(src);
+  // Every section header and `section\nkey` seen so far: TOML defines each
+  // once, and a repeat is refused rather than silently overriding the first.
+  let seen: string[] = [];
+  let lines: string[] = split_char(src, b'\n');
   let li: i32 = 0;
-  while (li < lines.len()) {
+  while (li < lines.len() && m.err.len() == 0) {
     let line: string = line_content(lines[li]);
     li = li + 1;
+    let at: string = "line " + util.i32_to_string(li) + ": ";
     if (line.len() == 0) {
       continue;
     }
-    if (line[0] == b'[') {  // section header
-      let close: i32 = index_of(line, b']', 0);
-      if (close > 0) {
-        section = slice_unchecked(line, 1, close) + "";
+    if (line[0] == b'[') {
+      if (line[line.len() - 1] != b']') {
+        return Manifest { ...m, err: at + "malformed section header " + docsummary.quote(line) };
       }
+      section = util.trim(slice_unchecked(line, 1, line.len() - 1));
+      workspace = workspace || section == "workspace";
+      m = Manifest { ...m, err: section_error(section, seen, at) };
+      seen = seen.append("[" + section + "]");
       continue;
     }
-    let eq: i32 = index_of(line, b'=', 0);
-    if (eq < 0) {
-      continue;
+    m = with_entry(m, section, line, at, seen);
+    seen = seen.append(section + "\n" + entry_key(line));
+  }
+  if (m.err.len() == 0 && m.name.len() == 0 && !workspace) {
+    return Manifest { ...m, err: "missing [package] name" };
+  }
+  return m;
+}
+
+function section_error(section: string, seen: string[], at: string): string {
+  let known: string[] = ["package", "dependencies", "workspace", "exclude", "lint", "lint.options"];
+  if (!util.has_str(known, section)) {
+    return at + "unknown section [" + section + "] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])";
+  }
+  if (util.has_str(seen, "[" + section + "]")) {
+    return at + "duplicate section [" + section + "]";
+  }
+  return "";
+}
+
+// entry_key is the key of a `key = value` line.
+function entry_key(line: string): string {
+  let eq: i32 = index_of(line, b'=', 0);
+  if (eq < 0) {
+    return "";
+  }
+  return util.trim(slice_unchecked(line, 0, eq));
+}
+
+function failed(m: Manifest, err: string): Manifest {
+  return Manifest { ...m, err: err };
+}
+
+// with_entry is `m` with one `key = value` line of `section` applied.
+function with_entry(m: Manifest, section: string, line: string, at: string, seen: string[]): Manifest {
+  let eq: i32 = index_of(line, b'=', 0);
+  if (eq < 0) {
+    return failed(m, at + "expected `key = value`, got " + docsummary.quote(line));
+  }
+  let key: string = util.trim(slice_unchecked(line, 0, eq));
+  let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
+  if (section.len() > 0 && util.has_str(seen, section + "\n" + key)) {
+    return failed(m, at + "duplicate key " + docsummary.quote(key) + " in [" + section + "]");
+  }
+  if (section == "package") {
+    return with_package_key(m, key, val, at);
+  }
+  if (section == "dependencies") {
+    return with_dep(m, key, val, at);
+  }
+  if (section == "workspace") {
+    return with_members(m, key, val, at);
+  }
+  if (section == "lint" || section == "lint.options") {
+    return with_lint(m, section, key, val, at);
+  }
+  if (section == "exclude") {
+    return with_exclude(m, key, val, at);
+  }
+  return failed(m, at + docsummary.quote(key) + " outside a section (start with [package], [dependencies], or [workspace])");
+}
+
+function with_package_key(m: Manifest, key: string, val: string, at: string): Manifest {
+  let s: Parsed = parse_string(val);
+  if (s.err.len() > 0) {
+    return failed(m, at + key + ": " + s.err);
+  }
+  if (key == "name") {
+    return Manifest { ...m, name: s.value };
+  }
+  if (key == "lib") {
+    return Manifest { ...m, lib: s.value };
+  }
+  if (key == "index") {
+    return Manifest { ...m, index: s.value };
+  }
+  if (key == "version") {
+    return m;
+  }
+  return failed(m, at + "unknown [package] key " + docsummary.quote(key) + " (supported: name, version, lib, index)");
+}
+
+function with_dep(m: Manifest, key: string, val: string, at: string): Manifest {
+  let d: DepResult = parse_dep(key, val);
+  if (d.err.len() > 0) {
+    return failed(m, at + "dependency " + docsummary.quote(key) + ": " + d.err);
+  }
+  if (!valid_dep_name(key)) {
+    return failed(m, at + "invalid dependency name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
+  }
+  return Manifest { ...m, deps: m.deps.append(d.dep) };
+}
+
+function with_members(m: Manifest, key: string, val: string, at: string): Manifest {
+  if (key != "members") {
+    return failed(m, at + "unknown [workspace] key " + docsummary.quote(key) + " (supported: members)");
+  }
+  let ms: ParsedList = parse_str_array(val);
+  if (ms.err.len() > 0) {
+    return failed(m, at + "members: " + ms.err);
+  }
+  return Manifest { ...m, members: ms.values };
+}
+
+// with_lint keeps a [lint] or [lint.options] pair for the linter, which
+// reads the tables; under [lint.options] the key is `<rule>.<option>`.
+function with_lint(m: Manifest, section: string, key: string, val: string, at: string): Manifest {
+  let v: Parsed = parse_scalar(val);
+  if (v.err.len() > 0) {
+    return failed(m, at + "[" + section + "] " + key + ": " + v.err);
+  }
+  if (section == "lint.options" && index_of(key, b'.', 0) < 0) {
+    return failed(m, at + "[lint.options] key " + docsummary.quote(key) + " must be spelled <rule>.<option>");
+  }
+  return Manifest { ...m, lint_keys: m.lint_keys.append(key), lint_vals: m.lint_vals.append(v.value) };
+}
+
+function with_exclude(m: Manifest, key: string, val: string, at: string): Manifest {
+  if (!valid_dep_name(key)) {
+    return failed(m, at + "invalid [exclude] package name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
+  }
+  let vs: ParsedList = parse_str_array(val);
+  if (vs.err.len() > 0) {
+    return failed(m, at + "exclude " + key + ": " + vs.err);
+  }
+  let excl_pkg: string[] = m.excl_pkg;
+  let excl_ver: string[] = m.excl_ver;
+  for v in vs.values {
+    if (!is_version(v)) {
+      return failed(m, at + "exclude " + key + ": version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(v));
     }
-    let key: string = util.trim(slice_unchecked(line, 0, eq));
-    let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
-    if (section == "package") {
-      if (key == "name") {
-        match (quoted_value(val, 0)) {
-          Some(v) => {
-            name = v;
-          },
-          None => {}
-        }
+    excl_pkg = excl_pkg.append(key);
+    excl_ver = excl_ver.append(v);
+  }
+  return Manifest { ...m, excl_pkg: excl_pkg, excl_ver: excl_ver };
+}
+
+// Parsed is one scalar value, or why it is not one.
+struct Parsed { value: string, err: string }
+
+struct ParsedList { values: string[], err: string }
+
+// parse_string accepts a double-quoted string with no escapes.
+function parse_string(val: string): Parsed {
+  if (val.len() < 2 || val[0] != b'"' || val[val.len() - 1] != b'"') {
+    return Parsed { value: "", err: "expected a double-quoted string, got " + docsummary.quote(val) };
+  }
+  let s: string = slice_unchecked(val, 1, val.len() - 1) + "";
+  if (index_of(s, b'"', 0) >= 0 || index_of(s, b'\\', 0) >= 0) {
+    return Parsed { value: "", err: "escapes are not supported in " + docsummary.quote(val) + " (use forward slashes in paths)" };
+  }
+  return Parsed { value: s, err: "" };
+}
+
+// parse_scalar accepts a quoted string or a bare integer.
+function parse_scalar(val: string): Parsed {
+  if (val.len() > 0 && val[0] == b'"') {
+    return parse_string(val);
+  }
+  if (val.len() == 0) {
+    return Parsed { value: "", err: "expected a quoted string or a number, got an empty value" };
+  }
+  if (!is_integer_text(val)) {
+    return Parsed { value: "", err: "expected a quoted string or a number, got " + docsummary.quote(val) };
+  }
+  return Parsed { value: val, err: "" };
+}
+
+// parse_str_array parses a single-line inline array of quoted strings:
+// `["a", "b/c"]` → ["a", "b/c"].
+function parse_str_array(val: string): ParsedList {
+  if (val.len() < 2 || val[0] != b'[' || val[val.len() - 1] != b']') {
+    return ParsedList { values: [], err: "expected an array like [\"a\", \"b\"], got " + docsummary.quote(val) };
+  }
+  let out: string[] = [];
+  for raw in split_char(slice_unchecked(val, 1, val.len() - 1) + "", b',') {
+    let part: string = util.trim(raw);
+    if (part.len() > 0) {
+      let s: Parsed = parse_string(part);
+      if (s.err.len() > 0) {
+        return ParsedList { values: [], err: s.err };
       }
-      if (key == "lib") {
-        match (quoted_value(val, 0)) {
-          Some(v) => {
-            lib = v;
-          },
-          None => {}
-        }
-      }
-      if (key == "index") {
-        match (quoted_value(val, 0)) {
-          Some(v) => {
-            index = v;
-          },
-          None => {}
-        }
-      }
-      continue;
-    }
-    if (section == "workspace") {
-      if (key == "members") {
-        members = parse_str_array(val);
-      }
-      continue;
-    }
-    if (section == "exclude") {
-      let banned: string[] = parse_str_array(val);
-      let bi: i32 = 0;
-      while (bi < banned.len()) {
-        excl_pkg = excl_pkg.append(key + "");
-        excl_ver = excl_ver.append(banned[bi] + "");
-        bi = bi + 1;
-      }
-      continue;
-    }
-    if (section == "dependencies") {
-      deps = deps.append(parse_dep(key, val));
-    }
-    if (section == "lint" || section == "lint.options") {
-      // A severity is a quoted string and an option value may be a bare
-      // number; under [lint.options] the key is `<rule>.<option>`.
-      let v: string = val;
-      let bad: string = "";
-      if (val.len() > 0 && val[0] == b'"') {
-        match (quoted_value(val, 0)) {
-          Some(q) => {
-            v = q;
-          },
-          None => {}
-        }
-      } else if (val.len() == 0) {
-        bad = "expected a quoted string or a number, got an empty value";
-      } else if (!is_integer_text(val)) {
-        bad = "expected a quoted string or a number, got \"" + val + "\"";
-      }
-      if (bad.len() > 0 && lint_err.len() == 0) {
-        lint_err = "line " + util.i32_to_string(li) + ": [" + section + "] " + key + ": " + bad;
-      }
-      if (section == "lint.options" && index_of(key, b'.', 0) < 0 && lint_err.len() == 0) {
-        lint_err = "line " + util.i32_to_string(li) + ": [lint.options] key \"" + key + "\" must be spelled <rule>.<option>";
-      }
-      lint_keys = lint_keys.append(key);
-      lint_vals = lint_vals.append(v);
+      out = out.append(s.value);
     }
   }
-  return Manifest {
-    name: name, lib: lib, index: index, deps: deps, members: members,
-    excl_pkg: excl_pkg, excl_ver: excl_ver,
-    lint_keys: lint_keys, lint_vals: lint_vals, lint_err: lint_err,
-  };
+  return ParsedList { values: out, err: "" };
+}
+
+// is_version reports whether `s` is a bare MAJOR.MINOR.PATCH version.
+function is_version(s: string): boolean {
+  let parts: string[] = split_char(s, b'.');
+  if (parts.len() != 3) {
+    return false;
+  }
+  for p in parts {
+    if (p.len() == 0 || p[0] == b'-' || !is_integer_text(p)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// valid_dep_name: letters, digits, `_` and `-`, not starting with a digit.
+pub function valid_dep_name(s: string): boolean {
+  if (s.len() == 0 || is_digit(s[0])) {
+    return false;
+  }
+  for c in s {
+    if (!is_digit(c) && !is_letter(c) && c != b'_' && c != b'-') {
+      return false;
+    }
+  }
+  return true;
+}
+
+function is_digit(c: u8): boolean {
+  return c >= b'0' && c <= b'9';
+}
+
+function is_letter(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z';
 }
 
 // HashResult is validate_hash's outcome: the 64 hex digits of the archive
@@ -297,8 +410,8 @@ pub struct HashResult {
 // Mirrors native pkgcache.ValidateHash, message included: the two compilers
 // must agree on what a hash is, or a lock one accepts is one the other refuses.
 pub function validate_hash(hash: string): HashResult {
-  let bad: string = "must be `sha256:` + 64 lowercase hex digits of the archive bytes, got \""
-    + hash + "\"";
+  let bad: string = "must be `sha256:` + 64 lowercase hex digits of the archive bytes, got "
+    + docsummary.quote(hash);
   if (hash.len() < 7 || slice_unchecked(hash, 0, 7) != "sha256:") {
     return HashResult { hex: "", err: bad };
   }
@@ -319,137 +432,178 @@ pub function validate_hash(hash: string): HashResult {
   return HashResult { hex: hex, err: "" };
 }
 
-// parse_dep classifies a dependency value line into a Dep. A bare quoted
-// string ("1.2.0") or `{ version = "..." }` is a version dep; an inline
-// table with `workspace = true` is a workspace dep; one with `path = "..."`
-// is a path dep. Anything else (url/hash) parses to kind "" (native-only;
-// the loader falls back to on-disk resolution).
-function parse_dep(name: string, val: string): Dep {
-  let grant: CapGrant = capability_grant(val);
-  let governed: boolean = grant.governed;
-  let caps: string[] = grant.values;
-  // Bare quoted string ⇒ version dep.
-  if (val.len() > 0 && val[0] == b'"') {
-    let bare: string = "";
-    match (quoted_value(val, 0)) {
-      Some(v) => {
-        bare = v;
-      },
-      None => {}
-    }
-    return Dep { name: name, kind: "version", path: "", url: "", hash: "", version: bare, governed: governed, caps: caps, cap_error: grant.err };
-  }
-  if (index_of_str(val, "workspace") >= 0 && index_of_str(val, "true") >= 0) {
-    return Dep { name: name, kind: "workspace", path: "", url: "", hash: "", version: "", governed: governed, caps: caps, cap_error: grant.err };
-  }
-  // url+hash dep: `{ url = "https://…", hash = "sha256:…" }` (#4949).
-  // Checked before the `version`/`path` substring probes because a URL
-  // VALUE can contain either word (".../versions/x.tar.gz"); requiring
-  // the `hash` key + a well-formed hash value keeps a stray "url" inside
-  // a path value from misclassifying (that value has no hash key).
-  let up: i32 = index_of_str(val, "url");
-  let hp: i32 = index_of_str(val, "hash");
-  if (up >= 0 && hp >= 0) {
-    let heq: i32 = index_of(val, b'=', hp);  // after hash
-    if (heq >= 0) {
-      match (quoted_value(val, heq)) {
-        Some(hv) => {
-          if (validate_hash(hv).err.len() == 0) {
-            return Dep { name: name, kind: "url", path: "", url: dep_url(val), hash: hv, version: "", governed: governed, caps: caps, cap_error: grant.err };
-          }
-        },
-        None => {}
-      }
-    }
-  }
-  let vp: i32 = index_of_str(val, "version");
-  if (vp >= 0) {
-    let veq: i32 = index_of(val, b'=', vp);  // after version
-    let vv: string = "";
-    if (veq >= 0) {
-      match (quoted_value(val, veq)) {
-        Some(v) => {
-          vv = v;
-        },
-        None => {}
-      }
-    }
-    return Dep { name: name, kind: "version", path: "", url: "", hash: "", version: vv, governed: governed, caps: caps, cap_error: grant.err };
-  }
-  let p: i32 = index_of_str(val, "path");
-  if (p >= 0) {
-    let eq2: i32 = index_of(val, b'=', p);  // after path
-    if (eq2 >= 0) {
-      match (quoted_value(val, eq2)) {
-        Some(pv) => {
-          return Dep { name: name, kind: "path", path: pv, url: "", hash: "", version: "", governed: governed, caps: caps, cap_error: grant.err };
-        },
-        None => {}
-      }
-    }
-  }
-  return Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: governed, caps: caps, cap_error: grant.err };  // unrecognised form
+struct DepResult { dep: Dep, err: string }
+
+function dep_failed(d: Dep, err: string): DepResult {
+  return DepResult { dep: d, err: err };
 }
 
-struct CapGrant { governed: boolean, values: string[], err: string }
-
-struct CapName { value: string, err: string }
-
-function array_depth(depth: i32, c: u8): i32 {
-  if (c == b'[') {
-    return depth + 1;
-  }
-  if (c == b']' && depth > 0) {
-    return depth - 1;
-  }
-  return depth;
-}
-
-// Split only at field boundaries. A quoted path containing "capabilities"
-// or brackets is not a grant. An unclosed array stays one malformed value.
-function inline_parts(val: string): string[] {
-  let out: string[] = [];
+// parse_dep reads one [dependencies] value: a bare version string, or an
+// inline table of `path`, `url` + `hash`, `workspace = true` or `version`,
+// any of them with a `capabilities` grant.
+function parse_dep(name: string, val: string): DepResult {
+  let d: Dep = Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: false, caps: [] };
   if (val.len() == 0 || val[0] != b'{') {
-    return out;
+    let s: Parsed = parse_string(val);
+    if (s.err.len() > 0) {
+      return dep_failed(d, "a bare dependency value must be a version string like \"1.2.0\" (or use an inline table): " + s.err);
+    }
+    let r: DepResult = with_dep_string(d, "version", s.value);
+    if (r.err.len() > 0) {
+      return r;
+    }
+    return classified(r.dep);
   }
-  let end: i32 = val.len();
-  if (val[end - 1] == b'}') {
-    end = end - 1;
+  if (val[val.len() - 1] != b'}') {
+    return dep_failed(d, "malformed inline table " + docsummary.quote(val));
   }
-  let start: i32 = 1;
+  for raw in inline_parts(util.trim(slice_unchecked(val, 1, val.len() - 1))) {
+    let part: string = util.trim(raw);
+    if (part.len() > 0) {
+      let r: DepResult = with_dep_field(d, part);
+      if (r.err.len() > 0) {
+        return r;
+      }
+      d = r.dep;
+    }
+  }
+  return classified(d);
+}
+
+// with_dep_field applies one `key = value` field of an inline dependency
+// table. A `workspace = true` field marks the kind until classified() checks
+// it stands alone.
+function with_dep_field(d: Dep, part: string): DepResult {
+  let eq: i32 = index_of(part, b'=', 0);
+  if (eq < 0) {
+    return dep_failed(d, "expected `key = value` in inline table, got " + docsummary.quote(part));
+  }
+  let k: string = util.trim(slice_unchecked(part, 0, eq));
+  let v: string = util.trim(slice_unchecked(part, eq + 1, part.len()));
+  if (k == "workspace") {
+    if (v != "true") {
+      return dep_failed(d, "workspace must be `true` (the only supported value), got " + docsummary.quote(v));
+    }
+    return DepResult { dep: Dep { ...d, kind: "workspace" }, err: "" };
+  }
+  if (k == "capabilities") {
+    let cs: ParsedList = parse_capabilities(v);
+    if (cs.err.len() > 0) {
+      return dep_failed(d, "capabilities: " + cs.err);
+    }
+    return DepResult { dep: Dep { ...d, governed: true, caps: cs.values }, err: "" };
+  }
+  let s: Parsed = parse_string(v);
+  if (s.err.len() > 0) {
+    return dep_failed(d, k + ": " + s.err);
+  }
+  return with_dep_string(d, k, s.value);
+}
+
+function with_dep_string(d: Dep, k: string, s: string): DepResult {
+  if (k == "path") {
+    if (s.len() == 0) {
+      return dep_failed(d, "path must not be empty");
+    }
+    return DepResult { dep: Dep { ...d, path: s }, err: "" };
+  }
+  if (k == "url") {
+    if (!util.str_has_prefix(s, "https://") && !util.str_has_prefix(s, "http://")) {
+      return dep_failed(d, "url must be http(s), got " + docsummary.quote(s));
+    }
+    return DepResult { dep: Dep { ...d, url: s }, err: "" };
+  }
+  if (k == "hash") {
+    let hr: HashResult = validate_hash(s);
+    if (hr.err.len() > 0) {
+      return dep_failed(d, "hash " + hr.err);
+    }
+    return DepResult { dep: Dep { ...d, hash: s }, err: "" };
+  }
+  if (k == "version") {
+    if (!is_version(s)) {
+      return dep_failed(d, "version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(s));
+    }
+    return DepResult { dep: Dep { ...d, version: s }, err: "" };
+  }
+  return dep_failed(d, "unknown dependency key " + docsummary.quote(k) + " (supported: path, url, hash, workspace, version, capabilities)");
+}
+
+// classified settles the kind from the fields an inline table set, refusing
+// a combination that names more than one source.
+function classified(d: Dep): DepResult {
+  let remote: boolean = d.url.len() > 0 || d.hash.len() > 0;
+  if (d.kind == "workspace") {
+    if (d.path.len() > 0 || remote || d.version.len() > 0) {
+      return dep_failed(d, "a `workspace` dependency takes no path/url/hash/version");
+    }
+    return DepResult { dep: d, err: "" };
+  }
+  if (d.version.len() > 0) {
+    if (d.path.len() > 0 || remote) {
+      return dep_failed(d, "a `version` dependency takes no path/url/hash (the version resolves through the index)");
+    }
+    return DepResult { dep: Dep { ...d, kind: "version" }, err: "" };
+  }
+  return source_classified(d, remote);
+}
+
+// source_classified settles a dependency that is neither a workspace member
+// nor versioned: a `path`, or a `url` + `hash` pair.
+function source_classified(d: Dep, remote: boolean): DepResult {
+  if (d.path.len() > 0) {
+    if (remote) {
+      return dep_failed(d, "a dependency is either `path` or `url`+`hash`, not both");
+    }
+    return DepResult { dep: Dep { ...d, kind: "path" }, err: "" };
+  }
+  if (d.url.len() > 0 && d.hash.len() > 0) {
+    return DepResult { dep: Dep { ...d, kind: "url" }, err: "" };
+  }
+  if (remote) {
+    return dep_failed(d, "url dependencies need BOTH `url` and `hash` — the hash is the identity, the url just a mirror hint");
+  }
+  return dep_failed(d, "missing `path` (or `url` + `hash`, `workspace = true`, or a version)");
+}
+
+// inline_parts splits an inline-table body at the commas outside any quoted
+// string or `[...]`, so an array-valued field stays one part.
+function inline_parts(body: string): string[] {
+  let out: string[] = [];
+  let start: i32 = 0;
   let depth: i32 = 0;
   let quoted: boolean = false;
-  let i: i32 = start;
-  while (i < end) {
-    let c: u8 = val[i];
+  let i: i32 = 0;
+  while (i < body.len()) {
+    let c: u8 = body[i];
     if (c == b'"') {
       quoted = !quoted;
-    } else if (!quoted) {
-      depth = array_depth(depth, c);
-      if (c == b',' && depth == 0) {
-        out = out.append(util.trim(slice_unchecked(val, start, i)));
-        start = i + 1;
-      }
+    } else if (!quoted && c == b'[') {
+      depth = depth + 1;
+    } else if (!quoted && c == b']') {
+      depth = depth - 1;
+    } else if (!quoted && c == b',' && depth == 0) {
+      out = out.append(slice_unchecked(body, start, i) + "");
+      start = i + 1;
     }
     i = i + 1;
   }
-  return out.append(util.trim(slice_unchecked(val, start, end)));
+  return out.append(slice_unchecked(body, start, body.len()) + "");
 }
 
-function capability_name(raw: string): CapName {
-  if (raw.len() < 2 || raw[0] != b'"' || raw[raw.len() - 1] != b'"') {
-    return CapName { value: "", err: "expected a double-quoted capability name" };
+// parse_capabilities parses a `capabilities = [...]` grant: every name from
+// the vocabulary, deduped and in vocabulary order. Empty grants nothing.
+function parse_capabilities(val: string): ParsedList {
+  let names: ParsedList = parse_str_array(val);
+  if (names.err.len() > 0) {
+    return names;
   }
-  let name: string = slice_unchecked(raw, 1, raw.len() - 1) + "";
-  for c in name {
-    if (c == b'"' || c == b'\\') {
-      return CapName { value: "", err: "escapes and embedded quotes are not supported in capability names" };
+  for name in names.values {
+    if (!util.has_str(capvocab.capabilities(), name)) {
+      return ParsedList { values: [], err: "unknown capability " + docsummary.quote(name) + " (valid capabilities: " + capability_choices() + ")" };
     }
   }
-  if (!util.has_str(capvocab.capabilities(), name)) {
-    return CapName { value: "", err: "unknown capability \"" + name + "\" (valid capabilities: " + capability_choices() + ")" };
-  }
-  return CapName { value: name, err: "" };
+  return ParsedList { values: ordered_caps(names.values), err: "" };
 }
 
 function capability_choices(): string {
@@ -473,80 +627,6 @@ function ordered_caps(values: string[]): string[] {
   return out;
 }
 
-function capability_array(raw: string): CapGrant {
-  if (raw.len() < 2 || raw[0] != b'[' || raw[raw.len() - 1] != b']') {
-    return CapGrant { governed: true, values: [], err: "expected an array of double-quoted capability names" };
-  }
-  let body: string = slice_unchecked(raw, 1, raw.len() - 1) + "";
-  let values: string[] = [];
-  let from: i32 = 0;
-  while (from < body.len()) {
-    let end: i32 = index_of(body, b',', from);
-    if (end < 0) {
-      end = body.len();
-    }
-    let part: string = util.trim(slice_unchecked(body, from, end));
-    if (part.len() > 0) {
-      let name: CapName = capability_name(part);
-      if (name.err.len() > 0) {
-        return CapGrant { governed: true, values: [], err: name.err };
-      }
-      values = values.append(name.value);
-    }
-    from = end + 1;
-  }
-  return CapGrant { governed: true, values: ordered_caps(values), err: "" };
-}
-
-function capability_grant(val: string): CapGrant {
-  let grant: CapGrant = CapGrant { governed: false, values: [], err: "" };
-  for field in inline_parts(val) {
-    let eq: i32 = index_of(field, b'=', 0);
-    if (eq >= 0 && util.trim(slice_unchecked(field, 0, eq)) == "capabilities") {
-      grant = capability_array(util.trim(slice_unchecked(field, eq + 1, field.len())));
-      if (grant.err.len() > 0) {
-        return grant;
-      }
-    }
-  }
-  return grant;
-}
-
-// dep_url is the `url = "…"` value of an inline dependency table.
-function dep_url(val: string): string {
-  let up: i32 = index_of_str(val, "url");
-  let ueq: i32 = index_of(val, b'=', up);
-  if (up >= 0 && ueq >= 0) {
-    match (quoted_value(val, ueq)) {
-      Some(v) => {
-        return v;
-      },
-      None => {}
-    }
-  }
-  return "";
-}
-
-// parse_str_array parses a single-line inline array of quoted strings:
-// `["a", "b/c"]` → ["a", "b/c"].
-function parse_str_array(val: string): string[] {
-  let out: string[] = [];
-  let i: i32 = 0;
-  while (i < val.len()) {
-    if (val[i] == b'"') {
-      let j: i32 = index_of(val, b'"', i + 1);
-      if (j < 0) {
-        return out;
-      }
-      out = out.append(slice_unchecked(val, i + 1, j) + "");
-      i = j + 1;
-    } else {
-      i = i + 1;
-    }
-  }
-  return out;
-}
-
 // dep_path returns the declared PATH of a path dependency `name`, or
 // None. Iterates m.deps directly (no Option[Dep] intermediary): a struct-
 // payload Option (Some(dep)) is outside the self-host IR emitter's lowered
@@ -563,9 +643,7 @@ pub function dep_path(m: Manifest, name: string): Option[string] {
   return None;
 }
 
-// has_dep reports whether `name` is declared at all — a different question
-// from dep_kind, which answers "" both for an undeclared dependency and for a
-// declared one whose form this reader does not recognise.
+// has_dep reports whether `name` is declared at all.
 pub function has_dep(m: Manifest, name: string): boolean {
   let i: i32 = 0;
   while (i < m.deps.len()) {
@@ -578,7 +656,7 @@ pub function has_dep(m: Manifest, name: string): boolean {
 }
 
 // dep_kind returns the kind of dependency `name` ("path"/"workspace"/
-// "version"/""), or "" when undeclared. Iterates m.deps directly (see
+// "version"/"url"), or "" when undeclared. Iterates m.deps directly (see
 // dep_path on why no Option[Dep] intermediary).
 pub function dep_kind(m: Manifest, name: string): string {
   let i: i32 = 0;
@@ -674,7 +752,7 @@ pub function parse_lock(src: string): LockResult {
   let blank: LockEntry = LockEntry { name: "", version: "", path: "", url: "", hash: "" };
   let cur: LockEntry = blank;
   let have: boolean = false;
-  let lines: string[] = split_lines(src);
+  let lines: string[] = split_char(src, b'\n');
   let li: i32 = 0;
   while (li < lines.len()) {
     let line: string = line_content(lines[li]);

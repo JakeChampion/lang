@@ -273,6 +273,7 @@ subset.
 
 | Capability | Native | Self-hosted |
 | --- | --- | --- |
+| `fern.toml` validation, same diagnostics (pinned by `self_host_manifest_parity_test.go`) | ✅ | ✅ |
 | `path` deps + resolver-side isolation | ✅ | ✅ |
 | `[workspace]` + `workspace = true` deps | ✅ | ✅ |
 | vendored mode (`vendor/`) | ✅ | ✅ |
