@@ -1209,7 +1209,7 @@ Valid text retains embedded NUL. Negative sizes fail before reading, and
 zero-sized reads, EOF, closed handles and host I/O failures retain their
 normal distinctions.
 
-`Writer.write_bytes(bytes): Option[IoError]` and
+`Writer.write_bytes(bytes): Result[void, IoError]` and
 `Writer.write_some_bytes(bytes): Result[i64, IoError]` borrow a byte view `[u8]`
 without changing or retaining it. The former completes short writes and
 reports an I/O error on zero progress; the latter returns the count from one

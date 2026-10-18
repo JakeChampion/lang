@@ -441,19 +441,16 @@ function write_pass(w: Writer, path: string, len: i64, code: i32, rnd: Rand): Op
 // synced.
 function sync_pass(w: Writer, path: string): Option[PassFail] {
   match (w.fdatasync()) {
-    None => {
+    Ok(_) => {
       return None;
     },
-    Some(_) => {}
+    Err(_) => {}
   }
-  match (w.fsync()) {
-    Some(e) => {
-      if (errno.of(e) == errno.EINVAL) {
-        return None;
-      }
-      return Some(PassFail { msg: path + ": " + gnu.io_error_text(e), fatal: false });
-    },
-    None => {}
+  if let Err(e) = w.fsync() {
+    if (errno.of(e) == errno.EINVAL) {
+      return None;
+    }
+    return Some(PassFail { msg: path + ": " + gnu.io_error_text(e), fatal: false });
   }
   return None;
 }
@@ -785,12 +782,9 @@ function dash_remove(w: Writer, s: Settings): boolean {
   if (!s.remove) {
     return true;
   }
-  match (w.truncate(0 as i64)) {
-    Some(e) => {
-      gnu.error("-: " + gnu.io_error_text(e));
-      return false;
-    },
-    None => {}
+  if let Err(e) = w.truncate(0 as i64) {
+    gnu.error("-: " + gnu.io_error_text(e));
+    return false;
   }
   return true;
 }

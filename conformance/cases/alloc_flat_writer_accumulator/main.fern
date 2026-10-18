@@ -32,7 +32,7 @@ function round(w: Writer, n: i32): i32 {
                 i = i + 1;
             }
             if (k == 0) {
-                match (w.write(out)) { Some(_) => { return -1; }, None => {} }
+                match (w.write(out)) { Err(_) => { return -1; }, Ok(_) => {} }
             }
             return out.len();
         },

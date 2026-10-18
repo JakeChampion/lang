@@ -34,12 +34,12 @@ func pipeSource(forks bool) string {
         return 21;
     }
     if (pid == 0) {
-        match (q.r.dup_onto(0)) { None => {}, Some(_) => { exit(22); } }
+        match (q.r.dup_onto(0)) { Ok(_) => {}, Err(_) => { exit(22); } }
         proc_exec("/bin/sh", ["-c", "c=$(cat); [ \"$c\" = piped ] && exit 7; exit 9"]);
         exit(23);
     }
     q.r.close();
-    match (q.w.write("piped\n")) { None => {}, Some(_) => { return 24; } }
+    match (q.w.write("piped\n")) { Ok(_) => {}, Err(_) => { return 24; } }
     q.w.close();
     return proc_waitpid(pid);`
 	}
@@ -48,7 +48,7 @@ func pipeSource(forks bool) string {
         Ok(p) => p,
         Err(_) => { return 10; },
     };
-    match (p.w.write("through\n")) { None => {}, Some(_) => { return 11; } }
+    match (p.w.write("through\n")) { Ok(_) => {}, Err(_) => { return 11; } }
     p.w.close();
     match (p.r.read_line()) {
         Some(line) => { if (line != "through\n") { return 12; } },

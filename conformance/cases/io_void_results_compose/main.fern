@@ -1,0 +1,68 @@
+// Every handle operation with no value to return answers Result[void, IoError],
+// the shape remove_file has, so a write, a close and a remove compose through
+// `?` in one function (#12669).
+
+function kind(e: IoError): string {
+  match (e) {
+    NotFound(_) => {
+      return "NotFound";
+    },
+    Other(_, m, _) => {
+      return "Other(" + m + ")";
+    },
+    _ => {
+      return "another IoError";
+    }
+  }
+}
+
+// The success path: every step answers Ok, so control reaches the end.
+function save_and_remove(path: string, body: string): Result[void, IoError] {
+  let w: Writer = open_writer(path)?;
+  w.write(body)?;
+  w.write_bytes([33 as u8, 10 as u8])?;
+  w.close()?;
+  let got: string = read_file(path)?;
+  print("read back " + got);
+  remove_file(path)?;
+  return Ok(());
+}
+
+// The error path: the write after the close fails with EBADF, and `?` hands
+// that back before remove_file runs.
+function write_after_close(path: string): Result[void, IoError] {
+  let w: Writer = open_writer(path)?;
+  w.close()?;
+  w.write("late")?;
+  remove_file(path)?;
+  return Ok(());
+}
+
+function report(label: string, r: Result[void, IoError]): void {
+  match (r) {
+    Ok(_) => {
+      print(label + " ok");
+    },
+    Err(e) => {
+      print(label + " " + kind(e));
+    }
+  }
+}
+
+function main(): i32 {
+  match (temp_dir("fern-void-results")) {
+    Err(e) => {
+      print("temp_dir " + kind(e));
+      return 1;
+    },
+    Ok(dir) => {
+      report("save and remove", save_and_remove(dir + "/saved.txt", "hello"));
+      report("saved.txt removed again", remove_file(dir + "/saved.txt"));
+      report("write after close", write_after_close(dir + "/late.txt"));
+      // The early return left late.txt for this remove to find.
+      report("late.txt left behind", remove_file(dir + "/late.txt"));
+      report("remove dir", remove_dir(dir));
+      return 0;
+    }
+  }
+}

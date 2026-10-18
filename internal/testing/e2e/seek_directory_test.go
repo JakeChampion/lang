@@ -61,7 +61,7 @@ function main(): i32 {
             seek("end 0", r, 0, 2);
             seek("back to 0", r, 0, 0);
             read("back at 0", r);
-            match (r.close()) { Some(_) => { print("close failed"); }, None => { print("closed"); } }
+            match (r.close()) { Err(_) => { print("close failed"); }, Ok(_) => { print("closed"); } }
         },
         Err(_) => { print("open failed"); }
     }

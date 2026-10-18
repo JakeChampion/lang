@@ -135,7 +135,7 @@ func TestSelfHostPerModuleReadLineText(t *testing.T) {
       match (r.read_line()) { None => { return 4; }, Some(s) => { if (s != second) { return 5; } } }
       if (held != first) { return 6; }
       match (r.read_line()) { None => {}, Some(_) => { return 7; } }
-      match (r.close()) { None => {}, Some(_) => { return 8; } }
+      match (r.close()) { Ok(_) => {}, Err(_) => { return 8; } }
     }
   }
   return 0;

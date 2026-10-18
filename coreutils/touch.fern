@@ -141,10 +141,7 @@ function touch_one(file: string, t: Times, change: i32, no_create: boolean, no_d
     // is EISDIR, which is not reported when the times still set.
     match (open_writer_with(file, 3)) {
       Ok(w) => {
-        match (w.close()) {
-          Some(_) => {},
-          None => {}
-        }
+        w.close();
       },
       Err(e) => {
         open_failed = true;

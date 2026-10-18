@@ -88,12 +88,12 @@ func TestArm64DarwinOpenWriterTruncates(t *testing.T) {
 		"  match (open_writer(\"" + path + "\")) {\n" +
 		"    Ok(w) => {\n" +
 		"      match (w.write(\"" + fresh + "\")) {\n" +
-		"        Some(e) => { return 1; },\n" +
-		"        None => {}\n" +
+		"        Err(e) => { return 1; },\n" +
+		"        Ok(_) => {}\n" +
 		"      }\n" +
 		"      match (w.close()) {\n" +
-		"        Some(e) => { return 2; },\n" +
-		"        None => {}\n" +
+		"        Err(e) => { return 2; },\n" +
+		"        Ok(_) => {}\n" +
 		"      }\n" +
 		"      return 0;\n" +
 		"    },\n" +
@@ -125,12 +125,12 @@ func TestArm64DarwinOpenAppenderAppends(t *testing.T) {
 		"  match (open_appender(\"" + path + "\")) {\n" +
 		"    Ok(w) => {\n" +
 		"      match (w.write(\"" + added + "\")) {\n" +
-		"        Some(e) => { return 1; },\n" +
-		"        None => {}\n" +
+		"        Err(e) => { return 1; },\n" +
+		"        Ok(_) => {}\n" +
 		"      }\n" +
 		"      match (w.close()) {\n" +
-		"        Some(e) => { return 2; },\n" +
-		"        None => {}\n" +
+		"        Err(e) => { return 2; },\n" +
+		"        Ok(_) => {}\n" +
 		"      }\n" +
 		"      return 0;\n" +
 		"    },\n" +

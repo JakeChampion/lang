@@ -2198,7 +2198,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-option-ret-type-param", "function h[T](o: Option[i32]): T { let v: i32 = o?; return h[T](o); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-result-ret-type-param", "function h[T](r: Result[i32, string]): T { let v: i32 = r?; return h[T](r); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-option-ret-void", "function f(o: Option[i32]): void { let v: i32 = o?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
-		{"try-writer-write-ret-result", "function a(): Result[i32, IoError] {\n  let w: Writer = stdout();\n  w.write(\"hi\\n\")?;\n  return Ok(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-writer-write-ret-result", "function a(): Result[i32, IoError] {\n  let w: Writer = stdout();\n  w.write(\"hi\\n\")?;\n  return Ok(1);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"try-lambda-ret-i32", "function f(): Option[i32] {\n    let g = (): i32 => { let o: Option[i32] = Some(1); let v: i32 = o?; return v; };\n    return Some(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-lambda-ret-option-ok", "function f(): i32 {\n    let g = (): Option[i32] => { let o: Option[i32] = Some(1); let v: i32 = o?; return Some(v); };\n    return 2;\n}\nfunction main(): i32 { return 0; }\n", nil},
 		// E042 not-a-`?`-type on a NON-primitive operand (#9331). The rule
@@ -2423,6 +2423,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"generic-slot-payloadless-binder-result", "function f(): Result[i32, IoError] { return Ok(1); }\nfunction main(): i32 { match (f()) { Ok(n) => { return n; }, Err(Interrupted) => { return 0; } } }\n", []string{"E015"}},
 		{"generic-slot-payloadless-binder-user", "enum Box[T] { Full(T), Empty }\nenum C { Red, Blue }\nfunction main(): i32 { let b: Box[C] = Full(Red); match (b) { Full(Blue) => { return 1; }, Empty => { return 0; } } }\n", []string{"E015"}},
 		{"generic-slot-payload-variant-name-binds", "function f(): Option[IoError] { return None; }\nfunction main(): i32 { match (f()) { Some(NotFound) => { return 0; }, _ => { return 1; } } }\n", nil},
+		// A handle operation with no value answers Result[void, IoError], so
+		// `?` composes it with remove_file; the Option spelling is gone (#12669).
+		{"handle-void-ops-compose", "function a(r: Reader): Result[i32, IoError] {\n    let w: Writer = stdout();\n    w.write(\"hi\\n\")?;\n    w.write_bytes([104 as u8])?;\n    w.truncate(0 as i64)?;\n    w.fsync()?;\n    w.close()?;\n    r.close()?;\n    remove_file(\"x\")?;\n    return Ok(1);\n}\nfunction main(): i32 { match (a(stdin())) { Ok(n) => { return n; }, Err(_) => { return 0; } } }\n", nil},
+		{"handle-write-is-not-option", "function main(): i32 {\n    let w: Writer = stdout();\n    match (w.write(\"x\")) { Some(_) => { return 1; }, None => { return 0; } }\n}\n", []string{"E014", "E030"}},
 		{"variant-missing-binding", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has => { return 1; }, Nil => { return 0; } } }\n", []string{"E015"}},
 		{"variant-binding-arity-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
 		// E015 continued: a RECORD-form variant (#6676) is destructured by field

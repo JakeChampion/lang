@@ -29,17 +29,17 @@ func dropCacheSource(prefix string, kernel bool) string {
 	}
 	writerChecks, readerChecks := "", ""
 	if kernel {
-		writerChecks = `match (w.drop_cache(0i64, 0i64 - 1i64)) { None => { return 13; }, Some(_) => {} }`
-		readerChecks = `match (r.drop_cache(0i64, 0i64 - 1i64)) { None => { return 23; }, Some(_) => {} }
+		writerChecks = `match (w.drop_cache(0i64, 0i64 - 1i64)) { Ok(_) => { return 13; }, Err(_) => {} }`
+		readerChecks = `match (r.drop_cache(0i64, 0i64 - 1i64)) { Ok(_) => { return 23; }, Err(_) => {} }
             r.close();
-            match (r.drop_cache(0i64, 0i64)) { None => { return 24; }, Some(_) => {} }`
+            match (r.drop_cache(0i64, 0i64)) { Ok(_) => { return 24; }, Err(_) => {} }`
 	}
 	return fmt.Sprintf(`function main(): i32 {
     match (open_writer(%[1]q)) {
         Ok(w) => {
-            match (w.write("cached\n")) { None => {}, Some(_) => { return 10; } }
-            match (w.drop_cache(0i64, 0i64)) { None => {}, Some(_) => { return 11; } }
-            match (w.drop_cache(0i64, 4i64)) { None => {}, Some(_) => { return 12; } }
+            match (w.write("cached\n")) { Ok(_) => {}, Err(_) => { return 10; } }
+            match (w.drop_cache(0i64, 0i64)) { Ok(_) => {}, Err(_) => { return 11; } }
+            match (w.drop_cache(0i64, 4i64)) { Ok(_) => {}, Err(_) => { return 12; } }
             %[2]s
             w.close();
         },
@@ -47,7 +47,7 @@ func dropCacheSource(prefix string, kernel bool) string {
     }
     match (open_reader(%[1]q)) {
         Ok(r) => {
-            match (r.drop_cache(2i64, 0i64)) { None => {}, Some(_) => { return 21; } }
+            match (r.drop_cache(2i64, 0i64)) { Ok(_) => {}, Err(_) => { return 21; } }
             match (r.read_chunk(6)) { Ok(c) => { if (c != "cached") { return 22; } }, Err(_) => { return 25; } }
             %[3]s
         },
@@ -77,7 +77,7 @@ func TestInterpDropCache(t *testing.T) {
 		// XNU has no fadvise: every call answers Unsupported there.
 		src := fmt.Sprintf(`function main(): i32 {
     match (open_writer(%q)) {
-        Ok(w) => { match (w.drop_cache(0i64, 0i64)) { Some(Unsupported()) => { return 0; }, _ => { return 1; } } },
+        Ok(w) => { match (w.drop_cache(0i64, 0i64)) { Err(Unsupported()) => { return 0; }, _ => { return 1; } } },
         Err(_) => { return 2; }
     }
 }

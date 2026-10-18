@@ -106,11 +106,11 @@ function main(): i32 {
     match (sub.remove_dir("g")) { Ok(_) => { return 36; }, Err(_) => {} }
     match (sub.remove_file("g")) { Ok(_) => {}, Err(_) => { return 37; } }
     match (sub.remove_file("g")) { Ok(_) => { return 38; }, Err(_) => {} }
-    match (sub.close()) { None => {}, Some(_) => { return 39; } }
+    match (sub.close()) { Ok(_) => {}, Err(_) => { return 39; } }
     match (top.remove_dir("sub")) { Ok(_) => {}, Err(_) => { return 40; } }
     match (open_dir(%[2]q)) { Ok(_) => { return 41; }, Err(_) => {} }%[3]s
-    match (top.close()) { None => {}, Some(_) => { return 43; } }
-    match (top.close()) { None => { return 44; }, Some(_) => {} }
+    match (top.close()) { Ok(_) => {}, Err(_) => { return 43; } }
+    match (top.close()) { Ok(_) => { return 44; }, Err(_) => {} }
     return 0;
 }
 `, root, filepath.Join(root, "f"), walk)

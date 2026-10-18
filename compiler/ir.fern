@@ -1803,9 +1803,9 @@ pub function op_tcp_send_buf(): Op {
   return op0(387);
 }
 
-// `writer_write` [fd, str box] -> a fresh `Option[IoError]` box: write(2) of the
-// box's bytes to the fd, looping until they are all out — None once they are,
-// Some(io_error(errno, "")) on a failing write. The write-half streaming
+// `writer_write` [fd, str box] -> a fresh `Result[void, IoError]` box: write(2)
+// of the box's bytes to the fd, looping until they are all out — Ok once they
+// are, Err(io_error(errno, "")) on a failing write. The write-half streaming
 // primitive (#4372); a Writer is a bare fd (like a Reader — see op_read_chunk).
 // `stdout()`/`stderr()` lower to the i32 constants 1/2 directly (no op);
 // `Writer.close()` reuses op_reader_close. The byte count is not reported:
@@ -2286,8 +2286,8 @@ pub function op_fd_stat(): Op {
   return op0(241);
 }
 
-// `fd_fsync` / `fd_fdatasync` pop [fd] and push Option[IoError]: fsync(2) /
-// fdatasync(2) of the handle, None once the write-back is scheduled. Back
+// `fd_fsync` / `fd_fdatasync` pop [fd] and push Result[void, IoError]: fsync(2) /
+// fdatasync(2) of the handle, Ok once the write-back is scheduled. Back
 // `r.fsync()` / `w.fsync()` and their fdatasync twins. `fd_syncfs` is the same
 // shape for syncfs(2), the whole filesystem the handle lives on rather than the
 // handle's own file; neither WASI preview has it, so the wasm backends answer
@@ -2304,14 +2304,14 @@ pub function op_fd_syncfs(): Op {
   return op0(301);
 }
 
-// `fd_drop_cache` pops [fd, offset, len] and pushes Option[IoError]:
+// `fd_drop_cache` pops [fd, offset, len] and pushes Result[void, IoError]:
 // posix_fadvise(2) with POSIX_FADV_DONTNEED over that range of the handle's
 // file. Backs `r.drop_cache(offset, len)` / `w.drop_cache(offset, len)`.
 pub function op_fd_drop_cache(): Op {
   return op0(366);
 }
 
-// `fd_dup_onto` pops [fd, newfd] and pushes Option[IoError]: dup3(2) of the
+// `fd_dup_onto` pops [fd, newfd] and pushes Result[void, IoError]: dup3(2) of the
 // handle's descriptor onto `newfd`, so the handle is reachable as that number
 // too and whatever it named is closed. Backs `r.dup_onto(fd)` /
 // `w.dup_onto(fd)`. Neither WASI preview can install a descriptor at a chosen
@@ -2320,9 +2320,9 @@ pub function op_fd_dup_onto(): Op {
   return op0(311);
 }
 
-// `writer_splice_forever` pops [fd, str box] and pushes Option[IoError]: the
+// `writer_splice_forever` pops [fd, str box] and pushes Result[void, IoError]: the
 // string vmsplice(2)d into the writer over and over, returning only on a
-// failure. Some(Unsupported) means nothing reached the writer, and the caller
+// failure. Err(Unsupported) means nothing reached the writer, and the caller
 // writes the block itself. Backs `w.splice_forever(block)`.
 pub function op_writer_splice_forever(): Op {
   return op0(431);
@@ -2364,7 +2364,7 @@ pub function op_fd_flags(): Op {
   return op0(307);
 }
 
-// `writer_truncate` pops [fd, length] and pushes Option[IoError]: ftruncate(2)
+// `writer_truncate` pops [fd, length] and pushes Result[void, IoError]: ftruncate(2)
 // on the handle. Backs `w.truncate(length)`. Distinct from `truncate` (273),
 // which resolves a PATH and checks write permission again — the descriptor's
 // check happened at the open, so the two disagree on a file whose mode would
@@ -2374,7 +2374,7 @@ pub function op_writer_truncate(): Op {
 }
 
 // `reader_close` pops an i32 Reader fd and closes it (`close(fd)`), pushing a
-// fresh Option[IoError] (None on success). A VALUE op — one arg consumed. Lowers
+// fresh Result[void, IoError] (Ok on success). A VALUE op — one arg consumed. Lowers
 // to each backend's __fern_reader_close helper. wasm-ineligible like read_chunk.
 pub function op_reader_close(): Op {
   return op0(179);
@@ -9038,10 +9038,10 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 203 || tag == 304 || tag == 305) {
     return true;
   }
-  // writer_write boxes its Option[IoError] result (and, on a failing write,
+  // writer_write boxes its Result[void, IoError] result (and, on a failing write,
   // the IoError inside it), so it needs the heap runtime too (#7926).
   // write_some boxes a Result[i64, IoError] the same way, and
-  // writer_splice_forever an Option[IoError].
+  // writer_splice_forever a Result[void, IoError].
   if (tag == 202 || tag == 308 || tag == 431) {
     return true;
   }
@@ -9112,7 +9112,7 @@ pub function op_allocates(tag: i32): boolean {
   }
   // fd_stat boxes the same pair; reader_seek, reader_splice,
   // reader_copy_range and fd_flags box their Result[i64, IoError];
-  // writer_truncate and fd_drop_cache box their Option[IoError].
+  // writer_truncate and fd_drop_cache box their Result[void, IoError].
   if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330 || tag == 407 || tag == 366) {
     return true;
   }

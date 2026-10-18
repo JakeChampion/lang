@@ -37,7 +37,7 @@ function main(): i32 {
   }
   match (read_line()) { Some(_) => { return 1; }, None => {} }
   match (r.read_line()) { Some(_) => { return 2; }, None => {} }
-  match (r.close()) { Some(_) => { return 3; }, None => {} }
+  match (r.close()) { Err(_) => { return 3; }, Ok(_) => {} }
   match (read_line()) { Some(_) => { return 4; }, None => {} }
   match (r.read_line()) { Some(_) => { return 5; }, None => {} }
   print("retained");

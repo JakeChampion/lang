@@ -108,7 +108,7 @@ function main(): i32 {
  let v: [u8] = s.as_bytes();
  let i = 0;
  while (i < %d) {
-  match (w.write_bytes(%s)) { Some(_) => { return 1; }, None => {} }
+  match (w.write_bytes(%s)) { Err(_) => { return 1; }, Ok(_) => {} }
   match (w.write_some_bytes(%s)) { Err(_) => { return 2; }, Ok(n) => { if (n != %d) { return 3; } } }
   i = i + 1;
  }

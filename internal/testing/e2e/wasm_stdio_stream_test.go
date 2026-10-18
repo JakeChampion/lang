@@ -24,10 +24,10 @@ import (
 
 const stdoutCloseSource = `function main(): i32 {
     let w = stdout();
-    match (w.close()) { Some(_) => { eprint("fail 1"); return 1; }, None => {} }
-    match (w.write("LEAK-a\n")) { None => { eprint("fail 2"); return 2; }, Some(_) => {} }
-    match (stdout().write("LEAK-b\n")) { None => { eprint("fail 3"); return 3; }, Some(_) => {} }
-    match (stdout().close()) { None => { eprint("fail 4"); return 4; }, Some(_) => {} }
+    match (w.close()) { Err(_) => { eprint("fail 1"); return 1; }, Ok(_) => {} }
+    match (w.write("LEAK-a\n")) { Ok(_) => { eprint("fail 2"); return 2; }, Err(_) => {} }
+    match (stdout().write("LEAK-b\n")) { Ok(_) => { eprint("fail 3"); return 3; }, Err(_) => {} }
+    match (stdout().close()) { Ok(_) => { eprint("fail 4"); return 4; }, Err(_) => {} }
     print("LEAK-c");
     write("LEAK-d");
     putchar(76);
@@ -38,10 +38,10 @@ const stdoutCloseSource = `function main(): i32 {
 
 const stderrCloseSource = `function main(): i32 {
     let w = stderr();
-    match (w.close()) { Some(_) => { print("fail 1"); return 1; }, None => {} }
-    match (w.write("LEAK-a\n")) { None => { print("fail 2"); return 2; }, Some(_) => {} }
-    match (stderr().write("LEAK-b\n")) { None => { print("fail 3"); return 3; }, Some(_) => {} }
-    match (stderr().close()) { None => { print("fail 4"); return 4; }, Some(_) => {} }
+    match (w.close()) { Err(_) => { print("fail 1"); return 1; }, Ok(_) => {} }
+    match (w.write("LEAK-a\n")) { Ok(_) => { print("fail 2"); return 2; }, Err(_) => {} }
+    match (stderr().write("LEAK-b\n")) { Ok(_) => { print("fail 3"); return 3; }, Err(_) => {} }
+    match (stderr().close()) { Ok(_) => { print("fail 4"); return 4; }, Err(_) => {} }
     eprint("LEAK-c");
     print("done");
     return 0;
@@ -51,12 +51,12 @@ const stderrCloseSource = `function main(): i32 {
 // stdin carries a line, so a read that reached it would answer Some.
 const stdinCloseSource = `function main(): i32 {
     let r = stdin();
-    match (r.close()) { Some(_) => { print("fail 1"); return 1; }, None => {} }
+    match (r.close()) { Err(_) => { print("fail 1"); return 1; }, Ok(_) => {} }
     match (r.read_line()) { Some(_) => { print("fail 2"); return 2; }, None => {} }
     match (stdin().read_line()) { Some(_) => { print("fail 3"); return 3; }, None => {} }
     match (stdin().read_chunk(4)) { Ok(_) => { print("fail 4"); return 4; }, Err(_) => {} }
     match (read_line()) { Some(_) => { print("fail 5"); return 5; }, None => {} }
-    match (stdin().close()) { None => { print("fail 6"); return 6; }, Some(_) => {} }
+    match (stdin().close()) { Ok(_) => { print("fail 6"); return 6; }, Err(_) => {} }
     print("done");
     return 0;
 }
@@ -157,7 +157,7 @@ const failedWriteSource = `function main(): i32 {
         match (open_writer("full")) {
             Err(_) => { return 1; },
             Ok(w) => {
-                match (w.write("x")) { None => { return 2; }, Some(_) => {} }
+                match (w.write("x")) { Ok(_) => { return 2; }, Err(_) => {} }
                 w.close();
             }
         }

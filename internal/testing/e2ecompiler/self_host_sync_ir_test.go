@@ -37,20 +37,20 @@ func selfHostSyncSource(prefix string, wasm bool) string {
 	tail := `
     match (open_reader("/dev/zero")) {
         Ok(f) => {
-            match (f.fsync())     { None => { return 20; }, Some(_) => {} }
-            match (f.fdatasync()) { None => { return 21; }, Some(_) => {} }
-            match (f.syncfs())    { None => {}, Some(_) => { return 22; } }
+            match (f.fsync())     { Ok(_) => { return 20; }, Err(_) => {} }
+            match (f.fdatasync()) { Ok(_) => { return 21; }, Err(_) => {} }
+            match (f.syncfs())    { Ok(_) => {}, Err(_) => { return 22; } }
             f.close();
         },
         Err(_) => { return 23; }
     }
     sync();`
-	syncfsArm := `match (w.syncfs()) { None => {}, Some(_) => { return 12; } }`
-	closed := `match (w.fsync())     { None => { return 14; }, Some(_) => {} }
-            match (w.fdatasync()) { None => { return 15; }, Some(_) => {} }`
+	syncfsArm := `match (w.syncfs()) { Ok(_) => {}, Err(_) => { return 12; } }`
+	closed := `match (w.fsync())     { Ok(_) => { return 14; }, Err(_) => {} }
+            match (w.fdatasync()) { Ok(_) => { return 15; }, Err(_) => {} }`
 	if wasm {
 		tail = ""
-		syncfsArm = `match (w.syncfs()) { None => { return 12; }, Some(_) => {} }`
+		syncfsArm = `match (w.syncfs()) { Ok(_) => { return 12; }, Err(_) => {} }`
 		// `close` drops the preview-2 descriptor resource, and a dropped
 		// handle traps rather than answering EBADF.
 		closed = ""
@@ -58,10 +58,10 @@ func selfHostSyncSource(prefix string, wasm bool) string {
 	return `function main(): i32 {
     match (open_writer("` + p("flushed.txt") + `")) {
         Ok(w) => {
-            match (w.write("self-host\n")) { None => {}, Some(_) => { return 10; } }
-            match (w.fsync())     { None => {}, Some(_) => { return 11; } }
+            match (w.write("self-host\n")) { Ok(_) => {}, Err(_) => { return 10; } }
+            match (w.fsync())     { Ok(_) => {}, Err(_) => { return 11; } }
             ` + syncfsArm + `
-            match (w.fdatasync()) { None => {}, Some(_) => { return 13; } }
+            match (w.fdatasync()) { Ok(_) => {}, Err(_) => { return 13; } }
             w.close();
             ` + closed + `
         },

@@ -52,7 +52,7 @@ function main(): i32 {
     let changed = first.with(0, 255 as u8);
     if (alias[0] != 0 || changed[0] != 255) { return 10; }
     match (r.read_chunk_bytes(9)) { Ok(bs) => { if (bs.len() != 0) { return 11; } }, Err(_) => { return 12; } }
-    match (r.close()) { Some(_) => { return 13; }, None => { } }
+    match (r.close()) { Err(_) => { return 13; }, Ok(_) => { } }
     match (r.read_chunk_bytes(1)) { Ok(_) => { return 14; }, Err(_) => { } }
     match (r.read_chunk_bytes(0)) { Ok(_) => { return 15; }, Err(_) => { } }
     return 0;

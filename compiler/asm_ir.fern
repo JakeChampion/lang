@@ -142,8 +142,8 @@ function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
 // __fern_writer_write is a Fern runtime function (#2649):
 // asmcore.rt_src_writer_write, in the same bundle and gated on the writer_write
 // need. It write(2)s the string's own buffer via __raw_data until every byte is
-// out, wrapping the outcome as None / Some(io_error) (#7926); it allocates that
-// Option box, so it needs the heap.
+// out, wrapping the outcome as Ok / Err(io_error) (#7926); it allocates that
+// Result box, so it needs the heap.
 // __fern_sleep_ms is a Fern runtime function (#2649): asmcore.rt_src_sleep_ms,
 // and __fern_sleep_ns its nanosecond-resolution twin (#8528):
 // asmcore.rt_src_sleep_ns. Both write the timespec into __fern_scratch, so they
@@ -10896,7 +10896,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("write_some");
   } else if (o.kind_tag == 431) {  // writer_splice_forever
     // [fd, str box], marshalled as write_some's are, into
-    // __fn___fern_writer_splice_forever(fd, s) -> a fresh Option[IoError].
+    // __fn___fern_writer_splice_forever(fd, s) -> a fresh Result[void, IoError].
     s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_writer_splice_forever\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
@@ -11110,7 +11110,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("sysctl");
   } else if (o.kind_tag == 299) {  // fd_fsync
     // [fd] IS param[0]; __fn___fern_fd_fsync pushes a fresh
-    // Option[IoError], None once the write-back is scheduled.
+    // Result[void, IoError], Ok once the write-back is scheduled.
     s = s.write("    call __fn___fern_fd_fsync\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("reader");
@@ -11148,7 +11148,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("fd_stat");
   } else if (o.kind_tag == 311) {  // fd_dup_onto
     // [fd][newfd]; the Fern __fn___fern_fd_dup_onto(fd, newfd) pushes
-    // a fresh Option[IoError]. newfd is on top but param[0] is fd, so
+    // a fresh Result[void, IoError]. newfd is on top but param[0] is fd, so
     // swap before the call, as writer_truncate does.
     s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_fd_dup_onto\n    addq $16, %rsp\n    pushq %rax\n");
@@ -11188,7 +11188,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("reader_copy_range");
   } else if (o.kind_tag == 281) {  // writer_truncate
     // [fd][length]; the Fern __fn___fern_writer_truncate(fd, length)
-    // pushes a fresh Option[IoError]. The length is on top but param[0]
+    // pushes a fresh Result[void, IoError]. The length is on top but param[0]
     // is fd, so swap before the call, as writer_write does.
     s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_writer_truncate\n    addq $16, %rsp\n    pushq %rax\n");

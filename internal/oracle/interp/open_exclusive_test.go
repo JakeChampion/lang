@@ -16,8 +16,8 @@ func TestOpenExclusiveRefusesAnExistingName(t *testing.T) {
 	src := `function main(): i32 {
     match (open_exclusive("` + path + `")) {
         Ok(w) => {
-            match (w.write("new")) { Some(e) => { return 1; }, None => {} }
-            match (w.close()) { Some(e) => { return 2; }, None => {} }
+            match (w.write("new")) { Err(e) => { return 1; }, Ok(_) => {} }
+            match (w.close()) { Err(e) => { return 2; }, Ok(_) => {} }
         },
         Err(e) => { return 3; }
     }
@@ -64,7 +64,7 @@ func TestOpenExclusiveIsNotReadableByGroupOrOther(t *testing.T) {
 	src := `function main(): i32 {
     match (open_exclusive("` + path + `")) {
         Ok(w) => {
-            match (w.close()) { Some(e) => { return 1; }, None => {} }
+            match (w.close()) { Err(e) => { return 1; }, Ok(_) => {} }
             return 0;
         },
         Err(e) => { return 2; }

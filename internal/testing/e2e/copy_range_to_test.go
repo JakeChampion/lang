@@ -51,7 +51,7 @@ function copy(r: Reader, w: Writer): i32 {
         match (r.read_chunk(65536)) {
             Ok(c) => {
                 if (c.len() == 0) { return copied; }
-                match (w.write(c)) { None => {}, Some(_) => { return 0 - 2; } }
+                match (w.write(c)) { Ok(_) => {}, Err(_) => { return 0 - 2; } }
             },
             Err(_) => { return 0 - 3; }
         }

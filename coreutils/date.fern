@@ -327,11 +327,8 @@ function batch(o: io_buffered.BufWriter, s: Show, name: string): (boolean, io_bu
     None => {}
   }
   if (name != "-") {
-    match (r.close()) {
-      Some(e) => {
-        gnu.die(w, gnu.quotef(name) + ": " + gnu.io_error_text(e), 1);
-      },
-      None => {}
+    if let Err(e) = r.close() {
+      gnu.die(w, gnu.quotef(name) + ": " + gnu.io_error_text(e), 1);
     }
   }
   return (ok, w);

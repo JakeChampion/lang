@@ -22,7 +22,7 @@ function main(): i32 {
     Ok(p) => p,
     Err(_) => { return 10; },
   };
-  match (p.w.write("x")) { None => {}, Some(_) => { return 11; } }
+  match (p.w.write("x")) { Ok(_) => {}, Err(_) => { return 11; } }
   let d: async.RealDriver = async.real_driver();
   let fd: i32 = p.r.fd;
   if (!d.oneshot()) { return 12; }

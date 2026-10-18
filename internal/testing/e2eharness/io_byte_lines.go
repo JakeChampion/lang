@@ -13,7 +13,7 @@ const ioByteLinePrelude = `import "std/io_buffered" as io;
 import "std/i32";
 function emit(line: u8[]): i32 {
     write(line.len().to_string() + ":");
-    match (stdout().write_bytes(line)) { Some(_) => { return 1; }, None => {} }
+    match (stdout().write_bytes(line)) { Err(_) => { return 1; }, Ok(_) => {} }
     write("\n");
     return 0;
 }
@@ -38,7 +38,7 @@ func IOByteLinesProgram(term, chunkSize int) string {
     match (lr.error()) { Some(_) => { return 2; }, None => {} }
     let again: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
     match (again.0) { Some(_) => { return 3; }, None => {} }
-    match (r.close()) { Some(_) => { return 4; }, None => {} }
+    match (r.close()) { Err(_) => { return 4; }, Ok(_) => {} }
     let i: i32 = 0;
     while (i < held.len()) {
         if (emit(held[i]) != 0) { return 5; }
@@ -84,7 +84,7 @@ func IOByteLineCases() []IOByteLineCase {
     lr = end.1;
     match (end.0) { Some(_) => { return 3; }, None => {} }
     match (lr.error()) { Some(_) => { return 4; }, None => {} }
-    match (r.close()) { Some(_) => { return 5; }, None => {} }
+    match (r.close()) { Err(_) => { return 5; }, Ok(_) => {} }
     let i: i32 = 0;
     while (i < held.len()) { if (emit(held[i]) != 0) { return 6; } i = i + 1; }
     return 0;
@@ -117,7 +117,7 @@ func IOByteLineCases() []IOByteLineCase {
     let again: (boolean, io.ByteLineReader) = lr.skip_line();
     if (again.0) { return 2; }
     match (again.1.error()) { Some(_) => { return 3; }, None => {} }
-    match (r.close()) { Some(_) => { return 4; }, None => {} }
+    match (r.close()) { Err(_) => { return 4; }, Ok(_) => {} }
     return 0;
 }`, Check: func(t *testing.T, command func() *exec.Cmd, census bool) {
 		checkIOByteLineOutput(t, command(), []byte("a\nbbbbbbbbb\nccc\ndddddddddd"),
@@ -140,7 +140,7 @@ func IOByteLineCases() []IOByteLineCase {
 func IOByteLineReadErrorProgram(closed bool, chunk, length, value int) string {
 	setup, closeAtEnd := "", "true"
 	if closed {
-		setup = "match (r.close()) { Some(_) => { return 1; }, None => {} }"
+		setup = "match (r.close()) { Err(_) => { return 1; }, Ok(_) => {} }"
 		closeAtEnd = "false"
 	}
 	return strings.NewReplacer("SETUP", setup, "CHUNK", strconv.Itoa(chunk), "LENGTH", strconv.Itoa(length),
@@ -169,7 +169,7 @@ function main(): i32 {
     let last: (Option[u8[]], io.ByteLineReader) = lr.next_line_bytes();
     match (last.0) { Some(_) => { return 8; }, None => {} }
     match (last.1.error()) { Some(_) => {}, None => { return 9; } }
-    if (CLOSE) { match (r.close()) { Some(_) => { return 10; }, None => {} } }
+    if (CLOSE) { match (r.close()) { Err(_) => { return 10; }, Ok(_) => {} } }
     return 0;
 }`)
 }

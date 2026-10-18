@@ -23,6 +23,7 @@ import "./parser";
 import "./util";
 import "./astwalk";
 import "./aesref";
+import "std/io";
 import "std/utf8";
 
 // =================== VALUES ====================
@@ -1705,7 +1706,7 @@ function reader_method(rs: VStruct, name: string, args: Value[]): Value {
     if (args.len() != 0) {
       return v_err("Reader.close takes no arguments");
     }
-    return option_io_error_value(r.close());
+    return void_result_value(r.close().failure());
   }
   if (name == "read_line") {
     if (args.len() != 0) {
@@ -1876,13 +1877,15 @@ function call_xattr(name: string, args: Value[]): Value {
   }
 }
 
-function option_io_error_value(error: Option[IoError]): Value {
+// The interpreted program's Result[void, IoError] for a host handle call,
+// from the host outcome's `.failure()`.
+function void_result_value(error: Option[IoError]): Value {
   match (error) {
     Some(e) => {
-      return v_variant("Some", [io_error_value(e)]);
+      return v_variant("Err", [io_error_value(e)]);
     },
     None => {
-      return v_variant("None", []);
+      return v_variant("Ok", [v_tuple([])]);
     }
   }
 }
@@ -1912,7 +1915,7 @@ function writer_byte_method(w: Writer, name: string, value: Value): Value {
       i = i + 1;
     }
     if (name == "write_bytes") {
-      return option_io_error_value(w.write_bytes(bytes));
+      return void_result_value(w.write_bytes(bytes).failure());
     }
     return write_count_value(w.write_some_bytes(bytes));
   }
@@ -1932,7 +1935,7 @@ function writer_method(rs: VStruct, name: string, args: Value[]): Value {
     if (args.len() != 0) {
       return v_err("Writer.close takes no arguments");
     }
-    return option_io_error_value(w.close());
+    return void_result_value(w.close().failure());
   }
   if (args.len() != 1) {
     return v_err("Writer." + name + " takes one argument");
@@ -1942,11 +1945,11 @@ function writer_method(rs: VStruct, name: string, args: Value[]): Value {
   }
   if let VString(s) = args[0] {
     if (name == "write") {
-      return option_io_error_value(w.write(s.v));
+      return void_result_value(w.write(s.v).failure());
     }
     // Nothing reaches the writer, so the caller writes the block itself.
     if (name == "splice_forever") {
-      return option_io_error_value(Some(Unsupported));
+      return void_result_value(Some(Unsupported));
     }
     return write_count_value(w.write_some(s.v));
   }

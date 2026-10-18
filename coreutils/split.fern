@@ -579,11 +579,8 @@ function out_end(o: Out): Out {
   if (!o.open) {
     return o;
   }
-  match (o.w.close()) {
-    Some(e) => {
-      write_failed(o.s, o.so, o.name, e);
-    },
-    None => {}
+  if let Err(e) = o.w.close() {
+    write_failed(o.s, o.so, o.name, e);
   }
   piece_wait(o.s, o.so, o.name, o.pid);
   return Out { ...o, open: false, pid: 0 };
@@ -777,12 +774,9 @@ function spool(s: Src, first: u8[]): (Src, i64) {
     block = r.0;
     src = r.1;
   }
-  match (buf.close()) {
-    Some(e) => {
-      gnu.error(path + ": " + gnu.io_error_text(e));
-      exit(1);
-    },
-    None => {}
+  if let Err(e) = buf.close() {
+    gnu.error(path + ": " + gnu.io_error_text(e));
+    exit(1);
   }
   return (src_new(back, s.name), total);
 }
@@ -1290,11 +1284,8 @@ function split_round(s: Settings, o: Out, src: Src): Out {
   let c: i32 = 0;
   while (c < n) {
     if (live[c]) {
-      match (ws[c].close()) {
-        Some(e) => {
-          write_failed(s, out.so, names[c], e);
-        },
-        None => {}
+      if let Err(e) = ws[c].close() {
+        write_failed(s, out.so, names[c], e);
       }
       piece_wait(s, out.so, names[c], pids[c]);
     }
@@ -1377,11 +1368,8 @@ function write_fd(s: Settings, so: io_buffered.BufWriter, w: Writer, name: strin
   if (data.len() == 0) {
     return;
   }
-  match (w.write_bytes(data)) {
-    Some(e) => {
-      write_failed(s, so, name, e);
-    },
-    None => {}
+  if let Err(e) = w.write_bytes(data) {
+    write_failed(s, so, name, e);
   }
 }
 

@@ -332,6 +332,7 @@ int_wrap                                             0
 io_error_other_closed_stdout                         0
 io_error_other_is_a_directory                        0
 io_error_other_not_a_directory                       0
+io_void_results_compose                              0
 iter_build_consume                                   0
 json_array_field                                     0
 json_error_location                                  0

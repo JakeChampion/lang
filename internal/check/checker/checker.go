@@ -2536,14 +2536,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// write_file(path, content): Result[void, IoError] — writes the
 	// content to the named file, truncating it first. `Ok(())` on
 	// success, `Err(e)` on failure.
-	//
-	// This was Option[IoError], with `Some` meaning FAILURE, because
-	// the language had no way to write a unit value so Result[void, E]
-	// could not be constructed. That inverted the polarity of every
-	// other Option, split the filesystem builtins across two shapes
-	// (read_file / read_dir / stat are Results), and made `?` silently
-	// wrong — on failure it yielded the error and carried on, on
-	// success it returned early. `()` (#6040) closed that.
 	c.info.FuncSigs["write_file"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
@@ -2587,7 +2579,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	readerType := ast.StructType{Name: "Reader"}
 	writerType := ast.StructType{Name: "Writer"}
 	ioErrType := ast.EnumType{Name: "IoError"}
-	optionIoErr := ast.EnumType{Name: "Option", Args: []ast.Type{ioErrType}}
+	voidIoResult := ast.EnumType{Name: "Result", Args: []ast.Type{ast.VoidType{}, ioErrType}}
 	c.info.FuncSigs["open_reader"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{readerType, ioErrType}},
@@ -4211,7 +4203,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// Raw reads preserve every byte, including partial UTF-8 sequences.
 	registerStructMethod("Reader", "read_chunk_bytes", []ast.Type{ast.NumberType{}},
 		ast.EnumType{Name: "Result", Args: []ast.Type{u8s, ioErrType}})
-	registerStructMethod("Reader", "close", nil, optionIoErr)
+	registerStructMethod("Reader", "close", nil, voidIoResult)
 	// stat asks fstat(2) of the handle itself — the same record `stat(path)`
 	// fills, for a stream the program did not open by name (stdin, stdout,
 	// an inherited descriptor). A method rather than an `fstat(fd)` free
@@ -4244,19 +4236,18 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// Gated on `fsdir`: no wasm backend lowers the handle (E066).
 	dirType := ast.StructType{Name: "Dir"}
 	dirResult := ast.EnumType{Name: "Result", Args: []ast.Type{dirType, ioErrType}}
-	voidResult := ast.EnumType{Name: "Result", Args: []ast.Type{ast.VoidType{}, ioErrType}}
 	c.info.FuncSigs["open_dir"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}}, Result: dirResult}
 	registerStructMethod("Dir", "open_dir", []ast.Type{ast.StringType{}}, dirResult)
 	registerStructMethod("Dir", "entries", nil,
 		ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.StringType{}}, ioErrType}})
 	registerStructMethod("Dir", "stat", []ast.Type{ast.StringType{}}, fileStatResult)
 	registerStructMethod("Dir", "lstat", []ast.Type{ast.StringType{}}, fileStatResult)
-	registerStructMethod("Dir", "access", []ast.Type{ast.StringType{}, ast.NumberType{}}, voidResult)
-	registerStructMethod("Dir", "remove_file", []ast.Type{ast.StringType{}}, voidResult)
-	registerStructMethod("Dir", "remove_dir", []ast.Type{ast.StringType{}}, voidResult)
-	registerStructMethod("Dir", "chmod", []ast.Type{ast.StringType{}, ast.NumberType{}, ast.BoolType{}}, voidResult)
-	registerStructMethod("Dir", "chown", []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}, ast.BoolType{}}, voidResult)
-	registerStructMethod("Dir", "close", nil, optionIoErr)
+	registerStructMethod("Dir", "access", []ast.Type{ast.StringType{}, ast.NumberType{}}, voidIoResult)
+	registerStructMethod("Dir", "remove_file", []ast.Type{ast.StringType{}}, voidIoResult)
+	registerStructMethod("Dir", "remove_dir", []ast.Type{ast.StringType{}}, voidIoResult)
+	registerStructMethod("Dir", "chmod", []ast.Type{ast.StringType{}, ast.NumberType{}, ast.BoolType{}}, voidIoResult)
+	registerStructMethod("Dir", "chown", []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}, ast.BoolType{}}, voidIoResult)
+	registerStructMethod("Dir", "close", nil, voidIoResult)
 	registerStructMethod("Writer", "stat", nil, fileStatResult)
 	// seek(offset, whence) is lseek(2): whence 0 / 1 / 2 for SEEK_SET /
 	// SEEK_CUR / SEEK_END, the new offset back. A pipe answers ESPIPE
@@ -4371,9 +4362,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// lowering and is not: it closes the source, which leaves the handle
 	// dangling — a move rather than a duplicate.
 	registerStructMethod("Reader", "dup_onto",
-		[]ast.Type{ast.NumberType{}}, optionIoErr)
+		[]ast.Type{ast.NumberType{}}, voidIoResult)
 	registerStructMethod("Writer", "dup_onto",
-		[]ast.Type{ast.NumberType{}}, optionIoErr)
+		[]ast.Type{ast.NumberType{}}, voidIoResult)
 	// The four terminal questions asked of a handle instead of a
 	// descriptor number, for `isatty`'s reason: `stty -F DEVICE` opens a
 	// path and a Reader surrenders no number, so without these the
@@ -4393,26 +4384,24 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// forms at compile time cannot see a method at all, because the call
 	// reaches `internal/pkg/platforms` already rewritten to
 	// `__method_Reader_termios_get(r)` and the scan skips `__` names.
-	voidIoErr := ast.EnumType{Name: "Result", Args: []ast.Type{
-		ast.VoidType{}, ioErrType}}
 	registerStructMethod("Reader", "window_size", nil,
 		ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.StructType{Name: "WinSize"}, ioErrType}})
 	registerStructMethod("Reader", "set_window_size",
-		[]ast.Type{ast.NumberType{}, ast.NumberType{}}, voidIoErr)
+		[]ast.Type{ast.NumberType{}, ast.NumberType{}}, voidIoResult)
 	registerStructMethod("Reader", "termios_get", nil,
 		ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}, ioErrType}})
 	registerStructMethod("Reader", "termios_set",
 		[]ast.Type{ast.NumberType{},
-			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}}, voidIoErr)
-	registerStructMethod("Reader", "set_extproc", []ast.Type{ast.BoolType{}}, voidIoErr)
-	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
+			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}}, voidIoResult)
+	registerStructMethod("Reader", "set_extproc", []ast.Type{ast.BoolType{}}, voidIoResult)
+	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, voidIoResult)
 	// splice_forever(block) moves the block into the writer over and over,
 	// by vmsplice(2) where the kernel takes it, and returns only on a
-	// failure. Some(Unsupported) means nothing reached the writer, so the
+	// failure. Err(Unsupported) means nothing reached the writer, so the
 	// caller writes the block itself.
-	registerStructMethod("Writer", "splice_forever", []ast.Type{ast.StringType{}}, optionIoErr)
+	registerStructMethod("Writer", "splice_forever", []ast.Type{ast.StringType{}}, voidIoResult)
 	// write_some(s) is ONE write(2) and the count it returned: the write
 	// may land in full, in part, or not at all, and the caller loops.
 	// `write` above is the same syscall with the loop inside it, which
@@ -4435,9 +4424,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Writer", "write_some", []ast.Type{ast.StringType{}}, writeSomeResult)
 	bytes := ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}
-	registerStructMethod("Writer", "write_bytes", []ast.Type{bytes}, optionIoErr)
+	registerStructMethod("Writer", "write_bytes", []ast.Type{bytes}, voidIoResult)
 	registerStructMethod("Writer", "write_some_bytes", []ast.Type{bytes}, writeSomeResult)
-	registerStructMethod("Writer", "close", nil, optionIoErr)
+	registerStructMethod("Writer", "close", nil, voidIoResult)
 	// truncate(len) is ftruncate(2) on the handle: the file's length is set
 	// to `len`, growing with a hole that reads as zeros or discarding the
 	// bytes past it.
@@ -4465,7 +4454,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// `descriptor.set-size` on preview 2, so it is provided on all four
 	// targets rather than refused.
 	registerStructMethod("Writer", "truncate",
-		[]ast.Type{ast.NumberType{Width: 64, Signed: true}}, optionIoErr)
+		[]ast.Type{ast.NumberType{Width: 64, Signed: true}}, voidIoResult)
 	// Write-back of a handle's own data, on the handle rather than on a
 	// path, for the same reason `stat` is: the descriptor is the thing
 	// being flushed, and on wasi preview 2 it is not a number the
@@ -4489,24 +4478,24 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// whose size did not change. Both are `Err(Other(…, "Invalid
 	// argument"))` on a handle whose kind cannot be flushed — a pipe,
 	// a FIFO, a character device — rather than silently succeeding.
-	registerStructMethod("Reader", "fsync", nil, optionIoErr)
-	registerStructMethod("Writer", "fsync", nil, optionIoErr)
-	registerStructMethod("Reader", "fdatasync", nil, optionIoErr)
-	registerStructMethod("Writer", "fdatasync", nil, optionIoErr)
+	registerStructMethod("Reader", "fsync", nil, voidIoResult)
+	registerStructMethod("Writer", "fsync", nil, voidIoResult)
+	registerStructMethod("Reader", "fdatasync", nil, voidIoResult)
+	registerStructMethod("Writer", "fdatasync", nil, voidIoResult)
 	// syncfs flushes the whole filesystem the handle lives on, not the
 	// handle's own file. Neither WASI preview has it — preview 1's
 	// `fd_sync` is per-descriptor and a preopen is a capability handle
 	// rather than a mount — so it answers `Err(Unsupported)` there.
-	registerStructMethod("Reader", "syncfs", nil, optionIoErr)
-	registerStructMethod("Writer", "syncfs", nil, optionIoErr)
+	registerStructMethod("Reader", "syncfs", nil, voidIoResult)
+	registerStructMethod("Writer", "syncfs", nil, voidIoResult)
 	// drop_cache(offset, len) asks the kernel to drop the cached pages of
 	// that range of the handle's file: posix_fadvise(2) with
 	// POSIX_FADV_DONTNEED, len 0 meaning to the end. XNU has no fadvise, so
 	// arm64-darwin answers `Err(Unsupported)`; WASI's fd_advise /
 	// descriptor.advise carry the same advice and answer what the host does.
 	dropCacheArgs := []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}}
-	registerStructMethod("Reader", "drop_cache", dropCacheArgs, optionIoErr)
-	registerStructMethod("Writer", "drop_cache", dropCacheArgs, optionIoErr)
+	registerStructMethod("Reader", "drop_cache", dropCacheArgs, voidIoResult)
+	registerStructMethod("Writer", "drop_cache", dropCacheArgs, voidIoResult)
 	// sync(): void — `sync(2)`, which schedules write-back of every
 	// dirty buffer on the machine. It returns nothing and cannot fail
 	// on either Linux or Darwin, so there is no Result to unwrap.

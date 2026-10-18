@@ -11,13 +11,13 @@ import "testing"
 // 1 for any other error or 2 for None, which the method never returns.
 const spliceForeverRefusedSource = `function main(): i32 {
     match (stdout().splice_forever("y\n")) {
-        Some(e) => {
+        Err(e) => {
             match (e) {
                 Unsupported => { return 0; },
                 _ => { return 1; }
             }
         },
-        None => { return 2; }
+        Ok(_) => { return 2; }
     }
 }
 `

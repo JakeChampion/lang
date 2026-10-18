@@ -1,0 +1,7 @@
+read back hello!
+
+save and remove ok
+saved.txt removed again NotFound
+write after close Other(Bad file descriptor)
+late.txt left behind ok
+remove dir ok

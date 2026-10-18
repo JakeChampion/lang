@@ -136,7 +136,7 @@ func TestSelfHostPerModuleReaderText(t *testing.T) {
         Ok(_) => { return 5; },
         Err(e) => { match (e) { InvalidUtf8(p) => { if (p != "") { return 6; } }, _ => { return 7; } } }
       }
-      match (r.close()) { Some(_) => { return 8; }, None => {} }
+      match (r.close()) { Err(_) => { return 8; }, Ok(_) => {} }
     }
   }
   return 0;

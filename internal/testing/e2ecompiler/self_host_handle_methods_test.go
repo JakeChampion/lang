@@ -70,16 +70,16 @@ func selfHostHandleMethodSource(path string, out string, app string) string {
     match (open_writer(%[2]q)) {
         Err(_) => { return 31; },
         Ok(w) => {
-            match (w.write("0123456789")) { Some(_) => { return 21; }, None => {} }
-            match (w.truncate(4 as i64)) { Some(_) => { return 22; }, None => {} }
-            match (w.truncate(6 as i64)) { Some(_) => { return 23; }, None => {} }
+            match (w.write("0123456789")) { Err(_) => { return 21; }, Ok(_) => {} }
+            match (w.truncate(4 as i64)) { Err(_) => { return 22; }, Ok(_) => {} }
+            match (w.truncate(6 as i64)) { Err(_) => { return 23; }, Ok(_) => {} }
             match (w.stat()) {
                 Err(_) => { return 24; },
                 Ok(st) => { if (st.size != 6 as i64) { return 25; } }
             }
             match (w.truncate((0 as i64) - (1 as i64))) {
-                Some(_) => { },
-                None => { return 26; }
+                Err(_) => { },
+                Ok(_) => { return 26; }
             }
             w.close();
         }
@@ -91,7 +91,7 @@ func selfHostHandleMethodSource(path string, out string, app string) string {
     match (open_writer(%[3]q)) {
         Err(_) => { return 40; },
         Ok(w) => {
-            match (w.write("0123456789")) { Some(_) => { return 41; }, None => {} }
+            match (w.write("0123456789")) { Err(_) => { return 41; }, Ok(_) => {} }
             match (w.seek(0 as i64, 1)) {
                 Err(_) => { return 42; },
                 Ok(pos) => { if (pos != 10 as i64) { return 43; } }
@@ -100,7 +100,7 @@ func selfHostHandleMethodSource(path string, out string, app string) string {
                 Err(_) => { return 44; },
                 Ok(pos) => { if (pos != 4 as i64) { return 45; } }
             }
-            match (w.write("ab")) { Some(_) => { return 46; }, None => {} }
+            match (w.write("ab")) { Err(_) => { return 46; }, Ok(_) => {} }
             match (w.seek(0 as i64, 1)) {
                 Err(_) => { return 47; },
                 Ok(pos) => { if (pos != 6 as i64) { return 48; } }
@@ -272,7 +272,7 @@ func TestSelfHostHandleStatSeekWasmIR(t *testing.T) {
     match (open_writer("out.txt")) {
         Err(_) => { return 40; },
         Ok(w) => {
-            match (w.write("0123456789")) { Some(_) => { return 41; }, None => {} }
+            match (w.write("0123456789")) { Err(_) => { return 41; }, Ok(_) => {} }
             match (w.seek(0 as i64, 1)) {
                 Err(_) => { return 42; },
                 Ok(pos) => { if (pos != 10 as i64) { return 43; } }
@@ -281,7 +281,7 @@ func TestSelfHostHandleStatSeekWasmIR(t *testing.T) {
                 Err(_) => { return 44; },
                 Ok(pos) => { if (pos != 4 as i64) { return 45; } }
             }
-            match (w.write("ab")) { Some(_) => { return 46; }, None => {} }
+            match (w.write("ab")) { Err(_) => { return 46; }, Ok(_) => {} }
             match (w.seek(0 as i64, 1)) {
                 Err(_) => { return 47; },
                 Ok(pos) => { if (pos != 6 as i64) { return 48; } }

@@ -3510,8 +3510,7 @@ func builtinReadFileBytes(_ *Interp, args []Value) (Value, error) {
 }
 
 // builtinWriteFile mirrors $write_file / __fern_write_file:
-// truncate-write the content, return Option[IoError]
-// (None = success).
+// truncate-write the content, return Result[void, IoError].
 // builtinWriteFileExec is builtinWriteFile with the executable bit —
 // see the checker's note on why a separate builtin rather than a mode
 // argument (#6133).
@@ -4090,7 +4089,7 @@ func fernHandleFlags(raw int) int {
 
 // syncMethod is the shared body of `fsync` / `fdatasync` / `syncfs` on
 // both handle types: resolve the descriptor, make the call, and answer
-// `Option[IoError]` — None for success, the errno otherwise.
+// `Result[void, IoError]` — Ok for success, the errno otherwise.
 //
 // A stdio stream a test replaced with a buffer has no descriptor to
 // flush and answers Unsupported, the same refusal `stat` gives for it.
@@ -4100,18 +4099,18 @@ func syncMethod(i *Interp, name string, args []Value, call func(int) error) (Val
 	}
 	f, err := streamFile(i, args[0])
 	if errors.Is(err, errClosedHandle) {
-		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	if f == nil {
-		return optionSome(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+		return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
 	}
 	if err := call(int(f.Fd())); err != nil {
-		return optionSome(classifyIoError("", err)), nil
+		return resultErr(classifyIoError("", err)), nil
 	}
-	return optionNone(), nil
+	return resultOk(unitValue()), nil
 }
 
 // builtinFsync answers `r.fsync()` / `w.fsync()`: fsync(2), the handle's
@@ -4165,7 +4164,7 @@ func builtinDropCache(i *Interp, args []Value) (Value, error) {
 		return e
 	})
 	if unsupported {
-		return optionSome(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+		return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
 	}
 	return v, err
 }
@@ -4801,9 +4800,9 @@ func builtinSignalDisposition(_ *Interp, args []Value) (Value, error) {
 	return Number(0), nil
 }
 
-// builtinRemoveFile unlinks `path`. `Option[IoError]` mirrors
-// `write_file`'s "None on success" shape. Removing a non-
-// existent file surfaces as `Some(NotFound(...))` — Go's
+// builtinRemoveFile unlinks `path`, answering Result[void, IoError]
+// as `write_file` does. Removing a non-
+// existent file surfaces as `Err(NotFound(...))` — Go's
 // `os.Remove` errors on missing target, and we preserve that
 // so a typo doesn't silently succeed.
 func builtinRemoveFile(_ *Interp, args []Value) (Value, error) {
@@ -5793,31 +5792,31 @@ func closeFile(i *Interp, args []Value) (Value, error) {
 	// stdio — those streams outlive the program being interpreted —
 	// but a SECOND close still answers EBADF, because that is what
 	// the kernel tells every compiled backend and what gnulib's
-	// close_stream contract is written against. Answering None twice
+	// close_stream contract is written against. Answering Ok twice
 	// made the interpreter unusable as the oracle for close
 	// reporting (#8569).
 	if fd == 0 || fd == 1 || fd == 2 {
 		if i.closedStd[fd] {
-			return optionSome(ioErrorOther("", syscall.EBADF)), nil
+			return resultErr(ioErrorOther("", syscall.EBADF)), nil
 		}
 		if i.closedStd == nil {
 			i.closedStd = map[int64]bool{}
 		}
 		i.closedStd[fd] = true
-		return optionNone(), nil
+		return resultOk(unitValue()), nil
 	}
 	f, ok := i.openFiles[fd]
 	if !ok {
 		// Closed already, so there is no host file left to close:
 		// EBADF, as a compiled binary gets from the kernel. Not an
 		// interpreter error — the program did nothing illegal.
-		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
 	}
 	if err := f.Close(); err != nil {
-		return optionSome(classifyIoError("", err)), nil
+		return resultErr(classifyIoError("", err)), nil
 	}
 	delete(i.openFiles, fd)
-	return optionNone(), nil
+	return resultOk(unitValue()), nil
 }
 
 func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
@@ -5826,7 +5825,7 @@ func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
 	}
 	w, err := writerStream(i, args[0])
 	if errors.Is(err, errClosedHandle) {
-		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
 	}
 	if err != nil {
 		return nil, err
@@ -5836,9 +5835,9 @@ func builtinWriterWrite(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Writer.write: content must be a string")
 	}
 	if _, err := w.Write([]byte(s)); err != nil {
-		return optionSome(classifyIoError("", err)), nil
+		return resultErr(classifyIoError("", err)), nil
 	}
-	return optionNone(), nil
+	return resultOk(unitValue()), nil
 }
 
 // builtinWriterWriteSome answers `w.write_some(s)`: one write and the
@@ -5892,7 +5891,7 @@ func builtinWriterTruncate(i *Interp, args []Value) (Value, error) {
 	}
 	f, err := streamFile(i, args[0])
 	if errors.Is(err, errClosedHandle) {
-		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
 	}
 	if err != nil {
 		return nil, err
@@ -5902,12 +5901,12 @@ func builtinWriterTruncate(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("Writer.truncate: length must be a number")
 	}
 	if f == nil {
-		return optionSome(ioErrorOther("", syscall.EINVAL)), nil
+		return resultErr(ioErrorOther("", syscall.EINVAL)), nil
 	}
 	if terr := f.Truncate(int64(length)); terr != nil {
-		return optionSome(classifyIoError("", terr)), nil
+		return resultErr(classifyIoError("", terr)), nil
 	}
-	return optionNone(), nil
+	return resultOk(unitValue()), nil
 }
 
 // builtinWriterSpliceForever answers `w.splice_forever(block)` with
@@ -5917,7 +5916,7 @@ func builtinWriterSpliceForever(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("splice_forever: expected 2 args")
 	}
-	return optionSome(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+	return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
 }
 
 // builtinDupOnto answers `r.dup_onto(fd)` / `w.dup_onto(fd)`: dup3(2)
@@ -5938,7 +5937,7 @@ func builtinDupOnto(i *Interp, args []Value) (Value, error) {
 	}
 	f, err := streamFile(i, args[0])
 	if errors.Is(err, errClosedHandle) {
-		return optionSome(ioErrorOther("", syscall.EBADF)), nil
+		return resultErr(ioErrorOther("", syscall.EBADF)), nil
 	}
 	if err != nil {
 		return nil, err
@@ -5948,12 +5947,12 @@ func builtinDupOnto(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("dup_onto: descriptor must be a number")
 	}
 	if f == nil {
-		return optionSome(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
+		return resultErr(&Enum{EnumName: "IoError", VariantName: "Unsupported", Index: 5}), nil
 	}
 	if derr := hostDupOnto(int(f.Fd()), int(target)); derr != nil {
-		return optionSome(classifyIoError("", derr)), nil
+		return resultErr(classifyIoError("", derr)), nil
 	}
-	return optionNone(), nil
+	return resultOk(unitValue()), nil
 }
 
 // handleFd resolves the four terminal methods' receiver to the real

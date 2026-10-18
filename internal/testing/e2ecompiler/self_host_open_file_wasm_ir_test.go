@@ -61,9 +61,9 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 
 	// open_writer + Writer.write + close: writes "hello world" to ow.txt, returns 0.
 	// The write's result is MATCHED, not discarded: $__fern_writer_write boxes an
-	// Option[IoError] like native's (#7926), so None is what a completed write says.
+	// Result[void, IoError] (#7926), so Ok is what a completed write says.
 	t.Run("writer", func(t *testing.T) {
-		src := `function main(): i32 { match (open_writer("ow.txt")) { Ok(w) => { match (w.write("hello world")) { Some(_) => { return 92; }, None => {} } w.close(); }, Err(_) => { return 91; } } return 0; }`
+		src := `function main(): i32 { match (open_writer("ow.txt")) { Ok(w) => { match (w.write("hello world")) { Err(_) => { return 92; }, Ok(_) => {} } w.close(); }, Err(_) => { return 91; } } return 0; }`
 		if code := run(t, src); code != 0 {
 			t.Fatalf("writer exit %d, want 0", code)
 		}

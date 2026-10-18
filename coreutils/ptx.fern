@@ -1692,12 +1692,9 @@ pub function main(): i32 {
   }
   if (have_out) {
     w = gnu.flush(w);
-    match (w.close()) {
-      Some(e) => {
-        gnu.error("write error: " + gnu.io_error_text(e));
-        exit(1);
-      },
-      None => {}
+    if let Err(e) = w.close() {
+      gnu.error("write error: " + gnu.io_error_text(e));
+      exit(1);
     }
     return 0;
   }

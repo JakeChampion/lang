@@ -171,11 +171,8 @@ function put(c: Copy, chunk: u8[]): Copy {
   let i: i32 = 0;
   while (i < s.outs.len()) {
     if (s.outs[i].live) {
-      match (s.outs[i].w.write_bytes(chunk)) {
-        Some(e) => {
-          s = fail(s, i, e);
-        },
-        None => {}
+      if let Err(e) = s.outs[i].w.write_bytes(chunk) {
+        s = fail(s, i, e);
       }
     }
     i = i + 1;

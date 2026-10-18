@@ -44,7 +44,7 @@ function chunks(path: string, size: i32): i32 {
                     Err(e) => { break; }
                 }
             }
-            match (r.close()) { Some(_) => { return -3; }, None => {} }
+            match (r.close()) { Err(_) => { return -3; }, Ok(_) => {} }
             return acc;
         },
         Err(_) => { return -1; }
@@ -61,7 +61,7 @@ function lines(path: string): i32 {
                     None => { break; }
                 }
             }
-            match (r.close()) { Some(_) => { return -3; }, None => {} }
+            match (r.close()) { Err(_) => { return -3; }, Ok(_) => {} }
             return acc;
         },
         Err(_) => { return -1; }

@@ -81,7 +81,7 @@ function main(): i32 {
 	}
 	fmt.Fprintf(&src, "if (!same(retained, %s)) { return 200; }\n", readerTextBytes(chunks[0]))
 	src.WriteString(`match (r.read_chunk(9)) { Ok(s) => { if (s != "") { return 201; } }, Err(_) => { return 202; } }
-  match (r.close()) { Some(_) => { return 203; }, None => {} }
+  match (r.close()) { Err(_) => { return 203; }, Ok(_) => {} }
   match (r.read_chunk(1)) { Ok(_) => { return 204; }, Err(_) => {} }
   match (r.read_chunk(0)) { Ok(_) => { return 205; }, Err(_) => {} }
   return 0;

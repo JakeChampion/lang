@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// `w.close()` / `r.close()` report a FAILING close, rather than answering None
+// `w.close()` / `r.close()` report a FAILING close, rather than answering Ok
 // whatever the kernel said (#8569).
 //
 // gnulib's close_stream contract is exactly "did the close fail", so a
@@ -18,18 +18,18 @@ import (
 //
 // Closing the same fd twice is the portable way to reach EBADF: the first close
 // succeeds, the second has nothing to close. The exit code carries both answers
-// — 1 for None, 7 for Some(Other) with glibc's text — so the whole outcome is
+// — 1 for Ok, 7 for Err(Other) with glibc's text — so the whole outcome is
 // one number, 17, and the interp is the oracle for it. A self-host that
 // swallows the error returns 11.
-const closeIoErrorSrc = `function code_of(o: Option[IoError]): i32 {
+const closeIoErrorSrc = `function code_of(o: Result[void, IoError]): i32 {
     match (o) {
-        Some(e) => {
+        Err(e) => {
             match (e) {
                 Other(c, msg, _) => { if (msg == "Bad file descriptor") { return 7; } return 5; },
                 _ => { return 4; }
             }
         },
-        None => { return 1; }
+        Ok(_) => { return 1; }
     }
 }
 function main(): i32 {
@@ -59,7 +59,7 @@ func TestSelfHostCloseIoErrorIRX86_64(t *testing.T) {
 	cmd.Stdout = nil
 	_ = cmd.Run()
 	if got := cmd.ProcessState.ExitCode(); got != want {
-		t.Errorf("close reporting = %d, want %d (interp oracle; 11 = the failing close answered None)", got, want)
+		t.Errorf("close reporting = %d, want %d (interp oracle; 11 = the failing close answered Ok)", got, want)
 	}
 }
 
@@ -78,7 +78,7 @@ func TestSelfHostCloseIoErrorIRArm64(t *testing.T) {
 	cmd := runArm64Bin(qemu, progBin)
 	_ = cmd.Run()
 	if got := cmd.ProcessState.ExitCode(); got != want {
-		t.Errorf("close reporting = %d, want %d (interp oracle; 11 = the failing close answered None)", got, want)
+		t.Errorf("close reporting = %d, want %d (interp oracle; 11 = the failing close answered Ok)", got, want)
 	}
 }
 
@@ -118,6 +118,6 @@ func TestSelfHostCloseIoErrorWasmIR(t *testing.T) {
 		t.Fatal("wasmtime did not exit normally")
 	}
 	if got := rcmd.ProcessState.ExitCode(); got != want {
-		t.Errorf("close reporting = %d, want %d (interp oracle; 11 = the failing close answered None)", got, want)
+		t.Errorf("close reporting = %d, want %d (interp oracle; 11 = the failing close answered Ok)", got, want)
 	}
 }

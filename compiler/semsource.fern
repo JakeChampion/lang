@@ -7611,17 +7611,16 @@ function shared_keys(keys: string[]): boolean[] {
 //
 // The handle metadata surface — stat, flags, seek, the partial write, the
 // truncation, the three fd syncs, isatty, dup_onto, splice_to and the window
-// size — is
-// asked of the bare descriptor like close, and hands back a fresh Result or
-// Option box.
+// size — is asked of the bare descriptor like close, and hands back a fresh
+// Result box.
 function handle_contracts(): ssasem.Contract[] {
   let value: i32[] = [ssaunits.value_mode()];
   let path: i32[] = [ssaunits.borrow_mode()];
   let path_flags: i32[] = [ssaunits.borrow_mode(), ssaunits.value_mode()];
   let reader: typeinfo.Type = t_handle("Reader");
   let writer: typeinfo.Type = t_handle("Writer");
-  let io_error: typeinfo.Type = t_option(typeinfo.TypeUnion { name: "IoError", args: [] });
-  let out: ssasem.Contract[] = handle_metadata_contracts(reader, writer, io_error);
+  let done: typeinfo.Type = t_io_result(t_void());
+  let out: ssasem.Contract[] = handle_metadata_contracts(reader, writer);
   let opens: ssasem.Contract[] = [
     ssasem.Contract { name: "stdin", params: [], modes: [], result: reader },
     ssasem.Contract { name: "stdout", params: [], modes: [], result: writer },
@@ -7635,12 +7634,12 @@ function handle_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "Reader.read_line", params: [reader], modes: value, result: t_option(t_string()) },
     ssasem.Contract { name: "Reader.read_chunk", params: [reader, t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(t_string()) },
     ssasem.Contract { name: "Reader.read_chunk_bytes", params: [reader, t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
-    ssasem.Contract { name: "Reader.close", params: [reader], modes: value, result: io_error },
-    ssasem.Contract { name: "Writer.close", params: [writer], modes: value, result: io_error },
-    ssasem.Contract { name: "Writer.write_bytes", params: [writer, typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error },
+    ssasem.Contract { name: "Reader.close", params: [reader], modes: value, result: done },
+    ssasem.Contract { name: "Writer.close", params: [writer], modes: value, result: done },
+    ssasem.Contract { name: "Writer.write_bytes", params: [writer, typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: done },
     ssasem.Contract { name: "Writer.write_some_bytes", params: [writer, typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: t_io_result(t_i64()) },
-    ssasem.Contract { name: "Writer.write", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error },
-    ssasem.Contract { name: "Writer.splice_forever", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: io_error },
+    ssasem.Contract { name: "Writer.write", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: done },
+    ssasem.Contract { name: "Writer.splice_forever", params: [writer, t_string()], modes: [ssaunits.value_mode(), ssaunits.borrow_mode()], result: done },
   ];
   for c in opens {
     out = out.append(c);
@@ -7648,8 +7647,9 @@ function handle_contracts(): ssasem.Contract[] {
   return out;
 }
 
-function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type, io_error: typeinfo.Type): ssasem.Contract[] {
+function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type): ssasem.Contract[] {
   let v: i32 = ssaunits.value_mode();
+  let done: typeinfo.Type = t_io_result(t_void());
   let seek: typeinfo.Type[] = [t_i64(), t_i32()];
   let out: ssasem.Contract[] = [];
   let handles: typeinfo.Type[] = [reader, writer];
@@ -7661,12 +7661,12 @@ function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type,
     out = out.append(ssasem.Contract { name: o + ".stat", params: [h], modes: [v], result: t_io_result(t_file_stat()) });
     out = out.append(ssasem.Contract { name: o + ".flags", params: [h], modes: [v], result: t_io_result(t_i64()) });
     out = out.append(ssasem.Contract { name: o + ".seek", params: [h, seek[0], seek[1]], modes: [v, v, v], result: t_io_result(t_i64()) });
-    out = out.append(ssasem.Contract { name: o + ".fsync", params: [h], modes: [v], result: io_error });
-    out = out.append(ssasem.Contract { name: o + ".fdatasync", params: [h], modes: [v], result: io_error });
-    out = out.append(ssasem.Contract { name: o + ".syncfs", params: [h], modes: [v], result: io_error });
-    out = out.append(ssasem.Contract { name: o + ".drop_cache", params: [h, t_i64(), t_i64()], modes: [v, v, v], result: io_error });
+    out = out.append(ssasem.Contract { name: o + ".fsync", params: [h], modes: [v], result: done });
+    out = out.append(ssasem.Contract { name: o + ".fdatasync", params: [h], modes: [v], result: done });
+    out = out.append(ssasem.Contract { name: o + ".syncfs", params: [h], modes: [v], result: done });
+    out = out.append(ssasem.Contract { name: o + ".drop_cache", params: [h, t_i64(), t_i64()], modes: [v, v, v], result: done });
     out = out.append(ssasem.Contract { name: o + ".isatty", params: [h], modes: [v], result: t_bool() });
-    out = out.append(ssasem.Contract { name: o + ".dup_onto", params: [h, t_i32()], modes: [v, v], result: io_error });
+    out = out.append(ssasem.Contract { name: o + ".dup_onto", params: [h, t_i32()], modes: [v, v], result: done });
     i = i + 1;
   }
   out = out.append(ssasem.Contract { name: "Reader.splice_to", params: [reader, writer, t_i32()], modes: [v, v, v], result: t_io_result(t_i64()) });
@@ -7677,13 +7677,12 @@ function handle_metadata_contracts(reader: typeinfo.Type, writer: typeinfo.Type,
   // answers a fresh one the caller owns, and `termios_set` reads its bytes and
   // keeps none, so that array is lent.
   let termios: typeinfo.Type = typeinfo.TypeArray { elem: t_i64(), view: false };
-  let done: typeinfo.Type = t_io_result(t_void());
   out = out.append(ssasem.Contract { name: "Reader.set_window_size", params: [reader, t_i32(), t_i32()], modes: [v, v, v], result: done });
   out = out.append(ssasem.Contract { name: "Reader.termios_get", params: [reader], modes: [v], result: t_io_result(termios) });
   out = out.append(ssasem.Contract { name: "Reader.set_extproc", params: [reader, t_bool()], modes: [v, v], result: done });
   out = out.append(ssasem.Contract { name: "Reader.termios_set", params: [reader, t_i32(), termios], modes: [v, v, ssaunits.borrow_mode()], result: done });
   out = out.append(ssasem.Contract { name: "Writer.write_some", params: [writer, t_string()], modes: [v, ssaunits.borrow_mode()], result: t_io_result(t_i64()) });
-  return out.append(ssasem.Contract { name: "Writer.truncate", params: [writer, t_i64()], modes: [v, v], result: io_error });
+  return out.append(ssasem.Contract { name: "Writer.truncate", params: [writer, t_i64()], modes: [v, v], result: done });
 }
 
 // The OS floor the compiler itself never calls: the process and host
@@ -7882,7 +7881,7 @@ function dir_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "Dir.remove_dir", params: [dir, t_string()], modes: [v, b], result: done },
     ssasem.Contract { name: "Dir.chmod", params: [dir, t_string(), t_i32(), t_bool()], modes: [v, b, v, v], result: done },
     ssasem.Contract { name: "Dir.chown", params: [dir, t_string(), t_i32(), t_i32(), t_bool()], modes: [v, b, v, v, v], result: done },
-    ssasem.Contract { name: "Dir.close", params: [dir], modes: [v], result: t_option(typeinfo.TypeUnion { name: "IoError", args: [] }) },
+    ssasem.Contract { name: "Dir.close", params: [dir], modes: [v], result: done },
   ];
 }
 

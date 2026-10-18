@@ -13,7 +13,7 @@ const HTTPByteSerializationProgram = `import "std/http";
 import "std/stream";
 function emit(data: u8[]): void {
     let w = stdout();
-    match (w.write_bytes(data)) { Some(_) => { assert(false); }, None => {} }
+    match (w.write_bytes(data)) { Err(_) => { assert(false); }, Ok(_) => {} }
 }
 function producer(data: u8[]): HttpResponse {
     return http.chunks(200, (i: i32): Option[u8[]] => {

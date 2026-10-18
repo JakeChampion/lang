@@ -2141,7 +2141,7 @@ pub function wasm_ir_deferrals_ok(cache: irtables.LowerResult[]): boolean {
   // on the wasm IR path (#4372): $__fern_open_file does path_open under preopen
   // fd 3 (openat-flags -> WASI oflags/rights/fdflags), boxing the outcome as a
   // Result[Reader|Writer, IoError] (#7758), and $__fern_writer_write fd_writes
-  // the bytes and boxes an Option[IoError] around the outcome (#7926) —
+  // the bytes and boxes a Result[void, IoError] around the outcome (#7926) —
   // reusing file_imports' path_open + the fd_write import.
   // subprocess (#4320) and FFI __c_call<n> (#4375) are NOT deferred — both
   // are unsupportable on wasm (no process spawn, no C ABI), so the driver
@@ -5875,8 +5875,8 @@ function emit_host_op_wat(o: ir.Op): string {
   }
   if (o.kind_tag == 202) {  // writer_write (#4372)
     // stack: fd, str box -> $__fern_writer_write (fd_write of the box's
-    // bytes, in a short-write loop) -> a fresh Option[IoError] box: None on
-    // success, Some(io_error) on a failing write (#7926).
+    // bytes, in a short-write loop) -> a fresh Result[void, IoError] box: Ok
+    // on success, Err(io_error) on a failing write (#7926).
     return "    call $__fern_writer_write\n";
   }
   if (o.kind_tag == 176) {  // env
@@ -6262,8 +6262,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // Emitted caller-side in wasm_ir_run. Mirrors asm_ir's read_chunk op.
     parts = parts.append("    call $__fern_reader_read_chunk\n");
   } else if (o.kind_tag == 179) {  // reader_close
-    // r.close() -> Option[IoError] (always None). fd on the stack;
-    // $__fern_reader_close calls preview1 fd_close and boxes None. Emitted
+    // r.close() -> Result[void, IoError]. fd on the stack;
+    // $__fern_reader_close calls preview1 fd_close and boxes the outcome. Emitted
     // caller-side in wasm_ir_run. Mirrors asm_ir's reader_close op.
     parts = parts.append("    call $__fern_reader_close\n");
   } else if (o.kind_tag == 241) {  // fd_stat
@@ -6271,12 +6271,12 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // FileStat type id the struct box needs, as the stat op pushes it.
     parts = parts.append(tid_get("FileStat") + "    call $__fern_fd_stat\n");
   } else if (o.kind_tag == 299) {  // fd_fsync
-    // r.fsync() -> Option[IoError]: the fd is already on the stack.
+    // r.fsync() -> Result[void, IoError]: the fd is already on the stack.
     parts = parts.append("    call $__fern_fd_fsync\n");
   } else if (o.kind_tag == 300) {  // fd_fdatasync
     parts = parts.append("    call $__fern_fd_fdatasync\n");
   } else if (o.kind_tag == 366) {  // fd_drop_cache
-    // r.drop_cache(offset, len) -> Option[IoError]: fd and the two i64s are
+    // r.drop_cache(offset, len) -> Result[void, IoError]: fd and the two i64s are
     // on the stack in param order.
     parts = parts.append("    call $__fern_fd_drop_cache\n");
   } else if (o.kind_tag == 301) {  // fd_syncfs
@@ -6300,7 +6300,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // Err(Unsupported), as reader_splice is.
     parts = parts.append("    call $__fern_reader_copy_range\n");
   } else if (o.kind_tag == 431) {  // writer_splice_forever
-    // w.splice_forever(block) -> Option[IoError]: always Some(Unsupported),
+    // w.splice_forever(block) -> Result[void, IoError]: always Err(Unsupported),
     // so the caller writes the block itself.
     parts = parts.append("    call $__fern_writer_splice_forever\n");
   } else if (o.kind_tag == 242) {  // reader_seek
@@ -6308,7 +6308,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // whence are on the stack in param order.
     parts = parts.append("    call $__fern_reader_seek\n");
   } else if (o.kind_tag == 281) {  // writer_truncate
-    // w.truncate(length) -> Option[IoError]: fd and the i64 length are on
+    // w.truncate(length) -> Result[void, IoError]: fd and the i64 length are on
     // the stack in param order.
     parts = parts.append("    call $__fern_writer_truncate\n");
   } else if (o.kind_tag == 222) {  // map_hash_seed
@@ -7777,7 +7777,7 @@ pub function fd_datasync_import(): string {
 }
 
 // fd_sync_func emits $__fern_fd_fsync / $__fern_fd_fdatasync(fd) ->
-// Option[IoError] box: one write-back import, None once it is scheduled. A
+// Result[void, IoError] box: one write-back import, Ok once it is scheduled. A
 // handle carries no path, so the error is classified against a fresh empty
 // string, as fd_stat's is.
 pub function fd_sync_func(name: string, imp: string): string {
@@ -7789,18 +7789,18 @@ pub function fd_sync_func(name: string, imp: string): string {
   o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
   o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
   o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "      (i32.store (local.get $res) (i32.const 0))\n";
+  o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
   o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
   o = o + "      (return (local.get $res))))\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
+  o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
   o = o + "    (local.get $res))\n";
   return o;
 }
 
 // fd_drop_cache_func emits $__fern_fd_drop_cache(fd, off, len) ->
-// Option[IoError]: fd_advise with `dontneed` (4), whose errno becomes
-// Some(IoError) as fd_sync_func's does. The host may ignore the advice.
+// Result[void, IoError]: fd_advise with `dontneed` (4), whose errno becomes
+// Err(IoError) as fd_sync_func's does. The host may ignore the advice.
 pub function fd_drop_cache_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_fd_drop_cache (param $fd i32) (param $off i64) (param $len i64) (result i32)\n";
@@ -7810,17 +7810,17 @@ pub function fd_drop_cache_func(): string {
   o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
   o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
   o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "      (i32.store (local.get $res) (i32.const 0))\n";
+  o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
   o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
   o = o + "      (return (local.get $res))))\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
+  o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
   o = o + "    (local.get $res))\n";
   return o;
 }
 
-// fd_syncfs_func emits $__fern_fd_syncfs(fd) -> Option[IoError]: always
-// Some(Unsupported). Neither preview has a whole-filesystem flush — preview 1's
+// fd_syncfs_func emits $__fern_fd_syncfs(fd) -> Result[void, IoError]: always
+// Err(Unsupported). Neither preview has a whole-filesystem flush — preview 1's
 // fd_sync is one descriptor's and a preopen is a capability handle rather than
 // a mount — so the call is refused rather than a success the caller never got.
 pub function fd_syncfs_func(): string {
@@ -7828,14 +7828,14 @@ pub function fd_syncfs_func(): string {
   o = o + "  (func $__fern_fd_syncfs (param $fd i32) (result i32)\n";
   o = o + "    (local $res i32)\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+  o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
   o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error " + refused_errno() + " (i32.const 0)))\n";
   o = o + "    (local.get $res))\n";
   return o;
 }
 
-// fd_dup_onto_func emits $__fern_fd_dup_onto(fd, newfd) -> Option[IoError]:
-// always Some(Unsupported). Preview 1's fd_renumber looks like the lowering and
+// fd_dup_onto_func emits $__fern_fd_dup_onto(fd, newfd) -> Result[void,
+// IoError]: always Err(Unsupported). Preview 1's fd_renumber looks like the lowering and
 // is not — it CLOSES the source, so the handle the caller still holds would be
 // dangling, which is a move rather than a duplicate — and preview 2 has no
 // numbered table to renumber at all.
@@ -7844,21 +7844,21 @@ pub function fd_dup_onto_func(): string {
   o = o + "  (func $__fern_fd_dup_onto (param $fd i32) (param $newfd i32) (result i32)\n";
   o = o + "    (local $res i32)\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+  o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
   o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error " + refused_errno() + " (i32.const 0)))\n";
   o = o + "    (local.get $res))\n";
   return o;
 }
 
 // splice_forever_func emits $__fern_writer_splice_forever(fd, box) ->
-// Option[IoError]: always Some(Unsupported). Neither preview has vmsplice or
+// Result[void, IoError]: always Err(Unsupported). Neither preview has vmsplice or
 // splice, so the caller writes the block itself.
 pub function splice_forever_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_writer_splice_forever (param $fd i32) (param $box i32) (result i32)\n";
   o = o + "    (local $res i32)\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+  o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
   o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error " + refused_errno() + " (i32.const 0)))\n";
   o = o + "    (local.get $res))\n";
   return o;
@@ -11053,8 +11053,8 @@ pub function open_with_func(): string {
 }
 
 // writer_write_func emits $__fern_writer_write(fd, str_box) → a fresh
-// Option[IoError] box (#4372, #7926): fd_write the string's bytes to the fd,
-// looping until every one is out — None once it is, Some($__fern_build_io_error)
+// Result[void, IoError] box (#4372, #7926): fd_write the string's bytes to the
+// fd, looping until every one is out — Ok once it is, Err($__fern_build_io_error)
 // on a non-zero WASI errno. Each pass builds a 1-element iovec
 // [ptr = box+4+cur, len = box[0]-cur] at scratch 0/4; nwritten lands at scratch 8.
 // The Writer/appender fd comes from $__fern_open_file.
@@ -11066,8 +11066,8 @@ pub function open_with_func(): string {
 //
 // A zero-byte write with bytes still outstanding makes no progress, so the loop
 // stops there and reports success, matching native's body and the register
-// backends' short-write loop. Option box shape [tag@0, payload@4] via
-// $__fern_str_box, like read_line's.
+// backends' short-write loop. Result box shape [tag@0, payload@4] via
+// $__fern_str_box.
 pub function writer_write_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_writer_write (param $fd i32) (param $box i32) (result i32)\n";
@@ -11082,14 +11082,14 @@ pub function writer_write_func(): string {
   o = o + "        (local.set $path (call $__fern_str_box (i32.const 4)))\n";
   o = o + "        (i32.store (local.get $path) (i32.const 0))\n";
   o = o + "        (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "        (i32.store (local.get $opt) (i32.const 0))\n";
+  o = o + "        (i32.store (local.get $opt) (i32.const 1))\n";
   o = o + "        (i32.store (i32.add (local.get $opt) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
   o = o + "        (return (local.get $opt))))\n";
   o = o + "      (br_if $wd (i32.eqz (i32.load (i32.const 8))))\n";
   o = o + "      (local.set $cur (i32.add (local.get $cur) (i32.load (i32.const 8))))\n";
   o = o + "      (br $wc)))\n";
   o = o + "    (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "    (i32.store (local.get $opt) (i32.const 1))\n";
+  o = o + "    (i32.store (local.get $opt) (i32.const 0))\n";
   o = o + "    (i32.store (i32.add (local.get $opt) (i32.const 4)) (i32.const 0))\n";
   o = o + "    (local.get $opt))\n";
   return o;
@@ -11113,14 +11113,12 @@ pub function writer_write_func(): string {
 // that much and write_bytes loops for the rest.
 pub function writer_bytes_func(all: boolean, p2: boolean): string {
   let name: string = "write_some_bytes";
-  let error_tag: string = "1";
   let more: string = "      (br $done)\n";
   let success: string = "    (local.set $res (call $__fern_str_box (i32.const 16))) (i32.store (local.get $res) (i32.const 0))\n    (i64.store offset=8 (local.get $res) (i64.extend_i32_u (local.get $count)))\n    (local.get $res)\n";
   if (all) {
     name = "write_bytes";
-    error_tag = "0";
     more = "      (local.set $at (i32.add (local.get $at) (local.get $count)))\n      (br_if $done (i32.eq (local.get $at) (local.get $n)))\n      (if (i32.eqz (local.get $count)) (then (local.set $err (i32.const 29)) (br $done)))\n      (br $write)\n";
-    success = "    (local.set $res (call $__fern_str_box (i32.const 8))) (i32.store (local.get $res) (i32.const 1))\n    (i32.store offset=4 (local.get $res) (i32.const 0))\n    (local.get $res)\n";
+    success = "    (local.set $res (call $__fern_str_box (i32.const 8))) (i32.store (local.get $res) (i32.const 0))\n    (i32.store offset=4 (local.get $res) (i32.const 0))\n    (local.get $res)\n";
   }
   let o: string = "";
   o = o + "  (func $__fern_writer_" + name + " (param $fd i32) (param $bytes i32) (result i32)\n";
@@ -11141,7 +11139,7 @@ pub function writer_bytes_func(all: boolean, p2: boolean): string {
   o = o + "    (if (local.get $err) (then\n";
   o = o + "      (local.set $path (call $__fern_str_box (i32.const 4))) (i32.store (local.get $path) (i32.const 0))\n";
   o = o + "      (local.set $res (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "      (i32.store (local.get $res) (i32.const " + error_tag + "))\n";
+  o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
   o = o + "      (i32.store offset=4 (local.get $res) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
   o = o + "      (return (local.get $res))))\n";
   o = o + success;
@@ -11181,9 +11179,9 @@ pub function writer_write_some_func(p2: boolean): string {
 }
 
 // writer_truncate_func emits $__fern_writer_truncate(fd, length) ->
-// Option[IoError]: one fd_filestat_set_size on the handle's own fd, which is
-// the import the path-based $__fern_truncate opens a descriptor to reach. None
-// is tag 1 with the payload word zeroed, as writer_write's is.
+// Result[void, IoError]: one fd_filestat_set_size on the handle's own fd, which
+// is the import the path-based $__fern_truncate opens a descriptor to reach. Ok
+// is tag 0 with the payload word zeroed, as writer_write's is.
 pub function writer_truncate_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_writer_truncate (param $fd i32) (param $length i64) (result i32)\n";
@@ -11193,11 +11191,11 @@ pub function writer_truncate_func(): string {
   o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
   o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
   o = o + "      (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "      (i32.store (local.get $opt) (i32.const 0))\n";
+  o = o + "      (i32.store (local.get $opt) (i32.const 1))\n";
   o = o + "      (i32.store (i32.add (local.get $opt) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
   o = o + "      (return (local.get $opt))))\n";
   o = o + "    (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "    (i32.store (local.get $opt) (i32.const 1))\n";
+  o = o + "    (i32.store (local.get $opt) (i32.const 0))\n";
   o = o + "    (i32.store (i32.add (local.get $opt) (i32.const 4)) (i32.const 0))\n";
   o = o + "    (local.get $opt))\n";
   return o;
@@ -11341,10 +11339,10 @@ pub function reader_read_chunk_func(): string {
   return o;
 }
 
-// reader_close_func emits $__fern_reader_close(fd) -> Option[IoError] — the wasm
-// sibling of asm_ir's __fern_reader_close. Closes the fd via preview1 fd_close:
-// None (tag 1) when it succeeds, Some($__fern_build_io_error) on a non-zero WASI
-// errno, which is what the register backends and every native backend answer.
+// reader_close_func emits $__fern_reader_close(fd) -> Result[void, IoError] —
+// the wasm sibling of asm_ir's __fern_reader_close. Closes the fd via preview1
+// fd_close: Ok (tag 0) when it succeeds, Err($__fern_build_io_error) on a
+// non-zero WASI errno, which is what the register backends and every native backend answer.
 //
 // A close carries no PATH, so the errno is classified against a FRESH empty
 // string box, for the same reason writer_write's error path builds one: a bare
@@ -11363,11 +11361,11 @@ pub function reader_close_func(dir_off: boolean): string {
   o = o + "      (local.set $path (call $__fern_str_box (i32.const 4)))\n";
   o = o + "      (i32.store (local.get $path) (i32.const 0))\n";
   o = o + "      (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "      (i32.store (local.get $opt) (i32.const 0))\n";
+  o = o + "      (i32.store (local.get $opt) (i32.const 1))\n";
   o = o + "      (i32.store (i32.add (local.get $opt) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $path)))\n";
   o = o + "      (return (local.get $opt))))\n";
   o = o + "    (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "    (i32.store (local.get $opt) (i32.const 1))\n";
+  o = o + "    (i32.store (local.get $opt) (i32.const 0))\n";
   o = o + "    (i32.store (i32.add (local.get $opt) (i32.const 4)) (i32.const 0))\n";
   o = o + "    (local.get $opt))\n";
   return o;
@@ -13497,7 +13495,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   // $__fern_reader_read_chunk(fd,n) / $__fern_reader_close(fd) back the
   // Reader intrinsics (r.read_chunk(n) / r.close()) — a Reader is just its fd
-  // (stdin = fd 0). Both box (Option[string] / Option[IoError]), so they use
+  // (stdin = fd 0). Both box (Option[string] / Result[void, IoError]), so they use
   // the heap runtime (gated in above); read_chunk reads via fd_read, close
   // via fd_close (imports emitted above). Backs std/io read_all_stdin on wasm.
   if (need(needs, "read_chunk")) {

@@ -800,12 +800,9 @@ function out_close(st: St): St {
     return st;
   }
   let s: St = St { ...st, open: false };
-  match (s.out.close()) {
-    Some(e) => {
-      gnu.error(gnu.quotef(s.name) + ": " + gnu.io_error_text(e));
-      cleanup_exit(s);
-    },
-    None => {}
+  if let Err(e) = s.out.close() {
+    gnu.error(gnu.quotef(s.name) + ": " + gnu.io_error_text(e));
+    cleanup_exit(s);
   }
   if (s.written == 0 as i64 && s.s.elide) {
     match (remove_file(s.name)) {

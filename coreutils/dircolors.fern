@@ -406,12 +406,9 @@ function read_stream(r: Reader, name: string): Input {
       }
     }
   }
-  match (r.close()) {
-    Some(e) => {
-      gnu.error(name + ": " + gnu.io_error_text(e));
-      ok = false;
-    },
-    None => {}
+  if let Err(e) = r.close() {
+    gnu.error(name + ": " + gnu.io_error_text(e));
+    ok = false;
   }
   let bytes: u8[] = buf_take_bytes(h);
   buf_free(h);

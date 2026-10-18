@@ -57,7 +57,7 @@ function help_text(): string {
 // `flush_reader` / `flush_writer(h, mode)` — the flush the mode names,
 // on an open handle. Reader and Writer carry the same three methods but
 // are two types, hence two functions.
-function flush_reader(r: Reader, mode: i32): Option[IoError] {
+function flush_reader(r: Reader, mode: i32): Result[void, IoError] {
   if (mode == mode_data()) {
     return r.fdatasync();
   }
@@ -67,7 +67,7 @@ function flush_reader(r: Reader, mode: i32): Option[IoError] {
   return r.fsync();
 }
 
-function flush_writer(w: Writer, mode: i32): Option[IoError] {
+function flush_writer(w: Writer, mode: i32): Result[void, IoError] {
   if (mode == mode_data()) {
     return w.fdatasync();
   }
@@ -79,21 +79,15 @@ function flush_writer(w: Writer, mode: i32): Option[IoError] {
 
 // `report(name, flushed, closed)` — the two per-operand diagnostics
 // after an open, each costing the status.
-function report(name: string, flushed: Option[IoError], closed: Option[IoError]): boolean {
+function report(name: string, flushed: Result[void, IoError], closed: Result[void, IoError]): boolean {
   let ok: boolean = true;
-  match (flushed) {
-    Some(e) => {
-      gnu.error("error syncing " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
-      ok = false;
-    },
-    None => {}
+  if let Err(e) = flushed {
+    gnu.error("error syncing " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+    ok = false;
   }
-  match (closed) {
-    Some(e) => {
-      gnu.error("failed to close " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
-      ok = false;
-    },
-    None => {}
+  if let Err(e) = closed {
+    gnu.error("failed to close " + gnu.quotea(name) + ": " + gnu.io_error_text(e));
+    ok = false;
   }
   return ok;
 }

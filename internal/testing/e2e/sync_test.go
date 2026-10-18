@@ -68,7 +68,7 @@ func syncSource(prefix string, wasm bool, chardev bool) string {
 	}
 	// On wasm the FIFO cases cannot run at all (no mknod there), and syncfs
 	// is the refusal rather than the success.
-	syncfsOnFile := `match (w.syncfs()) { None => {}, Some(_) => { return 12; } }`
+	syncfsOnFile := `match (w.syncfs()) { Ok(_) => {}, Err(_) => { return 12; } }`
 	// A CHARACTER DEVICE separates the three calls from one another.
 	// MEASURED on Linux: fsync and fdatasync of /dev/zero are both EINVAL,
 	// where syncfs of the same descriptor succeeds — the fd names a
@@ -84,9 +84,9 @@ func syncSource(prefix string, wasm bool, chardev bool) string {
 	chardevBlock := `
     match (open_reader("/dev/zero")) {
         Ok(f) => {
-            match (f.fsync())     { None => { return 31; }, Some(_) => {} }
-            match (f.fdatasync()) { None => { return 32; }, Some(_) => {} }
-            match (f.syncfs())    { None => {}, Some(_) => { return 33; } }
+            match (f.fsync())     { Ok(_) => { return 31; }, Err(_) => {} }
+            match (f.fdatasync()) { Ok(_) => { return 32; }, Err(_) => {} }
+            match (f.syncfs())    { Ok(_) => {}, Err(_) => { return 33; } }
             f.close();
         },
         Err(_) => { return 34; }
@@ -96,14 +96,14 @@ func syncSource(prefix string, wasm bool, chardev bool) string {
 	// answers None here. Preview 2 cannot be asked — `close` there drops the
 	// descriptor RESOURCE, and the component model traps on a dropped handle
 	// rather than returning an error — so the wasm legs stop at the close.
-	closedWriter := `match (w.fsync())     { None => { return 14; }, Some(_) => {} }
-            match (w.fdatasync()) { None => { return 15; }, Some(_) => {} }`
-	closedReader := `match (r.syncfs())    { None => { return 22; }, Some(_) => {} }`
+	closedWriter := `match (w.fsync())     { Ok(_) => { return 14; }, Err(_) => {} }
+            match (w.fdatasync()) { Ok(_) => { return 15; }, Err(_) => {} }`
+	closedReader := `match (r.syncfs())    { Ok(_) => { return 22; }, Err(_) => {} }`
 	if !chardev {
 		chardevBlock = ""
 	}
 	if wasm {
-		syncfsOnFile = `match (w.syncfs()) { None => { return 12; }, Some(_) => {} }`
+		syncfsOnFile = `match (w.syncfs()) { Ok(_) => { return 12; }, Err(_) => {} }`
 		chardevBlock = ""
 		closedWriter = "// a dropped preview-2 descriptor traps rather than answering EBADF"
 		closedReader = closedWriter
@@ -113,10 +113,10 @@ func syncSource(prefix string, wasm bool, chardev bool) string {
     // A Writer flushed through every method, then read back by the Go side.
     match (open_writer(%[1]q)) {
         Ok(w) => {
-            match (w.write("durable\n")) { None => {}, Some(_) => { return 10; } }
-            match (w.fsync())     { None => {}, Some(_) => { return 11; } }
+            match (w.write("durable\n")) { Ok(_) => {}, Err(_) => { return 10; } }
+            match (w.fsync())     { Ok(_) => {}, Err(_) => { return 11; } }
             %[3]s
-            match (w.fdatasync()) { None => {}, Some(_) => { return 13; } }
+            match (w.fdatasync()) { Ok(_) => {}, Err(_) => { return 13; } }
             w.close();
             %[6]s
         },
@@ -127,8 +127,8 @@ func syncSource(prefix string, wasm bool, chardev bool) string {
     // backend that wired only the Writer half is caught here.
     match (open_reader(%[1]q)) {
         Ok(r) => {
-            match (r.fsync())     { None => {}, Some(_) => { return 20; } }
-            match (r.fdatasync()) { None => {}, Some(_) => { return 21; } }
+            match (r.fsync())     { Ok(_) => {}, Err(_) => { return 20; } }
+            match (r.fdatasync()) { Ok(_) => {}, Err(_) => { return 21; } }
             r.close();
             %[7]s
         },

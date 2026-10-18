@@ -43,7 +43,7 @@ function count_chunk(chunk: string, acc: Counts): Counts {
 
 function count_reader(r: Reader): Counts {
   let acc: Counts = Counts { lines: 0, words: 0, bytes: 0 };
-  // `r.close()` is best-effort — its Option[IoError] return
+  // `r.close()` is best-effort — its Result[void, IoError] return
   // is dropped here. defer fires even when one of the match
   // arms below short-circuits with `return`.
   defer r.close();

@@ -19,18 +19,18 @@ import (
 // lower on the IR path.
 //
 // The program uses NATIVE's signature throughout: `Writer.write(s)` answers
-// `Option[IoError]` — None once every byte is out — not the byte count the
+// `Result[void, IoError]` — Ok once every byte is out — not the byte count the
 // self-host used to hand back (#7926). So the bytes that reached stdout are what
 // this asserts; the count is not recoverable from either compiler's signature, and
 // the native-shaped `match (w.write(s))` below is exactly the program that used to
 // bail the module for want of an Option type to recover.
 const writerStdoutProg = `function main(): i32 {
     let w: Writer = stdout();
-    match (w.write("hello writer\n")) { Some(_) => { return 1; }, None => {} }
-    match (w.close()) { Some(_) => { return 2; }, None => {} }
+    match (w.write("hello writer\n")) { Err(_) => { return 1; }, Ok(_) => {} }
+    match (w.close()) { Err(_) => { return 2; }, Ok(_) => {} }
     let e: Writer = stderr();
-    match (e.write("err line\n")) { Some(_) => { return 3; }, None => {} }
-    match (e.close()) { Some(_) => { return 4; }, None => {} }
+    match (e.write("err line\n")) { Err(_) => { return 3; }, Ok(_) => {} }
+    match (e.close()) { Err(_) => { return 4; }, Ok(_) => {} }
     return 0;
 }`
 
@@ -49,15 +49,15 @@ const writerStdoutProg = `function main(): i32 {
 const writerErrProg = `function main(): i32 {
     match (open_writer("` + writerErrPath + `")) {
         Ok(w) => {
-            match (w.close()) { Some(_) => { return 8; }, None => {} }
+            match (w.close()) { Err(_) => { return 8; }, Ok(_) => {} }
             match (w.write("x")) {
-                Some(e) => {
+                Err(e) => {
                     match (e) {
                         Other(p, _, _) => { if (p.len() == 0) { return 5; } return 6; },
                         _ => { return 7; },
                     }
                 },
-                None => { return 1; },
+                Ok(_) => { return 1; },
             }
         },
         Err(_) => { return 9; },

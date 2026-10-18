@@ -51,9 +51,9 @@ func writerTruncateSource(dir string, perms bool, closed bool) string {
 		// path form. 292 is 0444.
 		locked = `    match (open_exclusive(` + at("locked.txt") + `)) {
         Ok(w) => {
-            match (w.write("0123456789")) { Some(e) => { return 9; }, None => {} }
+            match (w.write("0123456789")) { Err(e) => { return 9; }, Ok(_) => {} }
             match (chmod(` + at("locked.txt") + `, 292)) { Ok(_) => { }, Err(e) => { return 10; } }
-            match (w.truncate(3 as i64)) { Some(e) => { return 11; }, None => {} }
+            match (w.truncate(3 as i64)) { Err(e) => { return 11; }, Ok(_) => {} }
             w.close();
         },
         Err(e) => { return 12; }
@@ -70,9 +70,9 @@ func writerTruncateSource(dir string, perms bool, closed bool) string {
 		// stat / seek / the sync family already are.
 		shut = `    match (open_writer(` + at("closed.txt") + `)) {
         Ok(w) => {
-            match (w.write("abc")) { Some(e) => { return 13; }, None => {} }
+            match (w.write("abc")) { Err(e) => { return 13; }, Ok(_) => {} }
             w.close();
-            match (w.truncate(0 as i64)) { Some(e) => { }, None => { return 14; } }
+            match (w.truncate(0 as i64)) { Err(e) => { }, Ok(_) => { return 14; } }
         },
         Err(e) => { return 15; }
     }
@@ -81,18 +81,18 @@ func writerTruncateSource(dir string, perms bool, closed bool) string {
 	return `function main(): i32 {
     match (open_writer(` + at("grow.txt") + `)) {
         Ok(w) => {
-            match (w.write("hello world")) { Some(e) => { return 2; }, None => {} }
-            match (w.truncate(5 as i64)) { Some(e) => { return 3; }, None => {} }
-            match (w.truncate(9 as i64)) { Some(e) => { return 4; }, None => {} }
-            match (w.close()) { Some(e) => { return 5; }, None => {} }
+            match (w.write("hello world")) { Err(e) => { return 2; }, Ok(_) => {} }
+            match (w.truncate(5 as i64)) { Err(e) => { return 3; }, Ok(_) => {} }
+            match (w.truncate(9 as i64)) { Err(e) => { return 4; }, Ok(_) => {} }
+            match (w.close()) { Err(e) => { return 5; }, Ok(_) => {} }
         },
         Err(e) => { return 6; }
     }
     match (open_writer(` + at("neg.txt") + `)) {
         Ok(w) => {
             match (w.truncate((0 as i64) - (1 as i64))) {
-                Some(e) => { },
-                None => { return 7; }
+                Err(e) => { },
+                Ok(_) => { return 7; }
             }
             w.close();
         },

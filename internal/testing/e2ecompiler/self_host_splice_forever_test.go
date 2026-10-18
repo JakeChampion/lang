@@ -30,13 +30,13 @@ function main(): i32 {
         block = "x".repeat(69999) + "\n";
     }
     match (stdout().splice_forever(block)) {
-        Some(e) => {
+        Err(e) => {
             match (e) {
                 Unsupported => { return 3; },
                 _ => { return 4; }
             }
         },
-        None => { return 5; }
+        Ok(_) => { return 5; }
     }
 }
 `

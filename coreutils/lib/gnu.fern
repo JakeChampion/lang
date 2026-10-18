@@ -341,12 +341,9 @@ pub function write_out(s: string): void {
 // sets to 2.
 pub function write_out_with(s: string, status: i32): void {
   let w: Writer = stdout();
-  match (w.write(s)) {
-    Some(e) => {
-      error("write error: " + io_error_text(e));
-      exit(status);
-    },
-    None => {}
+  if let Err(e) = w.write(s) {
+    error("write error: " + io_error_text(e));
+    exit(status);
   }
 }
 
@@ -1192,14 +1189,11 @@ pub function close_stdout_with(o: io_buffered.BufWriter, prev_fail: boolean, sta
     },
     None => {}
   }
-  match (o.close()) {
-    Some(e) => {
-      if (prev || some_pending || errno.of(e) != errno.EBADF) {
-        error("write error: " + io_error_text(e));
-        exit(status);
-      }
-    },
-    None => {}
+  if let Err(e) = o.close() {
+    if (prev || some_pending || errno.of(e) != errno.EBADF) {
+      error("write error: " + io_error_text(e));
+      exit(status);
+    }
   }
   if (prev) {
     error("write error");
@@ -1371,13 +1365,10 @@ pub function (s: Stdio) close_stdout(): void {
       }
     }
   }
-  match (s.w.close()) {
-    Some(e) => {
-      fclose_fail = true;
-      text = io_error_text(e);
-      errnum = errno.of(e);
-    },
-    None => {}
+  if let Err(e) = s.w.close() {
+    fclose_fail = true;
+    text = io_error_text(e);
+    errnum = errno.of(e);
   }
   if (prev_fail || fclose_fail && (some_pending || errnum != errno.EBADF)) {
     if (fclose_fail) {
@@ -1470,10 +1461,10 @@ function sys_write(s: Stdio, data: [u8]): Stdio {
     None => {}
   }
   match (s.w.write_bytes(data)) {
-    Some(e) => {
+    Err(e) => {
       return Stdio { ...s, err: Some(e) };
     },
-    None => {
+    Ok(_) => {
       return s;
     }
   }
@@ -2241,10 +2232,7 @@ pub function backup_name(dest: string, control: i32, suffix: string): string {
 // question it preceded.
 pub function prompt(msg: string): boolean {
   let w: Writer = stderr();
-  match (w.write(prog() + ": " + msg)) {
-    Some(_) => {},
-    None => {}
-  }
+  w.write(prog() + ": " + msg);
   return yesno();
 }
 
