@@ -2360,6 +2360,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"unsettled-residual-try-ok", "function f(): Result[i32, string] { let r = Ok(3); return Ok(r? + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"unsettled-payload-store-some", "function main(): i32 { let o = None; o = Some(3); return 0; }\n", []string{"E003"}},
 		{"unsettled-payload-store-err", "function main(): i32 { let r = Ok(1); r = Err(\"s\"); return 0; }\n", []string{"E003"}},
+		// A generic enum named without arguments settles no parameter, so only a
+		// payload spelling one is unbound; a concrete payload keeps its type.
+		{"bare-generic-enum-payload-ok", "enum P[T] { Two(i32, T), Many(T[]), Wrap(Option[i32]), N }\nfunction f(p: P): i32 {\n  match (p) {\n    Two(a, b) => { return a * a + 1; },\n    Many(xs) => { return xs.len(); },\n    Wrap(o) => { return match (o) { Some(v) => v, None => 0 }; },\n    N => { return 0; }\n  }\n  return 0;\n}\nfunction g(p: P): i32 { return 1 + (match (p) { Two(_, b) => b, _ => 2 }); }\nfunction main(): i32 { return f(Wrap(Some(3))) + g(N); }\n", nil},
+		{"bare-generic-enum-payload-mismatch", "enum P[T] { Two(i32, T), N }\nfunction f(p: P): string { match (p) { Two(a, _) => { return a; }, N => { return \"\"; } } return \"\"; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"unsettled-payload-store-variant", "enum E[T] { A(T), B }\nfunction main(): i32 { let e = E.B; e = E.A(3); return 0; }\n", []string{"E003"}},
 		// A `for` loop inside a `defer` is checked like any other.
 		{"defer-for-body-checked", "struct S { n: i32 }\nfunction main(): i32 { let xs: i32[] = [1]; defer { for y in xs { let x: i32 = S { n: y }; } } return 0; }\n", []string{"E003"}},
