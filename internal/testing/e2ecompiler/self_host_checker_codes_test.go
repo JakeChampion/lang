@@ -2436,16 +2436,23 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"variant-missing-binding", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has => { return 1; }, Nil => { return 0; } } }\n", []string{"E015"}},
 		{"variant-binding-arity-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
 		// E015 continued: a RECORD-form variant (#6676) is destructured by field
-		// name in any order, and every field must be bound exactly once. A
-		// resolved pattern is rewritten to the positional one in declaration
-		// order (resolve_variant_fields_module); anything that does not resolve
-		// lands here. The rename row also draws E001 because both checkers bind
-		// the DECLARED names, leaving the renamed local undefined.
+		// name in any order, with the struct pattern's `field: local` rename and
+		// trailing `..`; every field must be bound exactly once unless `..`
+		// leaves the rest out. A resolved pattern is rewritten to the positional
+		// one in declaration order (resolve_variant_fields_module); anything that
+		// does not resolve lands here.
 		{"record-variant-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { h, w } => { return w * h; }, Unit => { return 0; } } }\n", nil},
 		{"record-variant-missing-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { w } => { return w; }, Unit => { return 0; } } }\n", []string{"E015"}},
 		{"record-variant-unknown-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { w, z } => { return w; }, Unit => { return 0; } } }\n", []string{"E015"}},
 		{"record-variant-dup-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { w, w } => { return w; }, Unit => { return 0; } } }\n", []string{"E015"}},
-		{"record-variant-rename", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { w: a, h: b } => { return a; }, Unit => { return 0; } } }\n", []string{"E001", "E015"}},
+		{"record-variant-rename-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { h: b, w: a } => { return a - b; }, Unit => { return 0; } } }\n", nil},
+		{"record-variant-rest-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; return match (s) { Rect { w, .. } => w, Unit => 0 }; }\n", nil},
+		{"record-variant-rename-rest-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; if let Rect { h: hh, .. } = s { return hh; } return 0; }\n", nil},
+		{"record-variant-rest-only-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { .. } => { return 1; }, Unit => { return 0; } } }\n", nil},
+		{"record-variant-nested-rename-rest-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let o: Option[S] = None; match (o) { Some(Rect { w: ww, .. }) => { return ww; }, Some(Unit()) => { return 1; }, None => { return 0; } } }\n", nil},
+		{"record-variant-rest-unknown-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { z: a, .. } => { return 1; }, Unit => { return 0; } } }\n", []string{"E015"}},
+		{"record-variant-rest-dup-field", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect { w, w: b, .. } => { return w; }, Unit => { return 0; } } }\n", []string{"E015"}},
+		{"record-variant-literal-field-not-exhaustive", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; return match (s) { Rect { w: 0, .. } => 1, Unit => 0 }; }\n", []string{"E030"}},
 		{"record-pattern-on-positional", "enum S { Pair(i32, i32), Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Pair { a, b } => { return a; }, Unit => { return 0; } } }\n", []string{"E015"}},
 		{"positional-pattern-on-record-ok", "enum S { Rect { w: i32, h: i32 }, Unit }\nfunction main(): i32 { let s: S = Unit; match (s) { Rect(w, h) => { return w * h; }, Unit => { return 0; } } }\n", nil},
 		// E054: an `@export(...)` world-export function cannot be generic
@@ -3681,6 +3688,11 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"record-variant-rename-and-rest", `enum S { Rect { w: i32, h: i32 }, Tag { name: string, n: i32 } }
+function f(s: S): i32 { match (s) { Rect { h: hh, w } => { return w - hh; }, Tag { n: count, .. } => { return count; } } }
+function g(o: Option[S]): i32 { return match (o) { Some(Rect { w: ww, .. }) => ww, Some(Tag { .. }) => 1, None => 0 }; }
+function h(s: S): i32 { if let Tag { name: nm, .. } = s { return nm.len(); } return 0; }
+function main(): i32 { return f(Rect(1, 2)) + g(None) + h(Tag("x", 1)); }`},
 		{"bound-method-unused-result-variable", `trait Cfg { function get(self: Self, k: string): Option[string]; }
 function f[P: Cfg](c: P): i32 { let s: string = c.get("x"); return 0; }
 function main(): i32 { return 0; }`},

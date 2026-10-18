@@ -1,0 +1,33 @@
+import "core/int";
+import "std/i32";
+
+// `if let` takes a named-field variant pattern with renaming and `..`, as
+// `match` does.
+enum Shape {
+    Circle { r: i32 },
+    Rect { w: i32, h: i32 },
+    Label { text: string, size: i32 },
+}
+
+function rect_width(s: Shape): i32 {
+    if let Rect { w: ww, .. } = s {
+        return ww;
+    }
+    return 0 - 1;
+}
+
+function label_text(s: Shape): string {
+    if let Label { text: t, size: sz } = s {
+        return t + "/" + sz.to_string();
+    } else {
+        return "none";
+    }
+}
+
+function main(): i32 {
+    print(rect_width(Rect(6, 2)).to_string());
+    print(rect_width(Circle(1)).to_string());
+    print(label_text(Label("tag", 3)));
+    print(label_text(Rect(1, 1)));
+    return 0;
+}
