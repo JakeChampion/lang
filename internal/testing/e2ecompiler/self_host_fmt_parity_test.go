@@ -1966,6 +1966,20 @@ function nestedfn(p: Result[(Option[(i32) => i32])[], i32]): i32 { return 0; }
 function generictup(p: Result[(Option[i32], i32), i32]): i32 { return 0; }
 function main(): i32 { return 0; }
 `},
+	// A `resource` declaration, with and without its `@import` binding. The
+	// self-host printer dropped both, leaving every handle naming them unknown.
+	{"resource-declaration", `@import("wasi:io/poll@0.2.0", "pollable")
+resource Pollable;
+
+resource Conn;
+
+@import("wasi:io/poll@0.2.0", "[method]pollable.ready")
+function ready(h: borrow Pollable): boolean;
+
+function hold(c: own Conn): i32 { return 0; }
+
+function main(): i32 { return 0; }
+`},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the

@@ -6378,19 +6378,13 @@ func forEachHandle(t ast.Type, fn func(ast.HandleType)) {
 
 // validateResourceHandles is the sole reporter of resource-handle type-level
 // errors: every `own R` / `borrow R` must name a declared `resource`. It walks
-// every function signature (params + return) and local var annotation, once,
-// reporting each unknown resource a single time. Mirrors validateDynTraitTypes
-// (P5 — docs/WIT-BRING-YOUR-OWN.md).
+// every function signature (params + return), struct field and local
+// annotation (P5 — docs/WIT-BRING-YOUR-OWN.md).
 func (c *checker) validateResourceHandles(prog *ast.Program) {
-	reported := map[string]bool{}
 	visit := func(t ast.Type, pos ast.Position) {
 		forEachHandle(t, func(h ast.HandleType) {
-			if reported[h.Resource] {
-				return
-			}
 			if _, ok := c.info.Resources[h.Resource]; !ok {
-				reported[h.Resource] = true
-				c.errfCode(pos, "E021", "unknown resource %q in handle type %q", demangle(h.Resource), h.String())
+				c.errfCode(pos, "E021", "%s", handleNotResource(h))
 			}
 		})
 	}
@@ -6403,6 +6397,28 @@ func (c *checker) validateResourceHandles(prog *ast.Program) {
 			c.walkDeclaredTypes(fn.Body, visit)
 		}
 	}
+	for _, sd := range prog.Structs {
+		for _, f := range sd.Fields {
+			visit(f.Type, sd.P)
+		}
+	}
+	for _, ed := range prog.Enums {
+		for _, v := range ed.Variants {
+			for _, t := range v.Payloads {
+				visit(t, ed.P)
+			}
+		}
+	}
+}
+
+// handleNotResource is the E021 for a handle type over a name that is not a
+// `resource`, which is what a consuming parameter written `xs: own T` reads as.
+func handleNotResource(h ast.HandleType) string {
+	name := demangle(h.Resource)
+	if h.Borrowed {
+		return fmt.Sprintf("`%s` is not a resource, so `borrow %s` is not a handle type; a parameter borrows by default, written `name: %s`", name, name, name)
+	}
+	return fmt.Sprintf("`%s` is not a resource, so `own %s` is not a handle type; a consuming parameter is written `own name: %s`", name, name, name)
 }
 
 // validateExports checks `@export` functions (P6 — bind a Fern function to a

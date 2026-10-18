@@ -676,8 +676,6 @@ func (p *parser) parseProgram() *ast.Program {
 				continue
 			}
 			if rd != nil {
-				rd.Public = isPub
-				rd.PackageScoped = isPackage
 				rd.ImportIface = importIface
 				rd.ImportWITName = importWIT
 				prog.Resources = append(prog.Resources, rd)
@@ -1491,6 +1489,15 @@ func (p *parser) expectMemberName() (lexer.Token, error) {
 		return tok, nil
 	}
 	return p.expect(lexer.Ident, "")
+}
+
+// handleWordMisuse is the P001 for `own` / `borrow` in a type with no
+// resource name after it, such as `xs: own i32[]`.
+func handleWordMisuse(word string) string {
+	if word == "own" {
+		return "`own` in a type must be followed by a resource name (`own R` for a `resource R`); a consuming parameter is written `own name: T`"
+	}
+	return "`borrow` in a type must be followed by a resource name (`borrow R` for a `resource R`); a parameter borrows by default, written `name: T`"
 }
 
 // maybeQualify consumes an optional `.ident` suffix and returns the
@@ -2429,21 +2436,17 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 			break
 		}
 		base = ast.NewDynTraitTypeFull(traits, traitArgs, traitAssoc)
-	case (t.Kind == lexer.Ident) && (t.Text == "own" || t.Text == "borrow") &&
-		p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Ident:
+	case t.Kind == lexer.Ident && (t.Text == "own" || t.Text == "borrow"):
 		// `own R` / `borrow R` — a WIT resource-handle type (P5 —
 		// docs/WIT-BRING-YOUR-OWN.md). R names a `resource` declaration (the
-		// checker validates that). `own` is owned/consuming (dropped at scope
-		// exit, a later slice); `borrow` is a non-consuming view. Contextual:
-		// only a handle when an identifier (the resource name) follows, so
-		// `own`/`borrow` stay usable as ordinary type names otherwise. Falls
-		// through to the trailing-`[]` suffix loop like any base type.
-		borrowed := t.Text == "borrow"
+		// checker validates that). A consuming parameter is spelled
+		// `own xs: T`, never with `own` in its type.
 		p.advance() // own / borrow
-		nameTok, err := p.expect(lexer.Ident, "")
-		if err != nil {
-			return nil, err
+		nameTok, ok := p.accept(lexer.Ident, "")
+		if !ok {
+			return nil, p.errorfCode(t.Pos, "P001", "%s", handleWordMisuse(t.Text))
 		}
+		borrowed := t.Text == "borrow"
 		name := p.maybeQualify(nameTok.Text)
 		p.typeRefs = append(p.typeRefs, ast.TypeRef{P: nameTok.Pos, Name: name})
 		base = ast.HandleType{Resource: name, Borrowed: borrowed}

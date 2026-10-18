@@ -86,6 +86,8 @@ unreadable. The known cases:
 | `1 = 2` — any expression as an assignment target | `P003`, left-hand side is not assignable |
 | A match arm with no separating comma after a struct-pattern arm | `P001` — the arm body's `{` and the pattern's `{` are ambiguous, so the comma is required there |
 | `'string' '.' IDENT` in any expression, including where no such module is imported | `E001`, unknown module |
+| `own R` / `borrow R` where `R` is not a declared `resource` | `E021`, not a resource |
+| `own` or `borrow` alone as a type name, `let x: own = …` | `P001`, a resource name must follow |
 
 The differential gate below therefore runs in **one direction only**:
 everything the parser accepts, the grammar must derive.
