@@ -362,6 +362,7 @@ map_column_snapshot_outlives_the_map                 0
 map_delete_and_clear_rebuild_the_map                 0
 map_f32_derived_key                                  0
 map_f32_column                                       0
+map_hand_written_eq_hash_keys                        0
 map_heap_value_probe                                 0
 map_i32                                              0
 map_iter_struct_value                                0

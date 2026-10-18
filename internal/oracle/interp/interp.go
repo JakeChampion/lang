@@ -342,13 +342,41 @@ func adjustRC(v Value, delta int) {
 	}
 }
 
-func (m *Map) findKey(k Value) int {
-	for i, kk := range m.keys {
-		if valuesEqual(kk, k) {
-			return i
+// findKey is the index of m's entry whose key equals k, or -1. A struct or
+// enum key compares through its type's cmp.Eq `eq`, derived or written by
+// hand, as the compiled map's keyed probe does; any other key by value.
+func (i *Interp) findKey(m *Map, k Value) (int, error) {
+	eq := i.keyEq(k)
+	for idx, kk := range m.keys {
+		if eq == nil {
+			if valuesEqual(kk, k) {
+				return idx, nil
+			}
+			continue
+		}
+		same, err := i.callFunc(eq, []Value{kk, k})
+		if err != nil {
+			return -1, err
+		}
+		if b, ok := same.(Bool); ok && bool(b) {
+			return idx, nil
 		}
 	}
-	return -1
+	return -1, nil
+}
+
+// keyEq is the `eq` of k's cmp.Eq impl when k is a struct or enum, else nil.
+func (i *Interp) keyEq(k Value) *ast.FuncDecl {
+	var tn string
+	switch x := k.(type) {
+	case *Struct:
+		tn = x.TypeName
+	case *Enum:
+		tn = x.EnumName
+	default:
+		return nil
+	}
+	return i.Funcs[i.keyEqs[tn]]
 }
 
 // MapIter is the interp's `MapIter[K, V]` cursor — pairs the
@@ -616,6 +644,9 @@ type Interp struct {
 	// name offered by two traits for one type resolves to the trait the
 	// call site named.
 	traitMethods map[string]string
+	// keyEqs maps a struct or enum type to the flat symbol of its cmp.Eq
+	// `eq`, the comparison a map makes between keys of that type.
+	keyEqs map[string]string
 	// dynSites is the checker's concrete→`dyn` coercion sites (SetDynCoercions).
 	dynSites map[ast.Expr]checker.DynCoercion
 	// arrayGrowCopies counts the elements copied by the array append
@@ -667,6 +698,7 @@ func New() *Interp {
 		Funcs:        map[string]*ast.FuncDecl{},
 		arrayCOW:     arrayCOWFromEnv(),
 		traitMethods: map[string]string{},
+		keyEqs:       map[string]string{},
 		Enums:        map[string]*ast.EnumDecl{},
 		Builtins:     map[string]*Builtin{},
 		Stdout:       os.Stdout,
@@ -3001,7 +3033,7 @@ func builtinMapLen(_ *Interp, args []Value) (Value, error) {
 	return Number(int64(len(m.keys))), nil
 }
 
-func builtinMapHas(_ *Interp, args []Value) (Value, error) {
+func builtinMapHas(ip *Interp, args []Value) (Value, error) {
 	m, err := mapReceiver("__method_Map_has", args)
 	if err != nil {
 		return nil, err
@@ -3009,10 +3041,14 @@ func builtinMapHas(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("__method_Map_has: expected 2 args (m, k), got %d", len(args))
 	}
-	return Bool(m.findKey(args[1]) >= 0), nil
+	idx, err := ip.findKey(m, args[1])
+	if err != nil {
+		return nil, err
+	}
+	return Bool(idx >= 0), nil
 }
 
-func builtinMapGet(_ *Interp, args []Value) (Value, error) {
+func builtinMapGet(ip *Interp, args []Value) (Value, error) {
 	m, err := mapReceiver("__method_Map_get", args)
 	if err != nil {
 		return nil, err
@@ -3020,7 +3056,11 @@ func builtinMapGet(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("__method_Map_get: expected 2 args (m, k), got %d", len(args))
 	}
-	if idx := m.findKey(args[1]); idx >= 0 {
+	idx, err := ip.findKey(m, args[1])
+	if err != nil {
+		return nil, err
+	}
+	if idx >= 0 {
 		return optionSome(m.vals[idx]), nil
 	}
 	return optionNone(), nil
@@ -3041,7 +3081,11 @@ func builtinMapSet(ip *Interp, args []Value) (Value, error) {
 	// same *Map going out as came in, so its retain and release cancel.
 	storeArray(args[1])
 	storeArray(args[2])
-	if idx := t.findKey(args[1]); idx >= 0 {
+	idx, err := ip.findKey(t, args[1])
+	if err != nil {
+		return nil, err
+	}
+	if idx >= 0 {
 		adjustRC(args[2], t.rc)
 		adjustRC(t.vals[idx], -t.rc)
 		t.vals[idx] = args[2]
@@ -3085,14 +3129,15 @@ func builtinMapDelete(ip *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("__method_Map_delete: expected 2 args (m, k), got %d", len(args))
 	}
-	idx := m.findKey(args[1])
+	idx, err := ip.findKey(m, args[1])
+	if err != nil {
+		return nil, err
+	}
 	if idx < 0 {
 		return arrayOf(m, Bool(false)), nil // unchanged; in-place receiver is fine
 	}
+	// A copy keeps the entry order, so idx names the same entry in it.
 	t := ip.cowTarget(m)
-	if t != m {
-		idx = t.findKey(args[1]) // re-find in the copy (same order, but be explicit)
-	}
 	// Swap-with-last, mirroring core/map.fern's __map_delete_impl: move
 	// the final entry into the removed slot and truncate. This keeps the
 	// interpreter's iteration order identical to the compiled runtime's
@@ -3122,7 +3167,7 @@ func builtinMapClear(ip *Interp, args []Value) (Value, error) {
 	return m, nil // Map.clear is value-returning; return the map handle.
 }
 
-func builtinMapGetOr(_ *Interp, args []Value) (Value, error) {
+func builtinMapGetOr(ip *Interp, args []Value) (Value, error) {
 	m, err := mapReceiver("__method_Map_get_or", args)
 	if err != nil {
 		return nil, err
@@ -3130,7 +3175,11 @@ func builtinMapGetOr(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("__method_Map_get_or: expected 3 args (m, k, default), got %d", len(args))
 	}
-	if idx := m.findKey(args[1]); idx >= 0 {
+	idx, err := ip.findKey(m, args[1])
+	if err != nil {
+		return nil, err
+	}
+	if idx >= 0 {
 		return m.vals[idx], nil
 	}
 	return args[2], nil
@@ -6886,6 +6935,9 @@ func (i *Interp) Register(fn *ast.FuncDecl) {
 	}
 	if fn.ImplTrait != "" && fn.MethodRecv != "" && fn.MethodSimpleName != "" {
 		i.traitMethods[fn.ImplTrait+"."+fn.MethodRecv+"."+fn.MethodSimpleName] = fn.Name
+		if fn.MethodSimpleName == "eq" && checker.SimpleTraitName(fn.ImplTrait) == "Eq" {
+			i.keyEqs[fn.MethodRecv] = fn.Name
+		}
 	}
 }
 
@@ -8321,7 +8373,11 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 				return nil, err
 			}
 			storeArray(vv)
-			if idx := m.findKey(kv); idx >= 0 {
+			idx, err := i.findKey(m, kv)
+			if err != nil {
+				return nil, err
+			}
+			if idx >= 0 {
 				m.vals[idx] = vv
 			} else {
 				m.keys = append(m.keys, kv)
