@@ -68,11 +68,12 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 			t.Fatalf("read %s: %v", p, err)
 		}
 		lines := strings.Split(string(src), "\n")
-		if hasImport(lines) {
+		mod := strings.TrimSuffix(filepath.Base(p), ".fern")
+		if !hasImport(lines) {
+			free = append(free, mod)
+		} else if mod != sharedCopies {
 			continue
 		}
-		mod := strings.TrimSuffix(filepath.Base(p), ".fern")
-		free = append(free, mod)
 		for name, body := range topLevelFuncs(lines) {
 			code := normaliseCode(body)
 			sum := md5.Sum([]byte(strings.Join(code, "\n")))
@@ -86,7 +87,7 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	sort.Strings(free)
 	wantFree := []string{
 		"aesref", "arm64_native", "builtins", "capvocab", "docprintable", "elf", "lexer", "literate", "rtbytecopy", "rtprofilemacho",
-		"sourcepos", "ssadecrementcount", "ssafixed", "typeinfo", "util", "watbin", "wit_fern_world", "wit_proxy_world", "x86_native",
+		"sourcepos", "ssadecrementcount", "ssafixed", "typeinfo", "watbin", "wit_fern_world", "wit_proxy_world", "x86_native",
 	}
 	if strings.Join(free, ",") != strings.Join(wantFree, ",") {
 		t.Errorf("the import-free module set changed.\n  got:  %v\n  want: %v\n"+
@@ -143,6 +144,11 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 			name, len(copies), len(distinct), strings.Join(detail, "\n"))
 	}
 }
+
+// sharedCopies is the module the rest of the compiler calls for the helpers the
+// import-free modules duplicate. It imports std/ modules, so it is not
+// import-free itself, but its copies are held to the same bodies.
+const sharedCopies = "util"
 
 var (
 	importRe = regexp.MustCompile(`^import\s`)
