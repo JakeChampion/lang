@@ -17,6 +17,20 @@ func TestLetAnnotationSpans(t *testing.T) {
 	}
 }
 
+func TestSignatureTypeSpans(t *testing.T) {
+	src := "struct G0[T] { v: T, m: Map[i32, i32] }\n" +
+		"function (g: G0[T]) bump(k: i32, f: (i32) => i32): G0[T] { return g; }\n" +
+		"function main(): i32 { function inner(): Option[i32] { return None; } return 0; }\n"
+	var got []string
+	for _, sp := range signatureTypeSpans(src) {
+		got = append(got, src[sp[0]:sp[1]])
+	}
+	want := []string{"i32", "(i32) => i32", "G0[T]", "i32", "Option[i32]", "T", "Map[i32, i32]"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("spans = %q, want %q", got, want)
+	}
+}
+
 func TestTypeMutants(t *testing.T) {
 	withMutants := 0
 	for seed := uint64(0); seed < 64; seed++ {
