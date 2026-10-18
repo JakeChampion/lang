@@ -29,6 +29,7 @@ func TestPartialEnumPayloadInference(t *testing.T) {
 		{"generic-join", `function first[T](a: T, b: T): T { return a; } function main(): i32 { let o = first(Ok(3), Err("x")); match (o) { Ok(v) => { return v + 1; }, Err(e) => { return e.len(); } } }`},
 		{"unreachable-err-payload", `function main(): i32 { let o = Ok(3); return match (o) { Ok(v) => v, Err(e) => e - (e +| e) }; }`},
 		{"unreachable-some-payload", `function main(): i32 { let a: i32 = 4; let o = None; return a % (match (o) { Some(x) => x, None => a }); }`},
+		{"try-on-unsettled-residual", `function id[T](x: T): T { return x; } function f(): Result[i32, i32] { let v = id(Ok(180)); return Ok(v? + 1); } function main(): i32 { match (f()) { Ok(x) => { return x - 181; }, Err(_) => { return 1; } } }`},
 		{"unreachable-variant-payload", `enum E[T] { A(T), B } function main(): i32 { let e = E.B; return 1 + (match (e) { E.A(x) => x, E.B => 2 }); }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
