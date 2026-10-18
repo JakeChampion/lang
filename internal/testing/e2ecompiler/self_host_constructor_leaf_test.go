@@ -123,3 +123,45 @@ func TestSelfHostConstructorLeafUnionMemberOff(t *testing.T) {
 	runSemanticProgram(t, "ctorleaf-union-off", unionConstructorLeafProgram, unionConstructorLeafProduced,
 		semInlineWants("700100\n150100\n"))
 }
+
+// A constructor leaf with a wide field, called with an integer literal cast
+// to its width, as std/fetch's `timeouts` calls std/time's
+// `duration_seconds(10 as i64)`: the cast literal is a literal of the field's
+// type, so the call is spliced and the record of records is static. Each
+// round weighs the bounds and allocates nothing; with the pass off, a round
+// builds its three boxes.
+const wideConstructorLeafProgram = `struct D { sec: i64, nsec: i64 }
+struct T { a: D, b: D }
+function secs(s: i64): D { return D { sec: s, nsec: 0 }; }
+function bounds(): T { return T { a: secs(10 as i64), b: secs(30 as i64) }; }
+function weigh(t: T): i32 { return (t.a.sec + t.b.sec + t.a.nsec) as i32; }
+@noinline function lit_rounds(): i32 {
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { t = t + weigh(bounds()); i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+function print_int(n: i32): i32 {
+    if (n > 9) { print_int(n / 10); }
+    putchar(48 + n % 10);
+    return 0;
+}
+function main(): i32 {
+    print_int(lit_rounds()); print("");
+    return 0;
+}
+`
+
+var wideConstructorLeafProduced = []string{"secs", "bounds", "weigh", "lit_rounds"}
+
+func TestSelfHostConstructorLeafWide(t *testing.T) {
+	runSemanticProgram(t, "ctorleaf-wide", wideConstructorLeafProgram, wideConstructorLeafProduced,
+		semInlineWants("4000000\n"))
+}
+
+func TestSelfHostConstructorLeafWideOff(t *testing.T) {
+	t.Setenv("FERN_SEM_INLINE", "")
+	runSemanticProgram(t, "ctorleaf-wide-off", wideConstructorLeafProgram, wideConstructorLeafProduced,
+		semInlineWants("4000300\n"))
+}

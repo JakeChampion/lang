@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// Literal or-patterns on the self-host compiler (#5355): `match x { 1 | 2
+// Literal or-patterns on the self-host compiler (#5355): `match (x) { 1 | 2
 // | 3 => … }`. The self-host literal-match arm loop now splits on `|` at a
 // precedence above bitwise-or (parse_lit_alts), so `1 | 2` reads as "1 or
 // 2", not the value 3 — matching the native front-end. Each alternative

@@ -113,7 +113,7 @@ the language.
 | Pass configuration | an optimisation whose off switch changes the answer, or a bug only the unoptimised path has | the non-sanitize `TestDifferential_SelfHost{X86_64,Arm64,Wasm}` legs compile half the seeds with a seed-chosen subset of `selfHostPassSwitches` (reuse, unit-plan replay, inlining, array fusion, the ndarray kernels) off |
 | **Sanitizer** | rc over-release, use of a freed block, leaks — wrong memory with a right answer | `TestDifferential_SelfHostSanitize{X86_64,Arm64,Wasm}`; wasm carries the leak census only |
 | Go checker vs self-host checker | a program one checker accepts and the other rejects | the self-host legs: a seed the self-host refuses to compile fails or skips by cause |
-| Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased or replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
+| Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased, or one `let`, parameter, result or struct-field type replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
 | Coverage feedback | steers mutation toward new self-host compiler paths, and every input that reaches one is judged by the exit-byte differential | `TestSelfHostCoverageGuidedFuzz` |
 
 ### Measuring it: the mutation score
@@ -200,6 +200,20 @@ regression test where the bug lived:
 - **A generic literal passed to a generic parameter took the callee's `T`**
   (#12739, Go checker), so `b(G { v: 1 })` was refused.
   `TestGenericStructLitFieldCheckedAgainstDestination`.
+- **A type parameter was a wildcard in its own generic's body** (#12656,
+  self-host checker). `return 0` into a `T`, an `if` joining a `T` with an
+  `i32`, a field of type `T` given an `i32`, and `H::Item` returned as a
+  `string` were all accepted. A body's type parameters are now
+  `TypeErased`, equal only to themselves (`rigid_tparams`); a caller's
+  reading of the signature still erases them to unknown for inference. Rows
+  `rigid-tparam-*` in `TestSelfHostCheckerCodesX86_64`.
+- **An array literal fitted any `T[]` in a generic body** (Go checker; found
+  with #12656). `elemSettleable` let a destination element naming the
+  enclosing declaration's own parameter take any literal. Only a callee's
+  parameter does now. `TestArrayLiteralSettlingStillWorks`.
+- **A missing method on a `boolean` had no diagnostic** (self-host checker;
+  found with #12656), so a generic body, which gets no well-typedness hint,
+  accepted it. Row `bool-method-missing-in-generic`.
 - **A generator bug**: the ownership cluster reassigned a variable whose type
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.
@@ -244,8 +258,9 @@ built. Citations are to the paper that introduced the technique.
    change their output.
 8. **Type-checker fuzzing** (Hephaestus, PLDI 2022; Thalia, POPL 2024): erase
    annotations and overwrite types, and hold both checkers to one verdict.
-   Done as the checker-mutant oracle, in the x86_64 `diff-selfhost` lane; next is mutating more than `let` annotations (parameter and
-   return types, generic arguments).
+   Done as the checker-mutant oracle, in the x86_64 `diff-selfhost` lane. It
+   erases `let` annotations and overwrites `let`, parameter, result and
+   struct-field types; next is erasing a generic call's type arguments.
 9. **Fragments mined from bug history** (LegoFuzz, OOPSLA 2025; FeatureFuzz,
    2026; WhiteFox, OOPSLA 2024): `docs/rc-log/` and the tracker are a corpus of
    shapes that broke once.

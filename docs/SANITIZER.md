@@ -49,10 +49,11 @@ tool you point at a reduced repro after the sanitizer has told you there is
 something to look for, not something a standing mode can afford. Compose them
 by hand when you want both.
 
-The individual flags (`FERN_LEAKCHECK`, `FERN_RC_UNDERFLOW_TRAP`,
-`FERN_RC_FREE_DEBUG`) all still work on their own for exactly that kind of
-narrow probe, and compose with `-sanitize` — the fold-down only ever turns
-checks on.
+The individual flags (`FERN_LEAKCHECK`, `FERN_RC_FREE_DEBUG`) still work on
+their own for exactly that kind of narrow probe, and compose with `-sanitize` —
+the fold-down only ever turns checks on. Each is on or off by the rule in
+"Environment variables" in `site/src/content/docs/reference/tooling.md`, so
+`FERN_SANITIZE=0` builds without the detectors.
 
 ## Cost
 

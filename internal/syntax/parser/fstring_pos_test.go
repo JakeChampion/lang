@@ -1,9 +1,11 @@
 package parser
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
+	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
 // An f-string interpolant is sub-parsed from raw text by a fresh lexer
@@ -88,6 +90,44 @@ func TestFStringInterpolantInnerNodePositions(t *testing.T) {
 	}
 	if got, want := bin.Right.Pos(), (ast.Position{Line: 1, Col: 39}); got != want {
 		t.Errorf("right operand at %v, want %v", got, want)
+	}
+}
+
+// A placeholder holds one expression. Anything left over is P001 at the
+// first leftover token, once per f-string (#12648).
+func TestFStringTrailingTokensRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want ast.Position
+	}{
+		{"two operands", `function main(): i32 { let x = 5; let y = 7; let s = f"[{x y}]"; return 0; }`, ast.Position{Line: 1, Col: 60}},
+		{"comma list", `function main(): i32 { let x = 5; let y = 7; let s = f"[{x, y}]"; return 0; }`, ast.Position{Line: 1, Col: 59}},
+		{"stray paren", `function main(): i32 { let x = 5; let s = f"[{x)}]"; return 0; }`, ast.Position{Line: 1, Col: 48}},
+		{"format spec", `function main(): i32 { let x = 5; let s = f"{x:04}"; return 0; }`, ast.Position{Line: 1, Col: 47}},
+		{"second placeholder", `function main(): i32 { let x = 5; let s = f"{x} {x x} {x x}"; return 0; }`, ast.Position{Line: 1, Col: 52}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Parse(tc.src)
+			if !hasParseCode(err, "P001") {
+				t.Fatalf("want P001, got %v", err)
+			}
+			var batch diag.Errors
+			if !errors.As(err, &batch) || len(batch) != 1 {
+				t.Fatalf("want exactly one error, got %v", err)
+			}
+			var pe *Error
+			if !errors.As(batch[0], &pe) {
+				t.Fatalf("want *Error, got %T", batch[0])
+			}
+			if pe.Msg != "f-string interpolation: unexpected trailing tokens after expression" {
+				t.Errorf("message %q", pe.Msg)
+			}
+			if pe.Pos != tc.want {
+				t.Errorf("at %v, want %v", pe.Pos, tc.want)
+			}
+		})
 	}
 }
 

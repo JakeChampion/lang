@@ -42,7 +42,7 @@ function parse_first(buf: u8[], limits: http.HttpLimits): http.HttpFramed {
 }
 
 function serialize_once(out: usize, resp: HttpResponse): i32 {
-  http.http_serialize_response_into(out, "GET", resp, true, "");
+  http.http_serialize_response_into(out, "GET", "HTTP/1.1", resp, true, "");
   let n: i32 = buf_len(out);
   buf_clear(out);
   return n;
@@ -80,11 +80,12 @@ function main(): i32 {
 // FramingAllocs is what one compiler and target spend per request.
 type FramingAllocs struct{ Parse, Serialize int64 }
 
-// The request is 77 bytes and the reply 67, so every round must have
-// framed both whole.
+// The request is 77 bytes and the reply 43 (the status line, Content-Length
+// and the blank line; a persisting HTTP/1.1 response names no Connection),
+// so every round must have framed both whole.
 const (
 	framingRequestBytes = 77
-	framingReplyBytes   = 67
+	framingReplyBytes   = 43
 )
 
 var framingAllocsLine = regexp.MustCompile(`parsed=(\d+) wire=(\d+) parse=(\d+) serialize=(\d+)`)

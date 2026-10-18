@@ -514,7 +514,7 @@ function __exchange_of(o: json.JsonObject): Option[__Exchange] {
     target = target + "?" + u.query;
   }
   let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(__body_member(o)), headers: __headers_member(o), trailers: headers.header_map_new(), background: None };
-  return Some(__Exchange { host: u.host, port: port, target: target, answer: raw_bytes(http.http_serialize_response_to_bytes(method, resp, false)) });
+  return Some(__Exchange { host: u.host, port: port, target: target, answer: raw_bytes(http.http_serialize_response_to_bytes(method, "HTTP/1.1", resp, false)) });
 }
 
 // `__string_member(o, key)` — `o`'s `key` as text: a string's text, a
@@ -809,7 +809,7 @@ function __response_entry(s: Server, bytes: u8[]): string {
       if (f.keep_alive) {
         flag = "k";
       }
-      return flag + hex.hex_encode(http.http_serialize_response_to_bytes(f.request.method, resp, f.keep_alive));
+      return flag + hex.hex_encode(http.http_serialize_response_to_bytes(f.request.method, f.version, resp, f.keep_alive));
     },
     http.Incomplete => {
       return __refused_entry();

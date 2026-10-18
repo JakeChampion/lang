@@ -92,6 +92,7 @@ import "std/tls/client";
 import "std/tls/ktls";
 import "std/tls/verify";
 import "std/crypto";
+import "std/cli";
 import "std/http/h2";
 import "core/int";
 
@@ -678,8 +679,12 @@ pub trait Transport {
 // the machine's resolver as the transport last read it (`dns.Resolver`),
 // kept with the connections so a request reads no file to find a host.
 // `proxies` is the environment's proxy configuration once `proxy_env` read
-// it.
-pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]] }
+// it. `armed`, under a serve loop, is the HTTP/1.1 connections the loop
+// keeps watched between a task's reads (`async.KEEP`), so a request on a
+// kept connection re-arms nothing; the pool forgets a connection when it
+// closes it, and the loop asks `disarm` for one that reports readiness
+// while no task reads it.
+pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]], armed: Option[Cell[i32[]]] }
 
 // `(p).proxy_env()` — the environment's proxy configuration (`__proxies()`),
 // read on the pool's first request and kept, since nothing changes the
@@ -712,16 +717,99 @@ pub function idle(): Idle {
 // connections, each for `idle`; a `max` of 0 keeps none.
 pub function idle_limited(max: i32, idle: Duration): Idle {
   let none: Kept[] = [];
-  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None, names: dns.resolver(), proxies: cell_new(None) };
+  return Idle { kept: cell_new(none), max: max, idle: idle, shared: None, names: dns.resolver(), proxies: cell_new(None), armed: None };
 }
 
 // `idle_shared()` — `idle()` with a `Shared` table beside it, for a loop
-// that drives its handlers' HTTP/2 connections (std/serve).
+// that drives its handlers' HTTP/2 connections (std/serve), and the table of
+// HTTP/1.1 connections the loop keeps watched.
 pub function idle_shared(): Idle {
   let rows: Driven[] = [];
   let mail: Mail[] = [];
   let dialing: string[] = [];
-  return Idle { ...idle(), shared: Some(Shared { rows: cell_new(rows), mail: cell_new(mail), next: cell_new(3), dialing: cell_new(dialing) }) };
+  let fds: i32[] = [];
+  return Idle { ...idle(), shared: Some(Shared { rows: cell_new(rows), mail: cell_new(mail), next: cell_new(3), dialing: cell_new(dialing) }), armed: Some(cell_new(fds)) };
+}
+
+// `(p).read_interest(fd)` — the interest a read of connection `fd` waits
+// with: on a pool whose loop keeps connections watched, readable with
+// `async.KEEP` the first time and `async.WATCHED` after, the descriptor
+// noted as armed; plain readable elsewhere.
+pub function (p: Idle) read_interest(fd: i32): i32 {
+  match (p.armed) {
+    Some(c) => {
+      let fds: i32[] = c.get();
+      if (__has_fd(fds, fd)) {
+        return 1 | async.WATCHED;
+      }
+      c.set(fds.append(fd));
+      return 1 | async.KEEP;
+    },
+    None => {
+      return 1;
+    }
+  }
+  return 1;
+}
+
+function __has_fd(fds: i32[], fd: i32): boolean {
+  let i: i32 = 0;
+  while (i < fds.len()) {
+    if (fds[i] == fd) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function __without_fd(fds: i32[], fd: i32): i32[] {
+  let out: i32[] = [];
+  for f in fds {
+    if (f != fd) {
+      out = out.append(f);
+    }
+  }
+  return out;
+}
+
+// `(p).armed(fd)` — whether the loop keeps `fd` watched for this pool's
+// reads.
+pub function (p: Idle) armed(fd: i32): boolean {
+  match (p.armed) {
+    Some(c) => {
+      return __has_fd(c.get(), fd);
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// `(p).disarm(fd)` — `fd` no longer counted as watched, so its next read
+// asks the loop to watch it again; a connection the pool holds idle is
+// closed and dropped, since an idle connection that reports readiness has
+// been closed by its peer or is sending what no request asked for. The
+// loop calls this for a readiness no task waits on, after unwatching the
+// descriptor.
+pub function (p: Idle) disarm(fd: i32): void {
+  match (p.armed) {
+    Some(c) => {
+      c.set(__without_fd(c.get(), fd));
+    },
+    None => {}
+  }
+  let rows: Kept[] = p.kept.get();
+  let i: i32 = 0;
+  while (i < rows.len()) {
+    if (rows[i].fd == fd) {
+      p.kept.set(__kept_without(rows, i));
+      tcp_close(fd);
+      return;
+    }
+    i = i + 1;
+  }
 }
 
 // `shared_of(pool)` — the pool's `Shared` table, or an empty one that
@@ -1424,9 +1512,15 @@ impl Transport for Sockets {
     return tcp_send_bytes(conn, data);
   }
   function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): tcp.Recv {
-    return tcp.tcp_recv_within(conn, max, wait_ms);
+    return tcp.tcp_recv_watched(conn, max, wait_ms, self.pool.read_interest(conn));
   }
   function close(self: Sockets, conn: i32): i32 {
+    match (self.pool.armed) {
+      Some(c) => {
+        c.set(__without_fd(c.get(), conn));
+      },
+      None => {}
+    }
     tcp_close(conn);
     return 0;
   }
@@ -2307,13 +2401,7 @@ function __kernel_session(sock: i32, s: client.Session, req: Request): Result[cl
 }
 
 function __ktls_asked(req: Request): boolean {
-  match (env("FERN_KTLS")) {
-    Some(v) => {
-      return req.ktls || v == "1";
-    },
-    None => {}
-  }
-  return req.ktls;
+  return req.ktls || cli.env_flag("FERN_KTLS");
 }
 
 // `__Record` — a record other than application data off an offloaded

@@ -60,6 +60,28 @@ to compile with E066 instead of failing at run time.
 | `-backend` | target's own | Code generator. `ssa`, the register allocator, is the only one on the native ISAs. |
 | `-color` | `auto` | Colour diagnostics: `auto`, `always`, or `never`. `NO_COLOR` turns `auto` off. |
 | `-ascii` | auto | Draw diagnostics with ASCII only. Chosen automatically when the locale is not UTF-8. |
+| `-q` | off | Print one line per diagnostic, without source context, notes, fixes or colour. |
+
+### Environment variables
+
+Every on/off `FERN_*` variable reads its value the same way: unset, empty,
+`0`, `false` and `off` (in any case) are off, and anything else is on. A
+variable that also names a mode, such as `FERN_PROFILE`, is off for the same
+values. A directory variable set to the empty string counts as unset. The
+compiler variables are read when compiling, so they go on the build, not on
+the run.
+
+| Variable | Meaning |
+| --- | --- |
+| `FERN_SIZE` | The default for `-size`. |
+| `FERN_BACKTRACE` | The default for `-backtrace`; on while unset, so `FERN_BACKTRACE=0` leaves the walk out. |
+| `FERN_SANITIZE` | The same as `-sanitize`. |
+| `FERN_LEAKCHECK` | The leak census of `-sanitize` on its own. |
+| `FERN_COVER` | The same as `-cover`. |
+| `FERN_PROFILE` | `cpu`, `alloc`, `cpu-pprof` or `alloc-pprof`: build a self-profiling executable. `FERN_PROFILE_FILE` names the pprof output. |
+| `FERN_DIAG_FORMAT` | `terse` is the same as `-q`. |
+| `FERN_CACHE_DIR` | Where `fern` keeps its cache, in place of the user cache directory. |
+| `FERN_KTLS`, `FERN_IO_URING` | Read at run time by a program using `std/fetch` or `std/serve`; see [protocols](../../http/protocols/). |
 
 ### Program arguments
 

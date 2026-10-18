@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // The checked-source producer (semsource.fern) is the typed frontend import of
@@ -973,7 +975,7 @@ func TestSelfHostSemanticSourcePrint(t *testing.T) {
 	// rewrites the golden from the driver's output before the compare, so a
 	// lane setting it would disable this gate. The compare below is the CI
 	// behaviour.
-	if os.Getenv("FERN_UPDATE_GOLDEN") != "" {
+	if envflag.On("FERN_UPDATE_GOLDEN") {
 		if err := os.WriteFile("testdata/semsource_print.golden", got, 0o644); err != nil {
 			t.Fatal(err)
 		}

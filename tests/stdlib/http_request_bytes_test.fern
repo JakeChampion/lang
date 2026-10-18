@@ -947,8 +947,8 @@ function test_framed_persistence_follows_the_version_and_connection(): test.Test
 function test_serialize_names_the_connection(): test.TestOutcome {
   let r: HttpResponse = http.ok("ok");
   let kept: string = http.http_serialize_response_conn(r, true);
-  if (!kept.contains("\r\nConnection: keep-alive\r\n")) {
-    return test.fail("a persisting response did not say keep-alive: " + kept);
+  if (kept.contains("Connection:")) {
+    return test.fail("a persisting HTTP/1.1 response named Connection: " + kept);
   }
   let closed: string = http.http_serialize_response_conn(r, false);
   if (!closed.contains("\r\nConnection: close\r\n")) {

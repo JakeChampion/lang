@@ -2066,26 +2066,14 @@ pub struct Scope {
   // (ambiguous_call_diags, #12282). Empty on every other scope.
   default_trait: string,
   default_recv: string,
-  // tparams / tbounds are the enclosing function's declared type
-  // parameters and their `+`-joined trait bounds, running parallel
-  // (parser.parse_type_param_list). Populated by build_func_scope; they let
-  // an associated call through a bounded type parameter (`T.zero()`)
-  // resolve against the bound rather than be read as a value (#6933).
-  // Empty on every other scope.
+  // tparams / tbounds are the enclosing function's type parameters, bounded,
+  // unbounded and its receiver's, and their `+`-joined trait bounds ("" for
+  // none), running parallel. Populated by build_func_scope. Each is a rigid
+  // type variable in the body (rigid_tparams), and the bounds let an
+  // associated call through one (`T.zero()`) resolve against the bound
+  // rather than be read as a value (#6933). Empty on every other scope.
   tparams: string[],
   tbounds: string[],
-  // tpvars / tpvar_tps run parallel: a parameter whose declared type is
-  // exactly one of tparams (`a: T`), and the type parameter it names. `T`
-  // erases to unknown like every type in a generic body, so the binding's
-  // TYPE cannot answer "is this receiver a bounded type parameter?" — this
-  // pair can, which is what the associated-function-as-method rejection in
-  // call_diags reads (#7221). Empty on every other scope.
-  tpvars: string[],
-  tpvar_tps: string[],
-  // fn_tvars is every type variable of the function this body declares, the
-  // erased ones included; an instantiation has none. Empty on every other
-  // scope.
-  fn_tvars: string[],
   // lit_locals names the locals in scope an unsettled integer initialised
   // (`let q = 2`), which native types polymorphic until a use fixes a width;
   // settle_literal_locals has annotated every one a use fixed at another
@@ -2570,7 +2558,7 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs: StructTable = struct_table(ss, [], no_spellings());
   let unions: UnionTable = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
@@ -2579,7 +2567,7 @@ function new_scope(): Scope {
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], tpvars: [], tpvar_tps: [], fn_tvars: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -2647,31 +2635,7 @@ function type_names_of(structs: StructTable, unions: UnionTable): TypeNames {
 }
 
 function (s: Scope) resolve_type(name: string): typeinfo.Type {
-  return type_from_name_erasing_tparams(name, s.tparams, s.type_names());
-}
-
-// bind_tpvar records that value `name` was declared with the type parameter
-// `tp` as its type (`function pick[T: Show](a: T)`). Paired with the ordinary
-// bind, which gives the same name the erased unknown every generic type has.
-function (s: Scope) bind_tpvar(name: string, tp: string): Scope {
-  let vs: string[] = s.tpvars.append(name);
-  let ps: string[] = s.tpvar_tps.append(tp);
-  return Scope { ...s, tpvars: vs, tpvar_tps: ps };
-}
-
-// tpvar_of returns the type parameter a value binding was declared with, or ""
-// when the name is not one. Its caller reaches it only for a receiver that
-// typed to unknown, so a local shadowing the parameter with a real type is
-// already out of the picture.
-function (s: Scope) tpvar_of(name: string): string {
-  let i: i32 = s.tpvars.len() - 1;
-  while (i >= 0) {
-    if (s.tpvars[i] == name) {
-      return s.tpvar_tps[i];
-    }
-    i = i - 1;
-  }
-  return "";
+  return type_from_name_subst(name, s.tparams, rigid_tparams(s.tparams), s.type_names());
 }
 
 // defines reports whether `name` is bound in scope (param, receiver,
@@ -3290,7 +3254,8 @@ function conforms_to_dyn_trait(s: Scope, tyname: string, tr: string): boolean {
 // enum types deriving both Eq and Hash (#2671), and tuples and arrays of
 // usable scalar keys (#10020) — the same set native accepts.
 function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
-  if (is_unknown(kt) || is_integer(kt) || type_eq(kt, t_string()) || type_eq(kt, t_str())) {
+  // A type variable's key is checked where it is instantiated.
+  if (is_unknown(kt) || is_type_variable(kt) || is_integer(kt) || type_eq(kt, t_string()) || type_eq(kt, t_str())) {
     return "";
   }
   if (is_tuple_or_array(kt)) {
@@ -5738,8 +5703,8 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       // `T.zero()` through a bounded type parameter (#6933). There is no
       // receiver value to dispatch on, so it must be typed from the trait
       // requirement before the method path reads the object as a value and
-      // returns unknown. A generic `T` still erases to unknown; a concrete
-      // one gives the real type, so a non-generic body isn't over-rejected.
+      // returns unknown. `T` gives the type variable, a concrete type the real
+      // type.
       if (!qhandled) {
         let ah: AssocHit = assoc_call_req(fa.obj, fa.field, s);
         if (ah.found) {
@@ -5775,7 +5740,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           if let typeinfo.TypeDyn(d) = recv_ty {
             return dyn_method_type(d.traits, name, s);
           }
-          match (bound_method(s, tp_receiver(fa.obj, recv_ty, s), name)) {
+          match (bound_method(s, tp_receiver(recv_ty, s), name)) {
             Some(msig) => {
               return generic_method_ret(c, msig, method_binding(c, msig, recv_ty, s), s);
             },
@@ -8090,11 +8055,11 @@ function check_program(prog: ast.Stmt[]): ProgramTypes {
 // then passed to check_module's per-function body walk so calls
 // (including recursive / mutually-recursive ones) can resolve.
 // func_ret_type resolves a FuncDecl's declared return type.
-function func_ret_type(fd: parser.FuncDecl, tn: TypeNames): typeinfo.Type {
+function func_ret_type(fd: parser.FuncDecl, tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
   if (fd.ret_fn_ret.len() > 0 && parser.is_fn_contract_tag(fd.ret_type)) {
-    return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, fd.type_params, tn);
+    return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, tparams, subst, tn);
   }
-  return type_from_name_erasing_tparams(fd.ret_type, fd.type_params, tn);
+  return type_from_name_subst(fd.ret_type, tparams, subst, tn);
 }
 
 // A lambda's own function type, as a binding of its name sees it.
@@ -8148,7 +8113,7 @@ function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
     return t_unknown(INFERRED_RESULT);
   }
   if (lm.ret_fn_ret.len() > 0 && parser.is_fn_contract_tag(lm.ret_type)) {
-    return declared_callable_type(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, s.tparams, s.type_names());
+    return declared_callable_type(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, s.tparams, rigid_tparams(s.tparams), s.type_names());
   }
   return s.resolve_type(lm.ret_type);
 }
@@ -8156,7 +8121,7 @@ function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
 // var_declared_type resolves a StmtVar's annotation.
 function var_declared_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
   if (v.fn_ret.len() > 0 && parser.is_fn_contract_tag(v.type_name)) {
-    return declared_callable_type(v.type_name, v.fn_ret, v.fn_param_types, s.tparams, s.type_names());
+    return declared_callable_type(v.type_name, v.fn_ret, v.fn_param_types, s.tparams, rigid_tparams(s.tparams), s.type_names());
   }
   return s.resolve_type(v.type_name);
 }
@@ -8180,7 +8145,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
       // (#5986's call-site half), so argument checks against it are live —
       // a lambda or named-function argument passes the fn-to-fn arm, a
       // non-function argument is a real mismatch.
-      pts = pts.append(param_decl_type(param, fd.type_params, tn));
+      pts = pts.append(param_decl_type(param, fd.type_params, erased_tparams(fd.type_params), tn));
       powns = powns.append(param.own);
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
@@ -8192,7 +8157,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
       }
     }
     let rtn: string = parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
-    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: callable_own_flags(powns, pts.len()), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: rtn, param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module, refs: generic_sig_refs(fd.all_type_params, ptn, rtn) });
+    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: callable_own_flags(powns, pts.len()), ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: rtn, param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module, refs: generic_sig_refs(fd.all_type_params, ptn, rtn) });
     i = i + 1;
   }
   return out;
@@ -8429,11 +8394,11 @@ function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig
       let ptn: string[] = [];
       for param in fd.params {
         // Same sidecar resolution as collect_func_sigs (#5986).
-        pts = pts.append(param_decl_type(param, fd.type_params, tn));
+        pts = pts.append(param_decl_type(param, fd.type_params, erased_tparams(fd.type_params), tn));
         ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
       }
       let rtn: string = parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
-      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: rtn, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module, impl_trait: fd.impl_trait, line: fd.line, col: fd.col, file: decl_file_label(fd) });
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), ret_type_name: rtn, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module, impl_trait: fd.impl_trait, line: fd.line, col: fd.col, file: decl_file_label(fd) });
     }
   }
   return out;
@@ -8466,7 +8431,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
     for elem in sd.fields {
       fnames = fnames.append(elem.name);
       if (elem.fn_ret.len() > 0 && parser.is_fn_contract_tag(elem.type_name)) {
-        ftypes = ftypes.append(declared_callable_type(elem.type_name, elem.fn_ret, elem.fn_param_types, sd.type_params, tn));
+        ftypes = ftypes.append(declared_callable_type(elem.type_name, elem.fn_ret, elem.fn_param_types, sd.type_params, erased_tparams(sd.type_params), tn));
       } else {
         ftypes = ftypes.append(type_from_spelling(elem.type_name, tn));
       }
@@ -8785,6 +8750,15 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
     if (tpi >= 0 && tpi < targs.len()) {
       return targs[tpi];
     }
+    // A projection off a rigid type variable (`H::Item`) is as opaque as
+    // the variable.
+    let sep: i32 = util.index_of_sub(r.base, "::");
+    if (sep > 0) {
+      let opi: i32 = util.index_of_str(tparams, slice_unchecked(r.base, 0, sep) + "");
+      if (opi >= 0 && opi < targs.len() && is_type_variable(targs[opi]) && !is_unknown(targs[opi])) {
+        return typeinfo.TypeErased { name: r.base };
+      }
+    }
   }
   if (parser.ref_is_fn_value(r)) {
     let f: parser.TypeRef = parser.ref_ungroup(r);
@@ -8865,9 +8839,9 @@ function with_nominal_args(t: typeinfo.Type, args: typeinfo.Type[]): typeinfo.Ty
 // reads `a.cmp(b)` as a field of that struct. Native scopes the same lookup
 // (#6118).
 //
-// A type variable erases to unknown in this partial type system, so each
-// parameter substitutes to unknown; a spelling naming none of them resolves
-// unchanged.
+// This is the CALLER's reading of a generic signature: each parameter
+// substitutes to unknown, for the call to infer; a spelling naming none of
+// them resolves unchanged. The body's own reading is rigid_tparams.
 // TPARAM_MARK is the reason a type variable erased to unknown carries; the rest
 // of the reason is the variable's name.
 const TPARAM_MARK: string = "type parameter ";
@@ -8967,36 +8941,38 @@ function unknown_beyond_tvars(t: typeinfo.Type): boolean {
   return false;
 }
 
-// tvar_meets_concrete reports whether a value of a bare type variable reaches a
-// destination that names a concrete type. The variable stands for every type,
-// so it meets no concrete one; a `dyn` destination is the bounds' question.
-// `e` is the value: a callee's variable only the destination binds is not one
-// of the enclosing function's, whatever its name.
-function tvar_meets_concrete(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
-  if (!util.has_str(s.fn_tvars, tvar_name(from)) || type_contains_unknown(to) || dest_bound_result(e, s)) {
-    return false;
-  }
-  if let typeinfo.TypeDyn(_) = to {
-    return false;
-  }
-  return true;
+function type_from_name_erasing_tparams(name: string, tparams: string[], tn: TypeNames): typeinfo.Type {
+  return type_from_name_subst(name, tparams, erased_tparams(tparams), tn);
 }
 
-function type_from_name_erasing_tparams(name: string, tparams: string[], tn: TypeNames): typeinfo.Type {
+// type_from_name_subst resolves `name` with each of `tparams` read as the
+// type at the same index of `subst`.
+function type_from_name_subst(name: string, tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
   // A top-level dyn trait set cannot name an enclosing type variable.
   if (tparams.len() == 0 || name.len() == 0 || name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ") {
     return type_from_spelling(name, tn);
   }
-  return type_from_ref_subst(parser.parse_type_ref(name), tparams, erased_tparams(tparams), tn);
+  return type_from_ref_subst(parser.parse_type_ref(name), tparams, subst, tn);
 }
 
-// erased_tparams is what each of `tparams` resolves to inside its generic.
+// erased_tparams is what each of `tparams` resolves to in its generic's
+// signature, as a caller reads it: unknown, for the call to infer.
 function erased_tparams(tparams: string[]): typeinfo.Type[] {
   let erased: typeinfo.Type[] = [];
   for tp in tparams {
     erased = erased.append(t_unknown(TPARAM_MARK + tp));
   }
   return erased;
+}
+
+// rigid_tparams is what each of `tparams` is inside its own generic's body: a
+// type variable, equal only to itself.
+function rigid_tparams(tparams: string[]): typeinfo.Type[] {
+  let rigid: typeinfo.Type[] = [];
+  for tp in tparams {
+    rigid = rigid.append(typeinfo.TypeErased { name: tp });
+  }
+  return rigid;
 }
 
 // gc_is_typevar_name reports whether a bare type NAME is a type VARIABLE of the
@@ -9215,25 +9191,22 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
   while (tbs.len() < tps.len()) {
     tbs = tbs.append("");
   }
-  s = s.with_tparams(tps, tbs);
-  let fn_tvars: string[] = tps;
+  // The unbounded parameters are type variables of the body too.
   for tv in fd.all_type_params {
-    if (!util.has_str(fn_tvars, tv)) {
-      fn_tvars = fn_tvars.append(tv);
+    if (!util.has_str(tps, tv)) {
+      tps = tps.append(tv);
+      tbs = tbs.append("");
     }
   }
-  s = Scope { ...s, fn_tvars: fn_tvars };
+  s = s.with_tparams(tps, tbs);
   if (fd.ret_type.len() > 0) {
-    s = s.with_ret_type(func_ret_type(fd, s.type_names()));
+    s = s.with_ret_type(func_ret_type(fd, tps, rigid_tparams(tps), s.type_names()));
   }
   if (fd.receiver_name.len() > 0) {
-    s = s.bind(fd.receiver_name, type_from_name_erasing_tparams(fd.receiver_type, tps, s.type_names()));
+    s = s.bind(fd.receiver_name, type_from_name_subst(fd.receiver_type, tps, rigid_tparams(tps), s.type_names()));
   }
   for param in fd.params {
-    s = s.bind(param.name, param_decl_type(param, tps, s.type_names()));
-    if (util.index_of_str(fd.type_params, param.type_name) >= 0) {
-      s = s.bind_tpvar(param.name, param.type_name);
-    }
+    s = s.bind(param.name, param_decl_type(param, tps, rigid_tparams(tps), s.type_names()));
   }
   return s;
 }
@@ -9242,21 +9215,16 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
 // parameters plus the implicit ones a generic RECEIVER binds. `(m: Map[K, V])
 // merge(...)` declares no `[K, V]`, yet K and V are variables in its body. The
 // parser has already told the two apart by module visibility, as native's
-// collectFreeTypeVars does, and respelled the variables, so
-// struct_receiver_typevars reads them straight off the receiver.
+// collectFreeTypeVars does, and respelled the variables, so type_str_vars
+// reads them straight off the receiver, nested ones (`Option[(T, U)]`)
+// included.
 //
 // The implicit ones are unbounded, so the caller pads tbounds to match.
 function func_scope_tparams(fd: parser.FuncDecl): string[] {
   if (fd.receiver_type.len() == 0) {
     return fd.type_params;
   }
-  let out: string[] = fd.type_params;
-  for tv in parser.struct_receiver_typevars(fd.receiver_type) {
-    if (util.index_of_str(out, tv) < 0) {
-      out = out.append(tv);
-    }
-  }
-  return out;
+  return parser.type_str_vars(fd.receiver_type, fd.type_params);
 }
 
 // split_fn_param_spellings splits ParamDecl.fn_param_types — the comma-encoded
@@ -9285,25 +9253,25 @@ function split_fn_param_spellings(csv: string): string[] {
 // fields and results. No recorded result means an opaque tag, not zero arity.
 // param_decl_type is a declared parameter's type: its sidecar type, else its
 // resolved name.
-function param_decl_type(p: ast.ParamDecl, tparams: string[], tn: TypeNames): typeinfo.Type {
-  let t: typeinfo.Type = fn_param_decl_type(p, tparams, tn);
+function param_decl_type(p: ast.ParamDecl, tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
+  let t: typeinfo.Type = fn_param_decl_type(p, tparams, subst, tn);
   if (is_unknown(t)) {
-    t = type_from_name_erasing_tparams(p.type_name, tparams, tn);
+    t = type_from_name_subst(p.type_name, tparams, subst, tn);
   }
   return t;
 }
 
-function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], tn: TypeNames): typeinfo.Type {
+function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
   if (!parser.is_fn_contract_tag(p.type_name) || p.fn_ret.len() == 0) {
     return t_unknown("opaque fn param");
   }
-  return declared_callable_type(p.type_name, p.fn_ret, p.fn_param_types, tparams, tn);
+  return declared_callable_type(p.type_name, p.fn_ret, p.fn_param_types, tparams, subst, tn);
 }
 
 // Every lambda scope and diagnostic walk consumes the same declaration
 // contract as top-level functions, including callable signatures and views.
 function (s: Scope) resolve_param(p: ast.ParamDecl): typeinfo.Type {
-  let ty = fn_param_decl_type(p, s.tparams, s.type_names());
+  let ty = fn_param_decl_type(p, s.tparams, rigid_tparams(s.tparams), s.type_names());
   if (!is_unknown(ty)) {
     return ty;
   }
@@ -9313,16 +9281,16 @@ function (s: Scope) resolve_param(p: ast.ParamDecl): typeinfo.Type {
 // The parser retains callable signatures beside coarse fn/fn[]/[fn] tags. All
 // declaration sites consume that same contract. A recorded result distinguishes
 // a genuine empty parameter list from an opaque tag with no signature at all.
-function declared_callable_type(name: string, ret: string, params: string, tparams: string[], tn: TypeNames): typeinfo.Type {
+function declared_callable_type(name: string, ret: string, params: string, tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
   let pts: typeinfo.Type[] = [];
   let powns: boolean[] = [];
   if (params.len() > 0) {
     for seg in split_fn_param_spellings(params) {
       powns = powns.append(parser.spelling_is_own(seg));
-      pts = pts.append(type_from_name_erasing_tparams(parser.spelling_without_own(seg), tparams, tn));
+      pts = pts.append(type_from_name_subst(parser.spelling_without_own(seg), tparams, subst, tn));
     }
   }
-  let ft: typeinfo.Type = t_func_own(pts, powns, type_from_name_erasing_tparams(ret, tparams, tn));
+  let ft: typeinfo.Type = t_func_own(pts, powns, type_from_name_subst(ret, tparams, subst, tn));
   if (name == "fn[]") {
     return t_array(ft);
   }
@@ -9337,9 +9305,9 @@ function declared_callable_type(name: string, ret: string, params: string, tpara
 // rebuilt because check_module already holds the identical scope.
 function check_func_body(fd: parser.FuncDecl, s: Scope): boolean {
   // A GENERIC function's body operates on opaque-typed values — its type
-  // parameters erase to unknown in this partial type system, so `v: T`
-  // binds `v` to unknown and any expression over it infers unknown. That's
-  // expected, not an error: native defers such checks to monomorphisation
+  // parameters are rigid, but a callee's signature still erases to unknown,
+  // so an expression over a `T` can infer unknown. That's expected, not an
+  // error: native defers such checks to monomorphisation
   // and accepts the body. So a TypeUnknown statement here must NOT mark the
   // module ill-typed (which over-rejected `ident[T](v: T): T { return v; }`
   // under `-check`, #4346 piece 2). The CODED diagnostic passes still run —
@@ -9554,9 +9522,6 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
           out = util.append_diags(out, rbound);
           if (rbound.len() == 0 && !is_unknown(t) && !settles_to(r.value, ret_ty, cur) && !(type_assignable(t, ret_ty, unions) && dyn_conforms(t, ret_ty, cur))) {
             out = out.append(dg_at("E002", "return value: expected " + type_label(ret_ty) + ", got " + type_label(t) + str_copy_hint(t, ret_ty), r.line, r.col));
-          }
-          if (tvar_meets_concrete(r.value, t, ret_ty, cur)) {
-            out = out.append(dg_at("E002", "return value: expected " + type_label(ret_ty) + ", got " + tvar_name(t), r.line, r.col));
           }
         }
       },
@@ -14426,17 +14391,20 @@ function trait_bound_method(s: Scope, bound: string, self: string, field: string
     if (m.name == field && m.params.len() > 0 && m.params[0].name == "self") {
       let pts: typeinfo.Type[] = [];
       let ptn: string[] = [];
+      // The body's own parameters are rigid; the method's are the call's to
+      // infer.
       let tps: string[] = util.append_all(s.tparams, m.all_type_params);
+      let subst: typeinfo.Type[] = util.append_all(rigid_tparams(s.tparams), erased_tparams(m.all_type_params));
       let i: i32 = 1;
       while (i < m.params.len()) {
         let p: ast.ParamDecl = m.params[i];
         let spelling: string = parser.subst_ty(parser.subst_self(parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types), self), req.type_params, args);
         ptn = ptn.append(spelling);
-        pts = pts.append(type_from_name_erasing_tparams(spelling, tps, s.type_names()));
+        pts = pts.append(type_from_name_subst(spelling, tps, subst, s.type_names()));
         i = i + 1;
       }
       let rt: string = parser.subst_ty(parser.subst_self(parser.fn_tag_spelling(m.ret_type, m.ret_fn_ret, m.ret_fn_param_types), self), req.type_params, args);
-      return Some(MethodSig { name: m.name, receiver_type: self, param_types: pts, ret_type: type_from_name_erasing_tparams(rt, tps, s.type_names()), ret_type_name: rt, param_type_names: ptn, all_type_params: m.all_type_params, type_params: m.type_params, type_bounds: m.bound_traits, module: m.module, impl_trait: req.trait_name, line: m.line, col: m.col, file: decl_file_label(m) });
+      return Some(MethodSig { name: m.name, receiver_type: self, param_types: pts, ret_type: type_from_name_subst(rt, tps, subst, s.type_names()), ret_type_name: rt, param_type_names: ptn, all_type_params: m.all_type_params, type_params: m.type_params, type_bounds: m.bound_traits, module: m.module, impl_trait: req.trait_name, line: m.line, col: m.col, file: decl_file_label(m) });
     }
   }
   for parent in req.supertraits {
@@ -14472,32 +14440,12 @@ function trait_provides(reqs: parser.TraitReq[], tr: string, field: string, seen
 }
 
 // tp_receiver returns the type parameter a method call's RECEIVER is a value
-// of, or "" when it is not one. A parameter declared `a: T` is recorded as
-// such at its binding; any other receiver — a call through a fn-typed
-// parameter returning `T`, a local annotated `T` or initialised from one —
-// carries the parameter's name in the erased unknown it typed to, and counts
-// only while `T` is a type variable of the enclosing function.
-function tp_receiver(obj: ast.Expr, recv: typeinfo.Type, s: Scope): string {
-  match (obj) {
-    ast.ExprIdent(id) => {
-      let tp: string = s.tpvar_of(id.name);
-      if (tp.len() > 0) {
-        return tp;
-      }
-    },
-    _ => {}
-  }
-  match (recv) {
-    typeinfo.TypeUnknown(u) => {
-      let prefix: string = TPARAM_MARK;
-      if (u.reason.len() > prefix.len() && util.str_has_prefix(u.reason, prefix)) {
-        let tp: string = slice_unchecked(u.reason, prefix.len(), u.reason.len()) + "";
-        if (util.index_of_str(s.tparams, tp) >= 0) {
-          return tp;
-        }
-      }
-    },
-    _ => {}
+// of, or "" when it is not one: a type variable of the enclosing function.
+function tp_receiver(recv: typeinfo.Type, s: Scope): string {
+  if let typeinfo.TypeErased(e) = recv {
+    if (util.index_of_str(s.tparams, e.name) >= 0) {
+      return e.name;
+    }
   }
   return "";
 }
@@ -14590,8 +14538,7 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope): AssocHit {
 
 // assoc_hit_type is assoc_call_req's typing half: the associated call's
 // result type, with the requirement's `Self` resolved to the object — the
-// type parameter for `T.zero()` (which erases to unknown, as every generic
-// body's types do here) and the concrete name for `i32.zero()`.
+// type variable for `T.zero()` and the concrete type for `i32.zero()`.
 function assoc_hit_type(h: AssocHit, obj: ast.Expr, s: Scope): typeinfo.Type {
   if (h.ret.len() == 0) {
     return t_unknown("associated call: return type not recoverable");
@@ -14638,6 +14585,16 @@ function assoc_arg_diags(h: AssocHit, c: ast.ExprCall, mfa: ast.ExprFieldAccess,
     k = k + 1;
   }
   return out;
+}
+
+// operand_open reports whether an operator's operand type leaves the operator
+// unjudged here: an unknown, or a type variable, whose operators
+// tvar_operator_diags judges by its bound.
+function operand_open(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeErased(_) = t {
+    return true;
+  }
+  return is_unknown(t);
 }
 
 function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
@@ -15351,7 +15308,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         },
         typeinfo.TypeBool(_) => {
           if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("boolean", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
           out = util.append_diags(out, uninferred_method_diags(c, "boolean", mfa.field, s.lookup_method(mfa.field, "boolean")));
         },
@@ -15557,7 +15514,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         },
         _ => {
           // A bounded type parameter receiver: `a.f(...)` where `a: T`
-          // and `T: Tr`. T erases to unknown, so the receiver lands
+          // and `T: Tr`. T is a type variable, so the receiver lands
           // here rather than in a nominal arm above. A requirement of
           // one of T's bounds that has no leading `self` is an
           // ASSOCIATED function — `T.f(...)`, never a value's method —
@@ -15580,7 +15537,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
 
 function type_param_method_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typeinfo.Type, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
-  let tpn: string = tp_receiver(mfa.obj, recv, s);
+  let tpn: string = tp_receiver(recv, s);
   if (tpn.len() > 0) {
     let tph: AssocHit = tp_assoc_req(s, tpn, mfa.field);
     if (tph.found) {
@@ -15640,6 +15597,17 @@ function tvar_operator_diags(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
       return [dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + name, b.line, b.col)];
     }
   }
+  // The bound's method takes another value of the same variable, so the
+  // other operand must be one.
+  let ln: string = unmet_tvar(lt, "", s);
+  let rn: string = unmet_tvar(rt, "", s);
+  if (ln != rn && !is_unknown(lt) && !is_unknown(rt)) {
+    let name: string = ln;
+    if (name == "") {
+      name = rn;
+    }
+    return [dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + name, b.line, b.col)];
+  }
   return [];
 }
 
@@ -15659,8 +15627,11 @@ function tvar_operator_method(op: string): string {
 // unmet_tvar names `t` when it is a type variable of this function whose bound
 // supplies no `method` ("" supplied by none), else "".
 function unmet_tvar(t: typeinfo.Type, method: string, s: Scope): string {
-  let name: string = tvar_name(t);
-  if (name == "" || !util.has_str(s.fn_tvars, name)) {
+  let name: string = "";
+  if let typeinfo.TypeErased(e) = t {
+    name = e.name;
+  }
+  if (name == "" || !util.has_str(s.tparams, name)) {
     return "";
   }
   if (method != "" && tp_bound_provides(s, name, method)) {
@@ -15757,7 +15728,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
   // rejects the operands (no new false positives).
   if (b.op == "+") {
     let (pl, pr) = settled_operands(b, blt, brt);
-    if (!is_unknown(pl) && !is_unknown(pr)) {
+    if (!operand_open(pl) && !operand_open(pr)) {
       let oks: boolean = type_eq(pl, t_string()) && type_eq(pr, t_string());
       let both_int: boolean = is_integer(pl) && is_integer(pr);
       let oki2: boolean = both_int && int_operands_agree(pl, pr, b.left, b.right);
@@ -15778,7 +15749,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
   }
   if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
     let (alt, art) = settled_operands(b, blt, brt);
-    if (!is_unknown(alt) && !is_unknown(art)) {
+    if (!operand_open(alt) && !operand_open(art)) {
       let a_both_int: boolean = is_integer(alt) && is_integer(art);
       let oki: boolean = a_both_int && int_operands_agree(alt, art, b.left, b.right);
       let okf: boolean = b.op != "%" && float_operands_agree(alt, art);
@@ -15796,7 +15767,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
   // integer-only — no string concat, no float form. Mirrors the Go
   // checker's dedicated requireInteger pair (#5542).
   if (b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
-    if (!is_unknown(blt) && !is_unknown(brt)) {
+    if (!operand_open(blt) && !operand_open(brt)) {
       if (!is_integer(blt) || !is_integer(brt)) {
         out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(blt) + " and " + type_label(brt), b.line, b.col));
       } else if (is_usize(blt) || is_usize(brt)) {
@@ -15809,7 +15780,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
   // E009: checked arithmetic (`+?` `-?` `*?`) is integer-only too —
   // it yields Option[T]. Same requireInteger pair as saturating (#5542).
   if (b.op == "+?" || b.op == "-?" || b.op == "*?" || b.op == "/?" || b.op == "%?" || b.op == "<<?" || b.op == ">>?") {
-    if (!is_unknown(blt) && !is_unknown(brt)) {
+    if (!operand_open(blt) && !operand_open(brt)) {
       if (!is_integer(blt) || !is_integer(brt)) {
         out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(blt) + " and " + type_label(brt), b.line, b.col));
       } else if (is_usize(blt) || is_usize(brt)) {
@@ -15827,11 +15798,11 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
     // A composite carrying the operator's method is well-formed: `a & b` is
     // `a.bitand(b)`, as check_expr types it.
     let sov: boolean = !is_unknown(s.binop_overload_ret(b.op, blt));
-    if (!sov && !is_unknown(blt) && !is_integer(blt)) {
+    if (!sov && !operand_open(blt) && !is_integer(blt)) {
       out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(blt), b.line, b.col));
-    } else if (!sov && !is_unknown(brt) && !is_integer(brt)) {
+    } else if (!sov && !operand_open(brt) && !is_integer(brt)) {
       out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires an integer type, got " + type_label(brt), b.line, b.col));
-    } else if (!sov && !is_unknown(blt) && !is_unknown(brt) && !int_operands_agree(blt, brt, b.left, b.right)) {
+    } else if (!sov && !operand_open(blt) && !operand_open(brt) && !int_operands_agree(blt, brt, b.left, b.right)) {
       out = out.append(mixed_int_diag(b.op, blt, brt, b.line, b.col));
     }
   }
@@ -15841,7 +15812,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
   // float). `==` / `!=` (equality, E041) are handled above.
   if (b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") {
     let (olt, ort) = settled_operands(b, blt, brt);
-    if (!is_unknown(olt) && !is_unknown(ort)) {
+    if (!operand_open(olt) && !operand_open(ort)) {
       let o_both_int: boolean = is_integer(olt) && is_integer(ort);
       let oki_o: boolean = o_both_int && int_operands_agree(olt, ort, b.left, b.right);
       let okf_o: boolean = float_operands_agree(olt, ort);
@@ -15891,7 +15862,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
   if (u.op == "-") {
     let nt: typeinfo.Type = check_expr(u.operand, s);
     let nok: boolean = !is_unknown(s.unop_overload_ret(u.op, nt));
-    if (!is_unknown(nt) && !is_integer(nt) && !is_float(nt) && !nok) {
+    if (!operand_open(nt) && !is_integer(nt) && !is_float(nt) && !nok) {
       out = out.append(dg_at("E009", "operator \"-\" requires a numeric type, got " + type_label(nt), u.line, u.col));
     }
   }
@@ -17936,9 +17907,6 @@ function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.D
     if (abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur))) {
       out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
     }
-    if (tvar_meets_concrete(a.value, vt, tt, cur)) {
-      out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + tvar_name(vt), a.line, a.col));
-    }
   }
   return out;
 }
@@ -18011,9 +17979,6 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           out = util.append_diags(out, vbound);
           if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
             out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + type_label(initt) + str_copy_hint(initt, declared), v.line, v.col));
-          }
-          if (tvar_meets_concrete(v.init, initt, declared, cur)) {
-            out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + tvar_name(initt), v.line, v.col));
           }
           // An annotation naming no declared type (the E064 case) is a type
           // native cannot assign a typed init to either, so E003 stands
@@ -22595,6 +22560,11 @@ function cell_payload_risk(t: typeinfo.Type, s: Scope, own: string[], seen: stri
         if (!util.has_str(own, tp)) {
           return tp;
         }
+      }
+    },
+    typeinfo.TypeErased(e) => {
+      if (!util.has_str(own, e.name)) {
+        return type_label(t);
       }
     },
     typeinfo.TypeFunc(_) => {
