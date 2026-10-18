@@ -9788,9 +9788,6 @@ function sentinel_message(kind: string): string {
   if (k == "primary") {
     return "expected an expression";
   }
-  if (k == "match: missing (") {
-    return "expected \"(\" after \"match\"";
-  }
   if (k == "lambda: bad destructuring param") {
     return "expected a parameter name or a destructuring pattern";
   }
@@ -9806,12 +9803,6 @@ function sentinel_message(kind: string): string {
 // missing_message words a "missing X in Y" sentinel; `what` is the text after
 // "missing ".
 function missing_message(what: string): string {
-  if (what == "( in if") {
-    return "expected \"(\" after \"if\"";
-  }
-  if (what == "( in while") {
-    return "expected \"(\" after \"while\"";
-  }
   if (what == "= in let") {
     return "expected \"=\" after the name in this declaration";
   }
