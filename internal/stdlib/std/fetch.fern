@@ -396,7 +396,10 @@ function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] 
   let tls: boolean = u.scheme == "https";
   let host_field: string = __host_field(u.host, port, tls);
   let target: string = __request_target(u)?;
-  let authority: string = u.host + ":" + int.int_to_string(port);
+  let authority: string = "";
+  if (tls) {
+    authority = u.host + ":" + int.int_to_string(port);
+  }
   match (__proxy_for_url(policy.proxies, u)) {
     Some(spec) => {
       let p: __Proxy = __proxy_named(policy.proxies, spec, tls)?;
@@ -416,15 +419,18 @@ function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] 
 // to some resolvers and as a name to others, and an address that reads
 // two ways is how a block list is bypassed.
 function __http_url(raw: string): Result[Url, FetchError] {
-  let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(raw)) {
     Some(parsed) => {
-      u = parsed;
+      return __http_url_checked(raw, parsed);
     },
     None => {
       return Err(InvalidUrl(raw));
     }
   }
+  return Err(InvalidUrl(raw));
+}
+
+function __http_url_checked(raw: string, u: Url): Result[Url, FetchError] {
   if (u.scheme.len() == 0) {
     return Err(InvalidUrl("no scheme in " + raw));
   }
@@ -451,19 +457,14 @@ function __ambiguous_ipv4(host: string): boolean {
   if (end > 0 && host[end - 1] == 46) {
     end = end - 1;
   }
-  let start: i32 = slice_unchecked(host, 0, end).to_owned().last_index_of(".") + 1;
+  let start: i32 = end;
+  while (start > 0 && host[start - 1] != 46 as u8) {
+    start = start - 1;
+  }
   if (start >= end || host[start] < 48 || host[start] > 57) {
     return false;
   }
-  match (net.ipv4_parse(host)) {
-    Some(a) => {
-      return false;
-    },
-    None => {
-      return true;
-    }
-  }
-  return true;
+  return !net.is_ipv4(host);
 }
 
 // `__request_target(u)` — the origin-form request-target of `u`: its
@@ -695,11 +696,11 @@ pub function (p: Idle) proxy_env(): ProxyEnv {
   return env;
 }
 
-// `Kept` — a connection the pool holds: where it reaches (`key`), the
+// `Kept` — a connection the pool holds: where it reaches (`place`), the
 // transport's number for it, the nanosecond it went idle, its TLS session
 // for `https`, and the HTTP/2 connection's state when the origin chose
 // `h2`.
-pub struct Kept { key: string, fd: i32, since: i64, tls: Option[client.Session], h2: Option[h2.Conn] }
+pub struct Kept { place: __Place, fd: i32, since: i64, tls: Option[client.Session], h2: Option[h2.Conn] }
 
 // `idle()` — an empty pool keeping up to 64 connections, each for 90 s
 // (Go's `IdleConnTimeout`).
@@ -1228,20 +1229,36 @@ pub function close_idle[T: Transport](tr: T): void {
   pool.kept.set(none);
 }
 
-// `__pool_key(t, guard, roots)` — where a connection reaches: the host and
-// port dialled, the origin a TLS connection reaches through it and the
-// roots its chain was checked against, and whether the block list judged
-// the addresses, so a connection the open route made is never handed to
-// the guarded one, nor one trusted under one store to a request naming
-// another.
-function __pool_key(t: __Target, guard: boolean, roots: Option[verify.Roots]): string {
+// `__Place` — where a kept connection reaches: the host and port dialled,
+// whether the block list judged the addresses (`guard`), and for TLS the
+// origin's authority and the roots its chain was checked against, joined
+// (empty for a connection in the clear), so a connection the open route
+// made is never handed to the guarded one, nor one trusted under one
+// store to a request naming another.
+struct __Place { guard: boolean, host: string, port: i32, tls: string }
+
+function __place_of(t: __Target, guard: boolean, roots: Option[verify.Roots]): __Place {
+  let tls: string = "";
+  if (t.tls) {
+    tls = t.authority + " " + __roots_key(roots);
+  }
+  return __Place { guard: guard, host: t.host, port: t.port, tls: tls };
+}
+
+function __place_eq(a: __Place, b: __Place): boolean {
+  return a.port == b.port && a.guard == b.guard && a.host == b.host && a.tls == b.tls;
+}
+
+// `__place_key(p)` — the place as the text the loop's shared HTTP/2
+// connections are keyed by (`Shared`).
+function __place_key(p: __Place): string {
   let route: string = "open ";
-  if (guard) {
+  if (p.guard) {
     route = "global ";
   }
-  let key: string = route + t.host + " " + int.int_to_string(t.port);
-  if (t.tls) {
-    key = key + " tls " + t.authority + " " + __roots_key(roots);
+  let key: string = route + p.host + " " + int.int_to_string(p.port);
+  if (p.tls.len() > 0) {
+    key = key + " tls " + p.tls;
   }
   return key;
 }
@@ -1264,13 +1281,13 @@ function __roots_key(roots: Option[verify.Roots]): string {
   return "system";
 }
 
-// `__take_idle(tr, key)` — the connection to `key` kept last, taken out
-// of the pool, or one numbered -1; any connection idle past the pool's
-// bound is closed on the way.
-function __take_idle[T: Transport](tr: T, key: string): __Conn {
+// `__take_idle(tr, place)` — the connection to `place` kept last, taken
+// out of the pool, or one numbered -1; any connection idle past the
+// pool's bound is closed on the way.
+function __take_idle[T: Transport](tr: T, place: __Place): __Conn {
   let rows: Kept[] = __live_kept(tr);
   let pick: i32 = rows.len() - 1;
-  while (pick >= 0 && rows[pick].key != key) {
+  while (pick >= 0 && !__place_eq(rows[pick].place, place)) {
     pick = pick - 1;
   }
   if (pick < 0) {
@@ -1281,11 +1298,11 @@ function __take_idle[T: Transport](tr: T, key: string): __Conn {
   return conn;
 }
 
-// `__park(tr, key, conn)` — `conn` kept for the next request to `key`, the
-// longest-idle connections closed while the pool holds more than its
-// `max`.
-function __park[T: Transport](tr: T, key: string, conn: __Conn): void {
-  let rows: Kept[] = __live_kept(tr).append(Kept { key: key, fd: conn.fd, since: tr.now_ns(), tls: conn.tls, h2: conn.h2 });
+// `__park(tr, place, conn)` — `conn` kept for the next request to
+// `place`, the longest-idle connections closed while the pool holds more
+// than its `max`.
+function __park[T: Transport](tr: T, place: __Place, conn: __Conn): void {
+  let rows: Kept[] = __live_kept(tr).append(Kept { place: place, fd: conn.fd, since: tr.now_ns(), tls: conn.tls, h2: conn.h2 });
   let from: i32 = 0;
   while (rows.len() - from > tr.idle().max) {
     __close(tr, __kept_conn(rows[from]));
@@ -1407,7 +1424,7 @@ impl Transport for Sockets {
     return tcp_send_bytes(conn, data);
   }
   function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): tcp.Recv {
-    return tcp.tcp_recv_deadline(conn, max, time.duration_millis(wait_ms));
+    return tcp.tcp_recv_within(conn, max, wait_ms);
   }
   function close(self: Sockets, conn: i32): i32 {
     tcp_close(conn);
@@ -1887,49 +1904,49 @@ function __reset(e: FetchError): boolean {
 // the response read, and the connection kept when the response left it
 // reusable, closed otherwise.
 function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean, roots: Option[verify.Roots], reuse: boolean): Result[HttpResponse, FetchError] {
-  let key: string = __pool_key(t, guard, roots);
+  let place: __Place = __place_of(t, guard, roots);
   let conn: __Conn = __no_conn();
   if (reuse && http.http_method_idempotent(req.method)) {
-    conn = __take_idle(tr, key);
+    conn = __take_idle(tr, place);
   }
   if (conn.fd < 0) {
     if (t.tls && async.in_task()) {
       match (tr.idle().shared) {
         Some(sh) => {
-          return __attempt_shared(tr, req, t, started, key, guard, roots, sh);
+          return __attempt_shared(tr, req, t, started, place, guard, roots, sh);
         },
         None => {}
       }
     }
     conn = __connect(tr, t, req, guard, roots)?;
   }
-  return __attempt_opened(tr, req, t, started, key, conn);
+  return __attempt_opened(tr, req, t, started, place, conn);
 }
 
-// `__attempt_opened(tr, req, t, started, key, conn)` — `__attempt` on a
-// connection this task opened and speaks to itself, by the protocol the
-// origin chose.
-function __attempt_opened[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, conn: __Conn): Result[HttpResponse, FetchError] {
+// `__attempt_opened(tr, req, t, started, place, conn)` — `__attempt` on
+// a connection this task opened and speaks to itself, by the protocol
+// the origin chose.
+function __attempt_opened[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn): Result[HttpResponse, FetchError] {
   if let Some(hc) = conn.h2 {
-    return __attempt_h2(tr, req, t, started, key, conn, hc);
+    return __attempt_h2(tr, req, t, started, place, conn, hc);
   }
-  return __attempt_h1(tr, req, t, started, key, conn);
+  return __attempt_h1(tr, req, t, started, place, conn);
 }
 
-// `__attempt_shared(tr, req, t, started, key, guard, roots, sh)` — the
+// `__attempt_shared(tr, req, t, started, place, guard, roots, sh)` — the
 // request over a connection the loop drives: the origin's, when one has
 // room for a stream, else one opened here and handed to the loop (an
 // origin that chose `http/1.1` is spoken to as before, on this task).
 // The task parks on the stream's slot until the loop puts the answer in
 // it, under the request's bounds; a wait that passes resets the stream.
-function __attempt_shared[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, guard: boolean, roots: Option[verify.Roots], sh: Shared): Result[HttpResponse, FetchError] {
+function __attempt_shared[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, guard: boolean, roots: Option[verify.Roots], sh: Shared): Result[HttpResponse, FetchError] {
   let fd: i32 = 0 - 1;
-  match (__shared_socket(tr, req, t, started, key, guard, roots, sh)?) {
+  match (__shared_socket(tr, req, t, started, __place_key(place), guard, roots, sh)?) {
     OnLoop(socket) => {
       fd = socket;
     },
     OnTask(conn) => {
-      return __attempt_opened(tr, req, t, started, key, conn);
+      return __attempt_opened(tr, req, t, started, place, conn);
     }
   }
   let body: u8[] = req.body.bytes();
@@ -2038,9 +2055,9 @@ function __shared_wait[T: Transport](tr: T, req: Request, started: i64, sh: Shar
   return Err(Protocol("unreachable"));
 }
 
-// `__attempt_h1(tr, req, t, started, key, conn)` — `__attempt` on a
+// `__attempt_h1(tr, req, t, started, place, conn)` — `__attempt` on a
 // connection speaking HTTP/1.1: the request written, the response read.
-function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, conn: __Conn): Result[HttpResponse, FetchError] {
+function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn): Result[HttpResponse, FetchError] {
   match (__send_all(tr, conn, __wire(req, t, req.body.bytes()))) {
     Ok(c) => {
       conn = c;
@@ -2053,7 +2070,7 @@ function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i
   match (__read_response(tr, conn, req, started)) {
     Ok(read) => {
       if (read.keep) {
-        __park(tr, key, read.conn);
+        __park(tr, place, read.conn);
       } else {
         __close(tr, read.conn);
       }
@@ -2067,14 +2084,14 @@ function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i
   return Err(Protocol("unreachable"));
 }
 
-// `__attempt_h2(tr, req, t, started, key, conn, hc)` — `__attempt` on a
+// `__attempt_h2(tr, req, t, started, place, conn, hc)` — `__attempt` on a
 // connection speaking HTTP/2: the request on a stream of its own, the
 // frames read and fed to the state machine until the stream's response
 // comes back whole, and the connection kept for the next request unless
 // the server is going away. A connection that takes no stream is one the
 // server has since closed, reported as a reset so an idempotent request is
 // sent again on a new one.
-function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, conn: __Conn, hc: h2.Conn): Result[HttpResponse, FetchError] {
+function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn, hc: h2.Conn): Result[HttpResponse, FetchError] {
   let body: u8[] = req.body.bytes();
   let (sent, stream) = hc.request(h2.Outgoing { method: req.method, scheme: "https", authority: t.host_field, path: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.header_map_new() });
   if (stream < 0) {
@@ -2086,7 +2103,7 @@ function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i
       if (done.0.h2.closed() || done.0.h2.going_away()) {
         __close(tr, done.0.conn);
       } else {
-        __park(tr, key, __Conn { ...done.0.conn, h2: Some(done.0.h2) });
+        __park(tr, place, __Conn { ...done.0.conn, h2: Some(done.0.h2) });
       }
       return __decoded(HttpResponse { ...done.1, headers: http.http_end_to_end(done.1.headers) }, req);
     },
@@ -2815,8 +2832,12 @@ function __read_response[T: Transport](tr: T, conn: __Conn, req: Request, starte
 
 // `__append_bytes(buf, chunk)` — `buf` with `chunk` on its end, grown in
 // place: `buf` is owned here, so each push lands on a unique array and
-// the accumulation over a whole response is one linear pass.
+// the accumulation over a whole response is one linear pass. The first
+// chunk is the buffer itself, with the room its read left behind it.
 function __append_bytes(own buf: u8[], chunk: u8[]): u8[] {
+  if (buf.len() == 0) {
+    return chunk;
+  }
   let i: i32 = 0;
   while (i < chunk.len()) {
     buf = buf.append(chunk[i]);

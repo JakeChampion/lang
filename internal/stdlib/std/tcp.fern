@@ -20,7 +20,13 @@ pub enum Recv { Chunk(u8[]), Elapsed, Abandoned }
 // docs/STRINGS-SOTA.md). The wait is `async.wait_any`, so under a scheduler
 // the caller's task parks, and a cancelled task's read is `Abandoned`.
 pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Recv {
-  let wait_ms: i32 = deadline.as_millis() as i32;
+  return tcp_recv_within(fd, max, deadline.as_millis());
+}
+
+// `tcp_recv_within(fd, max, ms)` — `tcp_recv_deadline` with the wait in
+// milliseconds, for a caller that holds the bound as a number.
+pub function tcp_recv_within(fd: i32, max: i32, ms: i64): Recv {
+  let wait_ms: i32 = ms as i32;
   if (wait_ms < 1) {
     wait_ms = 1;
   }
