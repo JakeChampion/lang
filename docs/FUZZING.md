@@ -186,6 +186,20 @@ regression test where the bug lived:
   `TestSelfHostCheckerCodesX86_64`.
 - **A dyn call's arguments went unchecked** (#12639, self-host checker; from a
   review of #12627). `TestSelfHostDynTraitArgsCheck`.
+- **An associated call's arguments went unchecked** (#12693, self-host
+  checker). `T.mk(true)` through a bound, and `S.mk(true)` through a trait
+  or an inherent impl in a local function. Rows in
+  `TestSelfHostCheckerCodesX86_64`.
+- **An impl's signature was compared with its trait's only partly** (#12694,
+  self-host checker). An associated function, a `self` not typed `Self`, an
+  overridden or inherited default, and a generic trait's requirement were
+  all skipped. Rows in `TestSelfHostCheckerCodesX86_64`.
+- **A struct-update base of another type had no diagnostic** (#12695,
+  self-host checker), so a local function accepted it. Rows in
+  `TestSelfHostCheckerCodesX86_64`.
+- **A generic literal passed to a generic parameter took the callee's `T`**
+  (#12739, Go checker), so `b(G { v: 1 })` was refused.
+  `TestGenericStructLitFieldCheckedAgainstDestination`.
 - **A generator bug**: the ownership cluster reassigned a variable whose type
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.

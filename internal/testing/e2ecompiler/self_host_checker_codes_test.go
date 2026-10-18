@@ -2326,6 +2326,29 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// its type's variables (#12632).
 		{"type-param-unbound-receiver", "enum GO[T] { GNil, GHas(T) }\nfunction (o: GO[T]) count(): i32 { match (o) { GHas(_) => { return 1; }, GNil => { return 0; } } }\nfunction main(): i32 { let o = GNil; return o.count(); }\n", []string{"E040"}},
 		{"type-param-bound-receiver", "enum GO[T] { GNil, GHas(T) }\nfunction (o: GO[T]) count(): i32 { match (o) { GHas(_) => { return 1; }, GNil => { return 0; } } }\nfunction main(): i32 { let o: GO[i32] = GNil; let p = GHas(5); return o.count() + p.count(); }\n", nil},
+		// An associated call's arguments are checked against the trait
+		// requirement or the inherent declaration it reaches (#12693).
+		{"assoc-arg-through-bound", "trait Mk { function mk(x: i32): Self; }\nfunction g[T: Mk](x: boolean): T { return T.mk(x); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
+		{"assoc-arity-through-bound", "trait Mk { function mk(x: i32): Self; }\nfunction g[T: Mk](): T { return T.mk(); }\nfunction main(): i32 { return 0; }\n", []string{"E004"}},
+		{"assoc-arg-self-through-bound", "trait Mk { function mk(x: Self): i32; }\nfunction g[T: Mk](t: T): i32 { return T.mk(t); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"assoc-arg-inherent-local", "struct S { v: i32 }\nimpl S { function mk(x: i32): S { return S { v: x }; } }\nfunction main(): i32 { function inner(): i32 { let s: S = S.mk(true); return s.v; } return inner(); }\n", []string{"E038"}},
+		{"assoc-arg-inherent-ok", "struct S { v: i32 }\nimpl S { function mk(x: i32): S { return S { v: x }; } }\nfunction main(): i32 { function inner(): i32 { let s: S = S.mk(4); return s.v; } return inner(); }\n", nil},
+		// An impl's associated function, and a requirement whose `self` is
+		// not `Self`, are held to the trait's signature (#12694).
+		{"impl-assoc-fn-signature", "trait Mk { function mk(x: Option[i32]): Self; }\nstruct S { v: i32 }\nimpl Mk for S { function mk(x: i32): Self { return S { v: x }; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-self-type-signature", "trait Tr { function d(self: i32): i32; }\nstruct S { v: i32 }\nimpl Tr for S { function d(self: Self): i32 { return self.v; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-default-override-signature", "trait Tr { function m(self: Self): i32; function d(self: string): i32 { return 1; } }\nstruct S { v: i32 }\nimpl Tr for S { function m(self: Self): i32 { return self.v; } function d(self: Self): i32 { return 2; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-inherited-default-self-type", "trait Tr { function m(self: Self): i32; function d(self: string): i32 { return 1; } }\nimpl Tr for i32 { function m(self: Self): i32 { return self; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-generic-trait-signature", "trait Tc[T] { function g(self: Self, d: T): T; }\nimpl Tc[i32] for i32 { function g(self: Self, d: i32[]): i32 { return self; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-generic-trait-signature-ok", "trait Tc[T] { function g(self: Self, d: T): T; }\nimpl Tc[i32] for i32 { function g(self: Self, d: i32): i32 { return self + d; } }\nstruct B[T] { v: T }\nimpl[T] Tc[T] for B[T] { function g(self: Self, d: T): T { return d; } }\nfunction main(): i32 { return 3.g(4); }\n", nil},
+		{"impl-assoc-fn-signature-ok", "trait Mk { function mk(x: i32): Self; }\nstruct S { v: i32 }\nimpl Mk for S { function mk(x: i32): Self { return S { v: x }; } }\nfunction main(): i32 { return S.mk(3).v; }\n", nil},
+		// A generic literal passed to a generic parameter infers from its
+		// fields, not from the callee's unbound parameter (#12739).
+		{"generic-lit-arg-to-generic-param", "struct G[T] { v: T }\nfunction b[T](g: G[T]): T { return g.v; }\nfunction main(): i32 { return b(G { v: 1 }); }\n", nil},
+		// A struct-update base of another type is E003 in any body, a local
+		// function's included (#12695).
+		{"struct-update-base-local", "struct S { a: i32, b: i32 }\nfunction main(): i32 { function inner(o: Option[i32]): S { return S { ...o, a: 1 }; } return 0; }\n", []string{"E003"}},
+		{"struct-update-base-generic", "struct G[T] { v: T, n: i32 }\nfunction (g: G[T]) b(): G[T] { return G { ...g, n: 1 }; }\nfunction main(): i32 { let g: G[i32] = G { v: 1, n: 2 }; return g.b().n; }\n", nil},
 		// A receiver binds only the variables its declared type names, so on a
 		// concrete receiver the method's own parameter is unbound (#10991).
 		{"method-type-param-unbound-array", "function (xs: u8[]) count[T](values: T[]): i32 { return values.len() + xs.len(); }\nfunction main(): i32 { let b: u8[] = [1 as u8]; return b.count([]); }\n", []string{"E040"}},
