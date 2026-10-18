@@ -105,6 +105,23 @@ The audit's 1.5-times safety band flags substantial underestimates without
 treating small timing fluctuations as new evidence. A warm driver becoming
 unavailable can invalidate the table even when no test source changes.
 
+## The stdlib gates in a job of their own (2026-10-18)
+
+On #12624's runs [39087054640](https://github.com/JakeChampion/lang/actions/runs/39087054640)
+and [39091470716](https://github.com/JakeChampion/lang/actions/runs/39091470716)
+three x86_64 shard workers reached the 28-minute timeout, each holding one of
+`TestSelfHostStdTestE2E` (1,422 s), `TestSelfHostStdTestE2ETLS` (1,021 s) and
+`TestSelfHostCryptoSuitesWasm` (1,170 s); the arm64 pair measured 875 and
+1,078 s on the same runs. Raising sixty-nine stale weights from the audit's
+list moved the overflow from one shard to two: a test costing half or more of
+a worker's 1,680 s leaves the partition no room for the rest of that worker,
+whatever its weight says, which is the own-job rule `scripts/ci-test-weights`
+notes for anything past half the budget (#6667). The five now run as
+`selfhost-stdtest-{x86-64,x86-64-tls,arm64,arm64-tls,crypto-wasm}`, one test
+per job under a 33-minute `-test.timeout`, listed in `OWN_JOB_TESTS` with no
+weight row. That takes about 5,600 s out of the shards, roughly 880 s per
+worker when balanced.
+
 ## Split of the stdlib gates (2026-10-15)
 
 `TestSelfHostStdTestE2EArm64`, weighted 1,185 s, measured 1,397 s on green run

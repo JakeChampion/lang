@@ -91,7 +91,7 @@ env:
   # their own, so their minutes do not lengthen whichever shard the LPT
   # partition happens to drop them into. Excluded from shard selection by the
   # same regex as the two lists above, and each has a matching job below.
-  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostCLIStage2X86_64|TestSelfHostWasmWholeCompilerShardedLink|TestSelfHostModloadPerModuleWholeCompilerArm64|TestSelfHostSemanticWholeCompilerX86_64"
+  OWN_JOB_TESTS: "TestSelfHostPerModuleEmitAllFixpointX86_64|TestSelfHostStage2FixpointArm64|TestSelfHostCLIStage2X86_64|TestSelfHostWasmWholeCompilerShardedLink|TestSelfHostModloadPerModuleWholeCompilerArm64|TestSelfHostSemanticWholeCompilerX86_64|TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only, each with its issue in
   # the comment, and re-run the list when that issue closes: a quarantine with
@@ -303,6 +303,79 @@ jobs:
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostPerModuleEmitAllFixpointX86_64$' -test.v -test.timeout 23m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+
+  # STDLIB SUITES. The tests/stdlib runner suites compiled by the self-host
+  # compiler, one job per leg: x86-64 and arm64 (under qemu), each plain and
+  # TLS, plus the wasm leg of std/crypto and std/tls. Each measures 800 to
+  # 1,400 seconds, half or more of a shard worker's 28-minute budget, so no
+  # weight could place one without crowding its worker (#6667); run 39091470716
+  # timed out two workers that each held one of them.
+  selfhost-stdtest:
+    name: selfhost-stdtest-${{ matrix.leg }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [x86-64, x86-64-tls, arm64, arm64-tls, crypto-wasm]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: aarch64 cross-gcc + qemu
+        if: startsWith(matrix.leg, 'arm64')
+        uses: ./.github/actions/apt-cross-toolchain
+      - uses: ./.github/actions/build-e2e-binaries
+      - name: stdlib suites on x86-64
+        if: ${{ !cancelled() && matrix.leg == 'x86-64' }}
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostStdTestE2E$' -test.v -test.timeout 33m
+      - name: stdlib TLS suites on x86-64
+        if: ${{ !cancelled() && matrix.leg == 'x86-64-tls' }}
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostStdTestE2ETLS$' -test.v -test.timeout 33m
+      - name: stdlib suites on arm64 under qemu
+        if: ${{ !cancelled() && matrix.leg == 'arm64' }}
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostStdTestE2EArm64$' -test.v -test.timeout 33m
+      - name: stdlib TLS suites on arm64 under qemu
+        if: ${{ !cancelled() && matrix.leg == 'arm64-tls' }}
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostStdTestE2EArm64TLS$' -test.v -test.timeout 33m
+      - name: std/crypto and std/tls suites on wasm
+        if: ${{ !cancelled() && matrix.leg == 'crypto-wasm' }}
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostCryptoSuitesWasm$' -test.v -test.timeout 33m
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
