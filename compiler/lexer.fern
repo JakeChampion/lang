@@ -970,46 +970,6 @@ function ident_or_keyword(name: string, start_line: i32, start_col: i32): Token 
   return ident_tok(name, start_line, start_col);
 }
 
-// apply_escape decodes a C-style escape whose escape byte `esc` has
-// already been consumed (so `l` is positioned just past it). It returns
-// the decoded fragment plus flags for the two failure shapes — `\x`
-// needing two hex digits (`hexerr`) and an unrecognised escape
-// (`unknown`) — so scan_string and scan_fstring share one decode ladder
-// while keeping their own literal-kind error messages (SH-043).
-struct EscResult { lex: Lex, frag: string, hexerr: boolean, unknown: boolean }
-
-function apply_escape(own l: Lex, esc: i32): EscResult {
-  if (esc == 110) {
-    return EscResult { lex: l, frag: "\n", hexerr: false, unknown: false };
-  }
-  if (esc == 116) {
-    return EscResult { lex: l, frag: "\t", hexerr: false, unknown: false };
-  }
-  if (esc == 114) {
-    return EscResult { lex: l, frag: "\r", hexerr: false, unknown: false };
-  }
-  if (esc == 48) {
-    return EscResult { lex: l, frag: "\x00", hexerr: false, unknown: false };
-  }
-  if (esc == 34) {
-    return EscResult { lex: l, frag: "\"", hexerr: false, unknown: false };
-  }
-  if (esc == 92) {
-    return EscResult { lex: l, frag: "\\", hexerr: false, unknown: false };
-  }
-  if (esc == 120) {
-    // \xNN — two hex digits → one byte.
-    if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i] as i32) || !is_hex_digit(l.src[l.i + 1] as i32)) {
-      return EscResult { lex: l, frag: "", hexerr: true, unknown: false };
-    }
-    let b: i32 = hex_val(l.src[l.i] as i32) * 16 + hex_val(l.src[l.i + 1] as i32);
-    l = l.advance();
-    l = l.advance();
-    return EscResult { lex: l, frag: string_from_bytes_unchecked([b as u8]), hexerr: false, unknown: false };
-  }
-  return EscResult { lex: l, frag: "", hexerr: false, unknown: true };
-}
-
 // dec_str renders a non-negative i32 in base 10. util.i32_to_string is
 // the shared home for this, but reaching it means importing util here,
 // and this module deliberately imports nothing — see the header. Only
@@ -1136,15 +1096,16 @@ function bad_char_message(src: string, i: i32, n: i32): string {
 struct EscVal { lex: Lex, val: i32, err: string }
 
 // quoted_escape decodes the escape at the current `\`, which it
-// consumes along with the escape body. `\u{...}` is a Unicode scalar so
-// it is character-literal-only, and `\xNN` reaches the full byte range
-// in a byte literal but stops at 0x7F in a character literal, where
-// anything above ASCII has two readings and `\u{...}` says which.
-// Mirrors the Go lexer's scanQuotedEscape.
-function quoted_escape(own l: Lex, is_byte: boolean): EscVal {
+// consumes along with the escape body. Character, string and f-string
+// literals share it, so their escapes are one set. `\u{...}` is a
+// Unicode scalar, so a byte literal refuses it, and `\xNN` reaches the
+// full byte range in a byte literal but stops at 0x7F everywhere else,
+// where anything above ASCII has two readings and `\u{...}` says which.
+// Mirrors the Go lexer's scanQuotedEscape, message for message.
+function quoted_escape(own l: Lex, is_byte: boolean, kind_name: string): EscVal {
   l = l.advance();  // backslash
   if (l.at_end()) {
-    return EscVal { lex: l, val: 0, err: "unterminated quoted literal" };
+    return EscVal { lex: l, val: 0, err: "unterminated " + kind_name + " literal" };
   }
   let esc: i32 = l.peek_byte();
   l = l.advance();
@@ -1170,51 +1131,98 @@ function quoted_escape(own l: Lex, is_byte: boolean): EscVal {
     return EscVal { lex: l, val: 34, err: "" };
   }
   if (esc == 120) {
-    if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i] as i32) || !is_hex_digit(l.src[l.i + 1] as i32)) {
-      return EscVal { lex: l, val: 0, err: "\\x escape needs two hex digits" };
-    }
-    let v: i32 = hex_val(l.src[l.i] as i32) * 16 + hex_val(l.src[l.i + 1] as i32);
-    l = l.advance();
-    l = l.advance();
-    if (!is_byte && v > 127) {
-      return EscVal { lex: l, val: 0, err: "\\x escape is above ASCII in a character literal; write \\u{...} for the scalar" };
-    }
-    return EscVal { lex: l, val: v, err: "" };
+    return hex_escape(l, is_byte, kind_name);
   }
   if (esc == 117) {
     if (is_byte) {
       return EscVal { lex: l, val: 0, err: "\\u{...} is a Unicode scalar; a byte literal takes \\xNN" };
     }
-    if (l.at_end() || l.peek_byte() != 123) {
-      return EscVal { lex: l, val: 0, err: "\\u escape needs braces: \\u{1F600}" };
-    }
-    l = l.advance();  // {
-    let digits: i32 = 0;
-    let uv: i32 = 0;
-    while (!l.at_end() && is_hex_digit(l.peek_byte())) {
-      if (digits == 6) {
-        return EscVal { lex: l, val: 0, err: "\\u{...} takes at most 6 hex digits" };
-      }
-      uv = uv * 16 + hex_val(l.peek_byte());
-      digits = digits + 1;
-      l = l.advance();
-    }
-    if (digits == 0) {
-      return EscVal { lex: l, val: 0, err: "\\u{...} needs at least one hex digit" };
-    }
-    if (l.at_end() || l.peek_byte() != 125) {
-      return EscVal { lex: l, val: 0, err: "unterminated \\u{...} escape" };
-    }
-    l = l.advance();  // }
-    if (uv > 1114111) {
-      return EscVal { lex: l, val: 0, err: "\\u{...} is above the maximum Unicode scalar 10FFFF" };
-    }
-    if (uv >= 55296 && uv <= 57343) {
-      return EscVal { lex: l, val: 0, err: "\\u{...} is a surrogate, not a Unicode scalar value" };
-    }
-    return EscVal { lex: l, val: uv, err: "" };
+    return unicode_escape(l);
   }
-  return EscVal { lex: l, val: 0, err: "unknown escape in quoted literal" };
+  return EscVal { lex: l, val: 0, err: "unknown escape \\" + rune_of_byte(esc) + " in " + kind_name + " literal" };
+}
+
+// hex_escape decodes the two digits of `\xNN`, `l` positioned after the `x`.
+function hex_escape(own l: Lex, is_byte: boolean, kind_name: string): EscVal {
+  if (l.i + 1 >= l.n || !is_hex_digit(l.src[l.i] as i32) || !is_hex_digit(l.src[l.i + 1] as i32)) {
+    return EscVal { lex: l, val: 0, err: "\\x escape needs two hex digits" };
+  }
+  let v: i32 = hex_val(l.src[l.i] as i32) * 16 + hex_val(l.src[l.i + 1] as i32);
+  l = l.advance();
+  l = l.advance();
+  if (!is_byte && v > 127) {
+    let hx: string = upper_hex(v);
+    return EscVal { lex: l, val: 0, err: "\\x" + hx + " is above ASCII in " + literal_name(kind_name) + "; write \\u{" + hx + "} for the scalar" };
+  }
+  return EscVal { lex: l, val: v, err: "" };
+}
+
+// literal_name is the kind of literal with its article, for a message.
+function literal_name(kind_name: string): string {
+  if (kind_name == "f-string") {
+    return "an f-string literal";
+  }
+  return "a " + kind_name + " literal";
+}
+
+// unicode_escape decodes the `{...}` of `\u{...}`, `l` positioned after the
+// `u`, refusing a surrogate and anything past U+10FFFF.
+function unicode_escape(own l: Lex): EscVal {
+  if (l.at_end() || l.peek_byte() != 123) {
+    return EscVal { lex: l, val: 0, err: "\\u escape needs braces: \\u{1F600}" };
+  }
+  l = l.advance();  // {
+  let digits: i32 = 0;
+  let uv: i32 = 0;
+  while (!l.at_end() && is_hex_digit(l.peek_byte())) {
+    if (digits == 6) {
+      return EscVal { lex: l, val: 0, err: "\\u{...} takes at most 6 hex digits" };
+    }
+    uv = uv * 16 + hex_val(l.peek_byte());
+    digits = digits + 1;
+    l = l.advance();
+  }
+  if (digits == 0) {
+    return EscVal { lex: l, val: 0, err: "\\u{...} needs at least one hex digit" };
+  }
+  if (l.at_end() || l.peek_byte() != 125) {
+    return EscVal { lex: l, val: 0, err: "unterminated \\u{...} escape" };
+  }
+  l = l.advance();  // }
+  if (uv > 1114111) {
+    return EscVal { lex: l, val: 0, err: "\\u{" + upper_hex(uv) + "} is above the maximum Unicode scalar 10FFFF" };
+  }
+  if (uv >= 55296 && uv <= 57343) {
+    return EscVal { lex: l, val: 0, err: "\\u{" + upper_hex(uv) + "} is a surrogate, not a Unicode scalar value" };
+  }
+  return EscVal { lex: l, val: uv, err: "" };
+}
+
+// upper_hex spells a non-negative value in upper-case hex with at least two
+// digits, as Go's `%02X` does.
+function upper_hex(v: i32): string {
+  let out: string = hex_digit(v & 15, "0123456789ABCDEF");
+  v = v >> 4;
+  while (v > 0 || out.len() < 2) {
+    out = hex_digit(v & 15, "0123456789ABCDEF") + out;
+    v = v >> 4;
+  }
+  return out;
+}
+
+// utf8_encode is scalar `v` as UTF-8. The lexer has refused every value
+// that is not a Unicode scalar before it gets here.
+function utf8_encode(v: i32): string {
+  if (v < 128) {
+    return string_from_bytes_unchecked([v as u8]);
+  }
+  if (v < 2048) {
+    return string_from_bytes_unchecked([(192 | v >> 6) as u8, (128 | v & 63) as u8]);
+  }
+  if (v < 65536) {
+    return string_from_bytes_unchecked([(224 | v >> 12) as u8, (128 | v >> 6 & 63) as u8, (128 | v & 63) as u8]);
+  }
+  return string_from_bytes_unchecked([(240 | v >> 18) as u8, (128 | v >> 12 & 63) as u8, (128 | v >> 6 & 63) as u8, (128 | v & 63) as u8]);
 }
 
 // closing_quote_ahead separates a too-long literal (`'ab'`) from an
@@ -1259,7 +1267,7 @@ function scan_quoted(own l: Lex, is_byte: boolean, start_line: i32, start_col: i
   }
   let val: i32 = 0;
   if (c == 92) {
-    let ev: EscVal = quoted_escape(l, is_byte);
+    let ev: EscVal = quoted_escape(l, is_byte, kind_name);
     l = ev.lex;
     if (ev.err.len() > 0) {
       return NumResult { lex: l, tok: error_tok(ev.err, start_line, start_col) };
@@ -1290,12 +1298,10 @@ function scan_quoted(own l: Lex, is_byte: boolean, start_line: i32, start_col: i
   return NumResult { lex: l, tok: quoted_tok(dec_str(val), suffix, raw, start_line, start_col) };
 }
 
-// scan_string reads `"…"` with C-style escapes. The Go lexer
-// uses strings.Builder + WriteRune; here we build the unescaped
-// value by walking the source and concatenating. Errors (newline
-// inside string, unknown escape, unterminated) surface as a
-// TokError carrying a diagnostic message — matching the Go
-// lexer's error shapes.
+// scan_string reads `"…"` with the escapes quoted_escape decodes, each
+// appended as UTF-8, so the value is always valid UTF-8. Errors (newline
+// inside string, a refused escape, unterminated) surface as a TokError
+// carrying the Go lexer's message.
 function scan_string(own l: Lex, start_line: i32, start_col: i32): NumResult {
   l = l.advance();  // opening "
   let out: string = "";
@@ -1305,21 +1311,12 @@ function scan_string(own l: Lex, start_line: i32, start_col: i32): NumResult {
       return NumResult { lex: l, tok: error_tok("newline inside string literal", start_line, start_col) };
     }
     if (c == 92) {  // backslash
-      l = l.advance();
-      if (l.at_end()) {
-        return NumResult { lex: l, tok: error_tok("unterminated string literal", start_line, start_col) };
+      let ev: EscVal = quoted_escape(l, false, "string");
+      l = ev.lex;
+      if (ev.err.len() > 0) {
+        return NumResult { lex: l, tok: error_tok(ev.err, start_line, start_col) };
       }
-      let esc: i32 = l.peek_byte();
-      l = l.advance();
-      let er: EscResult = apply_escape(l, esc);
-      l = er.lex;
-      if (er.hexerr) {
-        return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
-      }
-      if (er.unknown) {
-        return NumResult { lex: l, tok: error_tok("unknown escape \\" + rune_of_byte(esc), start_line, start_col) };
-      }
-      out = out + er.frag;
+      out = out + utf8_encode(ev.val);
       continue;
     }
     // Copy the run of plain bytes up to the next `"` / `\` / newline
@@ -1372,21 +1369,12 @@ function scan_fstring(own l: Lex, start_line: i32, start_col: i32): NumResult {
       return NumResult { lex: l, tok: error_tok("newline inside f-string literal", start_line, start_col) };
     }
     if (c == 92) {  // backslash escape (literal portion only)
-      l = l.advance();
-      if (l.at_end()) {
-        return NumResult { lex: l, tok: error_tok("unterminated f-string literal", start_line, start_col) };
+      let ev: EscVal = quoted_escape(l, false, "f-string");
+      l = ev.lex;
+      if (ev.err.len() > 0) {
+        return NumResult { lex: l, tok: error_tok(ev.err, start_line, start_col) };
       }
-      let esc: i32 = l.peek_byte();
-      l = l.advance();
-      let fer: EscResult = apply_escape(l, esc);
-      l = fer.lex;
-      if (fer.hexerr) {
-        return NumResult { lex: l, tok: error_tok("\\x escape needs two hex digits", start_line, start_col) };
-      }
-      if (fer.unknown) {
-        return NumResult { lex: l, tok: error_tok("unknown escape \\" + rune_of_byte(esc), start_line, start_col) };
-      }
-      lit = lit + fer.frag;
+      lit = lit + utf8_encode(ev.val);
       have_lit = true;
       continue;
     }
@@ -2148,7 +2136,7 @@ function test_unknown_char(): i32 {
   if (!lex_error_is("\x01", "unexpected character '\\x01'", "P001")) {
     return 1907;
   }
-  if (!lex_error_is("a \xff", "invalid UTF-8 byte 0xFF", "P001")) {
+  if (!lex_error_is(string_from_bytes_unchecked([97 as u8, 32 as u8, 255 as u8]), "invalid UTF-8 byte 0xFF", "P001")) {
     return 1908;
   }
   // The rest of the lexer's errors carry their codes too: a numeric literal's
@@ -2162,8 +2150,75 @@ function test_unknown_char(): i32 {
   if (!lex_error_is("0o19", "invalid digit '9' in a 0o literal", "P002")) {
     return 1911;
   }
-  if (!lex_error_is("\"a\\qb\"", "unknown escape \\q", "P001")) {
+  if (!lex_error_is("\"a\\qb\"", "unknown escape \\q in string literal", "P001")) {
     return 1912;
+  }
+  if (!lex_error_is("f\"a\\qb\"", "unknown escape \\q in f-string literal", "P001")) {
+    return 1913;
+  }
+  if (!lex_error_is("'\\xFF'", "\\xFF is above ASCII in a character literal; write \\u{FF} for the scalar", "P001")) {
+    return 1914;
+  }
+  if (!lex_error_is("\"\\xff\"", "\\xFF is above ASCII in a string literal; write \\u{FF} for the scalar", "P001")) {
+    return 1915;
+  }
+  if (!lex_error_is("f\"\\x80{x}\"", "\\x80 is above ASCII in an f-string literal; write \\u{80} for the scalar", "P001")) {
+    return 1916;
+  }
+  if (!lex_error_is("\"\\u{D800}\"", "\\u{D800} is a surrogate, not a Unicode scalar value", "P001")) {
+    return 1917;
+  }
+  if (!lex_error_is("\"\\u{110000}\"", "\\u{110000} is above the maximum Unicode scalar 10FFFF", "P001")) {
+    return 1918;
+  }
+  if (!lex_error_is("f\"\\u{1F600\"", "unterminated \\u{...} escape", "P001")) {
+    return 1919;
+  }
+  if (!lex_error_is("'\\q'", "unknown escape \\q in character literal", "P001")) {
+    return 1920;
+  }
+  return 0;
+}
+
+// string_is reports whether `src` lexes to one string token whose value is
+// `want`.
+function string_is(src: string, want: string): boolean {
+  let t: Token[] = tokenize(src);
+  if (t.len() != 2) {
+    return false;
+  }
+  if let TokString(x) = t[0] {
+    return x.value == want;
+  }
+  return false;
+}
+
+// test_string_escapes — a string and an f-string decode the escapes a
+// character literal takes, each appended as UTF-8: `\xNN` stops at 0x7F and
+// `\u{...}` reaches every Unicode scalar value. Mirrors the Go lexer's
+// TestStringEscapes.
+function test_string_escapes(): i32 {
+  if (!string_is("\"a\\x41\\x7f\"", "aA\x7f")) {
+    return 1930;
+  }
+  if (!string_is("\"\\0\\'\\\"\\\\\"", "\x00'\"\\")) {
+    return 1931;
+  }
+  let top: string = string_from_bytes_unchecked([244 as u8, 143 as u8, 191 as u8, 191 as u8]);
+  if (!string_is("\"\\u{41}\\u{e9}\\u{20AC}\\u{1F600}\\u{10FFFF}\"", "Aé€😀" + top)) {
+    return 1932;
+  }
+  let edges: string = string_from_bytes_unchecked([237 as u8, 159 as u8, 191 as u8, 238 as u8, 128 as u8, 128 as u8]);
+  if (!string_is("\"\\u{D7FF}\\u{E000}\"", edges)) {
+    return 1933;
+  }
+  let ft: Token[] = tokenize("f\"\\u{1F600}{x}\\u{7B}\"");
+  if let TokFString(f) = ft[0] {
+    if (f.parts.len() != 3 || f.parts[0].lit != "😀" || f.parts[1].expr != "x" || f.parts[2].lit != "{") {
+      return 1934;
+    }
+  } else {
+    return 1935;
   }
   return 0;
 }
@@ -2698,6 +2753,10 @@ function main(): i32 {
     return c;
   }
   c = test_quoted_literals();
+  if (c != 0) {
+    return c;
+  }
+  c = test_string_escapes();
   if (c != 0) {
     return c;
   }

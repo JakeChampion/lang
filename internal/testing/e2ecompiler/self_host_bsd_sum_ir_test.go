@@ -39,7 +39,7 @@ function main(): i32 {
     }
     let high: string = "";
     let k: i32 = 0;
-    while (k < 300) { high = high + "\xff\x80"; k = k + 1; }
+    while (k < 300) { high = high + string_from_bytes_unchecked([255 as u8, 128 as u8]); k = k + 1; }
     if (__bsd_sum(high, 4660) != ref(high, 4660)) { return 5; }
     if (__bsd_sum("abc", 74565) != ref("abc", 74565)) { return 6; }
     return 42;

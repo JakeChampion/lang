@@ -37,25 +37,11 @@ func TestSelfHostWitSectionRoundTrip(t *testing.T) {
 // wit_reencode_sections and returns 0 iff the bytes match.
 func witSectionSelfTestMain(t *testing.T) string {
 	t.Helper()
-	payload, err := componenttype.PayloadFor("fern")
-	if err != nil {
-		t.Fatalf("PayloadFor(fern): %v", err)
-	}
 	var sb strings.Builder
-	sb.WriteString(`function FERN_BIN(): string { return "`)
-	for _, b := range payload {
-		fmt.Fprintf(&sb, `\x%02x`, b)
-	}
-	sb.WriteString("\"; }\n")
+	sb.WriteString(witPayloadFunc(t, "FERN_BIN", "fern"))
 	sb.WriteString(`
-function wit_bytes_of(s: string): i32[] {
-    let o: i32[] = [];
-    let i: i32 = 0;
-    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
-    return o;
-}
 function main(): i32 {
-    let payload: i32[] = wit_bytes_of(FERN_BIN());
+    let payload: i32[] = FERN_BIN();
     let got: i32[] = wit_reencode_sections(payload);
     if (got.len() != payload.len()) { return 1; }
     let i: i32 = 0;
@@ -143,29 +129,17 @@ func TestSelfHostWitWorldRoundTrip(t *testing.T) {
 	}
 }
 
-// witPayloadFunc emits `function <fn>(): string { return "<world bytes>"; }`.
+// witPayloadFunc emits a function `fn` returning the world's payload bytes.
 func witPayloadFunc(t *testing.T, fn, world string) string {
 	t.Helper()
 	payload, err := componenttype.PayloadFor(world)
 	if err != nil {
 		t.Fatalf("PayloadFor(%s): %v", world, err)
 	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, `function %s(): string { return "`, fn)
-	for _, b := range payload {
-		fmt.Fprintf(&sb, `\x%02x`, b)
-	}
-	sb.WriteString("\"; }\n")
-	return sb.String()
+	return witBytesFunc(fn, payload)
 }
 
 const witWorldSelfTestMain = `
-function wit_bytes(s: string): i32[] {
-    let o: i32[] = [];
-    let i: i32 = 0;
-    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
-    return o;
-}
 function wit_eq2(a: i32[], b: i32[]): boolean {
     if (a.len() != b.len()) { return false; }
     let i: i32 = 0;
@@ -173,10 +147,10 @@ function wit_eq2(a: i32[], b: i32[]): boolean {
     return true;
 }
 function main(): i32 {
-    let fern: i32[] = wit_bytes(FERN_BIN());
+    let fern: i32[] = FERN_BIN();
     if (!wit_eq2(wit_transcode_type_section(wit_section_body(fern, 7)), wit_section_body(fern, 7))) { return 1; }
     if (!wit_eq2(wit_transcode_export_section(wit_section_body(fern, 11)), wit_section_body(fern, 11))) { return 2; }
-    let http: i32[] = wit_bytes(HTTP_BIN());
+    let http: i32[] = HTTP_BIN();
     if (!wit_eq2(wit_transcode_type_section(wit_section_body(http, 7)), wit_section_body(http, 7))) { return 3; }
     if (!wit_eq2(wit_transcode_export_section(wit_section_body(http, 11)), wit_section_body(http, 11))) { return 4; }
     return 0;
@@ -203,12 +177,6 @@ func TestSelfHostWitWorldLift(t *testing.T) {
 }
 
 const witLiftSelfTestMain = `
-function wit_lift_bytes(s: string): i32[] {
-    let o: i32[] = [];
-    let i: i32 = 0;
-    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
-    return o;
-}
 function main(): i32 {
     let want: string[] = [
         "wasi:io/error@0.2.0", "wasi:io/poll@0.2.0", "wasi:io/streams@0.2.0",
@@ -220,7 +188,7 @@ function main(): i32 {
         "wasi:sockets/tcp-create-socket@0.2.0", "wasi:sockets/udp@0.2.0",
         "wasi:sockets/udp-create-socket@0.2.0", "wasi:random/random@0.2.0"
     ];
-    let got: string[] = wit_world_import_names(wit_section_body(wit_lift_bytes(FERN_BIN()), 7));
+    let got: string[] = wit_world_import_names(wit_section_body(FERN_BIN(), 7));
     if (got.len() != want.len()) { return 99; }
     let i: i32 = 0;
     while (i < want.len()) {
@@ -260,32 +228,21 @@ func TestSelfHostWitEmitWorldImports(t *testing.T) {
 	}
 }
 
-// witBytesFunc emits `function <fn>(): string { return "<bytes>"; }`.
+// witBytesFunc emits a function `fn` returning `b`, which it carries as hex
+// for watbin's hex_to_bytes: a string literal cannot hold a byte above 0x7F.
 func witBytesFunc(fn string, b []byte) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, `function %s(): string { return "`, fn)
-	for _, c := range b {
-		fmt.Fprintf(&sb, `\x%02x`, c)
-	}
-	sb.WriteString("\"; }\n")
-	return sb.String()
+	return fmt.Sprintf("function %s(): i32[] { return hex_to_bytes(\"%x\"); }\n", fn, b)
 }
 
 const witEmitSelfTestMain = `
-function wit_emit_bytes(s: string): i32[] {
-    let o: i32[] = [];
-    let i: i32 = 0;
-    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
-    return o;
-}
 function main(): i32 {
-    let tb: i32[] = wit_section_body(wit_emit_bytes(FERN_BIN()), 7);
+    let tb: i32[] = wit_section_body(FERN_BIN(), 7);
     let ifaces: string[] = wit_world_import_names(tb);
     let whole: string[] = [];
     let k: i32 = 0;
     while (k < ifaces.len()) { whole = whole.append(""); k = k + 1; }
     let got: i32[] = wit_emit_world_imports(tb, wit_import_plan(tb, ifaces, whole));
-    let want: i32[] = wit_emit_bytes(EMIT_REF());
+    let want: i32[] = EMIT_REF();
     if (got.len() != want.len()) { return 1; }
     let i: i32 = 0;
     while (i < got.len()) {
@@ -317,18 +274,12 @@ func TestSelfHostWitClassify(t *testing.T) {
 }
 
 const witClassifySelfTestMain = `
-function wit_cl_bytes(s: string): i32[] {
-    let o: i32[] = [];
-    let i: i32 = 0;
-    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
-    return o;
-}
 function wit_ck(tb: i32[], iface: string, fn: string, want: i32, id: i32): i32 {
     if (wit_classify(tb, iface, fn) != want) { return id; }
     return 0;
 }
 function main(): i32 {
-    let tb: i32[] = wit_cl_bytes(FERN_BIN());
+    let tb: i32[] = FERN_BIN();
     tb = wit_section_body(tb, 7);
     let r: i32 = 0;
     r = wit_ck(tb, "wasi:cli/stdout@0.2.0", "get-stdout", 0, 1); if (r != 0) { return r; }
@@ -367,12 +318,6 @@ func TestSelfHostWitPrefixLayout(t *testing.T) {
 }
 
 const witLayoutSelfTestMain = `
-function wit_ly_bytes(s: string): i32[] {
-    let o: i32[] = [];
-    let i: i32 = 0;
-    while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
-    return o;
-}
 function wit_ly_whole(n: i32): string[] {
     let o: string[] = [];
     let i: i32 = 0;
@@ -380,7 +325,7 @@ function wit_ly_whole(n: i32): string[] {
     return o;
 }
 function main(): i32 {
-    let tb: i32[] = wit_section_body(wit_ly_bytes(FERN_BIN()), 7);
+    let tb: i32[] = wit_section_body(FERN_BIN(), 7);
     let ifaces: string[] = wit_world_import_names(tb);
     let all: WitImportPlan = wit_import_plan(tb, ifaces, wit_ly_whole(ifaces.len()));
     if (all.n_type != 32) { return 1; }

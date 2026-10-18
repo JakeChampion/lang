@@ -2850,19 +2850,17 @@ function into_float(own r: irtables.LowerResult, from: typeinfo.Type, to: typein
   return r;
 }
 
-// A saturating or checked operator is the AST lowering's own shape
-// (irtables.sat_binary_ops / chk_binary_ops) over this function's slots: the
-// operands are values, so they are already in slots, the result's slot holds
-// the shape's outcome, and an intermediate the shape reads twice is
-// recomputed from the operands rather than spilled, so it takes no scratch.
+// A saturating or checked operator is the shape irtables.sat_binary_ops /
+// chk_binary_ops builds over this function's slots: the operands are values,
+// so they are already in slots, and the result's slot holds the outcome.
 function overflow_binary(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let t: typeinfo.Type = f.values[ins.args[0]];
   let wide: boolean = ssasem.is_wide(t);
   let ops: ir.Op[] = [];
   if (ssasem.saturating(ins.str)) {
-    ops = irtables.sat_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.result, 0 - 1, 0 - 1);
+    ops = irtables.sat_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.result);
   } else {
-    ops = irtables.chk_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], 0 - 1, ins.result);
+    ops = irtables.chk_binary_ops(ins.str, overflow_kind(t), wide, ins.args[0], ins.args[1], ins.result);
   }
   for op in ops {
     r = emit(r, op);

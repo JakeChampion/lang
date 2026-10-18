@@ -402,6 +402,21 @@ func TestForEachParsesUnlowered(t *testing.T) {
 	}
 }
 
+// A `for x in xs` inside a `defer` block lowers like any other, so the checker,
+// which has no case for a standing ForEach, sees its body.
+func TestForEachInDeferDesugars(t *testing.T) {
+	prog, err := Parse(`function f(xs: i32[]): i32 { defer { for x in xs { let y: i32 = x; } } return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if _, ok := n.(*ast.ForEach); ok {
+			t.Fatalf("a ForEach survived the desugar inside a defer")
+		}
+		return true
+	})
+}
+
 // `for x in b.items { body }` — the iterator is a struct field access, so the
 // trailing `{` opens the loop body, NOT a `b.items { … }` qualified struct
 // literal. Regression for the struct-lit clash: a `.field` postfix followed by
@@ -1504,7 +1519,14 @@ func TestCallTypeArgsShapes(t *testing.T) {
 		{`f[Pair[i32]](a)`, []string{"Pair[i32]"}},
 		{`f[Box[]](a)`, []string{"Box[]"}},
 		{`f[Box, (i32, Loc)](a)`, []string{"Box", "(i32, Loc)"}},
+		{`f[(i32, Loc)](a)`, []string{"(i32, Loc)"}},
+		{`f[(i32) => i32](a)`, []string{"(i32) => i32"}},
+		{`f[(Box) => Loc, i32](a)`, []string{"(Box) => Loc", "i32"}},
+		{`f[((Box) => Loc) => Box](a)`, []string{"((Box) => Loc) => Box"}},
 		{`f[Box](a)`, nil},
+		{`fs[(i)](a)`, nil},
+		{`fs[(i - 1)](a)`, nil},
+		{`fs[(m, k)](a)`, nil},
 		{`fs[i](a)`, nil},
 		{`fs[g[i32](1)](a)`, nil},
 		{`fs[m.k](a)`, nil},

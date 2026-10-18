@@ -38,6 +38,13 @@ are tokens, not characters. The **lexical** grammar is
 | `Punct` | a quoted literal, e.g. `'|>'` |
 | `EOF` | not written; consumed implicitly at the end of `Program` |
 
+`STRING`, `FSTRING`, `CHAR` and `BYTE` share one escape set: `\n`, `\t`,
+`\r`, `\0`, `\\`, `\"`, `\'`, `\xNN` and `\u{H…}`. `\xNN` reaches every
+byte in a `BYTE` and stops at `\x7F` everywhere else; `\u{H…}` is one to
+six hex digits naming a Unicode scalar value (no surrogates, nothing past
+`10FFFF`) and is refused in a `BYTE`. A string or f-string literal
+appends each scalar as UTF-8, so its value is always valid UTF-8.
+
 A quoted literal matches a token of any of the name-shaped kinds with
 that exact text. That is what lets the grammar spell **contextual
 keywords** — `own`, `borrow`, `fip`, `fbip`, `async`, `Self`, `str`,

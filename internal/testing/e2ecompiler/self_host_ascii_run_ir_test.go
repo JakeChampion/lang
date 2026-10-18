@@ -53,7 +53,7 @@ function main(): i32 {
         if (__ascii_run(base, 0) != ref(base, 0)) { return 1; }
         let at: i32 = 0;
         while (at < n) {
-            let s: string = slice_unchecked(base, 0, at) + "\xc3" + slice_unchecked(base, at + 1, n);
+            let s: string = slice_unchecked(base, 0, at) + string_from_bytes_unchecked([195 as u8]) + slice_unchecked(base, at + 1, n);
             if (__ascii_run(s, 0) != ref(s, 0)) { return 2; }
             if (__ascii_run(s, at) != ref(s, at)) { return 3; }
             if (__ascii_run(s, at + 1) != ref(s, at + 1)) { return 4; }
@@ -64,9 +64,9 @@ function main(): i32 {
     // Every byte >= 0x80 is a hit, not just UTF-8 lead bytes: 0x80 is a bare
     // continuation and 0xFF is not legal UTF-8 at all. This intrinsic answers
     // "not ASCII", not "start of a codepoint".
-    if (__ascii_run("abc\x80def", 0) != 3) { return 5; }
-    if (__ascii_run("abc\xffdef", 0) != 3) { return 6; }
-    if (__ascii_run("abc\xbfdef", 0) != 3) { return 7; }
+    if (__ascii_run("abc" + string_from_bytes_unchecked([128 as u8]) + "def", 0) != 3) { return 5; }
+    if (__ascii_run("abc" + string_from_bytes_unchecked([255 as u8]) + "def", 0) != 3) { return 6; }
+    if (__ascii_run("abc" + string_from_bytes_unchecked([191 as u8]) + "def", 0) != 3) { return 7; }
     // 0x7F is the last ASCII byte and must NOT be a hit — the off-by-one an
     // inclusive/exclusive slip on the high-bit test produces.
     if (__ascii_run("\x7f\x7f\x7f", 0) != 3) { return 8; }
@@ -75,8 +75,8 @@ function main(): i32 {
     if (__ascii_run("abc", 100) != 3) { return 10; }
     if (__ascii_run("abc", 0 - 5) != 3) { return 11; }
     // A hit at index 0, and one reached only after a whole vector block.
-    if (__ascii_run("\xffabc", 0) != 0) { return 12; }
-    if (__ascii_run("aaaaaaaaaaaaaaaa\xc3", 0) != 16) { return 13; }
+    if (__ascii_run(string_from_bytes_unchecked([255 as u8]) + "abc", 0) != 0) { return 12; }
+    if (__ascii_run("aaaaaaaaaaaaaaaa" + string_from_bytes_unchecked([195 as u8]), 0) != 16) { return 13; }
     return 42;
 }
 `

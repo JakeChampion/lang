@@ -436,11 +436,9 @@ pub function elem_ty_is_f64slot(t: string): boolean {
 }
 
 // sat_binary_ops is the saturating shape over SLOTS: the two operands already
-// stored in `lslot` / `rslot`, the result left in `oslot` and loaded last,
-// `hslot` the shifted value `<<|` rounds back through and `sslot` the wrapped
-// product signed `*|` divides back, -1 where the operator needs neither.
+// stored in `lslot` / `rslot`, the result left in `oslot` and loaded last.
 // `kind` names the operand width and signedness (i32 / u32 / u8 / i64 / u64).
-pub function sat_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, oslot: i32, hslot: i32, sslot: i32): ir.Op[] {
+pub function sat_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, oslot: i32): ir.Op[] {
   let uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
   let w: i32 = 0;
   if (wide) {
@@ -449,42 +447,36 @@ pub function sat_binary_ops(op: string, kind: string, wide: boolean, lslot: i32,
   let ops: ir.Op[] = [];
 
   if (op == "<<|") {
-    let back: string = "shr_s";
-    if (uns) {
-      back = "shr_u";
-    }
-    if (hslot >= 0) {
-      ops = sat_load(lslot, ops);
-      ops = sat_load(rslot, ops);
-      ops = sat_arith("shl", kind, w, ops);
-      ops = ops.append(ir.op_store_local(hslot));
-    }
-    ops = sat_temp(hslot, "shl", false, kind, w, lslot, rslot, ops);
-    ops = sat_load(rslot, ops);
-    ops = ops.append(ir.op_bin(back, w, false));
+    // Clamp exactly where `<<?` answers None. Only an out-of-range count
+    // reaches the clamp with `l == 0`, and zero shifted any distance is zero.
+    ops = shl_lost(kind, uns, w, lslot, rslot, ops);
+    ops = ops.append(ir.op_if(0));
     ops = sat_load(lslot, ops);
+    ops = sat_const(kind, "zero", ops);
     ops = ops.append(ir.op_bin("eq", w, false));
     ops = ops.append(ir.op_if(0));
-    ops = sat_temp(hslot, "shl", false, kind, w, lslot, rslot, ops);
+    ops = sat_const(kind, "zero", ops);
     ops = ops.append(ir.op_store_local(oslot));
     ops = ops.append(ir.op_else());
     if (uns) {
       ops = sat_const(kind, "max", ops);
       ops = ops.append(ir.op_store_local(oslot));
+    } else {
+      ops = sat_load(lslot, ops);
+      ops = sat_const(kind, "zero", ops);
+      ops = ops.append(ir.op_bin("lt_s", w, false));
+      ops = ops.append(ir.op_if(0));
+      ops = sat_const(kind, "min", ops);
+      ops = ops.append(ir.op_store_local(oslot));
+      ops = ops.append(ir.op_else());
+      ops = sat_const(kind, "max", ops);
+      ops = ops.append(ir.op_store_local(oslot));
       ops = ops.append(ir.op_end());
-      ops = sat_load(oslot, ops);
-      return ops;
     }
-    ops = sat_load(lslot, ops);
-    ops = sat_const(kind, "zero", ops);
-    ops = ops.append(ir.op_bin("lt_s", w, false));
-    ops = ops.append(ir.op_if(0));
-    ops = sat_const(kind, "min", ops);
-    ops = ops.append(ir.op_store_local(oslot));
-    ops = ops.append(ir.op_else());
-    ops = sat_const(kind, "max", ops);
-    ops = ops.append(ir.op_store_local(oslot));
     ops = ops.append(ir.op_end());
+    ops = ops.append(ir.op_else());
+    ops = sat_op("shl", kind, w, lslot, rslot, ops);
+    ops = ops.append(ir.op_store_local(oslot));
     ops = ops.append(ir.op_end());
     ops = sat_load(oslot, ops);
     return ops;
@@ -597,17 +589,11 @@ pub function sat_binary_ops(op: string, kind: string, wide: boolean, lslot: i32,
     return ops;
   }
 
-  // Signed `*|`: stash the wrapped product, then the division round-trip.
-  if (sslot >= 0) {
-    ops = sat_load(lslot, ops);
-    ops = sat_load(rslot, ops);
-    ops = sat_arith("mul", kind, w, ops);
-    ops = ops.append(ir.op_store_local(sslot));
-  }
+  // Signed `*|`: the division round-trip over the wrapped product.
   ops = sat_load(lslot, ops);
   ops = sat_const(kind, "zero", ops);
   ops = ops.append(ir.op_bin("ne", w, false));
-  ops = sat_temp(sslot, "mul", false, kind, w, lslot, rslot, ops);
+  ops = sat_op("mul", kind, w, lslot, rslot, ops);
   ops = sat_load(lslot, ops);
   ops = sat_arith("div_s", kind, w, ops);
   ops = sat_load(rslot, ops);
@@ -637,7 +623,7 @@ pub function sat_binary_ops(op: string, kind: string, wide: boolean, lslot: i32,
   ops = ops.append(ir.op_store_local(oslot));
   ops = ops.append(ir.op_end());
   ops = ops.append(ir.op_else());
-  ops = sat_temp(sslot, "mul", false, kind, w, lslot, rslot, ops);
+  ops = sat_op("mul", kind, w, lslot, rslot, ops);
   ops = ops.append(ir.op_store_local(oslot));
   ops = ops.append(ir.op_end());
   ops = sat_load(oslot, ops);
@@ -664,21 +650,12 @@ function sat_load(slot: i32, own ops: ir.Op[]): ir.Op[] {
   return ops.append(ir.op_load_local(slot));
 }
 
-// An intermediate the shape reads more than once: loaded from `slot` where
-// the caller spilled it (the AST lowering, a fresh local per intermediate),
-// recomputed from the operands where it did not (`slot` -1: the semantic
-// lowering, whose slots are its values and which spills nothing).
-function sat_temp(slot: i32, k: string, norm: boolean, kind: string, w: i32, lslot: i32, rslot: i32, own ops: ir.Op[]): ir.Op[] {
-  if (slot >= 0) {
-    return sat_load(slot, ops);
-  }
+// sat_op recomputes `l <k> r` from the operand slots. An intermediate the
+// shape reads twice is recomputed rather than spilled, so it takes no slot.
+function sat_op(k: string, kind: string, w: i32, lslot: i32, rslot: i32, own ops: ir.Op[]): ir.Op[] {
   ops = sat_load(lslot, ops);
   ops = sat_load(rslot, ops);
-  ops = sat_arith(k, kind, w, ops);
-  if (norm) {
-    return chk_norm(kind, ops);
-  }
-  return ops;
+  return sat_arith(k, kind, w, ops);
 }
 
 function sat_const(kind: string, which: string, own ops: ir.Op[]): ir.Op[] {
@@ -739,8 +716,50 @@ function sat_arith(k: string, kind: string, w: i32, own ops: ir.Op[]): ir.Op[] {
   return ops;
 }
 
+// shift_count_oor pushes whether the count in `rslot` is out of range:
+// `>= width` (spelled `> width-1` so gt_u / gt_s suffice) or, for a signed
+// count, `< 0`.
+function shift_count_oor(kind: string, uns: boolean, w: i32, rslot: i32, own ops: ir.Op[]): ir.Op[] {
+  ops = sat_load(rslot, ops);
+  if (w == 64) {
+    ops = ops.append(ir.op_const_i64_text("63"));
+  } else if (kind == "u8") {
+    ops = ops.append(ir.op_const_i32(7));
+  } else {
+    ops = ops.append(ir.op_const_i32(31));
+  }
+  if (uns) {
+    return ops.append(ir.op_bin("gt_u", w, false));
+  }
+  ops = ops.append(ir.op_bin("gt_s", w, false));
+  ops = sat_load(rslot, ops);
+  ops = sat_const(kind, "zero", ops);
+  ops = ops.append(ir.op_bin("lt_s", w, false));
+  return ops.append(ir.op_bin("or", 0, false));
+}
+
+// shl_lost pushes whether `l << r` loses bits: the count is out of range, or
+// shifting the wrapped result back does not restore `l`. `>>` is arithmetic
+// for signed operands, so the round trip also fails when the sign bit
+// changes, which is exactly when `l * 2^r` leaves [MIN, MAX]. Nothing here
+// traps on an out-of-range count: every backend masks a shift count, and the
+// `or` discards the round trip's answer.
+function shl_lost(kind: string, uns: boolean, w: i32, lslot: i32, rslot: i32, own ops: ir.Op[]): ir.Op[] {
+  let back: string = "shr_s";
+  if (uns) {
+    back = "shr_u";
+  }
+  ops = shift_count_oor(kind, uns, w, rslot, ops);
+  ops = sat_op("shl", kind, w, lslot, rslot, ops);
+  ops = sat_load(rslot, ops);
+  ops = ops.append(ir.op_bin(back, w, false));
+  ops = sat_load(lslot, ops);
+  ops = ops.append(ir.op_bin("ne", w, false));
+  return ops.append(ir.op_bin("or", 0, false));
+}
+
 // chk_overflow pushes the overflow boolean for a checked binary. It is the
-// SAME clamp condition lower_sat_binary tests (so it inherits that shape's
+// SAME clamp condition sat_binary_ops tests (so it inherits that shape's
 // per-backend proof), OR'd across the two saturation directions for
 // signed add / sub because a checked op only cares that it overflowed at
 // all, not which way:
@@ -751,46 +770,14 @@ function sat_arith(k: string, kind: string, w: i32, own ops: ir.Op[]): ir.Op[] {
 //     signed   +?  (r > 0 && l > MAX - r) || (r < 0 && l < MIN - r)
 //     signed   -?  (r < 0 && l > MAX + r) || (r > 0 && l < MIN + r)
 //     signed   *?  l != 0 && (s / l != r || (l == -1 && r == MIN))   (s = l * r wrapped)
-// chk_norm masks a value to the operand width — the same normalisation
-// sat_arith applies after add/sub/mul, reused for the `<<?` result (which
-// sat_arith leaves un-masked).
-function chk_norm(kind: string, own ops: ir.Op[]): ir.Op[] {
-  if (kind == "u32") {
-    return ops.append(ir.op_u32_wrap());
+//     <<?          shl_lost
+//     >>?          shift_count_oor
+function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32, rslot: i32, own ops: ir.Op[]): ir.Op[] {
+  if (op == "<<?") {
+    return shl_lost(kind, uns, w, lslot, rslot, ops);
   }
-  if (kind == "i32") {
-    return ops.append(ir.op_int_cast("i32"));
-  }
-  if (kind == "u8") {
-    return ops.append(ir.op_int_cast("u8"));
-  }
-  return ops;
-}
-
-function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32, rslot: i32, sslot: i32, own ops: ir.Op[]): ir.Op[] {
-  // Checked shift: fail on an out-of-range count — `>= width` (spelled
-  // `> width-1` so gt_u / gt_s suffice) and, for signed operands, `< 0`.
-  if (op == "<<?" || op == ">>?") {
-    let wm1: i32 = 31;
-    if (kind == "u8") {
-      wm1 = 7;
-    } else if (w == 64) {
-      wm1 = 63;
-    }
-    ops = sat_load(rslot, ops);
-    if (w == 64) {
-      ops = ops.append(ir.op_const_i64_text("63"));
-    } else {
-      ops = ops.append(ir.op_const_i32(wm1));
-    }
-    if (uns) {
-      return ops.append(ir.op_bin("gt_u", w, false));
-    }
-    ops = ops.append(ir.op_bin("gt_s", w, false));  // r > width-1
-    ops = sat_load(rslot, ops);
-    ops = sat_const(kind, "zero", ops);
-    ops = ops.append(ir.op_bin("lt_s", w, false));  // r < 0
-    return ops.append(ir.op_bin("or", 0, false));
+  if (op == ">>?") {
+    return shift_count_oor(kind, uns, w, rslot, ops);
   }
   // Checked divide / remainder: fail on a zero divisor, and for signed
   // operands also on `MIN / -1` (the one overflowing division). Same
@@ -870,7 +857,7 @@ function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32
   ops = sat_load(lslot, ops);
   ops = sat_const(kind, "zero", ops);
   ops = ops.append(ir.op_bin("ne", w, false));
-  ops = sat_temp(sslot, "mul", false, kind, w, lslot, rslot, ops);
+  ops = sat_op("mul", kind, w, lslot, rslot, ops);
   ops = sat_load(lslot, ops);
   ops = sat_arith("div_s", kind, w, ops);
   ops = sat_load(rslot, ops);
@@ -887,9 +874,8 @@ function chk_overflow(op: string, kind: string, uns: boolean, w: i32, lslot: i32
 }
 
 // chk_binary_ops is the checked shape over SLOTS: operands in `lslot` /
-// `rslot`, the wrapped result in `sslot` (a width-marked slot), the Option in
-// `oslot` (a pointer slot) and loaded last.
-pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, sslot: i32, oslot: i32): ir.Op[] {
+// `rslot`, the Option in `oslot` (a pointer slot) and loaded last.
+pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32, rslot: i32, oslot: i32): ir.Op[] {
   let uns: boolean = kind == "u8" || kind == "u32" || kind == "u64";
   let w: i32 = 0;
   if (wide) {
@@ -928,38 +914,15 @@ pub function chk_binary_ops(op: string, kind: string, wide: boolean, lslot: i32,
       basek = "shr_s";
     }
   }
-  // The wrapped result `s`. `+?` / `-?` / `*?` compute it UP FRONT — signed
-  // `*?`'s overflow check divides it back. `/?` / `%?` must NOT: a `84 /? 0`
-  // would divide by zero here, which traps on the wasm IR path (op_bin div is
-  // the raw, un-guarded division). Their overflow check needs only l / r, so
-  // the division is deferred into the Some branch below, where the divisor is
-  // provably non-zero (and not the signed `MIN / -1`) and so can't trap.
-  let is_divrem: boolean = op == "/?" || op == "%?";
-  if (!is_divrem && sslot >= 0) {
-    ops = sat_load(lslot, ops);
-    ops = sat_load(rslot, ops);
-    ops = sat_arith(basek, kind, w, ops);
-    // `<<?`'s value can exceed the type width (`255u8 <<? 1 == 254`);
-    // sat_arith doesn't mask a `shl` result (only add/sub/mul), so wrap
-    // it to the operand width here — matching Fern's ordinary `<<` and
-    // the native desugar. `>>?` never grows the value, so it needs none.
-    if (op == "<<?") {
-      ops = chk_norm(kind, ops);
-    }
-    ops = ops.append(ir.op_store_local(sslot));
-  }
-  ops = chk_overflow(op, kind, uns, w, lslot, rslot, sslot, ops);
+  // The result is computed only on the Some branch, where a `/?` / `%?`
+  // divisor is provably non-zero (and not the signed `MIN / -1`), so the raw
+  // division, which traps on wasm, cannot.
+  ops = chk_overflow(op, kind, uns, w, lslot, rslot, ops);
   ops = ops.append(ir.op_if(0));
   ops = ops.append(ir.op_const_option(1));
   ops = ops.append(ir.op_store_local(oslot));
   ops = ops.append(ir.op_else());
-  if (is_divrem) {
-    ops = sat_load(lslot, ops);
-    ops = sat_load(rslot, ops);
-    ops = sat_arith(basek, kind, w, ops);
-  } else {
-    ops = sat_temp(sslot, basek, op == "<<?", kind, w, lslot, rslot, ops);
-  }
+  ops = sat_op(basek, kind, w, lslot, rslot, ops);
   if (wide) {
     ops = ops.append(ir.op_opt_make_w(0, 64, true));
   } else {

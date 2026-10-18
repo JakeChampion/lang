@@ -89,7 +89,14 @@ func TestLexErrorCodes(t *testing.T) {
 		{"\x01", `unexpected character '\x01'`, "P001"},
 		{"a \xff", "invalid UTF-8 byte 0xFF", "P001"},
 		{`"oops`, "unterminated string literal", "P001"},
-		{`"a\qb"`, `unknown escape \q`, "P001"},
+		{`"a\qb"`, `unknown escape \q in string literal`, "P001"},
+		{`f"a\qb"`, `unknown escape \q in f-string literal`, "P001"},
+		{`'\xFF'`, `\xFF is above ASCII in a character literal; write \u{FF} for the scalar`, "P001"},
+		{`"\xff"`, `\xFF is above ASCII in a string literal; write \u{FF} for the scalar`, "P001"},
+		{`f"\x80{x}"`, `\x80 is above ASCII in an f-string literal; write \u{80} for the scalar`, "P001"},
+		{`"\u{D800}"`, `\u{D800} is a surrogate, not a Unicode scalar value`, "P001"},
+		{`"\u{110000}"`, `\u{110000} is above the maximum Unicode scalar 10FFFF`, "P001"},
+		{`f"\u{1F600"`, `unterminated \u{...} escape`, "P001"},
 		{"42i33", `unknown numeric suffix "i33" on "42"`, "P002"},
 		{"1.5i32", `integer suffix "i32" on float literal "1.5"`, "P002"},
 		{"0x", "hex literal needs at least one digit after 0x", "P002"},
@@ -224,6 +231,35 @@ func TestFStringLiteralUTF8(t *testing.T) {
 func TestStringLiteralUnterminated(t *testing.T) {
 	if _, _, err := Tokenize(`"oops`); err == nil {
 		t.Error("expected error on unterminated string")
+	}
+}
+
+// TestStringEscapes pins the escapes a string and an f-string decode: the set
+// a character literal takes, encoded as UTF-8, so the value is always valid
+// UTF-8. \xNN stops at 0x7F; \u{...} reaches every Unicode scalar value.
+func TestStringEscapes(t *testing.T) {
+	for _, c := range []struct{ src, want string }{
+		{`"a\x41\x7f"`, "aA\x7f"},
+		{`"\0\'\"\\"`, "\x00'\"\\"},
+		{`"\u{41}\u{e9}\u{20AC}\u{1F600}\u{10FFFF}"`, "Aé€😀\U0010FFFF"},
+		{`"\u{D7FF}\u{E000}"`, "\uD7FF\uE000"},
+	} {
+		toks, _, err := Tokenize(c.src)
+		if err != nil {
+			t.Errorf("Tokenize(%s): %v", c.src, err)
+			continue
+		}
+		if toks[0].Kind != String || toks[0].Text != c.want {
+			t.Errorf("Tokenize(%s) = %v %q, want String %q", c.src, toks[0].Kind, toks[0].Text, c.want)
+		}
+	}
+	toks, _, err := Tokenize(`f"\u{1F600}{x}\u{7B}"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := toks[0].FParts
+	if len(parts) != 3 || parts[0].Lit != "😀" || parts[1].Expr != "x" || parts[2].Lit != "{" {
+		t.Errorf("f-string \\u{...} parts = %+v", parts)
 	}
 }
 

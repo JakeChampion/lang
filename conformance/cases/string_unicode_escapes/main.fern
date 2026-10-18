@@ -1,0 +1,24 @@
+// `\u{...}` in a string and an f-string literal (#12666): the scalar is
+// written as its UTF-8, so the bytes the program reads back are the encoding
+// and the value prints as the character. `\xNN` covers ASCII beside it.
+
+import "std/i32";
+
+function main(): i32 {
+    let s: string = "\u{1F600} caf\u{e9} \u{20AC}\x21";
+    print(s);
+    print(s.len().to_string());
+    let bytes: string = "";
+    let i: i32 = 0;
+    while (i < 4) {
+        if (i > 0) { bytes = bytes + " "; }
+        bytes = bytes + (s[i] as i32).to_string();
+        i = i + 1;
+    }
+    print(bytes);
+    let n: i32 = 3;
+    print(f"{n}\u{d7}\u{1F600} = \u{7B}{n}\u{7D}");
+    if (s != "😀 café €!") { return 1; }
+    if ("\u{10FFFF}".len() != 4) { return 2; }
+    return 0;
+}
