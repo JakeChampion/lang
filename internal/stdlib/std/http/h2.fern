@@ -1405,14 +1405,11 @@ function __credited(r: __Run, at: i32, n: i32, stream_too: boolean): __Run {
   return __send(__Run { ...out, conn: Conn { ...out.conn, streams: out.conn.streams.with(at, filled) } }, frame.WindowUpdate(s.id, n));
 }
 
-// __response_fields is the response's header list: `:status` first, then
+// __response_block is the response's header block: `:status` first, then
 // each field in lower case, connection-specific ones dropped (§8.2.2),
-// cookies never indexed, and the body's length when it is known (`length`
-// below 0 when it is not: trailers follow, or the body comes in parts).
-// __response_block is a response's header block: its status, its fields
-// but the connection-specific ones, content-length from `length` when
-// the response names none and `length` is not -1, and `date` when the
-// response names none and `date` is not "".
+// cookies never indexed, the body's length when it is known (`length`
+// below 0 when it is not: trailers follow, or the body comes in parts),
+// and `date` when the response names no Date and `date` is not "".
 function __response_block(e: hpack.Encoder, resp: HttpResponse, length: i32, date: string): hpack.Encoded {
   let en: hpack.Encoding = e.begin().put(":status", __status_text(resp.status), false);
   let i: i32 = 0;
