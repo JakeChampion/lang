@@ -5150,7 +5150,7 @@ function __least_timeout(a: i32, b: i32): i32 {
 // has passed run on with -1, the timeout answer, and every parked producer
 // whose filler is due given it, as many times as one is due.
 function __flights_expire[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config, clk: __Clock): (__Conns, __Flight[]) {
-  let again: boolean = true;
+  let again: boolean = fls.len() > 0;
   while (again) {
     again = false;
     let now: i64 = monotonic_ns();
@@ -6607,6 +6607,9 @@ function __h3_events(c: __Conns, i: i32): (__Conns, __H3Req[]) {
 // request's handler started, answered or parked, as the stateless loop
 // starts one, then every connection the burst touched flushed.
 function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], burst: __H3Burst, handler: (HttpRequest, platform.Host) => HttpResponse, host_for: (Option[net.SocketAddr]) => platform.Host, opts: Config, stop: __Stop): (__Conns, __Flight[]) {
+  if (burst.reqs.len() == 0 && burst.touched.len() == 0) {
+    return (c, fls);
+  }
   let cur: __Conns = c;
   let fs: __Flight[] = fls;
   for r in burst.reqs {
@@ -6622,6 +6625,9 @@ function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], bu
 // request answered in turn by the stateful loop's handler, the state
 // threaded through, then every connection the burst touched flushed.
 function __h3_start_all_with[D: async.Driver, S](drv: D, c: __Conns, fls: __Flight[], burst: __H3Burst, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flight[], S) {
+  if (burst.reqs.len() == 0 && burst.touched.len() == 0) {
+    return (c, fls, st);
+  }
   let cur: __Conns = c;
   let fs: __Flight[] = fls;
   let state: S = st;
