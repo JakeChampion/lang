@@ -5,10 +5,11 @@
 package e2eharness
 
 import (
-	"os"
 	"os/exec"
 	"runtime"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // X86_64Tooling locates the gcc cross-compiler used to link
@@ -29,7 +30,7 @@ func X86_64Tooling(t testing.TB) (gcc string, exec_ []string) {
 		if gcc == "" {
 			why = "no x86_64-linux-gnu-gcc / gcc on PATH"
 		}
-		if os.Getenv("FERN_REQUIRE_X86_64_TOOLING") == "1" {
+		if envflag.On("FERN_REQUIRE_X86_64_TOOLING") {
 			t.Fatalf("%s and FERN_REQUIRE_X86_64_TOOLING=1: this lane has the "+
 				"toolchain and is the only one running this test, so a skip here covers nothing", why)
 		}
@@ -47,7 +48,7 @@ func X86_64Runner(t testing.TB) []string {
 	if runner, ok := lookupX86_64Runner(); ok {
 		return runner
 	}
-	if os.Getenv("FERN_REQUIRE_X86_64_TOOLING") == "1" {
+	if envflag.On("FERN_REQUIRE_X86_64_TOOLING") {
 		t.Fatal("non-x86_64 host and no qemu-x86_64 on PATH, and FERN_REQUIRE_X86_64_TOOLING=1: this lane has the toolchain and is the only one running this test, so a skip here covers nothing")
 	}
 	t.Skip("non-x86_64 host and no qemu-x86_64 on PATH; skipping x86-64 e2e")

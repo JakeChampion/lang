@@ -5,10 +5,11 @@
 package e2eharness
 
 import (
-	"os"
 	"os/exec"
 	"runtime"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // Arm64Tooling locates the C linker used to assemble the
@@ -28,7 +29,7 @@ func Arm64Tooling(t *testing.T) (gcc, qemu string) {
 	t.Helper()
 	gcc, qemu, ok := LookupArm64Tooling()
 	if !ok {
-		if os.Getenv("FERN_REQUIRE_ARM64_TOOLING") == "1" {
+		if envflag.On("FERN_REQUIRE_ARM64_TOOLING") {
 			t.Fatalf("aarch64 cross toolchain not available (gcc=%q qemu=%q) and FERN_REQUIRE_ARM64_TOOLING=1: "+
 				"this lane installs it and is the only one running this test, so a skip here covers nothing", gcc, qemu)
 		}
@@ -48,7 +49,7 @@ func Arm64Runner(t *testing.T) string {
 	}
 	_, qemu, _ := LookupArm64Tooling()
 	if qemu == "" {
-		if os.Getenv("FERN_REQUIRE_ARM64_TOOLING") == "1" {
+		if envflag.On("FERN_REQUIRE_ARM64_TOOLING") {
 			t.Fatal("no qemu-aarch64 on PATH and FERN_REQUIRE_ARM64_TOOLING=1: this lane installs it and is the only one running this test, so a skip here covers nothing")
 		}
 		t.Skip("no qemu-aarch64 on PATH")

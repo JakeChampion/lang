@@ -38,6 +38,7 @@
 # account for improvements without ratcheting weights upward forever.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/flag-lib"
 
 # Below this, a wrong weight cannot plausibly threaten a 28-minute shard.
 MIN_SECONDS="${FERN_WEIGHT_MIN_FLAG_SECONDS:-60}"
@@ -373,7 +374,7 @@ check() {
     fi
   done < <(printf '%s\n' "$routed")
 
-  if [ "${FERN_CI_WEIGHT_GATE_STRICT:-0}" = "1" ] && [ "$findings" -gt 0 ]; then
+  if fern_flag FERN_CI_WEIGHT_GATE_STRICT && [ "$findings" -gt 0 ]; then
     echo "ci-test-weights: $findings finding(s) and FERN_CI_WEIGHT_GATE_STRICT=1" >&2
     exit 1
   fi

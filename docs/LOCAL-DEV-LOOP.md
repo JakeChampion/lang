@@ -10,6 +10,17 @@ these have been wrong by an order of magnitude in the direction that
 discourages using the tool at all, and a stale number costs an hour per
 attempt.
 
+## `FERN_*` switches: one reading of on and off
+
+Every on/off `FERN_*` variable — the user-facing ones, the compiler's
+diagnostic modes (`FERN_STRICT_IR`, `FERN_RC_TRACE`, …) and the test and CI
+knobs — follows the rule in "Environment variables" in
+`site/src/content/docs/reference/tooling.md`. Each language reads it through
+one helper: `std/cli`'s `env_flag` / `flag_on` in the compiler and the
+standard library, `internal/envflag` in Go, and `scripts/flag-lib`'s
+`fern_flag` in the shell scripts. A new switch reads through the helper too,
+never `== "1"` or "is it set".
+
 ## Toolchain: `mise install`
 
 Every pinned tool — Go, wasmtime, wasm-tools, the WASI preview1 adapter,
@@ -736,7 +747,7 @@ FERN_CLIFF_REPORT=1 /usr/bin/time -l $B/fern-s2 -target arm64-darwin -o $B/fern-
 Every compile certifies the reference counting it emits (`rccertify.fern`,
 the row in `docs/TEST-GATES.md`), through a memo of the functions each target
 has certified clean: `~/.cache/fern/certified/<version>-<target>.txt`, or
-under `$FERN_CACHE_DIR` or `$XDG_CACHE_HOME/fern` when set. A cold compile of
+under `$FERN_CACHE_DIR`, or `$XDG_CACHE_HOME/fern` off macOS, when set. A cold compile of
 the compiler pays about 15% for it; a warm one pays a digest per function.
 `FERN_IR_VERIFY=1` prints `FERN_RC_CERTIFY: memo hits=… misses=…` at the end
 of a compile. To certify everything again, delete the directory or set

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jakechampion/lang/internal/envflag"
 	"github.com/jakechampion/lang/internal/syntax/ast"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
@@ -284,7 +285,7 @@ func runCoverageCampaign(t *testing.T, bin, stdlibRoot, srcPath string, seeds []
 // binary. The guided-beats-unguided comparison is its own test below, where
 // its stochastic nature can be handled honestly.
 func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
-	if os.Getenv(selfHostCoverFuzzEnv) == "" {
+	if !envflag.On(selfHostCoverFuzzEnv) {
 		t.Skip("set " + selfHostCoverFuzzEnv + "=1 to run the coverage-guided self-host fuzzer")
 	}
 	_, runner := x86_64Tooling(t)
@@ -378,7 +379,7 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 // machine could hand the two arms different numbers of inputs and the result
 // would say nothing about feedback.
 func TestSelfHostCoverageFeedbackBeatsBlindMutation(t *testing.T) {
-	if os.Getenv(selfHostCoverFuzzEnv) == "" {
+	if !envflag.On(selfHostCoverFuzzEnv) {
 		t.Skip("set " + selfHostCoverFuzzEnv + "=1 to run the coverage-guided self-host fuzzer")
 	}
 	_, runner := x86_64Tooling(t)

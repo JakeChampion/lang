@@ -34,6 +34,7 @@ import "./semarrayreport";
 import "./semreach";
 import "./flatten";
 import "./treeshake";
+import "std/cli";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
 // — has no body of its own: it is produced once per instantiation its callers
@@ -9404,7 +9405,7 @@ function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
 function inline_on(): boolean {
   match (env("FERN_SEM_INLINE")) {
     Some(v) => {
-      return v.len() > 0;
+      return cli.flag_on(v);
     },
     None => {
       return true;
@@ -9557,14 +9558,7 @@ function stdlib_names(all: Produced[], names: string[], decls: parser.FuncDecl[]
 }
 
 function kernel_switch_on(name: string): boolean {
-  match (env(name)) {
-    Some(v) => {
-      return v != "1";
-    },
-    None => {
-      return true;
-    }
-  }
+  return !cli.env_flag(name);
 }
 
 function ndarray_open(all: Produced[], names: string[], mod: parser.Module, funcs: ssasem.Func[]): boolean[] {
@@ -9596,14 +9590,7 @@ function ndarray_open(all: Produced[], names: string[], mod: parser.Module, func
 }
 
 function fusion_on(): boolean {
-  match (env("FERN_NO_ARRAY_FUSION")) {
-    Some(v) => {
-      return v != "1";
-    },
-    None => {
-      return true;
-    }
-  }
+  return !cli.env_flag("FERN_NO_ARRAY_FUSION");
 }
 
 // The implementations a dyn call on `method` over `traits` reaches: the

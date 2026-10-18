@@ -49,6 +49,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jakechampion/lang/internal/envflag"
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
 )
 
@@ -105,7 +106,7 @@ func selfHostDiffSeeds(t *testing.T) uint64 {
 
 func requireSelfHostDiffLeg(t *testing.T) {
 	t.Helper()
-	if os.Getenv("FERN_SELFHOST_DIFF") == "" {
+	if !envflag.On("FERN_SELFHOST_DIFF") {
 		t.Skip("set FERN_SELFHOST_DIFF=1 to run the fernsmith corpus through the self-host compiler")
 	}
 }

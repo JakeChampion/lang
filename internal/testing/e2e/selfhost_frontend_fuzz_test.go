@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // selfHostFuzzEnv gates the self-host front-end fuzzer.
@@ -58,7 +60,7 @@ const selfHostFuzzEnv = "FERN_SELFHOST_FUZZ"
 //
 //	FERN_SELFHOST_FUZZ=1 go test -run='^$' -fuzz=FuzzSelfHostFrontEnd ./internal/testing/e2e
 func FuzzSelfHostFrontEnd(f *testing.F) {
-	if os.Getenv(selfHostFuzzEnv) == "" {
+	if !envflag.On(selfHostFuzzEnv) {
 		f.Skip("set " + selfHostFuzzEnv + "=1 to fuzz the self-host front end")
 	}
 	gcc, runner := x86_64Tooling(f)

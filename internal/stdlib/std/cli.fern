@@ -769,3 +769,39 @@ pub function cli_bold(s: string): string {
 pub function cli_dim(s: string): string {
   return __cli_sgr("2", s);
 }
+
+// `flag_on(value)` — whether an environment switch set to `value` is on.
+// "", `0`, `false` and `off`, in any case, are off; anything else is on.
+// Every boolean FERN_* variable, in the compiler and in the standard
+// library, is read by this rule.
+pub function flag_on(value: string): boolean {
+  return !(value == "" || value == "0" || value.eq_ignore_ascii_case("false") || value.eq_ignore_ascii_case("off"));
+}
+
+// `env_flag(name)` — whether the environment switches `name` on: off when
+// it is unset, otherwise what `flag_on` makes of its value.
+pub function env_flag(name: string): boolean {
+  match (env(name)) {
+    Some(v) => {
+      return flag_on(v);
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// `env_value(name)` — the variable's value, with an empty value counted as
+// unset: the reading a directory such as `$HOME` or `$XDG_CACHE_HOME`
+// wants.
+pub function env_value(name: string): Option[string] {
+  match (env(name)) {
+    Some(v) => {
+      if (v != "") {
+        return Some(v);
+      }
+    },
+    None => {}
+  }
+  return None;
+}

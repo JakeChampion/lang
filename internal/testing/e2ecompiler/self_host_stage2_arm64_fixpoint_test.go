@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // childFailure renders a failed exec.Command with the child's stderr, which
@@ -103,7 +104,7 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.selfEnv && os.Getenv("FERN_STAGE2_SELF") != "1" {
+			if tc.selfEnv && !envflag.On("FERN_STAGE2_SELF") {
 				t.Skip("set FERN_STAGE2_SELF=1 to run the whole-compiler stage-2 case")
 			}
 			src := langSrcAbs(t, tc.src)
