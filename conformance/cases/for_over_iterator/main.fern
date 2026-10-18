@@ -1,0 +1,51 @@
+// `for` walks anything implementing core/iter's Iterator: it pulls `next()`
+// until None. A destructuring header binds each yielded tuple, `continue`
+// and a labelled `break` behave as over an array, a `return` leaves the
+// loop, and a generic body walks a type parameter bounded by Iterator.
+import "core/iter";
+
+function total[I: iter.Iterator[i32]](it: I): i32 {
+  let n: i32 = 0;
+  for v in it {
+    n = n + v;
+  }
+  return n;
+}
+
+function first_above(it: iter.ArrayIter[i32], floor: i32): i32 {
+  for v in it {
+    if (v > floor) {
+      return v;
+    }
+  }
+  return 0 - 1;
+}
+
+function main(): i32 {
+  for x in iter.of([1, 2, 3]) {
+    print(f"of {x}");
+  }
+  for (i, w) in iter.of(["a", "b"]).enumerate() {
+    print(f"enumerate {i} {w}");
+  }
+  for sq in iter.range(0, 6).filter((v: i32): boolean => v % 2 == 0).map((v: i32): i32 => v * v) {
+    print(f"chain {sq}");
+  }
+  outer: for a in iter.range(0, 3) {
+    for b in iter.of([10, 20, 30]) {
+      if (b == 20) {
+        continue;
+      }
+      if (a == 2) {
+        break outer;
+      }
+      print(f"nested {a} {b}");
+    }
+  }
+  for _ in iter.range(0, 2) {
+    print("tick");
+  }
+  print(f"total {total(iter.of([4, 5, 6]))}");
+  print(f"first_above {first_above(iter.of([1, 7, 9]), 5)}");
+  return 0;
+}

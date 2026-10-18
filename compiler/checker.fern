@@ -1967,7 +1967,9 @@ function generic_sig_refs(all_type_params: string[], param_type_names: string[],
 // `derives` carries the declaration's `@derive(...)` list so a conformance
 // question can be answered from the Scope — the map-key Eq/Hash check needs it,
 // and a derive does not synthesise an entry in the impl table.
-pub struct StructSig { name: string, field_names: string[], field_types: typeinfo.Type[], type_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string }
+// `module` is the declaring module's prefix ("" for the entry), which an
+// `opaque` struct's fields are private to.
+pub struct StructSig { name: string, field_names: string[], field_types: typeinfo.Type[], type_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string, opaque: boolean, module: string }
 
 // MethodSig: nominal handle for a declared receiver method
 // `function (recv: RecvType) name(p1, p2): RT`. The receiver
@@ -2731,6 +2733,16 @@ function struct_destr_name(type_name: string): string {
   return slice_unchecked(rest, 0, colon) + "";
 }
 
+// opaque_access_diags is E021 for reaching into the fields of `sig` (`what`
+// names the access) from a module other than the one that declared it opaque.
+// The type's name and methods stay usable everywhere.
+function opaque_access_diags(sig: StructSig, s: Scope, what: string, line: i32, col: i32): util.Diag[] {
+  if (!sig.opaque || sig.module == s.fn_module) {
+    return [];
+  }
+  return [dg_at("E021", "cannot " + what + " opaque type " + util.demangle(sig.name) + " outside the module that defines it", line, col)];
+}
+
 // struct_destr_diags is E043 for each field a struct destructure
 // `let P { x, z } = e;` reads that the struct `e` is lacks, at the `let`, as
 // native reports it. The field has no position of its own, so its fix stands
@@ -2749,6 +2761,7 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
         return out.append(dg_at("E024", "struct destructure pattern names " + named + ", but the expression is " + st.name, v.line, v.col));
       }
       let sig: StructSig = s.lookup_struct(st.name);
+      out = util.append_diags(out, opaque_access_diags(sig, s, "destructure a field of", v.line, v.col));
       for f in fields {
         if (sig.name.len() > 0 && !util.has_str(sig.field_names, f)) {
           let d: util.Diag = dg_at("E043", "struct " + util.demangle(st.name) + " has no field \"" + f + "\"", v.line, v.col);
@@ -3800,7 +3813,7 @@ function (s: Scope) lookup_struct(name: string): StructSig {
   let empty_t: typeinfo.Type[] = [];
   let empty_tp: string[] = [];
   let empty_ftn: string[] = [];
-  return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn, variant_field_names: empty_n, derives: [], enum_owner: "" };
+  return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn, variant_field_names: empty_n, derives: [], enum_owner: "", opaque: false, module: "" };
 }
 
 // lookup_variant answers for the VARIANT namespace: the first enum variant
@@ -8584,7 +8597,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
       // piece 2).
       ftnames = ftnames.append(parser.fn_tag_spelling(elem.type_name, elem.fn_ret, elem.fn_param_types));
     }
-    out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names, derives: sd.derives, enum_owner: sd.enum_owner });
+    out = out.append(StructSig { name: sd.name, field_names: fnames, field_types: ftypes, type_params: sd.type_params, field_type_names: ftnames, variant_field_names: sd.variant_field_names, derives: sd.derives, enum_owner: sd.enum_owner, opaque: sd.opaque, module: sd.module });
   }
   return out;
 }
@@ -12117,7 +12130,7 @@ function find_struct_sig(structs: StructTable, name: string): StructSig {
   let nonet: typeinfo.Type[] = [];
   let none_tp: string[] = [];
   let none_ftn: string[] = [];
-  return StructSig { name: "", field_names: none, field_types: nonet, type_params: none_tp, field_type_names: none_ftn, variant_field_names: none, derives: [], enum_owner: "" };
+  return StructSig { name: "", field_names: none, field_types: nonet, type_params: none_tp, field_type_names: none_ftn, variant_field_names: none, derives: [], enum_owner: "", opaque: false, module: "" };
 }
 
 // find_variant_sig is find_struct_sig for the possibly enum-QUALIFIED spelling
@@ -15297,6 +15310,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           },
           _ => {}
         }
+        if let typeinfo.TypeStruct(ost) = check_expr(c.args[0], s) {
+          out = util.append_diags(out, opaque_access_diags(s.lookup_struct(ost.name), s, "access a field of", expr_line(c.args[1]), expr_col(c.args[1])));
+        }
         out = out.append(dg_at("E048", "cannot assign to field \"" + fld + "\": fields are immutable after construction; rebuild with a struct-update literal", expr_line(c.args[1]), expr_col(c.args[1])));
       }
       // E056: `arr[i] = v` is desugared by the parser to
@@ -16411,6 +16427,7 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
   match (ot) {
     typeinfo.TypeStruct(sn) => {
       let fsig: StructSig = s.lookup_struct(sn.name);
+      out = util.append_diags(out, opaque_access_diags(fsig, s, "access a field of", fa.line, fa.col));
       if (fsig.name.len() > 0 && !util.has_str(fsig.field_names, fa.field)) {
         out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + fa.field + "\"", fa.line, fa.col), fa, fsig));
       }
@@ -16453,6 +16470,7 @@ function tuple_field_diags(field: string, tt: typeinfo.TypeTuple, line: i32, col
 // field that contradicts an earlier one is refused as native refuses it.
 function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
   let fsig: StructSig = s.lookup_struct(sl.type_name);
+  out = util.append_diags(out, opaque_access_diags(fsig, s, "construct", sl.line, sl.col));
   let args: typeinfo.Type[] = dest_args;
   // The literal's own instantiation outranks its destination's, as natively;
   // a disagreement between the two is the assignment's to report.
@@ -17098,36 +17116,146 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
   return [];
 }
 
-// for_iter_diags reports a `for` over a value that is not an array, string or
-// map. Native lowers such a loop to `ITER.len()` and `ITER[i]`, so the iterand
-// draws exactly that shape's E043 and E034 here, on the loop's line.
+// for_iter_diags reports E083 for a `for` over a value it cannot walk: no
+// array, string, Map or range, no Iterator, and no `iter()` returning one.
 function for_iter_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
   let none: util.Diag[] = [];
   if (for_iter_is_range(fr.iter)) {
     return none;
   }
   let it: typeinfo.Type = check_expr(fr.iter, s);
-  match (it) {
-    typeinfo.TypeArray(_) => {
-      return none;
-    },
-    typeinfo.TypeString(_) => {
-      return none;
-    },
-    typeinfo.TypeMap(_) => {
-      return none;
-    },
-    _ => {}
-  }
-  if (is_unknown(it)) {
+  if (builtin_iterable(it) || is_unknown(it) && tvar_name(it).len() == 0 || iter_subject(it, s).ok) {
     return none;
   }
+  return [dg_at("E083", "cannot iterate over a value of type " + util.demangle_all(util.show_type_vars(type_label_or_tvar(it))) + ": `for` walks an array, a string, a Map, a range, an iter.Iterator, or a value whose iter() returns one", expr_line(fr.iter), expr_col(fr.iter))];
+}
+
+// builtin_iterable: the subjects `for` walks without the Iterator protocol.
+function builtin_iterable(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeArray(_) => {
+      return true;
+    },
+    typeinfo.TypeString(_) => {
+      return true;
+    },
+    typeinfo.TypeMap(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function type_label_or_tvar(t: typeinfo.Type): string {
+  let tv: string = tvar_name(t);
+  if (tv.len() > 0) {
+    return tv;
+  }
+  return type_label(t);
+}
+
+// IterSubject is how a `for` walks a subject `builtin_iterable` refuses: the
+// element its Iterator yields, and `via_iter` when that Iterator is the
+// subject's `iter()` rather than the subject itself. `ok` is false for a
+// subject that is neither.
+struct IterSubject { ok: boolean, elem: typeinfo.Type, via_iter: boolean }
+
+function iter_subject(t: typeinfo.Type, s: Scope): IterSubject {
+  let direct: typeinfo.Type = iterator_elem(t, s);
+  if (!is_unknown(direct) || tvar_name(direct).len() > 0) {
+    return IterSubject { ok: true, elem: direct, via_iter: false };
+  }
+  if (is_unknown(t) || is_type_variable(t)) {
+    return IterSubject { ok: false, elem: direct, via_iter: false };
+  }
+  let via: typeinfo.Type = iterator_elem(probe_method(t, "iter", s), s);
+  if (!is_unknown(via) || tvar_name(via).len() > 0) {
+    return IterSubject { ok: true, elem: via, via_iter: true };
+  }
+  return IterSubject { ok: false, elem: via, via_iter: false };
+}
+
+// iterator_elem is the `T` of the `Iterator[T]` that `t` implements, read off
+// its `next()`; unknown when `t` implements no core/iter Iterator.
+function iterator_elem(t: typeinfo.Type, s: Scope): typeinfo.Type {
+  if (!implements_iterator(t, s)) {
+    return t_unknown("not an Iterator");
+  }
+  if let typeinfo.TypeUnion(u) = probe_method(t, "next", s) {
+    if (u.name == "Option" && u.args.len() == 1) {
+      if let typeinfo.TypeTuple(tp) = u.args[0] {
+        if (tp.elements.len() == 2) {
+          return tp.elements[0];
+        }
+      }
+    }
+  }
+  return t_unknown("not an Iterator");
+}
+
+// implements_iterator: an impl of core/iter's Iterator for `t`, or for a type
+// parameter, a bound naming it.
+function implements_iterator(t: typeinfo.Type, s: Scope): boolean {
+  let tv: string = tp_receiver(t, s);
+  if (tv.len() == 0) {
+    tv = tvar_name(t);
+  }
+  if (tv.len() > 0) {
+    for tr in tp_bound_traits(s, tv) {
+      if (tr == CORE_ITERATOR) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if (is_unknown(t)) {
+    return false;
+  }
+  let base: string = util.base_type_name(type_label(t));
+  for imp in s.impls {
+    if (parser.impl_trait_key(imp) == CORE_ITERATOR && util.base_type_name(imp.impl_type) == base) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// core/iter's Iterator as an impl key or a bound spells it.
+const CORE_ITERATOR: string = "iter.Iterator";
+
+// iterator_lowering is the loop over core/iter's Iterator protocol a `for`
+// lowers to, or None for a range or a builtin iterable, which keep their
+// counted loops.
+function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
+  if (for_iter_is_range(fr.iter)) {
+    return None;
+  }
+  let it: typeinfo.Type = check_expr(fr.iter, s);
+  if (builtin_iterable(it)) {
+    return None;
+  }
+  let sub: IterSubject = iter_subject(it, s);
+  if (!sub.ok) {
+    return None;
+  }
+  let line: i32 = expr_line(fr.iter);
   let col: i32 = expr_col(fr.iter);
-  let bound: Scope = s.bind("__for_iter", it);
-  let iter: ast.Expr = ast.ExprIdent { name: "__for_iter", line: fr.line, col: col, ty: "" };
-  let len_call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: iter, field: "len", line: fr.line, col: col, ty: "" }, args: [], line: fr.line, col: col, type_args: [], ty: "" };
-  let first: ast.Expr = ast.ExprIndex { array: iter, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: fr.line, col: col }, unchecked: false, ty: "", line: fr.line, col: col };
-  return util.append_diags(call_diags(len_call, bound), call_diags(first, bound));
+  let subject: ast.Expr = fr.iter;
+  if (sub.via_iter) {
+    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "" }, args: [], line: line, col: col, type_args: [], ty: "" };
+  }
+  return Some(parser.iterator_loop(fr, subject, col));
+}
+
+// probe_method is the type of a zero-argument call of method `name` on a value
+// of type `t`; unknown when `t` has no such method.
+function probe_method(t: typeinfo.Type, name: string, s: Scope): typeinfo.Type {
+  let recv: ast.Expr = ast.ExprIdent { name: "__for_iter", line: 0, col: 0, ty: "" };
+  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+  return check_expr(call, s.bind("__for_iter", t));
 }
 
 // ---- exhaustiveness of a desugared match --------------------------------------
@@ -18538,7 +18666,7 @@ function const_elems_err(elems: ast.Expr[], earlier: string[]): string {
 // refuses it (#6618).
 //
 // The diagnostic is UNCODED, matching native: an empty `code` renders as
-// `<line>:<col>: <message>` with no `error[…]` segment.
+// `<line>:<col>: error: <message>` with no `[…]` code.
 function const_grammar_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   let earlier: string[] = [];
@@ -27518,7 +27646,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
       let ct: typeinfo.Type = check_expr(e, s);
-      return Typed { e: ast.ExprCall { callee: annotate_callee(c, ct, s), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: type_to_irtag(ct) }, ty: ct, known: true };
+      return Typed { e: ast.ExprCall { callee: annotate_callee(c, ct, s), args: nargs, line: c.line, col: c.col, type_args: stamped_type_args(c, s), ty: type_to_irtag(ct) }, ty: ct, known: true };
     },
     ast.ExprFieldAccess(fa) => {
       let oa: Typed = annotate_typed(fa.obj, s);
@@ -27579,6 +27707,87 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
 // annotate_callee annotates a call's callee; a value block's lambda results in
 // `ct`, the block's type, which joins every arm where its first arm alone may
 // not: `if (c) { Full(1) } else { Full(2.5) }` is a Bx[f64].
+// A free generic call that writes no type arguments carries the ones its
+// arguments bind, so every later pass instantiates it as it would the written
+// `f[T](...)`. A variable only the destination or a literal's open width can
+// settle leaves the call unwritten, for those passes to settle.
+function stamped_type_args(c: ast.ExprCall, s: Scope): string[] {
+  let sig: FuncSig = free_generic_sig(c, s);
+  if (c.type_args.len() > 0 || sig.all_type_params.len() == 0 || c.args.len() != sig.param_types.len()) {
+    return c.type_args;
+  }
+  let (bn, bt) = call_type_bindings(sig, c, s);
+  let out: string[] = [];
+  for tp in sig.all_type_params {
+    let bi: i32 = util.index_of_str(bn, tp);
+    if (bi < 0 || type_contains_unknown(bt[bi]) || width_open(bt[bi])) {
+      return c.type_args;
+    }
+    let spelled: string = typeinfo.spelling(bt[bi]);
+    if (spelled.len() == 0) {
+      return c.type_args;
+    }
+    out = out.append(parser.canonicalise_type_args(spelled));
+  }
+  return out;
+}
+
+// free_generic_sig: the declaration a bare call names when it is a free
+// generic function rather than a local, or an empty signature.
+function free_generic_sig(c: ast.ExprCall, s: Scope): FuncSig {
+  if let ast.ExprIdent(cid) = c.callee {
+    let sig: FuncSig = s.lookup_sig(cid.name);
+    if (!s.is_bound(cid.name) && sig.receiver.len() == 0) {
+      return sig;
+    }
+  }
+  return s.lookup_sig("");
+}
+
+// width_open: does `t` hold an integer or float literal's type, whose width a
+// destination may still choose?
+function width_open(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeI32(_) => {
+      return is_poly_int(t);
+    },
+    typeinfo.TypeFloat(_) => {
+      return is_poly_float(t);
+    },
+    typeinfo.TypeArray(a) => {
+      return width_open(a.elem);
+    },
+    typeinfo.TypeMap(m) => {
+      return width_open(m.key) || width_open(m.value);
+    },
+    typeinfo.TypeTuple(tup) => {
+      return any_width_open(tup.elements);
+    },
+    typeinfo.TypeStruct(r) => {
+      return any_width_open(r.args);
+    },
+    typeinfo.TypeUnion(u) => {
+      return any_width_open(u.args);
+    },
+    typeinfo.TypeFunc(f) => {
+      return width_open(f.ret_type) || any_width_open(f.param_types);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function any_width_open(ts: typeinfo.Type[]): boolean {
+  for t in ts {
+    if (width_open(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function annotate_callee(c: ast.ExprCall, ct: typeinfo.Type, s: Scope): ast.Expr {
   if let ast.ExprLambda(lm) = c.callee {
     if (parser.is_value_block(c)) {
@@ -27815,8 +28024,9 @@ function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
       return ForBinding { scope: bind_tuple_destr_names(body, names, t_tuple([tm.key, tm.value])), valid: names.len() == 2 };
     },
     _ => {
+      let sub: IterSubject = iter_subject(it, s);
       // An invalid iterator still introduces names for diagnostic recovery.
-      return ForBinding { scope: bind_for_element(body, fr.var_name, t_unknown("invalid iterator")), valid: false };
+      return ForBinding { scope: bind_for_element(body, fr.var_name, sub.elem), valid: sub.ok };
     }
   }
   return ForBinding { scope: bind_for_element(body, fr.var_name, t_unknown("invalid iterator")), valid: false };
@@ -27931,6 +28141,9 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
     },
     ast.StmtFor(fr) => {
+      if let Some(lowered) = iterator_lowering(fr, s) {
+        return annotate_stmt(lowered, s, after);
+      }
       return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line };
     },
     ast.StmtDefer(d) => {

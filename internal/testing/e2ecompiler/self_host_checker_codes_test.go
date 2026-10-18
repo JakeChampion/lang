@@ -1271,10 +1271,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// `for x in <EXPR>` over a non-ident array iterable — clean from both checkers.
 		{"for-literal-clean", "function main(): i32 { let s = 0; for x in [1, 2, 3] { s = s + x; } return s; }\n", nil},
 		{"for-call-clean", "function mk(): i32[] { return [1, 2]; }\nfunction main(): i32 { let s = 0; for x in mk() { s = s + x; } return s; }\n", nil},
-		// `for x in <EXPR>` over a value no loop iterates: native lowers it to
-		// `.len()` + index and reports both at the loop.
-		{"for-over-struct", "enum Ty { S(i32), N(i32) }\nstruct Item { ty: Ty }\nstruct Box { list: Item[], k: i32 }\nfunction main(): i32 {\n  let b: Box = Box { list: [Item { ty: Ty.S(1) }], k: 1 };\n  let names: string[] = [];\n  for it in b {\n    if let Ty.S(v) = it.ty {\n      names = names.append(\"x\");\n    }\n  }\n  return names.len();\n}\n", []string{"E034", "E043"}},
-		{"for-over-i32", "function main(): i32 { let n: i32 = 3; let s: i32 = 0; for x in n { s = s + x; } return s; }\n", []string{"E034", "E043"}},
+		// `for x in <EXPR>` over a value no loop iterates is E083, naming the
+		// type rather than the array lowering's `len` and index.
+		{"for-over-struct", "enum Ty { S(i32), N(i32) }\nstruct Item { ty: Ty }\nstruct Box { list: Item[], k: i32 }\nfunction main(): i32 {\n  let b: Box = Box { list: [Item { ty: Ty.S(1) }], k: 1 };\n  let names: string[] = [];\n  for it in b {\n    if let Ty.S(v) = it.ty {\n      names = names.append(\"x\");\n    }\n  }\n  return names.len();\n}\n", []string{"E083"}},
+		{"for-over-i32", "function main(): i32 { let n: i32 = 3; let s: i32 = 0; for x in n { s = s + x; } return s; }\n", []string{"E083"}},
 		// Unannotated struct-array literal (`let ps = [P{..}, ..]`) — element type
 		// inferred, clean from both checkers.
 		{"inferred-struct-array-clean", "struct P { v: i32 }\nfunction main(): i32 { let ps = [P { v: 3 }, P { v: 4 }]; return ps[0].v + ps[1].v; }\n", nil},
@@ -1596,6 +1596,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e082-use-callback", "function apply(x: i32, k: (i32) => i32): i32 { return k(x); }\nfunction f(s: str): i32 { use n <- apply(41); return n + s.len(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
 		{"e082-owned-copy", "function f(sep: str): i32 { let owned: string = sep + \"\"; let g = (): i32 => owned.len(); return g(); }\nfunction main(): i32 { return f(\",\"); }\n", nil},
 		{"e082-view-without-a-closure", "function f(s: string, c: boolean): i32 { let v: str = slice_unchecked(s, 0, 1); let n: i32 = if (c) { v.len() } else { 0 }; return n; }\nfunction main(): i32 { return f(\"ab\", true); }\n", nil},
+		// E083 beside the two rows above: an unbounded type parameter, and a
+		// value whose iter() returns no Iterator. What does walk an Iterator
+		// needs core/iter, which these single-file rows do not load: the
+		// for_over_* conformance cases cover it.
+		{"e083-unbounded-type-parameter", "function each[T](v: T): i32 { for x in v { } return 0; }\nfunction main(): i32 { return each(1); }\n", []string{"E083"}},
+		{"e083-iter-returns-no-iterator", "struct Counter { n: i32 }\nfunction (c: Counter) iter(): i32 { return c.n; }\nfunction main(): i32 { let k: Counter = Counter { n: 3 }; for n in k { } return 0; }\n", []string{"E083"}},
 		{"e082-parameter-shadows-a-view", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (v: i32): i32 => v + 1; return g(v.len()); }\nfunction main(): i32 { return f(\"ab\"); }\n", nil},
 		{"e082-shared-struct-graph", e082SharedChain("i32"), nil},
 		{"e082-shared-struct-graph-view", e082SharedChain("str"), []string{"E082"}},
