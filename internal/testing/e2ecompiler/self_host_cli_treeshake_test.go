@@ -547,3 +547,60 @@ function main(): i32 {
 		t.Errorf("program exited %d, want 3", code)
 	}
 }
+
+// TestSelfHostTreeshakeKeepsMapRuntimeOnlyForLiveMapsX86_64 pins that a struct
+// holding a map roots core/map's runtime only when the program can reach the
+// struct. std/cli declares `CliArgs { opts: Map[string, string], … }`, and
+// importing std/cli for `flag_on` alone carried the whole map runtime into
+// every server, 30% of bench/http_hello's code.
+func TestSelfHostTreeshakeKeepsMapRuntimeOnlyForLiveMapsX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+	cases := []struct {
+		name, src string
+		maps      bool
+	}{
+		{"flag-only", `import "std/cli";
+function main(): i32 { if (cli.flag_on("1")) { return 0; } return 1; }
+`, false},
+		{"live-map-struct", `import "core/map";
+struct Opts { m: Map[string, i32] }
+function main(): i32 { let o: Opts = Opts { m: map_new(4) }; let p: Opts = Opts { m: o.m.insert("a", 1) }; return p.m.len() - 1; }
+`, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prog := filepath.Join(dir, "ts_map_"+c.name+".fern")
+			if err := os.WriteFile(prog, []byte(c.src), 0o644); err != nil {
+				t.Fatalf("write program: %v", err)
+			}
+			asmPath := filepath.Join(dir, "ts_map_"+c.name+".s")
+			if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
+				t.Fatalf("self-host compile failed: %v\n%s", err, out)
+			}
+			asmBytes, err := os.ReadFile(asmPath)
+			if err != nil {
+				t.Fatalf("read asm: %v", err)
+			}
+			asm := string(asmBytes)
+			if got := strings.Contains(asm, "\n__fn___map_put_impl:"); got != c.maps {
+				t.Errorf("map runtime emitted = %v, want %v", got, c.maps)
+			}
+			bin := buildBin(t, gcc, dir, "ts_map_"+c.name, asm)
+			run := exec.Command(bin)
+			_ = run.Run()
+			if code := run.ProcessState.ExitCode(); code != 0 {
+				t.Errorf("program exited %d, want 0", code)
+			}
+		})
+	}
+}
