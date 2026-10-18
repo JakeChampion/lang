@@ -121,13 +121,33 @@ function test_status_reason_unknown_falls_back(): test.TestOutcome {
 // none of the body; a 1xx, 204 or 304 carries neither, whatever the
 // handler put in the body (RFC 9112 §6.3).
 function test_head_response_has_no_body(): test.TestOutcome {
-  let wire: string = http.http_serialize_response_to("HEAD", http.ok("hello"), true);
-  return test.assert_eq(wire, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\n");
+  let wire: string = http.http_serialize_response_to("HEAD", "HTTP/1.1", http.ok("hello"), true);
+  return test.assert_eq(wire, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n");
 }
 
 function test_no_content_has_no_length_or_body(): test.TestOutcome {
-  let wire: string = http.http_serialize_response_to("GET", http.text(204, "ignored"), true);
-  return test.assert_eq(wire, "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n");
+  let wire: string = http.http_serialize_response_to("GET", "HTTP/1.1", http.text(204, "ignored"), true);
+  return test.assert_eq(wire, "HTTP/1.1 204 No Content\r\n\r\n");
+}
+
+// A persisting connection is HTTP/1.1's default, so a response to an
+// HTTP/1.1 request names `Connection` only to close it; an HTTP/1.0 client
+// that asked to keep the connection is told that it was kept (RFC 9112
+// §9.3).
+function test_connection_field_where_it_carries_meaning(): test.TestOutcome {
+  let kept_11: string = http.http_serialize_response_to("GET", "HTTP/1.1", http.ok("hello"), true);
+  if (kept_11.contains("Connection:")) {
+    return test.fail("a persisting HTTP/1.1 response named Connection: " + kept_11);
+  }
+  let kept_10: string = http.http_serialize_response_to("GET", "HTTP/1.0", http.ok("hello"), true);
+  if (!kept_10.contains("\r\nConnection: keep-alive\r\n")) {
+    return test.fail("a kept HTTP/1.0 connection was not told so: " + kept_10);
+  }
+  let closed_10: string = http.http_serialize_response_to("GET", "HTTP/1.0", http.ok("hello"), false);
+  if (!closed_10.contains("\r\nConnection: close\r\n")) {
+    return test.fail("a closing HTTP/1.0 response did not say close: " + closed_10);
+  }
+  return test.assert_eq(http.http_serialize_response_to("GET", "HTTP/1.1", http.ok("hello"), false), "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
 }
 
 function test_not_modified_and_informational_have_no_body(): test.TestOutcome {
@@ -175,6 +195,7 @@ function main(): i32 {
   );
   r = r.it("HEAD response has no body", test_head_response_has_no_body);
   r = r.it("204 has no Content-Length or body", test_no_content_has_no_length_or_body);
+  r = r.it("Connection field where it carries meaning", test_connection_field_where_it_carries_meaning);
   r = r.it("304 and 1xx have no body", test_not_modified_and_informational_have_no_body);
   return r.finish();
 }

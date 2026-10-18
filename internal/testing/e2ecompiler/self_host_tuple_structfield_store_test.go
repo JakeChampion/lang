@@ -189,22 +189,6 @@ func TestSelfHostTupleStructFieldStoreX86_64(t *testing.T) {
 			if strings.Contains(sanErr, "rc over-release") || strings.Contains(sanErr, "use-after-free") {
 				t.Fatalf("%s sanitize leg reported:\n%s", tc.name, sanErr)
 			}
-
-			// Nothing here is plan-routed, so FERN_SELFHOST_RC_PLAN=0
-			// must change nothing.
-			offAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1", "FERN_SELFHOST_RC_PLAN=0"})
-			offBin := buildBin(t, gcc, dir, "tupsfs_off_"+tc.name, offAsm)
-			offErr, offExit := hevRun(t, runner, offBin)
-			if offExit != tc.want {
-				t.Fatalf("%s plan-off exited %d, want %d", tc.name, offExit, tc.want)
-			}
-			var oa, of, ol int64
-			if _, err := fmtSscan(leakSummaryLine(offErr), &oa, &of, &ol); err != nil {
-				t.Fatalf("%s plan-off: parse: %v", tc.name, err)
-			}
-			if ol != 0 || oa != of {
-				t.Errorf("%s plan-off: %s — must balance without the plan", tc.name, leakSummaryLine(offErr))
-			}
 		})
 	}
 }

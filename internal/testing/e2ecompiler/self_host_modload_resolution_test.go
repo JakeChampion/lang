@@ -85,6 +85,25 @@ function main(): i32 { let a: i32 = h2.value(); let b: string = h3.value(); let 
 			},
 			want: `checker_modload_run: cannot resolve import "./gone" in DIR/lib/a.fern: DIR/lib/gone.fern: not found`,
 		},
+		{
+			// A stdlib import resolves under the stdlib root and nowhere else:
+			// a file of the same basename beside the importer is not it (#12690).
+			name: "missing-stdlib-module-with-local-namesake",
+			files: map[string]string{
+				"main.fern":      "import \"std/other\";\n  import \"std/json2\";\nfunction main(): i32 { return other.x() + json2.y(); }\n",
+				"json2.fern":     "pub function y(): i32 { return 1; }\n",
+				"std/other.fern": "pub function x(): i32 { return 1; }\n",
+			},
+			want: `checker_modload_run: DIR/main.fern:2:3: error: unknown stdlib module "std/json2"`,
+		},
+		{
+			name: "missing-subpath-with-local-namesake",
+			files: map[string]string{
+				"main.fern": "import \"./sub/x\";\nfunction main(): i32 { return x.f(); }\n",
+				"x.fern":    "pub function f(): i32 { return 1; }\n",
+			},
+			want: `checker_modload_run: cannot resolve import "./sub/x" in DIR/main.fern: DIR/sub/x.fern: not found`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

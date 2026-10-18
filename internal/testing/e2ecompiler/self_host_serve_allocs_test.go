@@ -157,7 +157,7 @@ func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 // included (e2eharness.ServeFetchAllocsServerSource, the nightly two-fetch
 // profile; docs/benchmarks/net-twofetch-2026-10-17.md and
 // docs/benchmarks/net-fetch-client-2026-10-18.md).
-const ServeFetchAllocsCeiling = 108
+const ServeFetchAllocsCeiling = 98
 
 func TestSelfHostServeAllocsPerRequestTwoFetch(t *testing.T) {
 	cli := buildSelfHostCLI(t)

@@ -168,12 +168,9 @@ func TestSelfHostTargetCapabilityDifferentialX86_64(t *testing.T) {
 		{"heap-mark-wasm", "wasm32-wasi", "function main(): i32 {\n    let m: i64 = __heap_mark();\n    __heap_release_to(m);\n    return 0;\n}\n"},
 		{"heap-bump-bytes-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    return __heap_bump_bytes();\n}\n"},
 		// The wasm worlds have no process model, so spawning is refused there
-		// by both. On the NATIVE targets the two tables disagree on purpose —
-		// native gates `subprocess` everywhere because no Go backend lowers
-		// it, while the self-host's emitters do — so that pairing is asserted
-		// in internal/pkg/platforms (profileExceptions) rather than here, where a
-		// row would read as an unexplained divergence.
+		// and granted on the hosted natives.
 		{"subprocess-wasm", "wasm32-wasi", "function main(): i32 {\n    let argv: string[] = [];\n    let r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
+		{"subprocess-native-ok", "x86-64-linux", "function main(): i32 {\n    let argv: string[] = [];\n    let r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
 		// The capabilities a wasm program legitimately has: a filesystem, a
 		// clock, entropy, stdout. If the gate fired on these it would refuse
 		// most real programs.
@@ -225,12 +222,17 @@ func TestSelfHostFreestandingTargets(t *testing.T) {
 		t.Fatalf("stdlib path: %v", err)
 	}
 
-	// `-targets` must list both, or nothing tells a user they exist.
+	// `-targets` must list both, or nothing tells a user they exist, and it
+	// lists exactly what the oracle's does.
 	listing, _ := exec.Command(driverBin, "-targets").CombinedOutput()
 	for _, want := range []string{"arm64-freestanding", "x86-64-freestanding"} {
 		if !strings.Contains(string(listing), want) {
 			t.Errorf("self-host -targets does not list %s:\n%s", want, listing)
 		}
+	}
+	nativeListing, _ := exec.Command(nativeBin, "-targets").CombinedOutput()
+	if string(listing) != string(nativeListing) {
+		t.Errorf("-targets differs:\n--- native ---\n%s\n--- self-host ---\n%s", nativeListing, listing)
 	}
 
 	for _, c := range []struct {

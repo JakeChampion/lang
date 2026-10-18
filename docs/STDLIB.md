@@ -1381,14 +1381,17 @@ address is checked against the certificate's addresses and not sent as SNI
   identity (`std/tls/identity`), a server asking for a client certificate
   is sent the chain and a CertificateVerify under its key; without one, an
   empty Certificate, and the server decides.
-- `Session` is sans-IO, so any transport can carry it: `start(config)` draws
-  its entropy from `random_bytes` and returns a `Step { session, output,
-  data, closed, tickets }`; `(s).read(input)` takes what arrived,
+- `Session` is sans-IO, so any transport can carry it: `start(config, now)`
+  draws its entropy from `random_bytes` and returns a `Step { session,
+  output, data, closed, tickets }`; `(s).read(input, now)` takes what arrived,
   `(s).write(data)` seals application data and `(s).close()` is the
   close_notify. `read` passes whole records to the handshake one at a time,
   so on failure it returns a `Failure { error, alert }` whose alert is
   sealed under the keys in force when it failed; send it, then close.
-  `(s).alpn()` is the protocol the server chose.
+  `(s).alpn()` is the protocol the server chose. `now` is the wall-clock
+  time in Unix milliseconds, the caller's to give: the server's chain is
+  judged and a ticket's age measured at it, and the session reads no clock.
+  `Connection` gives `now_unix_ms()`.
 - Resumption: `Step.tickets` are the `Ticket`s the server issued (identity,
   the PSK it stands for, suite, lifetime, age_add, when it was received and
   the server's name); keep one and offer it with `with_ticket` to the same
@@ -1768,16 +1771,18 @@ crypto/tls client in `TestTLSServerAgainstGo`).
   the chosen suite's hash, and is within its lifetime; otherwise the
   handshake is a full one. `(s).resumed()` says which.
 - Client certificates: `with_client_roots(roots)` asks every client for a
-  certificate and requires a chain reaching the roots now, allowed a TLS
-  client (`verify.verify_client`), with a CertificateVerify under its key;
-  a client sending none is refused with certificate_required, one with a
-  bad chain with bad_certificate. `(s).client_chain()` is the chain shown,
-  leaf first. A resumed session shows none: the ticket stands for the
-  certificate shown when it was issued.
+  certificate and requires a chain reaching the roots at `read`'s `now`,
+  allowed a TLS client (`verify.verify_client`), with a CertificateVerify
+  under its key; a client sending none is refused with
+  certificate_required, one with a bad chain with bad_certificate.
+  `(s).client_chain()` is the chain shown, leaf first. A resumed session
+  shows none: the ticket stands for the certificate shown when it was
+  issued.
 - `Session`: `start(config)` draws its entropy from `random_bytes` and
-  returns a session with nothing to send until `(s).read(input)` has taken a
-  ClientHello; `read` signs the CertificateVerify when the handshake reaches
-  it and returns a `Step { session, output, data, closed }`, or on failure a
+  returns a session with nothing to send until `(s).read(input, now)` has
+  taken a ClientHello; `read` signs the CertificateVerify when the handshake
+  reaches it, judges a client's chain and a ticket at `now` (Unix
+  milliseconds, the session reads no clock), and returns a `Step { session, output, data, closed }`, or on failure a
   `Failure { error, alert }` whose alert is sealed under the keys in force
   when it failed. `(s).write(data)`, `(s).close()`, `(s).connected()`,
   `(s).alpn()` (the protocol chosen) and `(s).server_name()` (the SNI the
@@ -2081,7 +2086,7 @@ serializer.
   coding to an HTTP/1.1 client, and close-delimited (the connection ending
   with the body) to an HTTP/1.0 one, so the length need not be known up
   front. A response to HEAD, or with a 1xx, 204 or 304 status, produces no
-  body either way. `http_serialize_response_head_into(b, resp,
+  body either way. `http_serialize_response_head_into(b, version, resp,
   keep_alive, fields)` pushes the head alone into the builder `b`, the
   caller's field lines (the framing line, `Content-Length` or
   `Transfer-Encoding`, among them) after the handler's.
@@ -2311,15 +2316,20 @@ serializer.
   `http_header_value(block, key)` reads a raw header block by the same
   rules, so a block the parser would refuse names no header.
   `http_serialize_response(resp): string` writes `Connection: close`;
-  `http_serialize_response_conn(resp, keep_alive)` writes `keep-alive` or
-  `close` as the serve loop decided; `http_serialize_response_to(method,
-  resp, keep_alive)` is what the loop sends, with no body on a response
-  to HEAD (its `Content-Length` kept) or a 1xx, 204 or 304 (neither),
-  whatever the handler put in the body (RFC 9112 §6.3).
-  `http_serialize_response_to_bytes(method, resp, keep_alive)` is the same
-  as bytes, and `http_serialize_response_into(b, method, resp, keep_alive,
-  fields)` pushes them into a builder the caller keeps, `fields` after the
-  handler's: the loop serializes every reply into one builder, sends from
+  `http_serialize_response_conn(resp, keep_alive)` writes `close` when the
+  serve loop decided the connection ends and no `Connection` field when it
+  persists, which HTTP/1.1 implies; `http_serialize_response_to(method,
+  version, resp, keep_alive)` is what the loop sends to a request made
+  with `method` in `version`: no body on a response to HEAD (its
+  `Content-Length` kept) or a 1xx, 204 or 304 (neither), whatever the
+  handler put in the body (RFC 9112 §6.3), and `Connection: keep-alive`
+  only to an HTTP/1.0 request whose connection persists (RFC 9112 §9.3),
+  since an HTTP/1.1 client assumes persistence and would only strip the
+  field. `http_serialize_response_to_bytes(method, version, resp,
+  keep_alive)` is the same as bytes, and `http_serialize_response_into(b,
+  method, version, resp, keep_alive, fields)` pushes them into a builder
+  the caller keeps, `fields` after the handler's: the loop serializes
+  every reply into one builder, sends from
   it with `tcp_send_buf(fd, b, from)` and empties it with `buf_clear(b)`,
   so a reply allocates nothing once the builder has grown. The loop adds
   a `Date`, formatted once per second, unless the handler set one.
@@ -4115,7 +4125,14 @@ old `concurrent { … }` / `await` keyword surface.
   `wait_any(set, timeout_ms)` — a call chain that parks on a set of (fd,
   interest) pairs under a bound and runs on when its scheduler resumes it
   with the index of the ready pair, -1 at the timeout (`docs/ASYNC.md` §8,
-  `docs/NET-P3-SUSPENSION-PLAN.md`). `wait_any` blocks when no task is
+  `docs/NET-P3-SUSPENSION-PLAN.md`). An interest may carry `KEEP` (watch
+  the descriptor level-triggered and leave it watched when the wait ends)
+  or `WATCHED` (a `KEEP` wait already did, so this wait needs no watch and
+  no unwatch), for the owner of a descriptor that waits on it many times,
+  a pooled connection's reads; the owner tracks which descriptors it has
+  said `KEEP` for and unwatches or closes them itself, a scheduler honours
+  the two only on a driver whose `keeps` says a watch outlives its wait,
+  and `interest_bits(interest)` is the interest without them. `wait_any` blocks when no task is
   current, which is how std/tcp's recv-with-deadline and std/dns's connect
   and exchange waits work in a plain program; under a scheduler the
   self-host compiler lowers every function that reaches it to a resumable

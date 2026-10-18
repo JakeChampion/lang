@@ -441,6 +441,9 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
 		}
+		if err := checkStdlibImport(path, imp.P, imp.Path); err != nil {
+			return err
+		}
 		if err := loadRecursive(childPaths[i], loaded, stack, srcs, overrides, lit, mans); err != nil {
 			return err
 		}
@@ -454,6 +457,9 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		pubUsePaths[i], err = resolveImport(dir, pu.Path, mans, overrides)
 		if err != nil {
 			return fmt.Errorf("%s: %w", path, err)
+		}
+		if err := checkStdlibImport(path, pu.P, pu.Path); err != nil {
+			return err
 		}
 		if err := loadRecursive(pubUsePaths[i], loaded, stack, srcs, overrides, lit, mans); err != nil {
 			return err
@@ -1026,6 +1032,18 @@ func moduleExists(path string, overrides map[string]string) bool {
 		return true
 	}
 	return false
+}
+
+// checkStdlibImport refuses a `std/` or `core/` import, written in module
+// `path` at `pos`, that names no stdlib module.
+func checkStdlibImport(path string, pos ast.Position, importPath string) error {
+	if !stdlib.IsStdlibPath(importPath) {
+		return nil
+	}
+	if _, ok := stdlib.Resolve(importPath); ok {
+		return nil
+	}
+	return diag.Errors{&importError{path: path, pos: pos, msg: fmt.Sprintf("unknown stdlib module %q", importPath)}}
 }
 
 // stdlibPrefix tags a path as referring to the embedded stdlib

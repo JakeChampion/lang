@@ -1078,14 +1078,15 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       }
       return (out + " }", f);
     },
-    ast.ExprUnknown(u) => {
-      return ("/*unknown:" + u.kind + "*/", f);
+    ast.ExprUnknown(_) => {
+      // `-fmt` refuses a source holding one; a void `return;`'s is printed
+      // by StmtReturn.
+      return ("", f);
     },
     ast.ExprZero(z) => {
       return ("/*zero:" + z.type_name + "*/", f);
     }
   }
-  return ("/*unhandled-expr*/", f);
 }
 
 // elem_line is the source line a list element starts on (first_line), and for a
@@ -3161,11 +3162,11 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       }
       return ("continue;", f);
     },
-    ast.StmtUnknown(u) => {
-      return ("/*unknown-stmt:" + u.kind + "*/", f);
+    ast.StmtUnknown(_) => {
+      // `-fmt` refuses a source holding one.
+      return ("", f);
     }
   }
-  return ("/*unhandled-stmt*/", f);
 }
 
 // =================== MODULE ====================

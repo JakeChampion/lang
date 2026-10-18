@@ -1,6 +1,7 @@
 package lexer
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
@@ -75,6 +76,34 @@ func TestUnknownChar(t *testing.T) {
 	_, _, err := Tokenize("~")
 	if err == nil {
 		t.Fatal("expected error on '~'")
+	}
+}
+
+// TestLexErrorCodes pins the code each lex error carries, which the self-host
+// lexer's TokError matches: P002 for a malformed numeric literal, P001 for
+// everything else.
+func TestLexErrorCodes(t *testing.T) {
+	for _, c := range []struct{ src, msg, code string }{
+		{"#", "unexpected character '#'", "P001"},
+		{`\`, `unexpected character '\\'`, "P001"},
+		{"\x01", `unexpected character '\x01'`, "P001"},
+		{"a \xff", "invalid UTF-8 byte 0xFF", "P001"},
+		{`"oops`, "unterminated string literal", "P001"},
+		{`"a\qb"`, `unknown escape \q`, "P001"},
+		{"42i33", `unknown numeric suffix "i33" on "42"`, "P002"},
+		{"1.5i32", `integer suffix "i32" on float literal "1.5"`, "P002"},
+		{"0x", "hex literal needs at least one digit after 0x", "P002"},
+		{"0o19", "invalid digit '9' in a 0o literal", "P002"},
+	} {
+		_, _, err := Tokenize(c.src)
+		var le *Error
+		if !errors.As(err, &le) {
+			t.Errorf("%q: got %v, want a *lexer.Error", c.src, err)
+			continue
+		}
+		if le.Msg != c.msg || le.Code() != c.code {
+			t.Errorf("%q: got %s %q, want %s %q", c.src, le.Code(), le.Msg, c.code, c.msg)
+		}
 	}
 }
 

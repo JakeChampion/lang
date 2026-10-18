@@ -10,7 +10,8 @@ import (
 	"testing"
 )
 
-// A test guarded by `if os.Getenv("RUN_X") == "" { t.Skip(...) }` runs nowhere
+// A test guarded by `if os.Getenv("RUN_X") == "" { t.Skip(...) }` (or by
+// `envflag.On("FERN_X")`, the boolean FERN_* reader) runs nowhere
 // unless something sets RUN_X. When nothing does, the test is DARK: it is in
 // the tree, it looks like coverage, `go test ./...` reports it as a pass, and
 // it has never executed.
@@ -30,7 +31,7 @@ import (
 // marker in its own file. The marker is not an exemption — it is the
 // enumerable list of "coverage we are knowingly not getting", which is the
 // thing that was impossible to produce before.
-var envGateRe = regexp.MustCompile(`os\.Getenv\("((?:RUN_|FERN_|DIFF_ORACLE_)[A-Z0-9_]+)"\)`)
+var envGateRe = regexp.MustCompile(`(?:os\.Getenv|envflag\.On)\("((?:RUN_|FERN_|DIFF_ORACLE_)[A-Z0-9_]+)"\)`)
 
 // ciDarkRe matches the acknowledgement marker. The reason text after the name
 // is required — a bare marker would just be a way to silence the check.

@@ -20783,8 +20783,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// this check, and only surfaces at monomorph re-check as a
 			// confusing "compiler bug" — the verdict monomorph already
 			// reaches, just earlier and as a proper E043.
+			// A destination argument naming a type parameter that nothing in
+			// scope binds is the callee's own (`b(G { v: 1 })` for
+			// `b[T](g: G[T])`), still to be inferred, so it seeds nothing.
 			if et, ok := c.expectedType.(ast.StructType); ok && et.Name == sd.Name && len(et.Args) == len(sd.TypeParams) {
+				seedScope := c.typeParamsInScope()
 				for i, tp := range sd.TypeParams {
+					if _, escaped := paramTypeNotIn(et.Args[i], seedScope); escaped {
+						continue
+					}
 					sub[tp] = et.Args[i]
 					seeded[tp] = true
 				}
@@ -21973,10 +21980,11 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 	if have == nil || want == nil {
 		return true
 	}
-	// A destination element that is still a type PARAMETER (`let local: T[] =
-	// [1, 2, 3]` inside a generic) names no concrete type for the literal to
-	// contradict — what it settles to is decided at monomorph, not here.
-	if containsParamType(want) {
+	// A destination element naming a callee's type parameter, one nothing in
+	// scope binds, is the call's to infer, so the literal settles to it. The
+	// enclosing declaration's own parameter is a type like any other:
+	// `let local: T[] = [1, 2, 3]` in a generic over T is a mismatch.
+	if _, escaped := paramTypeNotIn(want, c.typeParamsInScope()); escaped {
 		return true
 	}
 	// A NESTED literal settles element-wise: `[[1], [2]]` against `f64[][]`

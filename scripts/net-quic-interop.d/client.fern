@@ -158,7 +158,7 @@ function main(): i32 {
     return 2;
   };
   let cfg: conn.Config = conn.config(["fern-echo"]).with_streams(16 as i64, 16 as i64, 262144 as i64, 1048576 as i64).client_side(argv[2], roots);
-  let Ok(c0) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now()) else {
+  let Ok(c0) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), now_unix_ms()) else {
     return 2;
   };
   let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {

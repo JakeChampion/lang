@@ -29,6 +29,14 @@ const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
 
 const MS: i64 = 1000000;
 
+// The wall clock the client is started at, in Unix milliseconds: inside the
+// test chain's validity (2020-01-01 to 2100-01-01), and the bounds of it.
+const WALL_MS: i64 = 1700000000000;
+
+const NOT_BEFORE_MS: i64 = 1577836800000;
+
+const NOT_AFTER_MS: i64 = 4102444800000;
+
 function server_config(alpn: string[]): conn.Config {
   match (identity.private_key_from_pem(ED_PKCS8)) {
     Ok(k) => {
@@ -66,7 +74,11 @@ function entropy(seed: i32, n: i32): u8[] {
 struct Pair { client: conn.Conn, server: Option[conn.Conn], now: i64, log: string, drop_server: i32, server_cfg: conn.Config, client_sent: i32, server_sent: i32, lose_every: i32, carried: i32, reorder: boolean }
 
 function start(cc: conn.Config, sc: conn.Config): Result[Pair, string] {
-  let c: conn.Conn = conn.client(cc, entropy(1, conn.client_entropy(cc)), 0 as i64)?;
+  return start_at(cc, sc, WALL_MS);
+}
+
+function start_at(cc: conn.Config, sc: conn.Config, unix_ms: i64): Result[Pair, string] {
+  let c: conn.Conn = conn.client(cc, entropy(1, conn.client_entropy(cc)), 0 as i64, unix_ms)?;
   return Ok(Pair { client: c, server: None, now: 0 as i64, log: "", drop_server: 0, server_cfg: sc, client_sent: 0, server_sent: 0, lose_every: 0, carried: 0, reorder: false });
 }
 
@@ -321,6 +333,39 @@ function test_lost_flight(): test.TestOutcome {
 
 function test_untrusted(): test.TestOutcome {
   match (start(client_config("other.example", ["h3"]), server_config(["h3"]))) {
+    Ok(p0) => {
+      let p: Pair = settle(p0, 12, 10000 * MS);
+      return test.assert_eq(p.log, "client closed local 298 tls handshake: the peer's certificate was refused; server closed remote 298 tls handshake: the peer's certificate was refused; ");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
+// The server's chain is judged at the wall-clock time the client was given,
+// not the machine's: a second outside either bound it is refused, and a
+// second inside either bound it is accepted.
+function verdict_at(unix_ms: i64): string {
+  match (start_at(client_config("tls.example", ["h3"]), server_config(["h3"]), unix_ms)) {
+    Ok(p0) => {
+      let p: Pair = settle(p0, 12, 10000 * MS);
+      return p.client.connected().to_string();
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+}
+
+function test_validity_window(): test.TestOutcome {
+  let got: string = verdict_at(NOT_BEFORE_MS - 1000) + " " + verdict_at(NOT_BEFORE_MS + 1000) + " " + verdict_at(NOT_AFTER_MS - 1000) + " " + verdict_at(NOT_AFTER_MS + 1000);
+  return test.assert_eq(got, "false true true false");
+}
+
+// An expired chain closes the handshake the way an untrusted one does.
+function test_expired(): test.TestOutcome {
+  match (start_at(client_config("tls.example", ["h3"]), server_config(["h3"]), NOT_AFTER_MS + 1000)) {
     Ok(p0) => {
       let p: Pair = settle(p0, 12, 10000 * MS);
       return test.assert_eq(p.log, "client closed local 298 tls handshake: the peer's certificate was refused; server closed remote 298 tls handshake: the peer's certificate was refused; ");
@@ -857,6 +902,8 @@ function main(): i32 {
   r = r.it("a lost datagram, by time threshold", test_lost_datagram);
   r = r.it("a lost flight, by probe timeout", test_lost_flight);
   r = r.it("an untrusted certificate", test_untrusted);
+  r = r.it("the certificate validity window, at the given wall clock", test_validity_window);
+  r = r.it("an expired certificate", test_expired);
   r = r.it("no protocol in common", test_no_protocol);
   r = r.it("closing", test_close);
   r = r.it("following a Retry", test_retry);

@@ -2,10 +2,11 @@ package tv
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // Z3 returns z3's path, skipping the test when it is not on PATH.
@@ -16,7 +17,7 @@ func Z3(t testing.TB) string {
 	if err == nil {
 		return p
 	}
-	if os.Getenv("FERN_REQUIRE_Z3") == "1" {
+	if envflag.On("FERN_REQUIRE_Z3") {
 		t.Fatal("z3 not on PATH and FERN_REQUIRE_Z3=1: this lane installs it, so a skip here covers nothing")
 	}
 	t.Skip("z3 not on PATH; skipping translation validation")

@@ -170,8 +170,9 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		return conn
 	}
 	// Go's reader folds a `Connection: close` header into resp.Close and
-	// removes it, so the close case is read from the flag and the
-	// keep-alive case from the header it leaves in place.
+	// removes it, so the close case is read from the flag. A persisting
+	// HTTP/1.1 response carries no Connection field, read as "", and a kept
+	// HTTP/1.0 connection's `keep-alive` is left in place.
 	// dated checks the `Date` every response carries (RFC 9110 §6.6.1).
 	dated := func(conn net.Conn, resp *http.Response, label string) {
 		t.Helper()
@@ -250,7 +251,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		resp.Body.Close()
 		if err != nil || resp.StatusCode != wantStatus || len(body) != 0 || resp.Header.Get("Content-Length") != wantLength || resp.Close {
 			conn.Close()
-			t.Fatalf("%s: status=%d Content-Length=%q body=%q close=%v error=%v, want %d, %q, empty, keep-alive", label, resp.StatusCode, resp.Header.Get("Content-Length"), body, resp.Close, err, wantStatus, wantLength)
+			t.Fatalf("%s: status=%d Content-Length=%q body=%q close=%v error=%v, want %d, %q, empty, persisting", label, resp.StatusCode, resp.Header.Get("Content-Length"), body, resp.Close, err, wantStatus, wantLength)
 		}
 		dated(conn, resp, label)
 	}
@@ -298,7 +299,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		}
 		write(conn, pipeline.String())
 		for i := 0; i < 199; i++ {
-			read(conn, r, fmt.Sprintf("pipelined %d", i), "keep-alive")
+			read(conn, r, fmt.Sprintf("pipelined %d", i), "")
 		}
 		read(conn, r, "the 200th, at the cap", "close")
 		eof(conn, r, "after the cap")
@@ -321,7 +322,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		conn = dial()
 		r = bufio.NewReader(conn)
 		write(conn, "GET /u HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
-		read(conn, r, "Upgrade", "keep-alive")
+		read(conn, r, "Upgrade", "")
 		conn.Close()
 		// A pipeline of 33 requests whose peer half-closes behind them. The
 		// write and the half-close are separate calls, so the server may
@@ -337,9 +338,9 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		write(conn, pipeline.String())
 		halfClose(conn)
 		for i := 0; i < 32; i++ {
-			read(conn, r, fmt.Sprintf("half-closed pipeline %d", i), "keep-alive")
+			read(conn, r, fmt.Sprintf("half-closed pipeline %d", i), "")
 		}
-		read(conn, r, "half-closed pipeline, last", "close", "keep-alive")
+		read(conn, r, "half-closed pipeline, last", "close", "")
 		eof(conn, r, "after the half-closed pipeline")
 		// A complete request with the start of another behind it: answered,
 		// then closed by the 300 ms read deadline the partial request waits
@@ -347,7 +348,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		conn = dial()
 		r = bufio.NewReader(conn)
 		write(conn, "GET /j HTTP/1.1\r\nHost: localhost\r\n\r\nGET /k HT")
-		read(conn, r, "before a partial request", "keep-alive")
+		read(conn, r, "before a partial request", "")
 		started := time.Now()
 		eof(conn, r, "the partial request's deadline")
 		if waited := time.Since(started); waited > 4*time.Second {
@@ -379,7 +380,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		write(conn, pipeline.String())
 		halfClose(conn)
 		for i := 0; i < 32; i++ {
-			read(conn, r, fmt.Sprintf("slow pipeline %d", i), "keep-alive")
+			read(conn, r, fmt.Sprintf("slow pipeline %d", i), "")
 		}
 		read(conn, r, "slow pipeline, last", "close")
 		eof(conn, r, "after the slow pipeline")
@@ -446,8 +447,8 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		conn = dial()
 		r = bufio.NewReader(conn)
 		write(conn, "POST /chunked HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5;x=y\r\nhello\r\n6\r\n world\r\n0\r\nX-Sum: 11\r\n\r\nGET /after-chunked HTTP/1.1\r\nHost: localhost\r\n\r\n")
-		readBody(conn, r, "chunked", "hello world", "keep-alive")
-		read(conn, r, "behind the chunked request", "keep-alive")
+		readBody(conn, r, "chunked", "hello world", "")
+		read(conn, r, "behind the chunked request", "")
 		conn.Close()
 		// A HEAD with a GET pipelined behind it: the HEAD is answered with
 		// the Content-Length its body would have and none of the body, so
@@ -457,7 +458,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		r = bufio.NewReader(conn)
 		write(conn, "HEAD /h HTTP/1.1\r\nHost: localhost\r\n\r\nGET /after-head HTTP/1.1\r\nHost: localhost\r\n\r\n")
 		bodiless(conn, r, "HEAD", "HEAD", 200, "2")
-		read(conn, r, "behind the HEAD", "keep-alive")
+		read(conn, r, "behind the HEAD", "")
 		write(conn, "GET /nocontent HTTP/1.1\r\nHost: localhost\r\n\r\n")
 		bodiless(conn, r, "204", "GET", 204, "")
 		conn.Close()
@@ -470,7 +471,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		write(conn, "POST /expect HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n")
 		interim(conn, r, "100 Continue")
 		write(conn, "hello")
-		readBody(conn, r, "after 100 Continue", "hello", "keep-alive")
+		readBody(conn, r, "after 100 Continue", "hello", "")
 		conn.Close()
 		conn = dial()
 		r = bufio.NewReader(conn)
@@ -484,7 +485,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		write(conn, "GET /l HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n")
 		read(conn, r, "HTTP/1.0 keep-alive", "keep-alive")
 		write(conn, "GET /m HTTP/1.1\r\nHost: localhost\r\n\r\n")
-		read(conn, r, "after HTTP/1.0 keep-alive", "keep-alive")
+		read(conn, r, "after HTTP/1.0 keep-alive", "")
 		conn.Close()
 		// A body trickled a byte per 100 ms, 10 B/s: the read deadline
 		// closes the connection, since what the trickle has bought at the
@@ -523,7 +524,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 			time.Sleep(35 * time.Millisecond)
 			write(conn, flowing[i*300:(i+1)*300])
 		}
-		readBody(conn, r, "a body flowing above the minimum rate", flowing, "keep-alive")
+		readBody(conn, r, "a body flowing above the minimum rate", flowing, "")
 		conn.Close()
 		// The loop holds two connections open at most: with two answered
 		// and kept, a third connection's request is not read (it waits in
@@ -532,11 +533,11 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		first := dial()
 		firstReader := bufio.NewReader(first)
 		write(first, "GET /cap1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
-		read(first, firstReader, "the first of two held connections", "keep-alive")
+		read(first, firstReader, "the first of two held connections", "")
 		second := dial()
 		secondReader := bufio.NewReader(second)
 		write(second, "GET /cap2 HTTP/1.1\r\nHost: localhost\r\n\r\n")
-		read(second, secondReader, "the second of two held connections", "keep-alive")
+		read(second, secondReader, "the second of two held connections", "")
 		conn = dial()
 		r = bufio.NewReader(conn)
 		write(conn, "GET /cap3 HTTP/1.1\r\nHost: localhost\r\n\r\n")
@@ -553,7 +554,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 			t.Fatal(err)
 		}
 		first.Close()
-		read(conn, r, "the third connection once one closed", "keep-alive")
+		read(conn, r, "the third connection once one closed", "")
 		second.Close()
 		conn.Close()
 	}

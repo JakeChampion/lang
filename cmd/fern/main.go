@@ -410,7 +410,7 @@ func shouldUseASCII(force bool) bool {
 }
 
 func main() {
-	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
+	out := flag.String("o", "", "output path; if unset, a native target writes its assembly to stdout, and a wasm target refuses unless -emit asm asks for its WAT")
 	target := flag.String("target", "arm64-linux", "target as `<isa>-<environment>` — the ISA half selects the backend, the environment half says what the host provides; neither is implied. arm64-linux (default, Linux ELF), arm64-android (Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64-linux (Linux ELF), wasm32-wasi (CLI component), wasm32-wasi-http (HTTP handler component implementing wasi:http/incoming-handler), arm64-freestanding / x86-64-freestanding (no host at all — type-checks against an empty capability set; no backend emits for them yet, see docs/FREESTANDING-CORE.md). `fern -targets` lists them with their capabilities.")
 	runIt := flag.Bool("run", false, "build to a temporary binary and execute it: directly when the target's ISA is the host's, else under -qemu (qemu-x86_64 for an x86-64 target when -qemu is left at its default); a wasm32-wasi target runs under `wasmtime run`")
 	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")

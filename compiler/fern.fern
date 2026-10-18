@@ -6,8 +6,10 @@
 //     fern -o OUT <entry.fern> [stdlib]     a runnable x86-64 Linux ELF
 //     fern -target arm64-linux -o OUT <e>   a runnable arm64 Linux ELF
 //     fern -target arm64-darwin -o OUT …    a runnable arm64 Mach-O
-//     fern -target wasm32-wasi <entry>      a wasi:cli/run component
+//     fern -target wasm32-wasi -o OUT <e>   a wasi:cli/run component
 //     fern -emit asm <entry.fern>           emit the emitter's text instead
+//     fern <entry.fern>                     no -o: a native target's assembly
+//                                           on stdout; a wasm target refuses
 //     fern -emit core-module -target …      a raw wasm core module
 //     fern -emit command-module -target …   the same core, named as the preview-1 command it is
 //     fern -check <entry.fern>              type-check; exit 0 ok / 1 bad
@@ -101,6 +103,7 @@ import "./lspassist";
 import "./lspquery";
 import "./lsprefs";
 import "./lsptokens";
+import "std/cli";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
@@ -125,20 +128,15 @@ function blank_line_map(src: string): boolean[] {
 }
 
 // fmt_output_is_readable is the `-fmt -w` safety net, and an editor's: the
-// formatted text must come back through the formatter as itself, and keep what
-// the source says. The parser has no error list — a construct it refuses
-// becomes an Unknown node the printer spells `/*unknown*/` — so re-formatting
-// is the check that reaches both an unreadable node and a printer that is not a
-// fixed point on its own output. A fixed point can still have lost content (the
-// empty text is one), which content_print catches.
+// formatted text of a source that parsed must parse too, come back through the
+// formatter as itself, and keep what the source says. A fixed point can still
+// have lost content (the empty text is one), which content_print catches.
 function fmt_output_is_readable(path: string, src: string, formatted: string): boolean {
   if (is_literate(path)) {
     return literate_output_is_readable(src, formatted);
   }
-  // Marker text can be authored in a comment or string. Only the parse and
-  // print round trip distinguishes it from an unreadable node the printer
-  // emitted: those markers are not Fern syntax and do not round-trip.
-  return format_source(formatted) == formatted && content_print(src) == content_print(formatted);
+  let (again, errs) = format_source(formatted);
+  return errs.len() == 0 && again == formatted && content_print(src) == content_print(formatted);
 }
 
 // content_print lists what formatting must keep of a source: every comment,
@@ -177,18 +175,25 @@ function content_print(src: string): string {
   return util.str_join_chunks(out);
 }
 
-// format_source is what `-fmt` writes for a `.fern` file's text.
-function format_source(src: string): string {
+// format_source is what `-fmt` writes for a `.fern` file's text, or, when the
+// text does not parse, nothing and the parse errors `-check` reports for it.
+function format_source(src: string): (string, Finding[]) {
   let flex: lexer.LexResult = lexer.tokenize_full(src);
   let pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-  return printer.format_parsed(pf, flex.comments, blank_line_map(src));
+  let errs: Finding[] = parse_findings(pf.pmod);
+  if (errs.len() > 0) {
+    return ("", errs);
+  }
+  return (printer.format_parsed(pf, flex.comments, blank_line_map(src)), errs);
 }
 
-// format_text is what `-fmt` writes for the file at `path`: a literate
-// document's chunk bodies formatted, or the whole source.
-function format_text(path: string, src: string): string {
+// format_text is format_source for the file at `path`: a literate document
+// has its chunk bodies formatted, and a body that does not parse is kept as
+// written rather than refused.
+function format_text(path: string, src: string): (string, Finding[]) {
   if (is_literate(path)) {
-    return format_literate(src);
+    let none: Finding[] = [];
+    return (format_literate(src), none);
   }
   return format_source(src);
 }
@@ -245,11 +250,13 @@ function format_chunk_body(body: string): (boolean, string) {
     return (false, "");
   }
   if (parses_as_decls(body)) {
-    return (true, trim_trailing_newlines(format_source(body)));
+    let (formatted, _) = format_source(body);
+    return (true, trim_trailing_newlines(formatted));
   }
   let wrapped: string = fmt_wrap(body);
   if (parses_as_decls(wrapped)) {
-    return (true, unwrap_formatted(format_source(wrapped)));
+    let (formatted, _) = format_source(wrapped);
+    return (true, unwrap_formatted(formatted));
   }
   return (false, "");
 }
@@ -367,8 +374,10 @@ function read_failure(what: string, path: string, reason: string): string {
 // fmt_file is `-fmt` for ONE file: the formatted source goes to stdout, back
 // over the file (-w), to out_path (-o), or out as a unified diff (-d, exit 1
 // when it is non-empty). Formatting never loads imports, so a file is read and
-// formatted on its own. Returns the exit code for this file.
-function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
+// formatted on its own. A file that does not parse gets its parse errors and
+// exit 1 in every mode, and nothing is written. Returns the exit code for this
+// file.
+function fmt_file(st: DiagStyle, path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
   let esrc: string = "";
   match (read_file(path)) {
     Ok(s) => {
@@ -379,7 +388,11 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
       return 1;
     }
   }
-  let formatted: string = format_text(path, esrc);
+  let (formatted, errs) = format_text(path, esrc);
+  let no_files: string[] = [];
+  if (eprint_findings(st, errs, path, no_files, [util.no_line_map()])) {
+    return 1;
+  }
   if (fmt_diff) {
     let d: string = printer.unified_diff(esrc, formatted, path, path);
     if (d.len() == 0) {
@@ -389,18 +402,7 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
     return 1;
   }
   if (fmt_write) {
-    if (!fmt_output_is_readable(path, esrc, formatted)) {
-      eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse to the same content; this is a formatter bug, please report it");
-      return 1;
-    }
-    match (write_file(path, formatted)) {
-      Err(e) => {
-        eprint("fern: cannot write back " + path + ": " + util.io_error_reason(e));
-        return 1;
-      },
-      Ok(_) => {}
-    }
-    return 0;
+    return fmt_write_back(path, esrc, formatted);
   }
   if (out_path.len() > 0) {
     match (write_file(out_path, formatted)) {
@@ -412,6 +414,23 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
     }
   } else {
     write(formatted);
+  }
+  return 0;
+}
+
+// fmt_write_back is `-fmt -w` for a file that parsed: `formatted` replaces
+// `src` at `path` unless it fails the safety net.
+function fmt_write_back(path: string, src: string, formatted: string): i32 {
+  if (!fmt_output_is_readable(path, src, formatted)) {
+    eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse to the same content; this is a formatter bug, please report it");
+    return 1;
+  }
+  match (write_file(path, formatted)) {
+    Err(e) => {
+      eprint("fern: cannot write back " + path + ": " + util.io_error_reason(e));
+      return 1;
+    },
+    Ok(_) => {}
   }
   return 0;
 }
@@ -643,6 +662,8 @@ function finding_header(st: DiagStyle, f: Finding, entry: string, files: string[
     tag = paint(st, "1;33", "warning") + ": ";
   } else if (f.diag.code.len() > 0) {
     tag = paint(st, "1;31", "error[" + f.diag.code + "]") + ": ";
+  } else if (d.line > 0) {
+    tag = paint(st, "1;31", "error") + ": ";
   }
   if (d.line <= 0) {
     return tag + d.message;
@@ -1339,10 +1360,10 @@ function var_range(r: elf.VarRanges, f: string[], lo: i32, hi: i32): elf.VarRang
 // names a file beside the DEPENDENCY, and a dependency's own dependencies are
 // declared in the dependency's manifest — so an import cannot be resolved
 // without knowing where it was written (#6756). `importers` names the file
-// that wrote each path, for the diagnostic when it resolves to nothing.
-// `unrooted` is the first `std/…` or `core/…` import met with no stdlib root
-// to load it from.
-struct ImportQueue { paths: string[], dirs: string[], importers: string[], stdlibs: boolean[], unrooted: string }
+// that wrote each path and `lines` / `cols` where in it, for the diagnostic
+// when it resolves to nothing. `unrooted` is the first `std/…` or `core/…`
+// import met with no stdlib root to load it from.
+struct ImportQueue { paths: string[], dirs: string[], importers: string[], lines: i32[], cols: i32[], stdlibs: boolean[], unrooted: string }
 
 // queued reports whether this import path has already been queued FROM this
 // same directory.
@@ -1364,6 +1385,8 @@ function queue_imports(q: ImportQueue, mod: parser.Module, importer: string, fro
   let paths: string[] = q.paths;
   let dirs: string[] = q.dirs;
   let importers: string[] = q.importers;
+  let lines: i32[] = q.lines;
+  let cols: i32[] = q.cols;
   let stdlibs: boolean[] = q.stdlibs;
   let unrooted: string = q.unrooted;
   let i: i32 = 0;
@@ -1381,11 +1404,13 @@ function queue_imports(q: ImportQueue, mod: parser.Module, importer: string, fro
       paths = paths.append(ip);
       dirs = dirs.append(from_dir + "");
       importers = importers.append(importer + "");
+      lines = lines.append(mod.imports[i].line);
+      cols = cols.append(mod.imports[i].col);
       stdlibs = stdlibs.append(util.is_stdlib_path(ip) || parent_stdlib && !util.has_str(deps, util.dep_name(ip)));
     }
     i = i + 1;
   }
-  return ImportQueue { paths: paths, dirs: dirs, importers: importers, stdlibs: stdlibs, unrooted: unrooted };
+  return ImportQueue { paths: paths, dirs: dirs, importers: importers, lines: lines, cols: cols, stdlibs: stdlibs, unrooted: unrooted };
 }
 
 // is_flag is true for an argument that begins with '-'. A bare `-` is not a
@@ -1499,31 +1524,40 @@ function usage(): i32 {
 }
 
 // list_targets implements `-targets`: every target the descriptor table
-// answers for, with what its environment grants. The self-host descriptor
-// carries no prose description (platforms.fern says why), so a target is
-// printed as the two axes its name spells out.
+// answers for, with what its environment grants and the entry points it
+// accepts. The listing is the oracle's `fern -targets` byte for byte.
 function list_targets(): i32 {
   let all: string[] = platforms.targets();
   let i: i32 = 0;
   while (i < all.len()) {
-    let d: platforms.Descriptor = platforms.for_target(all[i]);
-    let line: string = d.name + ": " + d.isa + " / " + d.environment + "\n    capabilities: [";
-    let c: i32 = 0;
-    while (c < d.capabilities.len()) {
-      if (c > 0) {
-        line = line + " ";
-      }
-      line = line + d.capabilities[c];
-      c = c + 1;
+    let name: string = all[i];
+    let line: string = name + ": " + platforms.description(name) + "\n";
+    line = line + "    capabilities: " + bracket_words(platforms.for_target(name).capabilities) + "\n";
+    let kinds: string[] = platforms.handler_kinds(name);
+    if (kinds.len() > 0) {
+      line = line + "    handlers:     " + bracket_words(kinds) + "\n";
     }
-    line = line + "]\n";
-    if (!platforms.emits_code(d.name)) {
+    if (!platforms.emits_code(name)) {
       line = line + "    note:         check-only — no backend emits for this target yet\n";
     }
     write(line);
     i = i + 1;
   }
   return 0;
+}
+
+// bracket_words renders a list the way Go's %v prints a []string: `[a b c]`.
+function bracket_words(xs: string[]): string {
+  let out: string = "[";
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (i > 0) {
+      out = out + " ";
+    }
+    out = out + xs[i];
+    i = i + 1;
+  }
+  return out + "]";
 }
 
 // main wraps `run` in the opt-in quadratic-copy readout (FERN_CLIFF_REPORT,
@@ -2474,7 +2508,8 @@ function is_vendorable(name: string): boolean {
 // order, which is the order of their line bases (util.pos_str); `maps` and
 // `srcs` are each module's line map and text, the entry's first
 // (util.doc_diag). `err` is the line `-check` prints when the program could
-// not be loaded, and is empty when it was.
+// not be loaded, and is empty when it was; `err_line` / `err_col` place it at
+// the import that caused it, and are 0 when it has no position.
 struct Bundle {
   entry: parser.Module,
   entry_ident: string,
@@ -2486,6 +2521,8 @@ struct Bundle {
   maps: util.LineMap[],
   srcs: string[],
   err: string,
+  err_line: i32,
+  err_col: i32,
 }
 
 // Sources is an entry as the loader reads it: the entry module first — the
@@ -2628,12 +2665,10 @@ function read_bundle_module(s: Sources, mpath: string, from: string, ipath: stri
   if (r.ok || r.err.len() > 0) {
     return r;
   }
-  // Manifest fallback: a DECLARED dependency resolves through fern.toml across
-  // the disk-resolvable forms (path, workspace member, lock, vendor tree,
-  // content-addressed store). It is the only way to reach a package that
-  // carries its own manifest — the rules above can only name a sibling file
-  // or something under the stdlib root.
-  return modloader.resolve_module(modloader.Overlay { ...modloader.no_overlay(), files: s.open }, from, ipath, util.module_name(ipath));
+  // A DECLARED dependency resolves through fern.toml. It is the only way to
+  // reach a package that carries its own manifest — the rules above can only
+  // name a sibling file or something under the stdlib root.
+  return modloader.try_manifest(modloader.Overlay { ...modloader.no_overlay(), files: s.open }, from, ipath);
 }
 
 // Package provenance is collected while loading, before symbol mangling.
@@ -2680,14 +2715,14 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let srcs: string[] = [s.srcs[0]];
   let bad_manifest: string = manifest_error(gov.dir, gov.man);
   if (bad_manifest.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: "fern: " + bad_manifest };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: "fern: " + bad_manifest, err_line: 0, err_col: 0 };
   }
   let missing: string = emitforms.http_entry_refused(entry_mod, target, entry_display(entry_path));
   if (missing.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: missing };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: missing, err_line: 0, err_col: 0 };
   }
 
-  let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], importers: [], stdlibs: [], unrooted: "" }, entry_mod, entry_path, dir_slash, root, deps, false);
+  let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], importers: [], lines: [], cols: [], stdlibs: [], unrooted: "" }, entry_mod, entry_path, dir_slash, root, deps, false);
   let loaded: flatten.LoadedModule[] = [];
   let files: string[] = [];
   let done_paths: string[] = [];
@@ -2696,6 +2731,8 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
     let ipath: string = q.paths[j];
     let from: string = q.dirs[j];
     let importer: string = q.importers[j];
+    let at_line: i32 = q.lines[j];
+    let at_col: i32 = q.cols[j];
     let is_stdlib: boolean = q.stdlibs[j];
     j = j + 1;
     let from_dir: string = from;
@@ -2713,11 +2750,8 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       done_paths = done_paths.append(mpath);
       let rm: modloader.Resolved = read_bundle_module(s, mpath, from, ipath);
       if (!rm.ok) {
-        let bad: string = mpath;
-        if (rm.err.len() > 0) {
-          bad = rm.err_path;
-        }
-        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err) };
+        let (err, err_line, err_col) = unloaded_error(rm, ipath, importer, mpath, at_line, at_col);
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: err, err_line: err_line, err_col: err_col };
       }
       // A module's own imports resolve beside its file — a module in lib/
       // writing `import "./gnu"` means lib/gnu.fern — wherever it was found.
@@ -2745,7 +2779,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       let module_gov: Governed = governing_manifest(mdir);
       let bad_module_manifest: string = manifest_error(module_gov.dir, module_gov.man);
       if (bad_module_manifest.len() > 0) {
-        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + bad_module_manifest };
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + bad_module_manifest, err_line: 0, err_col: 0 };
       }
       module_packages = module_packages.append(module_package_at(mdir, module_gov, gov.dir, root_package, is_stdlib));
       grant_mans = pkggrants.with_manifest(grant_mans, module_gov.dir, module_gov.man);
@@ -2753,18 +2787,18 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
     }
   }
   if (q.unrooted.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file" };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file", err_line: 0, err_col: 0 };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
   let import_err: string = bundle_import_error(entry_r, loaded, root, files);
   if (import_err.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: import_err };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: import_err, err_line: 0, err_col: 0 };
   }
   let prefixes: string[] = flatten.assign_prefixes(loaded);
   let checked: pkggrants.Checked = pkggrants.checked(grant_mans, root_package, module_packages, prefixes);
   pkgs = checked.pkgs;
   if (checked.err.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + checked.err };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + checked.err, err_line: 0, err_col: 0 };
   }
   let merged: parser.Module = flatten.bundle_with_prefixes(entry_r, loaded, target, prefixes);
   // Fill omitted trailing args from default parameter values up front, so the
@@ -2774,7 +2808,22 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   // settle against until the bundle exists; parse_module resolved the
   // same-module ones already, and the pass is idempotent.
   merged = parser.resolve_variant_fields_module(merged);
-  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "" };
+  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "", err_line: 0, err_col: 0 };
+}
+
+// unloaded_error is load_bundle's refusal of import `ipath`, written in
+// `importer` at `line`:`col`, that read as `rm` from `mpath`: a stdlib module
+// that is not there is refused at the import, anything else on one line naming
+// the file looked for.
+function unloaded_error(rm: modloader.Resolved, ipath: string, importer: string, mpath: string, line: i32, col: i32): (string, i32, i32) {
+  if (rm.err.len() == 0 && util.is_stdlib_path(ipath)) {
+    return (modloader.unknown_stdlib_module(ipath), line, col);
+  }
+  let bad: string = mpath;
+  if (rm.err.len() > 0) {
+    bad = rm.err_path;
+  }
+  return ("fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err), 0, 0);
 }
 
 // Check the completed import graph before flattening or checking its code.
@@ -2805,7 +2854,8 @@ function load_checked(s: Sources, root: string, target: string, embed_dir: strin
   let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(s.srcs[0], target)));
   let b: Bundle = load_bundle(s, entry_mod, root, target);
   if (b.err.len() > 0) {
-    return Loaded { b: b, refused: [refusal(b.err)] };
+    let f: Finding = refusal(b.err);
+    return Loaded { b: b, refused: [Finding { ...f, diag: util.Diag { ...f.diag, line: b.err_line, col: b.err_col } }] };
   }
   let (folded, fold_errs) = fold_embedded_assets(b, embed_dir);
   if (fold_errs.len() > 0) {
@@ -2901,7 +2951,7 @@ function load_source(entry_path: string, src: string, open: modloader.Buffers, r
   let (s, err) = entry_sources(entry_path, src);
   if (err.len() > 0) {
     let none: parser.Module = parser.parse_module(lexer.tokenize(""));
-    return Loaded { b: Bundle { entry: none, entry_ident: "", root: root, loaded: [], merged: none, pkgs: [], files: [], maps: [], srcs: [], err: err }, refused: [refusal(err)] };
+    return Loaded { b: Bundle { entry: none, entry_ident: "", root: root, loaded: [], merged: none, pkgs: [], files: [], maps: [], srcs: [], err: err, err_line: 0, err_col: 0 }, refused: [refusal(err)] };
   }
   return load_checked(Sources { ...s, open: open }, root, target, embed_dir);
 }
@@ -4348,16 +4398,17 @@ function lsp_message(msg: string): string {
 
 // lsp_formatting is a formatting request's answer: one edit replacing the
 // document with what `-fmt` writes for it, or none when that is the text it
-// already has, or when the formatted text would fail `-fmt -w`'s safety net —
-// a format the editor applies is a write-back.
+// already has, when the document does not parse (its published diagnostics
+// say why), or when the formatted text would fail `-fmt -w`'s safety net — a
+// format the editor applies is a write-back.
 function lsp_formatting(s: Server, uri: string): string {
   let i: i32 = util.index_of_str(s.uris, uri);
   if (i < 0) {
     return "[]";
   }
   let src: string = s.srcs[i];
-  let formatted: string = format_text(uri, src);
-  if (formatted == src || !fmt_output_is_readable(uri, src, formatted)) {
+  let (formatted, errs) = format_text(uri, src);
+  if (errs.len() > 0 || formatted == src || !fmt_output_is_readable(uri, src, formatted)) {
     return "[]";
   }
   return "[" + lsp.whole_document_edit(src, formatted) + "]";
@@ -4733,12 +4784,29 @@ function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, 
   return (ToolFlags { ...tf, color_mode: mode }, next, 0);
 }
 
-// stdout_emit is the output form of a compile with `emit` asked for: one
-// with nowhere to write prints a native target's assembly rather than its
-// executable. A wasm module or component goes to stdout as it is.
-function stdout_emit(target: string, emit: string, has_out: boolean): string {
-  if (!has_out && emit.len() == 0 && platforms.for_target(target).isa != "wasm32") {
-    return "asm";
+// output_form is the output form of a compile with `emit` asked for, or why
+// it cannot be written: stdout takes only a target's text, so a compile with
+// nowhere to write prints a native target's assembly rather than its
+// executable, and refuses a wasm module or component, which have no text
+// form but `-emit asm`.
+function output_form(target: string, emit: string, has_out: boolean): (string, string) {
+  if (has_out || emit == "asm") {
+    return (core_form(emit), "");
+  }
+  if (platforms.for_target(target).isa != "wasm32") {
+    return ("asm", "");
+  }
+  if (emit.len() > 0) {
+    return ("", "-emit " + emit + " for -target " + target + " writes a binary; pass -o OUTPUT");
+  }
+  return ("", "-target " + target + " requires -o OUTPUT (the component is a binary)");
+}
+
+// core_form is the form `emit` names: a command module is this compiler's
+// core module.
+function core_form(emit: string): string {
+  if (emit == "command-module") {
+    return "core-module";
   }
   return emit;
 }
@@ -5165,15 +5233,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // kernel through the image's GNU property note, and return addresses
   // signed with pointer authentication (#5549).
   let harden: boolean = false;
-  // `-cover` (or FERN_COVER=1) instruments the program with line and branch
+  // `-cover` (or FERN_COVER) instruments the program with line and branch
   // counters it reports to stderr at exit (cover.fern).
-  let cover_on: boolean = false;
-  match (env("FERN_COVER")) {
-    Some(v) => {
-      cover_on = v == "1";
-    },
-    None => {}
-  }
+  let cover_on: boolean = cli.env_flag("FERN_COVER");
   let have_entry: boolean = false;
   // Whether -target was given, as distinct from the default above. It only
   // matters to `-check`: native type-checks against a capability set only
@@ -5472,20 +5534,13 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // bytes plus a `_start` that runs main and exits with its value, and an
   // exported memory — the shape `wasmtime run` and a browser shim run. This
   // compiler's core module already has both (and exports `main`, #10768), so
-  // the two forms are one artifact here and the spelling is accepted for the
-  // one target native gives it (#11408).
-  if (emit == "command-module") {
-    if (target != "wasm32-wasi") {
-      eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
-      return 2;
-    }
-    if (out_path.len() == 0) {
-      eprint("fern: -emit command-module writes a binary module; pass -o OUTPUT");
-      return 2;
-    }
-    emit = "core-module";
+  // the two forms are one artifact here (output_form) and the spelling is
+  // accepted for the one target native gives it (#11408).
+  if (emit == "command-module" && target != "wasm32-wasi") {
+    eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
+    return 2;
   }
-  if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
+  if (emit.len() > 0 && emit != "asm" && emit != "core-module" && emit != "command-module") {
     eprint("fern: unknown -emit: " + emit + " (want asm, core-module, command-module, or omit it for the target's default output form)");
     return 2;
   }
@@ -5551,13 +5606,18 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     let code: i32 = 0;
     let fi: i32 = 0;
     while (fi < pos.len()) {
-      let fc: i32 = fmt_file(pos[fi], fmt_write, fmt_diff, out_path);
+      let fc: i32 = fmt_file(st, pos[fi], fmt_write, fmt_diff, out_path);
       if (fc > code) {
         code = fc;
       }
       fi = fi + 1;
     }
     return code;
+  }
+  let (form, refused) = output_form(target, emit, out_path.len() > 0);
+  if (refused.len() > 0 && !(mode_check || mode_interp || mode_caps || mode_effects)) {
+    eprint("fern: " + refused);
+    return 2;
   }
 
   let esrc: string = "";
@@ -5646,7 +5706,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     }
     return status;
   }
-  emit = stdout_emit(target, emit, out_path.len() > 0 || tf.run_it);
+  emit = form;
 
   // The parse gates the `-check` path runs (#7447), for the same reason the
   // checker gate below exists: without them a build is MORE permissive than

@@ -1,9 +1,10 @@
 package e2eharness
 
 import (
-	"os"
 	"os/exec"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // Valgrind returns valgrind's path, skipping the test when it is not on PATH.
@@ -15,7 +16,7 @@ func Valgrind(t testing.TB) string {
 	if err == nil {
 		return p
 	}
-	if os.Getenv("FERN_REQUIRE_VALGRIND") == "1" {
+	if envflag.On("FERN_REQUIRE_VALGRIND") {
 		t.Fatal("valgrind not on PATH and FERN_REQUIRE_VALGRIND=1: this lane installs it, so a skip here covers nothing")
 	}
 	t.Skip("valgrind not on PATH; skipping the memcheck gate")
