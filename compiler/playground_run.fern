@@ -72,7 +72,8 @@ const STDLIB_EXT: string = ".fern";
 // built with.
 //
 // Non-`.fern` assets are skipped. They are not modules, and an embed root can
-// legitimately hold other things.
+// legitimately hold other text; a binary file there is a compile error, which
+// is `__fern_assets()` refusing a string that could not be valid.
 function embedded_stdlib(): modloader.Overlay {
   let paths: string[] = [];
   let srcs: string[] = [];

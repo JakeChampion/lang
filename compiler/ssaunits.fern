@@ -3416,9 +3416,22 @@ function same_bits(a: boolean[], b: boolean[]): boolean {
   return true;
 }
 
-// step_index lists, for each block id, the positions of the plan's steps at
-// that block, so a lookup scans one block's steps rather than the whole plan.
+// step_index is, for each block id, the plan's steps at that block as step_at
+// reads them: the length n of a table holding the first step at each point
+// from return_point up with no target, that table, and then every other step
+// (an edge's) for a scan. A block of n instructions takes n lookups, so a
+// scan of the whole block per lookup made a long block quadratic.
 pub function step_index(p: Plan): i32[][] {
+  let by_block: i32[][] = steps_by_block(p);
+  let out: i32[][] = [];
+  for steps in by_block {
+    out = out.append(block_step_row(p, steps));
+  }
+  return out;
+}
+
+// The positions of the plan's steps at each block id.
+function steps_by_block(p: Plan): i32[][] {
   let top: i32 = 0 - 1;
   for s in p.steps {
     if (s.block > top) {
@@ -3442,15 +3455,51 @@ pub function step_index(p: Plan): i32[][] {
   return out;
 }
 
+function tabled_step(s: Step): boolean {
+  return s.target == 0 - 1 && s.point >= return_point();
+}
+
+function block_step_row(p: Plan, steps: i32[]): i32[] {
+  let n: i32 = 0;
+  for i in steps {
+    if (tabled_step(p.steps[i]) && p.steps[i].point - return_point() >= n) {
+      n = p.steps[i].point - return_point() + 1;
+    }
+  }
+  let row: i32[] = [n];
+  while (row.len() <= n) {
+    row = row.append(0 - 1);
+  }
+  for i in steps {
+    let s: Step = p.steps[i];
+    if (!tabled_step(s)) {
+      row = row.append(i);
+    } else if (row[1 + s.point - return_point()] < 0) {
+      row = row.with(1 + s.point - return_point(), i);
+    }
+  }
+  return row;
+}
+
 // step_at is the first step at (block, point, target), or -1.
 pub function step_at(p: Plan, idx: i32[][], block: i32, point: i32, target: i32): i32 {
   if (block < 0 || block >= idx.len()) {
     return 0 - 1;
   }
-  for i in idx[block] {
-    if (p.steps[i].point == point && p.steps[i].target == target) {
-      return i;
+  let row: i32[] = idx[block];
+  let n: i32 = row[0];
+  if (target == 0 - 1 && point >= return_point()) {
+    if (point - return_point() < n) {
+      return row[1 + point - return_point()];
     }
+    return 0 - 1;
+  }
+  let at: i32 = 1 + n;
+  while (at < row.len()) {
+    if (p.steps[row[at]].point == point && p.steps[row[at]].target == target) {
+      return row[at];
+    }
+    at = at + 1;
   }
   return 0 - 1;
 }

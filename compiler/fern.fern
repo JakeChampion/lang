@@ -1523,7 +1523,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-o", "OUT", "write the output to OUT; without it a native target prints its assembly"),
       cli_flag("-emit", "FORM", "output form instead of the target's default: asm, core-module or command-module"),
       cli_flag("-backend", "NAME", "name the target's emitter: ssa on the native ISAs, flat on wasm"),
-      cli_flag("-embed", "DIR", "the asset directory __fern_asset and __fern_assets read"),
+      cli_flag("-embed", "DIR", "the asset directory __fern_asset, __fern_asset_bytes, __fern_assets and __fern_assets_bytes read"),
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export (default main)"),
@@ -5433,9 +5433,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // register-allocating emit, on the native ISAs (docs/SELFHOST-SSA-BACKEND.md);
   // `flat`, the stack machine, on wasm. Empty is the same emitter unnamed.
   let backend: string = "";
-  // -embed DIR: the asset bundle __fern_asset / __fern_assets resolve
-  // against. Empty means the flag was not passed, which makes any use of
-  // either builtin the error (embed.fern / docs/EMBED.md).
+  // -embed DIR: the asset bundle the asset builtins resolve against. Empty
+  // means the flag was not passed, which makes any use of one the error
+  // (embed.fern / docs/EMBED.md).
   let embed_dir: string = "";
   // `-O` is the release build: it elides every assert() check, matching
   // native. Constant folding is NOT what this flag selects on either
@@ -5832,8 +5832,8 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     eprint(read_failure("entry file", entry_path, eerr));
     return 1;
   }
-  // -embed is folded as the program loads: __fern_asset / __fern_assets
-  // become string literals before anything else reads the tree, so the
+  // -embed is folded as the program loads: the asset builtins become string
+  // and u8[] literals before anything else reads the tree, so the
   // checker, the interpreter and every backend see literals and never learn
   // that assets exist. Native folds them in the same place, ahead of
   // checker.Check.

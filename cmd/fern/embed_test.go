@@ -81,6 +81,40 @@ func TestEmbedUnknownAssetSuggests(t *testing.T) {
 	}
 }
 
+// A string is always valid UTF-8: the text form refuses a binary file with a
+// diagnostic naming it, and the bytes form takes the same file as u8[].
+func TestEmbedTextFormRefusesInvalidUTF8(t *testing.T) {
+	writeAssets(t, map[string]string{"img/favicon.png": "\x89PNG\r\n\x1a\n\x00\xff"})
+	dir := t.TempDir()
+	check := func(prog string) error {
+		src := filepath.Join(dir, "main.fern")
+		if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return runCheck(src, "")
+	}
+	err := check(`function main(): i32 {
+    let s: string = __fern_asset("img/favicon.png");
+    return 0;
+}
+`)
+	if err == nil {
+		t.Fatal("expected -check to refuse a binary file through __fern_asset")
+	}
+	for _, want := range []string{`"img/favicon.png"`, "is not valid UTF-8", "__fern_asset_bytes"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should contain %q", err, want)
+		}
+	}
+	if err := check(`function main(): i32 {
+    let b: u8[] = __fern_asset_bytes("img/favicon.png");
+    return b.len();
+}
+`); err != nil {
+		t.Fatalf("the bytes form must take a binary file: %v", err)
+	}
+}
+
 // An embed directory holding no files is legitimate: the loop body just
 // never runs. Without a stamped element type this fails to compile with
 // "E020: empty array literal needs a type annotation" pointing at the
