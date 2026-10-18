@@ -1,33 +1,11 @@
 // Package embed loads a directory of assets for compile-time embedding.
 //
-// The compiler resolves `__fern_asset("name")` against a Set at const-fold
-// time, replacing the call with a plain string literal (see internal/check/constfold).
-// Everything downstream — interning, the immortal rc sentinel, all four
-// backends — then treats an asset exactly like any other string literal, so
-// this package deliberately knows nothing about codegen.
-//
-// Asset bytes are arbitrary: the emitted literal carries an explicit byte
-// length at data-4, so the `.asciz` NUL terminator is never required and
-// binary assets (images, fonts, wasm) round-trip unchanged.
-//
-// # Cost of the string-literal route
-//
-// Assets reach the native backends as GAS assembly text via escapeForGAS,
-// which spends 4 characters on each byte below 32 (`\NNN` octal) and 1 on
-// most others. Measured on this repository's own site bundle (HTML, JS, CSS,
-// SVG, WOFF2, PNG — 494 KB): 1.31x overall. The spread is what matters:
-//
-//	pure ASCII text     1.00x
-//	HTML / CSS / JS     1.03x - 1.17x
-//	compressed binary   1.37x - 1.51x   (PNG, WOFF2)
-//	all-NUL bytes       4.00x           (worst case)
-//
-// 4x is reachable only by data that is overwhelmingly low bytes — which is
-// also data that compresses to near nothing, and assets served over HTTP are
-// meant to be stored pre-compressed anyway. Issue #6069 budgeted for ~4x as
-// the expected case and proposed splicing raw bytes into a section from the
-// in-process linker to avoid it; the measurement says realistic bundles cost
-// ~1.3x, so that path is not built.
+// The compiler resolves the asset builtins against a Set at const-fold time
+// (see internal/check/constfold): a text form becomes a string literal and a
+// bytes form a u8[] literal, so this package deliberately knows nothing about
+// codegen. File contents are held as loaded; whether a file must be UTF-8 is
+// the call site's question. A file NAME reaches the program as a string, so
+// Load refuses one that is not UTF-8. docs/EMBED.md is the contract.
 package embed
 
 import (
@@ -37,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // Set is a loaded asset bundle: lookup name -> file contents. Names are
@@ -114,6 +93,10 @@ func Load(dir string) (*Set, error) {
 		rel, err := filepath.Rel(walkRoot, path)
 		if err != nil {
 			return err
+		}
+		// A name reaches the program as a string, so it must be text.
+		if !utf8.ValidString(rel) {
+			return fmt.Errorf("file name %q is not valid UTF-8", filepath.ToSlash(rel))
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
