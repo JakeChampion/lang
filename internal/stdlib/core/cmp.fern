@@ -135,6 +135,12 @@ impl Eq for u64 {
   }
 }
 
+impl Eq for usize {
+  function eq(self: usize, other: usize): boolean {
+    return self == other;
+  }
+}
+
 impl Eq for u8 {
   function eq(self: u8, other: u8): boolean {
     return self == other;
@@ -223,6 +229,18 @@ impl Ord for u32 {
 
 impl Ord for u64 {
   function cmp(self: u64, other: u64): i32 {
+    if (self < other) {
+      return 0 - 1;
+    }
+    if (self > other) {
+      return 1;
+    }
+    return 0;
+  }
+}
+
+impl Ord for usize {
+  function cmp(self: usize, other: usize): i32 {
     if (self < other) {
       return 0 - 1;
     }
@@ -374,6 +392,16 @@ impl Hash for u64 {
   function hash(self: u64): i32 {
     let lo: i32 = self as i32;
     let hi: i32 = (self >> 32 as u64) as i32;
+    return __hash_mix_i32(lo ^ hi);
+  }
+}
+
+// Folded through u64 so a 32-bit usize (wasm) never shifts by its own width.
+impl Hash for usize {
+  function hash(self: usize): i32 {
+    let w: u64 = self as u64;
+    let lo: i32 = w as i32;
+    let hi: i32 = (w >> 32 as u64) as i32;
     return __hash_mix_i32(lo ^ hi);
   }
 }

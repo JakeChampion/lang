@@ -75,6 +75,8 @@ function main(): i32 {
 	}{
 		{"byte-view", viewLeaf, viewMain, helpers, 10},
 		{"byte-copy", copyLeaf, copyMain, []string{"__fn___fern_arr_slice_u8"}, 0},
+		// std/cli's colour gate asks isatty from a library unit.
+		{"isatty", "@noinline pub function tty(): i32 { if (isatty(1)) { return 1; } return 0; }\n", "import \"./leaf\";\nfunction main(): i32 { return leaf.tty() + 7; }\n", []string{"__fn___fern_isatty"}, 7},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			proj := t.TempDir()

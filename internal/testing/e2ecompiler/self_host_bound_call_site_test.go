@@ -1,0 +1,171 @@
+package e2ecompiler
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
+)
+
+// boundCallSiteCases are generic calls whose type arguments must meet their
+// trait bounds at the call (#12649): whichever module declares the trait,
+// whatever expression the argument is, and for an array method's bound on the
+// element type. wantE021 pins each E021 as "line:col message", so the
+// differential cannot pass with both checkers silent.
+var boundCallSiteCases = []struct {
+	name     string
+	src      string
+	wantE021 []string
+}{
+	{"imported-trait-struct-literal",
+		"import \"core/cmp\";\nstruct Pt { x: i32 }\nfunction need[T: cmp.Eq](a: T): i32 { return 1; }\nfunction main(): i32 { return need(Pt { x: 1 }); }\n",
+		[]string{"4:35 type argument T = Pt does not implement trait cmp.Eq required by need"}},
+	{"imported-trait-local-and-call-argument",
+		"import \"core/cmp\";\nstruct Pt { x: i32 }\nfunction mk(): Pt { return Pt { x: 1 }; }\nfunction need[T: cmp.Eq](a: T): i32 { return 1; }\nfunction main(): i32 { let p = Pt { x: 2 }; return need(p) + need(mk()); }\n",
+		[]string{
+			"5:56 type argument T = Pt does not implement trait cmp.Eq required by need",
+			"5:66 type argument T = Pt does not implement trait cmp.Eq required by need",
+		}},
+	{"aliased-import-trait",
+		"import \"core/cmp\" as c;\nstruct Pt { x: i32 }\nfunction need[T: c.Eq](a: T): i32 { return 1; }\nfunction main(): i32 { return need(Pt { x: 1 }); }\n",
+		[]string{"4:35 type argument T = Pt does not implement trait cmp.Eq required by need"}},
+	{"imported-trait-impl-ok",
+		"import \"core/cmp\";\nstruct Pt { x: i32 }\nimpl cmp.Eq for Pt { function eq(self: Pt, other: Pt): boolean { return self.x == other.x; } }\nfunction need[T: cmp.Eq](a: T): i32 { return 1; }\nfunction main(): i32 { return need(Pt { x: 1 }); }\n",
+		nil},
+	{"imported-trait-derive-ok",
+		"import \"core/cmp\";\n@derive(cmp.Eq)\nstruct Pt { x: i32 }\nfunction need[T: cmp.Eq](a: T): i32 { return 1; }\nfunction main(): i32 { return need(Pt { x: 1 }); }\n",
+		nil},
+	{"one-of-two-bounds-missing",
+		"import \"core/cmp\";\n@derive(cmp.Eq)\nstruct Pt { x: i32 }\nfunction need[T: cmp.Eq + cmp.Hash](a: T): i32 { return 1; }\nfunction main(): i32 { return need(Pt { x: 1 }); }\n",
+		[]string{"5:35 type argument T = Pt does not implement trait cmp.Hash required by need"}},
+	{"own-trait-primitive",
+		"trait Tr { function f(self: Self): i32; }\nfunction need[T: Tr](a: T): i32 { return 1; }\nfunction main(): i32 { return need(3); }\n",
+		[]string{"3:35 type argument T = i32 does not implement trait Tr required by need"}},
+	{"stdlib-free-generic-char",
+		"import \"core/cmp\";\nfunction main(): i32 { let cs: char[] = ['a']; if (cmp.contains(cs, 'a')) { return 1; } return 0; }\n",
+		[]string{"2:64 type argument T = char does not implement trait cmp.Eq required by cmp.contains"}},
+	{"stdlib-method-generic-struct",
+		"import \"std/array\";\nimport \"std/option\";\nstruct Pt { x: i32 }\nfunction main(): i32 { let ps: Pt[] = [Pt { x: 1 }]; return ps.index_of(Pt { x: 1 }).unwrap_or(0); }\n",
+		[]string{"4:72 type argument T = Pt does not implement trait cmp.Eq required by Array.index_of"}},
+	{"stdlib-method-generic-char",
+		"import \"std/array\";\nfunction main(): i32 { let cs: char[] = ['a', 'b']; if (cs.contains('a')) { return 1; } return 0; }\n",
+		[]string{"2:68 type argument T = char does not implement trait cmp.Eq required by Array.contains"}},
+	{"stdlib-method-generic-primitives-ok",
+		"import \"std/array\";\nfunction main(): i32 { let xs: i32[] = [1, 2]; let bs: u8[] = [3]; let ss: string[] = [\"a\"]; let us: usize[] = []; if (xs.contains(2) && bs.contains(3) && ss.contains(\"a\") && !us.contains(1)) { return 0; } return 1; }\n",
+		nil},
+	{"generic-into-generic-ok",
+		"import \"core/cmp\";\nfunction need[T: cmp.Eq](a: T): i32 { return 1; }\nfunction outer[U](x: U): i32 { return need(x); }\nfunction main(): i32 { return 0; }\n",
+		nil},
+	// A bound naming no trait is reported at the function, and each call
+	// still reports the bound it cannot meet; so is a bound supplying the
+	// wrong number of trait arguments.
+	{"unknown-trait-in-bound",
+		"function need[T: Bogus](a: T): i32 { return 1; }\nfunction need2[T: zz.Bogus](a: T): i32 { return 1; }\nfunction main(): i32 { return need(3) + need2(4); }\n",
+		[]string{
+			"1:1 unknown trait \"Bogus\" in bound on type parameter T",
+			"2:1 unknown trait \"zz.Bogus\" in bound on type parameter T",
+			"3:35 type argument T = i32 does not implement trait Bogus required by need",
+			"3:46 type argument T = i32 does not implement trait zz.Bogus required by need2",
+		}},
+	{"bound-trait-arity",
+		"trait Conv[U] { function conv(self: Self): U; }\nstruct P { x: i32 }\nimpl Conv[i32] for P { function conv(self: P): i32 { return self.x; } }\nfunction f[T: Conv](x: T): i32 { return 1; }\nfunction main(): i32 { return f(P { x: 3 }); }\n",
+		[]string{"4:1 trait Conv takes 1 type argument(s), 0 supplied in bound on type parameter T"}},
+	{"generic-fn-value",
+		"import \"core/cmp\";\nstruct Pt { x: i32 }\nfunction need[T: cmp.Eq](a: T): i32 { return 1; }\nfunction main(): i32 { let f: (Pt) => i32 = need; return f(Pt { x: 1 }); }\n",
+		[]string{"4:45 type argument T = Pt does not implement trait cmp.Eq required by need"}},
+}
+
+var checkDiagRE = regexp.MustCompile(`^[^:]*main\.fern:(\d+):(\d+): error\[(E\d{3})\]: (.*)$`)
+
+// checkDiags runs a `-check` and returns its diagnostics as sorted
+// "line:col CODE message" lines.
+func checkDiags(t *testing.T, cmd *exec.Cmd) []string {
+	t.Helper()
+	out, _ := cmd.CombinedOutput()
+	var ds []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if m := checkDiagRE.FindStringSubmatch(line); m != nil {
+			ds = append(ds, m[1]+":"+m[2]+" "+m[3]+" "+m[4])
+		}
+	}
+	sort.Strings(ds)
+	return ds
+}
+
+// TestSelfHostBoundCallSiteAgreesWithGo holds `fern -check` to the Go
+// checker's E021 at a generic call: same code, message and position.
+func TestSelfHostBoundCallSiteAgreesWithGo(t *testing.T) {
+	cli := e2eharness.SelfHostCLI(t)
+	root := e2eharness.SelfHostStdlibRoot(t)
+	oracle := e2eharness.BuildLangBinForInterp(t)
+	for _, tc := range boundCallSiteCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(p, []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			goDiags := checkDiags(t, exec.Command(oracle, "-check", p))
+			shDiags := checkDiags(t, exec.Command(cli, "-check", p, root))
+			if strings.Join(goDiags, "\n") != strings.Join(shDiags, "\n") {
+				t.Errorf("diagnostics differ\n--- Go ---\n%s\n--- self-host ---\n%s", strings.Join(goDiags, "\n"), strings.Join(shDiags, "\n"))
+			}
+			var want []string
+			for _, w := range tc.wantE021 {
+				pos, msg, _ := strings.Cut(w, " ")
+				want = append(want, pos+" E021 "+msg)
+			}
+			sort.Strings(want)
+			if strings.Join(want, "\n") != strings.Join(goDiags, "\n") {
+				t.Errorf("Go checker diagnostics\n%s\nwant\n%s", strings.Join(goDiags, "\n"), strings.Join(want, "\n"))
+			}
+		})
+	}
+}
+
+// usizeEqOrdHashSrc exercises core/cmp's usize impls through the generics
+// that need them; it exits 0 when every answer is right.
+const usizeEqOrdHashSrc = `import "core/cmp";
+import "std/array";
+import "std/option";
+function main(): i32 {
+  let us: usize[] = [3, 7, 7];
+  let seven: usize = 7;
+  if (!us.contains(seven)) { return 1; }
+  if (us.index_of(seven).unwrap_or(9) != 1) { return 2; }
+  if (cmp.max(us[0], seven) != seven) { return 3; }
+  if (seven.hash() != seven.hash()) { return 4; }
+  if (us[0].cmp(seven) != 0 - 1 || seven.cmp(us[0]) != 1 || seven.cmp(us[1]) != 0) { return 5; }
+  return 0;
+}
+`
+
+// TestSelfHostUsizeEqOrdHashRuns runs usize through the Eq / Ord / Hash
+// generics compiled and interpreted: core/cmp implements all three for it, so
+// the backend has a usize.eq to call.
+func TestSelfHostUsizeEqOrdHashRuns(t *testing.T) {
+	if _, code := e2eharness.RunInterp(t, usizeEqOrdHashSrc); code != 0 {
+		t.Errorf("interpreter: exit %d, want 0", code)
+	}
+	cli := e2eharness.SelfHostCLI(t)
+	dir := t.TempDir()
+	in := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(in, []byte(usizeEqOrdHashSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "prog")
+	build := exec.Command(cli, "-target", e2eharness.HostSelfHostTarget(), "-o", bin, in, e2eharness.SelfHostStdlibRoot(t))
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("compile: %v\n%s", err, out)
+	}
+	run := exec.Command(bin)
+	_ = run.Run()
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("compiled: exit %d, want 0", code)
+	}
+}

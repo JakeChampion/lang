@@ -1273,6 +1273,8 @@ func ReceiverTypeName(t Type) (string, bool) {
 		return "char", true
 	case NumberType:
 		switch {
+		case rt.IsPointerWidth():
+			return "usize", true
 		case rt.NormalWidth() == 64 && rt.IsSigned():
 			return "i64", true
 		case rt.NormalWidth() == 64 && !rt.IsSigned():
