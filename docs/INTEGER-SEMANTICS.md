@@ -6,7 +6,9 @@ Fern's integer types (`u8`, `i32`/`u32`, `i64`/`u64`, and the
 target-width `usize`) have **fully portable, never-trapping**
 semantics: every integer operation produces the same result on every
 backend (`interp`, `arm64`, `arm64-darwin`, `x86_64`, `wasm`) for the
-same inputs, and none of them can crash or trap the process.
+same inputs, and none of them can crash or trap the process. The one
+type whose width is the target's is `usize`: it is the same on every
+backend of the same pointer width, and its rules are below.
 
 This is the deliberate counterpart to `docs/FLOAT-SEMANTICS.md`: where
 the float edges are under-specified, the integer edges are pinned.
@@ -33,6 +35,35 @@ is arithmetic (sign-propagating) for signed types and logical
 (0 - 8) >> 33 == -4       // count 33 & 31 == 1; arithmetic shift
 4294967288u32 >> 2 == 1073741822   // logical
 ```
+
+## `usize` is the pointer width
+
+`usize` is an address-sized unsigned integer: **64 bits on x86-64 and
+arm64, 32 bits on wasm32**. Its arithmetic follows every rule in this
+document at that width — `+`, `-`, `*` and `<<` wrap modulo
+2^64 or 2^32, the orderings, `>>`, `/` and `%` read it unsigned, and a
+shift count masks to 63 or 31. It has no negative values: a borrow below
+zero wraps to the type's maximum.
+
+```
+(0 as usize) - (1 as usize)   == 18446744073709551615   // 64-bit
+                              == 4294967295             // wasm32
+(4294967295 as usize) + 1     == 4294967296             // 64-bit
+                              == 0                      // wasm32
+```
+
+A `usize` literal can be anything up to `u64::MAX`; on wasm32 one past
+`u32::MAX` does not fit and the wasm backend refuses it. A cast into
+`usize` extends the source to 64 bits by its own signedness and wraps
+that to the pointer width.
+
+The interpreters model the pointer width of the machine they run on, as
+`target_arch()` answers with it: `internal/oracle/interp` and `fern
+-interp` are 64-bit, and the playground's wasm32 build of the
+interpreter is 32-bit.
+
+The conformance cases `usize_wraps_at_64_bits` and
+`usize_wraps_at_32_bits` pin both widths.
 
 ## Division and remainder never trap
 
@@ -113,9 +144,8 @@ like `+` / `-`, `*|` binds like `*`, `<<|` binds like `<<`. They are
 **integer-only** — there is no string-concat form (unlike `+`), no
 float form (floats already saturate to ±Inf), and no composite
 operator overload. `usize` is
-rejected (E009) because its clamp bounds are target-width-dependent and
-so aren't expressible in the target-agnostic IR; cast to a fixed-width
-integer first.
+rejected (E009): where a usize clamps depends on the target, so the
+program names the width it means by casting to `u32` or `u64` first.
 
 Saturation never traps, so the no-exceptions contract above still
 holds.
@@ -225,8 +255,8 @@ They sit in the same arithmetic tiers as the wrapping and saturating
 operators: `+?` / `-?` bind like `+` / `-`, `*?` / `/?` / `%?` bind
 like `*` / `/` / `%`, `<<?` / `>>?` bind like `<<` / `>>`. They
 are **integer-only** — no string or float form, no composite overload —
-and `usize` is rejected (E009) because its overflow bound is
-target-width-dependent. The result composes with the postfix `?`
+and `usize` is rejected (E009), as for the saturating operators: whether
+a usize overflows depends on the target. The result composes with the postfix `?`
 operator, so `(a +? b)?` propagates `None` out of an `Option`-returning
 function. The trailing `?` never collides with the postfix try `?`: it
 only follows an arithmetic operator, never a completed operand.

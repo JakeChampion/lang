@@ -12851,7 +12851,7 @@ func scalarModuleFor(t ast.Type) string {
 	switch x := t.(type) {
 	case ast.NumberType:
 		if !x.IsSigned() {
-			if x.NormalWidth() == 64 {
+			if x.NormalWidth() == 64 || x.IsPointerWidth() {
 				mod = "std/u64"
 			} else if x.NormalWidth() == 8 {
 				// u8's method surface lives in std/i32, not std/u32:

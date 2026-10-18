@@ -526,6 +526,26 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 	if got := strings.TrimSuffix(srvOut.String(), "0\n"); got != nativeSession {
 		t.Errorf("wasm-hosted -lsp answered\n%s\nnatively-hosted\n%s", got, nativeSession)
 	}
+
+	// `-interp` hosted in wasm models wasm32's 32-bit usize, the width the
+	// same program compiled for the page's target has.
+	usizeSrc, usizeWant := usizeCase(t, "usize_wraps_at_32_bits")
+	usizeProg, err := os.ReadFile(usizeSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := exec.Command("wasmtime", "run", "--invoke", "main", mod, "-interp")
+	ip.Dir = t.TempDir()
+	ip.Stdin = strings.NewReader(string(usizeProg))
+	var ipOut, ipErr strings.Builder
+	ip.Stdout = &ipOut
+	ip.Stderr = &ipErr
+	if err := ip.Run(); err != nil {
+		t.Fatalf("wasm-hosted -interp failed: %v\n%s", err, ipErr.String())
+	}
+	if got := strings.TrimSuffix(ipOut.String(), "0\n"); got != usizeWant {
+		t.Errorf("wasm-hosted -interp printed\n%s\nwant\n%s\nstderr:\n%s", got, usizeWant, ipErr.String())
+	}
 }
 
 // assertWatRuns parses the emitted WAT and runs it, asserting the exit code.

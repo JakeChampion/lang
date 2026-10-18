@@ -843,8 +843,9 @@ function literal_type(suffix: string): typeinfo.Type {
 // byte, and `65` in an i32 position an i32. A suffix names the type outright.
 // Either way the value has to fit what it lands in, which `ssasem` holds the
 // constant to.
-// A literal with no i32 immediate to hold it — either 64-bit width, or a u32,
-// whose range reaches past the immediate's sign bit — carries its SOURCE TEXT
+// A literal with no i32 immediate to hold it — either 64-bit width, a u32,
+// whose range reaches past the immediate's sign bit, or a usize past it —
+// carries its SOURCE TEXT
 // instead, which is also how the AST lowering hands the same literal to the
 // backends, rather than through a parse and re-format.
 // A float literal is an f64 unless something names the narrower width: the
@@ -889,15 +890,9 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
   if (!semtypes.concrete(ty, false)) {
     return refused(s, "unsupported literal width");
   }
-  // An address rides the i32 immediate, which carries every value below
-  // 2^31 exactly. Past that the register backends sign-extend the constant
-  // and wasm wraps it, and the pointer width has no immediate of its own to
-  // fall back on, so the literal is refused for its RANGE rather than for
-  // being written at the width at all.
-  if (ssasem.is_usize(ty) && parser.literal_is_i64(n.text)) {
-    return refused(s, "address literal past the immediate");
-  }
-  if (ssasem.text_constant(ty)) {
+  // The i32 immediate carries an address below 2^31 exactly; past that the
+  // literal carries its text, which each backend splices at its own width.
+  if (ssasem.text_constant(ty) || ssasem.is_usize(ty) && parser.literal_is_i64(n.text)) {
     return define(s, 1, [], 0, decimal_text(n.text), ty);
   }
   return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
