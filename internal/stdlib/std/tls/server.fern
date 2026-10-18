@@ -173,21 +173,22 @@ pub function start(config: Config): Result[Session, TlsError] {
   return Err(ClosedEarly);
 }
 
-// read takes bytes from the client, signing the CertificateVerify when the
-// handshake reaches it. Whole records go to the handshake one at a time:
-// the keys change only between records, so a failure's alert is sealed
-// under the keys the records before it left.
-pub function (s: Session) read(input: [u8]): Result[Step, Failure] {
+// read takes bytes from the client that arrived at `now`, in Unix
+// milliseconds, signing the CertificateVerify when the handshake reaches
+// it; a client's chain and a ticket are judged at that time. Whole records
+// go to the handshake one at a time: the keys change only between records,
+// so a failure's alert is sealed under the keys the records before it left.
+pub function (s: Session) read(input: [u8], now: i64): Result[Step, Failure] {
   // Only a partial record held from the last read is copied; otherwise the
   // records are read where the caller's bytes are.
   if (s.held.len() == 0) {
-    return __read(s, input);
+    return __read(s, input, now);
   }
-  return __read(Session { ...s, held: [] }, __cat(__copy(s.held), input));
+  return __read(Session { ...s, held: [] }, __cat(__copy(s.held), input), now);
 }
 
 // __read takes each whole record in buf and holds what is left.
-function __read(s: Session, buf: [u8]): Result[Step, Failure] {
+function __read(s: Session, buf: [u8], now: i64): Result[Step, Failure] {
   let session: Session = s;
   let output: u8[] = [];
   let data: u8[] = [];
@@ -199,7 +200,7 @@ function __read(s: Session, buf: [u8]): Result[Step, Failure] {
     if (end > buf.len()) {
       break;
     }
-    let next: Step = __record(session, buf[at:end])?;
+    let next: Step = __record(session, buf[at:end], now)?;
     session = next.session;
     output = __then(output, next.output);
     data = __then(data, next.data);
@@ -222,10 +223,10 @@ function __then(own a: u8[], b: u8[]): u8[] {
   return __cat(a, b);
 }
 
-function __record(s: Session, record: [u8]): Result[Step, Failure] {
+function __record(s: Session, record: [u8], now: i64): Result[Step, Failure] {
   match (s.server.read(record)) {
     Ok(step) => {
-      return __signed(s, step);
+      return __signed(s, step, now);
     },
     Err(e) => {
       return Err(Failure { error: HandshakeFailed(e), alert: s.server.alert(e) });
@@ -333,7 +334,7 @@ function __failed(srv: handshake.Server, r: Result[handshake.ServerStep, handsha
 // __signed answers each event in a step that asks something of the server
 // (a signature, a ticket lookup, a ticket to issue once connected) and
 // gathers what the handshake goes on to produce.
-function __signed(s: Session, first: handshake.ServerStep): Result[Step, Failure] {
+function __signed(s: Session, first: handshake.ServerStep, now: i64): Result[Step, Failure] {
   let srv: handshake.Server = first.server;
   let output: u8[] = first.output;
   let data: u8[] = first.data;
@@ -341,7 +342,7 @@ function __signed(s: Session, first: handshake.ServerStep): Result[Step, Failure
   let closed: boolean = false;
   let i: i32 = 0;
   while (i < events.len()) {
-    let next: handshake.ServerStep = __answered(s, srv, events[i])?;
+    let next: handshake.ServerStep = __answered(s, srv, events[i], now)?;
     closed = closed || __peer_closed(events[i]);
     srv = next.server;
     output = __cat(output, next.output);
@@ -369,7 +370,7 @@ function __peer_closed(e: handshake.Event): boolean {
 }
 
 // __answered is what the server does about one event: nothing, for most.
-function __answered(s: Session, srv: handshake.Server, e: handshake.Event): Result[handshake.ServerStep, Failure] {
+function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: i64): Result[handshake.ServerStep, Failure] {
   match (e) {
     handshake.SignNeeded(sg) => {
       match (s.config.identity.key.sign(sg.scheme, sg.signed)) {
@@ -382,10 +383,10 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event): Resu
       }
     },
     handshake.ResumeOffered(offer) => {
-      return __failed(srv, srv.resume(__lookup(s.config, offer, now_unix_ms())));
+      return __failed(srv, srv.resume(__lookup(s.config, offer, now)));
     },
     handshake.VerifyClient(v) => {
-      match (__client_trusted(s.config, v)) {
+      match (__client_trusted(s.config, v, now)) {
         Ok(_) => {
           return __failed(srv, srv.verdict(true));
         },
@@ -396,7 +397,7 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event): Resu
     },
     handshake.Connected => {
       if (s.config.tickets) {
-        return __failed(srv, srv.ticket(__issue(s.config, srv, now_unix_ms())));
+        return __failed(srv, srv.ticket(__issue(s.config, srv, now)));
       }
     },
     _ => {}
@@ -404,9 +405,9 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event): Resu
   return Ok(handshake.ServerStep { server: srv, output: [], data: [], events: [] });
 }
 
-// __client_trusted judges a client's chain against the config's roots now,
-// and its CertificateVerify under the leaf's key.
-function __client_trusted(config: Config, v: handshake.Verification): Result[void, TlsError] {
+// __client_trusted judges a client's chain against the config's roots at
+// `now`, in Unix milliseconds, and its CertificateVerify under the leaf's key.
+function __client_trusted(config: Config, v: handshake.Verification, now: i64): Result[void, TlsError] {
   let roots: verify.Roots = verify.roots([]);
   match (config.client_roots) {
     Some(r) => {
@@ -419,7 +420,7 @@ function __client_trusted(config: Config, v: handshake.Verification): Result[voi
   if (v.chain.len() == 0) {
     return Err(ClientCertificateMissing);
   }
-  match (verify.verify_client(v.chain, roots, now_unix_ms() / 1000)) {
+  match (verify.verify_client(v.chain, roots, now / 1000)) {
     Ok(leaf) => {
       if (!verify.scheme_fits(leaf, v.scheme)) {
         return Err(ClientSchemeMismatch);
@@ -869,7 +870,7 @@ function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, TlsErr
 // alert a failure calls for. Once offloaded, the keys a KeyUpdate set go to
 // the kernel after what the session answered under the old ones.
 function __exchange_fd(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
-  match (s.read(input)) {
+  match (s.read(input, now_unix_ms())) {
     Ok(step) => {
       __send_out(fd, s, step.output)?;
       let r: i32 = ktls.install(fd, step.rekeyed);

@@ -1,6 +1,7 @@
 package e2ecompiler
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -114,6 +115,23 @@ func TestSelfHostSanitizeFlag(t *testing.T) {
 		}
 		if read(t, on) == read(t, off) {
 			t.Error("-sanitize changed nothing in the emitted code")
+		}
+	})
+
+	// FERN_SANITIZE reads as every boolean FERN_* variable does: an off value
+	// builds without the detectors, any other value with them (#12678).
+	t.Run("env_off_values", func(t *testing.T) {
+		off, _ := build(t, "plain.s", "-target", "x86-64-linux", "-emit", "asm")
+		on, _ := build(t, "flag.s", "-sanitize", "-target", "x86-64-linux", "-emit", "asm")
+		for i, v := range []string{"0", "false", "OFF", "", "1", "yes"} {
+			want, wantOn := off, false
+			if v == "1" || v == "yes" {
+				want, wantOn = on, true
+			}
+			got, _ := buildEnv(t, fmt.Sprintf("env-%d.s", i), []string{"FERN_SANITIZE=" + v}, "-target", "x86-64-linux", "-emit", "asm")
+			if read(t, got) != read(t, want) {
+				t.Errorf("FERN_SANITIZE=%q: emitted code differs from a build with the sanitizer on=%v", v, wantOn)
+			}
 		}
 	})
 }

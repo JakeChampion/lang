@@ -34,6 +34,7 @@ import "./ssafixed";
 import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
+import "std/cli";
 
 // __fern_str_to_upper / _to_lower were hand-written here through #2649; they are
 // now Fern runtime functions (asmcore.rt_src_str_to_upper/_lower) lowered through
@@ -283,17 +284,10 @@ function any_ccall_need(s: asmcore.EmitState): boolean {
 // With both compilers tracing, `a` lines the self-host emits that native does
 // not name the construction sites where reuse was missed.
 function rc_trace_on(): boolean {
-  match (env("FERN_RC_TRACE")) {
-    Some(_) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
+  return cli.env_flag("FERN_RC_TRACE");
 }
 
-// rc_trace_deep_on reports whether FERN_RC_TRACE_DEEP is set: append a SIXTH
+// rc_trace_deep_on reports whether FERN_RC_TRACE_DEEP is on: append a SIXTH
 // field, the return address two frames above `site` rather than one.
 //
 // Off by default because five fields is native's format exactly, so one parser
@@ -302,14 +296,7 @@ function rc_trace_on(): boolean {
 // __fern_arr_push -> __fern_arr_box: `caller` is the wrapper for every owned
 // append in the program, and only the frame above it names user code.
 function rc_trace_deep_on(): boolean {
-  match (env("FERN_RC_TRACE_DEEP")) {
-    Some(_) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
+  return cli.env_flag("FERN_RC_TRACE_DEEP");
 }
 
 // quarantine_rc: the rc-word store a free path writes as it releases the

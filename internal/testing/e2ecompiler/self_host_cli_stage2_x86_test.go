@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // TestSelfHostCLIStage2X86_64 gates the CLI reproducing itself on x86-64
@@ -93,7 +95,7 @@ function main(): i32 {
 	t.Run("stage3", func(t *testing.T) {
 		// CI-DARK: FERN_STAGE3 — doubles a job already ~4 minutes long; stage 2
 		// compiling lexer.fern and a program is what runs on every push.
-		if os.Getenv("FERN_STAGE3") != "1" {
+		if !envflag.On("FERN_STAGE3") {
 			t.Skip("set FERN_STAGE3=1 to have stage 2 rebuild the whole compiler")
 		}
 		compile(t, stage2, filepath.Join(dir, "fern.fern"), filepath.Join(dir, "fern_stage3"))

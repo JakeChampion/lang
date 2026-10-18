@@ -6,12 +6,13 @@
 //
 // Given an entry file path, load_graph follows the entry's `import` graph
 // (transitively), parses each module, and returns them as
-// flatten.LoadedModule[] for flatten.bundle. Resolution is native modload's:
+// flatten.LoadedModule[] for flatten.bundle. Resolution:
 //
-//   * `std/` and `core/` imports resolve under the stdlib root
-//     (`import "std/io"` → `<root>/std/io.fern`), falling back to the flat
-//     basename `<root>/io.fern`; every other import resolves beside the file
-//     that wrote it, keeping its sub-path;
+//   * `std/` and `core/` imports resolve under the stdlib root and nowhere
+//     else (`import "std/io"` → `<root>/std/io.fern`); every other import
+//     resolves beside the file that wrote it, keeping its sub-path, and a
+//     bare one that is not there resolves through the governing fern.toml's
+//     declared dependencies (try_manifest);
 //   * a module's IDENTITY is the file it resolves to, so two modules sharing
 //     a basename both load and flatten gives each its own prefix;
 //   * a `.fern` that is not there is read from its literate `.fern.md`
@@ -199,11 +200,9 @@ pub function no_overlay(): Overlay {
   return Overlay { paths: [], srcs: [], sealed: false, files: no_buffers() };
 }
 
-// resolve_module finds the source for import `path` and the directory it
-// lives in. The overlay comes first; then the full (possibly `std/`-prefixed)
-// path, then the flat basename in `dir` — so `import "std/io"` resolves to
-// `<dir>/std/io.fern` when vendored there, or `<dir>/io.fern` when laid out
-// flat.
+// resolve_module finds the source for import `path`, written against `dir`
+// (the stdlib root for a `std/` or `core/` import). The overlay comes first,
+// then `<dir><path>.fern`, then the manifest's declared dependencies.
 //
 // The overlay is keyed by the path as WRITTEN, which is why it is consulted
 // here rather than inside res_read: by then the path has already been split
@@ -214,7 +213,7 @@ pub function no_overlay(): Overlay {
 // An overlay module has no directory of its own. Stdlib modules import each
 // other package-root-relative (`import "std/string"`, never `./string`), so
 // those re-enter the overlay wherever they are written.
-pub function resolve_module(ov: Overlay, dir: string, path: string, name: string): Resolved {
+pub function resolve_module(ov: Overlay, dir: string, path: string): Resolved {
   let oi: i32 = util.index_of_str(ov.paths, rel_path(path));
   if (oi >= 0) {
     return Resolved { ...res_none(), src: ov.srcs[oi], ok: true, shown: "stdlib://" + rel_path(path) + ".fern" };
@@ -226,15 +225,6 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
   if (direct.ok || direct.err.len() > 0) {
     return direct;
   }
-  let flat: Resolved = res_read(ov, dir, name);
-  if (flat.ok || flat.err.len() > 0) {
-    return flat;
-  }
-  // Manifest fallback (mirrors native's resolveImport): path / workspace /
-  // versioned(lock) deps, vendored mode, and — since #4949 — url+hash
-  // deps resolved from the per-machine content-addressed store via the
-  // `env` runtime builtin. Dormant when no fern.toml is present, so a
-  // manifest-less build (every current compiler source) is unchanged.
   let man: Resolved = try_manifest(ov, dir, path);
   if (man.ok || man.err.len() > 0) {
     return man;
@@ -243,13 +233,18 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
   return direct;
 }
 
-// try_manifest resolves an import of a DECLARED dependency from the manifest
-// governing `from` (manifest_dir): the import's first segment names the
-// dependency, and the rest is a module inside it — `helper` is the package's
-// lib module, `helper/extra` its `extra.fern`. Not-ok when there is no
-// manifest, the segment is not a declared dep, or its form is not
+// try_manifest resolves a bare import of a DECLARED dependency from the
+// manifest governing `from` (manifest_dir): the import's first segment names
+// the dependency, and the rest is a module inside it — `helper` is the
+// package's lib module, `helper/extra` its `extra.fern`. The forms are path,
+// workspace member, lock, vendor tree and the content-addressed store. Not-ok
+// for a stdlib or relative import, which never names a dependency, and when
+// there is no manifest, the segment is not a declared dep, or its form is not
 // disk-resolvable.
-function try_manifest(ov: Overlay, from: string, path: string): Resolved {
+pub function try_manifest(ov: Overlay, from: string, path: string): Resolved {
+  if (util.is_stdlib_path(path) || util.is_local(path)) {
+    return res_none();
+  }
   let dir: string = manifest_dir(from);
   match (read_file(dir + "fern.toml")) {
     Ok(src) => {
@@ -565,6 +560,12 @@ pub function unresolved_import(path: string, importer: string, tried: string, re
   return "cannot resolve import \"" + path + "\" in " + importer + ": " + tried + ": " + reason;
 }
 
+// unknown_stdlib_module is the message for a `std/` or `core/` import that
+// names no module of the stdlib that was given.
+pub function unknown_stdlib_module(path: string): string {
+  return "unknown stdlib module \"" + path + "\"";
+}
+
 // report_unresolved prints each of `missing` (unresolved_import lines) under
 // `driver`'s name and reports whether there were any.
 pub function report_unresolved(missing: string[], driver: string): boolean {
@@ -596,10 +597,11 @@ function stdlib_not_given(ov: Overlay, dir: string, path: string): boolean {
 // module's are, so flatten prefixes a reference the same wherever it is
 // written. `files` is each loaded module's display path in load order — the
 // table util.pos_str reads a diagnostic's file from, since each module is
-// tokenized from its own util.line_base. `missing` holds an unresolved_import
-// line for each import that resolved to no file, except those
-// stdlib_not_given expects to be absent; the driver reports them with
-// report_unresolved and fails.
+// tokenized from its own util.line_base. `missing` holds a line for each
+// import that resolved to no file — unknown_stdlib_module at the import for a
+// stdlib one, unresolved_import for any other — except those stdlib_not_given
+// expects to be absent; the driver reports them with report_unresolved and
+// fails.
 pub struct Graph { entry: parser.Module, loaded: flatten.LoadedModule[], files: string[], missing: string[] }
 
 // import_base is the directory an import written in a file under `dir`
@@ -680,6 +682,20 @@ function vendored_stdlib_dir(ov: Overlay, dir: string): string {
   return dir;
 }
 
+// missing_line is load_graph's report of import `imp`, written in `importer`
+// and resolved against `base`, that read as `r` rather than as a module, or ""
+// when stdlib_not_given expects it to be absent. A stdlib module that is not
+// there is reported at the import, as util.pos_str places it among `files`.
+function missing_line(ov: Overlay, imp: parser.Import, base: string, importer: string, r: Resolved, entry_path: string, files: string[]): string {
+  if (r.err.len() > 0 || !util.is_stdlib_path(imp.path)) {
+    return unresolved_import(imp.path, importer, r.err_path, r.err);
+  }
+  if (stdlib_not_given(ov, base, imp.path)) {
+    return "";
+  }
+  return util.pos_str(entry_path, files, imp.line, imp.col) + ": error: " + unknown_stdlib_module(imp.path);
+}
+
 // load_graph walks the entry module's import graph breadth-first, reading and
 // parsing each module once. `root` is the stdlib root `std/` and `core/`
 // resolve under; empty means the driver's vendored stdlib
@@ -701,17 +717,18 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
   // keys[i] is an import key already looked up, idents[i] what it resolved to.
   let keys: string[] = [];
   let idents: string[] = [];
-  let paths: string[] = [];
+  let imps: parser.Import[] = [];
   let dirs: string[] = [];
   let importers: string[] = [];
   for imp in entry.imports {
-    paths = paths.append(imp.path);
+    imps = imps.append(imp);
     dirs = dirs.append(edir);
     importers = importers.append(entry_path);
   }
   let qi: i32 = 0;
-  while (qi < paths.len()) {
-    let path: string = paths[qi];
+  while (qi < imps.len()) {
+    let imp: parser.Import = imps[qi];
+    let path: string = imp.path;
     let dir: string = dirs[qi];
     let importer: string = importers[qi];
     qi = qi + 1;
@@ -721,11 +738,12 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
     }
     keys = keys.append(key);
     let base: string = import_base(path, dir, sroot);
-    let r: Resolved = resolve_module(ov, base, path, base_name(path));
+    let r: Resolved = resolve_module(ov, base, path);
     if (!r.ok) {
       idents = idents.append("");
-      if (r.err.len() > 0 || !stdlib_not_given(ov, base, path)) {
-        missing = missing.append(unresolved_import(path, importer, r.err_path, r.err));
+      let line: string = missing_line(ov, imp, base, importer, r, entry_path, files);
+      if (line.len() > 0) {
+        missing = missing.append(line);
       }
       continue;
     }
@@ -735,7 +753,7 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
     if (util.has_str(loaded_ids, ident)) {
       continue;
     }
-    // The flat-name and manifest fallbacks are not the standard library.
+    // A module found through the manifest is not the standard library.
     let origin: string = "";
     if (r.shown == "stdlib://" + rel_path(path) + ".fern" || r.shown == base + rel_path(path) + ".fern") {
       origin = path;
@@ -751,8 +769,8 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
     loaded = loaded.append(flatten.LoadedModule { name: base_name(path), ident: ident, mod: m });
     loaded_ids = loaded_ids.append(ident);
     mod_dirs = mod_dirs.append(mdir);
-    for imp in m.imports {
-      paths = paths.append(imp.path);
+    for mi in m.imports {
+      imps = imps.append(mi);
       dirs = dirs.append(mdir);
       importers = importers.append(r.shown);
     }

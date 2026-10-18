@@ -151,15 +151,13 @@ type capabilityProfile = []string
 
 var capabilityProfiles = map[string]capabilityProfile{
 	// The full compiled runtime surface: fs / tcp / stdin are raw
-	// syscalls. NOTE `subprocess` is deliberately absent — it is an
-	// INTERP-ONLY builtin today (internal/oracle/interp only; no codegen
-	// backend lowers it), so no compiled target grants it and E066
-	// rejects it up front instead of the old "undefined label"
-	// assembler failure.
+	// syscalls.
 	//
 	// `proc` (fork/waitpid supervision — docs/CRASH-ONLY-SERVE.md D2')
-	// is native-only: wasm worlds have no processes. So are the three
-	// capabilities below, each for a reason of its own:
+	// and `subprocess` (spawn a child and collect its output:
+	// `__fern_subprocess`, pipe / fork / execve / wait4) are native-only:
+	// wasm worlds have no processes. So are the capabilities below, each
+	// for a reason of its own:
 	//
 	//   - `pollfd` — file descriptors a readiness primitive can wait on.
 	//     Wasm's readiness surface is wasi:io/poll pollables, which are
@@ -255,17 +253,16 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     socket endpoints. wasi:sockets has IP sockets only.
 	//   - `reactor` — a readiness set the host keeps between waits:
 	//     epoll, kqueue, or on wasm a table of wasi:io pollables.
-	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "unix", "reactor"},
+	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "subprocess", "unix", "reactor"},
 
 	// hosted-native plus `sysctl` — the kernel's named variables by MIB
 	// (load averages, boot time). Linux removed sysctl(2) and keeps the
 	// same facts in /proc, so only Darwin grants it.
-	"hosted-darwin": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "unix", "reactor", "sysctl"},
+	"hosted-darwin": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "subprocess", "unix", "reactor", "sysctl"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
-	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:
-	// wasi:cli/exec-process isn't in the runtime helpers (the standing
-	// gap wasmbin's TestBuildReportsUnsupported pins).
+	// (wasi:sockets) but has no process model, so neither `proc` nor
+	// `subprocess`.
 	"wasi-cli": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor"},
 
 	// The proxy world: an HTTP handler and nothing else. No stdout

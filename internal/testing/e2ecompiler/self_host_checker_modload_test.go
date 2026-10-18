@@ -36,8 +36,8 @@ func buildCheckerModloadDriverX86(t *testing.T) (gcc string, runner []string, dr
 }
 
 // checkSourceModload resolves `entrySrc`'s full stdlib closure (real Go
-// modload, like selfHostBundleFor), vendors each module as a flat
-// <base>.fern next to main.fern + builtins.fern, runs the file-based
+// modload, like selfHostBundleFor), vendors it as a std/ and core/ tree next
+// to main.fern + builtins.fern, runs the file-based
 // checker driver, and returns its stdout (the diagnostic codes). The
 // driver exits 1 when diagnostics are emitted, so the non-zero exit is
 // tolerated.
@@ -51,8 +51,8 @@ func checkSourceModload(t *testing.T, runner []string, driverBin, entrySrc strin
 }
 
 // checkFileModload is checkSourceModload for a program on disk, whose own
-// sibling modules (`import "./lib"`) load with it and vendor beside main.fern
-// as the stdlib's do.
+// modules (`import "./lib"`) load with it and vendor at the same place
+// relative to main.fern.
 func checkFileModload(t *testing.T, runner []string, driverBin, entryPath string) string {
 	t.Helper()
 	_, srcs, err := modload.Load(entryPath)
@@ -66,8 +66,9 @@ func checkFileModload(t *testing.T, runner []string, driverBin, entryPath string
 	return checkLoadedModload(t, runner, driverBin, entryPath, string(entrySrc), srcs)
 }
 
-// checkLoadedModload vendors a loaded module closure flat beside the entry and
-// runs the file-based checker driver over it.
+// checkLoadedModload vendors a loaded module closure beside the entry, each
+// module where its import resolves from there, and runs the file-based checker
+// driver over it.
 func checkLoadedModload(t *testing.T, runner []string, driverBin, entryPath, entrySrc string, srcs map[string]string) string {
 	t.Helper()
 	progDir := t.TempDir()
@@ -78,18 +79,25 @@ func checkLoadedModload(t *testing.T, runner []string, driverBin, entryPath, ent
 	if err := os.WriteFile(filepath.Join(progDir, "builtins.fern"), bsrc, 0o644); err != nil {
 		t.Fatalf("write builtins.fern: %v", err)
 	}
-	seen := map[string]string{}
+	entryDir := filepath.Dir(entryPath)
 	for p, src := range srcs {
 		if p == entryPath {
 			continue
 		}
-		b := strings.TrimSuffix(filepath.Base(p), ".fern")
-		if prev, ok := seen[b]; ok {
-			t.Fatalf("module-name collision: %q and %q both map to %q", prev, p, b)
+		name, ok := strings.CutPrefix(p, "stdlib://")
+		if !ok {
+			rel, err := filepath.Rel(entryDir, p)
+			if err != nil || strings.HasPrefix(rel, "..") {
+				t.Fatalf("module %s is not under the entry's directory %s", p, entryDir)
+			}
+			name = rel
 		}
-		seen[b] = p
-		if err := os.WriteFile(filepath.Join(progDir, b+".fern"), []byte(src), 0o644); err != nil {
-			t.Fatalf("write %s.fern: %v", b, err)
+		dst := filepath.Join(progDir, name)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dst, []byte(src), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(progDir, "main.fern"), []byte(entrySrc), 0o644); err != nil {

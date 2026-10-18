@@ -43,6 +43,7 @@
 # edit, or compare two compiler binaries against one fixed checkout.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/flag-lib"
 
 cd "$(dirname "$0")/.."
 
@@ -116,7 +117,7 @@ fi
 # in a checked-in baseline, and an unbaselined row is a finding on every run.
 # Turning it off also drops a second full self-host build from the lane.
 peak=""
-if [ "${FERN_ALLOC_PEAK_RSS:-1}" != "0" ]; then
+if fern_flag FERN_ALLOC_PEAK_RSS 1; then
   cgbase=""
   for base in /sys/fs/cgroup/memory /sys/fs/cgroup; do
     if [ -d "$base" ] && [ -w "$base" ]; then cgbase="$base"; break; fi

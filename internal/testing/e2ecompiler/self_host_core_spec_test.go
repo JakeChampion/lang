@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 const (
@@ -46,7 +48,7 @@ func TestSelfHostCoreSpecMatchesTheIR(t *testing.T) {
 		return
 	}
 	// CI-DARK: FERN_UPDATE_GOLDEN — a regeneration tool, not coverage.
-	if os.Getenv("FERN_UPDATE_GOLDEN") == "1" {
+	if envflag.On("FERN_UPDATE_GOLDEN") {
 		updated := spec[:begin+len(coreSpecBegin)] + want + spec[end:]
 		if err := os.WriteFile(filepath.Clean(coreSpecPath), []byte(updated), 0o644); err != nil {
 			t.Fatal(err)

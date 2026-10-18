@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jakechampion/lang/internal/envflag"
 	"github.com/jakechampion/lang/internal/syntax/ast"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
@@ -33,7 +34,8 @@ import (
 //	repeat:
 //	  mutate a corpus entry -> fernsmith turns the bytes into a program
 //	  run the instrumented compiler over it, read the counters it dumps
-//	  keep the entry when it reached a counter nothing had reached before
+//	  keep the entry when it reached a counter nothing had reached before,
+//	  and judge it: compiled and run, it must exit as the interpreter does
 //
 // Feedback comes from process EXIT, which is the right granularity here and
 // needs no live accessor: one input is one compiler process, so the report
@@ -284,10 +286,10 @@ func runCoverageCampaign(t *testing.T, bin, stdlibRoot, srcPath string, seeds []
 // binary. The guided-beats-unguided comparison is its own test below, where
 // its stochastic nature can be handled honestly.
 func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
-	if os.Getenv(selfHostCoverFuzzEnv) == "" {
+	if !envflag.On(selfHostCoverFuzzEnv) {
 		t.Skip("set " + selfHostCoverFuzzEnv + "=1 to run the coverage-guided self-host fuzzer")
 	}
-	_, runner := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("the self-host CLI driver runs only natively (argv paths)")
 	}
@@ -307,6 +309,7 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	bin := buildInstrumentedSelfHost(t, dir)
+	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	work := t.TempDir()
 	srcPath := filepath.Join(work, "main.fern")
 
@@ -339,6 +342,7 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 		if total.addAll(bits) > 0 {
 			corpus = append(corpus, input)
 			discoveries++
+			judgeDiscovery(t, fernBin, stdlibRoot, discoveries, input)
 		}
 	}
 
@@ -361,6 +365,34 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 	saveCoverCorpus(t, corpusDir, corpus)
 }
 
+// judgeDiscovery runs the exit-byte differential over a program that reached
+// self-host coverage nothing before it had: the self-host-compiled binary must
+// exit as the interpreter does. A discovery is the input least like anything
+// already judged, and discoveries are rare enough that judging each costs
+// little beside the loop. A failure names the input bytes, which reproduce
+// the program through fernsmith.GenMainBytes.
+func judgeDiscovery(t *testing.T, fernBin, stdlibRoot string, n int, input []byte) {
+	t.Helper()
+	t.Run(fmt.Sprintf("discovery=%d", n), func(t *testing.T) {
+		src := fernsmith.GenMainBytes(input)
+		want := runInterpByteOrSkip(t, src)
+		failf := func(format string, args ...any) {
+			t.Errorf("input %x: "+format, append([]any{input}, args...)...)
+		}
+		r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, nil, nil, failf)
+		if gap != "" {
+			if semRefused(gap) {
+				failf("the typed lowering refused this program:\n%s", gap)
+				return
+			}
+			t.Skipf("self-host coverage gap: %s", gap)
+		}
+		if r != nil {
+			checkSelfHostSeedExit(*r, want, src, failf)
+		}
+	})
+}
+
 // TestSelfHostCoverageFeedbackBeatsBlindMutation is this issue's stated
 // acceptance criterion: "a fernsmith run with feedback demonstrably reaches
 // edges a feedback-less run of the same budget does not".
@@ -378,7 +410,7 @@ func TestSelfHostCoverageGuidedFuzz(t *testing.T) {
 // machine could hand the two arms different numbers of inputs and the result
 // would say nothing about feedback.
 func TestSelfHostCoverageFeedbackBeatsBlindMutation(t *testing.T) {
-	if os.Getenv(selfHostCoverFuzzEnv) == "" {
+	if !envflag.On(selfHostCoverFuzzEnv) {
 		t.Skip("set " + selfHostCoverFuzzEnv + "=1 to run the coverage-guided self-host fuzzer")
 	}
 	_, runner := x86_64Tooling(t)

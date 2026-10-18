@@ -12,6 +12,7 @@ import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
 import "./rcmemo";
+import "std/cli";
 
 // asmcore — the emitter-side layer the three IR backends (asm_ir,
 // asm_arm64_ir, wasm_ir) share: the Ty type system, EmitState + its
@@ -573,8 +574,8 @@ pub function new_state(): EmitState {
   return with_switches(s, env_switches());
 }
 
-// sanitize_on reports whether FERN_SANITIZE is set — the self-host port of
-// ast.SanitizeEnabled (#5545). One opt-in surface over the heap detectors,
+// sanitize_on reports whether FERN_SANITIZE switches the heap detectors on
+// (#5545). One opt-in surface over the heap detectors,
 // so you can reach for it before knowing which check will fire: each
 // backend's leak census (with_switches folds it in), the rc over-release
 // report, and the use-after-free quarantine below. Both reports end in the
@@ -583,29 +584,15 @@ pub function new_state(): EmitState {
 // It deliberately does NOT imply FERN_RC_TRACE: per-heap-event output is a
 // probe you point at a reduced repro, not a standing mode.
 pub function sanitize_on(): boolean {
-  match (env("FERN_SANITIZE")) {
-    Some(_) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
+  return cli.env_flag("FERN_SANITIZE");
 }
 
-// sandbox_on reports whether FERN_SANDBOX=1 asks for the seccomp-bpf filter
+// sandbox_on reports whether FERN_SANDBOX asks for the seccomp-bpf filter
 // (#6071): an x86-64 Linux program installs, at `_start`, a filter allowing
 // exactly the syscalls its emitted code issues and killing the process on any
-// other. The self-host port of ast.SandboxEnabled.
+// other.
 pub function sandbox_on(): boolean {
-  match (env("FERN_SANDBOX")) {
-    Some(v) => {
-      return v == "1";
-    },
-    None => {
-      return false;
-    }
-  }
+  return cli.env_flag("FERN_SANDBOX");
 }
 
 // The fatal aborts' cause lines, without their newline: the native backends'
@@ -639,11 +626,11 @@ pub function msg_oom(): string {
 
 // backtrace_on is the -backtrace default: whether a fatal abort's report
 // walks the frame-pointer chain under its cause line. On unless
-// FERN_BACKTRACE=0, as ast.BacktraceEnabled.
+// FERN_BACKTRACE switches it off.
 pub function backtrace_on(): boolean {
   match (env("FERN_BACKTRACE")) {
     Some(v) => {
-      return v != "0";
+      return cli.flag_on(v);
     },
     None => {
       return true;
@@ -651,20 +638,13 @@ pub function backtrace_on(): boolean {
   }
 }
 
-// size_on is the -size default: FERN_SIZE=1 builds for size.
+// size_on is the -size default: FERN_SIZE builds for size.
 pub function size_on(): boolean {
-  match (env("FERN_SIZE")) {
-    Some(v) => {
-      return v == "1";
-    },
-    None => {
-      return false;
-    }
-  }
+  return cli.env_flag("FERN_SIZE");
 }
 
-// leak_check_on reports whether FERN_LEAKCHECK is set — the self-host port
-// of ast.LeakCheckEnabled, the leak census on its own: every alloc and every
+// leak_check_on reports whether FERN_LEAKCHECK switches on the leak census on
+// its own: every alloc and every
 // free counted (count + bytes) and one line printed at exit,
 //
 //	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
@@ -672,14 +652,7 @@ pub function size_on(): boolean {
 // ending ` from=exit` when the exit() builtin printed it rather than a
 // return from main. The sanitizer folds it in (with_switches).
 pub function leak_check_on(): boolean {
-  match (env("FERN_LEAKCHECK")) {
-    Some(_) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
+  return cli.env_flag("FERN_LEAKCHECK");
 }
 
 // Switches are the diagnostic modes a build is emitted with: the
@@ -709,14 +682,7 @@ pub function with_switches(s: EmitState, sw: Switches): EmitState {
 // FREE for the census (hev_free runs at the release), so the two detectors
 // compose instead of every correct free reading as a leak.
 pub function rc_free_debug_on(): boolean {
-  match (env("FERN_RC_FREE_DEBUG")) {
-    Some(_) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
+  return cli.env_flag("FERN_RC_FREE_DEBUG");
 }
 
 // add_shape_lit records `name` as a shape this unit references (deduped), for the
@@ -9737,6 +9703,15 @@ pub function assignable(want: Ty, got: Ty): boolean {
 }
 
 function parse_unknown_error(where: string, kind: string, line: i32, col: i32): util.Diag {
+  // A lex error has no enclosing construct to name: it carries its own code
+  // and is worded as native's lexer words it.
+  let lex: string = kind;
+  if (util.str_has_prefix(lex, "stmt: ")) {
+    lex = slice_unchecked(lex, 6, lex.len()) + "";
+  }
+  if (util.str_has_prefix(lex, "lex:")) {
+    return util.Diag { related: [], code: slice_unchecked(lex, 4, 8) + "", message: slice_unchecked(lex, 9, lex.len()) + "", line: line, col: col, fix: None };
+  }
   // An out-of-range float literal is P002, the numeric-literal code native's
   // parser reports for it, not the generic parser-side-unknown P001 (#6842).
   if (util.is_f64_range_kind(kind)) {
@@ -9776,9 +9751,6 @@ function sentinel_message(kind: string): string {
   if (util.str_has_prefix(k, "keyword:")) {
     return "expected an expression, got \"" + slice_unchecked(k, 8, k.len()) + "\"";
   }
-  if (util.str_has_prefix(k, "lex error: ")) {
-    return slice_unchecked(k, 11, k.len()) + "";
-  }
   if (util.str_has_prefix(k, "missing ")) {
     return missing_message(slice_unchecked(k, 8, k.len()) + "");
   }
@@ -9787,9 +9759,6 @@ function sentinel_message(kind: string): string {
   }
   if (k == "primary") {
     return "expected an expression";
-  }
-  if (k == "match: missing (") {
-    return "expected \"(\" after \"match\"";
   }
   if (k == "lambda: bad destructuring param") {
     return "expected a parameter name or a destructuring pattern";
@@ -9806,12 +9775,6 @@ function sentinel_message(kind: string): string {
 // missing_message words a "missing X in Y" sentinel; `what` is the text after
 // "missing ".
 function missing_message(what: string): string {
-  if (what == "( in if") {
-    return "expected \"(\" after \"if\"";
-  }
-  if (what == "( in while") {
-    return "expected \"(\" after \"while\"";
-  }
   if (what == "= in let") {
     return "expected \"=\" after the name in this declaration";
   }
@@ -10421,7 +10384,7 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
 // checks with; `tm` is the module as the checker annotated it.
 pub function entry_check_errors(tm: parser.Module): util.Diag[] {
   // FERN_ENTRY_CHECK_TRACE counts the gate's runs, which a build makes once.
-  if let Some(_) = env("FERN_ENTRY_CHECK_TRACE") {
+  if (cli.env_flag("FERN_ENTRY_CHECK_TRACE")) {
     eprint("entry check\n");
   }
   let s: EmitState = new_state();

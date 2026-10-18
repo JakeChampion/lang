@@ -44,6 +44,7 @@ import "./ssasem";
 import "./semrecords";
 import "./physicalbody";
 import "./ssaprepare";
+import "std/cli";
 
 // Select once from the actual pre-emission inputs. The emitter consumes and
 // retains this same value; a retained choice is not an ownership certificate.
@@ -300,7 +301,7 @@ pub function ir_helper_symbol(name: string): string {
   return "__fn_" + name;
 }
 
-// strict_ir_on reports whether FERN_STRICT_IR is set (#5646). A bail refuses the
+// strict_ir_on reports whether FERN_STRICT_IR is on (#5646). A bail refuses the
 // module either way — nothing is left behind the IR path — but the module gate
 // only says "not IR-eligible". With this set the refusal happens AT the bail,
 // naming the function and the reason, so a newly-unlowerable construct produces a
@@ -308,28 +309,14 @@ pub function ir_helper_symbol(name: string): string {
 // unlowerable operator in a match scrutinee bailed its enclosing function and
 // surfaced as 46 failing subtests reading like several unrelated bugs.
 pub function strict_ir_on(): boolean {
-  match (env("FERN_STRICT_IR")) {
-    Some(_) => {
-      return true;
-    },
-    None => {
-      return false;
-    }
-  }
+  return cli.env_flag("FERN_STRICT_IR");
 }
 
 // ssa_report_on reports whether FERN_SSA_REPORT asks for a line on stderr per
 // function whose lift or emit took over 200 ms. Nothing about the emitted
 // program changes with it.
 pub function ssa_report_on(): boolean {
-  match (env("FERN_SSA_REPORT")) {
-    Some(v) => {
-      return v.len() > 0;
-    },
-    None => {
-      return false;
-    }
-  }
+  return cli.env_flag("FERN_SSA_REPORT");
 }
 
 // ssa_refuse reports a function the register path cannot emit, and exits.

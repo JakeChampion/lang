@@ -7,12 +7,14 @@
 // those pure, dependency-free helpers; consumer modules
 // `import "./util"` and call them qualified (`util.i32_to_string`).
 //
-// It imports nothing, so any self-host
+// It imports no other compiler module, so any self-host
 // module can depend on it without pulling in the lexer/parser. The
 // module grows one helper at a time as files are converted off
 // their local copies; keeping each conversion small bounds the
 // churn in the Go-side test staging lists (each test that
 // compiles a converted module must also stage util.fern).
+
+import "std/cli";
 
 // arity_message is the one wording every count mismatch uses: "SUBJECT takes
 // N UNITs but was given M". Kept in lockstep with the native checker's arityMsg.
@@ -1130,22 +1132,15 @@ pub function rc_underflow_guard(who: string, code: i32): i32 {
 }
 
 // verify_on reports whether the compile path re-checks what its own passes
-// produced: FERN_IR_VERIFY=1, which also prints the IR gate's coverage line,
-// or FERN_IR_VERIFY=quiet. The re-checks catch compiler bugs, not errors in
-// the program, so a plain compile skips them; the test suites set quiet.
+// produced: FERN_IR_VERIFY on, which also prints the IR gate's coverage line
+// unless its value is `quiet`. The re-checks catch compiler bugs, not errors
+// in the program, so a plain compile skips them; the test suites set quiet.
 pub function verify_on(): boolean {
-  match (env("FERN_IR_VERIFY")) {
-    Some(v) => {
-      return v == "1" || v == "quiet";
-    },
-    None => {
-      return false;
-    }
-  }
+  return cli.env_flag("FERN_IR_VERIFY");
 }
 
 // certify_mode is what the emitted-RC certifier (rccertify.fern) does with
-// what it finds: 0, FERN_RC_CERTIFY=0, nothing runs; 1, FERN_RC_CERTIFY=report,
+// what it finds: 0, FERN_RC_CERTIFY off, nothing runs; 1, FERN_RC_CERTIFY=report,
 // every finding and the per-function census go to stderr and the compile
 // continues; 2, the default, a finding refuses the function as a lowering
 // refusal does, through the memo (rcmemo.fern) of what was certified before.
@@ -1155,7 +1150,7 @@ pub function certify_mode(): i32 {
       if (v == "report") {
         return 1;
       }
-      if (v == "0") {
+      if (!cli.flag_on(v)) {
         return 0;
       }
       return 2;
@@ -1167,7 +1162,7 @@ pub function certify_mode(): i32 {
 }
 
 // arr_push_cliff_report prints the process-wide rc==1 append-cliff count to
-// stderr when FERN_CLIFF_REPORT is set, and passes `code` through unchanged.
+// stderr when FERN_CLIFF_REPORT is on, and passes `code` through unchanged.
 //
 // This is the compiler's own use of the counter #6023 built for compiled
 // PROGRAMS. __fern_arr_push_grow mutates in place only at rc == 1, so a stray
@@ -1191,18 +1186,13 @@ pub function certify_mode(): i32 {
 // __heap_bump_bytes() over peak RSS — so it is the instrument any accumulator
 // work should be measured with. See #6056.
 pub function arr_push_cliff_report(who: string, code: i32): i32 {
-  match (env("FERN_CLIFF_REPORT")) {
-    Some(_) => {
-      let copied: i64 = __arr_push_shared_bytes();
-      eprint(who + ": arr_push_shared_count=" + i32_to_string(__arr_push_shared_count())
-        + " arr_push_shared_bytes=" + i64_to_string(copied)
-        + " heap_bump_bytes=" + i64_to_string(__heap_bump_bytes()));
-      return code;
-    },
-    None => {
-      return code;
-    }
+  if (cli.env_flag("FERN_CLIFF_REPORT")) {
+    let copied: i64 = __arr_push_shared_bytes();
+    eprint(who + ": arr_push_shared_count=" + i32_to_string(__arr_push_shared_count())
+      + " arr_push_shared_bytes=" + i64_to_string(copied)
+      + " heap_bump_bytes=" + i64_to_string(__heap_bump_bytes()));
   }
+  return code;
 }
 
 // str_join_range concatenates parts[lo..hi) by balanced divide-and-conquer.
@@ -1907,31 +1897,26 @@ pub function io_error_reason(e: IoError): string {
 }
 
 // cache_base is fern's per-user cache directory: $FERN_CACHE_DIR when that is
-// set, else the user cache directory's fern — $XDG_CACHE_HOME, else ~/.cache,
-// or ~/Library/Caches on darwin, as native reads os.UserCacheDir. "" when
-// there is no home to put it in. The package store, the shipped `fern`'s
-// stdlib tree and the certifier memo live under it.
+// set, else the user cache directory's fern — ~/Library/Caches on darwin,
+// elsewhere $XDG_CACHE_HOME, else ~/.cache — as Go's os.UserCacheDir reads
+// it. An empty variable counts as unset. "" when there is no home to put it
+// in. The package store, the shipped `fern`'s stdlib tree and the certifier
+// memo live under it.
 pub function cache_base(): string {
-  match (env("FERN_CACHE_DIR")) {
-    Some(d) => {
-      return d;
-    },
-    None => {}
+  if let Some(d) = cli.env_value("FERN_CACHE_DIR") {
+    return d;
   }
-  match (env("XDG_CACHE_HOME")) {
-    Some(x) => {
+  let darwin: boolean = target_os() == "darwin";
+  if (!darwin) {
+    if let Some(x) = cli.env_value("XDG_CACHE_HOME") {
       return x + "/fern";
-    },
-    None => {}
+    }
   }
-  match (env("HOME")) {
-    Some(h) => {
-      if (target_os() == "darwin") {
-        return h + "/Library/Caches/fern";
-      }
-      return h + "/.cache/fern";
-    },
-    None => {}
+  if let Some(h) = cli.env_value("HOME") {
+    if (darwin) {
+      return h + "/Library/Caches/fern";
+    }
+    return h + "/.cache/fern";
   }
   return "";
 }

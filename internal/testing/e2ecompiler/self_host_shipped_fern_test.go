@@ -234,8 +234,7 @@ func TestSelfHostFmtKeepsTodoAndClosedBooleanArms(t *testing.T) {
 }
 
 // Without -o, a compile prints its assembly for arm64-linux, the target a
-// compile gets when none is named, where a wasm target's binary goes to
-// stdout as it is.
+// compile gets when none is named, and for every other native target.
 func TestSelfHostCLIWritesAssemblyToStdout(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
 	root := e2eharness.SelfHostStdlibRoot(t)
@@ -244,8 +243,53 @@ func TestSelfHostCLIWritesAssemblyToStdout(t *testing.T) {
 	if err != nil || !strings.Contains(string(out), "__fn_main:\n") || !strings.Contains(string(out), "stp x29, x30, [sp, #-16]!") {
 		t.Errorf("no -o, no -target: %v\n%.400s", err, out)
 	}
-	out, err = exec.Command(cli, "-target", "wasm32-wasi", src, root).Output()
-	if err != nil || !strings.HasPrefix(string(out), "\x00asm") {
-		t.Errorf("no -o, -target wasm32-wasi: %v\n%.40q", err, out)
+	for _, target := range []string{"x86-64-linux", "arm64-darwin", "arm64-android"} {
+		out, err := exec.Command(cli, "-target", target, src, root).Output()
+		if err != nil || !strings.Contains(string(out), ".text") || strings.ContainsRune(string(out), 0) {
+			t.Errorf("no -o, -target %s: %v, want assembly text\n%.200q", target, err, out)
+		}
+	}
+}
+
+// Stdout takes only a target's text, so a wasm component or module with no -o
+// is a usage error, exit 2, with nothing written. It is refused before the
+// program is read: this one declares no HTTP handler, and the refusal still
+// comes first. `-emit asm` is the WAT, which stdout takes, and -check writes
+// nothing at all.
+func TestSelfHostCLIRefusesWasmBinaryOnStdout(t *testing.T) {
+	cli := e2eharness.SelfHostCLI(t)
+	root := e2eharness.SelfHostStdlibRoot(t)
+	src := writeShippedSrc(t, t.TempDir(), "main.fern", shippedArgsSrc)
+	run := func(args ...string) (string, string, int) {
+		cmd := exec.Command(cli, append(args, src, root)...)
+		var stdout, stderr strings.Builder
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		_ = cmd.Run()
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			t.Fatalf("fern %s did not exit normally\n%s", strings.Join(args, " "), stderr.String())
+		}
+		return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
+	}
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-target", "wasm32-wasi"}, "fern: -target wasm32-wasi requires -o OUTPUT (the component is a binary)\n"},
+		{[]string{"-target", "wasm32-wasi-http"}, "fern: -target wasm32-wasi-http requires -o OUTPUT (the component is a binary)\n"},
+		{[]string{"-target", "wasm32-wasi", "-emit", "core-module"}, "fern: -emit core-module for -target wasm32-wasi writes a binary; pass -o OUTPUT\n"},
+		{[]string{"-target", "wasm32-wasi-http", "-emit", "core-module"}, "fern: -emit core-module for -target wasm32-wasi-http writes a binary; pass -o OUTPUT\n"},
+		{[]string{"-target", "wasm32-wasi", "-emit", "command-module"}, "fern: -emit command-module for -target wasm32-wasi writes a binary; pass -o OUTPUT\n"},
+	} {
+		stdout, stderr, code := run(c.args...)
+		if code != 2 || stderr != c.want || stdout != "" {
+			t.Errorf("fern %s: exit %d, stderr %q, %d bytes on stdout; want exit 2, stderr %q, nothing on stdout",
+				strings.Join(c.args, " "), code, stderr, len(stdout), c.want)
+		}
+	}
+	if stdout, stderr, code := run("-target", "wasm32-wasi", "-emit", "asm"); code != 0 || !strings.HasPrefix(stdout, "(module") {
+		t.Errorf("fern -target wasm32-wasi -emit asm: exit %d, stdout %.80q; want exit 0 and WAT\n%s", code, stdout, stderr)
+	}
+	if _, stderr, code := run("-check", "-target", "wasm32-wasi"); code != 0 {
+		t.Errorf("fern -check -target wasm32-wasi: exit %d, want 0\n%s", code, stderr)
 	}
 }

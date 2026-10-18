@@ -32,8 +32,8 @@ Each asset ships a `*.tar.gz.sha256` alongside it if you want to verify
 the download. The archive holds the one `fern` binary: the compiler, written
 in Fern, with its standard library inside it, so it needs nothing beside it
 and no network. On first use it unpacks that standard library into a
-cache directory (`$FERN_CACHE_DIR`, else `$XDG_CACHE_HOME`, else
-`~/.cache`). [Releases](../../releases/) covers what the nightly channel
+cache directory (`$FERN_CACHE_DIR`, else `~/Library/Caches` on macOS and
+`$XDG_CACHE_HOME`, else `~/.cache`, elsewhere). [Releases](../../releases/) covers what the nightly channel
 promises and how to pin a build.
 
 ## Option B — build from source

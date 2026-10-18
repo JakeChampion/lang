@@ -118,6 +118,7 @@ import "std/metrics";
 import "std/tls/server";
 import "std/tls/ktls";
 import "std/i64";
+import "std/cli";
 // core/int — int_to_string for the supervisor's worker-death log
 // lines (the raw exit code, straight to stderr).
 import "core/int";
@@ -307,13 +308,7 @@ pub function (c: Config) with_ktls(): Config {
 
 // __ktls_asked(opts) — whether the loop offloads its TLS connections.
 function __ktls_asked(opts: Config): boolean {
-  match (env("FERN_KTLS")) {
-    Some(v) => {
-      return opts.ktls || v == "1";
-    },
-    None => {}
-  }
-  return opts.ktls;
+  return opts.ktls || cli.env_flag("FERN_KTLS");
 }
 
 // (c).with_io_uring() — each worker's loop waits on an io_uring where the
@@ -327,14 +322,7 @@ pub function (c: Config) with_io_uring(): Config {
 
 // __loop_driver(opts) — the driver a worker's loop waits on.
 function __loop_driver(opts: Config): async.RealDriver {
-  let asked: boolean = opts.io_uring;
-  match (env("FERN_IO_URING")) {
-    Some(v) => {
-      asked = asked || v == "1";
-    },
-    None => {}
-  }
-  if (asked) {
+  if (opts.io_uring || cli.env_flag("FERN_IO_URING")) {
     return async.real_driver_io_uring();
   }
   return async.real_driver();
@@ -1932,7 +1920,7 @@ function __kernel_record(c: __Conns, at: i32): (__Conns, boolean) {
   if let InKernel(sess) = c.tls[at] {
     match (ktls.read_now(fd)) {
       ktls.Opened(t, content) => {
-        match (sess.read(ktls.framed(t, content))) {
+        match (sess.read(ktls.framed(t, content), now_unix_ms())) {
           Ok(step) => {
             let c2: __Conns = __Conns { ...c, tls: c.tls.with(at, InKernel(step.session)) };
             if (ktls.send_records(fd, step.output) < 0 || ktls.install(fd, step.rekeyed) < 0) {
@@ -1970,7 +1958,7 @@ function __kernel_record(c: __Conns, at: i32): (__Conns, boolean) {
 // alert is written as far as the socket takes it.
 function __tls_taken[D: async.Driver](drv: D, c: __Conns, at: i32, sess: server.Session, raw: [u8], opts: Config): (__Conns, server.Session, u8[], boolean) {
   let none: u8[] = [];
-  match (sess.read(raw)) {
+  match (sess.read(raw, now_unix_ms())) {
     Ok(step) => {
       let done: boolean = step.closed;
       if (step.output.len() > 0) {
@@ -4276,7 +4264,7 @@ function __pull_read(p: __Pull, raw: u8[]): u8[] {
 // refused, its alert written. What the session answers is written as far
 // as the socket takes it.
 function __pull_opened(p: __Pull, sess: server.Session, raw: u8[]): Option[u8[]] {
-  match (sess.read(raw)) {
+  match (sess.read(raw, now_unix_ms())) {
     Ok(step) => {
       p.body.tls.set(Some(step.session));
       if (step.output.len() > 0) {

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // --- The leak matrix ---------------------------------------------------------
@@ -901,7 +903,7 @@ func TestSelfHostLeakMatrixX86_64(t *testing.T) {
 	// CI-DARK: FERN_LEAK_MATRIX_DUMP — a regeneration tool, not coverage: it
 	// prints measured matrix-file lines INSTEAD of comparing, so a lane setting
 	// it would disable this gate. The compare path below is the CI behaviour.
-	dump := os.Getenv("FERN_LEAK_MATRIX_DUMP") == "1"
+	dump := envflag.On("FERN_LEAK_MATRIX_DUMP")
 	var known map[string][2]leakVerdict
 	if !dump {
 		known = loadLeakMatrix(t)

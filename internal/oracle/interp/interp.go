@@ -1693,15 +1693,6 @@ func New() *Interp {
 	i.Builtins["__round_f64"] = mkUnaryF64Builtin("__round_f64", math.Round)
 	i.Builtins["__trunc_f64"] = mkUnaryF64Builtin("__trunc_f64", math.Trunc)
 	i.Builtins["__abs_f64"] = mkUnaryF64Builtin("__abs_f64", math.Abs)
-	// `temp_dir(prefix)` + `exec(cmd, args, stdin)` back the
-	// test-runner migration: ports of the Go-side e2e suite need
-	// somewhere to write fixture files and a way to spawn the
-	// compiler binary they're testing. Lang-the-language has
-	// neither today (per `docs/ROADMAP-AND-SELF-HOSTING.md`
-	// "Process spawning"), so these are interp-only — native /
-	// wasm backends would fail at codegen for now. That's the
-	// right trade for the migration: tests run under
-	// `fern -interp` regardless of which backend they exercise.
 	i.Builtins["now_unix_ms"] = &Builtin{Fn: builtinNowUnixMS}
 	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
 	i.Builtins["monotonic_ns"] = &Builtin{Fn: builtinMonotonicNS}

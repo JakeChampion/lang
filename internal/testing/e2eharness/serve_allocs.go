@@ -349,7 +349,7 @@ function main(): i32 {
     return 2;
   };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([hex.hex_decode(ROOT)])));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now()) else {
+  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), now_unix_ms()) else {
     return 2;
   };
   let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {

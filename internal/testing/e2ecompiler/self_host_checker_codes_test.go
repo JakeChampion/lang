@@ -136,9 +136,8 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 
 	// Compile the self-hosted checker binary (driverFile = checker_run /
 	// checker_codes_run, importing std/io + ./lexer + ./parser + ./checker)
-	// with the file-based asm driver. The loader resolves `import "std/io"`
-	// to the vendored flat io.fern (basename fallback), so the driver source
-	// is used unmodified — no ///MODULE bundle, no import rewrite.
+	// with the file-based asm driver, which is given the stdlib tree, so the
+	// driver source is used unmodified — no ///MODULE bundle, no import rewrite.
 	// Derived from the driver's own imports rather than listed: a hand-written
 	// set goes stale the moment one of these modules gains an import, and this
 	// bundle is a map rather than a project dir, so the copy helpers that guard
@@ -161,11 +160,6 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 		}
 		files["flatten.fern"] = string(src)
 	}
-	ioSrc, err := os.ReadFile("../../stdlib/std/io.fern")
-	if err != nil {
-		t.Fatalf("read std/io.fern: %v", err)
-	}
-	files["io.fern"] = string(ioSrc)
 	runSrc, err := os.ReadFile(filepath.Join("../../../compiler", driverFile))
 	if err != nil {
 		t.Fatalf("read %s: %v", driverFile, err)
@@ -2326,6 +2320,42 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// its type's variables (#12632).
 		{"type-param-unbound-receiver", "enum GO[T] { GNil, GHas(T) }\nfunction (o: GO[T]) count(): i32 { match (o) { GHas(_) => { return 1; }, GNil => { return 0; } } }\nfunction main(): i32 { let o = GNil; return o.count(); }\n", []string{"E040"}},
 		{"type-param-bound-receiver", "enum GO[T] { GNil, GHas(T) }\nfunction (o: GO[T]) count(): i32 { match (o) { GHas(_) => { return 1; }, GNil => { return 0; } } }\nfunction main(): i32 { let o: GO[i32] = GNil; let p = GHas(5); return o.count() + p.count(); }\n", nil},
+		// A type parameter is rigid in its own generic's body, equal only to
+		// itself, whether or not anything instantiates it (#12656).
+		{"rigid-tparam-return", "function f[T](x: T): T { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"rigid-tparam-return-concrete", "function pick[T](c: boolean, a: T, b: T): i32 { return if (c) { a } else { b }; }\nfunction main(): i32 { return pick(true, 1, 2); }\n", []string{"E002"}},
+		{"rigid-tparam-if-join", "function f[T](c: boolean, x: T): T { return if (c) { x } else { 5 }; }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"rigid-tparam-field", "struct G[T] { v: T }\nfunction mk[T](x: i32): G[T] { return G { v: x }; }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
+		{"rigid-tparam-nested-receiver", "function (o: Option[(T, U)]) unz(): T { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"rigid-tparam-projection", "trait P { type Item; function get(self: Self): Self::Item; }\nfunction g[H: P](h: H): string { return h.get(); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"rigid-tparam-unbounded-order", "function f[T](a: T, b: T): boolean { return a < b; }\nfunction main(): i32 { return 0; }\n", []string{"E009"}},
+		{"rigid-tparam-ord-order", "import \"core/cmp\";\nfunction f[T: cmp.Ord](a: T, b: T): boolean { return a < b; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"bool-method-missing-in-generic", "trait Mk { function v(self: Self): i32; }\nfunction f[T: Mk](a: boolean, b: T): i32 { return a.v(); }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
+		{"rigid-tparam-ok", "struct G[T] { v: T }\nfunction id[T](x: T): T { return x; }\nfunction mk[T](x: T): G[T] { let y: T = id(x); let g: G[T] = G { v: y }; return g; }\nfunction pick[T](c: boolean, a: T, b: T): T { return if (c) { a } else { b }; }\nfunction (g: G[T]) get(): T { return g.v; }\nfunction sw[A, B](p: (A, B)): (B, A) { return (p.1, p.0); }\nfunction main(): i32 { return mk(3).get() + pick(true, 1, 2) + sw((1, 2)).0; }\n", nil},
+		{"rigid-tparam-projection-ok", "trait P { type Item; function get(self: Self): Self::Item; }\nstruct B { v: i32 }\nimpl P for B { type Item = i32; function get(self: Self): Self::Item { return self.v; } }\nfunction g[H: P](h: H): H::Item { let x: H::Item = h.get(); return x; }\nfunction main(): i32 { return g(B { v: 1 }); }\n", nil},
+		// An associated call's arguments are checked against the trait
+		// requirement or the inherent declaration it reaches (#12693).
+		{"assoc-arg-through-bound", "trait Mk { function mk(x: i32): Self; }\nfunction g[T: Mk](x: boolean): T { return T.mk(x); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
+		{"assoc-arity-through-bound", "trait Mk { function mk(x: i32): Self; }\nfunction g[T: Mk](): T { return T.mk(); }\nfunction main(): i32 { return 0; }\n", []string{"E004"}},
+		{"assoc-arg-self-through-bound", "trait Mk { function mk(x: Self): i32; }\nfunction g[T: Mk](t: T): i32 { return T.mk(t); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"assoc-arg-inherent-local", "struct S { v: i32 }\nimpl S { function mk(x: i32): S { return S { v: x }; } }\nfunction main(): i32 { function inner(): i32 { let s: S = S.mk(true); return s.v; } return inner(); }\n", []string{"E038"}},
+		{"assoc-arg-inherent-ok", "struct S { v: i32 }\nimpl S { function mk(x: i32): S { return S { v: x }; } }\nfunction main(): i32 { function inner(): i32 { let s: S = S.mk(4); return s.v; } return inner(); }\n", nil},
+		// An impl's associated function, and a requirement whose `self` is
+		// not `Self`, are held to the trait's signature (#12694).
+		{"impl-assoc-fn-signature", "trait Mk { function mk(x: Option[i32]): Self; }\nstruct S { v: i32 }\nimpl Mk for S { function mk(x: i32): Self { return S { v: x }; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-self-type-signature", "trait Tr { function d(self: i32): i32; }\nstruct S { v: i32 }\nimpl Tr for S { function d(self: Self): i32 { return self.v; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-default-override-signature", "trait Tr { function m(self: Self): i32; function d(self: string): i32 { return 1; } }\nstruct S { v: i32 }\nimpl Tr for S { function m(self: Self): i32 { return self.v; } function d(self: Self): i32 { return 2; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-inherited-default-self-type", "trait Tr { function m(self: Self): i32; function d(self: string): i32 { return 1; } }\nimpl Tr for i32 { function m(self: Self): i32 { return self; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-generic-trait-signature", "trait Tc[T] { function g(self: Self, d: T): T; }\nimpl Tc[i32] for i32 { function g(self: Self, d: i32[]): i32 { return self; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"impl-generic-trait-signature-ok", "trait Tc[T] { function g(self: Self, d: T): T; }\nimpl Tc[i32] for i32 { function g(self: Self, d: i32): i32 { return self + d; } }\nstruct B[T] { v: T }\nimpl[T] Tc[T] for B[T] { function g(self: Self, d: T): T { return d; } }\nfunction main(): i32 { return 3.g(4); }\n", nil},
+		{"impl-assoc-fn-signature-ok", "trait Mk { function mk(x: i32): Self; }\nstruct S { v: i32 }\nimpl Mk for S { function mk(x: i32): Self { return S { v: x }; } }\nfunction main(): i32 { return S.mk(3).v; }\n", nil},
+		// A generic literal passed to a generic parameter infers from its
+		// fields, not from the callee's unbound parameter (#12739).
+		{"generic-lit-arg-to-generic-param", "struct G[T] { v: T }\nfunction b[T](g: G[T]): T { return g.v; }\nfunction main(): i32 { return b(G { v: 1 }); }\n", nil},
+		// A struct-update base of another type is E003 in any body, a local
+		// function's included (#12695).
+		{"struct-update-base-local", "struct S { a: i32, b: i32 }\nfunction main(): i32 { function inner(o: Option[i32]): S { return S { ...o, a: 1 }; } return 0; }\n", []string{"E003"}},
+		{"struct-update-base-generic", "struct G[T] { v: T, n: i32 }\nfunction (g: G[T]) b(): G[T] { return G { ...g, n: 1 }; }\nfunction main(): i32 { let g: G[i32] = G { v: 1, n: 2 }; return g.b().n; }\n", nil},
 		// A receiver binds only the variables its declared type names, so on a
 		// concrete receiver the method's own parameter is unbound (#10991).
 		{"method-type-param-unbound-array", "function (xs: u8[]) count[T](values: T[]): i32 { return values.len() + xs.len(); }\nfunction main(): i32 { let b: u8[] = [1 as u8]; return b.count([]); }\n", []string{"E040"}},
@@ -3025,7 +3055,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// function, and the hoist rebuilds the decl rather than copying it
 		// — so the `[T]`-vs-`T[]` flag the report filter reads has to be carried
 		// along or this stops being reported with no other symptom.
-		{"e063-receiver-method-slice-ret", "function (xs: T[]) danger(): [T] { let local: T[] = [1, 2, 3]; return local[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-receiver-method-slice-ret", "function (xs: T[]) danger(): [T] { let local: T[] = [xs[0], xs[0], xs[0]]; return local[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		// Slicing an unbound TEMPORARY. The callee hands back storage it
 		// built, so the CALLER's frame owns it and the slice dangles —
 		// binding it first (`let t = mkarr(); return t[0:1];`) was already

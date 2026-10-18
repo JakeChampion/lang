@@ -113,8 +113,8 @@ the language.
 | Pass configuration | an optimisation whose off switch changes the answer, or a bug only the unoptimised path has | the non-sanitize `TestDifferential_SelfHost{X86_64,Arm64,Wasm}` legs compile half the seeds with a seed-chosen subset of `selfHostPassSwitches` (reuse, unit-plan replay, inlining, array fusion, the ndarray kernels) off |
 | **Sanitizer** | rc over-release, use of a freed block, leaks — wrong memory with a right answer | `TestDifferential_SelfHostSanitize{X86_64,Arm64,Wasm}`; wasm carries the leak census only |
 | Go checker vs self-host checker | a program one checker accepts and the other rejects | the self-host legs: a seed the self-host refuses to compile fails or skips by cause |
-| Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased or replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
-| Coverage feedback | not an oracle: steers mutation toward new self-host compiler paths | `TestSelfHostCoverageGuidedFuzz` |
+| Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased, or one `let`, parameter, result or struct-field type replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
+| Coverage feedback | steers mutation toward new self-host compiler paths, and every input that reaches one is judged by the exit-byte differential | `TestSelfHostCoverageGuidedFuzz` |
 
 ### Measuring it: the mutation score
 
@@ -186,6 +186,34 @@ regression test where the bug lived:
   `TestSelfHostCheckerCodesX86_64`.
 - **A dyn call's arguments went unchecked** (#12639, self-host checker; from a
   review of #12627). `TestSelfHostDynTraitArgsCheck`.
+- **An associated call's arguments went unchecked** (#12693, self-host
+  checker). `T.mk(true)` through a bound, and `S.mk(true)` through a trait
+  or an inherent impl in a local function. Rows in
+  `TestSelfHostCheckerCodesX86_64`.
+- **An impl's signature was compared with its trait's only partly** (#12694,
+  self-host checker). An associated function, a `self` not typed `Self`, an
+  overridden or inherited default, and a generic trait's requirement were
+  all skipped. Rows in `TestSelfHostCheckerCodesX86_64`.
+- **A struct-update base of another type had no diagnostic** (#12695,
+  self-host checker), so a local function accepted it. Rows in
+  `TestSelfHostCheckerCodesX86_64`.
+- **A generic literal passed to a generic parameter took the callee's `T`**
+  (#12739, Go checker), so `b(G { v: 1 })` was refused.
+  `TestGenericStructLitFieldCheckedAgainstDestination`.
+- **A type parameter was a wildcard in its own generic's body** (#12656,
+  self-host checker). `return 0` into a `T`, an `if` joining a `T` with an
+  `i32`, a field of type `T` given an `i32`, and `H::Item` returned as a
+  `string` were all accepted. A body's type parameters are now
+  `TypeErased`, equal only to themselves (`rigid_tparams`); a caller's
+  reading of the signature still erases them to unknown for inference. Rows
+  `rigid-tparam-*` in `TestSelfHostCheckerCodesX86_64`.
+- **An array literal fitted any `T[]` in a generic body** (Go checker; found
+  with #12656). `elemSettleable` let a destination element naming the
+  enclosing declaration's own parameter take any literal. Only a callee's
+  parameter does now. `TestArrayLiteralSettlingStillWorks`.
+- **A missing method on a `boolean` had no diagnostic** (self-host checker;
+  found with #12656), so a generic body, which gets no well-typedness hint,
+  accepted it. Row `bool-method-missing-in-generic`.
 - **A generator bug**: the ownership cluster reassigned a variable whose type
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.
@@ -221,17 +249,18 @@ built. Citations are to the paper that introduced the technique.
    cranelift-fuzzgen, CLIR): generate SSA directly and check the register
    allocator and the rc plan replay in isolation.
 6. **Coverage-guided generation** (Zest/JQF, ISSTA 2019 — fernsmith's byte
-   stream already makes it a parametric generator). The self-host coverage loop
-   exists but judges by `-check` only; putting the differential oracle in that
-   loop is the step.
+   stream already makes it a parametric generator). Done: the self-host
+   coverage loop judges every input that reaches new coverage with the
+   exit-byte differential.
 7. **EMI and semantics-preserving transformations** (Orion, PLDI 2014; Hermes,
    OOPSLA 2016; GraphicsFuzz, OOPSLA 2017): mutate real programs — the
    conformance corpus, coreutils, the compiler itself — in ways that must not
    change their output.
 8. **Type-checker fuzzing** (Hephaestus, PLDI 2022; Thalia, POPL 2024): erase
    annotations and overwrite types, and hold both checkers to one verdict.
-   Done as the checker-mutant oracle, in the x86_64 `diff-selfhost` lane; next is mutating more than `let` annotations (parameter and
-   return types, generic arguments).
+   Done as the checker-mutant oracle, in the x86_64 `diff-selfhost` lane. It
+   erases `let` annotations and overwrites `let`, parameter, result and
+   struct-field types; next is erasing a generic call's type arguments.
 9. **Fragments mined from bug history** (LegoFuzz, OOPSLA 2025; FeatureFuzz,
    2026; WhiteFox, OOPSLA 2024): `docs/rc-log/` and the tracker are a corpus of
    shapes that broke once.
@@ -249,5 +278,4 @@ In order:
    to be stable, and the survivors worked down.
 2. Chaos fuel: a decision counter in the compiler, so a pass-configuration
    failure bisects to one decision.
-3. Differential oracle inside the coverage-guided loop.
-4. Signature-based nightly triage.
+3. Signature-based nightly triage.

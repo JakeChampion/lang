@@ -190,10 +190,9 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 			"let g: i32 = ;\nfunction a(): i32 {\n  let x: i32 = ;\n  let y: i32 = @;\n  return 0;\n}\nfunction b(): i32 {\n  if x > 1) { return 1; }\n  return 1 + ;\n}\nfunction main(): i32 {\n  return a() + b() + g;\n}\n",
 			"error[P001]: in fn 'a': expected an expression, got \";\" (3:16)\n" +
 				"error[P001]: in fn 'a': expected an expression, got \"@\" (4:16)\n" +
-				"error[P001]: in fn 'b': expected \"(\" after \"if\" (8:6)\n" +
-				"error[P001]: in fn 'b': expected an expression, got \")\" (8:11)\n" +
 				"error[P001]: in fn 'b': expected an expression, got \";\" (9:14)\n" +
-				"error[P001]: at top level: expected an expression, got \";\" (1:14)"},
+				"error[P001]: at top level: expected an expression, got \";\" (1:14)\n" +
+				"error[P001]: at top level: expected \"(\", got \"x\" (8:6)"},
 		// A sentinel inside a defer's action: the walk descends StmtDefer.
 		{"defer-action-sentinel",
 			"function main(): i32 {\n  defer print(;);\n  return 0;\n}\n",
