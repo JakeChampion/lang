@@ -1,0 +1,18 @@
+# flag-lib — fern_flag, sourced (`. "$(dirname "${BASH_SOURCE[0]}")/flag-lib"`)
+# by the scripts that read a boolean FERN_* variable, so they agree with the
+# compiler's std/cli flag_on and Go's internal/envflag on what turns one on.
+# shellcheck shell=bash
+
+# fern_flag NAME [UNSET] — succeeds when the variable NAME is on: "", 0, false
+# and off, in any case, are off, anything else is on. An unset NAME is off,
+# or on when UNSET is 1.
+fern_flag() {
+  if [ -z "${!1+set}" ]; then
+    [ "${2:-0}" = 1 ]
+    return
+  fi
+  case "$(printf '%s' "${!1}" | tr '[:upper:]' '[:lower:]')" in
+    '' | 0 | false | off) return 1 ;;
+  esac
+  return 0
+}

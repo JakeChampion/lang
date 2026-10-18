@@ -6100,11 +6100,10 @@ function main(): i32 { return total([1, 2, 3]); }`,
 		// rejected this, which broke `settle-nested-array-ok` on main.
 		`function main(): i32 { let xs: f64[][] = [[1], [2]]; return 0; }`,
 		`function main(): i32 { let xs: f64[][][] = [[[1]], [[2]]]; return 0; }`,
-		// A destination element that is still a type PARAMETER names no
-		// concrete type for the literal to contradict — monomorph decides
-		// what it settles to. The first cut rejected this too.
-		`function build[T](): i32 { let local: T[] = [1, 2, 3]; return local.len(); }
-function main(): i32 { return 0; }`,
+		// A callee's type parameter is the call's to infer, so a literal
+		// argument settles to it.
+		`function count[T](xs: T[]): i32 { return xs.len(); }
+function main(): i32 { return count([1, 2, 3]); }`,
 		// A literal local is still a literal, and a cast variable is a u8.
 		`function main(): i32 { let k = 5; let xs: u8[] = [k, 1]; return xs.len(); }`,
 		`function f(b: i32): i32 { let xs: u8[] = [b as u8, 2]; return xs.len(); }
@@ -6114,6 +6113,13 @@ function main(): i32 { return f(3); }`,
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("should type-check: %v\n%s", err, src)
 		}
+	}
+	// The enclosing declaration's own type parameter is opaque in its body,
+	// so a literal of concrete elements does not fit it (#12656).
+	bad := `function build[T](): i32 { let local: T[] = [1, 2, 3]; return local.len(); }
+function main(): i32 { return 0; }`
+	if err := checkSource(t, bad); err == nil || !strings.Contains(err.Error(), "expected T[], got i32[]") {
+		t.Errorf("want E003 expected T[], got i32[]; got %v", err)
 	}
 }
 

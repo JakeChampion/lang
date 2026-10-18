@@ -55,6 +55,7 @@
 # error, and arguing against the re-run that was in fact the whole fix.
 
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/flag-lib"
 
 DIR="${1:?usage: ci-verify-shard-outcomes DIR HOST=NSHARD [HOST=NSHARD ...]}"
 shift
@@ -63,7 +64,6 @@ shift
   exit 2
 }
 
-tolerate_vanished="${FERN_CI_TOLERATE_VANISHED_SHARDS:-0}"
 
 failed=()   # shard ran its tests and they failed
 notrun=()   # shard left a marker saying its test step never executed
@@ -121,7 +121,7 @@ fi
 
 nosignal=$((${#notrun[@]} + ${#vanished[@]}))
 if [ "$nosignal" -gt 0 ]; then
-  if [ "$tolerate_vanished" = "1" ]; then
+  if fern_flag FERN_CI_TOLERATE_VANISHED_SHARDS; then
     echo "tolerating $nosignal shard(s) that reported no result: FERN_CI_TOLERATE_VANISHED_SHARDS=1" >&2
     exit 0
   fi

@@ -1,4 +1,4 @@
-// Range match-pattern coverage (#5355 slice): `match x { 1..10 => … }`.
+// Range match-pattern coverage (#5355 slice): `match (x) { 1..10 => … }`.
 //
 // A range pattern is a scalar-match arm whose test is a bound check
 // (`scr >= lo && scr <op> hi`) instead of an equality — `..` is exclusive

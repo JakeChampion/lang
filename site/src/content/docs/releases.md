@@ -53,8 +53,9 @@ built for every commit are also attached to its run of the
 
 A pinned `fern` needs nothing else, network included: it is the compiler,
 with the standard library inside it. On first use it unpacks that library
-into a `stdlib-<digest>` directory under `$FERN_CACHE_DIR`,
-`$XDG_CACHE_HOME` or `~/.cache`.
+into a `stdlib-<digest>` directory under `$FERN_CACHE_DIR`, else
+`~/Library/Caches/fern` on macOS and `$XDG_CACHE_HOME/fern` or
+`~/.cache/fern` elsewhere.
 
 The same applies to dependencies: `fern -resolve` writes the versions it
 chose to a `fern.lock`, and `fern -vendor` flattens the resolved graph

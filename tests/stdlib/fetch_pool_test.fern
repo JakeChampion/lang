@@ -1,0 +1,73 @@
+import "std/test";
+import "std/fetch";
+import "std/async";
+
+// tests/stdlib/fetch_pool_test.fern — the pool's table of connections a
+// serve loop keeps watched between a task's reads (`Idle.armed`), pure:
+// a plain pool's reads wait as readable; a loop's pool (`idle_shared`)
+// asks for `async.KEEP` on a connection's first read and `async.WATCHED`
+// after, and `disarm` makes the next read ask again. No socket is opened:
+// `disarm` closes only a connection the pool holds idle, and none is.
+//
+// Run:  fern -interp tests/stdlib/fetch_pool_test.fern
+
+function test_plain_pool_reads_as_readable(): test.TestOutcome {
+  let p: fetch.Idle = fetch.idle();
+  if (p.read_interest(7) != 1 || p.read_interest(7) != 1) {
+    return test.fail("a plain pool's read asked for more than readability");
+  }
+  return test.assert_eq(p.armed(7), false);
+}
+
+function test_loop_pool_keeps_a_connection_watched(): test.TestOutcome {
+  let p: fetch.Idle = fetch.idle_shared();
+  if (p.armed(7)) {
+    return test.fail("a connection never read was counted as watched");
+  }
+  if (p.read_interest(7) != (1 | async.KEEP)) {
+    return test.fail("the first read did not ask to keep the watch");
+  }
+  if (!p.armed(7)) {
+    return test.fail("the first read left the connection unwatched");
+  }
+  if (p.read_interest(7) != (1 | async.WATCHED)) {
+    return test.fail("the second read did not say the connection is watched");
+  }
+  if (p.read_interest(9) != (1 | async.KEEP)) {
+    return test.fail("another connection's first read did not ask to keep the watch");
+  }
+  return test.assert_eq(p.armed(9), true);
+}
+
+function test_disarm_asks_again(): test.TestOutcome {
+  let p: fetch.Idle = fetch.idle_shared();
+  let first: i32 = p.read_interest(7);
+  let other: i32 = p.read_interest(9);
+  p.disarm(7);
+  if (p.armed(7)) {
+    return test.fail("a disarmed connection was still counted as watched");
+  }
+  if (!p.armed(9)) {
+    return test.fail("disarming one connection forgot another");
+  }
+  if (p.read_interest(7) != (1 | async.KEEP)) {
+    return test.fail("the read after a disarm did not ask to keep the watch");
+  }
+  return test.assert_eq(p.read_interest(9), 1 | async.WATCHED);
+}
+
+function test_interest_bits_strip_the_flags(): test.TestOutcome {
+  if (async.interest_bits(1 | async.KEEP) != 1 || async.interest_bits(1 | async.WATCHED) != 1) {
+    return test.fail("the flags were not stripped from a readable interest");
+  }
+  return test.assert_eq(async.interest_bits(2 | async.ONESHOT), 2 | async.ONESHOT);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("fetch pool");
+  r = r.it("a plain pool reads as readable", test_plain_pool_reads_as_readable);
+  r = r.it("a loop's pool keeps a connection watched", test_loop_pool_keeps_a_connection_watched);
+  r = r.it("disarm asks again", test_disarm_asks_again);
+  r = r.it("interest_bits strips the flags", test_interest_bits_strip_the_flags);
+  return r.finish();
+}

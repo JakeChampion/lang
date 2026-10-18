@@ -15,13 +15,13 @@ import (
 )
 
 // TestDifferential_CheckerMutants runs both checkers over type mutants of
-// the fernsmith corpus: each program with one `let` annotation erased or
-// replaced by another type (fernsmith.TypeMutants). The Go checker and the
-// self-host checker must agree on whether each mutant type-checks. A mutant
-// one accepts and the other rejects is a soundness hole in the one that
-// accepts or a completeness gap in the one that rejects, and the generated
-// corpus alone never shows either: fernsmith writes only well-typed
-// programs. An erased mutant that checks must also compute what the original
+// the fernsmith corpus: each program with one `let` annotation erased, or one
+// `let`, parameter, result or struct-field type replaced by another
+// (fernsmith.TypeMutants). The Go checker and the self-host checker must
+// agree on whether each mutant type-checks. A mutant one accepts and the
+// other rejects is a soundness hole in the one that accepts or a completeness
+// gap in the one that rejects, and the generated corpus alone never shows
+// either: fernsmith writes only well-typed programs. An erased mutant that checks must also compute what the original
 // did, which catches inference settling on a different type than the
 // annotation named.
 func TestDifferential_CheckerMutants(t *testing.T) {

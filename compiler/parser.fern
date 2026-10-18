@@ -28,6 +28,7 @@ import "./astwalk";
 import "./util";
 import "./lexer";
 import "./typeinfo";
+import "std/cli";
 
 // =================== PARSER ====================
 
@@ -186,12 +187,9 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
   eprint("warning: " + driver + " has no module loader; UNRESOLVED imports: " + paths);
   eprint("warning: any verdict below (ir/refused, exit code, eligibility bail) describes a BROKEN program, not the language.");
   eprint("warning: to judge this program use a loading driver: `fern <prog> <stdlib-root>`, or asm_load_run.");
-  match (env("FERN_STRICT_IMPORTS")) {
-    Some(_) => {
-      eprint("error: FERN_STRICT_IMPORTS=1 refuses an unresolvable-import run");
-      exit(3);
-    },
-    None => {}
+  if (cli.env_flag("FERN_STRICT_IMPORTS")) {
+    eprint("error: FERN_STRICT_IMPORTS refuses an unresolvable-import run");
+    exit(3);
   }
   return true;
 }
@@ -818,9 +816,7 @@ function parse_struct_destructure(p: Par, struct_name: string, at: string, line:
   if (!fields_ok) {
     return (s_unknown(p, "a struct destructuring pattern binds field names"), p);
   }
-  if (p.peek_punct() == "=") {
-    p = p.advance();
-  }
+  p = p.expect("=");
   let (init_expr, ip) = parse_expr(p);
   p = ip;
   p = p.end_of(init_expr);
@@ -1864,6 +1860,19 @@ function (p: Par) expect_semi(): Par {
     return p;
   }
   return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \";\", got " + tok_desc(p.peek()))) };
+}
+
+// expect consumes the punctuation or keyword `t` a construct requires next, or
+// records native's P001 "expected \"t\", got X" where it is missing and parses
+// on as if it were there. At the end of the input unclosed_brace reports.
+function (p: Par) expect(t: string): Par {
+  if (p.peek_punct() == t || p.peek_keyword() == t) {
+    return p.advance();
+  }
+  if (p.at_end()) {
+    return p;
+  }
+  return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \"" + t + "\", got " + tok_desc(p.peek()))) };
 }
 
 // end_of is expect_semi after a statement ending in `e`. An expression the
@@ -3229,20 +3238,27 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
 // parse_expr_from_text re-lexes + parses an f-string interpolant's
 // raw text into an Expr. The lexer already isolated the interpolant
 // (balanced braces, inner string literals skipped), so a fresh
-// tokenize + parse_expr round-trip recovers the AST. Mirrors the Go
-// parser's parseExprFromText.
+// tokenize + parse_expr round-trip recovers the AST. Anything beyond
+// one expression is a P001 at the first token left over, as the Go
+// parser's parseExprFromText reports it. The sub-parse runs in the
+// caller's verbatim mode and hands its type errors and `todo` sites
+// back on `p`.
 //
 // `base_line` / `base_col` are where `text` starts in the enclosing
 // file. The re-lex numbers `text` from 1:1, so the tokens are rebased
 // before parsing and every node the parse produces names the file.
-function parse_expr_from_text(text: string, base_line: i32, base_col: i32): ast.Expr {
+function parse_expr_from_text(p: Par, text: string, base_line: i32, base_col: i32): (ast.Expr, Par) {
   let toks: lexer.Token[] = lexer.rebase_tokens(lexer.tokenize(text), base_line, base_col);
   if let Some(le) = stream_lex_error(toks) {
-    return e_unknown_at(lex_error_kind(le), le.line, le.col);
+    return (e_unknown_at(lex_error_kind(le), le.line, le.col), p);
   }
-  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [] };
+  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [] };
   let (r_expr, r_p) = parse_expr(sub);
-  return r_expr;
+  let outer: Par = Par { ...p, type_errs: r_p.type_errs, todos: r_p.todos };
+  if (!r_p.at_end()) {
+    return (e_unknown_at("f-string interpolation: unexpected trailing tokens after expression", r_p.peek_line(), r_p.peek_col()), outer);
+  }
+  return (r_expr, outer);
 }
 
 // parse_primary: number, ident (which may extend to call), string,
@@ -3559,7 +3575,12 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
           vflags = vflags.append(vpart.is_expr);
           if (vpart.is_expr) {
             vlits = vlits.append("");
-            vexprs = vexprs.append(parse_expr_from_text(vpart.expr, vpart.line, vpart.col));
+            let (ve, vp) = parse_expr_from_text(p, vpart.expr, vpart.line, vpart.col);
+            p = vp;
+            if let ast.ExprUnknown(_) = ve {
+              return (ve, p);
+            }
+            vexprs = vexprs.append(ve);
           } else {
             vlits = vlits.append(vpart.lit);
             vexprs = vexprs.append(e_unknown("fstring-literal-part"));
@@ -3572,6 +3593,8 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       // FString lowering: literal parts → string literals,
       // interpolant parts → `(<sub-parsed expr>).to_string()`,
       // folded left-to-right. An empty f-string desugars to "".
+      // A placeholder that does not parse stands for the whole f-string,
+      // so it is reported once, as the Go parser does.
       let built: ast.Expr = e_string("");
       let has: boolean = false;
       let i: i32 = 0;
@@ -3580,7 +3603,12 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let piece: ast.Expr = e_string(part.lit);
         if (part.is_expr) {
           let no_args: ast.Expr[] = [];
-          piece = e_call(e_field_access(parse_expr_from_text(part.expr, part.line, part.col), "to_string"), no_args);
+          let (pe, pp) = parse_expr_from_text(p, part.expr, part.line, part.col);
+          p = pp;
+          if let ast.ExprUnknown(_) = pe {
+            return (pe, p);
+          }
+          piece = e_call_at(e_field_access_at(pe, "to_string", f.line, f.col), no_args, f.line, f.col);
         }
         if (!has) {
           built = piece;
@@ -4775,9 +4803,7 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (ast.StructArm[], 
       s_guard = sgr_expr;
       s_has_guard = true;
     }
-    if (p.peek_punct() == "=>") {
-      p = p.advance();
-    }
+    p = p.expect("=>");
     let sbody: ast.Stmt[] = [];
     let sbrt: string = "i32";
     if (expr_form) {
@@ -4808,9 +4834,7 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (ast.StructArm[], 
     }
     break;
   }
-  if (p.peek_punct() == "}") {
-    p = p.advance();
-  }
+  p = p.expect("}");
   return (arms, rt, all_ok, p);
 }
 
@@ -5124,30 +5148,21 @@ function parse_branch_body_written(p: Par): (ast.Stmt[], string, boolean, Par) {
 // total). A lone trailing expression with no leading statements stays
 // `[s_return(expr)]`, byte-identical to the pre-block-expr behaviour.
 function parse_if_chain(p: Par): IfChain {
-  p = p.advance();  // `if`
-  if (p.peek_punct() == "(") {
-    p = p.advance();
-  }
-  let (condr_expr, condr_p) = parse_expr(p);
+  let (condr_expr, condr_p) = parse_paren_head(p.advance());
   p = condr_p;
-  if (p.peek_punct() == ")") {
-    p = p.advance();
-  }
   let (thenb_body, thenb_rt, then_dead, thenb_p) = parse_branch_body_written(p);
-  p = thenb_p;
+  let else_written: boolean = thenb_p.peek_keyword() == "else";
+  p = thenb_p.expect("else");
   let then_body: ast.Stmt[] = thenb_body;
   let rt: string = thenb_rt;
-  if (p.peek_keyword() == "else") {
-    p = p.advance();
-  }
   let else_body: ast.Stmt[] = [];
   let else_dead = false;
-  if (p.peek_keyword() == "if") {
+  if (p.peek_keyword() == "if" && else_written) {
     // `else if (…) { … }` — the else arm is itself an if-chain.
     let nested: IfChain = parse_if_chain(p);
     p = nested.par;
     else_body = [nested.stmt];
-  } else {
+  } else if (else_written || p.peek_punct() == "{") {
     let (elseb_body, elseb_rt, elseb_dead, elseb_p) = parse_branch_body_written(p);
     p = elseb_p;
     else_body = elseb_body;
@@ -5174,19 +5189,9 @@ function parse_if_chain(p: Par): IfChain {
 function parse_match_expr(p: Par): IfChain {
   let mkline: i32 = p.peek_line();
   let mkcol: i32 = p.peek_col();
-  p = p.advance();  // `match`
-  if (p.peek_punct() == "(") {
-    p = p.advance();
-  }
-  let (sr_expr, sr_p) = parse_expr(p);
-  p = sr_p;
-  if (p.peek_punct() == ")") {
-    p = p.advance();
-  }
+  let (sr_expr, sr_p) = parse_paren_head(p.advance());
+  p = sr_p.expect("{");
   let rt: string = "i32";
-  if (p.peek_punct() == "{") {
-    p = p.advance();
-  }
   // A `(` at the FIRST arm's pattern position marks a match on a
   // TUPLE scrutinee — same build_tuple_match desugar as the statement
   // form; the surrounding IIFE (built by the caller) turns the
@@ -5242,9 +5247,7 @@ function parse_match_expr(p: Par): IfChain {
         et_guard = etgr_expr;
         et_has_guard = true;
       }
-      if (p.peek_punct() == "=>") {
-        p = p.advance();
-      }
+      p = p.expect("=>");
       let etbody: ast.Stmt[] = [];
       let etrt: string = "i32";
       if (p.peek_punct() == "{") {
@@ -5282,9 +5285,7 @@ function parse_match_expr(p: Par): IfChain {
       }
       break;
     }
-    if (p.peek_punct() == "}") {
-      p = p.advance();
-    }
+    p = p.expect("}");
     // Route the arm values through a value LOCAL rather than through
     // `return`: build_tuple_match splices each arm body into the done-flag
     // if-chain, where a `return` would leave the enclosing function instead
@@ -5363,9 +5364,7 @@ function parse_match_expr(p: Par): IfChain {
         lguard = lgr_expr;
         lhas_guard = true;
       }
-      if (p.peek_punct() == "=>") {
-        p = p.advance();
-      }
+      p = p.expect("=>");
       // A `{ … }` arm body is a block-with-tail (block-expressions
       // slice 1): leading statements then the trailing value. A bare
       // expression arm body stays the pre-block-expr single-expr form.
@@ -5402,9 +5401,7 @@ function parse_match_expr(p: Par): IfChain {
       }
       break;
     }
-    if (p.peek_punct() == "}") {
-      p = p.advance();
-    }
+    p = p.expect("}");
     // Anything but a name is read once into a local declared ahead of the
     // match, so the chain itself keeps the single-statement shape. The
     // refused shapes build_literal_match hands back as a StmtMatch never
@@ -5445,9 +5442,7 @@ function parse_match_expr(p: Par): IfChain {
       arm_guard = gr_expr;
       arm_has_guard = true;
     }
-    if (p.peek_punct() == "=>") {
-      p = p.advance();
-    }
+    p = p.expect("=>");
     // A `{ … }` arm body is a block-with-tail (block-expressions slice
     // 1): leading statements then the trailing value. A bare expression
     // arm body stays the pre-block-expr single-expr form.
@@ -5490,9 +5485,7 @@ function parse_match_expr(p: Par): IfChain {
     }
     break;
   }
-  if (p.peek_punct() == "}") {
-    p = p.advance();
-  }
+  p = p.expect("}");
   let esugar: ast.MatchArm[] = [];
   if (arms_have_written_form(ewritten)) {
     esugar = ewritten;
@@ -5692,6 +5685,43 @@ function parse_pipe(p: Par): (ast.Expr, Par) {
 }
 
 // parse_stmt: `let x = expr;`, `return expr;`, or `expr;`.
+// parse_paren_head reads the `(e)` after `if`, `while` or `match`. A head
+// written without its `(` is refused there alone, not again at its `)`.
+function parse_paren_head(p: Par): (ast.Expr, Par) {
+  let opened: boolean = p.peek_punct() == "(";
+  let (e, ep) = parse_expr(p.expect("("));
+  if (opened || ep.peek_punct() == ")") {
+    return (e, ep.expect(")"));
+  }
+  return (e, ep);
+}
+
+// parse_let_else_tail reads the `else { … };` of a let-else, cursor past its
+// initializer, and then the rest of the enclosing block, which becomes the
+// success arm so the pattern's bindings stay live for it.
+function parse_let_else_tail(p: Par): (ast.Stmt[], ast.Stmt[], Par) {
+  let else_body: ast.Stmt[] = [];
+  let written: boolean = p.peek_keyword() == "else";
+  p = p.expect("else");
+  if (written || p.peek_punct() == "{") {
+    let (eb, ep) = parse_block(p);
+    else_body = eb;
+    p = ep;
+  }
+  p = p.expect_semi();
+  let rest: ast.Stmt[] = [];
+  while (p.peek_punct() != "}" && !p.at_end()) {
+    let (rs, rp) = parse_stmt(p);
+    if (rp.pos == p.pos) {
+      p = p.advance();
+      continue;
+    }
+    p = rp;
+    rest = rest.append(rs);
+  }
+  return (else_body, rest, p);
+}
+
 // parse_block consumes `{ stmt; stmt; … }` and returns the
 // resulting Stmt[]. The opening `{` is expected to be the current
 // token. On malformed input — missing `{` or `}` — the result is
@@ -6575,21 +6605,8 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
   // E030 (non-exhaustive match) is reported at the `match` keyword.
   let mkline: i32 = p.peek_line();
   let mkcol: i32 = p.peek_col();
-  p = p.advance();  // consume `match`
-  let empty_arms: ast.MatchArm[] = [];
-  if (p.peek_punct() != "(") {
-    return (s_match(e_unknown_at("match: missing (", p.peek_line(), p.peek_col()), empty_arms), p);
-  }
-  p = p.advance();
-  let (sr_expr, sr_p) = parse_expr(p);
-  p = sr_p;
-  if (p.peek_punct() == ")") {
-    p = p.advance();
-  }
-  if (p.peek_punct() != "{") {
-    return (s_match_at(sr_expr, empty_arms, mkline, mkcol), p);
-  }
-  p = p.advance();
+  let (sr_expr, sr_p) = parse_paren_head(p.advance());
+  p = sr_p.expect("{");
   // A `(` at the FIRST arm's pattern position marks a match on a
   // TUPLE scrutinee: parse every arm as a tuple pattern / `_` and
   // desugar to the flag-chain build_tuple_match emits.
@@ -6647,9 +6664,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
         t_guard = tgr_expr;
         t_has_guard = true;
       }
-      if (p.peek_punct() == "=>") {
-        p = p.advance();
-      }
+      p = p.expect("=>");
       let (tbb_body, tbb_p) = parse_block(p);
       p = tbb_p;
       if (t_wild) {
@@ -6672,9 +6687,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
       }
       break;
     }
-    if (p.peek_punct() == "}") {
-      p = p.advance();
-    }
+    p = p.expect("}");
     return (build_tuple_match(sr_expr, tarms, mkline, mkcol), p);
   }
   // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (see
@@ -6725,9 +6738,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
         lguard = lgr_expr;
         lhas_guard = true;
       }
-      if (p.peek_punct() == "=>") {
-        p = p.advance();
-      }
+      p = p.expect("=>");
       let (lbb_body, lbb_p) = parse_block(p);
       p = lbb_p;
       if (lwild) {
@@ -6746,9 +6757,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
       }
       break;
     }
-    if (p.peek_punct() == "}") {
-      p = p.advance();
-    }
+    p = p.expect("}");
     return (build_literal_match(sr_expr, lit_arms, mkline, mkcol), p);
   }
   let arms: ast.MatchArm[] = [];
@@ -6786,9 +6795,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
       arm_has_guard = true;
     }
     // `=>` arrives as a single punct token from the lexer.
-    if (p.peek_punct() == "=>") {
-      p = p.advance();
-    }
+    p = p.expect("=>");
     let (bb_body, bb_p) = parse_block(p);
     p = bb_p;
     let pi: i32 = 0;
@@ -6808,9 +6815,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
     }
     break;
   }
-  if (p.peek_punct() == "}") {
-    p = p.advance();
-  }
+  p = p.expect("}");
   let sugar: ast.MatchArm[] = [];
   if (arms_have_written_form(written)) {
     sugar = written;
@@ -6986,9 +6991,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
         p = fcstep_p;
         stepone = [fcstep_stmt];
       }
-      if (p.peek_punct() == ")") {
-        p = p.advance();
-      }
+      p = p.expect(")");
       let (fcbody_body, fcbody_p) = parse_block(p);
       p = fcbody_p;
       let flag: string = "__forc_" + util.i32_to_string(cfl) + "_" + util.i32_to_string(cfc);
@@ -7029,9 +7032,10 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     if (!kvok || kvcount < 2) {
       return (s_unknown(p, "for pattern needs at least 2 binders"), p);
     }
-    if (p.peek_ident() == "in") {
-      p = p.advance();
+    if (p.peek_ident() != "in") {
+      return (s_unknown(p, "missing `in` in for"), p);
     }
+    p = p.advance();
     // Suppress trailing struct-literal parsing — the `{` that
     // follows the iter opens the loop body, not a struct lit.
     let kv_saved: boolean = p.no_struct;
@@ -7395,9 +7399,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         if (!ils_ok) {
           return (s_unknown(p, "a struct pattern binds field names"), p);
         }
-        if (p.peek_punct() == "=") {
-          p = p.advance();
-        }
+        p = p.expect("=");
         let ils_saved: boolean = p.no_struct;
         let (ils_scrut, ils_sp) = parse_expr(p.with_no_struct(true));
         p = ils_sp.with_no_struct(ils_saved);
@@ -7455,9 +7457,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
           }
           ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilo_kinds, binds: ilo_binds, lits: ilo_lits, elem_pats: ilo_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
         }
-        if (p.peek_punct() == "=") {
-          p = p.advance();
-        }
+        p = p.expect("=");
         let ilt_saved: boolean = p.no_struct;
         let (ilt_scrut, ilt_sp) = parse_expr(p.with_no_struct(true));
         p = ilt_sp.with_no_struct(ilt_saved);
@@ -7496,9 +7496,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         p = ill_atp;
         let (ill_lits, ill_his, ill_hrs, ill_incs, ill_p) = parse_lit_alts(p);
         p = ill_p;
-        if (p.peek_punct() == "=") {
-          p = p.advance();
-        }
+        p = p.expect("=");
         let ill_saved: boolean = p.no_struct;
         let (ill_scrut, ill_sp) = parse_expr(p.with_no_struct(true));
         p = ill_sp.with_no_struct(ill_saved);
@@ -7538,9 +7536,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         p = ilalt_p;
         ilpats = ilpats.append(ilalt_pattern);
       }
-      if (p.peek_punct() == "=") {
-        p = p.advance();
-      }
+      p = p.expect("=");
       // The source expression is followed directly by the then-block's
       // `{`, so struct-literal parsing must be suppressed while reading
       // it (native sets p.noStructLit here) — otherwise a bare-ident
@@ -7591,15 +7587,8 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       }
       return (s_match_origin_sugared(ilscrut_expr, ilarms, ilsugar, il_line, il_col, "if_let"), p);
     }
-    if (p.peek_punct() != "(") {
-      return (s_unknown(p, "missing ( in if"), p);
-    }
-    p = p.advance();
-    let (c_expr, c_p) = parse_expr(p);
+    let (c_expr, c_p) = parse_paren_head(p);
     p = c_p;
-    if (p.peek_punct() == ")") {
-      p = p.advance();
-    }
     let (then_blk_body, then_blk_p) = parse_block_or_stmt(p);
     p = then_blk_p;
     let else_body: ast.Stmt[] = [];
@@ -7625,16 +7614,8 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     return (s_if_chained(c_expr, then_blk_body, else_body, else_chained), p);
   }
   if (kw == "while") {
-    p = p.advance();
-    if (p.peek_punct() != "(") {
-      return (s_unknown(p, "missing ( in while"), p);
-    }
-    p = p.advance();
-    let (wc_expr, wc_p) = parse_expr(p);
+    let (wc_expr, wc_p) = parse_paren_head(p.advance());
     p = wc_p;
-    if (p.peek_punct() == ")") {
-      p = p.advance();
-    }
     let (wb_body, wb_p) = parse_block_or_stmt(p);
     p = wb_p;
     return (with_loop_label(s_while(wc_expr, wb_body), loop_label), p);
@@ -7675,9 +7656,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       if (!tdok || tdcount < 2) {
         return (s_unknown(p, "a tuple destructuring pattern binds names, not literals"), p);
       }
-      if (p.peek_punct() == "=") {
-        p = p.advance();
-      }
+      p = p.expect("=");
       let (tdinit_expr, tdinit_p) = parse_expr(p);
       p = tdinit_p;
       p = p.end_of(tdinit_expr);
@@ -7685,10 +7664,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     }
     // `let 3 = n else { … };` — a LITERAL or RANGE head, including
     // `|` alternatives (`let 1 | 2 = n else …`). A binding needs a name,
-    // so a literal here is unambiguously a let-else pattern; it still
-    // parses speculatively, because only the `else` past the initializer
-    // makes it one, and without it the head must reach the
-    // missing-var-name error below rather than a half-consumed cursor.
+    // so a literal here is unambiguously a let-else pattern.
     //
     // Same shape as the variant-pattern let-else: the rest of the
     // enclosing block is the success arm, so the `else` block is the only
@@ -7696,35 +7672,17 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     if (p.peek_is_pat_literal() || p.peek_at_literal()) {
       let (lel_at, lel_atp) = take_at_binding(p);
       let (lel_lits, lel_his, lel_hrs, lel_incs, lel_p) = parse_lit_alts(lel_atp);
-      if (lel_p.peek_punct() == "=") {
-        lel_p = lel_p.advance();
-        let (lel_init, lel_ip) = parse_expr(lel_p);
-        lel_p = lel_ip;
-        if (lel_p.peek_keyword() == "else") {
-          p = lel_p.advance();  // consume `else`
-          let (lel_else, lel_ep) = parse_block(p);
-          p = lel_ep;
-          p = p.expect_semi();
-          let lel_rest: ast.Stmt[] = [];
-          while (p.peek_punct() != "}" && !p.at_end()) {
-            let (lel_rs, lel_rp) = parse_stmt(p);
-            if (lel_rp.pos == p.pos) {
-              p = p.advance();
-              continue;
-            }
-            p = lel_rp;
-            lel_rest = lel_rest.append(lel_rs);
-          }
-          let lel_arms: ast.LitArm[] = [];
-          let lel_i: i32 = 0;
-          while (lel_i < lel_lits.len()) {
-            lel_arms = lel_arms.append(ast.LitArm { is_wild: false, lit: lel_lits[lel_i], guard: e_bool(true), has_guard: false, body: lel_rest, line: vline, col: vcol, range_hi: lel_his[lel_i], has_range: lel_hrs[lel_i], range_inclusive: lel_incs[lel_i], alt_cont: lel_i > 0, at_binding: lel_at });
-            lel_i = lel_i + 1;
-          }
-          lel_arms = lel_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: lel_else, line: vline, col: vcol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
-          return (with_sugar_origin(build_literal_match(lel_init, lel_arms, vline, vcol), "let_else"), p);
-        }
+      let (lel_init, lel_ip) = parse_expr(lel_p.expect("="));
+      let (lel_else, lel_rest, lel_restp) = parse_let_else_tail(lel_ip);
+      p = lel_restp;
+      let lel_arms: ast.LitArm[] = [];
+      let lel_i: i32 = 0;
+      while (lel_i < lel_lits.len()) {
+        lel_arms = lel_arms.append(ast.LitArm { is_wild: false, lit: lel_lits[lel_i], guard: e_bool(true), has_guard: false, body: lel_rest, line: vline, col: vcol, range_hi: lel_his[lel_i], has_range: lel_hrs[lel_i], range_inclusive: lel_incs[lel_i], alt_cont: lel_i > 0, at_binding: lel_at });
+        lel_i = lel_i + 1;
       }
+      lel_arms = lel_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: lel_else, line: vline, col: vcol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
+      return (with_sugar_origin(build_literal_match(lel_init, lel_arms, vline, vcol), "let_else"), p);
     }
     let name: string = p.peek_ident();
     if (name.len() == 0) {
@@ -7746,14 +7704,9 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     }
     // `let PAT = E else { … }` with a pattern-shaped head takes the shared
     // grammar: parse_pattern gives it nested payloads, `@` bindings and
-    // or-patterns, the same forms `if let` and the match arms accept.
-    //
-    // A head spelled `NAME(`, `NAME@`, `NAME|` or `NAME.` (a qualified
-    // variant, `Color.Red(n)`) is never a plain binding, but only an
-    // `else` makes it a let-else, and that keyword sits past the
-    // initializer. Par is a value, so the whole head is parsed
-    // speculatively and thrown away when no `else` follows, leaving the
-    // original cursor to the paths below.
+    // or-patterns, the same forms `if let` and the match arms accept. A head
+    // spelled `NAME(`, `NAME@`, `NAME|` or `NAME.` (a qualified variant,
+    // `Color.Red(n)`) is never a plain binding, so it requires the `= E else`.
     if (p.peek_punct() == "(" || p.peek_punct() == "@" || p.peek_punct() == "|" || p.at_path_sep()) {
       let (lsp_pat, lsp_p) = parse_pattern(le_pat_start);
       let lsp_pats: ast.Pattern[] = [lsp_pat];
@@ -7763,90 +7716,39 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         lsp_p = lsp_ap;
         lsp_pats = lsp_pats.append(lsp_alt);
       }
-      if (lsp_p.peek_punct() == "=") {
-        lsp_p = lsp_p.advance();
-        let (lsp_init, lsp_ip) = parse_expr(lsp_p);
-        lsp_p = lsp_ip;
-        if (lsp_p.peek_keyword() == "else") {
-          p = lsp_p.advance();  // consume `else`
-          let (lsp_else, lsp_ep) = parse_block(p);
-          p = lsp_ep;
-          p = p.expect_semi();
-          // The rest of the enclosing block is the success arm, so
-          // the bindings stay live for it — see the note on the
-          // single-binding path below.
-          let lsp_rest: ast.Stmt[] = [];
-          while (p.peek_punct() != "}" && !p.at_end()) {
-            let (lsp_rs, lsp_rp) = parse_stmt(p);
-            if (lsp_rp.pos == p.pos) {
-              p = p.advance();
-              continue;
-            }
-            p = lsp_rp;
-            lsp_rest = lsp_rest.append(lsp_rs);
-          }
-          let lsp_arms: ast.MatchArm[] = [];
-          let lsp_written: ast.MatchArm[] = [];
-          let lsp_i: i32 = 0;
-          while (lsp_i < lsp_pats.len()) {
-            lsp_written = lsp_written.append(ast.MatchArm { pattern: lsp_pats[lsp_i], body: lsp_rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: lsp_i > 0 });
-            let (fl_pat, fl_g, fl_hg) = fold_lit_cond(lsp_pats[lsp_i], e_bool(true), false);
-            lsp_arms = lsp_arms.append(ast.MatchArm { pattern: fl_pat, body: lsp_rest, line: vline, col: vcol, guard: fl_g, has_guard: fl_hg, alt_cont: false });
-            lsp_i = lsp_i + 1;
-          }
-          let lsp_wild: ast.MatchArm = ast.MatchArm { pattern: p_wildcard(), body: lsp_else, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: false };
-          lsp_arms = lsp_arms.append(lsp_wild);
-          lsp_written = lsp_written.append(lsp_wild);
-          // A head with payload sub-patterns takes the flag chain —
-          // see the `if let` site. The success arm is the rest of the
-          // enclosing block either way, so the bindings stay live for
-          // it.
-          if (arms_take_flag_chain(lsp_arms)) {
-            return (with_sugar_origin(build_nested_arm_match(lsp_init, lsp_arms, lsp_written, vline, vcol), "let_else"), p);
-          }
-          lsp_arms = desugar_nested_arms(lsp_arms, 0, "");
-          // A nested payload (`let Wrap(A(v)) = w else …`) leaves the
-          // synthesised `__nest` temp as the arm's only pattern, so
-          // without the written form `-fmt` wrote that name into the
-          // user's source — the #7059 fault, at the site it had not
-          // reached yet.
-          let lsp_sugar: ast.MatchArm[] = [];
-          if (arms_have_written_form(lsp_written)) {
-            lsp_sugar = lsp_written;
-          }
-          return (s_match_origin_sugared(lsp_init, lsp_arms, lsp_sugar, vline, vcol, "let_else"), p);
-        }
+      let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("="));
+      let (lsp_else, lsp_rest, lsp_restp) = parse_let_else_tail(lsp_ip);
+      p = lsp_restp;
+      let lsp_arms: ast.MatchArm[] = [];
+      let lsp_written: ast.MatchArm[] = [];
+      let lsp_i: i32 = 0;
+      while (lsp_i < lsp_pats.len()) {
+        lsp_written = lsp_written.append(ast.MatchArm { pattern: lsp_pats[lsp_i], body: lsp_rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: lsp_i > 0 });
+        let (fl_pat, fl_g, fl_hg) = fold_lit_cond(lsp_pats[lsp_i], e_bool(true), false);
+        lsp_arms = lsp_arms.append(ast.MatchArm { pattern: fl_pat, body: lsp_rest, line: vline, col: vcol, guard: fl_g, has_guard: fl_hg, alt_cont: false });
+        lsp_i = lsp_i + 1;
       }
-    }
-    // let-else payload bindings: `let Variant(b1, b2, …) = E else { … }`.
-    // The first binding is `le_binding`; any further ones go to
-    // `le_extra` (matching parse_pattern's PatVariant shape, so the
-    // checker can flag a payload-arity mismatch via E015).
-    let le_binding: string = "";
-    let le_extra: string[] = [];
-    if (p.peek_punct() == "(") {
-      p = p.advance();
-      let ben: i32 = 0;
-      while (p.peek_punct() != ")" && !p.at_end()) {
-        let bind_inner: string = p.peek_ident();
-        if (bind_inner.len() > 0) {
-          if (ben == 0) {
-            le_binding = bind_inner;
-          } else {
-            le_extra = le_extra.append(bind_inner);
-          }
-          ben = ben + 1;
-          p = p.advance();
-        } else {
-          p = p.advance();
-        }
-        if (p.peek_punct() == ",") {
-          p = p.advance();
-        }
+      let lsp_wild: ast.MatchArm = ast.MatchArm { pattern: p_wildcard(), body: lsp_else, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: false };
+      lsp_arms = lsp_arms.append(lsp_wild);
+      lsp_written = lsp_written.append(lsp_wild);
+      // A head with payload sub-patterns takes the flag chain —
+      // see the `if let` site. The success arm is the rest of the
+      // enclosing block either way, so the bindings stay live for
+      // it.
+      if (arms_take_flag_chain(lsp_arms)) {
+        return (with_sugar_origin(build_nested_arm_match(lsp_init, lsp_arms, lsp_written, vline, vcol), "let_else"), p);
       }
-      if (p.peek_punct() == ")") {
-        p = p.advance();
+      lsp_arms = desugar_nested_arms(lsp_arms, 0, "");
+      // A nested payload (`let Wrap(A(v)) = w else …`) leaves the
+      // synthesised `__nest` temp as the arm's only pattern, so
+      // without the written form `-fmt` wrote that name into the
+      // user's source — the #7059 fault, at the site it had not
+      // reached yet.
+      let lsp_sugar: ast.MatchArm[] = [];
+      if (arms_have_written_form(lsp_written)) {
+        lsp_sugar = lsp_written;
       }
+      return (s_match_origin_sugared(lsp_init, lsp_arms, lsp_sugar, vline, vcol, "let_else"), p);
     }
     // Optional `: Type` — capture the type name string so
     // the checker can resolve it. Full type syntax (arrays
@@ -7871,52 +7773,12 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       return (s_unknown(p, "missing = in let"), p);
     }
     p = p.advance();
-    // The source expr is followed by either `;` (plain binding) or
-    // the `else` keyword (let-else) — never directly by `{`, so no
-    // struct-literal suppression is needed here.
     // A `Map[K, V]` annotation outranks the key-kind guess parse_map_lit
     // would otherwise bake into the literal's constructor (#6207).
     let (init_expr, init_p) = parse_expr(p.with_map_kind(map_ann_key_kind(type_name)));
     p = init_p.with_map_kind(0 - 1);
-    // let-else: `let Variant(b..) = E else { divergent };`. The
-    // rest of the enclosing block becomes the success arm body;
-    // the else block becomes the wildcard arm. Reuses the
-    // statement-match machinery — no new AST node:
-    //   match (E) { Variant(b..) => { <rest of block> },
-    //               _ => { divergent } }
-    // The success bindings are live for the rest of the block
-    // (they live inside the arm), and the else branch is expected
-    // to diverge (return / break / continue) — the Go checker
-    // enforces that (E022); via the desugar a non-diverging else
-    // simply falls through to the end of the block.
     if (p.peek_keyword() == "else") {
-      p = p.advance();  // consume `else`
-      let (le_else_body, le_else_p) = parse_block(p);
-      p = le_else_p;
-      p = p.expect_semi();
-      // Consume the rest of the enclosing block as the success
-      // body, mirroring parse_block's loop (incl. its
-      // progress guard so a malformed statement can't spin).
-      let rest: ast.Stmt[] = [];
-      while (p.peek_punct() != "}" && !p.at_end()) {
-        let (rr_stmt, rr_p) = parse_stmt(p);
-        if (rr_p.pos == p.pos) {
-          p = p.advance();
-          continue;
-        }
-        p = rr_p;
-        rest = rest.append(rr_stmt);
-      }
-      let le_no_nested: ast.Pattern[] = [];
-      let no_tup_kinds: i32[] = [];
-      let no_tup_binds: string[] = [];
-      let no_tup_lits: ast.Expr[] = [];
-      let no_tup_pats: ast.Pattern[] = [];
-      let le_pat: ast.Pattern = ast.PatVariant { type_name: name, binding: le_binding, extra_bindings: le_extra, nested: le_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats };
-      let le_arms: ast.MatchArm[] = [];
-      le_arms = le_arms.append(ast.MatchArm { pattern: le_pat, body: rest, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: false });
-      le_arms = le_arms.append(ast.MatchArm { pattern: p_wildcard(), body: le_else_body, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: false });
-      return (s_match_origin(init_expr, le_arms, vline, vcol, "let_else"), p);
+      return (decl_sentinel(p, "`let " + name + "` always binds, so it takes no `else`; a pattern that can miss goes after `let`, e.g. `let Some(" + name + ") = …`"), p);
     }
     p = p.end_of(init_expr);
     // `let f: () => f64 = () => <body>;` — the binding already states the
@@ -9344,6 +9206,10 @@ function parse_type_param_list(p: Par): (TpList, Par) {
             } else if (bpk == ",") {
               bargs = bargs + ", ";
               p = p.advance();
+            } else if (bpk == "=") {
+              // An associated-type pin belongs to a `dyn` type, not a bound.
+              p = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \"]\", got " + tok_desc(p.peek()))) };
+              p = p.advance();
             } else {
               let bseg: string = p.peek_ident();
               if (bseg.len() == 0) {
@@ -10235,9 +10101,7 @@ function parse_const_decl(p: Par): (FuncDecl, Par) {
     p = tr_p;
     ty = tr_name;
   }
-  if (p.peek_punct() == "=") {
-    p = p.advance();
-  }
+  p = p.expect("=");
   let (er_expr, er_p) = parse_expr(p);
   p = er_p;
   p = p.end_of(er_expr);
@@ -12061,7 +11925,7 @@ function tv_word_char(c: i32): boolean {
 // spelling, appended to `acc` (deduped): each maximal `[A-Za-z0-9_]` run
 // looks_type_var accepts, so it finds `T` in `T[]` and both `K` and `V` in
 // `Map[K, V]`.
-function type_str_vars(ty: string, acc: string[]): string[] {
+pub function type_str_vars(ty: string, acc: string[]): string[] {
   let out: string[] = acc;
   let i: i32 = 0;
   let n: i32 = ty.len();
@@ -27848,9 +27712,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
       } else {
         impl_bad = impl_bad.append(decl_sentinel(p, "malformed associated type binding: its name could not be read (a keyword such as `type` or `match` cannot be a name)"));
       }
-      if (p.peek_punct() == "=") {
-        p = p.advance();
-      }
+      p = p.expect("=");
       let (ab_ty, ab_fnret, ab_p) = parse_type_name(p);
       p = ab_p;
       p = p.expect_semi();
@@ -31905,6 +31767,29 @@ function check_fstrings(): i32 {
     },
     _ => {
       return 1115;
+    }
+  }
+
+  // A placeholder with tokens left over is a sentinel at the first one, and
+  // it stands for the whole f-string (#12648).
+  match (parse_program(lexer.tokenize("return f\"{x} {x y} {x)}\";"))[0]) {
+    ast.StmtReturn(r) => {
+      match (r.value) {
+        ast.ExprUnknown(u) => {
+          if (u.kind != "f-string interpolation: unexpected trailing tokens after expression") {
+            return 1116;
+          }
+          if (u.line != 1 || u.col != 17) {
+            return 1117;
+          }
+        },
+        _ => {
+          return 1118;
+        }
+      }
+    },
+    _ => {
+      return 1119;
     }
   }
 

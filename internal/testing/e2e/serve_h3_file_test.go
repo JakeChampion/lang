@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/envflag"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
@@ -114,7 +115,7 @@ func checkServeH3Files(t *testing.T, target string, size int) {
 		if target == "arm64-linux" {
 			runner, ok := arm64Runner()
 			if !ok {
-				if os.Getenv("FERN_REQUIRE_ARM64_TOOLING") == "1" {
+				if envflag.On("FERN_REQUIRE_ARM64_TOOLING") {
 					t.Fatal("ARM64 runner required for HTTP/3 file-serving coverage")
 				}
 				t.Skip("no ARM64 runner for HTTP/3 file-serving coverage")

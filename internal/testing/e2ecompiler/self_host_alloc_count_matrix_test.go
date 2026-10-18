@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/envflag"
 )
 
 // --- The allocation-count matrix (#7351) -------------------------------------
@@ -246,7 +248,7 @@ func TestSelfHostAllocCountMatrixX86_64(t *testing.T) {
 	// CI-DARK: FERN_ALLOC_COUNT_DUMP — a regeneration tool, not coverage. It
 	// prints rows INSTEAD of comparing, so a lane setting it would disable this
 	// gate. The compare path below is the CI behaviour.
-	dump := os.Getenv("FERN_ALLOC_COUNT_DUMP") == "1"
+	dump := envflag.On("FERN_ALLOC_COUNT_DUMP")
 	var known map[string]int64
 	if !dump {
 		known = loadAllocMatrix(t)

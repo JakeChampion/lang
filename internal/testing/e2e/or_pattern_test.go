@@ -1,5 +1,5 @@
-// Literal + tuple or-pattern coverage (#5355): `match x { 1 | 2 | 3 => … }`
-// and `match t { (1, 2) | (3, 4) => … }`.
+// Literal + tuple or-pattern coverage (#5355): `match (x) { 1 | 2 | 3 => … }`
+// and `match (t) { (1, 2) | (3, 4) => … }`.
 //
 // Each `|` alternative is expanded by the shared per-alternative
 // clone-desugar (parseArmPatterns) into its own independent arm sharing the

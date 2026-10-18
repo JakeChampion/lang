@@ -90,11 +90,20 @@ var constAggWasmCases = []struct {
 	{"folded-field-admitted",
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 0 - 3, b: 0x10 }; } function main(): i32 { let p: P = mk(); return (p.a + p.b + 100) % 200; }`,
 		113, 1, false},
-	// NOT admitted: a wide (i64) field. The block writes one 8-byte slot per
-	// field but the admission classifier only vouches for i32-width values.
-	{"wide-field-not-admitted",
+	// A wide (i64) field: the block writes the field's whole 8-byte slot, so a
+	// value past 32 bits reads back whole.
+	{"wide-field-admitted",
 		`struct W { n: i64, k: i32 } function mk(): W { return W { n: 5000000000, k: 3 }; } function main(): i32 { let w: W = mk(); if (w.n > 4000000000) { return w.k + 10; } return 0; }`,
-		13, 0, false},
+		13, 1, true},
+	// An f64 field's word is the literal's bit pattern.
+	{"f64-field-admitted",
+		`struct F { x: f64, k: i32 } function mk(): F { return F { x: 2.5, k: 1 }; } function main(): i32 { let f: F = mk(); if (f.x > 2.0 && f.x < 3.0) { return f.k + 20; } return 0; }`,
+		21, 1, true},
+	// A record of records with wide fields: three blocks, the outer holding
+	// the inner two's addresses.
+	{"nested-wide-records",
+		`struct D { sec: i64, nsec: i64 } struct T { a: D, b: D } function mk(): T { return T { a: D { sec: 10 as i64, nsec: 0 }, b: D { sec: 30 as i64, nsec: 0 } }; } @noinline function keep(t: T): i64 { return t.a.sec + t.b.sec + t.a.nsec; } function main(): i32 { return keep(mk()) as i32; }`,
+		40, 3, true},
 }
 
 // TestSelfHostConstAggregateWasmIR compiles each case through the self-hosted

@@ -1308,7 +1308,7 @@ func TestRunnerQUICRecoveryExamplePasses(t *testing.T) {
 // the idle timeout; then a stream echoed through small windows, and again
 // through loss and reordering.
 func TestRunnerQUICConnExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "quic_conn", "std/quic/conn", 26)
+	runnerSuitePasses(t, "quic_conn", "std/quic/conn", 28)
 }
 
 // `tests/stdlib/quic_streams_test.fern` drives std/quic/streams frame by
@@ -1419,7 +1419,7 @@ func TestRunnerHTTPMultipartExamplePasses(t *testing.T) {
 // a forged CertificateVerify, a saved and restored session, close_notify,
 // a session resumed from a ticket, and an identity presented when asked.
 func TestRunnerTLSClientExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_client", "std/tls/client", 8)
+	runnerSuitePasses(t, "tls_client", "std/tls/client", 9)
 }
 
 // `tests/stdlib/tls_server_test.fern` reads keys from PKCS #8 and SEC 1,
@@ -1428,7 +1428,7 @@ func TestRunnerTLSClientExamplePasses(t *testing.T) {
 // from the tickets it issues, requires client certificates, updates keys
 // both ways, and checks the contract of offloading to the kernel.
 func TestRunnerTLSServerExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_server", "std/tls/server", 15)
+	runnerSuitePasses(t, "tls_server", "std/tls/server", 16)
 }
 
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3
@@ -2322,27 +2322,27 @@ function main(): i32 {
 	}
 }
 
-// `tests/stdlib/lang_binary_e2e_test.fern` is the canonical
-// migration-pattern example: a Lang test file spawns the
-// `lang` binary itself (path read from `$LANG_BIN`), drives
+// `tests/stdlib/fern_binary_e2e_test.fern` is the canonical
+// migration-pattern example: a Fern test file spawns the
+// `fern` binary itself (path read from `$FERN_BIN`), drives
 // it through `-interp` / `-check` against inline source +
 // tempdir fixtures, and asserts on the (exit, stdout,
 // stderr) triple. This is the shape the migrated Go-side
 // e2e suite will adopt.
 //
 // We exercise both paths the example handles:
-//  1. With `$LANG_BIN` pointing at a fresh build of the
+//  1. With `$FERN_BIN` pointing at a fresh build of the
 //     compiler — every case runs and passes.
-//  2. With `$LANG_BIN` unset — the suite skips cleanly
+//  2. With `$FERN_BIN` unset — the suite skips cleanly
 //     rather than failing, so dev laptops without an
 //     explicit env setup don't see false negatives.
-func TestRunnerLangBinaryE2EExample(t *testing.T) {
+func TestRunnerFernBinaryE2EExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "tests/stdlib/lang_binary_e2e_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/fern_binary_e2e_test.fern")
 
-	t.Run("with LANG_BIN set", func(t *testing.T) {
+	t.Run("with FERN_BIN set", func(t *testing.T) {
 		cmd := exec.Command(bin, "-interp", src)
-		cmd.Env = append(os.Environ(), "LANG_BIN="+bin)
+		cmd.Env = append(os.Environ(), "FERN_BIN="+bin)
 		var out, errb bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &errb
@@ -2366,13 +2366,13 @@ func TestRunnerLangBinaryE2EExample(t *testing.T) {
 		}
 	})
 
-	t.Run("without LANG_BIN — skips cleanly", func(t *testing.T) {
+	t.Run("without FERN_BIN — skips cleanly", func(t *testing.T) {
 		cmd := exec.Command(bin, "-interp", src)
-		// Drop LANG_BIN from the environment explicitly —
+		// Drop FERN_BIN from the environment explicitly —
 		// the parent process may have it set.
 		env := []string{}
 		for _, kv := range os.Environ() {
-			if !strings.HasPrefix(kv, "LANG_BIN=") {
+			if !strings.HasPrefix(kv, "FERN_BIN=") {
 				env = append(env, kv)
 			}
 		}
@@ -2387,7 +2387,7 @@ func TestRunnerLangBinaryE2EExample(t *testing.T) {
 		}
 		gotOut := out.String()
 		for _, w := range []string{
-			"# SKIP LANG_BIN not set",
+			"# SKIP FERN_BIN not set",
 			"# skip 1",
 		} {
 			if !strings.Contains(gotOut, w) {
@@ -2395,7 +2395,7 @@ func TestRunnerLangBinaryE2EExample(t *testing.T) {
 			}
 		}
 		if strings.Contains(gotOut, "# fail 1") {
-			t.Errorf("missing LANG_BIN should skip, not fail\noutput:\n%s", gotOut)
+			t.Errorf("missing FERN_BIN should skip, not fail\noutput:\n%s", gotOut)
 		}
 	})
 }

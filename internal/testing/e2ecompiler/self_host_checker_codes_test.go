@@ -2320,6 +2320,19 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// its type's variables (#12632).
 		{"type-param-unbound-receiver", "enum GO[T] { GNil, GHas(T) }\nfunction (o: GO[T]) count(): i32 { match (o) { GHas(_) => { return 1; }, GNil => { return 0; } } }\nfunction main(): i32 { let o = GNil; return o.count(); }\n", []string{"E040"}},
 		{"type-param-bound-receiver", "enum GO[T] { GNil, GHas(T) }\nfunction (o: GO[T]) count(): i32 { match (o) { GHas(_) => { return 1; }, GNil => { return 0; } } }\nfunction main(): i32 { let o: GO[i32] = GNil; let p = GHas(5); return o.count() + p.count(); }\n", nil},
+		// A type parameter is rigid in its own generic's body, equal only to
+		// itself, whether or not anything instantiates it (#12656).
+		{"rigid-tparam-return", "function f[T](x: T): T { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"rigid-tparam-return-concrete", "function pick[T](c: boolean, a: T, b: T): i32 { return if (c) { a } else { b }; }\nfunction main(): i32 { return pick(true, 1, 2); }\n", []string{"E002"}},
+		{"rigid-tparam-if-join", "function f[T](c: boolean, x: T): T { return if (c) { x } else { 5 }; }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"rigid-tparam-field", "struct G[T] { v: T }\nfunction mk[T](x: i32): G[T] { return G { v: x }; }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
+		{"rigid-tparam-nested-receiver", "function (o: Option[(T, U)]) unz(): T { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"rigid-tparam-projection", "trait P { type Item; function get(self: Self): Self::Item; }\nfunction g[H: P](h: H): string { return h.get(); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"rigid-tparam-unbounded-order", "function f[T](a: T, b: T): boolean { return a < b; }\nfunction main(): i32 { return 0; }\n", []string{"E009"}},
+		{"rigid-tparam-ord-order", "import \"core/cmp\";\nfunction f[T: cmp.Ord](a: T, b: T): boolean { return a < b; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"bool-method-missing-in-generic", "trait Mk { function v(self: Self): i32; }\nfunction f[T: Mk](a: boolean, b: T): i32 { return a.v(); }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
+		{"rigid-tparam-ok", "struct G[T] { v: T }\nfunction id[T](x: T): T { return x; }\nfunction mk[T](x: T): G[T] { let y: T = id(x); let g: G[T] = G { v: y }; return g; }\nfunction pick[T](c: boolean, a: T, b: T): T { return if (c) { a } else { b }; }\nfunction (g: G[T]) get(): T { return g.v; }\nfunction sw[A, B](p: (A, B)): (B, A) { return (p.1, p.0); }\nfunction main(): i32 { return mk(3).get() + pick(true, 1, 2) + sw((1, 2)).0; }\n", nil},
+		{"rigid-tparam-projection-ok", "trait P { type Item; function get(self: Self): Self::Item; }\nstruct B { v: i32 }\nimpl P for B { type Item = i32; function get(self: Self): Self::Item { return self.v; } }\nfunction g[H: P](h: H): H::Item { let x: H::Item = h.get(); return x; }\nfunction main(): i32 { return g(B { v: 1 }); }\n", nil},
 		// An associated call's arguments are checked against the trait
 		// requirement or the inherent declaration it reaches (#12693).
 		{"assoc-arg-through-bound", "trait Mk { function mk(x: i32): Self; }\nfunction g[T: Mk](x: boolean): T { return T.mk(x); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
@@ -3042,7 +3055,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// function, and the hoist rebuilds the decl rather than copying it
 		// — so the `[T]`-vs-`T[]` flag the report filter reads has to be carried
 		// along or this stops being reported with no other symptom.
-		{"e063-receiver-method-slice-ret", "function (xs: T[]) danger(): [T] { let local: T[] = [1, 2, 3]; return local[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-receiver-method-slice-ret", "function (xs: T[]) danger(): [T] { let local: T[] = [xs[0], xs[0], xs[0]]; return local[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		// Slicing an unbound TEMPORARY. The callee hands back storage it
 		// built, so the CALLER's frame owns it and the slice dangles —
 		// binding it first (`let t = mkarr(); return t[0:1];`) was already

@@ -4,6 +4,9 @@ package e2ecompiler
 
 import (
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,6 +103,62 @@ func TestSelfHostServeSyscallsPerRequest(t *testing.T) {
 	if got != serveSyscallsPerRequest {
 		t.Errorf("the serve loop makes %d syscalls per hello request; pinned %d.\n"+
 			"Above the pin is a regression. Below it, lower the pin in the same change.\n%s", got, serveSyscallsPerRequest, syscallBreakdown(before, after))
+	}
+}
+
+// serveFetchSyscallsPerRequest is what the two-fetch server
+// (e2eharness.ServeFetchAllocsServerSource) enters per request on a
+// keep-alive connection: the hello request's three, and three per upstream
+// request over the pooled connection, `sendto`, the reactor wait the
+// handler's task parks in, and `read`. The pooled socket stays watched
+// between requests (`async.KEEP`), so no `epoll_ctl` re-arms it.
+const serveFetchSyscallsPerRequest = 9
+
+// TestSelfHostServeSyscallsPerRequestTwoFetch traces the two-fetch server,
+// its upstream a Go server reached through `http_proxy`, and counts the
+// syscalls it enters per request.
+func TestSelfHostServeSyscallsPerRequestTwoFetch(t *testing.T) {
+	cli := buildNativeSelfHostCLI(t)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "upstream")
+	}))
+	t.Cleanup(up.Close)
+	port := freeTCPPort(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.ServeFetchAllocsServerSource(port, serveSyscallsRounds)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(cli.nativeBinary(t, src, "FERN_STRICT_IR=1"))
+	cmd.Env = append(os.Environ(), "http_proxy=http://u@"+up.Listener.Addr().String(), "no_proxy=")
+	tr := traceSyscalls(t, cmd)
+	get := e2eharness.KeepAliveGET(t, fmt.Sprintf("127.0.0.1:%d", port))
+	for i := 0; i < serveSyscallsWarm; i++ {
+		get("/")
+	}
+	before := tr.snapshot()
+	start := time.Now()
+	for i := 0; i < serveSyscallsRounds; i++ {
+		get("/")
+	}
+	seconds := int64(time.Since(start).Seconds()) + 2
+	after := tr.snapshot()
+	if err := syscall.Kill(tr.pid, syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	if code := tr.wait(t); code != 0 {
+		t.Errorf("server exited %d on SIGTERM, want 0", code)
+	}
+	var total int64
+	for nr, n := range after {
+		total += int64(n - before[nr])
+	}
+	got := (total + serveSyscallsRounds/2) / serveSyscallsRounds
+	if d := total - got*serveSyscallsRounds; d < -serveSyscallsSlackPerSecond*seconds || d > serveSyscallsSlackPerSecond*seconds {
+		t.Fatalf("%d syscalls over %d requests is %d from a whole number per request:\n%s", total, serveSyscallsRounds, d, syscallBreakdown(before, after))
+	}
+	if got != serveFetchSyscallsPerRequest {
+		t.Errorf("the two-fetch server makes %d syscalls per request; pinned %d.\n"+
+			"Above the pin is a regression. Below it, lower the pin in the same change.\n%s", got, serveFetchSyscallsPerRequest, syscallBreakdown(before, after))
 	}
 }
 

@@ -11,8 +11,10 @@ rg -v '^#' cpu.folded | flamegraph.pl >cpu.svg
 The compiler includes function symbols and preserves generated frame pointers.
 The executable needs no profiler library or external symbolizer. Both x86-64
 and ARM64 Linux are supported, including ARM64 `-harden` builds, together with
-ARM64 Darwin. Android, WASI and shared libraries are refused. `FERN_PROFILE=0`, an empty value, or an
-unset variable leaves profiling disabled; the variable controls compilation,
+ARM64 Darwin. Android, WASI and shared libraries are refused. An unset
+`FERN_PROFILE`, or one set to an off value (the rule in "Environment variables"
+in `site/src/content/docs/reference/tooling.md`), leaves profiling disabled; any
+other value that is not a mode is refused. The variable controls compilation,
 not execution.
 
 The runtime samples process CPU time at 100 Hz using `SIGPROF` and `ITIMER_PROF`.
