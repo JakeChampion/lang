@@ -29,6 +29,7 @@ Declaration = FuncDecl
             | TraitDecl
             | ImplDecl
             | ConstDecl
+            | ResourceDecl
             | Visibility Declaration
             ;
 
@@ -103,29 +104,37 @@ ImplItem    = 'type' IDENT '=' Type ';' | Attribute | FuncDecl ;
 
 ConstDecl   = 'const' IDENT [ ':' Type ] '=' Expr ';' ;
 
+# A WIT resource, the type a HandleType names. `resource` is contextual.
+ResourceDecl
+            = 'resource' IDENT ';' ;
+
 # -------------------------------------------------------------------- types
 
-Type        = OwnType ;
-OwnType     = ( 'own' | 'borrow' ) Type
-            | DynType
-            ;
+Type        = DynType ;
 DynType     = 'dyn' Bound { '+' Bound }
             | FnOrTupleType
             ;
 
 # `(A, B) => C` is a function type; `(A, B)` a tuple; `(A)` a grouping.
 FnOrTupleType
-            = '(' [ Type { ',' Type } [ ',' ] ] ')' ( '=>' Type | { TypeSuffix } )
+            = '(' [ FnParam { ',' FnParam } [ ',' ] ] ')' '=>' Type
+            | '(' [ Type { ',' Type } [ ',' ] ] ')' { TypeSuffix }
             | SliceType
             ;
+# `own` opening a function type's parameter slot marks it consuming.
+FnParam     = 'own' Type | Type ;
 SliceType   = '[' Type ']' { TypeSuffix }
             | PrimaryType { TypeSuffix }
             ;
 TypeSuffix  = '[' ']' ;
 
-PrimaryType = PrimitiveType
+PrimaryType = HandleType
+            | PrimitiveType
             | NamedType
             ;
+# A WIT resource handle. The name must be a declared `resource` (E021 when
+# it is not); a consuming parameter is `own xs: T`, never `xs: own T`.
+HandleType  = ( 'own' | 'borrow' ) IDENT [ '.' IDENT ] ;
 PrimitiveType
             = 'i32' | 'i64' | 'u8' | 'u32' | 'u64' | 'usize'
             | 'f32' | 'f64' | 'boolean' | 'void' | 'string'
@@ -395,8 +404,7 @@ ArrowLambda = '(' [ LambdaParams ] ')' ':' Type '=>' Expr
 # top-level function-type arrow of FnOrTupleType is not available, so
 # `(): (string, i32) => e` reads the tuple. Nested arrows are untouched,
 # because only the outermost one competes with the lambda's.
-RetType     = ( 'own' | 'borrow' ) RetType
-            | 'dyn' Bound { '+' Bound }
+RetType     = 'dyn' Bound { '+' Bound }
             | '(' [ Type { ',' Type } [ ',' ] ] ')' { TypeSuffix }
             | SliceType
             ;

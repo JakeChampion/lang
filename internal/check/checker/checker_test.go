@@ -7191,7 +7191,27 @@ function main(): i32 {
 		{"unknown resource",
 			`function f(h: borrow Bogus): i32 { return 0; }
 function main(): i32 { return 0; }`,
-			"unknown resource"},
+			"`Bogus` is not a resource, so `borrow Bogus` is not a handle type; a parameter borrows by default, written `name: Bogus`"},
+		{"struct is not a resource",
+			`struct Foo { v: i32 }
+function f(xs: own Foo): i32 { return 0; }
+function main(): i32 { return 0; }`,
+			"`Foo` is not a resource, so `own Foo` is not a handle type; a consuming parameter is written `own name: Foo`"},
+		{"contextual type name is not a resource",
+			"function f(s: own str): i32 { return 0; }\nfunction main(): i32 { return 0; }",
+			"`str` is not a resource"},
+		{"type parameter is not a resource",
+			"function f[T](x: own T): i32 { return 0; }\nfunction main(): i32 { return 0; }",
+			"`T` is not a resource"},
+		{"struct field",
+			"struct Foo { v: i32 }\nstruct S { h: own Foo }\nfunction main(): i32 { return 0; }",
+			"2:1: `Foo` is not a resource"},
+		{"enum payload",
+			"struct Foo { v: i32 }\nenum E { A(own Foo) }\nfunction main(): i32 { return 0; }",
+			"2:1: `Foo` is not a resource"},
+		{"let annotation",
+			"struct Foo { v: i32 }\nfunction main(): i32 {\n\tlet x: own Foo = Foo { v: 1 };\n\treturn 0;\n}",
+			"3:2: `Foo` is not a resource"},
 		{"plain i32 is not a handle",
 			prelude + `function main(): i32 {
 	let n: i32 = 7;

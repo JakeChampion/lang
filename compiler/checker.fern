@@ -22551,6 +22551,96 @@ function e064_fn_tparams(fd: parser.FuncDecl): string[] {
   return out;
 }
 
+// handle_type_diags is native's validateResourceHandles: an E021 for each
+// `own T` / `borrow T` whose T is not a declared resource, across every
+// signature, body annotation and struct field.
+function handle_type_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeNames): util.Diag[] {
+  let out: util.Diag[] = [];
+  for fd in mod.funcs {
+    if (in_focus(focus, fd)) {
+      for param in fd.params {
+        out = util.append_diags(out, handle_misuse_diags(e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), tn, fd.line, fd.col));
+      }
+      out = util.append_diags(out, handle_misuse_diags(e064_decl_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), tn, fd.line, fd.col));
+      for an in collect_annots(fd.body) {
+        out = util.append_diags(out, handle_misuse_diags(an.type_name, tn, an.line, an.col));
+      }
+    }
+  }
+  for sd in mod.structs {
+    let (line, col) = struct_decl_pos(mod, sd);
+    for field in sd.fields {
+      out = util.append_diags(out, handle_misuse_diags(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn, line, col));
+    }
+  }
+  return out;
+}
+
+// struct_decl_pos is where a struct is declared; an enum variant's payload
+// struct has no position of its own, so it reports at its enum.
+function struct_decl_pos(mod: parser.Module, sd: parser.StructDecl): (i32, i32) {
+  if (sd.enum_owner.len() > 0) {
+    for ed in mod.enums {
+      if (ed.name == sd.enum_owner) {
+        return (ed.line, ed.col);
+      }
+    }
+  }
+  return (sd.line, sd.col);
+}
+
+function handle_misuse_diags(type_name: string, tn: TypeNames, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  for leaf in handle_leaves(parser.parse_type_ref(type_name), []) {
+    if (!names_resource_handle(leaf, tn)) {
+      out = out.append(dg_at("E021", handle_not_resource_message(leaf), line, col));
+    }
+  }
+  return out;
+}
+
+// handle_leaves collects every `own R` / `borrow R` spelling nested in `tr`.
+function handle_leaves(tr: parser.TypeRef, own acc: string[]): string[] {
+  if (tr.array_depth > 0) {
+    return handle_leaves(parser.elem_type_ref(tr), acc);
+  }
+  if (tr.args.len() == 0 && handle_resource(tr.base) != tr.base) {
+    return acc.append(tr.base);
+  }
+  // A function type's parameters precede its result in `args`.
+  let slots: i32 = 0;
+  if (tr.is_fn) {
+    slots = tr.args.len() - 1;
+  }
+  let i: i32 = 0;
+  while (i < tr.args.len()) {
+    if (i < slots) {
+      acc = handle_leaves(without_slot_marker(tr.args[i]), acc);
+    } else {
+      acc = handle_leaves(tr.args[i], acc);
+    }
+    i = i + 1;
+  }
+  return acc;
+}
+
+// without_slot_marker drops the `own` that marks a function type's parameter
+// slot consuming, `(own T) => U`, which is not a handle.
+function without_slot_marker(slot: parser.TypeRef): parser.TypeRef {
+  if (util.str_has_prefix(slot.base, "own ")) {
+    return parser.TypeRef { ...slot, base: slice_unchecked(slot.base, 4, slot.base.len()) + "" };
+  }
+  return slot;
+}
+
+function handle_not_resource_message(leaf: string): string {
+  let name: string = util.demangle(handle_resource(leaf));
+  if (util.str_has_prefix(leaf, "borrow ")) {
+    return "`" + name + "` is not a resource, so `borrow " + name + "` is not a handle type; a parameter borrows by default, written `name: " + name + "`";
+  }
+  return "`" + name + "` is not a resource, so `own " + name + "` is not a handle type; a consuming parameter is written `own name: " + name + "`";
+}
+
 function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[], tparams: string[], traits: string[]): util.Diag[] {
   let out: util.Diag[] = [];
   for elem in an {
@@ -25754,6 +25844,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       body_diags = util.append_diags(body_diags, e057_fn_diags(efn, tsc));
     }
   }
+  body_diags = util.append_diags(body_diags, handle_type_diags(mod, focus, e064_tn));
   // E044: a closure capture of a value with no runtime representation, a
   // `void` call result.
   let e044_void_fns: string[] = [];
