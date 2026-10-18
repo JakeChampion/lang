@@ -113,6 +113,7 @@ the language.
 | Pass configuration | an optimisation whose off switch changes the answer, or a bug only the unoptimised path has | the non-sanitize `TestDifferential_SelfHost{X86_64,Arm64,Wasm}` legs compile half the seeds with a seed-chosen subset of `selfHostPassSwitches` (reuse, unit-plan replay, inlining, array fusion, the ndarray kernels) off |
 | **Sanitizer** | rc over-release, use of a freed block, leaks — wrong memory with a right answer | `TestDifferential_SelfHostSanitize{X86_64,Arm64,Wasm}`; wasm carries the leak census only |
 | Go checker vs self-host checker | a program one checker accepts and the other rejects | the self-host legs: a seed the self-host refuses to compile fails or skips by cause |
+| Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased or replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
 | Coverage feedback | not an oracle: steers mutation toward new self-host compiler paths | `TestSelfHostCoverageGuidedFuzz` |
 
 ### Measuring it: the mutation score
@@ -166,6 +167,16 @@ regression test where the bug lived:
   payload was never released. `TestSelfHostGenericReuseTag`.
 - **A function type in a symbol** (#12289). `G0[(i32) => i32]` put `=>` into
   instance labels GNU as rejects. `TestSelfHostFnTypeArgMangle`.
+- **A dyn method's result read without the dyn's arguments** (#12629,
+  self-host checker). `T` in `dyn Tc[i32]` and `Self::Item` in
+  `dyn P[Item = i32]` stayed unresolved, so -check refused valid programs.
+  `TestSelfHostDynTraitArgsCheck`.
+- **A dead arm never type-checked** (#12631, Go front end). The constant fold
+  pruned an `if (false)` arm before the checker ran, so a type error behind it
+  passed. `TestFoldKeepsDeadArmsForTheChecker`.
+- **No E040 for an uninferred receiver** (#12632, self-host checker).
+  `let o = GNil; o.count()` binds no `T`. Rows in
+  `TestSelfHostCheckerCodesX86_64`.
 - **A generator bug**: the ownership cluster reassigned a variable whose type
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.
@@ -209,8 +220,9 @@ built. Citations are to the paper that introduced the technique.
    conformance corpus, coreutils, the compiler itself — in ways that must not
    change their output.
 8. **Type-checker fuzzing** (Hephaestus, PLDI 2022; Thalia, POPL 2024): erase
-   annotations (must still check) and overwrite types (must be rejected, the
-   same way by both checkers). fernsmith never writes an ill-typed program today.
+   annotations and overwrite types, and hold both checkers to one verdict.
+   Done as the checker-mutant oracle; next is mutating more than `let`
+   annotations (parameter and return types, generic arguments).
 9. **Fragments mined from bug history** (LegoFuzz, OOPSLA 2025; FeatureFuzz,
    2026; WhiteFox, OOPSLA 2024): `docs/rc-log/` and the tracker are a corpus of
    shapes that broke once.
@@ -229,5 +241,4 @@ In order:
 2. Chaos fuel: a decision counter in the compiler, so a pass-configuration
    failure bisects to one decision.
 3. Differential oracle inside the coverage-guided loop.
-4. Type-erasure / type-overwrite checker fuzzing, run against both checkers.
-5. Signature-based nightly triage.
+4. Signature-based nightly triage.
