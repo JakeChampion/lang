@@ -1308,7 +1308,7 @@ func TestRunnerQUICRecoveryExamplePasses(t *testing.T) {
 // the idle timeout; then a stream echoed through small windows, and again
 // through loss and reordering.
 func TestRunnerQUICConnExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "quic_conn", "std/quic/conn", 26)
+	runnerSuitePasses(t, "quic_conn", "std/quic/conn", 28)
 }
 
 // `tests/stdlib/quic_streams_test.fern` drives std/quic/streams frame by
@@ -1419,7 +1419,7 @@ func TestRunnerHTTPMultipartExamplePasses(t *testing.T) {
 // a forged CertificateVerify, a saved and restored session, close_notify,
 // a session resumed from a ticket, and an identity presented when asked.
 func TestRunnerTLSClientExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_client", "std/tls/client", 8)
+	runnerSuitePasses(t, "tls_client", "std/tls/client", 9)
 }
 
 // `tests/stdlib/tls_server_test.fern` reads keys from PKCS #8 and SEC 1,
@@ -1428,7 +1428,7 @@ func TestRunnerTLSClientExamplePasses(t *testing.T) {
 // from the tickets it issues, requires client certificates, updates keys
 // both ways, and checks the contract of offloading to the kernel.
 func TestRunnerTLSServerExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_server", "std/tls/server", 15)
+	runnerSuitePasses(t, "tls_server", "std/tls/server", 16)
 }
 
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3

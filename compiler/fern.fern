@@ -1491,36 +1491,178 @@ function bti_property_text(on: boolean): string {
   return "    .section .note.gnu.property,\"a\"\n    .p2align 3\n    .word 4\n    .word 16\n    .word 5\n    .asciz \"GNU\"\n    .word 0xc0000000\n    .word 4\n    .word 1\n    .word 0\n    .text\n";
 }
 
-// flag_after_entry refuses a driver flag written after the entry file, in
-// native's words (#8465): Go's flag package stops at the first positional,
-// so reading the flag here would make the two engines read one command line
-// two ways. Native's example omits the stdlib root it has no positional for.
-function flag_after_entry(a: string): i32 {
+// flag_after_entry refuses a driver flag written after the entry file (#8465):
+// driver flags end at the first positional, so the program's own `-x`
+// arguments go behind a `--`, which in a build without an embedded stdlib
+// follows the stdlib root.
+function flag_after_entry(a: string, embedded: boolean): i32 {
   eprint("fern: " + a + " comes after the source file, where driver flags are no longer parsed");
   eprint("  a driver flag goes before FILE; an argument for the program goes after a `--` separator:");
-  eprint("    fern FILE.fern STDLIB -- " + a);
+  eprint("    fern FILE.fern" + unless_embedded(embedded, " STDLIB") + " -- " + a);
   return 2;
 }
 
-function usage(): i32 {
-  eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-target <isa>-<environment>] [-backend flat|ssa] [-emit asm|core-module|command-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]");
-  eprint("       fern -harden -target arm64-linux -o OUT <entry.fern> [stdlib-root]  (BTI landing pads and signed return addresses)");
-  eprint("       fern -shared [-export NAME,...] -o OUT.so <entry.fern> [stdlib-root]  (a shared object exporting the named functions, main by default)");
-  eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)");
-  eprint("       fern -targets                                (list supported targets + capabilities)");
-  eprint("       fern -resolve [DIR]                          (run MVS over the manifest's index; write fern.lock)");
-  eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)");
-  eprint("       fern -weave [-html] <doc.fern.md>            (literate: woven Markdown, or an HTML page)");
-  eprint("       fern -doctest <doc.fern.md>                  (literate: run the `test` examples, TAP)");
-  eprint("       fern -repl                                   (an interactive interpreter session)");
-  eprint("       fern -effects <entry.fern>                   (the effect row of every function)");
-  eprint("       fern -doc [-o OUT] <module.fern>             (Markdown reference page; stdout without -o)");
-  eprint("       fern -doc -o OUTDIR <DIR>                    (one page per module under DIR)");
-  eprint("       fern -add NAME SPEC [DIR]                    (declare a dependency: path:DIR | url:URL | workspace)");
-  eprint("       fern -vendor [DIR]                           (flatten the dependency graph into vendor/)");
-  eprint("       fern -fetch [DIR]                            (download url dependencies into the package store)");
-  eprint("       fern -lsp [-target T] [-embed DIR] [stdlib-root]  (language server on stdin/stdout: -check's diagnostics, -fmt)");
+// unless_embedded is `text` in a build that takes its stdlib root on the
+// command line, and nothing in one carrying its own.
+function unless_embedded(embedded: boolean, text: string): string {
+  if (embedded) {
+    return "";
+  }
+  return text;
+}
+
+// CliFlag is one driver flag as usage lists it: its spelling, any other
+// spellings, the value it takes and a one-line description. `value` is ""
+// for none, a placeholder such as "OUT" for a value in the next argument,
+// "[CODE]" for one that may be left out, and "[=BOOL]" for a boolean that
+// also takes `=true` or `=false`.
+struct CliFlag { name: string, also: string[], value: string, help: string }
+
+// FlagGroup is one heading of the usage listing and the flags under it.
+struct FlagGroup { title: string, flags: CliFlag[] }
+
+function cli_flag(name: string, value: string, help: string): CliFlag {
+  let none: string[] = [];
+  return CliFlag { name: name, also: none, value: value, help: help };
+}
+
+// flag_groups is every flag run_with accepts, grouped by mode; the usage
+// listing is drawn from it. self_host_cli_help_test.go fails when this table
+// and the parser disagree.
+function flag_groups(): FlagGroup[] {
+  return [
+    FlagGroup { title: "compile", flags: [
+      cli_flag("-target", "ISA-ENV", "the target to build for (default arm64-linux); -targets lists them"),
+      cli_flag("-o", "OUT", "write the output to OUT; without it a native target prints its assembly"),
+      cli_flag("-emit", "FORM", "output form instead of the target's default: asm, core-module or command-module"),
+      cli_flag("-backend", "NAME", "name the target's emitter: ssa on the native ISAs, flat on wasm"),
+      cli_flag("-embed", "DIR", "the asset directory __fern_asset and __fern_assets read"),
+      cli_flag("-O", "", "release build: elide every assert() check"),
+      cli_flag("-shared", "[=BOOL]", "a shared object exporting the -export functions, not an executable"),
+      cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export (default main)"),
+      cli_flag("-harden", "[=BOOL]", "arm64-linux executables: BTI landing pads and signed return addresses"),
+    ] },
+    FlagGroup { title: "run", flags: [
+      CliFlag { name: "-run", also: ["--run"], value: "", help: "build to a temporary binary (or -o) and run it with the program's arguments" },
+      cli_flag("-qemu", "EMULATOR", "with -run: the emulator for a foreign ISA (default qemu-aarch64)"),
+      cli_flag("-interp", "", "run FILE (or - for stdin) through the interpreter, building nothing"),
+      cli_flag("-repl", "", "an interactive interpreter session"),
+    ] },
+    FlagGroup { title: "check", flags: [
+      cli_flag("-check", "", "type-check FILE, - for stdin, or the package or workspace under DIR"),
+      cli_flag("-capabilities", "", "the capabilities each package of the program reaches"),
+      cli_flag("-effects", "", "the effect row of every function"),
+      cli_flag("-targets", "", "list the supported targets and what each provides"),
+    ] },
+    FlagGroup { title: "fmt", flags: [
+      cli_flag("-fmt", "", "print each FILE formatted (-o OUT takes one FILE)"),
+      cli_flag("-w", "", "with -fmt: overwrite each file"),
+      cli_flag("-d", "", "with -fmt: print unified diffs, exiting 1 when any file differs"),
+    ] },
+    FlagGroup { title: "lint", flags: [
+      cli_flag("-lint", "", "lint each PATH, a .fern file or a directory of them"),
+      cli_flag("-lint-rules", "", "list the lint rules with their severities and options"),
+      cli_flag("-lint-set", "RULE=LEVEL", "with -lint: set a rule to allow, warn or deny (repeatable)"),
+      cli_flag("-lint-opt", "RULE.OPT=VALUE", "with -lint: set a rule option (repeatable)"),
+    ] },
+    FlagGroup { title: "doc", flags: [
+      cli_flag("-doc", "", "a module's Markdown reference page, or with -o OUTDIR one per module under DIR"),
+      cli_flag("-tangle", "", "the Fern source a literate DOC.fern.md tangles to"),
+      cli_flag("-chunk", "NAME", "with -tangle: only the named chunk"),
+      cli_flag("-weave", "", "the woven Markdown of a literate DOC.fern.md"),
+      cli_flag("-html", "", "with -weave: an HTML page instead of Markdown"),
+      cli_flag("-doctest", "", "run a literate DOC.fern.md's test examples, reporting TAP"),
+    ] },
+    FlagGroup { title: "lsp", flags: [
+      cli_flag("-lsp", "", "the language server on stdin and stdout"),
+    ] },
+    FlagGroup { title: "packages", flags: [
+      cli_flag("-add", "", "declare a dependency in fern.toml (SPEC is path:DIR, url:URL or workspace)"),
+      cli_flag("-resolve", "", "run MVS over the manifest's index and write fern.lock"),
+      cli_flag("-vendor", "", "flatten the dependency graph into vendor/"),
+      cli_flag("-fetch", "", "download the url dependencies into the package store"),
+    ] },
+    FlagGroup { title: "diagnostics", flags: [
+      cli_flag("-color", "MODE", "colour diagnostics: auto (the default), always or never"),
+      cli_flag("-ascii", "", "draw the diagnostic gutter with | rather than box drawing"),
+      cli_flag("-q", "", "one plain line per diagnostic (also FERN_DIAG_FORMAT=terse)"),
+      cli_flag("-explain", "[CODE]", "explain an error code, or list the codes"),
+      cli_flag("-version", "", "the commit this binary was built from"),
+      CliFlag { name: "-h", also: ["-help", "--help"], value: "", help: "print this help" },
+    ] },
+    FlagGroup { title: "debug, size and sanitizers", flags: [
+      cli_flag("-g", "", "a symbol table and DWARF for debuggers and profilers"),
+      cli_flag("-backtrace", "[=BOOL]", "walk the frames under a fatal abort's cause line (default FERN_BACKTRACE)"),
+      cli_flag("-size", "[=BOOL]", "build for size over speed (default FERN_SIZE)"),
+      cli_flag("-sanitize", "[=BOOL]", "the heap memory-safety detectors (also FERN_SANITIZE=1)"),
+      cli_flag("-cover", "", "count line and branch hits, reported to stderr at exit (also FERN_COVER=1)"),
+      cli_flag("-cover-report", "", "summarise a saved -cover run's stderr (FILE, or - for stdin)"),
+      cli_flag("-lcov", "", "with -cover-report: an lcov tracefile instead of the summary"),
+    ] },
+  ];
+}
+
+// flag_spelling is how usage writes `f`: every spelling, then its value.
+function flag_spelling(f: CliFlag): string {
+  let s: string = f.name;
+  for a in f.also {
+    s = s + ", " + a;
+  }
+  if (f.value.len() == 0) {
+    return s;
+  }
+  if (util.str_has_prefix(f.value, "[=")) {
+    return s + f.value;
+  }
+  return s + " " + f.value;
+}
+
+// usage_lines is the help, one line per element. `embedded` drops the stdlib
+// root positional a build carrying its own stdlib does not take.
+function usage_lines(embedded: boolean): string[] {
+  let root: string = unless_embedded(embedded, " [STDLIB]");
+  let lines: string[] = [
+    "usage: fern [FLAG...] FILE.fern" + unless_embedded(embedded, " [STDLIB") + " [--] [ARG...]" + unless_embedded(embedded, "]"),
+    "       fern -check [FLAG...] DIR" + root,
+    "       fern -check | -interp [FLAG...] -             (the program on stdin)",
+    "       fern -fmt [-w | -d | -o OUT] FILE...",
+    "       fern -lint [-lint-set RULE=LEVEL] PATH...",
+    "       fern -doc [-o OUT] MODULE.fern | -doc -o OUTDIR DIR",
+    "       fern -tangle | -weave | -doctest DOC.fern.md",
+    "       fern -add NAME SPEC [DIR]",
+    "       fern -resolve | -vendor | -fetch [DIR]",
+    "       fern -lsp | -repl [-target ISA-ENV]" + root,
+    "       fern -cover-report [-lcov] FILE",
+    "       fern -explain [CODE] | -targets | -lint-rules | -version | -h",
+    "Flags go before FILE. The program's arguments follow FILE" + unless_embedded(embedded, " and STDLIB") + ", behind -- when the first begins with -.",
+  ];
+  for g in flag_groups() {
+    lines = lines.append(g.title + ":");
+    for f in g.flags {
+      let left: string = "  " + flag_spelling(f);
+      while (left.len() < 26) {
+        left = left + " ";
+      }
+      lines = lines.append(left + "  " + f.help);
+    }
+  }
+  return lines;
+}
+
+// usage reports a malformed command line: the help on stderr, and status 2.
+function usage(embedded: boolean): i32 {
+  for l in usage_lines(embedded) {
+    eprint(l);
+  }
   return 2;
+}
+
+// help is `fern -h`: the help on stdout, and success.
+function help(embedded: boolean): i32 {
+  for l in usage_lines(embedded) {
+    write(l + "\n");
+  }
+  return 0;
 }
 
 // list_targets implements `-targets`: every target the descriptor table
@@ -3013,10 +3155,8 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
     }
     return Checked { findings: util.append_all(fs, todo_warnings(merged.todo_sites, entry_path)), entry: entry_path, files: b.files, maps: b.maps, ok: true };
   }
-  // The module is ill-typed but produced no coded diagnostic — an
-  // expression collapsed to TypeUnknown on a type the partial checker
-  // can't model yet (#9053). Surface a best-effort hint so `-check`
-  // never exits 1 silently; the native `fern` remains the full oracle.
+  // Ill-typed with no diagnostic is a checker bug; report it as one rather
+  // than exit 1 silently.
   if (mt.diags.len() == 0) {
     fs = util.append_all(fs, errors_of(checker.ill_typed_hint(merged)));
   }
@@ -3746,7 +3886,7 @@ struct Doc { loaded: boolean, prog: lspquery.Program, files: string[], maps: uti
 function serve_lsp(pos: string[], embedded_root: string, target: string, target_given: boolean, embed_dir: string): i32 {
   let root: string = embedded_root;
   if (pos.len() > 1 || pos.len() == 1 && root.len() > 0) {
-    return usage();
+    return usage(embedded_root.len() > 0);
   }
   if (pos.len() == 1) {
     root = util.clean_path(pos[0]);
@@ -4707,7 +4847,7 @@ function tool_flag(a: string): boolean {
 // parse_tool_flag applies the tool flag at av[i], returning the flags, the
 // index of the last argument it consumed, and a non-zero exit status for a
 // malformed one.
-function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, i32) {
+function parse_tool_flag(tf: ToolFlags, av: string[], i: i32, embedded: boolean): (ToolFlags, i32, i32) {
   let a: string = av[i];
   let has_next: boolean = i + 1 < av.len();
   if (a == "-run" || a == "--run") {
@@ -4745,7 +4885,7 @@ function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, 
   }
   if (a == "-lint-set" || a == "-lint-opt") {
     if (!has_next) {
-      return (tf, i, usage());
+      return (tf, i, usage(embedded));
     }
     if (a == "-lint-set") {
       return (ToolFlags { ...tf, lint_sets: tf.lint_sets.append(av[i + 1]) }, i + 1, 0);
@@ -4754,7 +4894,7 @@ function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, 
   }
   if (a == "-qemu") {
     if (!has_next) {
-      return (tf, i, usage());
+      return (tf, i, usage(embedded));
     }
     return (ToolFlags { ...tf, qemu: av[i + 1] }, i + 1, 0);
   }
@@ -4772,7 +4912,7 @@ function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, 
   let next: i32 = i;
   if (a == "-color") {
     if (!has_next) {
-      return (tf, i, usage());
+      return (tf, i, usage(embedded));
     }
     mode = av[i + 1];
     next = i + 1;
@@ -5168,7 +5308,8 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   let entry_path: string = "";
   let out_path: string = "";
   let root: string = embedded_root;
-  let have_root: boolean = embedded_root.len() > 0;
+  let embedded: boolean = embedded_root.len() > 0;
+  let have_root: boolean = embedded;
   // Positionals past the stdlib root are the program's own, as `-interp
   // FILE ARG...` hands them to `args()` behind the entry's path.
   let prog_args: string[] = [];
@@ -5257,7 +5398,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       // follow the root, behind a `--` when the first begins with `-`.
       if (!have_root) {
         if (is_flag(a)) {
-          return flag_after_entry(a);
+          return flag_after_entry(a, embedded);
         }
         pos = pos.append(a);
         root = util.clean_path(a);
@@ -5265,15 +5406,17 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       } else if (prog_args.len() == 0 && !prog_sep && a == "--") {
         prog_sep = true;
       } else if (prog_args.len() == 0 && !prog_sep && is_flag(a)) {
-        return flag_after_entry(a);
+        return flag_after_entry(a, embedded);
       } else {
         pos = pos.append(a);
         prog_args = prog_args.append(a);
       }
+    } else if (a == "-h" || a == "-help" || a == "--help") {
+      return help(embedded);
     } else if (a == "-check") {
       mode_check = true;
     } else if (tool_flag(a)) {
-      let (ntf, ni, bad) = parse_tool_flag(tf, av, i);
+      let (ntf, ni, bad) = parse_tool_flag(tf, av, i, embedded);
       if (bad != 0) {
         return bad;
       }
@@ -5292,7 +5435,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     } else if (a == "-backend") {
       i = i + 1;
       if (i >= av.len()) {
-        return usage();
+        return usage(embedded);
       }
       backend = av[i];
     } else if (a == "-cover") {
@@ -5317,7 +5460,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     } else if (a == "-export") {
       i = i + 1;
       if (i >= av.len()) {
-        return usage();
+        return usage(embedded);
       }
       export_list = av[i];
     } else if (util.str_has_prefix(a, "-export=")) {
@@ -5356,13 +5499,13 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     } else if (a == "-chunk") {
       i = i + 1;
       if (i >= av.len()) {
-        return usage();
+        return usage(embedded);
       }
       chunk = av[i];
     } else if (a == "-emit") {
       i = i + 1;
       if (i >= av.len()) {
-        return usage();
+        return usage(embedded);
       }
       emit = av[i];
     } else if (a == "-O") {
@@ -5370,20 +5513,20 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     } else if (a == "-target") {
       i = i + 1;
       if (i >= av.len()) {
-        return usage();
+        return usage(embedded);
       }
       target = av[i];
       target_given = true;
     } else if (a == "-embed") {
       i = i + 1;
       if (i >= av.len()) {
-        return usage();
+        return usage(embedded);
       }
       embed_dir = av[i];
     } else if (a == "-o") {
       i = i + 1;
       if (i >= av.len()) {
-        return usage();
+        return usage(embedded);
       }
       out_path = av[i];
     } else if (is_flag(a)) {
@@ -5441,7 +5584,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // `-doctest` runs the examples in one.
   if (mode_tangle || tf.weave || tf.doctest) {
     if (!have_entry) {
-      return usage();
+      return usage(embedded);
     }
     if (prog_args.len() > 0) {
       eprint("fern: one document expected, got \"" + entry_path + "\" and \"" + prog_args[0] + "\"");
@@ -5457,7 +5600,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // nothing.
   if (mode_doc) {
     if (!have_entry) {
-      return usage();
+      return usage(embedded);
     }
     return run_doc(entry_path, out_path);
   }
@@ -5498,7 +5641,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   }
   if (mode_repl) {
     if (pos.len() > 1 || pos.len() == 1 && embedded_root.len() > 0) {
-      return usage();
+      return usage(embedded);
     }
     if (pos.len() == 1) {
       return run_repl(util.clean_path(pos[0]), target);
@@ -5514,7 +5657,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     have_entry = true;
   }
   if (!have_entry) {
-    return usage();
+    return usage(embedded);
   }
 
   // `-check <DIR>` checks the package governing DIR, or every member of the

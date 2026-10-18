@@ -1844,7 +1844,13 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
       let took: (__Conns, server.Session, u8[], boolean) = __tls_taken(drv, c, at, s, scratch[0:n], opts);
       c = took.0;
       s = took.1;
-      buf = buf.concat(took.2);
+      // The first record of a read is the session's own decrypted buffer;
+      // take it as is rather than copy it onto an empty buffer.
+      if (buf.len() == 0) {
+        buf = took.2;
+      } else {
+        buf = buf.concat(took.2);
+      }
       done = took.3;
       more = !done && n == __recv_room() && buf.len() <= http.http_request_bytes_cap(opts.limits);
       if (buf.len() > http.http_request_bytes_cap(opts.limits)) {

@@ -3103,9 +3103,7 @@ function string_result(op: string): typeinfo.Type {
 }
 
 // Negation keeps its operand's type, at either signed width. An unsigned
-// operand has no negation here: the result of one leaves the range the type
-// names, and what the source would mean by it is not the wrap this boundary
-// would emit.
+// negation never reaches this op: the producer writes it as `0 - x`.
 pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
   if (op == "-" && (is_i32(operand) || is_i64(operand) || is_float(operand))) {
     return operand;

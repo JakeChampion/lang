@@ -66,6 +66,7 @@ var parseErrPosCases = []struct {
 	{"fstring-comma-list", "function main(): i32 {\n  let x = 5;\n  let y = 7;\n  let s = f\"[{x, y}]\";\n  return 0;\n}\n"},
 	{"fstring-stray-paren", "function main(): i32 {\n  let x = 5;\n  let s = f\"[{x)}]\";\n  return 0;\n}\n"},
 	{"fstring-format-spec", "function main(): i32 {\n  let x = 5;\n  let s = f\"{x:04}\";\n  return 0;\n}\n"},
+	{"fstring-nested-sentinel-then-trailing", "function main(): i32 {\n  let x = 5;\n  let s = f\"{x + @} {x y}\";\n  return 0;\n}\n"},
 	{"fstring-placeholder-missing-type", "function main(): i32 {\n  let x = 5;\n  let s = f\"{(a: ) => a}\";\n  return 0;\n}\n"},
 }
 
@@ -258,6 +259,16 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"fstring-placeholder-type-error",
 			"function main(): i32 {\n  let x = 5;\n  let s = f\"{x as}\";\n  return 0;\n}\n",
 			"error[P001]: at top level: expected a type, got the end of the file (3:18)"},
+		// A placeholder that fails by a type error or by a sentinel inside it
+		// also ends the f-string: its own error is the f-string's one
+		// diagnostic, and a later bad placeholder adds nothing.
+		{"fstring-type-error-placeholder-ends-fstring",
+			"function main(): i32 {\n  let x = 5;\n  let s = f\"{x as} {x as}\";\n  let t = f\"{x as} {x y}\";\n  return 0;\n}\n",
+			"error[P001]: at top level: expected a type, got the end of the file (3:18)\n" +
+				"error[P001]: at top level: expected a type, got the end of the file (4:18)"},
+		{"fstring-nested-sentinel-placeholder-ends-fstring",
+			"function main(): i32 {\n  let x = 5;\n  let s = f\"{x + @} {x y}\";\n  return 0;\n}\n",
+			"error[P001]: in fn 'main': expected an expression, got \"@\" (3:18)"},
 		// Placeholders that are whole expressions stay clean: nested calls, a
 		// method chain, string literals holding braces, and a nested f-string.
 		{"fstring-placeholders-clean",

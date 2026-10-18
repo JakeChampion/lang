@@ -1,40 +1,8 @@
-// compiler/checker.fern — third concrete step of the
-// self-host port. Imports lexer.fern + parser.fern and walks the
-// Stmt[] / Expr tree from `parser.parse_program(toks)`, assigning
-// a type to every expression and verifying the program is
-// well-typed under a tiny static type system.
-//
-// This is the *minimal* checker — the Go checker in
-// internal/check/checker/checker.go is ~6700 LOC and handles unions,
-// generics, monomorphisation entry points, exhaustiveness, struct
-// methods, receiver visibility, and a host of other rules. This
-// port handles only:
-//
-//   - Primitive types: i32, bool, string (plus an `unknown`
-//     sentinel for nodes the parser couldn't fully resolve)
-//   - Variable bindings via `let x = expr;`
-//   - Binary operators: + - * / % (numeric), < <= > >= ==
-//     != (compare → bool), && || (bool-only)
-//   - Unary `-` (numeric) and `!` (bool)
-//   - String concatenation (`+` on two strings → string)
-//   - Identifier lookup through a flat scope (no nesting in this
-//     cut — there's no block-introducing stmt to scope yet)
-//
-// The point isn't completeness — it's demonstrating the
-// architectural pattern works end-to-end: `ast.ExprBinary(b)`
-// pattern-matches across module boundaries, `b.left` /
-// `b.right` recurse through `ast.Expr` cleanly, and the
-// resulting Type[] aligns row-for-row with the input Stmt[].
-//
-// Out of scope (the next iteration grows them):
-//   - Generics, type parameters, monomorphisation
-//   - Unions, enums, match exhaustiveness
-//   - Structs, methods, receiver dispatch
-//   - Function declarations + calls with arity / signature checks
-//   - Control flow (`if` / `while` / `for`) — parser stub
-//     doesn't emit them yet either
-//   - Float types (the parser flags `is_float` but the checker
-//     just lumps both into a numeric kind for now)
+// compiler/checker.fern — the type checker every `fern` command runs. It
+// resolves a parsed module's declarations, types every expression and
+// statement, reports the coded diagnostics (E0NN), and hands the types it
+// settles to the typed lowering. internal/check/checker is the Go oracle the
+// differential tests hold it to.
 import "./ast";
 import "./util";
 import "./lexer";
@@ -5219,6 +5187,7 @@ function builtin_sigs(): string[] {
     "__method_Writer_truncate(Writer, i64): Option[IoError]",
     "__method_Writer_write(Writer, string): Option[IoError]",
     "__method_Writer_write_some(Writer, string): Result[i64, IoError]",
+    "__method_boolean_to_string(boolean): string",
     "__method_string_as_bytes(string): [u8]",
     "__method_string_len(string): i32",
     "access(string, i32): Result[void, IoError]",
@@ -5859,7 +5828,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       typeinfo.TypeMap(mt) => {
         if (name == "insert") {
           if (c.args.len() != 2) {
-            return t_unknown("map.set: 2 args");
+            return t_unknown("map.insert: 2 args");
           }
           return literal_insert_columns(c, mt, recv_ty, s);
         }
@@ -5880,7 +5849,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         }
         if (name == "without") {
           if (c.args.len() != 1) {
-            return t_unknown("map.delete: 1 arg");
+            return t_unknown("map.without: 1 arg");
           }
           return t_tuple([recv_ty, t_bool()]);
         }
@@ -6323,6 +6292,17 @@ function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, 
     }
   }
   return out;
+}
+
+// declared_method_diags checks a call to receiver method `method` declared on
+// the scalar type `recv`: E004 for the wrong number of arguments, else E040
+// for a type parameter nothing binds. Silent when no such method is declared.
+function declared_method_diags(c: ast.ExprCall, recv: string, method: string, s: Scope): util.Diag[] {
+  let msig: MethodSig = s.lookup_method(method, recv);
+  if (msig.name.len() > 0 && c.args.len() != msig.param_types.len()) {
+    return [dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col)];
+  }
+  return uninferred_method_diags(c, recv, method, msig);
 }
 
 // uninferred_recv_diags reports E040 for a variable of the receiver's type
@@ -14791,8 +14771,9 @@ function display_dispatch_name(t: typeinfo.Type): string {
 
 // display_resolves reports whether `t.to_string(): string` resolves in `s` —
 // the Display spine's question (docs/TRAITS.md §3a), native's
-// typeImplementsDisplay: a `to_string` method on the type's dispatch name, or
-// an `impl Display` / `@derive(cmp.Display)` on its declaration. The import
+// typeImplementsDisplay: a `to_string` method on the type's dispatch name, an
+// `impl Display` / `@derive(cmp.Display)` on its declaration, or a builtin
+// `to_string` (a boolean's, which needs no import). The import
 // closure is what puts a scalar's stdlib method in `s.methods`, so `print(7)`
 // resolves with `core/cmp` imported and not without, as native has it.
 function display_resolves(t: typeinfo.Type, s: Scope): boolean {
@@ -14800,7 +14781,7 @@ function display_resolves(t: typeinfo.Type, s: Scope): boolean {
   if (tn.len() == 0) {
     return false;
   }
-  return s.has_method("to_string", tn) || conforms_by_impl_or_derive(s, tn, "Display");
+  return s.has_method("to_string", tn) || conforms_by_impl_or_derive(s, tn, "Display") || !is_unknown(builtin_method_sig(tn, "to_string"));
 }
 
 // display_unjudged: an argument type the Display spine neither rewrites nor
@@ -14944,11 +14925,16 @@ function unbound_map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.Typ
   return out;
 }
 
+// E004: a Map builtin takes a fixed number of arguments.
 // E038: a Map method's key and value arguments must match the map's columns,
 // as `append`'s element does. `insert` stores both, so a `str` view is not
 // lent there (native's storesArgument); a read borrows its key, so a view is.
 // A literal's own entries are the E045 check's, apart from the view.
 function map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.TypeMap, s: Scope, out: util.Diag[]): util.Diag[] {
+  let want: i32 = map_builtin_arity(method);
+  if (want >= 0 && c.args.len() != want) {
+    return out.append(dg_at("E004", util.arity_message("method \"" + method + "\"", want, c.args.len(), "argument"), c.line, c.col));
+  }
   let slots: typeinfo.Type[] = map_arg_slots(method, mt);
   if (slots.len() == 0 || c.args.len() != slots.len()) {
     return out;
@@ -14971,6 +14957,21 @@ function map_arg_slots(method: string, mt: typeinfo.TypeMap): typeinfo.Type[] {
     return [mt.key];
   }
   return [];
+}
+
+// map_builtin_arity is how many arguments a Map runtime builtin takes, or -1
+// when `method` is not one.
+function map_builtin_arity(method: string): i32 {
+  if (method == "insert" || method == "get_or") {
+    return 2;
+  }
+  if (method == "get" || method == "has" || method == "without") {
+    return 1;
+  }
+  if (method == "len" || method == "cleared" || method == "keys" || method == "values" || method == "iter") {
+    return 0;
+  }
+  return 0 - 1;
 }
 
 function map_arg_diag(c: ast.ExprCall, ii: i32, method: string, slot: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
@@ -15312,19 +15313,19 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
-          out = util.append_diags(out, uninferred_method_diags(c, int_label(it), mfa.field, s.lookup_method(mfa.field, int_label(it))));
+          out = util.append_diags(out, declared_method_diags(c, int_label(it), mfa.field, s));
         },
         typeinfo.TypeFloat(f) => {
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
-          out = util.append_diags(out, uninferred_method_diags(c, float_label(f), mfa.field, s.lookup_method(mfa.field, float_label(f))));
+          out = util.append_diags(out, declared_method_diags(c, float_label(f), mfa.field, s));
         },
         typeinfo.TypeBool(_) => {
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("boolean", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
-          out = util.append_diags(out, uninferred_method_diags(c, "boolean", mfa.field, s.lookup_method(mfa.field, "boolean")));
+          out = util.append_diags(out, declared_method_diags(c, "boolean", mfa.field, s));
         },
         typeinfo.TypeString(_) => {
           // E043: a string carries exactly two builtin methods
@@ -15347,7 +15348,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if ((mfa.field == "len" || mfa.field == "as_bytes") && c.args.len() != 0 && s.lookup_method(mfa.field, "string").name.len() == 0) {
             out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", 0, c.args.len(), "argument"), c.line, c.col));
           }
-          out = util.append_diags(out, uninferred_method_diags(c, "string", mfa.field, s.lookup_method(mfa.field, "string")));
+          out = util.append_diags(out, declared_method_diags(c, "string", mfa.field, s));
         },
         typeinfo.TypeArray(ar) => {
           // E038: a built-in array method whose argument must
@@ -15934,18 +15935,8 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
     if (is_primitive_type(trt)) {
       out = out.append(dg_at("E042", "`?` operator requires an Option, a Result, or an `@try` enum, got " + type_label(trt), u.line, u.col));
     } else {
-      // E042 return-shape (#4363 item 1): `?` on a KNOWN
-      // Option/Result operand additionally requires the
-      // surrounding function to return the same builtin enum.
-      // Sound subset of the Go rule: only fires when the
-      // declared return type resolved to a KNOWN primitive —
-      // never a possible Option/Result — so an unknown / union
-      // / struct / undeclared return is left to the Go checker
-      // and every legal `?` (whose return types to the matching
-      // name-only union) is untouched. Mismatched-enum returns
-      // (`?` on Option in a Result-returning fn) are also left
-      // to the Go checker: the name-only union can't render the
-      // return's generic args the way the native message does.
+      // E042 return-shape: `?` on a `?`-able enum requires the surrounding
+      // function to return that same enum.
       match (trt) {
         typeinfo.TypeUnion(tu) => {
           if (try_able_union(s, tu.name)) {
@@ -15953,7 +15944,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
             // return shape. Naming the enum rather than a placeholder
             // matches native, which prints the operand's enum in both
             // slots (#9344).
-            if (is_primitive_type(s.try_ret)) {
+            if (try_ret_other_type(s.try_ret, tu.name)) {
               out = out.append(dg_at("E042", "`?` on " + tu.name + " requires the surrounding function to return " + tu.name + ", got " + type_label(s.try_ret), u.line, u.col));
             } else {
               out = util.append_diags(out, try_residual_diags(s, trt, u));
@@ -16035,6 +16026,24 @@ function e069_cast(u: ast.ExprUnary, cot: typeinfo.Type, tgt: typeinfo.Type): ut
 
 function e033_cast(u: ast.ExprUnary, cot: typeinfo.Type, tgt: typeinfo.Type): util.Diag {
   return dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + ": `as` converts only between numeric types", u.line, u.col);
+}
+
+// try_ret_other_type reports whether `ret`, the type a `?` propagates to, is
+// resolved and is not the enum `name`. An unresolved or still-inferred result
+// says nothing.
+function try_ret_other_type(ret: typeinfo.Type, name: string): boolean {
+  match (ret) {
+    typeinfo.TypeUnion(ru) => {
+      return ru.name != name;
+    },
+    typeinfo.TypeVoid(_) => {
+      return true;
+    },
+    _ => {
+      return spellable(ret);
+    }
+  }
+  return false;
 }
 
 // try_residual_diags: E042 for a `?` on a Result whose error type is not the
@@ -16258,16 +16267,16 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
     return out;
   }
   out = call_diags(fa.obj, s);
-  // E043: a field READ on a struct that has no such field (and no
-  // method of that name). Method-call callees never reach here
-  // (the ExprCall arm above recurses only into the object), so a
-  // field access here is a genuine read.
+  // E043: a field READ on a struct that has no such field. Method-call
+  // callees never reach here (the ExprCall arm above recurses only into
+  // the object), so a field access here is a genuine read, and a method
+  // of that name is not a value it can read.
   let ot: typeinfo.Type = check_expr(fa.obj, s);
   match (ot) {
     typeinfo.TypeStruct(sn) => {
       let fsig: StructSig = s.lookup_struct(sn.name);
       out = util.append_diags(out, opaque_access_diags(fsig, s, "access a field of", fa.line, fa.col));
-      if (fsig.name.len() > 0 && !util.has_str(fsig.field_names, fa.field) && s.lookup_method(fa.field, sn.name).name.len() == 0) {
+      if (fsig.name.len() > 0 && !util.has_str(fsig.field_names, fa.field)) {
         out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + fa.field + "\"", fa.line, fa.col), fa, fsig));
       }
     },
@@ -16865,7 +16874,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       return s.lookup_method(field, float_label(f)).name.len() == 0;
     },
     typeinfo.TypeBool(_) => {
-      return s.lookup_method(field, "boolean").name.len() == 0;
+      return s.lookup_method(field, "boolean").name.len() == 0 && is_unknown(builtin_method_sig("boolean", field));
     },
     typeinfo.TypeString(_) => {
       return field != "len" && field != "as_bytes" && s.lookup_method(field, "string").name.len() == 0;
@@ -26230,7 +26239,7 @@ pub function payload_slot(s: Scope, owner: string, name: string, k: i32): i32 {
 
 // The innermost statement of a body whose type the checker could not infer,
 // and the reason it recorded for the unknown.
-struct UnknownSite { found: boolean, line: i32, reason: string }
+struct UnknownSite { found: boolean, line: i32, col: i32, reason: string }
 
 function unknown_site(stmts: ast.Stmt[], s: Scope): UnknownSite {
   let cur: Scope = s;
@@ -26241,16 +26250,16 @@ function unknown_site(stmts: ast.Stmt[], s: Scope): UnknownSite {
       if (inner.found) {
         return inner;
       }
-      return UnknownSite { found: true, line: ast.stmt_line(st), reason: u.reason };
+      return UnknownSite { found: true, line: ast.stmt_line(st), col: ast.stmt_col(st), reason: u.reason };
     }
     cur = r.scope;
   }
-  return UnknownSite { found: false, line: 0, reason: "" };
+  return UnknownSite { found: false, line: 0, col: 0, reason: "" };
 }
 
 // The nested bodies a statement checks, each in the scope check_stmt gives it.
 function unknown_site_within(st: ast.Stmt, s: Scope): UnknownSite {
-  let none: UnknownSite = UnknownSite { found: false, line: 0, reason: "" };
+  let none: UnknownSite = UnknownSite { found: false, line: 0, col: 0, reason: "" };
   match (st) {
     ast.StmtIf(f) => {
       let t: UnknownSite = unknown_site(f.then_body, s);
@@ -26282,21 +26291,13 @@ function unknown_site_within(st: ast.Stmt, s: Scope): UnknownSite {
   return none;
 }
 
-// ill_typed_hint returns a best-effort fallback diagnostic for a module that
-// check_module marked ill-typed but produced NO coded diagnostic for — an
-// expression collapsed to TypeUnknown, for example at a dyn method call or
-// an unregistered builtin. Option/Result values and dyn bindings now type;
-// the fallback corpus pins those accepted forms separately (#9053). The
-// `-check` driver calls this ONLY when `all_well_typed` is false and `diags`
-// is empty, so a rejection is never silent. Two deliberate properties keep it
-// safe: (1) it is a driver-only helper — check_module, checker_run, and the
-// differential codes gate (which drives check_module / checker_codes_run and
-// keys on E0NN codes) never invoke it, so parity is untouched; (2) the code is
-// the lowercase tag "type", never an E0NN, so even if some future path did run
-// it through a code scraper the tag would not be mistaken for a native code.
-// Reports the first function whose body has an un-inferable expression (at its
-// declaration), else the first offending top-level statement, else a
-// module-level note.
+// ill_typed_hint is the diagnostic for a module check_module marked ill-typed
+// without a coded diagnostic: an expression it collapsed to TypeUnknown. Every
+// such module is a checker bug, either a rule with no diagnostic or a valid
+// program it cannot type, so the report is an uncoded internal error at the
+// innermost statement it could not type. `-check` calls it only when
+// `all_well_typed` is false and `diags` is empty, so a rejection is never
+// silent; being uncoded, it never gates a build (is_diagnostic_code).
 pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
   // The module check_module typed, builtin structs (FileStat, …) included;
   // without them a function using one reads as the ill-typed one.
@@ -26308,20 +26309,30 @@ pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
     if (!check_func_body(func, fs)) {
       let site: UnknownSite = unknown_site(func.body, fs);
       if (site.found) {
-        return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer the type of the statement at line " + util.i32_to_string(util.pos_line(site.line)) + " (" + site.reason + "); run `fern -check`, the Go checker, for further diagnostics", site.line, 1)];
+        return [untyped_statement(site.line, site.col, "in \"" + func.name + "\" (" + site.reason + ")")];
       }
-      return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer an expression's type (for example, a dyn method call or an unregistered builtin); run `fern -check`, the Go checker, for further diagnostics", func.line, func.col)];
+      return [untyped_statement(func.line, func.col, "in the body of \"" + func.name + "\"")];
     }
   }
   let s: Scope = new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
   for top_stmt in mod.top_stmts {
     let r: CheckResult = check_stmt(top_stmt, s);
     s = r.scope;
-    if (is_unknown(r.ty)) {
-      return [dg_at("type", "at top level: the self-host checker could not infer an expression's type (for example, a dyn method call or an unregistered builtin); run `fern -check`, the Go checker, for further diagnostics", 0, 0)];
+    if let typeinfo.TypeUnknown(u) = r.ty {
+      return [untyped_statement(ast.stmt_line(top_stmt), ast.stmt_col(top_stmt), "at top level (" + u.reason + ")")];
     }
   }
-  return [dg_at("type", "type checking failed but no specific diagnostic is available (self-host checker limitation)", 0, 0)];
+  return [dg_at("", "internal error: the checker rejected this module without a diagnostic; this is a compiler bug, please report it", 0, 0)];
+}
+
+// untyped_statement is ill_typed_hint's report of a statement at `line`, `col`
+// the checker could not type; `col` 0 is a statement the parser keeps no
+// column for, reported from its line's start.
+function untyped_statement(line: i32, col: i32, place: string): util.Diag {
+  if (col <= 0) {
+    col = 1;
+  }
+  return dg_at("", "internal error: the checker could not type this statement " + place + " and has no diagnostic for it; this is a compiler bug, please report it", line, col);
 }
 
 // =================== VALIDATION ====================
