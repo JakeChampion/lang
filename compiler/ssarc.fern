@@ -3866,6 +3866,9 @@ function static_name(f: ssasem.Func, ins: ssa.SInst): string {
   if (ins.kind_tag == ssasem.record_new()) {
     return record_name(f.values[ins.result]);
   }
+  if (ins.kind_tag == ssasem.variant_new()) {
+    return ssasem.variant_key(f.values[ins.result], ins.str);
+  }
   return ins.str;
 }
 
