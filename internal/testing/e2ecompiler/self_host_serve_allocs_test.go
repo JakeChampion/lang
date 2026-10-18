@@ -152,8 +152,9 @@ func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 // ServeFetchAllocsCeiling bounds what a handler making two requests
 // through `plat.http` allocates per request, the serve loop's share
 // included (e2eharness.ServeFetchAllocsServerSource, the nightly two-fetch
-// profile; docs/benchmarks/net-twofetch-2026-10-17.md).
-const ServeFetchAllocsCeiling = 171
+// profile; docs/benchmarks/net-twofetch-2026-10-17.md and
+// docs/benchmarks/net-fetch-client-2026-10-18.md).
+const ServeFetchAllocsCeiling = 108
 
 func TestSelfHostServeAllocsPerRequestTwoFetch(t *testing.T) {
 	cli := buildSelfHostCLI(t)
