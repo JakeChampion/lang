@@ -31,6 +31,7 @@ import "./fern_toml";
 import "./literate";
 import "./util";
 import "core/map";
+import "std/error";
 
 // dirname returns everything up to and including the last '/', or "" when
 // the path has no directory part ("a/b/c.fern" → "a/b/", "main.fern" → "").
@@ -69,17 +70,13 @@ function rel_path(path: string): string {
   return path;
 }
 
-// read_error_reason says why a file that is there could not be read, or "" when
-// it is not there at all, which is the one error a search goes on past.
-pub function read_error_reason(e: IoError): string {
-  match (e) {
-    NotFound(_) => {
-      return "";
-    },
-    _ => {
-      return util.io_error_reason(e);
-    }
+// unreadable reports whether a failed read found the file there but could not
+// read it; not finding it is the one error a search goes on past.
+function unreadable(e: IoError): boolean {
+  if let NotFound(_) = e {
+    return false;
   }
+  return true;
 }
 
 // Resolved is a module's source. `err` is set when a candidate was present but
@@ -126,9 +123,8 @@ pub function read_module(bufs: Buffers, path: string): Resolved {
       return Resolved { ...res_none(), src: s, ok: true, shown: path };
     },
     Err(e) => {
-      let reason: string = read_error_reason(e);
-      if (reason.len() > 0) {
-        return Resolved { ...res_none(), err: reason, err_path: path };
+      if (unreadable(e)) {
+        return Resolved { ...res_none(), err: e.message(), err_path: path };
       }
     }
   }
@@ -138,9 +134,8 @@ pub function read_module(bufs: Buffers, path: string): Resolved {
       return tangle_module(path, doc, s);
     },
     Err(e) => {
-      let reason: string = read_error_reason(e);
-      if (reason.len() > 0) {
-        return Resolved { ...res_none(), err: reason, err_path: doc };
+      if (unreadable(e)) {
+        return Resolved { ...res_none(), err: e.message(), err_path: doc };
       }
     }
   }

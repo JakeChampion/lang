@@ -104,6 +104,7 @@ import "./lspquery";
 import "./lsprefs";
 import "./lsptokens";
 import "std/envflag";
+import "std/error";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
 // whitespace, indexed by line number so the formatter can ask about one in
@@ -362,12 +363,8 @@ function chunk_keeps_content(before: string, after: string): boolean {
 }
 
 // read_failure is the one-line report for a file that could not be read:
-// `fern: cannot read entry file /abs/x.fern: invalid UTF-8`. An empty reason means
-// the file was not found.
+// `fern: cannot read entry file /abs/x.fern: invalid UTF-8`.
 function read_failure(what: string, path: string, reason: string): string {
-  if (reason.len() == 0) {
-    reason = "not found";
-  }
   return "fern: cannot read " + what + " " + path + ": " + reason;
 }
 
@@ -384,7 +381,7 @@ function fmt_file(st: DiagStyle, path: string, fmt_write: boolean, fmt_diff: boo
       esrc = s;
     },
     Err(e) => {
-      eprint(read_failure("entry file", path, modloader.read_error_reason(e)));
+      eprint(read_failure("entry file", path, e.message()));
       return 1;
     }
   }
@@ -407,7 +404,7 @@ function fmt_file(st: DiagStyle, path: string, fmt_write: boolean, fmt_diff: boo
   if (out_path.len() > 0) {
     match (write_file(out_path, formatted)) {
       Err(e) => {
-        eprint("fern: cannot write output " + out_path + ": " + util.io_error_reason(e));
+        eprint("fern: cannot write output " + out_path + ": " + e.message());
         return 1;
       },
       Ok(_) => {}
@@ -427,7 +424,7 @@ function fmt_write_back(path: string, src: string, formatted: string): i32 {
   }
   match (write_file(path, formatted)) {
     Err(e) => {
-      eprint("fern: cannot write back " + path + ": " + util.io_error_reason(e));
+      eprint("fern: cannot write back " + path + ": " + e.message());
       return 1;
     },
     Ok(_) => {}
@@ -1523,7 +1520,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-o", "OUT", "write the output to OUT; without it a native target prints its assembly"),
       cli_flag("-emit", "FORM", "output form instead of the target's default: asm, core-module or command-module"),
       cli_flag("-backend", "NAME", "name the target's emitter: ssa on the native ISAs, flat on wasm"),
-      cli_flag("-embed", "DIR", "the asset directory __fern_asset and __fern_assets read"),
+      cli_flag("-embed", "DIR", "the asset directory __fern_asset, __fern_asset_bytes, __fern_assets and __fern_assets_bytes read"),
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export (default main)"),
@@ -2065,7 +2062,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
   match (write_file(lock, mvs.lock_text(sel))) {
     Ok(u) => {},
     Err(e) => {
-      eprint("resolve: cannot write " + lock + ": " + util.io_error_reason(e));
+      eprint("resolve: cannot write " + lock + ": " + e.message());
       return 1;
     }
   }
@@ -2146,7 +2143,7 @@ function run_add(pos: string[], fetcher: Fetcher): i32 {
   match (write_file(mpath, updated)) {
     Ok(u) => {},
     Err(e) => {
-      eprint("add: cannot write " + mpath + ": " + util.io_error_reason(e));
+      eprint("add: cannot write " + mpath + ": " + e.message());
       return 1;
     }
   }
@@ -2651,20 +2648,20 @@ function copy_package(src: string, dst: string): string {
           body = s;
         },
         Err(e) => {
-          return "cannot read " + child + ": " + util.io_error_reason(e);
+          return "cannot read " + child + ": " + e.message();
         }
       }
       let out: string = dst + "/" + child_rel;
       match (create_dir_all(util.dir_of(out))) {
         Ok(u) => {},
         Err(e) => {
-          return "cannot create " + util.dir_of(out) + ": " + util.io_error_reason(e);
+          return "cannot create " + util.dir_of(out) + ": " + e.message();
         }
       }
       match (write_file(out, body)) {
         Ok(u) => {},
         Err(e) => {
-          return "cannot write " + out + ": " + util.io_error_reason(e);
+          return "cannot write " + out + ": " + e.message();
         }
       }
     }
@@ -3564,7 +3561,7 @@ function write_generated(code: string, out_path: string): i32 {
     match (create_dir_all(parent)) {
       Ok(u) => {},
       Err(e) => {
-        eprint("fern: cannot create output directory " + parent + ": " + util.io_error_reason(e));
+        eprint("fern: cannot create output directory " + parent + ": " + e.message());
         return 1;
       }
     }
@@ -3575,7 +3572,7 @@ function write_generated(code: string, out_path: string): i32 {
       return 0;
     },
     Err(e) => {
-      eprint("fern: cannot write output " + out_path + ": " + util.io_error_reason(e));
+      eprint("fern: cannot write output " + out_path + ": " + e.message());
       return 1;
     }
   }
@@ -3638,7 +3635,7 @@ function run_doc(path: string, out_path: string): i32 {
       return 0;
     },
     Err(e) => {
-      eprint("fern: -doc: cannot write " + out_path + ": " + util.io_error_reason(e));
+      eprint("fern: -doc: cannot write " + out_path + ": " + e.message());
       return 1;
     }
   }
@@ -3658,7 +3655,7 @@ function doc_tree(dir: string, out_dir: string): i32 {
   match (create_dir_all(out_dir)) {
     Ok(u) => {},
     Err(e) => {
-      eprint("fern: -doc: cannot create " + out_dir + ": " + util.io_error_reason(e));
+      eprint("fern: -doc: cannot create " + out_dir + ": " + e.message());
       return 1;
     }
   }
@@ -3730,7 +3727,7 @@ function doc_tree(dir: string, out_dir: string): i32 {
       match (write_file(dest, page)) {
         Ok(u) => {},
         Err(e) => {
-          eprint("fern: -doc: cannot write " + dest + ": " + util.io_error_reason(e));
+          eprint("fern: -doc: cannot write " + dest + ": " + e.message());
           return 1;
         }
       }
@@ -3880,7 +3877,7 @@ function check_file(st: DiagStyle, entry_path: string, root: string, target: str
       return report_checked(st, check_source(entry_path, src, modloader.no_buffers(), root, target, target_given, embed_dir));
     },
     Err(e) => {
-      eprint(read_failure("entry file", entry_path, modloader.read_error_reason(e)));
+      eprint(read_failure("entry file", entry_path, e.message()));
       return 1;
     }
   }
@@ -4848,7 +4845,7 @@ function cover_report(path: string, have_path: boolean, as_lcov: boolean): i32 {
         text = t;
       },
       Err(e) => {
-        eprint("fern: -cover-report: cannot read " + path + ": " + util.io_error_reason(e));
+        eprint("fern: -cover-report: cannot read " + path + ": " + e.message());
         return 1;
       }
     }
@@ -5053,7 +5050,7 @@ function run_output(target: string, emit: string, shared: boolean, out_path: str
   match (create_dir_all(dir)) {
     Ok(_) => {},
     Err(e) => {
-      eprint("fern: -run: cannot create " + dir + ": " + util.io_error_reason(e));
+      eprint("fern: -run: cannot create " + dir + ": " + e.message());
       return ("", "", 1);
     }
   }
@@ -5108,7 +5105,7 @@ function lint_targets(paths: string[]): (string[], string) {
     if (!util.str_has_suffix(p, ".fern")) {
       if let Err(e) = read_file(p) {
         let no: string[] = [];
-        return (no, p + ": " + util.io_error_reason(e));
+        return (no, p + ": " + e.message());
       }
       let no: string[] = [];
       return (no, p + ": not a .fern source");
@@ -5292,7 +5289,7 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
         src = t;
       },
       Err(e) => {
-        eprint("fern: " + f + ": " + util.io_error_reason(e));
+        eprint("fern: " + f + ": " + e.message());
         return 2;
       }
     }
@@ -5419,9 +5416,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // register-allocating emit, on the native ISAs (docs/SELFHOST-SSA-BACKEND.md);
   // `flat`, the stack machine, on wasm. Empty is the same emitter unnamed.
   let backend: string = "";
-  // -embed DIR: the asset bundle __fern_asset / __fern_assets resolve
-  // against. Empty means the flag was not passed, which makes any use of
-  // either builtin the error (embed.fern / docs/EMBED.md).
+  // -embed DIR: the asset bundle the asset builtins resolve against. Empty
+  // means the flag was not passed, which makes any use of one the error
+  // (embed.fern / docs/EMBED.md).
   let embed_dir: string = "";
   // `-O` is the release build: it elides every assert() check, matching
   // native. Constant folding is NOT what this flag selects on either
@@ -5810,7 +5807,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
         eok = true;
       },
       Err(e) => {
-        eerr = modloader.read_error_reason(e);
+        eerr = e.message();
       }
     }
   }
@@ -5818,8 +5815,8 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     eprint(read_failure("entry file", entry_path, eerr));
     return 1;
   }
-  // -embed is folded as the program loads: __fern_asset / __fern_assets
-  // become string literals before anything else reads the tree, so the
+  // -embed is folded as the program loads: the asset builtins become string
+  // and u8[] literals before anything else reads the tree, so the
   // checker, the interpreter and every backend see literals and never learn
   // that assets exist. Native folds them in the same place, ahead of
   // checker.Check.
@@ -6235,7 +6232,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   if (out_path.len() > 0) {
     match (write_output(out_path, out_asm, target, emit)) {
       Err(e) => {
-        eprint("fern: cannot write output " + out_path + ": " + util.io_error_reason(e));
+        eprint("fern: cannot write output " + out_path + ": " + e.message());
         return 1;
       },
       Ok(_) => {}

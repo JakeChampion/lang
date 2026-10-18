@@ -319,7 +319,8 @@ pub function print_func(f: SFunc): string {
 //   48 arr_box    imm = cap             __fern_arr_box(cap): a fresh rc-headered box (a call)
 //   49 str_call   str = IR op name      a Fern-compiled runtime helper on the stack ABI (str_concat, arr_slice, ...)
 //   50 rt_call    str = IR op name      a runtime routine on the register ABI (arr_push, alloc, ...)
-//   51 str_view   args [src, lo, hi]    a string slice: the {rc -1, data, len} view box, in the frame (imm 1) or on the heap (imm 0)
+//   51 str_view   args [src, lo, hi]    a string slice: the {rc -1, data, len} view box, in the frame (imm 1) or on the heap (imm 0);
+//                 args [data, len]      imm 2: the same frame box over bytes already addressed (raw_string's frame form)
 //   52 ld_idx     args [base, idx]      8-byte load at base + idx*8, unchecked (the raw memory floor)
 //   53 st_idx     args [base, idx, val] 8-byte store at base + idx*8
 //   54 ld_byte    args [base, idx]      byte load at base + idx, zero-extended

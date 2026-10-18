@@ -115,13 +115,15 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 // net-h2-tls-2026-10-18.md); 55.0 with `record.open` handing the decrypted
 // buffer back shortened in place rather than copying the content out; 53.0
 // here with the decrypted application data moved into the step and then
-// into the read buffer rather than copied at each layer. The count's small
+// into the read buffer rather than copied at each layer; 49.0 with a byte
+// slice's view descriptor in the frame (#12780) and the session taken out of
+// its enum slot rather than retained (#12781). The count's small
 // variation between runs (how the client's records coalesce into reads) is
 // why it is a ceiling on the mean; a mean serveAllocsH2Drift or more under
 // it fails, to lower it. Most of the remaining count is the per-record
 // rebuild of the session and handshake state (docs/benchmarks/
 // net-h2-tls-2026-10-18.md, "Left").
-const ServeAllocsTLSCeiling = 53
+const ServeAllocsTLSCeiling = 49
 
 func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 	cli := buildSelfHostCLI(t)
@@ -150,8 +152,9 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 // re-read where their record dies; 255.2 here and 256.2 on the CI runner
 // on x86-64 with the request target handed back when already normal and
 // the handler started from its request rather than a framed record built
-// around it.
-const ServeAllocsH3Ceiling = 257
+// around it; 247.2 here with a byte slice's view descriptor in the frame
+// (#12780) and payloads taken out of enum slots (#12781).
+const ServeAllocsH3Ceiling = 249
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)
