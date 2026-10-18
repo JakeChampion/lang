@@ -1,7 +1,6 @@
 package e2ecompiler
 
 import (
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,15 +27,6 @@ func TestSelfHostArm64DarwinSocketV6(t *testing.T) {
 		t.Skip("requires native Apple Silicon")
 	}
 	checkSelfHostSocketV6(t, []string{"arm64-darwin"})
-}
-
-func selfHostHostHasIPv6() bool {
-	ln, err := net.Listen("tcp6", "[::1]:0")
-	if err != nil {
-		return false
-	}
-	ln.Close()
-	return true
 }
 
 func checkSelfHostSocketV6(t *testing.T, targets []string) {
@@ -107,7 +97,7 @@ func checkSelfHostSocketV6Probe(t *testing.T, driver, stdlib, target, probe stri
 		t.Fatalf("compile: %v\n%s", err, report)
 	}
 	e2eharness.RequireCompleteSemanticLowering(t, report)
-	has := selfHostHostHasIPv6()
+	has := e2eharness.HostHasIPv6()
 	if target == "wasm32-wasi" {
 		got, err := composeSelfHostWat(t, out).CombinedOutput()
 		if _, exited := err.(*exec.ExitError); err != nil && !exited {

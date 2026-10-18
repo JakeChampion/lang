@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,20 +24,10 @@ var socketV6Probes = []struct {
 	{"std_net", e2eharness.NetV6Probe},
 }
 
-// hostHasIPv6 reports whether this host can bind ::1.
-func hostHasIPv6() bool {
-	ln, err := net.Listen("tcp6", "[::1]:0")
-	if err != nil {
-		return false
-	}
-	ln.Close()
-	return true
-}
-
 // checkV6Verdict judges a native leg's exit code and output.
 func checkV6Verdict(t *testing.T, leg, out string, got int) {
 	t.Helper()
-	if hostHasIPv6() {
+	if e2eharness.HostHasIPv6() {
 		if got != 42 {
 			t.Fatalf("%s got %d, want 42; first failing check: %s", leg, got, out)
 		}
@@ -130,7 +119,7 @@ func TestSocketV6Wasm(t *testing.T) {
 				t.Fatalf("wasmtime run: %v\n%s", err, out)
 			}
 			got := strings.TrimSpace(string(out))
-			if hostHasIPv6() {
+			if e2eharness.HostHasIPv6() {
 				if got != "ok" {
 					t.Fatalf("wasm: want \"ok\" on stdout; first failing check: %s", got)
 				}

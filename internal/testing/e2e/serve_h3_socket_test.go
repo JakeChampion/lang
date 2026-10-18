@@ -44,6 +44,9 @@ func TestServeH3SocketX86_64(t *testing.T) {
 		}
 	})
 	t.Run("ipv6", func(t *testing.T) {
+		if !e2eharness.HostHasIPv6() {
+			t.Skip("the host has no IPv6 loopback")
+		}
 		ln, err := net.ListenTCP("tcp6", &net.TCPAddr{IP: net.IPv6loopback})
 		if err != nil {
 			t.Fatal(err)
