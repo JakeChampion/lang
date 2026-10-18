@@ -1775,6 +1775,9 @@ struct __Head { method: string, path: string, headers: HeaderMap, version: strin
 function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Result[__Head, i32] {
   let start: i32 = from;
   from = __past_empty_line(buf, from);
+  if (from >= buf.len()) {
+    return Err(1);
+  }
   let first_crlf: i32 = __request_line_end(buf, from, limits.request_line);
   let headers_end: i32 = __header_block_end(buf, from, limits.header_bytes);
   let bounded: i32 = __head_bounded(buf, from, limits, first_crlf, headers_end);
