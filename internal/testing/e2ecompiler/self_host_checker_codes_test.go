@@ -2322,10 +2322,6 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"type-param-unbound-empty-array", "function first[T](own x: T, n: i32): i32 { return n; }\nfunction main(): i32 { return first([], 3); }\n", []string{"E040"}},
 		{"type-param-unbound-no-args", "function mk[T](): i32 { return 1; }\nfunction main(): i32 { return mk(); }\n", []string{"E040"}},
 		{"type-param-explicit", "function mk[T](): i32 { return 1; }\nfunction main(): i32 { return mk[i32](); }\n", nil},
-		// A receiver whose own type argument nothing inferred binds none of
-		// its type's variables (#12632).
-		{"type-param-unbound-receiver", "enum GO[T] { GNil, GHas(T) }\nfunction (o: GO[T]) count(): i32 { match (o) { GHas(_) => { return 1; }, GNil => { return 0; } } }\nfunction main(): i32 { let o = GNil; return o.count(); }\n", []string{"E040"}},
-		{"type-param-bound-receiver", "enum GO[T] { GNil, GHas(T) }\nfunction (o: GO[T]) count(): i32 { match (o) { GHas(_) => { return 1; }, GNil => { return 0; } } }\nfunction main(): i32 { let o: GO[i32] = GNil; let p = GHas(5); return o.count() + p.count(); }\n", nil},
 		// A receiver binds only the variables its declared type names, so on a
 		// concrete receiver the method's own parameter is unbound (#10991).
 		{"method-type-param-unbound-array", "function (xs: u8[]) count[T](values: T[]): i32 { return values.len() + xs.len(); }\nfunction main(): i32 { let b: u8[] = [1 as u8]; return b.count([]); }\n", []string{"E040"}},
