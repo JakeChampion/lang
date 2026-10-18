@@ -2355,6 +2355,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// `let r = Ok(1);`) is a payload the binding never holds: a pattern
 		// binding of it is unreachable, and storing one in it is E003.
 		{"unsettled-payload-binding-ok", "enum E[T] { A(T), B }\nfunction main(): i32 {\n  let a: i32 = 4;\n  let o = None;\n  let r = Ok(1);\n  let e = E.B;\n  let n: i32 = a % (match (o) { Some(x) => x, None => a });\n  n = n + (match (r) { Ok(x) => x, Err(y) => y - (y +| y) });\n  return n + (match (e) { E.A(x) => x, E.B => 2 });\n}\n", nil},
+		{"unsettled-residual-try-ok", "function f(): Result[i32, string] { let r = Ok(3); return Ok(r? + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"unsettled-payload-store-some", "function main(): i32 { let o = None; o = Some(3); return 0; }\n", []string{"E003"}},
 		{"unsettled-payload-store-err", "function main(): i32 { let r = Ok(1); r = Err(\"s\"); return 0; }\n", []string{"E003"}},
 		{"unsettled-payload-store-variant", "enum E[T] { A(T), B }\nfunction main(): i32 { let e = E.B; e = E.A(3); return 0; }\n", []string{"E003"}},

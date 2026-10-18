@@ -85,6 +85,11 @@ var dynTraitIRCases = []struct {
 	// bound value is usable as a Circle (field `r`). r = 7.
 	{name: "downcast-hit",
 		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Circle) { Some(c) => { return c.r; }, None => { return 0; } } } function main(): i32 { let c: Circle = Circle { r: 7 }; return dc(c); }`, expected: 7},
+	// A downcast's payload passed straight to a bounded generic: the
+	// monomorphiser reads `x as? S` as Option[S], so the call has an instance.
+	// (3+4)*3 + (3+1) = 25.
+	{name: "downcast-into-bounded-generic",
+		src: `trait Tr { function m(self: Self, x: i32): i32; } struct S { n: i32 } impl Tr for S { function m(self: Self, x: i32): i32 { return self.n + x; } } function tg[T: Tr](a: T, b: T, x: i32): i32 { return a.m(x) * 3 + b.m(1); } function main(): i32 { let ds: dyn Tr[] = [S { n: 2 }, S { n: 3 }]; return match (ds[1] as? S) { Some(s) => tg(s, s, 4), None => 5 }; }`, expected: 25},
 	// MISS: a `dyn Shape` holding a Rect, `s as? Circle` → None → 0.
 	{name: "downcast-miss",
 		src: `trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Circle) { Some(c) => { return c.r; }, None => { return 0; } } } function main(): i32 { let r: Rect = Rect { w: 2, h: 5 }; return dc(r); }`, expected: 0, static: true},
@@ -168,13 +173,13 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 	// correct width.
 	// i64: 5_000_000_000 + 1 == 5_000_000_001 (truncates to garbage at i32).
 	{name: "dyn-i64-chained",
-		src: `trait Big { function v(self: Self): i64; } struct P { n: i64 } impl Big for P { function v(self: Self): i64 { return self.n; } } function main(): i32 { let p: P = P { n: 5000000000 }; let d: dyn Big = p; let r: i64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, expected: 1},
+		src: `trait Big { function v(self: Self): i64; } struct P { n: i64 } impl Big for P { function v(self: Self): i64 { return self.n; } } function main(): i32 { let p: P = P { n: 5000000000 }; let d: dyn Big = p; let r: i64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, expected: 1, static: true},
 	// u64 uses the i64 path — same fix.
 	{name: "dyn-u64-chained",
-		src: `trait U { function v(self: Self): u64; } struct P { n: u64 } impl U for P { function v(self: Self): u64 { return self.n; } } function main(): i32 { let p: P = P { n: 5000000000 }; let d: dyn U = p; let r: u64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, expected: 1},
+		src: `trait U { function v(self: Self): u64; } struct P { n: u64 } impl U for P { function v(self: Self): u64 { return self.n; } } function main(): i32 { let p: P = P { n: 5000000000 }; let d: dyn U = p; let r: u64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, expected: 1, static: true},
 	// f64: 2.5 + 0.5 == 3.0 (integer add on the float bits gives a wrong value).
 	{name: "dyn-f64-chained",
-		src: `trait Fl { function f(self: Self): f64; } struct S { v: f64 } impl Fl for S { function f(self: Self): f64 { return self.v; } } function main(): i32 { let s: S = S { v: 2.5 }; let d: dyn Fl = s; let r: f64 = d.f() + 0.5; if (r == 3.0) { return 1; } return 0; }`, expected: 1},
+		src: `trait Fl { function f(self: Self): f64; } struct S { v: f64 } impl Fl for S { function f(self: Self): f64 { return self.v; } } function main(): i32 { let s: S = S { v: 2.5 }; let d: dyn Fl = s; let r: f64 = d.f() + 0.5; if (r == 3.0) { return 1; } return 0; }`, expected: 1, static: true},
 	// f32 uses the f64 twin for value ops — same fix.
 	{name: "dyn-f32-chained",
 		src: `trait F { function v(self: Self): f32; } struct P { n: f32 } impl F for P { function v(self: Self): f32 { return self.n; } } function main(): i32 { let p: P = P { n: 2.5 }; let d: dyn F = p; let r: f32 = d.v() + 0.5; if (r == 3.0) { return 1; } return 0; }`, expected: 1},

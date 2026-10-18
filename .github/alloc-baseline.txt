@@ -55,5 +55,7 @@
 # container (the previous pin was drift); semreach's walk adds 803,363.
 # Re-pinned 2026-10-15 again: semreach no longer walks the `__` folds
 # nothing calls, 1.8% fewer.
-x86_64/checker.allocs	25053646
-x86_64/checker.frees	25053646
+# Re-pinned 2026-10-18: main's merges since moved it 14.4% (28,649,016 on main
+# d497b435 on the dev container); #12791 adds 0.1%.
+x86_64/checker.allocs	28676434
+x86_64/checker.frees	28676434

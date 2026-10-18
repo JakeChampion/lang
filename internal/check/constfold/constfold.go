@@ -101,7 +101,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 
 	for _, cd := range prog.Consts {
 		if _, dup := values[cd.Name]; dup {
-			errs = append(errs, fmt.Errorf("%s: const %q redeclared", cd.P, cd.Name))
+			errs = append(errs, &Error{Pos: cd.P, Msg: fmt.Sprintf("const %q redeclared", cd.Name)})
 			continue
 		}
 		if rangeErrs := checkLiteralRange(cd); len(rangeErrs) > 0 {
@@ -110,13 +110,13 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		}
 		val, err := evalConstTyped(cd.Value, cd.Type, values, types, in.Assets)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: const %s: %w", cd.P, cd.Name, err))
+			errs = append(errs, &Error{Pos: cd.P, Msg: fmt.Sprintf("const %s: %s", cd.Name, err)})
 			continue
 		}
 		gotT := litType(val)
 		if cd.Type != nil {
 			if err := settleConstLit(cd.Type, val); err != nil {
-				errs = append(errs, fmt.Errorf("%s: const %s: %w", cd.P, cd.Name, err))
+				errs = append(errs, &Error{Pos: cd.P, Msg: fmt.Sprintf("const %s: %s", cd.Name, err)})
 				continue
 			}
 			// The declared type is the const's type once the literal has
