@@ -98,6 +98,15 @@ three (`docs/NET-P0-MESSAGE-LAYER-PLAN.md` §6). The pin is a ratchet the same
 way: a count above it fails as a regression and one below it fails until
 the pin is lowered. The slack it allows is per second of the run, for the
 Date the loop reformats once a second.
+`TestSelfHostServeSyscallsPerRequest` counts the same request's syscalls,
+under ptrace, pinned at 3 the same way (the reactor wait, the read and the
+send) with no `clock_gettime` among them: the clocks read through the vDSO
+(#12537), where before it they were eight more per request.
+`TestSelfHostVdsoClockNoSyscall` is the same zero for a program of 100k
+bare reads. Both run on the host's own ISA only, x86-64 in `ci.yml` and
+both ISAs in `perf.yml`'s bench job: under qemu the guest vDSO's
+`clock_gettime` is a trampoline that makes the syscall, so an emulated leg
+would count one per read whatever the runtime did.
 `TestSelfHostRouterAllocs` (`internal/testing/e2ecompiler`) counts what
 std/http/router adds to a request on x86-64, arm64 and wasm, pinned per
 target as a ratchet: a literal route costs its handler alone, and a route

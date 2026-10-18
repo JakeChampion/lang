@@ -79,7 +79,7 @@ function main(): i32 {
 // it lowers the pin.
 func CheckServeAllocs(t *testing.T, addr string, want int64, rounds int) {
 	t.Helper()
-	total, seconds := serveAllocsRounds(t, serveAllocsHTTP1(t, addr), rounds)
+	total, seconds := serveAllocsRounds(t, KeepAliveGET(t, addr), rounds)
 	got := int64(math.Round(float64(total) / float64(rounds)))
 	if d := total - got*int64(rounds); d < -serveAllocsSlackPerSecond*seconds || d > serveAllocsSlackPerSecond*seconds {
 		t.Fatalf("%d allocations over %d requests is %d from a whole number per request", total, rounds, d)
@@ -90,9 +90,9 @@ func CheckServeAllocs(t *testing.T, addr string, want int64, rounds int) {
 	}
 }
 
-// serveAllocsHTTP1 opens one keep-alive HTTP/1.1 connection to the server
+// KeepAliveGET opens one keep-alive HTTP/1.1 connection to the server
 // at addr, closed when the test ends, and answers a GET's body over it.
-func serveAllocsHTTP1(t *testing.T, addr string) func(path string) string {
+func KeepAliveGET(t *testing.T, addr string) func(path string) string {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
@@ -153,7 +153,7 @@ function main(): i32 {
 // than a pin.
 func CheckServeFetchAllocs(t *testing.T, addr string, ceiling int64, rounds int) {
 	t.Helper()
-	total, seconds := serveAllocsRounds(t, serveAllocsHTTP1(t, addr), rounds)
+	total, seconds := serveAllocsRounds(t, KeepAliveGET(t, addr), rounds)
 	checkAllocsCeiling(t, "two-fetch", total, seconds, rounds, ceiling)
 }
 

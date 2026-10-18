@@ -115,6 +115,15 @@ jobs:
           FERN_REQUIRE_VALGRIND: "1"
         run: go test ./internal/testing/e2ecompiler/ -run '^(TestSelfHostCtGateX86_64|TestSelfHostCtGateArm64)$' -count=1 -v -timeout 30m
 
+      # The syscall gates (docs/TEST-GATES.md) trace a program natively and
+      # count what it asks the kernel: no clock_gettime from the clocks, and
+      # three syscalls per hello request from the serve loop. Each runner
+      # gates its own ISA, since under qemu the guest vDSO's clock is a
+      # trampoline that makes the syscall.
+      - name: Syscall gates
+        if: ${{ !cancelled() }}
+        run: go test ./internal/testing/e2ecompiler/ -run '^(TestSelfHostVdsoClockNoSyscall|TestSelfHostServeSyscallsPerRequest)$' -count=1 -v -timeout 30m
+
   # THREE MEASUREMENTS, ONE JOB. Each of these builds the whole self-hosted
   # compiler and then measures for well under a minute, so as separate jobs they
   # paid three checkouts, three toolchain setups, three queue admissions and two
