@@ -555,12 +555,17 @@ pub function (e: Encoder) encode(fields: Field[]): Encoded {
 pub struct Encoding { encoder: Encoder, out: u8[] }
 
 // `(e).begin()` — a header block started: the size update the encoder
-// owes, if any, goes first.
+// owes, if any, goes first. `(e).begin_in(out)` writes the block behind
+// the bytes `out` already holds, for a caller framing it in place.
 pub function (e: Encoder) begin(): Encoding {
+  return e.begin_in([]);
+}
+
+pub function (e: Encoder) begin_in(own out: u8[]): Encoding {
   if (e.update < 0) {
-    return Encoding { encoder: e, out: [] };
+    return Encoding { encoder: e, out: out };
   }
-  return Encoding { encoder: Encoder { ...e, update: 0 - 1 }, out: __put_integer([], 32, 5, e.update) };
+  return Encoding { encoder: Encoder { ...e, update: 0 - 1 }, out: __put_integer(out, 32, 5, e.update) };
 }
 
 // `(en).put(name, value, sensitive)` — one field written as `encode`

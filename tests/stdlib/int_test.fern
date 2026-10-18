@@ -10,6 +10,21 @@ import "core/int" as int;
 // prelude origin, this is the migration-shaped (pure-Fern) companion.
 
 function test_to_string_zero(): test.TestOutcome {
+  let i: i32 = 0;
+  while (i < 120) {
+    let s: string = int.int_to_string(i);
+    match (int.parse_int_radix(s, 10)) {
+      Some(n) => {
+        if (n != i || s[s.len() - 1] != (48 + i % 10) as u8) {
+          return test.fail("int_to_string " + s);
+        }
+      },
+      None => {
+        return test.fail("int_to_string " + s);
+      }
+    }
+    i = i + 1;
+  }
   return test.assert_eq(int.int_to_string(0), "0");
 }
 

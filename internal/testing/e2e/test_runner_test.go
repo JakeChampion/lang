@@ -1263,7 +1263,7 @@ func TestRunnerHTTPH3QExamplePasses(t *testing.T) {
 // frame as it arrives in pieces, and answers each malformed shape RFC 9113
 // §6 names with its error.
 func TestRunnerHTTPH2FrameExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h2_frame", "std/http/h2/frame", 5)
+	runnerSuitePasses(t, "http_h2_frame", "std/http/h2/frame", 6)
 }
 
 // `tests/stdlib/http_h2_test.fern` drives the server's HTTP/2 connection as

@@ -243,6 +243,10 @@ function test_field_by_field(): test.TestOutcome {
   if (hex.hex_encode(parts.bytes) != hex.hex_encode(whole.bytes)) {
     return test.fail("field by field " + hex.hex_encode(parts.bytes) + ", whole " + hex.hex_encode(whole.bytes));
   }
+  let behind: hpack.Encoded = hpack.encoder(4096).with_max_table(256).begin_in([1 as u8, 2 as u8]).put(":status", "200", false).finish();
+  if (hex.hex_encode(behind.bytes) != "0102" + hex.hex_encode(hpack.encoder(4096).with_max_table(256).encode([hpack.field(":status", "200")]).bytes)) {
+    return test.fail("begun behind bytes " + hex.hex_encode(behind.bytes));
+  }
   return test.assert_eq(parts.encoder.table_size(), whole.encoder.table_size());
 }
 

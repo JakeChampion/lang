@@ -158,8 +158,56 @@ function test_malformed(): test.TestOutcome {
   return test.assert_eq(got, "h2 frame: connection error 1: DATA on stream 0\nh2 frame: connection error 1: padding of 3 bytes in a payload of 3\nh2 frame: connection error 1: a PADDED frame with no pad length\nh2 frame: connection error 6: HEADERS with PRIORITY shorter than its priority\nh2 frame: stream 5 error 6: PRIORITY of 4 bytes\nh2 frame: connection error 6: RST_STREAM of 3 bytes\nh2 frame: connection error 1: SETTINGS on stream 1\nh2 frame: connection error 6: SETTINGS ACK with a payload\nh2 frame: connection error 6: SETTINGS of 5 bytes\nh2 frame: connection error 1: SETTINGS_ENABLE_PUSH of 2\nh2 frame: connection error 3: SETTINGS_INITIAL_WINDOW_SIZE over 2^31-1\nh2 frame: connection error 1: SETTINGS_MAX_FRAME_SIZE of 4096\nh2 frame: connection error 1: SETTINGS_MAX_FRAME_SIZE of 16777216\nh2 frame: connection error 6: PING of 7 bytes\nh2 frame: connection error 1: PING on stream 1\nh2 frame: connection error 6: GOAWAY of 4 bytes\nh2 frame: connection error 6: WINDOW_UPDATE of 3 bytes\nh2 frame: stream 5 error 1: WINDOW_UPDATE of 0\nh2 frame: connection error 1: CONTINUATION on stream 0\nh2 frame: connection error 6: frame of 16385 bytes over the 16384 allowed");
 }
 
+// framed_whole is a HEADERS frame carrying `block` and a DATA frame
+// carrying `data`, or HEADERS alone with END_STREAM for no data, as
+// `encode` writes them, in hex.
+function framed_whole(stream: i32, block: u8[], data: u8[]): string {
+  if (data.len() == 0) {
+    return hex.hex_encode(frame.encode(frame.Headers(frame.HeadersFrame { stream: stream, end_stream: true, end_headers: true, priority: None, block: block, padding: 0 })));
+  }
+  return hex.hex_encode(frame.encode(frame.Headers(frame.HeadersFrame { stream: stream, end_stream: false, end_headers: true, priority: None, block: block, padding: 0 })).concat(frame.encode(frame.Data(frame.DataFrame { stream: stream, end_stream: true, data: data, padding: 0 }))));
+}
+
+// in_one_buffer is the same two frames written in one buffer: the block
+// appended behind `headers_room`'s reserved bytes, then `headers_data`.
+function in_one_buffer(stream: i32, block: u8[], data: u8[]): string {
+  let buf: u8[] = frame.headers_room(data.len());
+  for b in block {
+    buf = buf.append(b);
+  }
+  return hex.hex_encode(frame.headers_data(buf, stream, data[0:data.len()], data.len()));
+}
+
+// A response written in one buffer is byte for byte the two frames
+// `encode` writes: with a body, without one, with a block that outgrows
+// the room, and with a body longer than the room.
+function test_headers_data(): test.TestOutcome {
+  let small: u8[] = [136 as u8, 190 as u8];
+  let large: u8[] = [];
+  let i: i32 = 0;
+  while (i < frame.BLOCK_ROOM + 7) {
+    large = large.append((64 + i % 32) as u8);
+    i = i + 1;
+  }
+  let long: u8[] = __alloc_u8(frame.BLOCK_ROOM * 3);
+  let cases: u8[][] = [small, large];
+  let got: string = "";
+  for block in cases {
+    for data in ["hello".bytes(), [], long] {
+      if (in_one_buffer(7, block, data) != framed_whole(7, block, data)) {
+        got = got + "block " + int.int_to_string(block.len()) + " data " + int.int_to_string(data.len()) + " differs\n";
+      }
+    }
+  }
+  if (hex.hex_encode(frame.header_into(__alloc_u8(11), 2, frame.DATA, 1, 65537, 300)) != "0000" + "00012c" + "00" + "01" + "00010001") {
+    got = got + "header_into\n";
+  }
+  return test.assert_eq(got, "");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/h2/frame");
+  r = r.it("a HEADERS and a DATA frame in one buffer", test_headers_data);
   r = r.it("the client preface", test_preface);
   r = r.it("every frame type round-trips", test_round_trips);
   r = r.it("padding and priority", test_padding_and_priority);
