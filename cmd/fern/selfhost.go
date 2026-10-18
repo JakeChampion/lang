@@ -56,12 +56,12 @@ func compileArgs(r compileRequest, out, stdlib string) []string {
 // component is served, not run.
 func wasmRunRefusal(r compileRequest) error {
 	if r.target == "wasm32-wasi-http" {
-		return fmt.Errorf("--run cannot serve -target wasm32-wasi-http; build it with -o OUT.wasm and run `wasmtime serve OUT.wasm`")
+		return fmt.Errorf("-run cannot serve -target wasm32-wasi-http; build it with -o OUT.wasm and run `wasmtime serve OUT.wasm`")
 	}
 	return nil
 }
 
-// compileSelfHost hands r to the self-host compiler, and with --run executes
+// compileSelfHost hands r to the self-host compiler, and with -run executes
 // what it built.
 func compileSelfHost(r compileRequest) (int, error) {
 	compiler, err := launcher.Compiler()
@@ -94,7 +94,7 @@ func compileSelfHost(r compileRequest) (int, error) {
 		return 0, nil
 	}
 	if r.target == "arm64-darwin" {
-		return 1, fmt.Errorf("--run is not supported for -target arm64-darwin (Mach-O binaries need an Apple Silicon Mac to execute; the output at %q is ready to run there)", out)
+		return 1, fmt.Errorf("-run is not supported for -target arm64-darwin (Mach-O binaries need an Apple Silicon Mac to execute; the output at %q is ready to run there)", out)
 	}
 	if d := platforms.ForTarget(r.target); d != nil && d.ISA == "wasm32" {
 		if err := wasmRunRefusal(r); err != nil {

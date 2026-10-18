@@ -1838,6 +1838,11 @@ func (g *Generator) maybeEmitArrayAliasCow(b *strings.Builder, sc *scope) bool {
 	if g.flip(0.85) {
 		return false
 	}
+	// A spent stream would take the pool's first type, which a later use of
+	// the cluster's result may not want; no cluster is the smaller program.
+	if g.ch.exhausted() {
+		return false
+	}
 	pool := cowArrayTypes
 	if g.profile.floatsAllowed() {
 		pool = append(append([]gtype{}, pool...), cowFloatArrayTypes...)

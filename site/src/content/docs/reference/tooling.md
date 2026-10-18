@@ -21,6 +21,11 @@ compiles, and manages packages. It is Fern's compiler, written in Fern, with
 the standard library inside it: it assembles, links, and (for Darwin)
 code-signs in-process, so no external toolchain is needed.
 
+These pages write every flag with one dash, and that is the canonical
+spelling. `fern` also accepts two dashes, takes a value as `-target
+x86-64-linux` or `-target=x86-64-linux`, and takes `=true` or `=false` on
+any flag that has no value: `-cover=false`, `-g=true`.
+
 ### Targets
 
 | Target | Output |
@@ -45,7 +50,7 @@ to compile with E066 instead of failing at run time.
 | --- | --- | --- |
 | `-target` | `arm64-linux` | Target to compile for; see the table above. |
 | `-o` | none | Output path. Without it a native target prints its assembly to stdout; a wasm target requires `-o` unless `-emit asm` asks for its WAT. |
-| `-run` | off | Build to a temporary binary and run it, passing on its exit code. Runs directly when the target's ISA is the host's, under `wasmtime run` for `wasm32-wasi` (a component reports only 0 or 1; `-emit command-module` keeps the full code), otherwise under `-qemu`. Also spelled `--run`. |
+| `-run` | off | Build to a temporary binary and run it, passing on its exit code. Runs directly when the target's ISA is the host's, under `wasmtime run` for `wasm32-wasi` (a component reports only 0 or 1; `-emit command-module` keeps the full code), otherwise under `-qemu`. |
 | `-qemu` | `qemu-aarch64` | User-mode emulator for `-run` on a foreign ISA. For `-target x86-64-linux` the default becomes `qemu-x86_64`. |
 | `-O` | off | Release build: drop every `assert()` after type-checking, without evaluating its condition. `-check` and `-interp` always keep asserts. |
 | `-g` | off | Emit a symbol table and DWARF so debuggers, `nm`, backtraces and profilers can name functions and source lines. |

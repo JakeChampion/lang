@@ -84,7 +84,7 @@ allocator past the 512-byte bound (exit 98); they are now flat.
 
 ## Traps
 
-- **`fern --run` is not the interpreter.** It links a temporary binary and
+- **`fern -run` is not the interpreter.** It links a temporary binary and
   executes it, so the issue's table read as "interp disagrees with native" when
   both rows were the compiled path. `-interp` is the AST interpreter, and it
   was right all along — which is what makes the differential harness

@@ -20709,7 +20709,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E042", "malformed %s type %s", demangle(srcEnum.Name), inner)
 			return nil
 		}
-		if !ast.Equal(srcRes, retRes) {
+		// An unsettled residual (`let r = Ok(1);`) is a failure the value never
+		// holds, so there is nothing to match or convert.
+		if !ast.Equal(srcRes, retRes) && !unboundEnumArg(srcRes) {
 			// Error-converting `?`: a residual propagated through a
 			// function whose own residual is `dyn Trait` boxes the
 			// concrete error, provided it implements Trait (the

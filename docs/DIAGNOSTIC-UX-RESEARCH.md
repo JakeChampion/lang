@@ -526,7 +526,7 @@ structure, not a pre-rendered string.
    apply the fix on click. Freeform "did you mean to
    write X?" requires the user to manually edit.
 
-3. **Error catalogue + `--explain` for the top errors.**
+3. **Error catalogue + `-explain` for the top errors.**
    Rust, Elm, Roc. Stable codes, long-form explanation,
    worked examples. Search anchors as a side benefit.
 
@@ -714,8 +714,8 @@ Adopt ariadne / codespan's visual vocabulary:
 - Suggestions get an inverted-colour block.
 
 Detect TTY (`isatty(stderr)`) for colour; `NO_COLOR=1` /
-`--color=never` overrides. Detect UTF-8 (`LANG=…UTF-8`)
-for box-drawing; `--ascii` overrides.
+`-color=never` overrides. Detect UTF-8 (`LANG=…UTF-8`)
+for box-drawing; `-ascii` overrides.
 
 ### 8. LSP `relatedInformation` + `CodeAction` wiring
 
