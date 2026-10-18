@@ -1,18 +1,22 @@
-// Command fern compiles a single .fern source file.
+// Command fern-oracle is the Go oracle's CLI, built as bin/fern-oracle: the
+// parser, checker and interpreter the differential tests run every program
+// against, with compiles handed to the self-hosted compiler. The shipped
+// `fern` is compiler/fern_main.fern.
 //
 // Usage:
 //
-//	fern FILE.fern                       # write arm64 Linux assembly to stdout
-//	fern -o OUTPUT FILE.fern             # compile with the self-hosted
+//	fern-oracle FILE.fern                # write arm64 Linux assembly to stdout
+//	fern-oracle -o OUTPUT FILE.fern      # compile with the self-hosted
 //	                                     # compiler to a static arm64
 //	                                     # Linux binary (-target picks
-//	                                     # another; `fern -targets` lists
+//	                                     # another; `fern-oracle -targets` lists
 //	                                     # them)
-//	fern -run FILE.fern [-- ARGS...]     # build a temporary binary and run
+//	fern-oracle -run FILE.fern [-- ARGS...]
+//	                                     # build a temporary binary and run
 //	                                     # it, directly when the target's
 //	                                     # ISA is the host's, else under
 //	                                     # -qemu (forwarding stdio)
-//	fern -fmt FILE...                    # write idiomatic, indented source
+//	fern-oracle -fmt FILE...             # write idiomatic, indented source
 //	                                     # to stdout, each file in order
 //	                                     # (use -w to overwrite the files
 //	                                     # in place; use -d to print a
@@ -24,16 +28,16 @@
 //	                                     # inside each chunk in place,
 //	                                     # leaving prose / fences / headers
 //	                                     # and any unparseable chunk verbatim.
-//	fern -check FILE.fern                # type-check the codebase rooted
+//	fern-oracle -check FILE.fern         # type-check the codebase rooted
 //	                                     # at FILE.fern (follows imports);
 //	                                     # silent on success, prints
 //	                                     # diagnostics + exits 1 on error.
 //	                                     # `-check -` reads from stdin.
-//	fern -tangle FILE.fern.md            # literate programming: tangle a
+//	fern-oracle -tangle FILE.fern.md     # literate programming: tangle a
 //	                                     # Markdown document's named `fern`
 //	                                     # chunks into plain Fern source on
 //	                                     # stdout (expands the `<<*>>` root).
-//	fern -weave FILE.fern.md             # weave the same document into a
+//	fern-oracle -weave FILE.fern.md      # weave the same document into a
 //	                                     # cross-referenced Markdown reading
 //	                                     # file on stdout.
 //
@@ -51,11 +55,11 @@
 // the executable's own path for a compiled binary — and `args()[1:]` is
 // identical between the two for the same command tail:
 //
-//	fern -interp prog.fern -- --filter x   # args() = [prog.fern --filter x]
-//	fern -run prog.fern -- --filter x      # args() = [/tmp/…   --filter x]
+//	fern-oracle -interp prog.fern -- --filter x   # args() = [prog.fern --filter x]
+//	fern-oracle -run prog.fern -- --filter x      # args() = [/tmp/…   --filter x]
 //
 // A flag written after FILE with no `--` before it is refused (exit 2)
-// rather than handed to the program as data: `fern prog.fern -o out` is a
+// rather than handed to the program as data: `fern-oracle prog.fern -o out` is a
 // misplaced driver flag far more often than it is an argument named `-o`.
 //
 // -qemu names the emulator -run uses for a foreign ISA.
@@ -411,7 +415,7 @@ func shouldUseASCII(force bool) bool {
 
 func main() {
 	out := flag.String("o", "", "output path; if unset, a native target writes its assembly to stdout, and a wasm target refuses unless -emit asm asks for its WAT")
-	target := flag.String("target", "arm64-linux", "target as `<isa>-<environment>` — the ISA half selects the backend, the environment half says what the host provides; neither is implied. arm64-linux (default, Linux ELF), arm64-android (Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64-linux (Linux ELF), wasm32-wasi (CLI component), wasm32-wasi-http (HTTP handler component implementing wasi:http/incoming-handler), arm64-freestanding / x86-64-freestanding (no host at all — type-checks against an empty capability set; no backend emits for them yet, see docs/FREESTANDING-CORE.md). `fern -targets` lists them with their capabilities.")
+	target := flag.String("target", "arm64-linux", "target as `<isa>-<environment>` — the ISA half selects the backend, the environment half says what the host provides; neither is implied. arm64-linux (default, Linux ELF), arm64-android (Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64-linux (Linux ELF), wasm32-wasi (CLI component), wasm32-wasi-http (HTTP handler component implementing wasi:http/incoming-handler), arm64-freestanding / x86-64-freestanding (no host at all — type-checks against an empty capability set; no backend emits for them yet, see docs/FREESTANDING-CORE.md). `fern-oracle -targets` lists them with their capabilities.")
 	runIt := flag.Bool("run", false, "build to a temporary binary and execute it: directly when the target's ISA is the host's, else under -qemu (qemu-x86_64 for an x86-64 target when -qemu is left at its default); a wasm32-wasi target runs under `wasmtime run`")
 	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")
 	shared := flag.Bool("shared", false, "emit a shared object (.so) instead of an executable — a position-independent ET_DYN with a dynamic symbol table exporting the -export functions, loadable via dlopen / Android's System.loadLibrary. Native ELF targets only (x86-64, arm64, arm64-android); requires -o.")
@@ -427,17 +431,16 @@ func main() {
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite each input file with its formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between each file and its formatted form; exits 1 when any differs")
 	doResolve := flag.Bool("resolve", false, "run Minimum Version Selection over a fern.toml's versioned ([package] index) dependencies and write the chosen versions to fern.lock (pass the manifest, its directory, or any file inside the package; default `.`). url-sourced versions are fetched and verified into the content-addressed store. The build reads fern.lock; the compiler never reads the index.")
-	doVendor := flag.Bool("vendor", false, "flatten the transitive dependency graph of a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into <root>/vendor/<name>/, one directory per package. After vendoring, builds are fully offline — the loader resolves declared dependencies out of vendor/ and never touches the network or the deps' original path/url locations. url dependencies must be fetched (`fern -fetch`) first; vendoring copies from the store.")
-	doAdd := flag.Bool("add", false, "add a dependency to the nearest fern.toml: `fern -add NAME SPEC [DIR]` where SPEC is `path:../dir`, `url:https://…/pkg.tar.gz` (the archive is fetched and its sha256 recorded automatically — no hand-computed hash), or `workspace` (a `{ workspace = true }` member dep). DIR (default `.`) selects the package whose fern.toml to edit. The manifest is edited textually so comments and formatting survive.")
+	doVendor := flag.Bool("vendor", false, "flatten the transitive dependency graph of a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into <root>/vendor/<name>/, one directory per package. After vendoring, builds are fully offline — the loader resolves declared dependencies out of vendor/ and never touches the network or the deps' original path/url locations. url dependencies must be fetched (`fern-oracle -fetch`) first; vendoring copies from the store.")
+	doAdd := flag.Bool("add", false, "add a dependency to the nearest fern.toml: `fern-oracle -add NAME SPEC [DIR]` where SPEC is `path:../dir`, `url:https://…/pkg.tar.gz` (the archive is fetched and its sha256 recorded automatically — no hand-computed hash), or `workspace` (a `{ workspace = true }` member dep). DIR (default `.`) selects the package whose fern.toml to edit. The manifest is edited textually so comments and formatting survive.")
 	doFetch := flag.Bool("fetch", false, "download the url+hash dependencies declared by a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into the content-addressed package store, verifying each archive against its declared sha256 before unpacking. Transitive: path dependencies' manifests are fetched too. It, `-add url:` and `-resolve` are the commands that download packages — build/check/interp read the store and error when a url dependency hasn't been fetched.")
-	doLint := flag.Bool("lint", false, "lint FILE.fern or every .fern source under a directory, reporting code that compiles but reads badly (start with `fern -lint-rules`). Parse-only: no type-checking, no import resolution, so a file with a type error still lints and a whole tree costs one parse per file. Severities come from the governing fern.toml's [lint] table and then -lint-set; a `// fern-lint: allow RULE` comment silences one site. Exits 1 when a rule set to `deny` fires; a `warn` finding prints and exits 0.")
+	doLint := flag.Bool("lint", false, "lint FILE.fern or every .fern source under a directory, reporting code that compiles but reads badly (start with `fern-oracle -lint-rules`). Parse-only: no type-checking, no import resolution, so a file with a type error still lints and a whole tree costs one parse per file. Severities come from the governing fern.toml's [lint] table and then -lint-set; a `// fern-lint: allow RULE` comment silences one site. Exits 1 when a rule set to `deny` fires; a `warn` finding prints and exits 0.")
 	listLintRulesFlag := flag.Bool("lint-rules", false, "list the lint rules with their default severity, description, and tunable options, then exit.")
 	var lintSets repeatedString
 	flag.Var(&lintSets, "lint-set", "with -lint: set one rule's severity, `RULE=allow|warn|deny`. Repeatable; wins over the manifest's [lint] table.")
 	var lintOpts repeatedString
 	flag.Var(&lintOpts, "lint-opt", "with -lint: set one rule option, `RULE.OPTION=VALUE` (e.g. cyclomatic-complexity.max=20). Repeatable; wins over the manifest's [lint.options] table.")
 	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
-	doArrayReport := flag.Bool("array-report", false, "compile FILE.fern with the self-host compiler and print the array decisions its rewriting passes make: each `std/array` chain's fusion verdict, the map storage and ndarray kernel decisions, each with the closed reason tag that decided it (docs/ARRAY-ALGEBRA.md). The same report as FERN_ARRAY_REPORT=1 on a compile; the compiled output is discarded.")
 	doCapabilities := flag.Bool("capabilities", false, "print the per-package capability usage of FILE.fern and its transitive imports — one line per package (fern.toml package name, or `(root)` when no manifest governs the program): the v1 capabilities (net, fs, env, subprocess, time, random) its declared functions can reach by call-graph reachability, with an example call chain down to the tagged runtime builtin. Stdlib usage is attributed to the calling package. The report itself enforces nothing; manifests' `capabilities` grants are enforced (E070) on the compile/-check/-interp paths (docs/PACKAGE-CAPABILITIES-BRIEF.md). No codegen.")
 
 	doEffects := flag.Bool("effects", false, "print the per-FUNCTION effect row of FILE.fern and its transitive imports — the effects (net, fs, env, subprocess, time, random) each declared function can reach by call-graph reachability, with an example call chain, and which effects it is charged only because it calls through a function value whose target is not statically known. Ends with the row-size distribution and the split between functions that call a tagged builtin themselves and those that only inherit. `-capabilities` answers the same question per PACKAGE; this one is per function. Report mode; nothing here enforces. No codegen. (docs/EFFECT-ROWS-BRIEF.md)")
@@ -454,23 +457,23 @@ func main() {
 	asciiBoxes := flag.Bool("ascii", false, "with coloured diagnostics, draw the gutter with a plain `|` instead of the box-drawing `│` (also selected automatically when the locale isn't UTF-8).")
 	terseDiagnostics := flag.Bool("q", os.Getenv("FERN_DIAG_FORMAT") == "terse", "print one line per diagnostic without source context, notes, fixes or colour")
 	sanitize := flag.Bool("sanitize", false, "debug build: turn on the heap memory-safety detectors together (native x86-64/arm64). Reports an rc over-release (double free) and a use-after-free of a quarantined block as a named `fern-sanitizer:` line on stderr followed by a fatal SIGILL, and prints a leak census at exit. Costs allocation throughput and never recycles a freed block, so it is for debugging, not for shipping; an unsanitized build is byte-identical to one from a compiler without the feature. Same as FERN_SANITIZE=1.")
-	cover := flag.Bool("cover", false, "measurement build: instrument every executable source line with a hit counter, and every conditional (`if`, `while`, `&&`, `||`) with a second pair, then write the whole table to stderr at exit — one `fern-cover: <file>:<line> <count>` row per instrumented line, hit or not, plus `fern-branch:` rows carrying each conditional's evaluations and true-arm entries. Feed the saved stream to `fern -cover-report` for per-file line AND branch totals, the uncovered lists, or lcov. Costs an increment per line and per branch edge, and keeps functions nothing calls (so they report 0), so it is for measuring a test run, not for shipping; a build without it is byte-identical to one from a compiler without the feature. Native x86-64 and arm64 only — any other target errors rather than emitting an uninstrumented binary. Same as FERN_COVER=1.")
-	coverReport := flag.Bool("cover-report", false, "read a saved `-cover` run's output (`fern -cover-report FILE`, or `-` for stdin) and print per-file line coverage plus the uncovered lines. Lines that don't carry the `fern-cover: ` prefix are ignored, so piping the program's whole stderr is fine. Add -lcov for an lcov tracefile instead. Report mode; no codegen.")
+	cover := flag.Bool("cover", false, "measurement build: instrument every executable source line with a hit counter, and every conditional (`if`, `while`, `&&`, `||`) with a second pair, then write the whole table to stderr at exit — one `fern-cover: <file>:<line> <count>` row per instrumented line, hit or not, plus `fern-branch:` rows carrying each conditional's evaluations and true-arm entries. Feed the saved stream to `fern-oracle -cover-report` for per-file line AND branch totals, the uncovered lists, or lcov. Costs an increment per line and per branch edge, and keeps functions nothing calls (so they report 0), so it is for measuring a test run, not for shipping; a build without it is byte-identical to one from a compiler without the feature. Native x86-64 and arm64 only — any other target errors rather than emitting an uninstrumented binary. Same as FERN_COVER=1.")
+	coverReport := flag.Bool("cover-report", false, "read a saved `-cover` run's output (`fern-oracle -cover-report FILE`, or `-` for stdin) and print per-file line coverage plus the uncovered lines. Lines that don't carry the `fern-cover: ` prefix are ignored, so piping the program's whole stderr is fine. Add -lcov for an lcov tracefile instead. Report mode; no codegen.")
 	lcov := flag.Bool("lcov", false, "with -cover-report, write an lcov tracefile (SF/DA/LF/LH records) instead of the human summary, for the coverage viewers that already read that format.")
 	backtrace := flag.Bool("backtrace", ast.BacktraceEnabled, "emit the frame-pointer backtrace a fatal abort (bounds / arena / sanitizer) prints under its cause line, on the native x86-64 and arm64 backends. `-backtrace=false` drops the walk, the hex printer, and the \"backtrace:\" string from the binary — the size-critical opt-out; the cause line and every exit code (134 / 125 / 124) are unchanged. Same as FERN_BACKTRACE=0, which this flag defaults to.")
 	harden := flag.Bool("harden", false, "arm64-linux executables: start every indirect-call target with a BTI landing pad, mark the image so the kernel traps an indirect branch anywhere else, and sign each frame's return address with pointer authentication.")
 	size := flag.Bool("size", false, "build for size over speed on the native backends: reference-count operations call their runtime helpers rather than testing the count inline, and the backtrace walk is dropped unless -backtrace is given. Same as FERN_SIZE=1.")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: fern [-target <isa>-<environment>] [-emit core-module] [-o OUTPUT] [-run] [-qemu QEMU] FILE.fern [-- ARGS...]\n       (targets: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, wasm32-wasi, wasm32-wasi-http; `fern -targets` for all)")
-		fmt.Fprintln(os.Stderr, "       fern -fmt [-w | -d | -o OUT] FILE...")
-		fmt.Fprintln(os.Stderr, "       fern -check FILE.fern | fern -check -      (type-check only; stdin form)")
-		fmt.Fprintln(os.Stderr, "       fern -repl")
-		fmt.Fprintln(os.Stderr, "       fern -interp FILE.fern | fern -interp -    (read from stdin)")
-		fmt.Fprintln(os.Stderr, "       fern -lint PATH...                         (lint .fern sources; `fern -lint-rules` lists the rules)")
-		fmt.Fprintln(os.Stderr, "       fern -capabilities FILE.fern               (per-package capability usage report)")
-		fmt.Fprintln(os.Stderr, "       fern -tangle FILE.fern.md                  (literate: emit tangled Fern source)")
-		fmt.Fprintln(os.Stderr, "       fern -weave  FILE.fern.md                  (literate: emit woven Markdown)")
-		fmt.Fprintln(os.Stderr, "       fern -targets                                (list supported targets + capabilities)")
+		fmt.Fprintln(os.Stderr, "usage: fern-oracle [-target <isa>-<environment>] [-emit core-module] [-o OUTPUT] [-run] [-qemu QEMU] FILE.fern [-- ARGS...]\n       (targets: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, wasm32-wasi, wasm32-wasi-http; `fern-oracle -targets` for all)")
+		fmt.Fprintln(os.Stderr, "       fern-oracle -fmt [-w | -d | -o OUT] FILE...")
+		fmt.Fprintln(os.Stderr, "       fern-oracle -check FILE.fern | fern-oracle -check -      (type-check only; stdin form)")
+		fmt.Fprintln(os.Stderr, "       fern-oracle -repl")
+		fmt.Fprintln(os.Stderr, "       fern-oracle -interp FILE.fern | fern-oracle -interp -    (read from stdin)")
+		fmt.Fprintln(os.Stderr, "       fern-oracle -lint PATH...                         (lint .fern sources; `fern-oracle -lint-rules` lists the rules)")
+		fmt.Fprintln(os.Stderr, "       fern-oracle -capabilities FILE.fern               (per-package capability usage report)")
+		fmt.Fprintln(os.Stderr, "       fern-oracle -tangle FILE.fern.md                  (literate: emit tangled Fern source)")
+		fmt.Fprintln(os.Stderr, "       fern-oracle -weave  FILE.fern.md                  (literate: emit woven Markdown)")
+		fmt.Fprintln(os.Stderr, "       fern-oracle -targets                                (list supported targets + capabilities)")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -479,13 +482,13 @@ func main() {
 	// run the program and print no report — silence a reader would take for
 	// "nothing was covered".
 	if *cover && (*doInterp || *repl) {
-		fmt.Fprintln(os.Stderr, "fern: -cover instruments compiled code; -interp and -repl do not lower, so they have no coverage to report")
+		fmt.Fprintln(os.Stderr, "fern-oracle: -cover instruments compiled code; -interp and -repl do not lower, so they have no coverage to report")
 		os.Exit(2)
 	}
 	if *embedDir != "" {
 		set, err := embed.Load(*embedDir)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "fern:", err)
+			fmt.Fprintln(os.Stderr, "fern-oracle:", err)
 			os.Exit(1)
 		}
 		embeddedAssets = set
@@ -508,7 +511,7 @@ func main() {
 	if *showSelfhostKey {
 		key, err := launcher.SourcesKey()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "fern:", err)
+			fmt.Fprintln(os.Stderr, "fern-oracle:", err)
 			os.Exit(1)
 		}
 		fmt.Println(key)
@@ -590,22 +593,10 @@ func main() {
 
 	if *coverReport {
 		if flag.NArg() < 1 {
-			fmt.Fprintln(os.Stderr, "usage: fern -cover-report FILE   (FILE is a saved -cover run's output; `-` reads stdin)")
+			fmt.Fprintln(os.Stderr, "usage: fern-oracle -cover-report FILE   (FILE is a saved -cover run's output; `-` reads stdin)")
 			os.Exit(2)
 		}
 		if err := runCoverReport(flag.Arg(0), *lcov, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	if *doArrayReport {
-		if flag.NArg() < 1 {
-			fmt.Fprintln(os.Stderr, "usage: fern -array-report FILE.fern")
-			os.Exit(2)
-		}
-		if err := runArrayReport(flag.Arg(0), os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -618,7 +609,7 @@ func main() {
 
 	if *doLint {
 		if flag.NArg() < 1 {
-			fmt.Fprintln(os.Stderr, "usage: fern -lint PATH... (a .fern file or a directory of them)")
+			fmt.Fprintln(os.Stderr, "usage: fern-oracle -lint PATH... (a .fern file or a directory of them)")
 			os.Exit(2)
 		}
 		if code := runLint(flag.Args(), lintSets, lintOpts, *colorMode, os.Stdout); code != 0 {
@@ -629,7 +620,7 @@ func main() {
 
 	if *doCapabilities {
 		if flag.NArg() < 1 {
-			fmt.Fprintln(os.Stderr, "usage: fern -capabilities FILE.fern")
+			fmt.Fprintln(os.Stderr, "usage: fern-oracle -capabilities FILE.fern")
 			os.Exit(2)
 		}
 		if err := runCapabilities(flag.Arg(0), os.Stdout); err != nil {
@@ -641,7 +632,7 @@ func main() {
 
 	if *doEffects {
 		if flag.NArg() < 1 {
-			fmt.Fprintln(os.Stderr, "usage: fern -effects FILE.fern")
+			fmt.Fprintln(os.Stderr, "usage: fern-oracle -effects FILE.fern")
 			os.Exit(2)
 		}
 		os.Exit(runEffects(flag.Arg(0)))
@@ -661,7 +652,7 @@ func main() {
 
 	if *doAdd {
 		if flag.NArg() < 2 {
-			fmt.Fprintln(os.Stderr, "usage: fern -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)")
+			fmt.Fprintln(os.Stderr, "usage: fern-oracle -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)")
 			os.Exit(1)
 		}
 		addDir := "."
@@ -748,7 +739,7 @@ func main() {
 	})
 	code, err := compileSelfHost(req)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "fern:", err)
+		fmt.Fprintln(os.Stderr, "fern-oracle:", err)
 		os.Exit(1)
 	}
 	os.Exit(code)
@@ -760,7 +751,7 @@ func main() {
 // -o names one output file, so it is refused with more than one input.
 func formatFiles(paths []string, writeBack, diffMode bool, outPath string) int {
 	if outPath != "" && len(paths) > 1 {
-		fmt.Fprintf(os.Stderr, "fern: -fmt -o takes a single input file (%d given)\n", len(paths))
+		fmt.Fprintf(os.Stderr, "fern-oracle: -fmt -o takes a single input file (%d given)\n", len(paths))
 		return 2
 	}
 	code := 0

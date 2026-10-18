@@ -101,5 +101,5 @@ func fileExists(p string) bool {
 
 // errUnknownTarget refuses a -target that names no descriptor.
 func errUnknownTarget(target string) error {
-	return fmt.Errorf("unknown target %q — run `fern -targets` for the list (targets are <isa>-<environment>, e.g. arm64-linux, x86-64-linux, wasm32-wasi)", target)
+	return fmt.Errorf("unknown target %q — run `fern-oracle -targets` for the list (targets are <isa>-<environment>, e.g. arm64-linux, x86-64-linux, wasm32-wasi)", target)
 }

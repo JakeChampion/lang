@@ -672,9 +672,10 @@ which lanes may be signed off locally as a result.
 ### The stage-1 / stage-2 self-compile on Apple Silicon
 
 Both stages run natively through `-target arm64-darwin`, so the self-compile
-IS reproducible on a Mac. Measured 2026-09-05 on an M-series machine from a
-fresh `go build -o $B/fern ./cmd/fern` (absolute paths throughout: the
-self-host CLI cannot open relative ones):
+IS reproducible on a Mac, starting from the `bin/fern` that `make build`
+writes, copied to `$B/fern` (absolute paths throughout: the self-host CLI
+cannot open relative ones). Measured 2026-09-05 on an M-series machine, when
+the first stage was the Go compiler in `cmd/fern`:
 
 ```
 $B/fern    -target arm64-darwin -o $B/fern-s1 $W/compiler/fern.fern      # stage 1: 8 s, 1.3 GB RSS
