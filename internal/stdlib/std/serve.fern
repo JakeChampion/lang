@@ -1699,8 +1699,8 @@ function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 // The readiness is level-triggered, so a short read leaves nothing the
 // next wait would not report. The first bytes of a request start its read
 // deadline, replacing the keep-alive idle span an answered connection
-// was waiting under, and the body's clock keeps the deadline no earlier
-// than what the body has delivered buys (`__body_deadline`).
+// was waiting under; the body's clock (`__body_deadline`) is the burst's
+// to start, once the event has left the request unanswered.
 function __serve_read[D: async.Driver](drv: D, c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conns, boolean) {
   match (c.tls[at]) {
     Secured(sess) => {
@@ -1824,16 +1824,11 @@ function __serve_read_plain[D: async.Driver](drv: D, c: __Conns, at: i32, scratc
       }
     }
   }
-  c = __Conns { ...c, bufs: c.bufs.with(at, buf), lent: lent };
-  if (done) {
-    return (c, true);
+  if (done || !was_idle || buf.len() == 0) {
+    return (__Conns { ...c, bufs: c.bufs.with(at, buf), lent: lent }, done);
   }
-  let deadline: i64 = c.deadlines[at];
-  if (was_idle && buf.len() > 0) {
-    deadline = monotonic_ns() + opts.recv_deadline.as_nanos();
-  }
-  c = __Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) };
-  return (__body_deadline(c, at, opts, monotonic_ns()), false);
+  let deadline: i64 = monotonic_ns() + opts.recv_deadline.as_nanos();
+  return (__Conns { ...c, bufs: c.bufs.with(at, buf), lent: lent, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) }, false);
 }
 
 // __serve_read_tls(drv, c, at, sess, scratch, opts) — `__serve_read` for a
@@ -1873,15 +1868,11 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, sess: se
   let off: (__Conns, boolean) = __serve_handshook(c, at, sess.connected(), s, done, opts);
   c = off.0;
   done = off.1;
-  if (done) {
-    return (c, true);
+  if (done || !was_idle || buf.len() == 0) {
+    return (c, done);
   }
-  let deadline: i64 = c.deadlines[at];
-  if (was_idle && buf.len() > 0) {
-    deadline = monotonic_ns() + opts.recv_deadline.as_nanos();
-  }
-  c = __Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) };
-  return (__body_deadline(c, at, opts, monotonic_ns()), false);
+  let deadline: i64 = monotonic_ns() + opts.recv_deadline.as_nanos();
+  return (__Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) }, false);
 }
 
 // __serve_handshook(c, at, was, sess, done, opts) — a TLS read's `(conns,
@@ -2132,9 +2123,10 @@ function __serve_next(c: __Conns, at: i32, opts: Config): __Conns {
 }
 
 // __body_deadline(c, at, opts, now) — the connection's deadline held no
-// earlier than its body has earned: the body's clock starts when the
-// request's header block is found complete, and from then the request
-// may take the grace plus what its bytes since buy at the minimum rate.
+// earlier than its body has earned: the body's clock starts when an
+// event leaves the request unanswered with its header block complete,
+// and from then the request may take the grace plus what its bytes
+// since buy at the minimum rate.
 // A body that keeps flowing outlasts the read deadline; one that stalls
 // or trickles does not.
 function __body_deadline(c: __Conns, at: i32, opts: Config, now: i64): __Conns {
@@ -4492,13 +4484,16 @@ function __expecting(behind: __Behind): boolean {
 // __serve_unframed(drv, c, fls, at, expecting, …) — a request whose body
 // has not arrived: with `stream_bodies` and its header block complete,
 // its handler starts now on a streamed body; otherwise the loop keeps
-// reading, answering `100 Continue` first when the request expects it.
+// reading under the body's clock (`__body_deadline`), answering
+// `100 Continue` first when the request expects it.
 // `(conns, flights, more, next)` as the burst loop reads them,
 // `more` when a response went out and the next request is framed.
 function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at: i32, expecting: boolean, start: (http.HttpFramed, boolean, __Stop, platform.Host) => __Started, opts: Config, stop: __Stop, count: i32, clk: __Clock, eof: boolean): (__Conns, __Flight[], boolean, __Behind, http.HttpFramed) {
   if (!opts.stream_bodies || eof) {
     if (expecting) {
       c = __serve_continue(drv, c, at, opts);
+    } else if (!eof) {
+      c = __body_deadline(c, at, opts, monotonic_ns());
     }
     return (c, fls, false, Idle, c.last);
   }
@@ -4507,7 +4502,7 @@ function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
       return __serve_stream(drv, c, fls, at, h, start, opts, stop, count, clk);
     },
     http.HeadIncomplete => {
-      return (c, fls, false, Idle, c.last);
+      return (__body_deadline(c, at, opts, monotonic_ns()), fls, false, Idle, c.last);
     },
     http.HeadMalformed(status) => {
       return (__serve_refuse(drv, c, at, status, opts, clk), fls, false, Idle, c.last);
@@ -5155,7 +5150,7 @@ function __least_timeout(a: i32, b: i32): i32 {
 // has passed run on with -1, the timeout answer, and every parked producer
 // whose filler is due given it, as many times as one is due.
 function __flights_expire[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config, clk: __Clock): (__Conns, __Flight[]) {
-  let again: boolean = true;
+  let again: boolean = fls.len() > 0;
   while (again) {
     again = false;
     let now: i64 = monotonic_ns();
@@ -6612,6 +6607,9 @@ function __h3_events(c: __Conns, i: i32): (__Conns, __H3Req[]) {
 // request's handler started, answered or parked, as the stateless loop
 // starts one, then every connection the burst touched flushed.
 function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], burst: __H3Burst, handler: (HttpRequest, platform.Host) => HttpResponse, host_for: (Option[net.SocketAddr]) => platform.Host, opts: Config, stop: __Stop): (__Conns, __Flight[]) {
+  if (burst.reqs.len() == 0 && burst.touched.len() == 0) {
+    return (c, fls);
+  }
   let cur: __Conns = c;
   let fs: __Flight[] = fls;
   for r in burst.reqs {
@@ -6627,6 +6625,9 @@ function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], bu
 // request answered in turn by the stateful loop's handler, the state
 // threaded through, then every connection the burst touched flushed.
 function __h3_start_all_with[D: async.Driver, S](drv: D, c: __Conns, fls: __Flight[], burst: __H3Burst, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), host_for: (Option[net.SocketAddr]) => platform.Host): (__Conns, __Flight[], S) {
+  if (burst.reqs.len() == 0 && burst.touched.len() == 0) {
+    return (c, fls, st);
+  }
   let cur: __Conns = c;
   let fs: __Flight[] = fls;
   let state: S = st;

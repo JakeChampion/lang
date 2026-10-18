@@ -92,36 +92,19 @@ pub function (s: string) repeat(n: i32): string {
 // needle / prefix / suffix return true / 0 to match the
 // `strstr` / Go conventions.
 pub function (s: string) starts_with(prefix: string): boolean {
-  let sLen: i32 = s.len();
   let pLen: i32 = prefix.len();
-  if (pLen > sLen) {
+  if (pLen > s.len()) {
     return false;
   }
-  let i: i32 = 0;
-  while (i < pLen) {
-    if (s[i] != prefix[i]) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
+  return __mismatch(s, 0, prefix, 0, pLen) == pLen;
 }
 
 pub function (s: string) ends_with(suffix: string): boolean {
-  let sLen: i32 = s.len();
   let sufLen: i32 = suffix.len();
-  if (sufLen > sLen) {
+  if (sufLen > s.len()) {
     return false;
   }
-  let off: i32 = sLen - sufLen;
-  let i: i32 = 0;
-  while (i < sufLen) {
-    if (s[off + i] != suffix[i]) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
+  return __mismatch(s, s.len() - sufLen, suffix, 0, sufLen) == sufLen;
 }
 
 // __substr_eq compares len(needle) bytes starting at

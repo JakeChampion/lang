@@ -561,6 +561,21 @@ function __find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
   return -1;
 }
 
+// `__line_end(buf, from, end)` — where the line running from `from` ends:
+// the first CR at or after `from`, which starts a CRLF before `end`, or
+// `end` when there is no CR; -1 for a CR that is bare, which no field
+// value may hold.
+function __line_end(buf: u8[], from: i32, end: i32): i32 {
+  let cr: i32 = __memchr_bytes(buf, 13, from);
+  if (cr < 0 || cr >= end) {
+    return end;
+  }
+  if (cr + 1 >= end || buf[cr + 1] != 10 as u8) {
+    return -1;
+  }
+  return cr;
+}
+
 // __bytes_string copies buf[from, end) into a fresh string, as
 // __bytes_range does into a fresh array. The parser's outputs are owned
 // copies of what the handler keeps, so the wire buffer can be reused once the
@@ -606,8 +621,8 @@ pub function http_request_bytes_cap(limits: HttpLimits): i32 {
 // NOT_TCHAR marks, by byte value, every byte that is not a tchar, the bytes
 // of a token (RFC 9110 §5.6.2): a letter, a digit, or one of
 // `!#$%&'*+-.^_`|~`. FIELD_CTL marks every control a field value may not
-// hold, all but HTAB below SP and DEL. A byte past FIELD_CTL's end is not in
-// it.
+// hold, all but HTAB below SP and DEL. CR_LF marks the two bytes that end
+// a line. A byte past a set's end is not in it.
 const NOT_TCHAR: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
@@ -637,6 +652,13 @@ const FIELD_CTL: u8[] = [
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8,
 ];
+
+const CR_LF: u8[] = [
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8,
+];
+
+// HTTP_SLASH is the `HTTP/` an HTTP-version starts with (RFC 9112 §2.3).
+const HTTP_SLASH: u8[] = [72u8, 84u8, 84u8, 80u8, 47u8];
 
 // `__is_token(buf, from, end)` — whether buf[from, end) is a non-empty
 // token.
@@ -736,12 +758,10 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev:
   let count: i32 = 0;
   let at: i32 = from;
   while (at < end) {
-    let e: i32 = __find_crlf(buf, at, end);
-    if (e < 0) {
-      e = end;
-    }
-    let col: i32 = __find_byte(buf, at, e, 58 as u8);
-    if (col < 0 || !__is_token(buf, at, col)) {
+    let split: (i32, i32) = __field_line(buf, at, end);
+    let col: i32 = split.0;
+    let e: i32 = split.1;
+    if (col < 0) {
       return Err(400);
     }
     count = count + 1;
@@ -786,6 +806,24 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev:
   return Ok(h);
 }
 
+// `__field_line(buf, at, end)` — the field line at `at` split: `(col, e)`
+// with its colon and where its CRLF starts (`end` for a last line without
+// one), or `(-1, _)` refusing it: the name is the token run at `at`, and
+// the byte after it must be the colon, so an empty name, a non-token byte
+// or whitespace before the colon all refuse; so does a bare CR in the
+// value, which no field may hold.
+function __field_line(buf: u8[], at: i32, end: i32): (i32, i32) {
+  let col: i32 = __token_end(buf, at, end);
+  if (col == at || col >= end || buf[col] != 58 as u8) {
+    return (-1, end);
+  }
+  let e: i32 = __line_end(buf, col + 1, end);
+  if (e < 0) {
+    return (-1, end);
+  }
+  return (col, e);
+}
+
 // `__leading_fields(h, n)` — the map of h's first n fields.
 function __leading_fields(h: HeaderMap, n: i32): HeaderMap {
   let out: HeaderMap = headers.header_map_new();
@@ -822,38 +860,107 @@ function __crlf_terminated(buf: u8[], from: i32, end: i32): boolean {
   return true;
 }
 
-// `__request_line_end(buf, from)` — where the request line's CRLF starts,
-// -1 while the buffer holds less than a line, or -2 once it holds more
-// than the cap without one. `__header_block_end` is the same for the
-// CRLF CRLF that ends the header block.
-function __request_line_end(buf: u8[], from: i32, cap: i32): i32 {
-  let limit: i32 = from + cap + 2;
-  let end: i32 = buf.len();
-  if (limit < end) {
-    end = limit;
+// `__head_shape(buf, from, limits)` — the head at `from` walked once,
+// line by line: `(first_crlf, headers_end, bare)`. `first_crlf` is where
+// the first line's CRLF starts, -1 while the buffer holds less than a
+// line, or -2 once it holds more than `limits.request_line` without one;
+// `headers_end` is the same for the CRLF CRLF that ends the header
+// block, under `limits.header_bytes`; `bare` is whether a bare CR or LF
+// lies in what is buffered of the block (RFC 9112 §2.2: malformed, and
+// known as soon as it is read; only a CR at the very end of the buffer
+// is still undecided). The walk ends at the block's end, or where the
+// block may no longer run.
+function __head_shape(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, boolean) {
+  let n: i32 = buf.len();
+  let line_limit: i32 = from + limits.request_line + 2;
+  let block_limit: i32 = from + limits.header_bytes + 4;
+  let end: i32 = n;
+  if (block_limit < end) {
+    end = block_limit;
   }
-  let at: i32 = __find_crlf(buf, from, end);
-  if (at >= 0) {
-    return at;
+  let first_crlf: i32 = -1;
+  let headers_end: i32 = -1;
+  let bare: boolean = false;
+  // `line` starts the current line, `after_crlf` says the previous one
+  // ended in CRLF: an empty line behind a CRLF is the block's end.
+  let line: i32 = from;
+  let after_crlf: boolean = false;
+  let i: i32 = from;
+  let p: i32 = __scan_set_bytes(buf, i, CR_LF);
+  let kind: i32 = __line_break(buf, p, end);
+  while (kind != 2) {
+    if (kind == 1) {
+      bare = true;
+      after_crlf = false;
+      i = p + 1;
+      line = i;
+    } else {
+      if (first_crlf == -1) {
+        first_crlf = __within(p, p + 1, line_limit);
+      }
+      if (p == line && after_crlf) {
+        headers_end = __within(p - 2, p + 1, block_limit);
+        break;
+      }
+      after_crlf = true;
+      i = p + 2;
+      line = i;
+    }
+    p = __scan_set_bytes(buf, i, CR_LF);
+    kind = __line_break(buf, p, end);
   }
-  if (buf.len() >= limit) {
-    return -2;
+  if (first_crlf == -1) {
+    first_crlf = __line_end_past(buf, i, end, line_limit);
   }
-  return -1;
+  if (headers_end == -1 && n >= block_limit) {
+    headers_end = -2;
+  }
+  return (first_crlf, headers_end, bare);
 }
 
-function __header_block_end(buf: u8[], from: i32, cap: i32): i32 {
-  let limit: i32 = from + cap + 4;
+// `__line_break(buf, p, end)` — what the CR or LF a scan found at `p`
+// is: 0 for the CR of a CRLF, 1 for a bare LF or a CR followed by
+// another byte, 2 to stop the walk (`p` is at or past `end`, or a CR at
+// the buffer's very end, whose next byte decides it).
+function __line_break(buf: u8[], p: i32, end: i32): i32 {
+  if (p >= end) {
+    return 2;
+  }
+  if (buf[p] == 10 as u8 || p + 1 < buf.len() && buf[p + 1] != 10 as u8) {
+    return 1;
+  }
+  if (p + 1 >= buf.len()) {
+    return 2;
+  }
+  return 0;
+}
+
+// `__within(at, last, limit)` — `at` when a terminator's last byte `last`
+// lies under `limit`, else -2: the buffer holds the whole cap without it.
+function __within(at: i32, last: i32, limit: i32): i32 {
+  if (last >= limit) {
+    return -2;
+  }
+  return at;
+}
+
+// `__line_end_past(buf, i, end, line_limit)` — `first_crlf` for a walk
+// that ended at `end` without a CRLF: -2 once the buffer holds the whole
+// request-line cap without one, else the CRLF between `end` and the cap
+// when the cap outruns the header cap, else -1.
+function __line_end_past(buf: u8[], i: i32, end: i32, line_limit: i32): i32 {
   let n: i32 = buf.len();
-  let end: i32 = n;
-  if (limit < end) {
-    end = limit;
+  if (line_limit > end && end < n) {
+    let to: i32 = n;
+    if (line_limit < to) {
+      to = line_limit;
+    }
+    let at: i32 = __find_crlf(buf, i, to);
+    if (at >= 0) {
+      return at;
+    }
   }
-  let at: i32 = __find_crlf_crlf(buf, from, end);
-  if (at >= 0) {
-    return at;
-  }
-  if (n >= limit) {
+  if (n >= line_limit) {
     return -2;
   }
   return -1;
@@ -865,7 +972,12 @@ function __header_block_end(buf: u8[], from: i32, cap: i32): i32 {
 // the body by how fast it arrives rather than by the deadline the header
 // block had.
 pub function http_header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean {
-  return __header_block_end(buf, __past_empty_line(buf, from), limits.header_bytes) >= 0;
+  from = __past_empty_line(buf, from);
+  let end: i32 = buf.len();
+  if (from + limits.header_bytes + 4 < end) {
+    end = from + limits.header_bytes + 4;
+  }
+  return __find_crlf_crlf(buf, from, end) >= 0;
 }
 
 // `__find_crlf_crlf(buf, from, end)` — where the first CRLF CRLF whose
@@ -894,7 +1006,7 @@ function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32 {
 function __field_at(h: HeaderMap, key: string, from: i32): i32 {
   let i: i32 = from;
   while (i < h.names.len()) {
-    if (h.names[i].eq_ignore_ascii_case(key)) {
+    if (h.names[i].len() == key.len() && h.names[i].eq_ignore_ascii_case(key)) {
       return i;
     }
     i = i + 1;
@@ -902,12 +1014,88 @@ function __field_at(h: HeaderMap, key: string, from: i32): i32 {
   return -1;
 }
 
-function __http_content_length(h: HeaderMap): Option[i32] {
-  let at: i32 = __field_at(h, "content-length", 0);
-  if (at < 0) {
+// `__fields_of(h)` — where the fields the framing and connection rules
+// read sit in `h`, found in one pass over its names: the index of the
+// first `Content-Length`, `Transfer-Encoding`, `Host`, `Expect` and
+// `Connection`, -1 for none, and -2 for a repeated `Content-Length`,
+// `Transfer-Encoding` or `Host`, whose rules refuse the repeat wherever
+// it sits.
+function __fields_of(h: HeaderMap): (i32, i32, i32, i32, i32) {
+  let cl: i32 = -1;
+  let te: i32 = -1;
+  let host: i32 = -1;
+  let expect: i32 = -1;
+  let conn: i32 = -1;
+  let i: i32 = 0;
+  while (i < h.names.len()) {
+    let kind: i32 = __field_kind(h.names[i]);
+    if (kind == 1) {
+      cl = __once(cl, i);
+    }
+    if (kind == 2) {
+      te = __once(te, i);
+    }
+    if (kind == 3) {
+      host = __once(host, i);
+    }
+    if (kind == 4 && expect < 0) {
+      expect = i;
+    }
+    if (kind == 5 && conn < 0) {
+      conn = i;
+    }
+    i = i + 1;
+  }
+  return (cl, te, host, expect, conn);
+}
+
+// `__once(at, i)` — `i` for a field seen for the first time, -2 once it
+// repeats.
+function __once(at: i32, i: i32): i32 {
+  if (at == -1) {
+    return i;
+  }
+  return -2;
+}
+
+// `__field_kind(name)` — which of the fields the rules read `name` is,
+// under ASCII case folding: 1 `Content-Length`, 2 `Transfer-Encoding`,
+// 3 `Host`, 4 `Expect`, 5 `Connection`, 0 any other. The length picks
+// the one candidate, so a name costs at most one comparison.
+function __field_kind(name: string): i32 {
+  let n: i32 = name.len();
+  if (n == 4) {
+    return __kind_if(name, "host", 3);
+  }
+  if (n == 6) {
+    return __kind_if(name, "expect", 4);
+  }
+  if (n == 10) {
+    return __kind_if(name, "connection", 5);
+  }
+  if (n == 14) {
+    return __kind_if(name, "content-length", 1);
+  }
+  if (n == 17) {
+    return __kind_if(name, "transfer-encoding", 2);
+  }
+  return 0;
+}
+
+function __kind_if(name: string, want: string, kind: i32): i32 {
+  if (name.eq_ignore_ascii_case(want)) {
+    return kind;
+  }
+  return 0;
+}
+
+// `__http_content_length(h, at)` — with `at` the `Content-Length` of
+// `__fields_of`.
+function __http_content_length(h: HeaderMap, at: i32): Option[i32] {
+  if (at == -1) {
     return Some(0);
   }
-  if (__field_at(h, "content-length", at + 1) >= 0) {
+  if (at == -2) {
     return None;
   }
   let value: string = h.values[at];
@@ -936,8 +1124,10 @@ function __http_content_length(h: HeaderMap): Option[i32] {
 // transfer coding.
 enum __BodyFraming { Length(i32), Chunked }
 
-// `__http_body_framing(h)` — the body's framing from the parsed headers,
-// or the status that refuses the request (RFC 9112 §6.1, §6.3): 400 for
+// `__http_body_framing(h, cl, te)` — the body's framing from the parsed
+// headers, `cl` and `te` the `Content-Length` and `Transfer-Encoding` of
+// `__fields_of`, or the status that refuses the request (RFC 9112 §6.1,
+// §6.3): 400 for
 // `Transfer-Encoding` beside `Content-Length` (the request-smuggling
 // shape), for a coding list whose last coding is not `chunked` (its
 // length cannot be determined), for `chunked` applied twice, or for a
@@ -945,10 +1135,9 @@ enum __BodyFraming { Length(i32), Chunked }
 // under the final `chunked`, which this parser cannot decode. A lenient
 // reading of any of them would be a framing disagreement with the next
 // parser on the path.
-function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
-  let te: i32 = __field_at(h, "transfer-encoding", 0);
-  if (te < 0) {
-    match (__http_content_length(h)) {
+function __http_body_framing(h: HeaderMap, cl: i32, te: i32): Result[__BodyFraming, i32] {
+  if (te == -1) {
+    match (__http_content_length(h, cl)) {
       Some(n) => {
         return Ok(Length(n));
       },
@@ -958,7 +1147,7 @@ function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
     }
     return Err(400);
   }
-  if (__field_at(h, "content-length", 0) >= 0 || __field_at(h, "transfer-encoding", te + 1) >= 0) {
+  if (cl != -1 || te == -2) {
     return Err(400);
   }
   let codings: string[] = h.values[te].split(",");
@@ -978,17 +1167,16 @@ function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
   return Ok(Chunked);
 }
 
-// `__host_ok(h, version)` — the `Host` rule (RFC 9112 §3.2): an
-// HTTP/1.1 request carries exactly one, any request at most one, and
-// its value is a host with an optional port, so it holds nothing but
-// visible ASCII (an empty value is the request-target's authority, and
-// allowed).
-function __host_ok(h: HeaderMap, version: string): boolean {
-  let at: i32 = __field_at(h, "host", 0);
-  if (at < 0) {
+// `__host_ok(h, at, version)` — the `Host` rule (RFC 9112 §3.2), `at`
+// the `Host` of `__fields_of`: an HTTP/1.1 request carries exactly one,
+// any request at most one, and its value is a host with an optional
+// port, so it holds nothing but visible ASCII (an empty value is the
+// request-target's authority, and allowed).
+function __host_ok(h: HeaderMap, at: i32, version: string): boolean {
+  if (at == -1) {
     return version != "HTTP/1.1";
   }
-  if (__field_at(h, "host", at + 1) >= 0) {
+  if (at == -2) {
     return false;
   }
   let host: string = h.values[at];
@@ -1521,11 +1709,10 @@ pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean, ver
 // malformed as soon as the cap is passed, before its end has arrived.
 pub enum HttpFraming { Framed(HttpFramed), Incomplete, Continue, Malformed(i32) }
 
-// `__expectation(h)` — what the `Expect` field asks (RFC 9110 §10.1.1):
-// 0 with none, 1 for `100-continue`, 417 for anything else, which this
-// server cannot meet.
-function __expectation(h: HeaderMap): i32 {
-  let at: i32 = __field_at(h, "expect", 0);
+// `__expectation(h, at)` — what the `Expect` field asks (RFC 9110
+// §10.1.1), `at` the first `Expect` of `__fields_of`: 0 with none, 1 for
+// `100-continue`, 417 for anything else, which this server cannot meet.
+function __expectation(h: HeaderMap, at: i32): i32 {
   if (at < 0) {
     return 0;
   }
@@ -1538,29 +1725,30 @@ function __expectation(h: HeaderMap): i32 {
   return 1;
 }
 
-// `__header_rules(h, version)` — the status that refuses a parsed header
-// block on its own terms, or 0: 400 for the `Host` rule, 417 for an
+// `__header_rules(h, host, expectation, version)` — the status that
+// refuses a parsed header block on its own terms, or 0: 400 for the
+// `Host` rule (`host` its `Host` of `__fields_of`), 417 for an
 // expectation the server cannot meet.
-function __header_rules(h: HeaderMap, version: string): i32 {
-  if (!__host_ok(h, version)) {
+function __header_rules(h: HeaderMap, host: i32, expectation: i32, version: string): i32 {
+  if (!__host_ok(h, host, version)) {
     return 400;
   }
-  if (__expectation(h) == 417) {
+  if (expectation == 417) {
     return 417;
   }
   return 0;
 }
 
-// `__unframed(kind, h, version)` — the answer for a body that has not
-// framed: `Malformed` with `kind` when it is a status, `Continue` when an
+// `__unframed(kind, head)` — the answer for a body that has not framed:
+// `Malformed` with `kind` when it is a status, `Continue` when an
 // HTTP/1.1 request expects `100 Continue` before sending its body,
 // `Incomplete` otherwise. An HTTP/1.0 request's `100-continue` is
 // ignored (RFC 9110 §10.1.1): its client cannot read the interim answer.
-function __unframed(kind: i32, h: HeaderMap, version: string): HttpFraming {
+function __unframed(kind: i32, head: __Head): HttpFraming {
   if (kind >= 400) {
     return HttpFraming.Malformed(kind);
   }
-  if (version != "HTTP/1.0" && __expectation(h) == 1) {
+  if (head.version != "HTTP/1.0" && head.expectation == 1) {
     return Continue;
   }
   return Incomplete;
@@ -1614,8 +1802,8 @@ function __same_fields(a: HeaderMap, b: HeaderMap): boolean {
 // target or a version that is not an HTTP-version, 505 for another
 // major version, and the target's own refusals.
 function __request_line(buf: u8[], from: i32, end: i32, prev_path: string): (i32, i32, i32, string) {
-  let sp1: i32 = __find_byte(buf, from, end, 32 as u8);
-  if (sp1 < 0 || !__is_token(buf, from, sp1)) {
+  let sp1: i32 = __token_end(buf, from, end);
+  if (sp1 == from || sp1 >= end || buf[sp1] != 32 as u8) {
     return (400, -1, -1, "");
   }
   let sp2: i32 = __find_byte(buf, sp1 + 1, end, 32 as u8);
@@ -1646,7 +1834,7 @@ pub function http_parse_request_framed(buf: u8[]): HttpFraming {
     Ok(head) => {
       let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, head.len, head.framing, head.version, limits);
       if (body.0 != 2) {
-        return __unframed(body.0, head.headers, head.version);
+        return __unframed(body.0, head);
       }
       return Framed(__framed_new(head, body.1, body.3, body.2));
     },
@@ -1688,7 +1876,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLi
     Ok(head) => {
       let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + head.len, head.framing, head.version, limits);
       if (body.0 != 2) {
-        return __unframed(body.0, head.headers, head.version);
+        return __unframed(body.0, head);
       }
       let len: i32 = body.2 - from;
       if (len == prev.len && head.keep_alive == prev.keep_alive && head.version == prev.version && __repeats(prev.request, head, body.1, body.3)) {
@@ -1751,7 +1939,7 @@ pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimi
       }
       let empty: u8[] = [];
       let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(empty), headers: head.headers, trailers: headers.header_map_new() };
-      let expects: boolean = head.version != "HTTP/1.0" && __expectation(head.headers) == 1;
+      let expects: boolean = head.version != "HTTP/1.0" && head.expectation == 1;
       return Headed(HttpHead { request: req, len: head.len, keep_alive: head.keep_alive, version: head.version, length: length, expects_continue: expects });
     },
     Err(status) => {
@@ -1766,9 +1954,9 @@ pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimi
 
 // `__Head` — a request head as parsed, before either public shape is
 // built from it: the method and path, the headers, the version, the
-// bytes the head occupies from where the parse started, its persistence
-// and its body framing.
-struct __Head { method: string, path: string, headers: HeaderMap, version: string, len: i32, keep_alive: boolean, framing: __BodyFraming }
+// bytes the head occupies from where the parse started, its persistence,
+// its body framing and what its `Expect` asks (`__expectation`).
+struct __Head { method: string, path: string, headers: HeaderMap, version: string, len: i32, keep_alive: boolean, framing: __BodyFraming, expectation: i32 }
 
 // `__request_head(buf, from, limits, prev)` — the request line and header
 // block at `from`, read and checked (the request line's rules, the header
@@ -1781,9 +1969,10 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
   if (from >= buf.len()) {
     return Err(1);
   }
-  let first_crlf: i32 = __request_line_end(buf, from, limits.request_line);
-  let headers_end: i32 = __header_block_end(buf, from, limits.header_bytes);
-  let bounded: i32 = __head_bounded(buf, from, limits, first_crlf, headers_end);
+  let shape: (i32, i32, boolean) = __head_shape(buf, from, limits);
+  let first_crlf: i32 = shape.0;
+  let headers_end: i32 = shape.1;
+  let bounded: i32 = __head_bounded(first_crlf, headers_end, shape.2);
   if (bounded != 0) {
     return Err(bounded);
   }
@@ -1827,12 +2016,14 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
     }
   }
   let version: string = __version_of(buf, sp2 + 1);
-  let refused: i32 = __header_rules(req_headers, version);
+  let fields: (i32, i32, i32, i32, i32) = __fields_of(req_headers);
+  let expectation: i32 = __expectation(req_headers, fields.3);
+  let refused: i32 = __header_rules(req_headers, fields.2, expectation, version);
   if (refused > 0) {
     return Err(refused);
   }
   let framing: __BodyFraming = Length(0);
-  match (__http_body_framing(req_headers)) {
+  match (__http_body_framing(req_headers, fields.0, fields.1)) {
     Ok(f) => {
       framing = f;
     },
@@ -1840,33 +2031,23 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
       return Err(status);
     }
   }
-  return Ok(__Head { method: __shared_string(buf, from, sp1, prev.method), path: path, headers: req_headers, version: version, len: from + headers_len - start, keep_alive: __persists(version, req_headers), framing: framing });
+  return Ok(__Head { method: __shared_string(buf, from, sp1, prev.method), path: path, headers: req_headers, version: version, len: from + headers_len - start, keep_alive: __persists(version, req_headers, fields.4), framing: framing, expectation: expectation });
 }
 
-// `__head_bounded(buf, from, limits, first_crlf, headers_end)` — 0 when
-// the request line and header block at `from` are within their limits so
-// far, `first_crlf` and `headers_end` where each ends (-1 while it has not
-// arrived, -2 past its cap); else the status refusing them: 414 for a
-// request line past its cap, 431 for a header block past its, 400 for a
-// bare CR or LF in what is buffered of the block (the bytes before `from`
-// are answered requests, the bytes after the block a body, which may hold
-// anything).
-function __head_bounded(buf: u8[], from: i32, limits: HttpLimits, first_crlf: i32, headers_end: i32): i32 {
+// `__head_bounded(first_crlf, headers_end, bare)` — 0 when the request
+// line and header block a `__head_shape` walked are within their limits
+// so far; else the status refusing them: 414 for a request line past its
+// cap, 431 for a header block past its, 400 for a bare CR or LF in what
+// is buffered of the block (the bytes before it are answered requests,
+// the bytes after it a body, which may hold anything).
+function __head_bounded(first_crlf: i32, headers_end: i32, bare: boolean): i32 {
   if (first_crlf == -2) {
     return 414;
   }
   if (headers_end == -2) {
     return 431;
   }
-  let n: i32 = buf.len();
-  let scanned: i32 = headers_end;
-  if (scanned < 0) {
-    scanned = from + limits.header_bytes + 4;
-    if (n < scanned) {
-      scanned = n;
-    }
-  }
-  if (!__crlf_terminated(buf, from, scanned)) {
+  if (bare) {
     return 400;
   }
   return 0;
@@ -2281,7 +2462,7 @@ function __past_empty_line(buf: u8[], from: i32): i32 {
 // parser speaks HTTP/1, and cannot promise to read the framing of another
 // major version (RFC 9110 §15.6.6).
 function __version_status(buf: u8[], from: i32, end: i32): i32 {
-  if (end - from != 8 || !__bytes_are(buf, from, "HTTP/")) {
+  if (end - from != 8 || __mismatch_bytes(buf, from, HTTP_SLASH, 0, 5) != 5) {
     return 400;
   }
   if (!__is_digit(buf[from + 5]) || buf[from + 6] != 46 as u8 || !__is_digit(buf[from + 7])) {
@@ -2328,11 +2509,10 @@ function __bytes_are(buf: u8[], from: i32, want: string): boolean {
 // connection where one carrying `keep-alive` extends an HTTP/1.0 one.
 // The header is a comma-separated token list, and only a whole token
 // counts: `x-close` neither closes nor keeps. `version` is one of the two
-// `__version_of` gives.
-function __persists(version: string, h: HeaderMap): boolean {
+// `__version_of` gives, `at` the first `Connection` of `__fields_of`.
+function __persists(version: string, h: HeaderMap, at: i32): boolean {
   let close: boolean = false;
   let keep: boolean = false;
-  let at: i32 = __field_at(h, "connection", 0);
   while (at >= 0) {
     if (__lists_token(h.values[at], "close")) {
       close = true;
@@ -3151,9 +3331,10 @@ pub function http_parse_response_framed(buf: u8[], method: string, eof: boolean,
 // `http_parse_response_framed_from(buf, from, method, eof, limits)` —
 // the same parse over buf[from, len); `len` counts from `from`.
 pub function http_parse_response_framed_from(buf: u8[], from: i32, method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
-  let first_crlf: i32 = __request_line_end(buf, from, limits.request_line);
-  let headers_end: i32 = __header_block_end(buf, from, limits.header_bytes);
-  let refused: i32 = __response_head_refused(buf, from, first_crlf, headers_end, limits);
+  let shape: (i32, i32, boolean) = __head_shape(buf, from, limits);
+  let first_crlf: i32 = shape.0;
+  let headers_end: i32 = shape.1;
+  let refused: i32 = __response_head_refused(buf, from, first_crlf, headers_end, shape.2);
   if (refused != 0) {
     return Rejected(refused);
   }
@@ -3163,38 +3344,24 @@ pub function http_parse_response_framed_from(buf: u8[], from: i32, method: strin
   return __response_body(buf, from, first_crlf, headers_end, __status_code(buf, from), method, eof, limits);
 }
 
-// `__response_head_refused(buf, from, first_crlf, headers_end, limits)`
-// — the code refusing the status line and header block as far as they
+// `__response_head_refused(buf, from, first_crlf, headers_end, bare)` —
+// the code refusing the status line and header block as far as they
 // have arrived, or 0: the status line is refused as soon as its CRLF is
 // in, the block's line endings as they come.
-function __response_head_refused(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, limits: HttpLimits): i32 {
+function __response_head_refused(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, bare: boolean): i32 {
   if (first_crlf == -2) {
     return 400;
   }
   if (headers_end == -2) {
     return 431;
   }
-  if (!__crlf_terminated(buf, from, __head_scanned(buf, from, headers_end, limits))) {
+  if (bare) {
     return 400;
   }
   if (first_crlf >= 0) {
     return __status_line_refused(buf, from, first_crlf);
   }
   return 0;
-}
-
-// `__head_scanned(buf, from, headers_end, limits)` — how far the header
-// block's line endings are checked: to its end once that has arrived,
-// else as far as the block may run.
-function __head_scanned(buf: u8[], from: i32, headers_end: i32, limits: HttpLimits): i32 {
-  if (headers_end >= 0) {
-    return headers_end;
-  }
-  let scanned: i32 = from + limits.header_bytes + 4;
-  if (buf.len() < scanned) {
-    return buf.len();
-  }
-  return scanned;
 }
 
 // `__status_line_refused(buf, from, end)` — 0 when buf[from, end) is a
@@ -3262,7 +3429,8 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
   }
   let version: string = __version_of(buf, from);
   let at: i32 = headers_end + 4;
-  let body: (i32, u8[], i32, HeaderMap) = __response_payload(buf, at, h, status, method, eof, version, limits);
+  let fields: (i32, i32, i32, i32, i32) = __fields_of(h);
+  let body: (i32, u8[], i32, HeaderMap) = __response_payload(buf, at, h, fields, status, method, eof, version, limits);
   if (body.0 == 1) {
     return Unfinished;
   }
@@ -3270,20 +3438,21 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
     return Rejected(body.0);
   }
   let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(body.1), headers: h, trailers: body.3, background: None };
-  return Complete(HttpResponseFramed { response: resp, len: body.2 - from, version: version, keep_alive: __persists(version, h) });
+  return Complete(HttpResponseFramed { response: resp, len: body.2 - from, version: version, keep_alive: __persists(version, h, fields.4) });
 }
 
-// `__response_payload(buf, at, h, status, method, eof, version)` — the
-// response's body from `at`, as `__framed_body` answers: none for a
-// bodiless response, the rest of the buffer at the close for one its
-// headers do not delimit, and the declared framing otherwise.
-function __response_payload(buf: u8[], at: i32, h: HeaderMap, status: i32, method: string, eof: boolean, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
+// `__response_payload(buf, at, h, fields, status, method, eof, version)`
+// — the response's body from `at`, `fields` the `__fields_of` its
+// headers, as `__framed_body` answers: none for a bodiless response, the
+// rest of the buffer at the close for one its headers do not delimit,
+// and the declared framing otherwise.
+function __response_payload(buf: u8[], at: i32, h: HeaderMap, fields: (i32, i32, i32, i32, i32), status: i32, method: string, eof: boolean, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
   let empty: u8[] = [];
   let none: HeaderMap = headers.header_map_new();
   if (method == "HEAD" || http_bodiless(status)) {
     return (2, empty, at, none);
   }
-  if (__field_at(h, "transfer-encoding", 0) < 0 && __field_at(h, "content-length", 0) < 0) {
+  if (fields.1 == -1 && fields.0 == -1) {
     if (!eof) {
       return (1, empty, 0, none);
     }
@@ -3292,7 +3461,7 @@ function __response_payload(buf: u8[], at: i32, h: HeaderMap, status: i32, metho
     }
     return (2, __bytes_range(buf, at, buf.len()), buf.len(), none);
   }
-  match (__http_body_framing(h)) {
+  match (__http_body_framing(h, fields.0, fields.1)) {
     Ok(framing) => {
       return __framed_body(buf, at, framing, version, limits);
     },

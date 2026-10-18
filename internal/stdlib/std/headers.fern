@@ -42,7 +42,7 @@ pub function header_map_new(): HeaderMap {
 pub function (h: HeaderMap) get(name: string): Option[string] {
   let i: i32 = 0;
   while (i < h.names.len()) {
-    if (h.names[i].eq_ignore_ascii_case(name)) {
+    if (h.names[i].len() == name.len() && h.names[i].eq_ignore_ascii_case(name)) {
       return Some(h.values[i]);
     }
     i = i + 1;
@@ -54,7 +54,7 @@ pub function (h: HeaderMap) get(name: string): Option[string] {
 pub function (h: HeaderMap) has(name: string): boolean {
   let i: i32 = 0;
   while (i < h.names.len()) {
-    if (h.names[i].eq_ignore_ascii_case(name)) {
+    if (h.names[i].len() == name.len() && h.names[i].eq_ignore_ascii_case(name)) {
       return true;
     }
     i = i + 1;
@@ -70,7 +70,7 @@ pub function (h: HeaderMap) get_all(name: string): string[] {
   let out: string[] = [];
   let i: i32 = 0;
   while (i < h.names.len()) {
-    if (h.names[i].eq_ignore_ascii_case(name)) {
+    if (h.names[i].len() == name.len() && h.names[i].eq_ignore_ascii_case(name)) {
       out = out.append(h.values[i]);
     }
     i = i + 1;
