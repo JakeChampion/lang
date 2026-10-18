@@ -561,6 +561,21 @@ function __find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
   return -1;
 }
 
+// `__line_end(buf, from, end)` — where the line running from `from` ends:
+// the first CR at or after `from`, which starts a CRLF before `end`, or
+// `end` when there is no CR; -1 for a CR that is bare, which no field
+// value may hold.
+function __line_end(buf: u8[], from: i32, end: i32): i32 {
+  let cr: i32 = __memchr_bytes(buf, 13, from);
+  if (cr < 0 || cr >= end) {
+    return end;
+  }
+  if (cr + 1 >= end || buf[cr + 1] != 10 as u8) {
+    return -1;
+  }
+  return cr;
+}
+
 // __bytes_string copies buf[from, end) into a fresh string, as
 // __bytes_range does into a fresh array. The parser's outputs are owned
 // copies of what the handler keeps, so the wire buffer can be reused once the
@@ -606,8 +621,8 @@ pub function http_request_bytes_cap(limits: HttpLimits): i32 {
 // NOT_TCHAR marks, by byte value, every byte that is not a tchar, the bytes
 // of a token (RFC 9110 §5.6.2): a letter, a digit, or one of
 // `!#$%&'*+-.^_`|~`. FIELD_CTL marks every control a field value may not
-// hold, all but HTAB below SP and DEL. A byte past FIELD_CTL's end is not in
-// it.
+// hold, all but HTAB below SP and DEL. CR_LF marks the two bytes that end
+// a line. A byte past a set's end is not in it.
 const NOT_TCHAR: u8[] = [
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
   1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8, 1u8,
@@ -636,6 +651,10 @@ const FIELD_CTL: u8[] = [
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8,
+];
+
+const CR_LF: u8[] = [
+  0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8,
 ];
 
 // `__is_token(buf, from, end)` — whether buf[from, end) is a non-empty
@@ -733,12 +752,10 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev:
   let count: i32 = 0;
   let at: i32 = from;
   while (at < end) {
-    let e: i32 = __find_crlf(buf, at, end);
-    if (e < 0) {
-      e = end;
-    }
-    let col: i32 = __find_byte(buf, at, e, 58 as u8);
-    if (col < 0 || !__is_token(buf, at, col)) {
+    let split: (i32, i32) = __field_line(buf, at, end);
+    let col: i32 = split.0;
+    let e: i32 = split.1;
+    if (col < 0) {
       return Err(400);
     }
     count = count + 1;
@@ -783,6 +800,24 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev:
   return Ok(h);
 }
 
+// `__field_line(buf, at, end)` — the field line at `at` split: `(col, e)`
+// with its colon and where its CRLF starts (`end` for a last line without
+// one), or `(-1, _)` refusing it: the name is the token run at `at`, and
+// the byte after it must be the colon, so an empty name, a non-token byte
+// or whitespace before the colon all refuse; so does a bare CR in the
+// value, which no field may hold.
+function __field_line(buf: u8[], at: i32, end: i32): (i32, i32) {
+  let col: i32 = __token_end(buf, at, end);
+  if (col == at || col >= end || buf[col] != 58 as u8) {
+    return (-1, end);
+  }
+  let e: i32 = __line_end(buf, col + 1, end);
+  if (e < 0) {
+    return (-1, end);
+  }
+  return (col, e);
+}
+
 // `__leading_fields(h, n)` — the map of h's first n fields.
 function __leading_fields(h: HeaderMap, n: i32): HeaderMap {
   let out: HeaderMap = headers.header_map_new();
@@ -819,38 +854,107 @@ function __crlf_terminated(buf: u8[], from: i32, end: i32): boolean {
   return true;
 }
 
-// `__request_line_end(buf, from)` — where the request line's CRLF starts,
-// -1 while the buffer holds less than a line, or -2 once it holds more
-// than the cap without one. `__header_block_end` is the same for the
-// CRLF CRLF that ends the header block.
-function __request_line_end(buf: u8[], from: i32, cap: i32): i32 {
-  let limit: i32 = from + cap + 2;
-  let end: i32 = buf.len();
-  if (limit < end) {
-    end = limit;
+// `__head_shape(buf, from, limits)` — the head at `from` walked once,
+// line by line: `(first_crlf, headers_end, bare)`. `first_crlf` is where
+// the first line's CRLF starts, -1 while the buffer holds less than a
+// line, or -2 once it holds more than `limits.request_line` without one;
+// `headers_end` is the same for the CRLF CRLF that ends the header
+// block, under `limits.header_bytes`; `bare` is whether a bare CR or LF
+// lies in what is buffered of the block (RFC 9112 §2.2: malformed, and
+// known as soon as it is read; only a CR at the very end of the buffer
+// is still undecided). The walk ends at the block's end, or where the
+// block may no longer run.
+function __head_shape(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, boolean) {
+  let n: i32 = buf.len();
+  let line_limit: i32 = from + limits.request_line + 2;
+  let block_limit: i32 = from + limits.header_bytes + 4;
+  let end: i32 = n;
+  if (block_limit < end) {
+    end = block_limit;
   }
-  let at: i32 = __find_crlf(buf, from, end);
-  if (at >= 0) {
-    return at;
+  let first_crlf: i32 = -1;
+  let headers_end: i32 = -1;
+  let bare: boolean = false;
+  // `line` starts the current line, `after_crlf` says the previous one
+  // ended in CRLF: an empty line behind a CRLF is the block's end.
+  let line: i32 = from;
+  let after_crlf: boolean = false;
+  let i: i32 = from;
+  let p: i32 = __scan_set_bytes(buf, i, CR_LF);
+  let kind: i32 = __line_break(buf, p, end);
+  while (kind != 2) {
+    if (kind == 1) {
+      bare = true;
+      after_crlf = false;
+      i = p + 1;
+      line = i;
+    } else {
+      if (first_crlf == -1) {
+        first_crlf = __within(p, p + 1, line_limit);
+      }
+      if (p == line && after_crlf) {
+        headers_end = __within(p - 2, p + 1, block_limit);
+        break;
+      }
+      after_crlf = true;
+      i = p + 2;
+      line = i;
+    }
+    p = __scan_set_bytes(buf, i, CR_LF);
+    kind = __line_break(buf, p, end);
   }
-  if (buf.len() >= limit) {
-    return -2;
+  if (first_crlf == -1) {
+    first_crlf = __line_end_past(buf, i, end, line_limit);
   }
-  return -1;
+  if (headers_end == -1 && n >= block_limit) {
+    headers_end = -2;
+  }
+  return (first_crlf, headers_end, bare);
 }
 
-function __header_block_end(buf: u8[], from: i32, cap: i32): i32 {
-  let limit: i32 = from + cap + 4;
+// `__line_break(buf, p, end)` — what the CR or LF a scan found at `p`
+// is: 0 for the CR of a CRLF, 1 for a bare LF or a CR followed by
+// another byte, 2 to stop the walk (`p` is at or past `end`, or a CR at
+// the buffer's very end, whose next byte decides it).
+function __line_break(buf: u8[], p: i32, end: i32): i32 {
+  if (p >= end) {
+    return 2;
+  }
+  if (buf[p] == 10 as u8 || p + 1 < buf.len() && buf[p + 1] != 10 as u8) {
+    return 1;
+  }
+  if (p + 1 >= buf.len()) {
+    return 2;
+  }
+  return 0;
+}
+
+// `__within(at, last, limit)` — `at` when a terminator's last byte `last`
+// lies under `limit`, else -2: the buffer holds the whole cap without it.
+function __within(at: i32, last: i32, limit: i32): i32 {
+  if (last >= limit) {
+    return -2;
+  }
+  return at;
+}
+
+// `__line_end_past(buf, i, end, line_limit)` — `first_crlf` for a walk
+// that ended at `end` without a CRLF: -2 once the buffer holds the whole
+// request-line cap without one, else the CRLF between `end` and the cap
+// when the cap outruns the header cap, else -1.
+function __line_end_past(buf: u8[], i: i32, end: i32, line_limit: i32): i32 {
   let n: i32 = buf.len();
-  let end: i32 = n;
-  if (limit < end) {
-    end = limit;
+  if (line_limit > end && end < n) {
+    let to: i32 = n;
+    if (line_limit < to) {
+      to = line_limit;
+    }
+    let at: i32 = __find_crlf(buf, i, to);
+    if (at >= 0) {
+      return at;
+    }
   }
-  let at: i32 = __find_crlf_crlf(buf, from, end);
-  if (at >= 0) {
-    return at;
-  }
-  if (n >= limit) {
+  if (n >= line_limit) {
     return -2;
   }
   return -1;
@@ -862,7 +966,12 @@ function __header_block_end(buf: u8[], from: i32, cap: i32): i32 {
 // the body by how fast it arrives rather than by the deadline the header
 // block had.
 pub function http_header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean {
-  return __header_block_end(buf, __past_empty_line(buf, from), limits.header_bytes) >= 0;
+  from = __past_empty_line(buf, from);
+  let end: i32 = buf.len();
+  if (from + limits.header_bytes + 4 < end) {
+    end = from + limits.header_bytes + 4;
+  }
+  return __find_crlf_crlf(buf, from, end) >= 0;
 }
 
 // `__find_crlf_crlf(buf, from, end)` — where the first CRLF CRLF whose
@@ -1611,8 +1720,8 @@ function __same_fields(a: HeaderMap, b: HeaderMap): boolean {
 // target or a version that is not an HTTP-version, 505 for another
 // major version, and the target's own refusals.
 function __request_line(buf: u8[], from: i32, end: i32, prev_path: string): (i32, i32, i32, string) {
-  let sp1: i32 = __find_byte(buf, from, end, 32 as u8);
-  if (sp1 < 0 || !__is_token(buf, from, sp1)) {
+  let sp1: i32 = __token_end(buf, from, end);
+  if (sp1 == from || sp1 >= end || buf[sp1] != 32 as u8) {
     return (400, -1, -1, "");
   }
   let sp2: i32 = __find_byte(buf, sp1 + 1, end, 32 as u8);
@@ -1778,9 +1887,10 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
   if (from >= buf.len()) {
     return Err(1);
   }
-  let first_crlf: i32 = __request_line_end(buf, from, limits.request_line);
-  let headers_end: i32 = __header_block_end(buf, from, limits.header_bytes);
-  let bounded: i32 = __head_bounded(buf, from, limits, first_crlf, headers_end);
+  let shape: (i32, i32, boolean) = __head_shape(buf, from, limits);
+  let first_crlf: i32 = shape.0;
+  let headers_end: i32 = shape.1;
+  let bounded: i32 = __head_bounded(first_crlf, headers_end, shape.2);
   if (bounded != 0) {
     return Err(bounded);
   }
@@ -1840,30 +1950,20 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
   return Ok(__Head { method: __shared_string(buf, from, sp1, prev.method), path: path, headers: req_headers, version: version, len: from + headers_len - start, keep_alive: __persists(version, req_headers), framing: framing });
 }
 
-// `__head_bounded(buf, from, limits, first_crlf, headers_end)` — 0 when
-// the request line and header block at `from` are within their limits so
-// far, `first_crlf` and `headers_end` where each ends (-1 while it has not
-// arrived, -2 past its cap); else the status refusing them: 414 for a
-// request line past its cap, 431 for a header block past its, 400 for a
-// bare CR or LF in what is buffered of the block (the bytes before `from`
-// are answered requests, the bytes after the block a body, which may hold
-// anything).
-function __head_bounded(buf: u8[], from: i32, limits: HttpLimits, first_crlf: i32, headers_end: i32): i32 {
+// `__head_bounded(first_crlf, headers_end, bare)` — 0 when the request
+// line and header block a `__head_shape` walked are within their limits
+// so far; else the status refusing them: 414 for a request line past its
+// cap, 431 for a header block past its, 400 for a bare CR or LF in what
+// is buffered of the block (the bytes before it are answered requests,
+// the bytes after it a body, which may hold anything).
+function __head_bounded(first_crlf: i32, headers_end: i32, bare: boolean): i32 {
   if (first_crlf == -2) {
     return 414;
   }
   if (headers_end == -2) {
     return 431;
   }
-  let n: i32 = buf.len();
-  let scanned: i32 = headers_end;
-  if (scanned < 0) {
-    scanned = from + limits.header_bytes + 4;
-    if (n < scanned) {
-      scanned = n;
-    }
-  }
-  if (!__crlf_terminated(buf, from, scanned)) {
+  if (bare) {
     return 400;
   }
   return 0;
@@ -3150,9 +3250,10 @@ pub function http_parse_response_framed(buf: u8[], method: string, eof: boolean,
 // `http_parse_response_framed_from(buf, from, method, eof, limits)` —
 // the same parse over buf[from, len); `len` counts from `from`.
 pub function http_parse_response_framed_from(buf: u8[], from: i32, method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
-  let first_crlf: i32 = __request_line_end(buf, from, limits.request_line);
-  let headers_end: i32 = __header_block_end(buf, from, limits.header_bytes);
-  let refused: i32 = __response_head_refused(buf, from, first_crlf, headers_end, limits);
+  let shape: (i32, i32, boolean) = __head_shape(buf, from, limits);
+  let first_crlf: i32 = shape.0;
+  let headers_end: i32 = shape.1;
+  let refused: i32 = __response_head_refused(buf, from, first_crlf, headers_end, shape.2);
   if (refused != 0) {
     return Rejected(refused);
   }
@@ -3162,38 +3263,24 @@ pub function http_parse_response_framed_from(buf: u8[], from: i32, method: strin
   return __response_body(buf, from, first_crlf, headers_end, __status_code(buf, from), method, eof, limits);
 }
 
-// `__response_head_refused(buf, from, first_crlf, headers_end, limits)`
-// — the code refusing the status line and header block as far as they
+// `__response_head_refused(buf, from, first_crlf, headers_end, bare)` —
+// the code refusing the status line and header block as far as they
 // have arrived, or 0: the status line is refused as soon as its CRLF is
 // in, the block's line endings as they come.
-function __response_head_refused(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, limits: HttpLimits): i32 {
+function __response_head_refused(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, bare: boolean): i32 {
   if (first_crlf == -2) {
     return 400;
   }
   if (headers_end == -2) {
     return 431;
   }
-  if (!__crlf_terminated(buf, from, __head_scanned(buf, from, headers_end, limits))) {
+  if (bare) {
     return 400;
   }
   if (first_crlf >= 0) {
     return __status_line_refused(buf, from, first_crlf);
   }
   return 0;
-}
-
-// `__head_scanned(buf, from, headers_end, limits)` — how far the header
-// block's line endings are checked: to its end once that has arrived,
-// else as far as the block may run.
-function __head_scanned(buf: u8[], from: i32, headers_end: i32, limits: HttpLimits): i32 {
-  if (headers_end >= 0) {
-    return headers_end;
-  }
-  let scanned: i32 = from + limits.header_bytes + 4;
-  if (buf.len() < scanned) {
-    return buf.len();
-  }
-  return scanned;
 }
 
 // `__status_line_refused(buf, from, end)` — 0 when buf[from, end) is a
