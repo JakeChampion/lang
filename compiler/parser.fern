@@ -3238,20 +3238,27 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
 // parse_expr_from_text re-lexes + parses an f-string interpolant's
 // raw text into an Expr. The lexer already isolated the interpolant
 // (balanced braces, inner string literals skipped), so a fresh
-// tokenize + parse_expr round-trip recovers the AST. Mirrors the Go
-// parser's parseExprFromText.
+// tokenize + parse_expr round-trip recovers the AST. Anything beyond
+// one expression is a P001 at the first token left over, as the Go
+// parser's parseExprFromText reports it. The sub-parse runs in the
+// caller's verbatim mode and hands its type errors and `todo` sites
+// back on `p`.
 //
 // `base_line` / `base_col` are where `text` starts in the enclosing
 // file. The re-lex numbers `text` from 1:1, so the tokens are rebased
 // before parsing and every node the parse produces names the file.
-function parse_expr_from_text(text: string, base_line: i32, base_col: i32): ast.Expr {
+function parse_expr_from_text(p: Par, text: string, base_line: i32, base_col: i32): (ast.Expr, Par) {
   let toks: lexer.Token[] = lexer.rebase_tokens(lexer.tokenize(text), base_line, base_col);
   if let Some(le) = stream_lex_error(toks) {
-    return e_unknown_at(lex_error_kind(le), le.line, le.col);
+    return (e_unknown_at(lex_error_kind(le), le.line, le.col), p);
   }
-  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [] };
+  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [] };
   let (r_expr, r_p) = parse_expr(sub);
-  return r_expr;
+  let outer: Par = Par { ...p, type_errs: r_p.type_errs, todos: r_p.todos };
+  if (!r_p.at_end()) {
+    return (e_unknown_at("f-string interpolation: unexpected trailing tokens after expression", r_p.peek_line(), r_p.peek_col()), outer);
+  }
+  return (r_expr, outer);
 }
 
 // parse_primary: number, ident (which may extend to call), string,
@@ -3568,7 +3575,12 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
           vflags = vflags.append(vpart.is_expr);
           if (vpart.is_expr) {
             vlits = vlits.append("");
-            vexprs = vexprs.append(parse_expr_from_text(vpart.expr, vpart.line, vpart.col));
+            let (ve, vp) = parse_expr_from_text(p, vpart.expr, vpart.line, vpart.col);
+            p = vp;
+            if let ast.ExprUnknown(_) = ve {
+              return (ve, p);
+            }
+            vexprs = vexprs.append(ve);
           } else {
             vlits = vlits.append(vpart.lit);
             vexprs = vexprs.append(e_unknown("fstring-literal-part"));
@@ -3581,6 +3593,8 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       // FString lowering: literal parts → string literals,
       // interpolant parts → `(<sub-parsed expr>).to_string()`,
       // folded left-to-right. An empty f-string desugars to "".
+      // A placeholder that does not parse stands for the whole f-string,
+      // so it is reported once, as the Go parser does.
       let built: ast.Expr = e_string("");
       let has: boolean = false;
       let i: i32 = 0;
@@ -3589,7 +3603,12 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let piece: ast.Expr = e_string(part.lit);
         if (part.is_expr) {
           let no_args: ast.Expr[] = [];
-          piece = e_call(e_field_access(parse_expr_from_text(part.expr, part.line, part.col), "to_string"), no_args);
+          let (pe, pp) = parse_expr_from_text(p, part.expr, part.line, part.col);
+          p = pp;
+          if let ast.ExprUnknown(_) = pe {
+            return (pe, p);
+          }
+          piece = e_call_at(e_field_access_at(pe, "to_string", f.line, f.col), no_args, f.line, f.col);
         }
         if (!has) {
           built = piece;
@@ -31878,6 +31897,29 @@ function check_fstrings(): i32 {
     },
     _ => {
       return 1115;
+    }
+  }
+
+  // A placeholder with tokens left over is a sentinel at the first one, and
+  // it stands for the whole f-string (#12648).
+  match (parse_program(lexer.tokenize("return f\"{x} {x y} {x)}\";"))[0]) {
+    ast.StmtReturn(r) => {
+      match (r.value) {
+        ast.ExprUnknown(u) => {
+          if (u.kind != "f-string interpolation: unexpected trailing tokens after expression") {
+            return 1116;
+          }
+          if (u.line != 1 || u.col != 17) {
+            return 1117;
+          }
+        },
+        _ => {
+          return 1118;
+        }
+      }
+    },
+    _ => {
+      return 1119;
     }
   }
 

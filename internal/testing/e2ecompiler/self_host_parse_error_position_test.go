@@ -60,6 +60,13 @@ var parseErrPosCases = []struct {
 	// token both parsers stop at.
 	{"assignment-in-let-init", "function main(): i32 {\n  let r = 0;\n  let a = r = 5;\n  return a;\n}\n"},
 	{"assignment-in-condition", "function main(): i32 {\n  let r = 0;\n  while ((r = r + 1) < 3) { }\n  return r;\n}\n"},
+	// An f-string placeholder holds one expression; the first token left over
+	// is the error (#12648).
+	{"fstring-two-operands", "function main(): i32 {\n  let x = 5;\n  let y = 7;\n  let s = f\"[{x y}]\";\n  return 0;\n}\n"},
+	{"fstring-comma-list", "function main(): i32 {\n  let x = 5;\n  let y = 7;\n  let s = f\"[{x, y}]\";\n  return 0;\n}\n"},
+	{"fstring-stray-paren", "function main(): i32 {\n  let x = 5;\n  let s = f\"[{x)}]\";\n  return 0;\n}\n"},
+	{"fstring-format-spec", "function main(): i32 {\n  let x = 5;\n  let s = f\"{x:04}\";\n  return 0;\n}\n"},
+	{"fstring-placeholder-missing-type", "function main(): i32 {\n  let x = 5;\n  let s = f\"{(a: ) => a}\";\n  return 0;\n}\n"},
 }
 
 // TestSelfHostParseErrorPositions pins SH-041 (tracking #2849): a
@@ -239,6 +246,23 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"malformed-fn-decl",
 			"function (): i32 {\n  return 1;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
 			"error[P001]: malformed function declaration: its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:1)"},
+		// A placeholder with tokens left over is one P001 per f-string, at the
+		// first leftover token of the first bad placeholder, as native reports
+		// it (#12648); a later f-string is reported on its own.
+		{"fstring-trailing-tokens-once-per-fstring",
+			"function main(): i32 {\n  let x = 5;\n  let y = 7;\n  let s = f\"[{x y}] [{x, y}] [{x)}]\";\n  let t = f\"{x} {x:04}\";\n  return 0;\n}\n",
+			"error[P001]: in fn 'main': f-string interpolation: unexpected trailing tokens after expression (4:17)\n" +
+				"error[P001]: in fn 'main': f-string interpolation: unexpected trailing tokens after expression (5:19)"},
+		// A type error inside a placeholder reaches the module's diagnostics
+		// rather than being dropped with the placeholder's sub-parse.
+		{"fstring-placeholder-type-error",
+			"function main(): i32 {\n  let x = 5;\n  let s = f\"{x as}\";\n  return 0;\n}\n",
+			"error[P001]: at top level: expected a type, got the end of the file (3:18)"},
+		// Placeholders that are whole expressions stay clean: nested calls, a
+		// method chain, string literals holding braces, and a nested f-string.
+		{"fstring-placeholders-clean",
+			"function main(): i32 {\n  let s = \"ab\";\n  let t = f\"{s.repeat(s.len()).repeat(2).len()} {\"}{\".len()} {\"a{b}c\".index_of(\"}\")} [{f\"{s}\"}]\";\n  return 0;\n}\n",
+			""},
 	}
 
 	for _, tc := range cases {

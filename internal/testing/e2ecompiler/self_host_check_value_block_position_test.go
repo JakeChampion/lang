@@ -97,3 +97,24 @@ func TestSelfHostCheckGenericCallPosition(t *testing.T) {
 		}
 	}
 }
+
+// An f-string placeholder desugars to `(e).to_string()`; a missing
+// `to_string` is reported at the f-string, where the Go checker reports it.
+func TestSelfHostCheckFStringToStringPosition(t *testing.T) {
+	cli := e2eharness.SelfHostCLI(t)
+	root := e2eharness.SelfHostStdlibRoot(t)
+	oracle := e2eharness.BuildLangBinForInterp(t)
+	lead := regexp.MustCompile(`(?m)^[^\s:]+:(\d+):(\d+): error\[E043\]: (.+)$`)
+	p := filepath.Join(t.TempDir(), "prog.fern")
+	src := "function main(): i32 {\n  let n = 7;\n  let s = f\"n = {n}\";\n  return 0;\n}\n"
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goOut, _ := exec.Command(oracle, "-check", p).CombinedOutput()
+	shOut, _ := exec.Command(cli, "-check", p, root).CombinedOutput()
+	want := lead.FindStringSubmatch(string(goOut))
+	got := lead.FindStringSubmatch(string(shOut))
+	if want == nil || got == nil || got[1] != want[1] || got[2] != want[2] || got[3] != want[3] {
+		t.Errorf("E043 positions or messages differ\n--- Go ---\n%s--- self-host ---\n%s", goOut, shOut)
+	}
+}
