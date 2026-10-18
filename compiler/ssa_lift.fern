@@ -441,7 +441,7 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
 // backends' box layouts (ssa.fern's kinds 40..48).
 function prod_mem_kind(k: string): boolean {
   let mem: string[] = [
-    "struct_get", "struct_set", "tuple_set", "arr_len", "str_len", "str_data", "tuple_get", "opt_tag", "opt_payload",
+    "struct_get", "struct_set", "tuple_set", "arr_len", "str_len", "str_data", "tuple_get", "opt_tag", "opt_payload", "opt_set_payload",
     "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is", "struct_set_shape",
     "struct_make", "arr_make", "tuple_make", "opt_make", "str_slice",
     "raw_load_ptr", "raw_store_ptr", "raw_load8", "raw_store8", "const_struct", "call_indirect",
@@ -533,6 +533,9 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     return lift_pop_push(lv, 7, 50, 0, k);
   }
   if (k == "raw_string") {
+    if (op.i32_imm > 0) {
+      return lift_pop_push(lv, 2, 51, 2, "");
+    }
     return lift_pop_push(lv, 2, 50, 0, k);
   }
   if (k == "exit") {
@@ -679,7 +682,7 @@ function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32
   if (kt.host[tag]) {
     return lift_prod_host(k, op, lv);
   }
-  if (util.str_has_prefix(k, "raw_store") || k == "struct_set" || k == "tuple_set" || k == "arr_set") {
+  if (util.str_has_prefix(k, "raw_store") || k == "struct_set" || k == "tuple_set" || k == "arr_set" || k == "opt_set_payload") {
     return lift_prod_store(k, op, lv);
   }
   if (k == "variant_is") {
@@ -742,6 +745,9 @@ function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   }
   if (k == "tuple_set") {
     return lift_store(lv, 41, op.i32_imm * 8);
+  }
+  if (k == "opt_set_payload") {
+    return lift_store(lv, 41, 8);
   }
   if (k == "arr_set") {
     return mark_packed(lift_store(lv, 43, op.i32_imm), op);

@@ -83,6 +83,11 @@ function byte_view(t: typeinfo.Type): boolean {
   return false;
 }
 
+// A byte view's sub-range whose descriptor the plan keeps in the frame.
+function frame_byte_slice(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.arr_slice() && byte_view(f.values[ins.result]) && p.frame_views[ins.result];
+}
+
 function contains_byte_view(t: typeinfo.Type): boolean {
   if (byte_view(t)) {
     return true;
@@ -456,7 +461,8 @@ function definition(f: ssasem.Func, v: i32): ssa.SInst {
 // retained, as `append_field` does around its push. A record's field and an
 // enum's payload are the same slot to this, since both read through
 // `op_struct_get`; a tuple's element has no shape word before it, so it is
-// written with `op_tuple_set`; an array's element is written at its index.
+// written with `op_tuple_set`; the builtin Option layout's payload with
+// `op_opt_set_payload`; an array's element is written at its index.
 // The scratch slot holds the box's answer; nothing reads it past this point.
 function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32): irtables.LowerResult {
   let get: ssa.SInst = definition(f, v);
@@ -475,6 +481,9 @@ function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32)
   } else if (get.kind_tag == ssasem.tuple_get()) {
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_tuple_set(get.imm));
+  } else if (get.kind_tag == ssasem.variant_get() && enum_layout(f, f.values[get.args[0]]) == semrecords.layout_option()) {
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_opt_set_payload());
   } else {
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_struct_set(get.imm, 0));
@@ -4002,7 +4011,7 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_str_data());
     r = emit(r, ir.op_load_local(ins.args[1]));
-  } else {
+  } else if (!frame_byte_slice(f, p, ins)) {
     for arg in ins.args {
       r = emit(r, ir.op_load_local(arg));
     }
@@ -4015,6 +4024,10 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
   }
   if (ins.kind_tag == ssasem.slice() && p.frame_views[ins.result]) {
     r = emit(r, ir.op_str_slice_frame(0));
+  } else if (frame_byte_slice(f, p, ins)) {
+    for op in ssabytes.slice_frame(ins.args[0], ins.args[1], ins.args[2]) {
+      r = emit(r, op);
+    }
   } else if (p.constants[ins.result] != "") {
     r = static_box(r, f, p, ins);
   } else if (container_op(ins.kind_tag)) {
@@ -6849,11 +6862,10 @@ function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {
 function place_views(own r: irtables.LowerResult): irtables.LowerResult {
   let ops: ir.Op[] = r.ops;
   let next: i32 = r.n_locals;
-  let k_str_slice: i32 = ir.K_STR_SLICE;
   let i: i32 = 0;
   while (i < ops.len()) {
-    if (ops[i].kind_tag == k_str_slice && ops[i].i32_imm > 0) {
-      ops = ops.with(i, ir.op_str_slice_frame(next));
+    if (ir.frame_box_base(ops[i]) >= 0) {
+      ops = ops.with(i, ir.placed_frame_box(ops[i], next));
       next = next + 3;
     }
     i = i + 1;
