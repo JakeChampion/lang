@@ -665,6 +665,24 @@ function test_caller_proxy_credentials(): test.TestOutcome {
   return test.pass();
 }
 
+// The caller's hop-by-hop fields, the fields its `Connection` names, and
+// its own `Host` and `Content-Length` stay off the wire; the rest go in
+// the caller's order, before the fields the client writes.
+function test_caller_fields_filtered(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "ok")]);
+  let req: fetch.Request = fetch.get("http://example.test/").with_header("X-First", "1").with_header("Connection", "x-trace, close").with_header("X-Trace", "abc").with_header("Host", "other.test").with_header("Content-Length", "99").with_header("TE", "trailers").with_header("X-Last", "2");
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, req, __open());
+  let sent: string = __sent_text(n, 0);
+  if (__body(got) != "ok") {
+    return test.fail("body: " + __body(got));
+  }
+  if (sent.index_of("X-Trace") >= 0 || sent.index_of("Connection") >= 0 || sent.index_of("other.test") >= 0 || sent.index_of("Content-Length") >= 0 || sent.index_of("TE:") >= 0) {
+    return test.fail("request: " + sent);
+  }
+  return test.assert_eq(sent, "GET / HTTP/1.1\r\nHost: example.test\r\nX-First: 1\r\nX-Last: 2\r\nAccept-Encoding: gzip, zstd, br\r\n\r\n");
+}
+
 // An `http_proxy` that is not an http URL with a host refuses the request
 // rather than dialling around it.
 function test_proxy_spec_refused(): test.TestOutcome {
@@ -1056,6 +1074,7 @@ function main(): i32 {
   r = r.it("keeps the proxy's connection across origins", test_proxy_connection_kept);
   r = r.it("dials a proxy named without a port on 80", test_proxy_bare_host);
   r = r.it("sends a caller's own proxy credentials", test_caller_proxy_credentials);
+  r = r.it("keeps the caller's hop-by-hop fields off the wire", test_caller_fields_filtered);
   r = r.it("refuses an http_proxy it cannot use", test_proxy_spec_refused);
   return r.finish();
 }

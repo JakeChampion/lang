@@ -529,17 +529,46 @@ function __host_field(host: string, port: i32, tls: boolean): string {
   return h;
 }
 
-// `__head(req, t, body_len)` — the request line and header block: the
-// caller's end-to-end fields, then what the client decides.
-function __head(req: Request, t: __Target, body_len: i32): string {
-  let out: string = req.method + " " + t.target + " HTTP/1.1\r\n" + "Host: " + t.host_field + "\r\n";
-  let fields: HeaderMap = __sent_fields(req, t, body_len);
+// `__wire(req, t, body)` — the request as the HTTP/1.1 connection takes
+// it, in one buffer: the request line, `Host`, the fields `__sent_fields`
+// lists, the empty line and the body.
+function __wire(req: Request, t: __Target, body: u8[]): u8[] {
+  let b: usize = buf_new(256 + body.len());
+  buf_push(b, req.method);
+  buf_push(b, " ");
+  buf_push(b, t.target);
+  buf_push(b, " HTTP/1.1\r\nHost: ");
+  buf_push(b, t.host_field);
+  buf_push(b, "\r\n");
+  let h: HeaderMap = req.headers;
   let i: i32 = 0;
-  while (i < fields.names.len()) {
-    out = out + fields.names[i] + ": " + fields.values[i] + "\r\n";
+  while (i < h.names.len()) {
+    if (__sent(h, i)) {
+      buf_push(b, h.names[i]);
+      buf_push(b, ": ");
+      buf_push(b, h.values[i]);
+      buf_push(b, "\r\n");
+    }
     i = i + 1;
   }
-  return out + "\r\n";
+  if (__carries_length(req, body.len())) {
+    buf_push(b, "Content-Length: ");
+    buf_push(b, int.int_to_string(body.len()));
+    buf_push(b, "\r\n");
+  }
+  if (__asks_codings(req)) {
+    buf_push(b, "Accept-Encoding: gzip, zstd, br\r\n");
+  }
+  if (__sends_proxy_auth(req, t)) {
+    buf_push(b, "Proxy-Authorization: ");
+    buf_push(b, t.proxy_auth);
+    buf_push(b, "\r\n");
+  }
+  buf_push(b, "\r\n");
+  buf_push_bytes_range(b, body, 0, body.len());
+  let out: u8[] = buf_take_bytes(b);
+  buf_free(b);
+  return out;
 }
 
 // `__sent_fields(req, t, body_len)` — the fields a request carries
@@ -549,17 +578,55 @@ function __head(req: Request, t: __Target, body_len: i32): string {
 // one), the `Accept-Encoding` it undoes itself, and the proxy's
 // credentials when the caller wrote none.
 function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
-  let out: HeaderMap = __without(http.http_end_to_end(req.headers), ["host", "content-length"]);
-  if (body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
+  let out: HeaderMap = headers.header_map_new();
+  let i: i32 = 0;
+  while (i < req.headers.names.len()) {
+    if (__sent(req.headers, i)) {
+      out = out.append(req.headers.names[i], req.headers.values[i]);
+    }
+    i = i + 1;
+  }
+  if (__carries_length(req, body_len)) {
     out = out.append("Content-Length", int.int_to_string(body_len));
   }
   if (__asks_codings(req)) {
     out = out.append("Accept-Encoding", "gzip, zstd, br");
   }
-  if (t.proxy_auth.len() > 0 && !t.tls && !__holds(req.headers.names, "proxy-authorization")) {
+  if (__sends_proxy_auth(req, t)) {
     out = out.append("Proxy-Authorization", t.proxy_auth);
   }
   return out;
+}
+
+// `__sent(h, i)` — whether the caller's field `i` goes on the wire: not
+// hop-by-hop, not named by the caller's `Connection`, and neither `Host`
+// nor `Content-Length`, which the client writes itself.
+function __sent(h: HeaderMap, i: i32): boolean {
+  let name: string = h.names[i];
+  if (http.http_hop_by_hop(name) || http.http_connection_names(h, name)) {
+    return false;
+  }
+  let n: i32 = name.len();
+  if (n == 4) {
+    return !name.eq_ignore_ascii_case("host");
+  }
+  if (n == 14) {
+    return !name.eq_ignore_ascii_case("content-length");
+  }
+  return true;
+}
+
+// `__carries_length(req, body_len)` — whether the request names its
+// body's length: a body, or a method that usually carries one.
+function __carries_length(req: Request, body_len: i32): boolean {
+  return body_len > 0 || req.method == "POST" || req.method == "PUT" || req.method == "PATCH";
+}
+
+// `__sends_proxy_auth(req, t)` — whether the client writes the proxy's
+// credentials: a proxy with some, reached in the clear, and none of the
+// caller's own.
+function __sends_proxy_auth(req: Request, t: __Target): boolean {
+  return t.proxy_auth.len() > 0 && !t.tls && !__holds(req.headers.names, "proxy-authorization");
 }
 
 // `__asks_codings(req)` — whether the client writes its own
@@ -1974,8 +2041,7 @@ function __shared_wait[T: Transport](tr: T, req: Request, started: i64, sh: Shar
 // `__attempt_h1(tr, req, t, started, key, conn)` — `__attempt` on a
 // connection speaking HTTP/1.1: the request written, the response read.
 function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, conn: __Conn): Result[HttpResponse, FetchError] {
-  let body: u8[] = req.body.bytes();
-  match (__send_all(tr, conn, __head(req, t, body.len()).bytes().concat(body))) {
+  match (__send_all(tr, conn, __wire(req, t, req.body.bytes()))) {
     Ok(c) => {
       conn = c;
     },
