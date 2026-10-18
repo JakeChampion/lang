@@ -533,6 +533,9 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     return lift_pop_push(lv, 7, 50, 0, k);
   }
   if (k == "raw_string") {
+    if (op.i32_imm > 0) {
+      return lift_pop_push(lv, 2, 51, 2, "");
+    }
     return lift_pop_push(lv, 2, 50, 0, k);
   }
   if (k == "exit") {

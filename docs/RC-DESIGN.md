@@ -279,7 +279,12 @@ locals sit above `nvals`. It emits:
   (a planted table the replay refuses);
 - **grow brackets** around calls the plan marked (`bracketed`);
 - **string and view** handling: a view is lent, never counted, and released
-  through the view's own release where a container holds it.
+  through the view's own release where a container holds it. A slice, of a
+  string or of a byte array, whose every use reads it within one
+  instruction (`ssaunits.frame_views`) builds its descriptor in three frame
+  slots (`op_str_slice_frame`, `op_raw_string_frame`) that the release
+  skips; on wasm, which has no data pointer to share, the same op copies the
+  bytes and the release frees the copy.
 
 What the lowering may assume: the plan verified; it re-derives the semantic
 facts it needs from the graph rather than trusting a sidecar. It refuses the
