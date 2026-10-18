@@ -6,8 +6,10 @@
 //     fern -o OUT <entry.fern> [stdlib]     a runnable x86-64 Linux ELF
 //     fern -target arm64-linux -o OUT <e>   a runnable arm64 Linux ELF
 //     fern -target arm64-darwin -o OUT …    a runnable arm64 Mach-O
-//     fern -target wasm32-wasi <entry>      a wasi:cli/run component
+//     fern -target wasm32-wasi -o OUT <e>   a wasi:cli/run component
 //     fern -emit asm <entry.fern>           emit the emitter's text instead
+//     fern <entry.fern>                     no -o: a native target's assembly
+//                                           on stdout; a wasm target refuses
 //     fern -emit core-module -target …      a raw wasm core module
 //     fern -emit command-module -target …   the same core, named as the preview-1 command it is
 //     fern -check <entry.fern>              type-check; exit 0 ok / 1 bad
@@ -4761,12 +4763,29 @@ function parse_tool_flag(tf: ToolFlags, av: string[], i: i32): (ToolFlags, i32, 
   return (ToolFlags { ...tf, color_mode: mode }, next, 0);
 }
 
-// stdout_emit is the output form of a compile with `emit` asked for: one
-// with nowhere to write prints a native target's assembly rather than its
-// executable. A wasm module or component goes to stdout as it is.
-function stdout_emit(target: string, emit: string, has_out: boolean): string {
-  if (!has_out && emit.len() == 0 && platforms.for_target(target).isa != "wasm32") {
-    return "asm";
+// output_form is the output form of a compile with `emit` asked for, or why
+// it cannot be written: stdout takes only a target's text, so a compile with
+// nowhere to write prints a native target's assembly rather than its
+// executable, and refuses a wasm module or component, which have no text
+// form but `-emit asm`.
+function output_form(target: string, emit: string, has_out: boolean): (string, string) {
+  if (has_out || emit == "asm") {
+    return (core_form(emit), "");
+  }
+  if (platforms.for_target(target).isa != "wasm32") {
+    return ("asm", "");
+  }
+  if (emit.len() > 0) {
+    return ("", "-emit " + emit + " for -target " + target + " writes a binary; pass -o OUTPUT");
+  }
+  return ("", "-target " + target + " requires -o OUTPUT (the component is a binary)");
+}
+
+// core_form is the form `emit` names: a command module is this compiler's
+// core module.
+function core_form(emit: string): string {
+  if (emit == "command-module") {
+    return "core-module";
   }
   return emit;
 }
@@ -5500,20 +5519,13 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // bytes plus a `_start` that runs main and exits with its value, and an
   // exported memory — the shape `wasmtime run` and a browser shim run. This
   // compiler's core module already has both (and exports `main`, #10768), so
-  // the two forms are one artifact here and the spelling is accepted for the
-  // one target native gives it (#11408).
-  if (emit == "command-module") {
-    if (target != "wasm32-wasi") {
-      eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
-      return 2;
-    }
-    if (out_path.len() == 0) {
-      eprint("fern: -emit command-module writes a binary module; pass -o OUTPUT");
-      return 2;
-    }
-    emit = "core-module";
+  // the two forms are one artifact here (output_form) and the spelling is
+  // accepted for the one target native gives it (#11408).
+  if (emit == "command-module" && target != "wasm32-wasi") {
+    eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
+    return 2;
   }
-  if (emit.len() > 0 && emit != "asm" && emit != "core-module") {
+  if (emit.len() > 0 && emit != "asm" && emit != "core-module" && emit != "command-module") {
     eprint("fern: unknown -emit: " + emit + " (want asm, core-module, command-module, or omit it for the target's default output form)");
     return 2;
   }
@@ -5586,6 +5598,11 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       fi = fi + 1;
     }
     return code;
+  }
+  let (form, refused) = output_form(target, emit, out_path.len() > 0);
+  if (refused.len() > 0 && !(mode_check || mode_interp || mode_caps || mode_effects)) {
+    eprint("fern: " + refused);
+    return 2;
   }
 
   let esrc: string = "";
@@ -5674,7 +5691,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     }
     return status;
   }
-  emit = stdout_emit(target, emit, out_path.len() > 0 || tf.run_it);
+  emit = form;
 
   // The parse gates the `-check` path runs (#7447), for the same reason the
   // checker gate below exists: without them a build is MORE permissive than
