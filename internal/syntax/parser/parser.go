@@ -3643,6 +3643,8 @@ func desugarForEachStmt(s ast.Stmt) ast.Stmt {
 		desugarForEachExpr(x.Value)
 	case *ast.Destructure:
 		desugarForEachExpr(x.Init)
+	case *ast.Defer:
+		desugarForEachExpr(x.Expr)
 	case *ast.FuncDecl:
 		// A nested named function is a STATEMENT here, and its body is a
 		// separate block this walk has to enter: nothing else lowers it, and a
