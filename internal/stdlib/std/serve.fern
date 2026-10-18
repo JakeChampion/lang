@@ -2646,7 +2646,7 @@ function __h2_step_with[S](c: __Conns, at: i32, conn: h2.Conn, stream: i32, req:
     stepped = __serve_step(handler, st, req, c.hosts[at], opts);
   }
   c = __serve_count(c, at, req.method, stepped.1.status);
-  let r: h2.Step = conn.respond(stream, __dated(c, __with_alt_svc(c, stepped.1)));
+  let r: h2.Step = conn.with_date(c.date).respond(stream, __with_alt_svc(c, stepped.1));
   return (c, r.conn, stepped.0, r.output);
 }
 
@@ -2982,10 +2982,11 @@ function __joined(a: u8[], b: u8[]): u8[] {
 // chunks as the producer answers and the windows allow (`__h2_produce`),
 // the producer never asked when the response carries no body.
 function __h2_respond[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i32, resp: HttpResponse): __H2Answered {
-  resp = __dated(a.conns, __with_alt_svc(a.conns, resp));
+  resp = __with_alt_svc(a.conns, resp);
   let conn: h2.Conn = a.conn;
   let conns: __Conns = a.conns;
   let fls: __Flight[] = a.fls;
+  conn = conn.with_date(conns.date);
   let out: u8[] = a.out;
   let answer: HttpResponse = __file_chunks(resp);
   match (answer.body) {
@@ -6447,8 +6448,9 @@ function __with_alt_svc(c: __Conns, resp: HttpResponse): HttpResponse {
 }
 
 // __dated(c, resp) — the response with the loop's `Date` (RFC 9110
-// §6.6.1) unless the handler set one: HTTP/2 and HTTP/3 carry it as a
-// field, where HTTP/1.1 writes the clock's line into the head.
+// §6.6.1) unless the handler set one: HTTP/3 carries it as a field, where
+// HTTP/1.1 writes the clock's line into the head and an HTTP/2 connection
+// carries the date itself (`h2.Conn.with_date`).
 function __dated(c: __Conns, resp: HttpResponse): HttpResponse {
   if (c.date.len() == 0 || resp.headers.has("date")) {
     return resp;

@@ -186,6 +186,9 @@ pub struct Conn {
   // opens next, odd for a client (§5.1.1).
   client: boolean,
   next_stream: i32,
+  // The Date a response carries when it names none (`with_date`); "" for
+  // none.
+  date: string,
 }
 
 // server is a new connection and the SETTINGS it opens with (§3.4).
@@ -209,7 +212,7 @@ function __opened(cfg: Config, client: boolean): Step {
   if (client) {
     phase = AWAITING_SETTINGS;
   }
-  let c: Conn = Conn { config: cfg, phase: phase, inbox: [], inbox_at: 0, decoder: hpack.decoder(cfg.header_table_size, cfg.max_header_list), encoder: hpack.encoder(4096), peer_max_frame: frame.MIN_FRAME_SIZE, peer_initial_window: 65535, settings_acked: false, send_window: 65535, recv_window: 65535, streams: [], last_stream: 0, handling: 0, block_stream: 0, block: [], block_end: false, block_frames: 0, resets: 0, empty_data: 0, frames: 0, peer_going_away: false, client: client, next_stream: 1 };
+  let c: Conn = Conn { config: cfg, phase: phase, inbox: [], inbox_at: 0, decoder: hpack.decoder(cfg.header_table_size, cfg.max_header_list), encoder: hpack.encoder(4096), peer_max_frame: frame.MIN_FRAME_SIZE, peer_initial_window: 65535, settings_acked: false, send_window: 65535, recv_window: 65535, streams: [], last_stream: 0, handling: 0, block_stream: 0, block: [], block_end: false, block_frames: 0, resets: 0, empty_data: 0, frames: 0, peer_going_away: false, client: client, next_stream: 1, date: "" };
   let settings: frame.Setting[] = [frame.Setting { id: frame.SETTINGS_HEADER_TABLE_SIZE, value: cfg.header_table_size }, frame.Setting { id: frame.SETTINGS_ENABLE_PUSH, value: 0 }, frame.Setting { id: frame.SETTINGS_MAX_CONCURRENT_STREAMS, value: cfg.max_concurrent_streams }, frame.Setting { id: frame.SETTINGS_INITIAL_WINDOW_SIZE, value: cfg.initial_window }, frame.Setting { id: frame.SETTINGS_MAX_FRAME_SIZE, value: cfg.max_frame_size }, frame.Setting { id: frame.SETTINGS_MAX_HEADER_LIST_SIZE, value: cfg.max_header_list }];
   let out: u8[] = frame.encode(frame.Settings(false, settings));
   if (cfg.initial_window > 65535) {
@@ -217,6 +220,13 @@ function __opened(cfg: Config, client: boolean): Step {
     return Step { conn: Conn { ...c, recv_window: cfg.initial_window }, output: out, events: [] };
   }
   return Step { conn: c, output: out, events: [] };
+}
+
+// with_date is the connection with the Date (RFC 9110 §6.6.1) its
+// responses carry when they name none, as the serve loop keeps it; ""
+// for none.
+pub function (c: Conn) with_date(date: string): Conn {
+  return Conn { ...c, date: date };
 }
 
 // Outgoing — a request a client sends: the method, scheme, authority and
@@ -1269,7 +1279,7 @@ pub function (c: Conn) respond(stream: i32, resp: HttpResponse): Step {
   if (resp.trailers.len() > 0) {
     length = 0 - 1;
   }
-  let enc: hpack.Encoded = __response_block(c.encoder, resp, length);
+  let enc: hpack.Encoded = __response_block(c.encoder, resp, length, c.date);
   c = Conn { ...c, handling: c.handling - 1, encoder: enc.encoder };
   // A body both windows and the frame size take goes out now, in one
   // DATA frame after the HEADERS, and the stream is done with; the rest
@@ -1310,7 +1320,7 @@ pub function (c: Conn) respond_head(stream: i32, resp: HttpResponse): Step {
     return Step { conn: Conn { ...freed, streams: __without(freed.streams, at) }, output: [], events: [] };
   }
   let headless: boolean = __headless(s, resp);
-  let enc: hpack.Encoded = __response_block(freed.encoder, resp, 0 - 1);
+  let enc: hpack.Encoded = __response_block(freed.encoder, resp, 0 - 1, freed.date);
   let r: __Run = __header_frames(__run(Conn { ...freed, encoder: enc.encoder }), stream, enc.bytes, headless);
   let owed: __Stream = __Stream { ...s, handling: false, pending: [], trailers: headers.header_map_new(), owes_end: !headless, producing: !headless };
   r = __Run { ...r, conn: Conn { ...r.conn, streams: r.conn.streams.with(at, owed) } };
@@ -1399,14 +1409,22 @@ function __credited(r: __Run, at: i32, n: i32, stream_too: boolean): __Run {
 // each field in lower case, connection-specific ones dropped (§8.2.2),
 // cookies never indexed, and the body's length when it is known (`length`
 // below 0 when it is not: trailers follow, or the body comes in parts).
-function __response_block(e: hpack.Encoder, resp: HttpResponse, length: i32): hpack.Encoded {
+// __response_block is a response's header block: its status, its fields
+// but the connection-specific ones, content-length from `length` when
+// the response names none and `length` is not -1, and `date` when the
+// response names none and `date` is not "".
+function __response_block(e: hpack.Encoder, resp: HttpResponse, length: i32, date: string): hpack.Encoded {
   let en: hpack.Encoding = e.begin().put(":status", __status_text(resp.status), false);
   let i: i32 = 0;
   let has_length: boolean = false;
+  let has_date: boolean = false;
   while (i < resp.headers.names.len()) {
     let name: string = __lowered(resp.headers.names[i]);
     if (name == "content-length") {
       has_length = true;
+    }
+    if (name == "date") {
+      has_date = true;
     }
     if (!__connection_specific(name)) {
       en = en.put(name, resp.headers.values[i], __sensitive(name));
@@ -1415,6 +1433,9 @@ function __response_block(e: hpack.Encoder, resp: HttpResponse, length: i32): hp
   }
   if (!has_length && length >= 0 && !http.http_bodiless(resp.status)) {
     en = en.put("content-length", int.int_to_string(length), false);
+  }
+  if (!has_date && date.len() > 0) {
+    en = en.put("date", date, false);
   }
   return en.finish();
 }
