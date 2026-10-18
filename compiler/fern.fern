@@ -1685,7 +1685,8 @@ function usage_lines(embedded: boolean): string[] {
     "       fern -resolve | -vendor | -fetch [DIR]",
     "       fern -lsp | -repl [-target ISA-ENV]" + root,
     "       fern -cover-report [-lcov] FILE",
-    "       fern -explain [CODE] | -targets | -lint-rules | -version | -h",
+    "       fern -explain [CODE]" + root,
+    "       fern -targets | -lint-rules | -version | -h",
     "Flags go before FILE. The program's arguments follow FILE" + unless_embedded(embedded, " and STDLIB") + ", behind -- when the first begins with -.",
     "A flag takes one dash or two. A value follows as -flag VALUE or -flag=VALUE; a flag without one is a boolean, also written -flag=true or -flag=false.",
   ];
@@ -4764,39 +4765,44 @@ function print_version(root: string): i32 {
   return 0;
 }
 
-// explain is `fern -explain CODE`: the long-form explanation the embedded tree
-// carries under explanations/, or, with no code, the codes there are.
-function explain(root: string, code: string): i32 {
-  let dir: string = root + "/explanations";
+// explain_cli is `fern -explain [CODE]`. A build without an embedded tree takes
+// the stdlib root after it, as `-lsp` does, and reads that tree's explanations.
+function explain_cli(pos: string[], embedded_root: string, code: string): i32 {
+  if (pos.len() > 1 || pos.len() == 1 && embedded_root.len() > 0) {
+    return usage(embedded_root.len() > 0);
+  }
+  if (pos.len() == 1) {
+    return explain(explanations_dir(util.clean_path(pos[0])), code);
+  }
+  if (embedded_root.len() == 0) {
+    eprint("fern: -explain: this build carries no explanations: pass the stdlib root after the code (-explain CODE STDLIB, or -explain= STDLIB to list the codes)");
+    return 2;
+  }
+  return explain(embedded_root + "/explanations", code);
+}
+
+// explanations_dir is where the stdlib root `root` keeps the explanations:
+// explanations/ in an embedded tree, the diag package's in the source tree.
+function explanations_dir(root: string): string {
+  if let Ok(_) = read_dir(root + "/explanations") {
+    return root + "/explanations";
+  }
+  return util.clean_path(root + "/../syntax/diag/explanations");
+}
+
+// explain prints the explanation of `code` from the pages in `dir`, or, with
+// no code, the codes there are.
+function explain(dir: string, code: string): i32 {
   let codes: string[] = [];
-  if (root.len() > 0) {
-    if let Ok(names) = read_dir(dir) {
-      for n in names {
-        if (n.len() > 3 && slice_unchecked(n, n.len() - 3, n.len()) == ".md") {
-          let c: string = slice_unchecked(n, 0, n.len() - 3) + "";
-          let at: i32 = codes.len();
-          while (at > 0 && util.str_less(c, codes[at - 1])) {
-            at = at - 1;
-          }
-          let sorted: string[] = [];
-          let k: i32 = 0;
-          while (k < codes.len()) {
-            if (k == at) {
-              sorted = sorted.append(c);
-            }
-            sorted = sorted.append(codes[k]);
-            k = k + 1;
-          }
-          if (at == codes.len()) {
-            sorted = sorted.append(c);
-          }
-          codes = sorted;
-        }
+  if let Ok(names) = read_dir(dir) {
+    for n in names {
+      if (n.len() > 3 && slice_unchecked(n, n.len() - 3, n.len()) == ".md") {
+        codes = literate.insert_sorted(codes, slice_unchecked(n, 0, n.len() - 3) + "");
       }
     }
   }
   if (codes.len() == 0) {
-    eprint("fern: -explain: this build carries no explanations");
+    eprint("fern: -explain: no explanations under " + dir);
     return 1;
   }
   if (code.len() == 0) {
@@ -4810,16 +4816,7 @@ function explain(root: string, code: string): i32 {
   let canonical: string = code.trim().to_upper();
   match (read_file(dir + "/" + canonical + ".md")) {
     Ok(body) => {
-      let header: string = "error " + canonical + ":";
-      if (isatty(1)) {
-        match (env("NO_COLOR")) {
-          Some(_) => {},
-          None => {
-            header = "\x1b[1;31m" + header + "\x1b[0m";
-          }
-        }
-      }
-      write(header + "\n\n" + body + "\n");
+      write(explain_text(canonical, body));
       return 0;
     },
     Err(_) => {
@@ -4834,6 +4831,30 @@ function explain(root: string, code: string): i32 {
       return 1;
     }
   }
+}
+
+// explain_text is the page `body` of `canonical` under its header: the page's
+// `# CODE — title` heading becomes an `error CODE: title` line.
+function explain_text(canonical: string, body: string): string {
+  let header: string = "error " + canonical + ":";
+  if (isatty(1)) {
+    match (env("NO_COLOR")) {
+      Some(_) => {},
+      None => {
+        header = "\x1b[1;31m" + header + "\x1b[0m";
+      }
+    }
+  }
+  let heading: string = "# " + canonical + " — ";
+  let nl: i32 = util.index_of_sub(body, "\n");
+  if (nl <= heading.len() || !util.str_has_prefix(body, heading)) {
+    return header + "\n\n" + body + "\n";
+  }
+  let at: i32 = nl;
+  while (at < body.len() && body[at] == b'\n') {
+    at = at + 1;
+  }
+  return header + " " + slice_unchecked(body, heading.len(), nl) + "\n\n" + slice_unchecked(body, at, body.len()) + "\n";
 }
 
 // cover_report is `fern -cover-report FILE` (`-` for stdin): fold a saved
@@ -5554,7 +5575,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     return print_version(root);
   }
   if (tf.explain) {
-    return explain(root, tf.explain_code);
+    return explain_cli(pos, embedded_root, tf.explain_code);
   }
   if (tf.cover_report) {
     return cover_report(entry_path, have_entry, tf.lcov);

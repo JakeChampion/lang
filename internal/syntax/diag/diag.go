@@ -59,7 +59,7 @@ type Filed interface {
 // error code (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §4). The code
 // is rendered in the header — `error[E001]: …` — so users can
 // search for it and look up the long-form explanation via
-// `lang explain E001`. Codes are stable identifiers; the
+// `fern -explain E001`. Codes are stable identifiers; the
 // rendered phrasing of the error message can evolve without
 // breaking the search.
 //

@@ -81,7 +81,7 @@ it claims:
    this keeps slice 1 sound without inter-type obligation flow.
 4. Closures capturing a marked value: violation in slice 1
    (capture semantics for obligations need design; forbid first).
-5. New error code **E067**, `fern explain E067` entry, message
+5. New error code **E067**, `fern -explain E067` entry, message
    naming the type, the binding, and the unconsumed path's exit
    point.
 
