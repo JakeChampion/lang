@@ -2963,10 +2963,8 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
     }
     return Checked { findings: util.append_all(fs, todo_warnings(merged.todo_sites, entry_path)), entry: entry_path, files: b.files, maps: b.maps, ok: true };
   }
-  // The module is ill-typed but produced no coded diagnostic — an
-  // expression collapsed to TypeUnknown on a type the partial checker
-  // can't model yet (#9053). Surface a best-effort hint so `-check`
-  // never exits 1 silently; the native `fern` remains the full oracle.
+  // Ill-typed with no diagnostic is a checker bug; report it as one rather
+  // than exit 1 silently.
   if (mt.diags.len() == 0) {
     fs = util.append_all(fs, errors_of(checker.ill_typed_hint(merged)));
   }

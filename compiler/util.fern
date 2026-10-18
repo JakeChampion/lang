@@ -1251,10 +1251,9 @@ pub struct Related { line: i32, col: i32, length: i32, message: string }
 pub struct Fix { line: i32, col: i32, old: string, new_text: string, title: string }
 
 // is_diagnostic_code reports whether `code` is a real diagnostic code: `E` or
-// `P` followed by three digits. The checker also emits the pseudo-code "type"
-// (ill_typed_hint's marker for an expression it cannot represent yet, #9053)
-// and leaves `code` empty on the uncoded diagnostics. Neither states that the
-// program is wrong, so neither can reject a build.
+// `P` followed by three digits. An uncoded diagnostic, such as the checker's
+// internal error (ill_typed_hint), does not state that the program is wrong,
+// so it cannot reject a build.
 pub function is_diagnostic_code(code: string): boolean {
   if (code.len() != 4) {
     return false;

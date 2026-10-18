@@ -270,15 +270,6 @@ func TestSelfHostFreestandingTargets(t *testing.T) {
 			}
 			// Whether the program is ACCEPTED, which the site lists agree on
 			// even when one compiler rejects with nothing to show for it.
-			//
-			// Not asserted where the self-host checker reports a construct it
-			// cannot represent: that gap makes the two compilers disagree on
-			// the exit code for reasons that have nothing to do with
-			// capabilities, and `exit-ok` lands on it today. Match the
-			// diagnostic tag so wording and tracker links can evolve.
-			if strings.Contains(string(shOut), "error[type]:") {
-				return
-			}
 			if wantCode, gotCode := nativeCmd.ProcessState.ExitCode(), shCmd.ProcessState.ExitCode(); wantCode != gotCode {
 				t.Errorf("-check exit differs: native %d, self-host %d\n--- native ---\n%s\n--- self-host ---\n%s",
 					wantCode, gotCode, nativeOut, shOut)
