@@ -51,6 +51,37 @@ function main(): i32 {
     let u: (i32, i32) = match (t) { (a, b) => (b, a) };
     return u.0 * 10 + u.1;
 }`}, // 27
+	// An arm that leaves the function contributes no store: its unreachable
+	// tail is the function's return value, which typed the local as i32.
+	{"diverging_arm_struct", `struct P { x: i32 }
+enum R { A(P), B }
+function pick(r: Result[R, i32]): i32 {
+    let p: P = match (r) { Ok(A(q)) => q, _ => { return 5; } };
+    return p.x;
+}
+function main(): i32 {
+    let b: R = B;
+    return pick(Ok(A(P { x: 30 }))) + pick(Ok(b));
+}`}, // 35
+	{"diverging_arm_array", `enum R { A(u8[]), B }
+function size(r: Result[R, i32]): i32 {
+    let m: u8[] = match (r) { Ok(A(bs)) => bs, _ => { if (true) { return 7; } else { return 8; } } };
+    return m.len();
+}
+function main(): i32 {
+    let xs: u8[] = [1u8, 2u8, 3u8];
+    let b: R = B;
+    return size(Ok(A(xs))) * 10 + size(Ok(b));
+}`}, // 37
+	// A `loop` that breaks falls through to the arm's value, which is stored.
+	{"loop_then_value_arm", `enum R { A(i32), B }
+function val(r: Result[R, i32]): i32 {
+    let n: i32 = match (r) { Ok(A(v)) => { loop { break; } v + 1 }, _ => 50 };
+    return n;
+}
+function main(): i32 {
+    return val(Ok(A(4)));
+}`}, // 5
 }
 
 func runMatchExprValueLocalX86_64(t *testing.T, tc struct{ name, src string }, gcc string, runner []string, fernBin, interpBin, stdlibRoot string) {

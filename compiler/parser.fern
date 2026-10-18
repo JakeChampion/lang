@@ -3775,8 +3775,9 @@ pub struct IfChain { par: Par, stmt: ast.Stmt, rt: string, needs_default_return:
 // terminal `return E` becomes `val = E`. Leading statements are untouched, so
 // a user `return` among them still returns from the enclosing function — the
 // same rule iife_rewrite_arm_body applies to the StmtMatch form. A body whose
-// last statement is not a return (a divergent arm) is left alone; the value
-// local keeps its zero.
+// last statement is not a return is left alone, and so is a diverging block's
+// unreachable tail (branch_dead_tail): a store of it would type the value local
+// from the enclosing function's return value.
 function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
   if (body.len() == 0) {
     return body;
@@ -3788,6 +3789,9 @@ function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
       while (i < body.len() - 1) {
         out = out.append(body[i]);
         i = i + 1;
+      }
+      if (stmts_exit(out, false)) {
+        return out;
       }
       return out.append(s_assign(val, r.value));
     },
@@ -4938,13 +4942,20 @@ function branch_stmt_start(p: Par): boolean {
 // conservative stance the Go side takes), an `if` needs both arms, and a `match`
 // needs every arm.
 pub function branch_stmts_diverge(stmts: ast.Stmt[]): boolean {
+  return stmts_exit(stmts, true);
+}
+
+// stmts_exit is branch_stmts_diverge with the `loop { … }` stance chosen:
+// `loops` false counts a loop as one that may break, so only a `return`,
+// `break` or `continue` on every path exits.
+function stmts_exit(stmts: ast.Stmt[], loops: boolean): boolean {
   if (stmts.len() == 0) {
     return false;
   }
-  return branch_stmt_diverges(stmts[stmts.len() - 1]);
+  return stmt_exits(stmts[stmts.len() - 1], loops);
 }
 
-function branch_stmt_diverges(st: ast.Stmt): boolean {
+function stmt_exits(st: ast.Stmt, loops: boolean): boolean {
   match (st) {
     ast.StmtReturn(_) => {
       return true;
@@ -4956,13 +4967,13 @@ function branch_stmt_diverges(st: ast.Stmt): boolean {
       return true;
     },
     ast.StmtWhile(w) => {
-      return w.is_loop;
+      return loops && w.is_loop;
     },
     ast.StmtIf(f) => {
       if (f.else_body.len() == 0) {
         return false;
       }
-      return branch_stmts_diverge(f.then_body) && branch_stmts_diverge(f.else_body);
+      return stmts_exit(f.then_body, loops) && stmts_exit(f.else_body, loops);
     },
     ast.StmtMatch(m) => {
       if (m.arms.len() == 0) {
@@ -4970,7 +4981,7 @@ function branch_stmt_diverges(st: ast.Stmt): boolean {
       }
       let i: i32 = 0;
       while (i < m.arms.len()) {
-        if (!branch_stmts_diverge(m.arms[i].body)) {
+        if (!stmts_exit(m.arms[i].body, loops)) {
           return false;
         }
         i = i + 1;
