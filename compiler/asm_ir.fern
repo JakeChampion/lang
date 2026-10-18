@@ -11530,7 +11530,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
       let dvi: i32 = 0;
       while (dvi < s.struct_decls.decls.len()) {
         if (s.struct_decls.decls[dvi].enum_owner == ddbn) {
-          let vlit_name: string = s.struct_decls.decls[dvi].name;
+          let vlit_name: string = irtables.decl_shape(s.struct_decls.decls[dvi]);
           let vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, vlit_name);
           s = vlit.state;
           s = ssa_lea_sym(s, vlit.label, "%rdx");
