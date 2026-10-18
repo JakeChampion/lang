@@ -23,18 +23,14 @@ type compileRequest struct {
 }
 
 // compileArgs is the self-host compiler's command line for r, writing to out.
-// Without -o the Go CLI printed a native target's assembly, so a native
-// compile with no output and no -emit asks for it.
+// With no out the compiler decides what reaches stdout: a native target's
+// assembly, or a refusal of a wasm binary.
 func compileArgs(r compileRequest, out, stdlib string) []string {
 	args := []string{"-target", r.target}
 	if out != "" {
 		args = append(args, "-o", out)
 	}
-	emit := r.emit
-	if d := platforms.ForTarget(r.target); out == "" && emit == "" && (d == nil || d.ISA != "wasm32") {
-		emit = "asm"
-	}
-	for _, f := range []struct{ name, val string }{{"-emit", emit}, {"-backend", r.backend}, {"-embed", r.embed}, {"-export", r.export}} {
+	for _, f := range []struct{ name, val string }{{"-emit", r.emit}, {"-backend", r.backend}, {"-embed", r.embed}, {"-export", r.export}} {
 		if f.val != "" {
 			args = append(args, f.name, f.val)
 		}
@@ -56,19 +52,6 @@ func compileArgs(r compileRequest, out, stdlib string) []string {
 	return append(args, r.src, stdlib)
 }
 
-// stdoutRefusal refuses a wasm module or component with no -o, as the Go CLI
-// did: stdout takes only a target's text.
-func stdoutRefusal(r compileRequest) error {
-	d := platforms.ForTarget(r.target)
-	if r.out != "" || r.runIt || r.emit == "asm" || d == nil || d.ISA != "wasm32" {
-		return nil
-	}
-	if r.emit != "" {
-		return fmt.Errorf("-emit %s for -target %s writes a binary; pass -o OUTPUT", r.emit, r.target)
-	}
-	return fmt.Errorf("-target %s requires -o OUTPUT (the component is a binary)", r.target)
-}
-
 // wasmRunRefusal refuses a -run that wasmtime run cannot execute: an HTTP
 // component is served, not run.
 func wasmRunRefusal(r compileRequest) error {
@@ -81,9 +64,6 @@ func wasmRunRefusal(r compileRequest) error {
 // compileSelfHost hands r to the self-host compiler, and with --run executes
 // what it built.
 func compileSelfHost(r compileRequest) (int, error) {
-	if err := stdoutRefusal(r); err != nil {
-		return 1, err
-	}
 	compiler, err := launcher.Compiler()
 	if err != nil {
 		return 1, err
