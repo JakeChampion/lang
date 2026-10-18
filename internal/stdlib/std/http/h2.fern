@@ -408,8 +408,14 @@ function __preface(r: __Run): __Run {
 }
 
 // __next_frame takes one frame off the inbox and acts on it; with no
-// whole frame there, the inbox is left as it is.
+// whole frame there, the inbox is left as it is. The frame a request
+// starts with, a whole HEADERS frame with END_HEADERS and no padding or
+// priority, is read off the inbox without the record `frame.read` builds.
 function __next_frame(r: __Run): __Run {
+  let plain: i32 = frame.plain_headers_at(r.conn.inbox, r.conn.inbox_at, r.conn.config.max_frame_size);
+  if (plain >= 0 && r.conn.block_stream == 0 && r.conn.phase == RUNNING) {
+    return __plain_headers(r, plain);
+  }
   match (frame.read(r.conn.inbox, r.conn.inbox_at, r.conn.config.max_frame_size)) {
     Ok(got) => {
       match (got) {
@@ -417,7 +423,7 @@ function __next_frame(r: __Run): __Run {
           let out: u8[] = r.out;
           let events: Event[] = r.events;
           let c: Conn = r.conn;
-          c = __counted(__taken(c, n));
+          c = __frame_taken(c, n);
           return __frame(__Run { conn: c, out: out, events: events }, f);
         },
         frame.More => {
@@ -437,28 +443,46 @@ function __next_frame(r: __Run): __Run {
   return r;
 }
 
-// __taken is c with the n bytes at inbox_at taken: the inbox emptied when
-// they were the last, which spares the read its cut at the end.
-function __taken(c: Conn, n: i32): Conn {
-  if (c.inbox_at + n >= c.inbox.len()) {
-    return Conn { ...c, inbox: [], inbox_at: 0 };
+// __plain_headers takes the HEADERS frame of `len` payload bytes at the
+// inbox's head (`frame.plain_headers_at`) as `__headers` takes one from
+// the record `frame.read` builds: the frame taken off and counted, its
+// block copied out and read whole, since END_HEADERS came with it.
+function __plain_headers(r: __Run, len: i32): __Run {
+  let at: i32 = r.conn.inbox_at;
+  let stream: i32 = frame.stream_at(r.conn.inbox, at);
+  let end_stream: boolean = frame.end_stream_at(r.conn.inbox, at);
+  let block: u8[] = __bytes_range(r.conn.inbox, at + frame.HEADER_LEN, at + frame.HEADER_LEN + len);
+  let out: u8[] = r.out;
+  let events: Event[] = r.events;
+  let c: Conn = r.conn;
+  c = __frame_taken(c, frame.HEADER_LEN + len);
+  return __block_done(__Run { conn: c, out: out, events: events }, stream, block, end_stream);
+}
+
+// __frame_taken is c with the n bytes of the frame at inbox_at taken, the
+// inbox emptied when they were the last (which spares the read its cut at
+// the end), and the frame counted against the budgets' span, the counters
+// reset when the span is over.
+function __frame_taken(c: Conn, n: i32): Conn {
+  let inbox_at: i32 = c.inbox_at + n;
+  let frames: i32 = c.frames + 1;
+  let resets: i32 = c.resets;
+  let empty_data: i32 = c.empty_data;
+  if (frames >= c.config.budget_frames) {
+    frames = 0;
+    resets = 0;
+    empty_data = 0;
   }
-  return Conn { ...c, inbox_at: c.inbox_at + n };
+  if (inbox_at >= c.inbox.len()) {
+    return Conn { ...c, inbox: [], inbox_at: 0, frames: frames, resets: resets, empty_data: empty_data };
+  }
+  return Conn { ...c, inbox_at: inbox_at, frames: frames, resets: resets, empty_data: empty_data };
 }
 
 // __past_frame is where the frame at `at` in the inbox ends, by its header.
 function __past_frame(inbox: u8[], at: i32): i32 {
   let len: i32 = inbox[at] as i32 << 16 | inbox[at + 1] as i32 << 8 | inbox[at + 2] as i32;
   return at + frame.HEADER_LEN + len;
-}
-
-// __counted counts a frame against the budgets' span, resetting them
-// when the span is over.
-function __counted(c: Conn): Conn {
-  if (c.frames + 1 >= c.config.budget_frames) {
-    return Conn { ...c, frames: 0, resets: 0, empty_data: 0 };
-  }
-  return Conn { ...c, frames: c.frames + 1 };
 }
 
 // __frame acts on one frame. A header block in progress takes only its
@@ -627,19 +651,19 @@ function __block_done(r: __Run, stream: i32, block: u8[], end_stream: boolean): 
 // __skipped is `r` with its decoder past `block` and the fields dropped:
 // a block on a stream that takes none still moves the table.
 function __skipped(r: __Run, block: u8[]): __Run {
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
-  let st: hpack.Decoding = c.decoder.start();
+  let st: hpack.Decoding = r.conn.decoder.start();
   while (st.more(block)) {
     st = st.next(block);
   }
   match (st.error) {
     Some(e) => {
-      return __fail(__Run { conn: c, out: out, events: events }, frame.COMPRESSION_ERROR, e.message());
+      return __fail(r, frame.COMPRESSION_ERROR, e.message());
     },
     None => {}
   }
+  let out: u8[] = r.out;
+  let events: Event[] = r.events;
+  let c: Conn = r.conn;
   c = Conn { ...c, decoder: c.decoder.finish(st) };
   return __Run { conn: c, out: out, events: events };
 }
@@ -679,11 +703,8 @@ function __client_block(r: __Run, stream: i32, at: i32, block: u8[], end_stream:
 // first and alone among the pseudo-header fields, the rest regular. A 1xx
 // other than 101 is stepped over, the final response still to come.
 function __response_head(r: __Run, at: i32, block: u8[], end_stream: boolean): __Run {
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
-  let s: __Stream = c.streams[at];
-  let st: hpack.Decoding = c.decoder.start();
+  let s: __Stream = r.conn.streams[at];
+  let st: hpack.Decoding = r.conn.decoder.start();
   while (st.more(block)) {
     st = st.next(block);
     if (st.has && (s.seen & MALFORMED) == 0) {
@@ -692,10 +713,13 @@ function __response_head(r: __Run, at: i32, block: u8[], end_stream: boolean): _
   }
   match (st.error) {
     Some(e) => {
-      return __fail(__Run { conn: c, out: out, events: events }, frame.COMPRESSION_ERROR, e.message());
+      return __fail(r, frame.COMPRESSION_ERROR, e.message());
     },
     None => {}
   }
+  let out: u8[] = r.out;
+  let events: Event[] = r.events;
+  let c: Conn = r.conn;
   c = Conn { ...c, decoder: c.decoder.finish(st) };
   return __response_headed(__Run { conn: c, out: out, events: events }, at, s, end_stream);
 }
@@ -792,10 +816,7 @@ function __trailers(r: __Run, at: i32, block: u8[], end_stream: boolean): __Run 
   if (!end_stream) {
     return __reset_past(r, block, id, frame.PROTOCOL_ERROR);
   }
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
-  let st: hpack.Decoding = c.decoder.start();
+  let st: hpack.Decoding = r.conn.decoder.start();
   let trailers: HeaderMap = headers.header_map_new();
   let pseudo: boolean = false;
   while (st.more(block)) {
@@ -810,10 +831,13 @@ function __trailers(r: __Run, at: i32, block: u8[], end_stream: boolean): __Run 
   }
   match (st.error) {
     Some(e) => {
-      return __fail(__Run { conn: c, out: out, events: events }, frame.COMPRESSION_ERROR, e.message());
+      return __fail(r, frame.COMPRESSION_ERROR, e.message());
     },
     None => {}
   }
+  let out: u8[] = r.out;
+  let events: Event[] = r.events;
+  let c: Conn = r.conn;
   c = Conn { ...c, decoder: c.decoder.finish(st) };
   return __trailed(__Run { conn: c, out: out, events: events }, at, trailers, pseudo);
 }
@@ -841,11 +865,8 @@ function __request(r: __Run, stream: i32, block: u8[], end_stream: boolean): __R
   if (r.conn.peer_going_away || r.conn.handling + __waiting(r.conn) >= r.conn.config.max_concurrent_streams) {
     return __declined(r, stream, block);
   }
-  let out: u8[] = r.out;
-  let events: Event[] = r.events;
-  let c: Conn = r.conn;
-  let s: __Stream = __Stream { id: stream, state: OPEN, send_window: c.peer_initial_window, recv_window: c.config.initial_window, method: "", scheme: "", authority: "", path: "", fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: [], trailers: headers.header_map_new(), owes_end: false, streaming: false, received: 0, producing: false, status: 0, seen: 0 };
-  let st: hpack.Decoding = c.decoder.start();
+  let s: __Stream = __Stream { id: stream, state: OPEN, send_window: r.conn.peer_initial_window, recv_window: r.conn.config.initial_window, method: "", scheme: "", authority: "", path: "", fields: headers.header_map_new(), body: [], length: 0 - 1, handling: false, reset: false, pending: [], trailers: headers.header_map_new(), owes_end: false, streaming: false, received: 0, producing: false, status: 0, seen: 0 };
+  let st: hpack.Decoding = r.conn.decoder.start();
   while (st.more(block)) {
     st = st.next(block);
     if (st.has && (s.seen & MALFORMED) == 0) {
@@ -854,10 +875,13 @@ function __request(r: __Run, stream: i32, block: u8[], end_stream: boolean): __R
   }
   match (st.error) {
     Some(e) => {
-      return __fail(__Run { conn: c, out: out, events: events }, frame.COMPRESSION_ERROR, e.message());
+      return __fail(r, frame.COMPRESSION_ERROR, e.message());
     },
     None => {}
   }
+  let out: u8[] = r.out;
+  let events: Event[] = r.events;
+  let c: Conn = r.conn;
   c = Conn { ...c, last_stream: stream, decoder: c.decoder.finish(st) };
   return __requested(__Run { conn: c, out: out, events: events }, s, end_stream);
 }
