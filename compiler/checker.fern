@@ -4577,10 +4577,9 @@ function (s: Scope) has_array_recv_method(field: string, view: boolean): boolean
 }
 
 function (s: Scope) lookup_union(name: string): UnionSig {
-  for union in s.unions.unions {
-    if (union.name == name) {
-      return union;
-    }
+  let at: i32 = s.unions.index.find(name);
+  if (at >= 0) {
+    return s.unions.unions[at];
   }
   // Sentinel: empty name signals "no such union".
   let empty_v: string[] = [];

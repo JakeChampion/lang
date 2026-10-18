@@ -263,6 +263,7 @@ generic_call_infers_from_variant_argument            0
 generic_call_through_fn_value                        0
 generic_call_in_struct_field                         0
 generic_enum_bound_dispatch                          0
+generic_enum_named_without_arguments                 0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
 generic_fnarg_typevar                                0
@@ -900,6 +901,7 @@ sso_slice_len_1_inline                               0
 sso_slice_len_7_inline                               0
 sso_slice_len_8_heap                                 0
 sso_triple_concat_via_inline                         0
+static_variant_of_an_unsettled_generic_enum          0
 stdin_double                                         0
 stdin_line                                           0
 str_to_owned_into_own_param                          0

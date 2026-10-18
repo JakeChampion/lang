@@ -9592,7 +9592,9 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			*slot = ast.StructType{Name: t.Name, Args: args}
 			return
 		}
-		if ed, ok := c.info.Enums[t.Name]; ok {
+		// No arguments is the bare form the StructType case above makes of
+		// an enum name, so resolving it again must accept it too.
+		if ed, ok := c.info.Enums[t.Name]; ok && len(args) > 0 {
 			if len(ed.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
 				c.errfCode(ed.P, "E019", "%s", arityMsg("enum "+t.Name, len(ed.TypeParams), len(args), "type argument"))
 			}
@@ -15668,17 +15670,6 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			} else if widened := c.widenCompositeByLiterals(got, n.Init); widened != nil {
 				c.settleNumeric(n.Init, widened)
 				got = widened
-			}
-			// A generic enum the init leaves uninstantiated (`let o = None;`)
-			// is not stamped: a re-check infers it again, where reading the
-			// stamp back as an annotation would fail its arity.
-			if et, ok := got.(ast.EnumType); ok && len(et.Args) == 0 {
-				if ed := c.info.Enums[et.Name]; ed != nil && len(ed.TypeParams) > 0 {
-					s.bindVar(n.Name, got, n)
-					c.info.VarTypes[n] = got
-					c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
-					return
-				}
 			}
 			n.Type = got
 			if litLocal {
