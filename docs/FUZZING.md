@@ -130,6 +130,14 @@ the decision the failure follows: `inline da0`, not a whole program and a set
 of switches. A test process bisects at most 16 seeds, so a fault that fails
 most of a window costs a shard minutes, not its budget.
 
+Each failed seed is also a signature: the leg, the failure's class (its
+message without the seed's numbers, or the typed lowering's refusal reason
+without the function), and the bisected pass. With `FERN_FINDINGS` set, the
+legs append one JSON line per failed seed, and the nightly report posts
+them grouped by signature (`scripts/nightly-findings.mjs`), with a count and
+the first seeds of each. One fault failing two hundred seeds is one row, and
+the same row on consecutive nights is the same bug.
+
 ### Measuring it: the mutation score
 
 `TestFernsmithMutationScore` (`FERN_MUTATION_SCORE=N`) plants one fault at a
@@ -309,7 +317,9 @@ built. Citations are to the paper that introduced the technique.
 11. **Triage**: one signature per finding (pass + bail site, or sanitizer
     report + function) instead of one issue per night, ranked by
     Furthest-Point-First (Chen et al., PLDI 2013), with each reduced repro
-    promoted to a regression test.
+    promoted to a regression test. Done: the signature (leg, failure class,
+    bisected pass) and the grouped nightly table. Next is the ranking and
+    the promotion of each reduced repro.
 
 ## Roadmap
 
@@ -317,4 +327,5 @@ In order:
 
 1. Mutation-score floor in CI once the score is measured over enough mutants
    to be stable, and the survivors worked down.
-2. Signature-based nightly triage.
+2. Rank the nightly signatures (Furthest-Point-First) and promote each
+   reduced repro to a regression test.

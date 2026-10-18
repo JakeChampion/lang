@@ -106,10 +106,12 @@ var selfHostBisects atomic.Int64
 // optimising passes' decisions (compiler/optbisect.fern) and says which one
 // the failure follows, so the report names a pass and a function, not a whole
 // program. agrees builds and judges the seed for target under the env given.
-func bisectSelfHostSeed(t *testing.T, fernBin, stdlibRoot, target, src string, flags, env []string, agrees func(env []string) bool) string {
+// pass is the culprit's pass, "none" when no one decision explains the
+// failure, and "unbisected" when the bisect did not run.
+func bisectSelfHostSeed(t *testing.T, fernBin, stdlibRoot, target, src string, flags, env []string, agrees func(env []string) bool) (report, pass string) {
 	t.Helper()
 	if selfHostBisects.Add(1) > selfHostBisectBudget {
-		return fmt.Sprintf("decision bisect: skipped, %d seeds already bisected in this run", selfHostBisectBudget)
+		return fmt.Sprintf("decision bisect: skipped, %d seeds already bisected in this run", selfHostBisectBudget), "unbisected"
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -120,16 +122,16 @@ func bisectSelfHostSeed(t *testing.T, fernBin, stdlibRoot, target, src string, f
 	// A refused compile still lists the decisions it took before refusing.
 	out, hung, _ := compileSelfHostSeed(fernBin, append(append([]string{}, env...), "FERN_OPT_TRACE=1"), args...)
 	if hung {
-		return "decision bisect: the traced compile hung"
+		return "decision bisect: the traced compile hung", "unbisected"
 	}
 	ds := e2eharness.ParseOptTrace(string(out))
 	d, ok := e2eharness.BisectOptDecisions(ds, func(bound uint64) bool {
 		return agrees(e2eharness.OptBisectEnv(env, bound))
 	})
 	if !ok {
-		return fmt.Sprintf("decision bisect: the failure stays with all %d decisions declined, so no one pass decision causes it", len(ds))
+		return fmt.Sprintf("decision bisect: the failure stays with all %d decisions declined, so no one pass decision causes it", len(ds)), "none"
 	}
-	return fmt.Sprintf("decision bisect: the failure follows `%s` (FERN_OPT_BISECT=%d agrees, FERN_OPT_BISECT=%d does not)", d, d.Hash+1, d.Hash)
+	return fmt.Sprintf("decision bisect: the failure follows `%s` (FERN_OPT_BISECT=%d agrees, FERN_OPT_BISECT=%d does not)", d, d.Hash+1, d.Hash), d.Pass
 }
 
 // seedRunAgrees is the native legs' verdict on one run of a seed: it ran,

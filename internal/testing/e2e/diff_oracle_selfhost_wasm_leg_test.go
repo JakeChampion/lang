@@ -112,30 +112,34 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 			want := runInterpByteOrSkip(t, src)
 
 			diverged := false
-			failed := false
+			class := ""
 			failf := func(format string, args ...any) {
 				if isKnown {
 					diverged = true
 					t.Logf("known divergence (%s): "+format, append([]any{reason}, args...)...)
 					return
 				}
-				failed = true
+				if class == "" {
+					class = failureClass(format)
+				}
 				t.Errorf(format, args...)
 			}
 
 			env := passEnv(passes, seed)
 			logPassConfig(t, env)
 			r, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, flags, env, failf)
-			bisect := func() {
-				t.Log(bisectSelfHostSeed(t, fernBin, stdlibRoot, "wasm32-wasi", src, flags, env, func(env []string) bool {
+			bisect := func(class string) {
+				report, pass := bisectSelfHostSeed(t, fernBin, stdlibRoot, "wasm32-wasi", src, flags, env, func(env []string) bool {
 					r, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, flags, env, func(string, ...any) {})
 					return wasmRunAgrees(r, gap, want)
-				}))
+				})
+				t.Log(report)
+				recordFinding(t, selfHostFinding{Test: legName(t), Seed: seed, Class: class, Pass: pass})
 			}
 			if gap != "" {
 				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
-					bisect()
+					bisect(refusalClass(gap))
 					return
 				}
 				// Same contract as the other legs: a compile bail is a
@@ -154,8 +158,8 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 				return
 			}
 			defer func() {
-				if failed {
-					bisect()
+				if class != "" {
+					bisect(class)
 				}
 			}()
 			out, exit := r.stdout+r.stderr, r.exit

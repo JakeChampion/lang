@@ -159,11 +159,11 @@ printf '.globl _start\n_start:\n mov $60, %%eax\n mov $%s, %%edi\n syscall\n' $c
 		t.Fatal(err)
 	}
 	const src = "function main(): i32 { return 0; }\n"
-	got := bisectSelfHostSeed(t, fake, t.TempDir(), "x86-64-linux", src, nil, nil, func(env []string) bool {
+	got, pass := bisectSelfHostSeed(t, fake, t.TempDir(), "x86-64-linux", src, nil, nil, func(env []string) bool {
 		r, gap := runSelfHostSeed(t, fake, t.TempDir(), src, nil, env, func(string, ...any) {})
 		return seedRunAgrees(r, gap, 0, src)
 	})
-	if want := "follows `reuse b` (FERN_OPT_BISECT=21 agrees, FERN_OPT_BISECT=20 does not)"; !strings.Contains(got, want) {
-		t.Fatalf("got %q, want it to contain %q", got, want)
+	if want := "follows `reuse b` (FERN_OPT_BISECT=21 agrees, FERN_OPT_BISECT=20 does not)"; !strings.Contains(got, want) || pass != "reuse" {
+		t.Fatalf("got %q (pass %q), want it to contain %q (pass reuse)", got, pass, want)
 	}
 }

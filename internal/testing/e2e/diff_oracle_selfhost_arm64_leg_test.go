@@ -99,30 +99,34 @@ func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string, pas
 			src := fernsmith.GenMain(seed)
 			want := runInterpByteOrSkip(t, src)
 
-			diverged, failed := false, false
+			diverged, class := false, ""
 			failf := func(format string, args ...any) {
 				if isKnown {
 					diverged = true
 					t.Logf("known divergence (%s): "+format, append([]any{reason}, args...)...)
 					return
 				}
-				failed = true
+				if class == "" {
+					class = failureClass(format)
+				}
 				t.Errorf(format, args...)
 			}
 
 			env := passEnv(passes, seed)
 			logPassConfig(t, env)
 			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, flags, env, failf)
-			bisect := func() {
-				t.Log(bisectSelfHostSeed(t, fernBin, stdlibRoot, "arm64-linux", src, flags, env, func(env []string) bool {
+			bisect := func(class string) {
+				report, pass := bisectSelfHostSeed(t, fernBin, stdlibRoot, "arm64-linux", src, flags, env, func(env []string) bool {
 					r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, flags, env, func(string, ...any) {})
 					return seedRunAgrees(r, gap, want, src)
-				}))
+				})
+				t.Log(report)
+				recordFinding(t, selfHostFinding{Test: legName(t), Seed: seed, Class: class, Pass: pass})
 			}
 			if gap != "" {
 				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
-					bisect()
+					bisect(refusalClass(gap))
 					return
 				}
 				// Same contract as the x86-64 leg: a compile bail is a
@@ -143,8 +147,8 @@ func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string, pas
 				if strings.Contains(r.stderr, "fern-sanitizer:") {
 					failf("the sanitizer reported on the self-host-compiled binary:\n%s\nsrc:\n%s", r.stderr, src)
 				}
-				if failed {
-					bisect()
+				if class != "" {
+					bisect(class)
 				}
 			}
 			if isKnown && !diverged {
