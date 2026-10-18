@@ -4719,7 +4719,7 @@ pub function map_report(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, pure: ut
   let out: semarrayreport.Site[] = [];
   let idx: i32[][] = ssaunits.step_index(p);
   let links: i32[] = ssaunits.with_reuse(f, p).links;
-  let disabled: boolean = ssaunits.reuse_layer_disabled();
+  let disabled: boolean = ssaunits.reuse_layer_disabled(f.graph.name);
   for b in f.graph.blocks {
     let pos: i32 = 0;
     for ins in b.insts {
@@ -4744,7 +4744,7 @@ pub function scale_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site
   let out: semarrayreport.Site[] = [];
   let idx: i32[][] = ssaunits.step_index(p);
   let links: i32[] = ssaunits.with_reuse(f, p).links;
-  let disabled: boolean = ssaunits.reuse_layer_disabled();
+  let disabled: boolean = ssaunits.reuse_layer_disabled(f.graph.name);
   for b in f.graph.blocks {
     let pos: i32 = 0;
     for ins in b.insts {
@@ -6882,7 +6882,7 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
   }
   let steps: i32[][] = ssaunits.step_index(p);
   let links: i32[] = p.links;
-  let no_reuse: boolean = ssaunits.reuse_layer_disabled();
+  let no_reuse: boolean = ssaunits.reuse_layer_disabled(f.graph.name);
   let maps: boolean[] = in_place_maps(f, modes, p, steps, links, pure, no_reuse);
   let at: i32[] = ssa.block_positions(f.graph);
   let ranks: i32[] = order_ranks(f.graph, layout.order, at.len());

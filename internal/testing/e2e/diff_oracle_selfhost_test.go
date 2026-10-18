@@ -189,21 +189,29 @@ func selfHostX86Sweep(t *testing.T, gcc, knownFile string, flags []string, passe
 			src := fernsmith.GenMain(seed)
 			want := runInterpByteOrSkip(t, src)
 
-			diverged := false
+			diverged, failed := false, false
 			failf := func(format string, args ...any) {
 				if isKnown {
 					diverged = true
 					t.Logf("known divergence (%s): "+format, append([]any{reason}, args...)...)
 					return
 				}
+				failed = true
 				t.Errorf(format, args...)
 			}
 			env := passEnv(passes, seed)
 			logPassConfig(t, env)
 			r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, flags, env, failf)
+			bisect := func() {
+				t.Log(bisectSelfHostSeed(t, fernBin, stdlibRoot, "x86-64-linux", src, flags, env, func(env []string) bool {
+					r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, flags, env, func(string, ...any) {})
+					return seedRunAgrees(r, gap, want, src)
+				}))
+			}
 			if gap != "" {
 				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
+					bisect()
 					return
 				}
 				// A compile bail is a documented endpoint, so an unlisted seed
@@ -225,6 +233,9 @@ func selfHostX86Sweep(t *testing.T, gcc, knownFile string, flags []string, passe
 				checkSelfHostSeedExit(*r, want, src, failf)
 				if strings.Contains(r.stderr, "fern-sanitizer:") {
 					failf("the sanitizer reported on the self-host-compiled binary:\n%s\nsrc:\n%s", r.stderr, src)
+				}
+				if failed {
+					bisect()
 				}
 			}
 			if isKnown && !diverged {

@@ -99,22 +99,30 @@ func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string, pas
 			src := fernsmith.GenMain(seed)
 			want := runInterpByteOrSkip(t, src)
 
-			diverged := false
+			diverged, failed := false, false
 			failf := func(format string, args ...any) {
 				if isKnown {
 					diverged = true
 					t.Logf("known divergence (%s): "+format, append([]any{reason}, args...)...)
 					return
 				}
+				failed = true
 				t.Errorf(format, args...)
 			}
 
 			env := passEnv(passes, seed)
 			logPassConfig(t, env)
 			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, flags, env, failf)
+			bisect := func() {
+				t.Log(bisectSelfHostSeed(t, fernBin, stdlibRoot, "arm64-linux", src, flags, env, func(env []string) bool {
+					r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, flags, env, func(string, ...any) {})
+					return seedRunAgrees(r, gap, want, src)
+				}))
+			}
 			if gap != "" {
 				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
+					bisect()
 					return
 				}
 				// Same contract as the x86-64 leg: a compile bail is a
@@ -134,6 +142,9 @@ func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string, pas
 				checkSelfHostSeedExit(*r, want, src, failf)
 				if strings.Contains(r.stderr, "fern-sanitizer:") {
 					failf("the sanitizer reported on the self-host-compiled binary:\n%s\nsrc:\n%s", r.stderr, src)
+				}
+				if failed {
+					bisect()
 				}
 			}
 			if isKnown && !diverged {

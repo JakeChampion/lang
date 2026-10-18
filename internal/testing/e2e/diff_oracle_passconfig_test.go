@@ -1,10 +1,15 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // selfHostPassSwitches are the self-host compiler's switches that turn one
@@ -88,4 +93,52 @@ func passEnv(passes func(uint64) []string, seed uint64) []string {
 		return nil
 	}
 	return passes(seed)
+}
+
+// selfHostBisectBudget caps the seeds one test process bisects: a fault that
+// fails most of a nightly window would otherwise spend the shard's budget on
+// rebuilds that all name the same decision.
+const selfHostBisectBudget = 16
+
+var selfHostBisects atomic.Int64
+
+// bisectSelfHostSeed bisects a seed a differential leg failed over the
+// optimising passes' decisions (compiler/optbisect.fern) and says which one
+// the failure follows, so the report names a pass and a function, not a whole
+// program. agrees builds and judges the seed for target under the env given.
+func bisectSelfHostSeed(t *testing.T, fernBin, stdlibRoot, target, src string, flags, env []string, agrees func(env []string) bool) string {
+	t.Helper()
+	if selfHostBisects.Add(1) > selfHostBisectBudget {
+		return fmt.Sprintf("decision bisect: skipped, %d seeds already bisected in this run", selfHostBisectBudget)
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	args := append(append([]string{"-target", target}, flags...), "-emit", "asm", "-o", filepath.Join(dir, "prog.s"), srcPath, stdlibRoot)
+	// A refused compile still lists the decisions it took before refusing.
+	out, hung, _ := compileSelfHostSeed(fernBin, append(append([]string{}, env...), "FERN_OPT_TRACE=1"), args...)
+	if hung {
+		return "decision bisect: the traced compile hung"
+	}
+	ds := e2eharness.ParseOptTrace(string(out))
+	d, ok := e2eharness.BisectOptDecisions(ds, func(bound uint64) bool {
+		return agrees(e2eharness.OptBisectEnv(env, bound))
+	})
+	if !ok {
+		return fmt.Sprintf("decision bisect: the failure stays with all %d decisions declined, so no one pass decision causes it", len(ds))
+	}
+	return fmt.Sprintf("decision bisect: the failure follows `%s` (FERN_OPT_BISECT=%d agrees, FERN_OPT_BISECT=%d does not)", d, d.Hash+1, d.Hash)
+}
+
+// seedRunAgrees is the native legs' verdict on one run of a seed: it ran,
+// exited with the interpreter's byte, and the sanitizer said nothing.
+func seedRunAgrees(r *selfHostRun, gap string, want int, src string) bool {
+	if r == nil || gap != "" {
+		return false
+	}
+	bad := false
+	checkSelfHostSeedExit(*r, want, src, func(string, ...any) { bad = true })
+	return !bad && !strings.Contains(r.stderr, "fern-sanitizer:")
 }
