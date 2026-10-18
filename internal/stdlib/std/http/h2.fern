@@ -156,8 +156,9 @@ pub struct Conn {
   phase: i32,
   // Bytes read and not yet framed, the next frame at `inbox_at`. Within one
   // `read` the frames are taken by moving inbox_at; a frame that ends the
-  // inbox empties it, and a partial frame left over is cut off once at the
-  // read's end, so it is 0 between calls.
+  // inbox empties it, and what is left over is copied out once at the
+  // read's end, so it is 0 between calls and the caller has its buffer
+  // back.
   inbox: u8[],
   inbox_at: i32,
   decoder: hpack.Decoder,
@@ -339,11 +340,14 @@ function __joined(a: u8[], b: u8[]): u8[] {
 // === reading ===============================================================
 
 // read takes bytes from the client: the frames they complete are acted
-// on, the rest kept for the next call. Nothing is read after a close.
+// on, and what is left is kept for the next call in bytes of the
+// connection's own, so `bytes` is the caller's to reuse once the call
+// returns. Nothing is read after a close.
 pub function (c: Conn) read(bytes: u8[]): Step {
   if (c.phase == CLOSED) {
     return Step { conn: c, output: [], events: [] };
   }
+  let held: boolean = c.inbox.len() > 0;
   let r: __Run = __run(Conn { ...c, inbox: __joined(c.inbox, bytes) });
   if (r.conn.phase == AWAITING_PREFACE) {
     r = __preface(r);
@@ -355,8 +359,13 @@ pub function (c: Conn) read(bytes: u8[]): Step {
       break;
     }
   }
-  if (r.conn.inbox_at > 0) {
-    r = __Run { ...r, conn: Conn { ...r.conn, inbox: __rest(r.conn.inbox, r.conn.inbox_at), inbox_at: 0 } };
+  // Joined onto bytes already held, the inbox is the connection's own;
+  // otherwise it is `bytes` itself, and what is left of it is copied out.
+  if (r.conn.inbox_at > 0 || !held && r.conn.inbox.len() > 0) {
+    let out: u8[] = r.out;
+    let events: Event[] = r.events;
+    let conn: Conn = r.conn;
+    r = __Run { conn: Conn { ...conn, inbox: __rest(conn.inbox, conn.inbox_at), inbox_at: 0 }, out: out, events: events };
   }
   return __step(r);
 }

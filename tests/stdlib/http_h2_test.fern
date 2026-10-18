@@ -234,12 +234,16 @@ function test_frames_across_reads(): test.TestOutcome {
   let o: Opened = opened(h2.config());
   let (c1, a) = request(o.client, 1, get("/a"), true);
   let (c2, b) = request(c1, 3, get("/b"), true);
-  let (_, c) = request(c2, 5, get("/c"), true);
+  let (c3, c) = request(c2, 5, get("/c"), true);
+  let (_, d) = request(c3, 7, get("/d"), true);
   let cut: i32 = 4;
   let first: h2.Step = o.conn.read(a.concat(b).concat(__bytes_range(c, 0, cut)));
   let second: h2.Step = first.conn.read(__bytes_range(c, cut, c.len()));
-  let want: string = "request 1 GET /a host=example.test body= trailer=-\nrequest 3 GET /b host=example.test body= trailer=-\n--\nrequest 5 GET /c host=example.test body= trailer=-\n";
-  return test.assert_eq(events_text(first.events) + "--\n" + events_text(second.events), want);
+  // A read that is nothing but the start of a frame is kept whole.
+  let third: h2.Step = second.conn.read(__bytes_range(d, 0, cut));
+  let fourth: h2.Step = third.conn.read(__bytes_range(d, cut, d.len()));
+  let want: string = "request 1 GET /a host=example.test body= trailer=-\nrequest 3 GET /b host=example.test body= trailer=-\n--\nrequest 5 GET /c host=example.test body= trailer=-\n--\n--\nrequest 7 GET /d host=example.test body= trailer=-\n";
+  return test.assert_eq(events_text(first.events) + "--\n" + events_text(second.events) + "--\n" + events_text(third.events) + "--\n" + events_text(fourth.events), want);
 }
 
 // Every request uses the HTTP target decoder, before either body mode

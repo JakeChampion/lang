@@ -2576,7 +2576,11 @@ function __h2_after_pulls[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
 // its HTTP/2 state machine (`__h2_opened` first): the step, its output
 // what the connection has to say.
 function __h2_fed(c: __Conns, at: i32): h2.Step {
-  let bytes: u8[] = __bytes_from(c.bufs[at], c.offs[at]);
+  let bytes: u8[] = c.bufs[at];
+  let from: i32 = c.offs[at];
+  if (from > 0) {
+    bytes = __bytes_from(bytes, from);
+  }
   match (c.framing[at]) {
     Http2(conn) => {
       return conn.read(bytes);
