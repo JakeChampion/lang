@@ -917,7 +917,8 @@ function ts_mentions_map(types: string[]): boolean {
 // ts_sig_types are the parameter and return types of a function and of every
 // lambda or nested function in its body.
 function ts_sig_types(fd: parser.FuncDecl): string[] {
-  let types: string[] = [fd.ret_type];
+  // A method's receiver, which a trait method spells only as `Self`.
+  let types: string[] = [fd.ret_type, fd.receiver_type];
   for p in fd.params {
     types = types.append(p.type_name);
   }

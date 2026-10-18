@@ -552,7 +552,8 @@ function main(): i32 {
 // holding a map roots core/map's runtime only when the program can reach the
 // struct. std/cli declares `CliArgs { opts: Map[string, string], … }`, and
 // importing std/cli for `flag_on` alone carried the whole map runtime into
-// every server, 30% of bench/http_hello's code.
+// every server, 30% of bench/http_hello's code. A trait method reached through
+// a vtable makes its receiver live (#12817).
 func TestSelfHostTreeshakeKeepsMapRuntimeOnlyForLiveMapsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -575,6 +576,17 @@ function main(): i32 { if (cli.flag_on("1")) { return 0; } return 1; }
 		{"live-map-struct", `import "core/map";
 struct Opts { m: Map[string, i32] }
 function main(): i32 { let o: Opts = Opts { m: map_new(4) }; let p: Opts = Opts { m: o.m.insert("a", 1) }; return p.m.len() - 1; }
+`, true},
+		// Nothing builds an S2, but its vtable entry is kept and drops one: the
+		// method names it only as Self.
+		{"dyn-impl-receiver", `import "core/map";
+struct S2 { f: f32, m: Map[i32, i32] }
+struct S0 { a: i32 }
+trait Tc { function get(self: Self, d: i32): i32; }
+impl Tc for S2 { function get(self: Self, d: i32): i32 { return d; } }
+impl Tc for S0 { function get(self: Self, d: i32): i32 { return d + self.a; } }
+function dc(o: dyn Tc, d: i32): i32 { return o.get(d); }
+function main(): i32 { return dc(S0 { a: 1 }, 3) - 4; }
 `, true},
 	}
 	for _, c := range cases {
