@@ -26,7 +26,7 @@ import (
 // TestSelfHostVdsoClockNoSyscall traces the clock program and wants no
 // clock_gettime from it: every read went through the vDSO.
 func TestSelfHostVdsoClockNoSyscall(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildNativeSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(src, []byte(vdsoClockSource), 0o644); err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ const serveSyscallsSlackPerSecond = 4
 // counts are read after a response arrives both times, so a wait the server
 // has entered and not yet left counts the same at both.
 func TestSelfHostServeSyscallsPerRequest(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildNativeSelfHostCLI(t)
 	port := freeTCPPort(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsServerSource(port, serveSyscallsRounds)), 0o644); err != nil {
