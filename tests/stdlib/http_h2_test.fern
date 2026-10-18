@@ -222,10 +222,18 @@ function test_request_and_response(): test.TestOutcome {
   let (cl, bytes) = request(o.client, 1, get("/hello?x=1"), true);
   let step: h2.Step = o.conn.read(bytes);
   let got: string = events_text(step.events) + "handling " + int.int_to_string(step.conn.handling()) + "\n";
-  let answered: h2.Step = step.conn.respond(1, http.ok("hi").with_header("Content-Type", "text/plain").with_header("Connection", "close"));
+  // The connection's Date goes on a response that names none; one that
+  // names its own keeps it.
+  let dated: h2.Conn = step.conn.with_date("Thu, 01 Jan 2026 00:00:00 GMT");
+  let answered: h2.Step = dated.respond(1, http.ok("hi").with_header("Content-Type", "text/plain").with_header("Connection", "close"));
   let s: Shown = shown(cl, step.output.concat(answered.output));
-  got = got + s.text + "open " + int.int_to_string(answered.conn.streams_open()) + " handling " + int.int_to_string(answered.conn.handling());
-  return test.assert_eq(got, "request 1 GET /hello?x=1 host=example.test body= trailer=-\nhandling 1\nHEADERS 1 END_HEADERS :status=200 content-type=text/plain content-length=2\nDATA 1 END_STREAM hi\nopen 0 handling 0");
+  got = got + s.text + "open " + int.int_to_string(answered.conn.streams_open()) + " handling " + int.int_to_string(answered.conn.handling()) + "\n";
+  let (cl2, again) = request(s.client, 3, get("/again"), true);
+  let step2: h2.Step = answered.conn.read(again);
+  let answered2: h2.Step = step2.conn.respond(3, http.ok("hi").with_header("Date", "Fri, 02 Jan 2026 00:00:00 GMT"));
+  let s2: Shown = shown(cl2, step2.output.concat(answered2.output));
+  got = got + s2.text;
+  return test.assert_eq(got, "request 1 GET /hello?x=1 host=example.test body= trailer=-\nhandling 1\nHEADERS 1 END_HEADERS :status=200 content-type=text/plain content-length=2 date=Thu, 01 Jan 2026 00:00:00 GMT\nDATA 1 END_STREAM hi\nopen 0 handling 0\nHEADERS 3 END_HEADERS :status=200 date=Fri, 02 Jan 2026 00:00:00 GMT content-length=2\nDATA 3 END_STREAM hi\n");
 }
 
 // Frames arrive however the reads cut them: several whole frames in one
