@@ -127,16 +127,9 @@ pub function preflight(req: HttpRequest, origin: string, p: Policy): Option[Http
     }
   }
   let bare: HttpResponse = http.no_content().with_vary("Origin").with_vary("Access-Control-Request-Method").with_vary("Access-Control-Request-Headers");
-  if (!p.allows_origin(origin) || !__has_ci(p.methods, method)) {
-    return Some(bare);
-  }
   let asked: string[] = __asked_headers(req);
-  if (!__has_str(p.headers, "*")) {
-    for h in asked {
-      if (!__has_ci(p.headers, h)) {
-        return Some(bare);
-      }
-    }
+  if (!__admits(p, origin, method, asked)) {
+    return Some(bare);
   }
   let out: HttpResponse = __origin_headers(bare, origin, p).with_header("Access-Control-Allow-Methods", method);
   if (asked.len() > 0) {
@@ -146,6 +139,23 @@ pub function preflight(req: HttpRequest, origin: string, p: Policy): Option[Http
     out = out.with_header("Access-Control-Max-Age", p.max_age.to_string());
   }
   return Some(out);
+}
+
+// __admits: the policy admits the origin, the method and every header a
+// preflight asks for.
+function __admits(p: Policy, origin: string, method: string, asked: string[]): boolean {
+  if (!p.allows_origin(origin) || !__has_ci(p.methods, method)) {
+    return false;
+  }
+  if (__has_str(p.headers, "*")) {
+    return true;
+  }
+  for h in asked {
+    if (!__has_ci(p.headers, h)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // `allowed(resp, origin, p)` — `resp` marked for `origin` when the policy
