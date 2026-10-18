@@ -18,9 +18,9 @@ import (
 // still compiled — a program native accepts, rejected by the self-host for
 // a name the source never used.
 //
-// `async` is STAMPED onto the FuncDecl and reprinted by `-fmt`; `opaque` is
-// DROPPED, because native's E021 opaque-access rule needs per-decl module
-// provenance the self-host checker does not carry. Neither mark changes
+// `async` is STAMPED onto the FuncDecl and `opaque` onto the StructDecl, and
+// `-fmt` reprints both; `opaque`'s access rule (E021) is pinned by
+// TestSelfHostCheckerOpaqueDifferentialX86_64. Neither mark changes
 // codegen on the paths below — only the wasm32-wasi component lifts an async
 // function, as an export too (TestSelfHostWasmAsyncExport) —
 // so the contract these tests pin is that each form parses, checks clean,
