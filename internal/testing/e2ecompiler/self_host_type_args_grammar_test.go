@@ -21,6 +21,9 @@ func TestSelfHostTypeArgsGrammar(t *testing.T) {
 		"r = id[i32](0);",
 		"let b: Box[i32] = Box[i32] { v: 0 }; r = b.v;",
 		"let t: Tag[i32] = Tag.One(0); match (t) { Tag.One(n) => { r = n; }, Tag.Empty => {} }",
+		"let f: (i32) => i32 = id[(i32) => i32]((q: i32) => q); r = f(0);",
+		"let p: (i32, string) = id[(i32, string)]((0, \"a\")); r = p.0;",
+		"let fs: ((i32) => i32)[] = [(q: i32) => q]; r = fs[(r)](0);",
 	}
 	rejected := []string{
 		"let t: Tag[i32] = Tag[i32].One(1);",

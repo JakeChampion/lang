@@ -702,6 +702,17 @@ func (t gtype) String() string {
 	return fmt.Sprintf("?dyn%d", int(t))
 }
 
+// maybeTypeArg writes a generic call's type argument (`id[i32](…)`) for t,
+// which inference would also bind, so the checker-mutant oracle can erase it
+// and both checkers must still agree. Exhaustion convention: `true` = none.
+func (g *Generator) maybeTypeArg(b *strings.Builder, t gtype) {
+	name := g.typeName(t)
+	if g.flip(0.75) || g.ch.exhausted() || strings.HasPrefix(name, "?") {
+		return
+	}
+	b.WriteString("[" + name + "]")
+}
+
 // typeName returns the source-level name token for type t. This
 // is the canonical name-fetcher: builtin gtypes resolve through
 // the static `gtypeNames` table, dynamic nominal types through
@@ -2016,7 +2027,9 @@ func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int
 		// returns t. Exhaustion convention: `true` => skip the
 		// generic call (smaller output, no extra clone for
 		// monomorph to handle).
-		fmt.Fprintf(b, "id(")
+		b.WriteString("id")
+		g.maybeTypeArg(b, t)
+		b.WriteString("(")
 		g.genericArg(b, sc, t, depth)
 		b.WriteString(")")
 		return
@@ -2027,7 +2040,9 @@ func (g *Generator) production(b *strings.Builder, sc *scope, t gtype, depth int
 		// unification produces a single T. Use genericArg so
 		// type-ambiguous values like bare `None` get forced
 		// into a concrete form before the inference runs.
-		b.WriteString("pick(")
+		b.WriteString("pick")
+		g.maybeTypeArg(b, t)
+		b.WriteString("(")
 		g.expr(b, sc, tBool, depth+1)
 		b.WriteString(", ")
 		g.genericArg(b, sc, t, depth)
