@@ -178,8 +178,9 @@ regression test where the bug lived:
   bare `Option` failed its own arity when monomorphisation re-checked a
   function that also made a generic call. `TestUninstantiatedEnumLocalSurvivesRecheck`.
 - **An `Err` payload nothing typed fit any array** (#12638, self-host
-  checker). `let r = Ok(5);` leaves `E` unbound, and the payload gave way to
-  concrete siblings. `TestSelfHostUnboundPayloadCheck`.
+  checker). `let r = Ok(5);` leaves `E` unbound, and the payload was taken
+  for a wildcard in an array, a tuple, a variant payload and a map value.
+  `TestSelfHostUnboundPayloadCheck`.
 - **No E040 for an uninferred receiver** (#12632, self-host checker).
   `let o = GNil; o.count()` binds no `T`. Rows in
   `TestSelfHostCheckerCodesX86_64`.

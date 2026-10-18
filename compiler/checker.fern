@@ -4822,10 +4822,10 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
       match (from) {
         typeinfo.TypeTuple(fe) => {
           // Same arity, element-wise assignable. An unknown element on
-          // EITHER side is a wildcard, as in the array arm above, except a
-          // built-in variant's unbound argument: a generic tuple `(T, U)` — whose params
-          // erase to `unknown` — flows into any concrete tuple slot, a
-          // literal whose element infers `unknown` doesn't false-positive,
+          // EITHER side is a wildcard, as in the array arm above; a
+          // built-in variant's unbound argument is not. A generic tuple
+          // `(T, U)` — whose params erase to `unknown` — flows into any
+          // concrete tuple slot, a literal whose element infers `unknown` doesn't false-positive,
           // and a DESTINATION element this resolver cannot name is not a
           // rejection. That last direction is what a spelling like
           // `Cell[i32]` needs: it resolves to unknown here, so a bare
@@ -4874,7 +4874,11 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
           // same wildcard for the same reason the array and tuple arms
           // give it: a generic parameter erases to unknown there, so
           // `assert_eq_map[K, V](Map[K, V], …)` takes a concrete
-          // `Map[i32, i32]`.
+          // `Map[i32, i32]`. A built-in variant's unbound argument is not a
+          // wildcard, as in the array arm.
+          if (unbound_enum_argument(fm.key) && !is_unknown(tm.key) || unbound_enum_argument(fm.value) && !is_unknown(tm.value)) {
+            return false;
+          }
           let kok: boolean = is_unknown(fm.key) || is_unknown(tm.key) || nested_assignable(fm.key, tm.key, unions);
           let vok: boolean = is_unknown(fm.value) || is_unknown(tm.value) || nested_assignable(fm.value, tm.value, unions);
           return kok && vok;
@@ -14002,7 +14006,8 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
     let at: typeinfo.Type = check_expr(c.args[i], s);
     let pt: typeinfo.Type = variant_pattern_payload_type(s, qname, whole, i);
     out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
-    if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !coercible(at, pt, s)) {
+    let checked: boolean = !is_unknown(at) || unbound_enum_argument(at);
+    if (checked && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !coercible(at, pt, s)) {
       out = out.append(dg_at("E036", "variant " + vname + " payload " + util.i32_to_string(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
     }
     i = i + 1;
