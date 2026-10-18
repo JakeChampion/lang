@@ -119,20 +119,31 @@ pub function token_eq(a: string, b: string): boolean {
   return diff == 0;
 }
 
+// __has_control: a C0 control or DEL among the bytes.
+function __has_control(bytes: u8[]): boolean {
+  for b in bytes {
+    if (b < 32 || b == 127) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // __challenge is the problem document answered with `WWW-Authenticate`.
 function __challenge(status: i32, detail: string, challenge: string): HttpResponse {
   return http.problem(status, "", detail).with_header("WWW-Authenticate", challenge);
 }
 
 // __user_pass decodes `user:password`, split at the first colon; a user
-// name may not hold one, a password may.
+// name may not hold one, a password may. Neither may hold a control
+// character (RFC 7617 §2).
 function __user_pass(encoded: string): Option[(string, string)] {
   match (base64.base64_decode_strict(encoded)) {
     Some(bytes) => {
       match (utf8.from_bytes(bytes)) {
         Some(text) => {
           let colon: i32 = text.index_of(":");
-          if (colon < 0) {
+          if (colon < 0 || __has_control(bytes)) {
             return None;
           }
           return Some((text.slice_snap(0, colon), text.slice_snap(colon + 1, text.len())));

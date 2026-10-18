@@ -75,6 +75,13 @@ function test_basic_missing_refused_and_malformed(): test.TestOutcome {
   return test.assert_eq(got, "401 " + challenge + " {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"credentials are required\"}\n401 " + challenge + " {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"the credentials were not accepted\"}\n400 " + challenge + " {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"the basic credential is malformed\"}\n400 " + challenge + " {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"the basic credential is malformed\"}");
 }
 
+function test_basic_with_a_control_character_is_malformed(): test.TestOutcome {
+  let nul: HttpResponse = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", "Basic Ym9iAHg6cGE6c3M=")));
+  let crlf: HttpResponse = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob:pa:ss\r\n"))));
+  let tab: HttpResponse = http.respond(admin(http.request("GET", "/admin").with_header("Authorization", basic_header("bob:pa:ss\t"))));
+  return test.assert_eq(nul.status.to_string() + " " + crlf.status.to_string() + " " + tab.status.to_string(), "400 400 400");
+}
+
 function test_credential_and_token_eq(): test.TestOutcome {
   let got: string = auth.credential(http.request("GET", "/").with_header("Authorization", "  BEARER  abc  "), "Bearer").unwrap_or("-") + "|" + auth.credential(http.request("GET", "/").with_header("Authorization", "Bearerabc"), "Bearer").unwrap_or("-") + "|" + auth.token_eq("abc", "abc").to_string() + auth.token_eq("abc", "abd").to_string() + auth.token_eq("abc", "abcd").to_string() + auth.token_eq("", "").to_string();
   return test.assert_eq(got, "abc|-|truefalsefalsetrue");
@@ -86,6 +93,7 @@ function main(): i32 {
   r = r.it("a bearer token missing, refused and malformed", test_bearer_missing_refused_and_malformed);
   r = r.it("a basic credential with a colon in the password", test_basic_accepted_with_a_colon_in_the_password);
   r = r.it("a basic credential missing, refused and malformed", test_basic_missing_refused_and_malformed);
+  r = r.it("a basic credential with a control character is malformed", test_basic_with_a_control_character_is_malformed);
   r = r.it("credential and token_eq", test_credential_and_token_eq);
   return r.finish();
 }
