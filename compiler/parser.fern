@@ -3242,23 +3242,59 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
 // one expression is a P001 at the first token left over, as the Go
 // parser's parseExprFromText reports it. The sub-parse runs in the
 // caller's verbatim mode and hands its type errors and `todo` sites
-// back on `p`.
+// back on `p`. The boolean is true when the placeholder failed: a lex
+// error, leftover tokens, a type error or a sentinel anywhere inside.
 //
 // `base_line` / `base_col` are where `text` starts in the enclosing
 // file. The re-lex numbers `text` from 1:1, so the tokens are rebased
 // before parsing and every node the parse produces names the file.
-function parse_expr_from_text(p: Par, text: string, base_line: i32, base_col: i32): (ast.Expr, Par) {
+function parse_expr_from_text(p: Par, text: string, base_line: i32, base_col: i32): (ast.Expr, Par, boolean) {
   let toks: lexer.Token[] = lexer.rebase_tokens(lexer.tokenize(text), base_line, base_col);
   if let Some(le) = stream_lex_error(toks) {
-    return (e_unknown_at(lex_error_kind(le), le.line, le.col), p);
+    return (e_unknown_at(lex_error_kind(le), le.line, le.col), p, true);
   }
-  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [] };
+  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: p.verbatim, depth: 0, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [] };
   let (r_expr, r_p) = parse_expr(sub);
   let outer: Par = Par { ...p, type_errs: r_p.type_errs, todos: r_p.todos };
   if (!r_p.at_end()) {
-    return (e_unknown_at("f-string interpolation: unexpected trailing tokens after expression", r_p.peek_line(), r_p.peek_col()), outer);
+    return (e_unknown_at("f-string interpolation: unexpected trailing tokens after expression", r_p.peek_line(), r_p.peek_col()), outer, true);
   }
-  return (r_expr, outer);
+  return (r_expr, outer, r_p.type_errs.len() > p.type_errs.len() || holds_sentinel(r_expr));
+}
+
+// SentinelScan is holds_sentinel's fold state. A bare `return;` carries
+// ExprUnknown("punct:;") as its value, which is not an error, so the return
+// arms `skip` and the next expression visited, that value, consumes it.
+struct SentinelScan { skip: boolean, hit: boolean }
+
+// holds_sentinel reports whether `e` holds a parse sentinel that the
+// pre-check reports as an error, by asmcore.unknown_error_stmt_at's rule.
+function holds_sentinel(e: ast.Expr): boolean {
+  return astwalk.fold_expr_nodes(e, SentinelScan { skip: false, hit: false }, sentinel_scan_stmt, sentinel_scan_expr, astwalk.descend_all).hit;
+}
+
+function sentinel_scan_stmt(st: ast.Stmt, own a: SentinelScan): SentinelScan {
+  if let ast.StmtUnknown(_) = st {
+    return SentinelScan { ...a, hit: true };
+  }
+  if let ast.StmtReturn(r) = st {
+    if let ast.ExprUnknown(u) = r.value {
+      if (u.kind == "punct:;") {
+        return SentinelScan { ...a, skip: true };
+      }
+    }
+  }
+  return a;
+}
+
+function sentinel_scan_expr(e: ast.Expr, own a: SentinelScan): SentinelScan {
+  if let ast.ExprUnknown(_) = e {
+    if (a.skip) {
+      return SentinelScan { ...a, skip: false };
+    }
+    return SentinelScan { ...a, hit: true };
+  }
+  return a;
 }
 
 // parse_primary: number, ident (which may extend to call), string,
@@ -3575,7 +3611,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
           vflags = vflags.append(vpart.is_expr);
           if (vpart.is_expr) {
             vlits = vlits.append("");
-            let (ve, vp) = parse_expr_from_text(p, vpart.expr, vpart.line, vpart.col);
+            let (ve, vp, _) = parse_expr_from_text(p, vpart.expr, vpart.line, vpart.col);
             p = vp;
             if let ast.ExprUnknown(_) = ve {
               return (ve, p);
@@ -3603,9 +3639,9 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let piece: ast.Expr = e_string(part.lit);
         if (part.is_expr) {
           let no_args: ast.Expr[] = [];
-          let (pe, pp) = parse_expr_from_text(p, part.expr, part.line, part.col);
+          let (pe, pp, failed) = parse_expr_from_text(p, part.expr, part.line, part.col);
           p = pp;
-          if let ast.ExprUnknown(_) = pe {
+          if (failed) {
             return (pe, p);
           }
           piece = e_call_at(e_field_access_at(pe, "to_string", f.line, f.col), no_args, f.line, f.col);
@@ -31920,6 +31956,26 @@ function check_fstrings(): i32 {
     },
     _ => {
       return 1119;
+    }
+  }
+
+  // A placeholder holding a sentinel ends the f-string too: the value is that
+  // placeholder, and the leftover tokens after it are not reported.
+  match (parse_program(lexer.tokenize("return f\"{x + @} {x y}\";"))[0]) {
+    ast.StmtReturn(r) => {
+      match (r.value) {
+        ast.ExprBinary(b) => {
+          if (!holds_sentinel(b.right)) {
+            return 1127;
+          }
+        },
+        _ => {
+          return 1128;
+        }
+      }
+    },
+    _ => {
+      return 1129;
     }
   }
 
