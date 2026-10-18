@@ -259,6 +259,21 @@ func semRefused(out string) bool {
 // a second or two; a compiler that runs past it is hung.
 var selfHostCompileTimeout = 2 * time.Minute
 
+// compileSelfHostSeed runs one self-host compile of a generated program,
+// killed at selfHostCompileTimeout; hung reports that it was.
+func compileSelfHostSeed(fernBin string, env []string, args ...string) (out []byte, hung bool, err error) {
+	cmd := selfHostCompileCmd(fernBin, env, args...)
+	var compiled bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &compiled, &compiled
+	hung, err = runBounded(cmd, selfHostCompileTimeout)
+	return compiled.Bytes(), hung, err
+}
+
+// reportCompileHang is the failure every leg reports for a hung compile.
+func reportCompileHang(failf failFunc, src string) {
+	failf("the self-host compiler did not finish in %v:\nsrc:\n%s", selfHostCompileTimeout, src)
+}
+
 // runSelfHostSeed compiles src with the self-host CLI, links it, and runs it.
 //
 // Returns (run, "") when the program ran, (nil, gapMessage) when the compiler
@@ -290,16 +305,12 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env [
 	asmPath := filepath.Join(dir, "prog.s")
 	args := append([]string{"-target", "x86-64-linux"}, flags...)
 	args = append(args, "-emit", "asm", "-o", asmPath, srcPath, stdlibRoot)
-	cmd := selfHostCompileCmd(fernBin, env, args...)
-	var compiled bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &compiled, &compiled
-	hung, err := runBounded(cmd, selfHostCompileTimeout)
+	out, hung, err := compileSelfHostSeed(fernBin, env, args...)
 	if hung {
-		failf("the self-host compiler did not finish in %v:\nsrc:\n%s", selfHostCompileTimeout, src)
+		reportCompileHang(failf, src)
 		return nil, ""
 	}
 	if err != nil {
-		out := compiled.Bytes()
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
 			strictIRBailSite(fernBin, "x86-64-linux", append(flags, "-emit", "asm"), env, srcPath, stdlibRoot, out))
 	}
