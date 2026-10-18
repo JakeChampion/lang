@@ -1,0 +1,12 @@
+K len 2
+K get_or 20
+K has yes
+K get none
+K without yes 1
+Shape len 2
+Shape get_or 2
+Shape dot 3
+Mixed len 2
+Mixed get_or 55
+Outer len 2
+Outer get_or 71

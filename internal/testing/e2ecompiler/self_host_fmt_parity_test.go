@@ -1820,12 +1820,11 @@ function main(): i32 {
 	// `+`-chain of `to_string()` calls.
 	{"nested-fstring-placeholder", "import \"std/i32\";\nimport \"std/string\";\n\nfunction main(): i32 {\n  let x = 5;\n  let s = f\"a {f\"b {x}\"} c {\"}{\"}\";\n  return s.len();\n}\n"},
 
-	// A byte escape that is not part of valid UTF-8 stays an escape on both
-	// sides; written raw it made the formatted file invalid UTF-8, which the
-	// self-host reader then refused. A real multibyte character stays itself.
-	{"string-non-utf8-bytes", "function main(): i32 {\n" +
-		"let s: string = \"\\x07\\xb2é\\xff\\xed\\xa0\\x80\";\n" +
-		"let f: string = f\"\\xc3{s}\\xa9\";\n" +
+	// A \u{...} escape prints as the character it names on both sides, as a
+	// raw multibyte character does; a control scalar stays an escape.
+	{"string-unicode-escapes", "function main(): i32 {\n" +
+		"let s: string = \"\\u{7}\\u{e9}é\\u{1F600}\";\n" +
+		"let f: string = f\"\\u{e9}{s}\\u{7B}\";\n" +
 		"return s.len() + f.len();\n" +
 		"}\n"},
 

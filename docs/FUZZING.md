@@ -214,6 +214,24 @@ regression test where the bug lived:
 - **A missing method on a `boolean` had no diagnostic** (self-host checker;
   found with #12656), so a generic body, which gets no well-typedness hint,
   accepted it. Row `bool-method-missing-in-generic`.
+- **A function or tuple type could not be a call's type argument** (#12775,
+  both parsers). `id[(i32) => i32](g)` and `id[(i32, string)](t)` were read
+  as an index. A `(` opening a type keyword, or a `=>` at the bracket's own
+  depth, now marks the bracket as type arguments. `TestCallTypeArgsShapes`,
+  `TestSelfHostTypeArgsGrammar`, `TestSelfHostFnTypeArgMangle`.
+- **`as?` on a struct or enum had no E059** (#12787, self-host checker),
+  which flagged only a scalar operand. Row `as-downcast-struct-left`.
+- **An enum argument no construction settled** (#12788, both checkers and
+  the lowering). `let o = None;` and `let r = Ok(1);` leave a payload the
+  binding never holds. Go typed a pattern binding of it as the raw `T` or
+  `_`. The self-host checker refused it uncoded, and the lowering refused a
+  `Some(x)` arm on a bare None. Both checkers accepted storing a settled
+  value into the binding, which the interpreter then mis-ran. Now the binding
+  is unreachable (never) and the store is E003. Rows `unsettled-payload-*`,
+  `TestPartialEnumPayloadInference`, `TestSelfHostBareNoneBinding`.
+- **A `for` loop inside a `defer` went unchecked** (#12789, Go parser): the
+  foreach desugar did not enter a `defer`, and the checker has no case for
+  a standing ForEach. `TestForEachInDeferDesugars`.
 - **A generator bug**: the ownership cluster reassigned a variable whose type
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.
@@ -259,8 +277,8 @@ built. Citations are to the paper that introduced the technique.
 8. **Type-checker fuzzing** (Hephaestus, PLDI 2022; Thalia, POPL 2024): erase
    annotations and overwrite types, and hold both checkers to one verdict.
    Done as the checker-mutant oracle, in the x86_64 `diff-selfhost` lane. It
-   erases `let` annotations and overwrites `let`, parameter, result and
-   struct-field types; next is erasing a generic call's type arguments.
+   erases `let` annotations and a generic call's type arguments, and
+   overwrites `let`, parameter, result and struct-field types.
 9. **Fragments mined from bug history** (LegoFuzz, OOPSLA 2025; FeatureFuzz,
    2026; WhiteFox, OOPSLA 2024): `docs/rc-log/` and the tracker are a corpus of
    shapes that broke once.

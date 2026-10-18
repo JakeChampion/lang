@@ -165,20 +165,14 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostTreeshakeKeepsDerivedMethodsX86_64 pins the second root of that
-// kind, and the one that actually broke.
-//
-// A `@derive`d method has no syntactic call site either: the map lowering emits
-// the call to a key type's `hash` after the prune has run. So
-// `@derive(cmp.Eq, cmp.Hash) struct Sku` used as a map key lost `Sku.hash`, and
-// the wasm leg rejected the module for calling a function it never defines —
-// conformance/cases/map_iter_struct_value, map_struct_enum_keys and
-// map_struct_key_grow, which are the corpus gate on this and are why the roots
-// are not a matter of reasoning about which ones might be needed.
-//
-// The root is by RECEIVER, not by a list of derivable method names, so a new
-// derive is covered without a second place to remember.
-func TestSelfHostTreeshakeKeepsDerivedMethodsX86_64(t *testing.T) {
+// TestSelfHostTreeshakeKeepsMapKeyMethodsX86_64 pins the second root of that
+// kind: a map key's `eq` and `hash` have no syntactic call site either, since
+// the map lowering emits those calls after the prune has run. Losing them
+// leaves the artifact calling a function it never defines — the wasm leg
+// rejects the module, the native assembler an unresolved symbol (#12650).
+// Derived and hand-written impls are rooted by the same rule, for every struct
+// and enum once a map reaches the program.
+func TestSelfHostTreeshakeKeepsMapKeyMethodsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("file-loading CLI test runs only natively (argv paths)")
@@ -191,10 +185,10 @@ func TestSelfHostTreeshakeKeepsDerivedMethodsX86_64(t *testing.T) {
 		t.Fatalf("stdlib path: %v", err)
 	}
 
-	// `hash` is never spelled here; only the map lowering asks for it. The
-	// enum's derives ride its variants' declarations while the methods take
-	// the ENUM as receiver, so `Tag.hash` is the case a root by the variant's
-	// own name misses.
+	// `eq` and `hash` are never spelled here; only the map lowering asks for
+	// them. The enums' methods take the ENUM as receiver while the program
+	// names only variants, so `Tag.hash` and `Mode.hash` are the cases a root
+	// by the variant's own name misses.
 	const src = `import "core/map";
 import "core/cmp";
 
@@ -204,12 +198,24 @@ struct Sku { code: i32 }
 @derive(cmp.Eq, cmp.Hash)
 enum Tag { A(i32), B }
 
+struct Hand { code: i32 }
+impl cmp.Eq for Hand { function eq(self: Self, o: Self): boolean { return self.code == o.code; } }
+impl cmp.Hash for Hand { function hash(self: Self): i32 { return self.code; } }
+
+enum Mode { On(i32), Off }
+impl cmp.Eq for Mode { function eq(self: Self, o: Self): boolean { return true; } }
+impl cmp.Hash for Mode { function hash(self: Self): i32 { return 0; } }
+
 function main(): i32 {
     let m: Map[Sku, i32] = map_new(8);
     m = m.insert(Sku { code: 5 }, 7);
     let t: Map[Tag, i32] = map_new(8);
     t = t.insert(A(1), 2);
-    return m.get_or(Sku { code: 5 }, 0) - 7 + t.get_or(A(1), 0) - 2;
+    let h: Map[Hand, i32] = map_new(8);
+    h = h.insert(Hand { code: 3 }, 4);
+    let o: Map[Mode, i32] = map_new(8);
+    o = o.insert(On(1), 6);
+    return m.get_or(Sku { code: 5 }, 0) - 7 + t.get_or(A(1), 0) - 2 + h.get_or(Hand { code: 3 }, 0) - 4 + o.get_or(Off, 0) - 6;
 }
 `
 	prog := filepath.Join(dir, "ts_derive_prog.fern")
@@ -225,9 +231,12 @@ function main(): i32 {
 		t.Fatalf("read asm: %v", err)
 	}
 	asm := string(asmBytes)
-	for _, sym := range []string{"__fn_Sku__hash", "__fn_Tag__hash"} {
-		if !strings.Contains(asm, "\n"+sym+":") {
-			t.Errorf("%s is not emitted: the prune dropped a @derive'd method the map lowering calls", sym)
+	for _, ty := range []string{"Sku", "Tag", "Hand", "Mode"} {
+		for _, m := range []string{"eq", "hash"} {
+			sym := "__fn_" + ty + "__" + m
+			if !strings.Contains(asm, "\n"+sym+":") {
+				t.Errorf("%s is not emitted: the prune dropped a map-key method the map lowering calls", sym)
+			}
 		}
 	}
 

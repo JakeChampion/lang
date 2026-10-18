@@ -2801,17 +2801,21 @@ function written_type_arg_list(text: string, scanned: i32, count: i32): string[]
 }
 
 // type_shaped_bracket reports whether the bracket the cursor sits just inside
-// opens with a name yet holds a type list, from shapes an index cannot take: a
-// top-level comma (`[Box, Loc]`) or a nested `[` opening a type keyword or `[]`
-// (`[Pair[i32]]`, `[Box[]]`), closed by a `]` that a `(` follows; before a `{`
-// any name list is a struct literal's. Mirrors native's peekTypeArgs; a lone
-// name before `(` stays an index for retag_type_arg_indexes to settle.
+// opens with a name or `(` yet holds a type list, from shapes an index cannot
+// take: a top-level comma (`[Box, Loc]`), a nested `[` opening a type keyword or
+// `[]` (`[Pair[i32]]`, `[Box[]]`), a `(` opening a type keyword
+// (`[(i32, string)]`) or a function type's `=>` (`[(Box) => Loc]`), closed by a
+// `]` that a `(` follows; before a `{` any name list is a struct literal's.
+// Mirrors the Go parser's peekTypeArgs; a lone name before `(` stays an index
+// for retag_type_arg_indexes to settle.
 function type_shaped_bracket(p: Par): boolean {
-  if (p.peek_ident().len() == 0) {
+  let named: boolean = p.peek_ident().len() > 0;
+  if (!named && p.peek_punct() != "(") {
     return false;
   }
   let shaped: boolean = false;
   let depth: i32 = 1;
+  let parens: i32 = 0;
   let j: i32 = 0;
   while (p.pos + j < p.toks.len()) {
     let pk: string = p.peek_punct_at(j);
@@ -2820,7 +2824,7 @@ function type_shaped_bracket(p: Par): boolean {
       if (is_type_keyword_tok(p, j + 1) || p.peek_punct_at(j + 1) == "]") {
         shaped = true;
       }
-    } else if (pk == "," && depth == 1) {
+    } else if (pk == "," && depth == 1 && parens == 0 || pk == "=>" && depth == 1) {
       shaped = true;
     } else if (pk == "{") {
       return false;
@@ -2829,11 +2833,17 @@ function type_shaped_bracket(p: Par): boolean {
       if (prev.len() == 0 || prev == "]" || prev == ")") {
         return false;
       }
+      parens = parens + 1;
+      if (is_type_keyword_tok(p, j + 1)) {
+        shaped = true;
+      }
+    } else if (pk == ")") {
+      parens = parens - 1;
     } else if (pk == "]") {
       depth = depth - 1;
       if (depth == 0) {
         let after: string = p.peek_punct_at(j + 1);
-        return shaped && after == "(" || after == "{" && !p.no_struct;
+        return shaped && after == "(" || named && after == "{" && !p.no_struct;
       }
     }
     j = j + 1;

@@ -156,6 +156,45 @@ function ts_routed_map_roots(): string[] {
   ];
 }
 
+// ts_with_key_roots adds to `rs` the cmp.Eq `eq` and cmp.Hash `hash` of every
+// struct and enum, derived or written by hand: a map keyed by one probes
+// through them (ssasem.keyed_map_key_fn), and no source spells that call.
+function ts_with_key_roots(mod: parser.Module, rs: RefSet): RefSet {
+  for fd in mod.funcs {
+    let base: string = util.base_type_name(fd.receiver_type);
+    if (ts_key_method(fd) && ts_nominal(mod, base)) {
+      rs = ts_with_root(rs, ts_qualified_root(base, fd.name));
+    }
+  }
+  return rs;
+}
+
+function ts_key_method(fd: parser.FuncDecl): boolean {
+  return fd.impl_trait == "Eq" && fd.name == "eq" || fd.impl_trait == "Hash" && fd.name == "hash";
+}
+
+function ts_with_root(rs: RefSet, root: string): RefSet {
+  if (refset_has(rs, root)) {
+    return rs;
+  }
+  return refset_add(rs, root);
+}
+
+// ts_nominal reports a struct or enum `mod` declares under the name `t`.
+function ts_nominal(mod: parser.Module, t: string): boolean {
+  for st in mod.structs {
+    if (st.name == t || st.enum_owner == t) {
+      return true;
+    }
+  }
+  for e in mod.enums {
+    if (e.name == t) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
   match (e) {
     ast.ExprIdent(id) => {
@@ -704,7 +743,8 @@ function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
 
 // treeshake returns `mod` with `mod.funcs` pruned to those reachable, by name,
 // from the roots (`main`, top-level statements, WIT exports, Drop finalizers,
-// body-bearing async functions). Structs / enums / aliases / imports /
+// body-bearing async functions, and where a map reaches the program the map
+// runtime and the map-key `eq` / `hash` methods). Structs / enums / aliases / imports /
 // top_stmts / exports are preserved unchanged (only the function list — the
 // IR-budget axis — is pruned). Idempotent.
 struct TsGrown { rs: RefSet, pending: i32[] }
@@ -935,41 +975,6 @@ pub function treeshake(mod: parser.Module): parser.Module {
     di = di + 1;
   }
 
-  // A `@derive`d method is the same shape as a Drop finalizer: the program
-  // never spells it, and its caller is generated after this pass. A struct
-  // used as a map KEY has its `hash` called by the map lowering, so
-  // `@derive(cmp.Eq, cmp.Hash) struct Sku` lost `Sku.hash` here and the wasm
-  // module was rejected for calling a function it never defines
-  // (conformance/cases/map_iter_struct_value and two siblings).
-  //
-  // Rooted by RECEIVER rather than by a list of the derivable method names.
-  // The names are `synth_derives`' business and a new derive would not think
-  // to update a copy of them here — where the cost of over-keeping is a
-  // hand-written method on a derive-carrying struct surviving, and the cost of
-  // under-keeping is a dangling symbol at link time.
-  //
-  // An enum's derives ride its variants' declarations, and the methods they
-  // synthesise take the ENUM as their receiver, so a variant roots the
-  // methods of its owner: `Tag.hash` on `@derive(cmp.Hash) enum Tag` was
-  // shaken away whenever nothing else in the program spelled a `.hash()`.
-  let si: i32 = 0;
-  while (si < mod.structs.len()) {
-    if (mod.structs[si].derives.len() > 0) {
-      let owner: string = mod.structs[si].name;
-      if (mod.structs[si].enum_owner.len() > 0) {
-        owner = mod.structs[si].enum_owner;
-      }
-      let fj: i32 = 0;
-      while (fj < mod.funcs.len()) {
-        if (mod.funcs[fj].receiver_type == owner) {
-          refs = refs.append(mod.funcs[fj].name);
-        }
-        fj = fj + 1;
-      }
-    }
-    si = si + 1;
-  }
-
   // An `async function` with a body is an entry point from outside: the
   // component-level export the wasm path lifts it as. A body-less
   // `@import(...) async` declaration is an import instead, and is excluded by
@@ -1006,11 +1011,9 @@ pub function treeshake(mod: parser.Module): parser.Module {
   if (ts_reaches_map(mod, grown.rs)) {
     let rs0: RefSet = grown.rs;
     for root in ts_routed_map_roots() {
-      if (!refset_has(rs0, root)) {
-        rs0 = refset_add(rs0, root);
-      }
+      rs0 = ts_with_root(rs0, root);
     }
-    grown = ts_grow(mod, rs0, grown.pending);
+    grown = ts_grow(mod, ts_with_key_roots(mod, rs0), grown.pending);
   }
   let rs: RefSet = grown.rs;
 

@@ -36,7 +36,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
@@ -1813,10 +1812,9 @@ func binaryPrec(op string) int {
 	return precLowest
 }
 
-// writeStringBody re-escapes a string or f-string literal segment. A control
-// byte stays an escape so the source stays text (a raw NUL makes git treat the
-// file as binary), and so does a byte that is not part of valid UTF-8: written
-// raw it would make the file itself invalid UTF-8.
+// writeStringBody re-escapes a string or f-string literal segment, which the
+// lexer guarantees is valid UTF-8. A control byte stays an escape so the
+// source stays text (a raw NUL makes git treat the file as binary).
 func (f *formatter) writeStringBody(lit string, fstring bool) {
 	for i := 0; i < len(lit); i++ {
 		c := lit[i]
@@ -1837,13 +1835,6 @@ func (f *formatter) writeStringBody(lit string, fstring bool) {
 			f.b.WriteString(`}}`)
 		case c < 0x20 || c == 0x7f:
 			fmt.Fprintf(&f.b, `\x%02x`, c)
-		case c >= utf8.RuneSelf:
-			if r, n := utf8.DecodeRuneInString(lit[i:]); r != utf8.RuneError || n > 1 {
-				f.b.WriteString(lit[i : i+n])
-				i += n - 1
-			} else {
-				fmt.Fprintf(&f.b, `\x%02x`, c)
-			}
 		default:
 			f.b.WriteByte(c)
 		}

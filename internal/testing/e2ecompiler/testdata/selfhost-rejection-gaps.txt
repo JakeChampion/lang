@@ -33,3 +33,4 @@ parse:diag_p006
 parse:param_pattern_rejects_enum_variant
 parse:param_pattern_rejects_literal_tuple_elem
 parse:param_pattern_rejects_qualified_variant
+parse:string_hex_escape_above_ascii

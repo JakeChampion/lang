@@ -3,7 +3,6 @@ package printer
 import (
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/check/checker"
 	"github.com/jakechampion/lang/internal/syntax/parser"
@@ -1616,20 +1615,16 @@ func TestFormatKeepsControlBytesEscapedInFString(t *testing.T) {
 	}
 }
 
-// A byte escape that is not valid UTF-8 stays an escape; written raw it would
-// make the formatted file invalid UTF-8, which the self-host reader refuses.
-// A real multi-byte character is still written as itself.
-func TestFormatKeepsNonUTF8BytesEscaped(t *testing.T) {
+// A \u{...} escape formats as the character it names, the way a raw
+// multi-byte character is kept as itself; a control scalar stays an escape.
+func TestFormatWritesUnicodeEscapesAsCharacters(t *testing.T) {
 	for _, tc := range []struct{ src, want string }{
-		{"function f(): string { return \"\\x07\\xb2\\x01é\\xff\"; }", `return "\x07\xb2\x01é\xff";`},
-		{"function f(s: string): string { return f\"\\xc3{s}\\xa9\"; }", `return f"\xc3{s}\xa9";`},
+		{"function f(): string { return \"\\u{7}\\u{e9}é\\u{1F600}\"; }", `return "\x07éé😀";`},
+		{"function f(s: string): string { return f\"\\u{e9}{s}\\u{7B}\"; }", `return f"é{s}{{";`},
 	} {
 		got := formatSrc(t, tc.src)
 		if !strings.Contains(got, tc.want) {
 			t.Fatalf("want %q in:\n%s", tc.want, got)
-		}
-		if !utf8.ValidString(got) {
-			t.Fatalf("formatted source is not valid UTF-8:\n%q", got)
 		}
 		if again := formatSrc(t, got); again != got {
 			t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)

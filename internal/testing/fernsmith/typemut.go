@@ -6,9 +6,9 @@ import (
 	"strings"
 )
 
-// TypeMutant is a generated program with one `let` annotation erased, or one
-// `let`, parameter, result or struct-field type replaced (Hephaestus, PLDI
-// 2022). Neither kind is guaranteed to check: an erased annotation may have
+// TypeMutant is a generated program with one `let` annotation or one generic
+// call's type argument erased, or one `let`, parameter, result or
+// struct-field type replaced (Hephaestus, PLDI 2022). Neither kind is guaranteed to check: an erased annotation may have
 // been the coercion site that boxed a value into a `dyn`, or the only thing
 // pinning a generic variant's type argument, and a replaced one may still
 // accept every value that flows into it. What both checkers must do
@@ -32,7 +32,10 @@ var (
 	fnHeader = regexp.MustCompile(`function (\([^)]*\) )?[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\(`)
 	// A struct declaration up to its field list's `{ `.
 	structHeader = regexp.MustCompile(`struct [A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])? \{ `)
-	fieldName    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	// A call of one of the prelude's generic helpers with its type argument
+	// written, up to the `[`.
+	typeArgCall = regexp.MustCompile(`(^|[^A-Za-z0-9_.])(id|pick)\[`)
+	fieldName   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 )
 
 // letAnnotationSpans returns the [start, end) of each `let` annotation's
@@ -144,9 +147,32 @@ func trimRight(src string, i, j int) int {
 	return j
 }
 
+// typeArgSpans returns the [start, end) of each type argument written on a
+// call of the prelude's generic helpers (`i32` in `id[i32](…)`).
+func typeArgSpans(src string) [][2]int {
+	var out [][2]int
+	for _, m := range typeArgCall.FindAllStringIndex(src, -1) {
+		depth := 1
+		for i := m[1]; i < len(src); i++ {
+			if src[i] == '[' {
+				depth++
+			} else if src[i] == ']' {
+				depth--
+				if depth == 0 {
+					if i+1 < len(src) && src[i+1] == '(' {
+						out = append(out, [2]int{m[1], i})
+					}
+					break
+				}
+			}
+		}
+	}
+	return out
+}
+
 // TypeMutants returns up to two erasures and two overwrites of src's `let`
-// annotations and up to two overwrites of its declaration types, chosen from
-// seed.
+// annotations, up to two erasures of its generic calls' type arguments, and
+// up to two overwrites of its declaration types, chosen from seed.
 func TypeMutants(src string, seed uint64) []TypeMutant {
 	lets := letAnnotationSpans(src)
 	sigs := signatureTypeSpans(src)
@@ -157,6 +183,12 @@ func TypeMutants(src string, seed uint64) []TypeMutant {
 		ann := src[sp[0]:sp[1]]
 		// The span starts after `: `, which goes with the type.
 		out = append(out, TypeMutant{Erased: true, Ann: ann, Src: src[:sp[0]-2] + src[sp[1]:]})
+	}
+	targs := typeArgSpans(src)
+	for k := 0; k < 2 && len(targs) > 0; k++ {
+		sp := targs[rng.Intn(len(targs))]
+		// The span is inside the brackets, which go with the argument.
+		out = append(out, TypeMutant{Erased: true, Ann: src[sp[0]:sp[1]], Src: src[:sp[0]-1] + src[sp[1]+1:]})
 	}
 	overwrite := func(spans [][2]int) {
 		for k := 0; k < 2 && len(spans) > 0; k++ {

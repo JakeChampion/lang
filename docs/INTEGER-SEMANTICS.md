@@ -94,8 +94,19 @@ arithmetic operator behaves exactly as before.
 10u8 -| 250u8    == 0                // unsigned clamps low at 0
 1 <<| 31         == 2147483647       // i32 shift clamps high
 (-2) <<| 31      == -2147483648      // ... and low
+(-1) <<| 31      == -2147483648      // exactly MIN: nothing lost
 200u8 <<| 1      == 255
+3 <<| 32         == 2147483647       // count >= width saturates ...
+0 <<| 32         == 0                // ... any non-zero value
 ```
+
+`<<|` clamps exactly where `<<?` (below) answers `None`: when a shift
+count is negative or at least the width, or when the shift loses bits.
+A shift loses bits when the shifted-out bits are not all copies of the
+sign bit, which is the same as saying `a * 2^n` falls outside `[MIN,
+MAX]`. Zero never loses bits, so `0 <<| n` is `0` for every count. The
+count is not masked the way `<<` masks it: `3 << 32 == 3`, but
+`3 <<| 32` saturates.
 
 The operators sit in the existing arithmetic tiers: `+|` / `-|` bind
 like `+` / `-`, `*|` binds like `*`, `<<|` binds like `<<`. They are
@@ -111,10 +122,11 @@ holds.
 
 ### How it's implemented
 
-There is no saturating IR opcode. Both the native lowering
-(`internal/oracle/ir.(*builder).satBinary`) and the self-host one
-(`irlower.lower_sat_binary`) expand to a clamp over ordinary IR ops, so
-every backend gets it for free. The tests are formulated as *pre*-checks
+There is no saturating IR opcode. The compiler's lowering
+(`irtables.sat_binary_ops`) expands each operator to a clamp over
+ordinary IR ops, so every backend gets it for free; the oracle
+interpreter computes the same clamp directly (`satArith` in
+`internal/oracle/interp`). The tests are formulated as *pre*-checks
 against the type's MIN / MAX rather than as post-hoc overflow-flag
 reconstruction, which makes one shape work at every width — including
 sub-i32 `u8`, whose wrap mask never has to run because a saturated
@@ -133,24 +145,27 @@ division: `a != 0 && (s / a != b || (a == -1 && b == MIN))`. The second
 term is needed precisely because division is total here — `MIN / -1`
 yields `MIN`, so the round-trip spuriously agrees on exactly that pair.
 
-`<<|` post-checks the same way, and for a related reason: its
-negative-side pre-check bound would be `ceil(MIN / 2^c)`, and an
-arithmetic shift only yields the floor —
-`-1 <<| 31` must clamp to MIN, yet `MIN >> 31` is `-1`, so
-`a < MIN >> c` would wrongly report no overflow.
+`<<|` post-checks too, by shifting the wrapped result back. The test
+it uses, `lost`, is the same predicate `<<?` answers `None` on:
 
 ```
-a <<| b →  s := a << b; (s >> b) == a ? s
-                        : signed ? (a < 0 ? MIN : MAX) : MAX
+lost(a, b) ⇔ b < 0 || b >= width || ((a << b) >> b) != a
+
+a <<| b →  !lost(a, b) ? a << b
+         : a == 0      ? 0
+         : signed && a < 0 ? MIN : MAX
 ```
 
-The count is masked exactly as `<<` masks it (`& 31` / `& 63`), so
-`3 <<| 32 == 3`, and the shift back uses the same masked count. `>>`
-is arithmetic for signed operands and logical for unsigned, which is
-what makes the round-trip value-preserving in each signedness. Sub-i32
-`u8` is the one width where the shifted value has to be masked back
-into its 8 bits before the round-trip runs, since sub-i32 arithmetic
-otherwise stays in a 32-bit lane.
+`>>` is arithmetic for signed operands and logical for unsigned, so the
+round trip restores `a` exactly when the bits shifted out, and for a
+signed operand the new sign bit, were all copies of `a`'s sign. Only an
+out-of-range count can make `lost` true for `a == 0`, which is why the
+clamp needs the zero arm. The round trip is still computed for an
+out-of-range count, where `<<` masks it, but its answer is discarded,
+and no backend traps on a large shift count. Sub-i32 `u8` is the one
+width where the shifted value has to be masked back into its 8 bits
+before the round trip runs, since sub-i32 arithmetic otherwise stays in
+a 32-bit lane.
 
 ### Known limitations
 
@@ -174,9 +189,13 @@ to `Some(result)` when the exact result fits the operand type and `None`
 on overflow, so overflow becomes a value the caller handles rather than
 a silent wrap. `/?` and `%?` additionally return `None` on a zero
 divisor and, for signed operands, on the one overflowing division
-`MIN / -1`; `<<?` and `>>?` return `None` when the shift count is out of
-range (`< 0` or `>= width`). Also additive surface — a program that
-never writes `?` after an arithmetic operator is unchanged.
+`MIN / -1`. `<<?` returns `None` when the shift loses bits, which is
+when `a * 2^n` does not fit (the `lost` test under the saturating
+operators above). Both shifts treat a count that is negative or at
+least the width as outside their domain and answer `None`, the way `/?`
+treats a zero divisor, so `0 <<? 32` is `None` even though `0 << n` is
+`0` for every `n`. Also additive surface — a program that never writes
+`?` after an arithmetic operator is unchanged.
 
 ```
 2147483647 +? 1  == None          // i32 overflows high
@@ -187,8 +206,20 @@ never writes `?` after an arithmetic operator is unchanged.
 (-2147483648) /? -1 == None        // signed MIN / -1 overflow
 85 %? 43         == Some(42)
 1 <<? 32         == None           // shift count >= width
-255u8 <<? 1      == Some(254)      // count in range; value wraps at u8
+255u8 <<? 1      == None           // the top bit is shifted out
+127u8 <<? 1      == Some(254)
+1073741824 <<? 2 == None           // 2^32 does not fit i32
+1 <<? 31         == None           // 2^31 does not fit i32 either
+(-1) <<? 31      == Some(-2147483648)
+256 >>? 4        == Some(16)
 ```
+
+A right shift cannot overflow: `a >> n` is `a` divided by `2^n` rounded
+toward negative infinity, and that always fits the type. Discarding the
+low bits is what `>>` is for, so `>>?` answers `None` only for an
+out-of-range count. For the same reason there is no `>>|`: with nothing
+to clamp, it would differ from `>>` only on an out-of-range count, and
+`>>?` already reports that case.
 
 They sit in the same arithmetic tiers as the wrapping and saturating
 operators: `+?` / `-?` bind like `+` / `-`, `*?` / `/?` / `%?` bind
@@ -201,25 +232,25 @@ function. The trailing `?` never collides with the postfix try `?`: it
 only follows an arithmetic operator, never a completed operand.
 
 Checked arithmetic never traps — `None` is a value — so the no-exceptions
-contract above still holds. `+?` / `-?` / `*?` are the operator form of
-the `checked_add` / `checked_sub` / `checked_mul` stdlib methods, the way
-`+|` / `-|` / `*|` are the operator form of `saturating_*`.
+contract above still holds. `+?` / `-?` / `*?` / `<<?` / `>>?` are the
+operator form of the `checked_add` / `checked_sub` / `checked_mul` /
+`checked_shl` / `checked_shr` stdlib methods, the way `+|` / `-|` / `*|`
+are the operator form of `saturating_*`.
 
 ### How it's implemented
 
-There is no checked IR opcode. The native compiler desugars `a +? b` in
-the checker (`buildCheckedLowered`, spliced in via `Binary.CheckedLowered`)
-to an `Option`-yielding block-expr — `{ let l = a; let r = b; let s = a
-<op> b; if (overflowed) { None } else { Some(s) } }` — so the interpreter
-and every codegen backend lower it through the ordinary `Option` / `if` /
-wrapping-arithmetic paths. The self-host compiler, whose IR-subset has no
+There is no checked IR opcode. The Go oracle's checker desugars `a +? b`
+(`buildCheckedLowered`, spliced in via `Binary.CheckedLowered`) to an
+`Option`-yielding block-expr — `{ let l = a; let r = b; let s = a <op> b;
+if (overflowed) { None } else { Some(s) } }` — so the oracle interpreter
+evaluates it through the ordinary `Option` / `if` / wrapping-arithmetic
+paths. The self-host compiler, whose IR-subset has no
 block-expression node, emits the same shape directly in
-`irlower.lower_checked_binary`: the overflow predicate is exactly the
-clamp condition `lower_sat_binary` tests (`chk_overflow`), OR'd across the
-two saturation directions, and the outcome is `op_opt_none` /
-`op_opt_make` instead of the clamp. The wrapped result rides a value slot
-and the `Option` rides a default pointer slot (i32 on wasm, 64-bit on the
-register backends).
+`irtables.chk_binary_ops`: the overflow predicate is exactly the clamp
+condition `sat_binary_ops` tests (`chk_overflow`), OR'd across the two
+saturation directions, and the outcome is `op_opt_none` / `op_opt_make`
+instead of the clamp. The `Option` rides a default pointer slot (i32 on
+wasm, 64-bit on the register backends).
 
 The overflow predicate reads back the wrapped result rather than
 comparing against literals, so the unsigned MAX — unrepresentable as a
@@ -228,10 +259,11 @@ signed literal — never has to appear:
 ```
 unsigned a +? b  overflowed ⇔ s < a                       (carry out)
 unsigned a *? b  overflowed ⇔ a != 0 && s / a != b
-signed   a +? b  overflowed ⇔ (a^b) >= 0 && (s^a) < 0     (native desugar)
+signed   a +? b  overflowed ⇔ (a^b) >= 0 && (s^a) < 0     (oracle desugar)
 signed   a *? b  overflowed ⇔ a != 0 && (s / a != b || (a == -1 && b == MIN))
          a /? b  failed     ⇔ b == 0 || (signed && a == MIN && b == -1)
-         a <<? b failed     ⇔ b >= width || (signed && b < 0)
+         a <<? b failed     ⇔ b >= width || (signed && b < 0) || (s >> b) != a
+         a >>? b failed     ⇔ b >= width || (signed && b < 0)
 ```
 
 The signed `*?` division round-trip agrees spuriously on exactly the
@@ -251,7 +283,9 @@ Those same modules also carry the full checked family — `checked_add` /
 `checked_sub` / `checked_mul` / `checked_div` / `checked_rem` /
 `checked_pow` / `checked_shl` / `checked_shr`, all returning `Option[T]`
 — alongside the `saturating_*` method forms. The operators above spell
-the seven binary cases (`+? -? *? /? %? <<? >>?`); `checked_pow` and the
+the seven binary cases (`+? -? *? /? %? <<? >>?`; `checked_shl` /
+`checked_shr` take an `i32` count and return exactly what `<<?` / `>>?`
+return); `checked_pow` and the
 unary `checked_neg` / `checked_abs` stay method-only. There is still no
 aborting-on-overflow build mode, so the never-trapping contract at the
 top of this document holds unconditionally.

@@ -2,9 +2,11 @@ package componenttype_test
 
 import (
 	"bytes"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/syntax/lexer"
@@ -127,9 +129,8 @@ func findWITDir() (string, error) {
 
 // TestWorldFernPayloads pins the self-host compiler's copies of the embedded
 // worlds (the concatenated Fern string literals of each file's payload
-// function) to their .bin files, so the two cannot drift when the WIT is
-// regenerated. The literals are read through the lexer, so any spelling of a
-// byte counts.
+// function, two hex digits a byte) to their .bin files, so the two cannot
+// drift when the WIT is regenerated. The literals are read through the lexer.
 func TestWorldFernPayloads(t *testing.T) {
 	for world, file := range map[string]string{
 		"fern":  "wit_fern_world.fern",
@@ -147,11 +148,15 @@ func TestWorldFernPayloads(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var got []byte
+		var hexText strings.Builder
 		for _, tok := range toks {
 			if tok.Kind == lexer.String {
-				got = append(got, tok.Text...)
+				hexText.WriteString(tok.Text)
 			}
+		}
+		got, err := hex.DecodeString(hexText.String())
+		if err != nil {
+			t.Fatalf("%s: %v", file, err)
 		}
 		if !bytes.Equal(got, want) {
 			t.Errorf("%s carries %d bytes that differ from %s.bin (%d bytes); regenerate it per doc.go", file, len(got), world, len(want))

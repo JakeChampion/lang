@@ -1261,14 +1261,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// the tail) draws no E061 from either checker.
 		{"if-branch-tail-ok", "function main(): i32 { let x = if (true) { 1 } else { 2 }; return x; }\n", nil},
 		{"if-branch-leading-then-tail-ok", "function main(): i32 { let x = if (true) { let k = 1; k + 1 } else { 0 }; return x; }\n", nil},
-		// E059 (`as?` downcast requires a `dyn Trait` value on the left, #2857):
-		// the operand of `x as? T` must be a `dyn Trait` value. A concrete
-		// scalar (i32 / string) on the left can never be dyn, so it's E059 —
-		// matching the Go checker. (A real dyn value types to `unknown` in the
-		// self-host and is left alone, like the E033/E042 conservatism.) The
-		// regular `as` cast is unaffected (it's the `as_` op, not `as?_`).
+		// E059: the operand of `x as? T` must be a `dyn Trait` value (#2857).
+		// The regular `as` cast is unaffected (it's the `as_` op, not `as?_`).
 		{"as-downcast-i32-left", "struct P { x: i32 }\nfunction main(): i32 { let a = 5; let b = a as? P; return 0; }\n", []string{"E059"}},
 		{"as-downcast-string-left", "struct P { x: i32 }\nfunction main(): i32 { let s = \"hi\"; let b = s as? P; return 0; }\n", []string{"E059"}},
+		{"as-downcast-struct-left", "trait Tr { function m(self: Self): i32; }\nstruct P { x: i32 }\nimpl Tr for P { function m(self: Self): i32 { return self.x; } }\nfunction main(): i32 { let p = P { x: 1 }; let b = p as? P; return 0; }\n", []string{"E059"}},
+		{"as-downcast-dyn-left-ok", "trait Tr { function m(self: Self): i32; }\nstruct P { x: i32 }\nimpl Tr for P { function m(self: Self): i32 { return self.x; } }\nfunction main(): i32 { let d: dyn Tr = P { x: 1 }; let b = d as? P; return 0; }\n", nil},
 		{"regular-as-cast-ok", "function main(): i32 { let a = 5; let b = a as i32; return b; }\n", nil},
 		// `for x in <EXPR>` over a non-ident array iterable — clean from both checkers.
 		{"for-literal-clean", "function main(): i32 { let s = 0; for x in [1, 2, 3] { s = s + x; } return s; }\n", nil},
@@ -2353,6 +2351,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"rigid-tparam-projection", "trait P { type Item; function get(self: Self): Self::Item; }\nfunction g[H: P](h: H): string { return h.get(); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"rigid-tparam-unbounded-order", "function f[T](a: T, b: T): boolean { return a < b; }\nfunction main(): i32 { return 0; }\n", []string{"E009"}},
 		{"rigid-tparam-ord-order", "import \"core/cmp\";\nfunction f[T: cmp.Ord](a: T, b: T): boolean { return a < b; }\nfunction main(): i32 { return 0; }\n", nil},
+		// An enum argument no construction settled (`let o = None;`,
+		// `let r = Ok(1);`) is a payload the binding never holds: a pattern
+		// binding of it is unreachable, and storing one in it is E003.
+		{"unsettled-payload-binding-ok", "enum E[T] { A(T), B }\nfunction main(): i32 {\n  let a: i32 = 4;\n  let o = None;\n  let r = Ok(1);\n  let e = E.B;\n  let n: i32 = a % (match (o) { Some(x) => x, None => a });\n  n = n + (match (r) { Ok(x) => x, Err(y) => y - (y +| y) });\n  return n + (match (e) { E.A(x) => x, E.B => 2 });\n}\n", nil},
+		{"unsettled-payload-store-some", "function main(): i32 { let o = None; o = Some(3); return 0; }\n", []string{"E003"}},
+		{"unsettled-payload-store-err", "function main(): i32 { let r = Ok(1); r = Err(\"s\"); return 0; }\n", []string{"E003"}},
+		{"unsettled-payload-store-variant", "enum E[T] { A(T), B }\nfunction main(): i32 { let e = E.B; e = E.A(3); return 0; }\n", []string{"E003"}},
+		// A `for` loop inside a `defer` is checked like any other.
+		{"defer-for-body-checked", "struct S { n: i32 }\nfunction main(): i32 { let xs: i32[] = [1]; defer { for y in xs { let x: i32 = S { n: y }; } } return 0; }\n", []string{"E003"}},
 		{"bool-method-missing-in-generic", "trait Mk { function v(self: Self): i32; }\nfunction f[T: Mk](a: boolean, b: T): i32 { return a.v(); }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
 		{"rigid-tparam-ok", "struct G[T] { v: T }\nfunction id[T](x: T): T { return x; }\nfunction mk[T](x: T): G[T] { let y: T = id(x); let g: G[T] = G { v: y }; return g; }\nfunction pick[T](c: boolean, a: T, b: T): T { return if (c) { a } else { b }; }\nfunction (g: G[T]) get(): T { return g.v; }\nfunction sw[A, B](p: (A, B)): (B, A) { return (p.1, p.0); }\nfunction main(): i32 { return mk(3).get() + pick(true, 1, 2) + sw((1, 2)).0; }\n", nil},
 		{"rigid-tparam-projection-ok", "trait P { type Item; function get(self: Self): Self::Item; }\nstruct B { v: i32 }\nimpl P for B { type Item = i32; function get(self: Self): Self::Item { return self.v; } }\nfunction g[H: P](h: H): H::Item { let x: H::Item = h.get(); return x; }\nfunction main(): i32 { return g(B { v: 1 }); }\n", nil},

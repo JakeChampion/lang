@@ -6074,10 +6074,10 @@ func moduleFileLabel(module string) string {
 	return filepath.Base(module)
 }
 
-// simpleTraitName strips a trait name's module mangling, so a caller can
+// SimpleTraitName strips a trait name's module mangling, so a caller can
 // name `Ord` without knowing it arrives as `cmp__Ord` (and pass a name it
 // already holds in mangled form unchanged).
-func simpleTraitName(name string) string {
+func SimpleTraitName(name string) string {
 	if i := strings.LastIndex(name, "__"); i >= 0 {
 		return name[i+2:]
 	}
@@ -6129,9 +6129,9 @@ func (in *Info) preferredMethod(key string, owners, prefer []string) (mangled, o
 		if want == "" {
 			continue
 		}
-		want = simpleTraitName(want)
+		want = SimpleTraitName(want)
 		for _, o := range owners {
-			if simpleTraitName(o) != want {
+			if SimpleTraitName(o) != want {
 				continue
 			}
 			if m, found := in.TraitMethods[o+"."+key]; found {
@@ -6912,7 +6912,7 @@ func demangleAll(s string) string {
 // "Default", or "Debug". Returns "" for any other trait — only these are
 // derivable.
 func deriveKind(name string) string {
-	switch simple := simpleTraitName(name); simple {
+	switch simple := SimpleTraitName(name); simple {
 	case "Eq", "Display", "Ord", "Hash", "Json", "FromJson", "Default", "Debug":
 		return simple
 	}
@@ -6980,7 +6980,7 @@ func fromJsonElem(t ast.Type) ast.Type {
 
 // typeImplsEqAndHash reports whether the named struct/enum implements
 // BOTH Eq and Hash — the requirement for using it as a Map key, whose
-// derived `hash` / `eq` methods drive the type-erased map runtime's
+// `hash` / `eq` methods, derived or hand-written, drive the map runtime's
 // keyed bucket choice + key comparison (#2671). Trait names in
 // c.info.Impls may be module-mangled (`cmp__Hash`), so classify by
 // simple name via deriveKind, which already strips the prefix.
@@ -10109,6 +10109,7 @@ func (c *checker) paramComparison(n *ast.Binary, lt, rt ast.Type, method string,
 //	signed    a +? b  ⇔ (a^b) >= 0 && (s^a) < 0   (same sign in, sign flip)
 //	signed    a -? b  ⇔ (a^b) <  0 && (s^a) < 0
 //	signed    a *? b  ⇔ a != 0 && (s / a != b || (a == -1 && b == MIN))
+//	          a <<? b ⇔ b out of range || (s >> b) != a
 //
 // The signed `*?` division round-trip agrees spuriously on exactly the
 // `(-1, MIN)` pair (`MIN / -1 == MIN` because Fern's division is total),
@@ -10138,18 +10139,19 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 	switch {
 	case n.Op == "<<?" || n.Op == ">>?":
 		// Checked shift: `None` when the shift count is out of range —
-		// negative (signed operands only) or `>= width`. `s` is Fern's
-		// masked shift (`a << (b & (width-1))`), which never traps, so it
-		// is computed up front like the other non-div cases; on the None
-		// path it just isn't read. `>=` picks the operand's signed /
-		// unsigned comparison, so an unsigned count only needs the upper
-		// bound.
+		// negative (signed operands only) or `>= width` — and, for `<<?`,
+		// when shifting `s` back does not restore `a` because bits or the
+		// sign were shifted out. `s` is Fern's masked shift, which never
+		// traps, so it is computed up front like the other non-div cases.
+		// `>=` picks the operand's signed / unsigned comparison, so an
+		// unsigned count only needs the upper bound.
 		wLit := int64(t.NormalWidth())
-		hiOOR := bin(">=", id(rN), num(wLit))
-		if unsigned {
-			overflow = hiOOR
-		} else {
-			overflow = bin("||", bin("<", id(rN), num(0)), hiOOR)
+		overflow = bin(">=", id(rN), num(wLit))
+		if !unsigned {
+			overflow = bin("||", bin("<", id(rN), num(0)), overflow)
+		}
+		if n.Op == "<<?" {
+			overflow = bin("||", overflow, bin("!=", bin(">>", id(sN), id(rN)), id(lN)))
 		}
 	case baseOp == "/" || baseOp == "%":
 		// Checked divide / remainder: `None` on a zero divisor, and for
@@ -11952,8 +11954,13 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 		if se, sok := src.(ast.EnumType); sok && de.Name == se.Name && len(de.Args) == len(se.Args) {
 			allOk := true
 			for i := range de.Args {
-				if unboundEnumArg(de.Args[i]) || unboundEnumArg(se.Args[i]) {
+				if unboundEnumArg(se.Args[i]) {
 					continue
+				}
+				// A binding's unsettled argument is a payload it never holds.
+				if unboundEnumArg(de.Args[i]) {
+					allOk = false
+					break
 				}
 				if !c.assignableWith(de.Args[i], se.Args[i], false) {
 					allOk = false
@@ -16131,8 +16138,33 @@ func (c *checker) bindArmPayloads(pos ast.Position, bindings []string, types []a
 			continue
 		}
 		seen[name] = true
+		if _, unreachable := bt.(ast.NeverType); unreachable {
+			// A value of never does not exist, so any use of it checks.
+			armScope.poison(name)
+			continue
+		}
 		armScope.names[name] = bt
 	}
+}
+
+// scrutineeSub binds a generic enum's type parameters to a scrutinee's
+// arguments, so `Some(v)` on an `Option[i32]` types `v` as i32. An argument
+// no construction settled (`let o = None;`, `let r = Ok(1);`) is a payload the
+// value never holds, so a binding of it is unreachable and typed never.
+func scrutineeSub(ed *ast.EnumDecl, et ast.EnumType) map[string]ast.Type {
+	sub := map[string]ast.Type{}
+	if len(et.Args) != 0 && len(et.Args) != len(ed.TypeParams) {
+		return sub
+	}
+	for i, p := range ed.TypeParams {
+		sub[p] = ast.NeverType{}
+		if len(et.Args) > 0 {
+			if _, open := et.Args[i].(ast.UnboundType); !open {
+				sub[p] = et.Args[i]
+			}
+		}
+	}
+	return sub
 }
 
 // resolveVariantBindings validates a variant pattern's bindings and
@@ -16386,14 +16418,7 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 			el.VariantName, ed.Name, variantSpellingHint(el.VariantName, ed))
 		return
 	}
-	var sub map[string]ast.Type
-	if len(ed.TypeParams) > 0 && len(et.Args) == len(ed.TypeParams) {
-		sub = make(map[string]ast.Type, len(ed.TypeParams))
-		for i, tp := range ed.TypeParams {
-			sub[tp] = et.Args[i]
-		}
-	}
-	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, variant, el.VariantBindings, false, sub)
+	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, variant, el.VariantBindings, false, scrutineeSub(ed, et))
 	for i, name := range el.VariantBindings {
 		// A slot carrying a sub-pattern binds nothing itself — its pattern
 		// does, under the same element rules, so it routes back through
@@ -16665,16 +16690,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		c.errfCode(n.Tag.Pos(), "E023", "unknown enum %q", et.Name)
 		return
 	}
-	// For generic enums, build a substitution map from the
-	// scrutinee's concrete type arguments. `match (o: Option[number])`
-	// gives us T=number, so the arm `Some(v)` types `v` as
-	// `number` rather than the unresolved `T`.
-	sub := map[string]ast.Type{}
-	if len(ed.TypeParams) == len(et.Args) {
-		for i, p := range ed.TypeParams {
-			sub[p] = et.Args[i]
-		}
-	}
+	sub := scrutineeSub(ed, et)
 	covered := map[string]bool{}
 	literalLocals := c.enumLiteralLocals(n.Tag, et, s)
 	refutableByVariant := map[string][]structArmPat{}
@@ -17567,12 +17583,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		c.errfCode(n.Tag.Pos(), "E023", "unknown enum %q", et.Name)
 		return nil
 	}
-	sub := map[string]ast.Type{}
-	if len(ed.TypeParams) == len(et.Args) {
-		for i, p := range ed.TypeParams {
-			sub[p] = et.Args[i]
-		}
-	}
+	sub := scrutineeSub(ed, et)
 	covered := map[string]bool{}
 	literalLocals := c.enumLiteralLocals(n.Tag, et, s)
 	refutableByVariant := map[string][]structArmPat{}
@@ -20129,8 +20140,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// Checked integer arithmetic (#5542): `Some(result)` when the
 			// exact result fits the operand type, `None` on overflow —
 			// for `/?` / `%?` on a zero divisor or the signed `MIN / -1`,
-			// and for `<<?` / `>>?` on an out-of-range shift count
-			// (`< 0` or `>= width`). Integer only — no float form, no
+			// for `<<?` / `>>?` on an out-of-range shift count
+			// (`< 0` or `>= width`), and for `<<?` when bits are shifted
+			// out. Integer only — no float form, no
 			// composite overload — and it desugars to a block-expr over
 			// ordinary `Option`, `if`, and arithmetic, so every backend
 			// (interp + all codegen) lowers it for free via CheckedLowered.
@@ -20142,7 +20154,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			for _, t := range []ast.Type{lt, rt} {
 				if nt, ok := t.(ast.NumberType); ok && nt.IsPointerWidth() {
 					c.errfCode(n.P, "E009", "checked operator %q is not supported on `usize` — its overflow bound is target-width-dependent; cast to a fixed-width integer (`as u64`) first", n.Op)
-					return ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}}
+					return ast.EnumType{Name: "Option", Args: []ast.Type{nt}}
 				}
 			}
 			common, ok := commonIntegerWidth(lt, rt)
