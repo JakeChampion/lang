@@ -177,6 +177,9 @@ regression test where the bug lived:
 - **No E040 for an uninferred receiver** (#12632, self-host checker).
   `let o = GNil; o.count()` binds no `T`. Rows in
   `TestSelfHostCheckerCodesX86_64`.
+- **`let v = None;` broke the re-check** (#12636, Go checker). The stamped
+  bare `Option` failed its own arity when monomorphisation re-checked a
+  function that also made a generic call. `TestUninstantiatedEnumLocalSurvivesRecheck`.
 - **A generator bug**: the ownership cluster reassigned a variable whose type
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.
@@ -221,8 +224,9 @@ built. Citations are to the paper that introduced the technique.
    change their output.
 8. **Type-checker fuzzing** (Hephaestus, PLDI 2022; Thalia, POPL 2024): erase
    annotations and overwrite types, and hold both checkers to one verdict.
-   Done as the checker-mutant oracle; next is mutating more than `let`
-   annotations (parameter and return types, generic arguments).
+   Done as the checker-mutant oracle, which waits on #12638 before it joins a
+   CI lane; next is mutating more than `let` annotations (parameter and
+   return types, generic arguments).
 9. **Fragments mined from bug history** (LegoFuzz, OOPSLA 2025; FeatureFuzz,
    2026; WhiteFox, OOPSLA 2024): `docs/rc-log/` and the tracker are a corpus of
    shapes that broke once.
