@@ -28,9 +28,11 @@ tracked in [#4415](https://github.com/JakeChampion/lang/issues/4415).
   document that changed, so a module whose import changed under it is
   brought up to date at the next check that loads both. An open document
   the check did not load keeps what its own check published.
-- **Formatting is `-fmt`'s** (`format_source`). The server refuses an edit
-  under `-fmt -w`'s rule, `fmt_output_is_readable`: no edit when the formatted
-  text would not come back through the formatter as itself.
+- **Formatting is `-fmt`'s** (`format_text`: a `.fern.md` document's chunk
+  bodies, or the whole source). The server refuses an edit under `-fmt -w`'s
+  rule, `fmt_output_is_readable`: no edit when the formatted text would not
+  come back through the formatter as itself, or loses a comment or a
+  declaration of the source.
 - **Hover and go-to-definition** (`compiler/lspquery.fern`) answer from what
   the document's last check loaded, kept on the server: the bundle and each
   module's text. The first request after a check builds the checker's view of

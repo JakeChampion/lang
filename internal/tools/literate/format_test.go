@@ -70,3 +70,15 @@ func TestFormatCodeFileRoot(t *testing.T) {
 		t.Errorf("file-root body should reformat under its directive fence:\n%s", got)
 	}
 }
+
+// An unclosed fence runs to EOF; the document's final newline is not part of
+// the body, so reformatting the body keeps it.
+func TestFormatCodeUnclosedFenceKeepsFinalNewline(t *testing.T) {
+	src := "intro\n\n```fern\n<<a>>=\nbody\n"
+	got := Parse(src).FormatCode(func(code string) (string, bool) {
+		return strings.ToUpper(code), true
+	})
+	if want := "intro\n\n```fern\n<<a>>=\nBODY\n"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

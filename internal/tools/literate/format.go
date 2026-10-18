@@ -34,11 +34,12 @@ func reformatFernBlock(blk block, format func(string) (string, bool)) string {
 	if len(raw) < 2 {
 		return blk.rawText
 	}
-	// A trailing all-backticks line is the closing fence; an unclosed
-	// block at EOF has none.
+	// A trailing all-backticks line is the closing fence. An unclosed block
+	// runs to EOF, where the empty line a final newline leaves is not body.
 	end := len(raw)
-	hasClose := isBacktickFence(raw[len(raw)-1])
-	if hasClose {
+	last := raw[len(raw)-1]
+	hasTail := isBacktickFence(last) || last == ""
+	if hasTail {
 		end--
 	}
 	inner := raw[1:end] // lines between the fences
@@ -68,7 +69,7 @@ func reformatFernBlock(blk block, format func(string) (string, bool)) string {
 	b.WriteString(strings.Join(raw[:1+bodyStart], "\n")) // opening fence + header
 	b.WriteByte('\n')
 	b.WriteString(strings.TrimRight(formatted, "\n"))
-	if hasClose {
+	if hasTail {
 		b.WriteByte('\n')
 		b.WriteString(raw[len(raw)-1])
 	}
