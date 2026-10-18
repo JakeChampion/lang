@@ -136,9 +136,8 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 
 	// Compile the self-hosted checker binary (driverFile = checker_run /
 	// checker_codes_run, importing std/io + ./lexer + ./parser + ./checker)
-	// with the file-based asm driver. The loader resolves `import "std/io"`
-	// to the vendored flat io.fern (basename fallback), so the driver source
-	// is used unmodified — no ///MODULE bundle, no import rewrite.
+	// with the file-based asm driver, which is given the stdlib tree, so the
+	// driver source is used unmodified — no ///MODULE bundle, no import rewrite.
 	// Derived from the driver's own imports rather than listed: a hand-written
 	// set goes stale the moment one of these modules gains an import, and this
 	// bundle is a map rather than a project dir, so the copy helpers that guard
@@ -161,11 +160,6 @@ func buildCheckerDriverBin(t *testing.T, driverFile string, withFlatten bool) (c
 		}
 		files["flatten.fern"] = string(src)
 	}
-	ioSrc, err := os.ReadFile("../../stdlib/std/io.fern")
-	if err != nil {
-		t.Fatalf("read std/io.fern: %v", err)
-	}
-	files["io.fern"] = string(ioSrc)
 	runSrc, err := os.ReadFile(filepath.Join("../../../compiler", driverFile))
 	if err != nil {
 		t.Fatalf("read %s: %v", driverFile, err)
