@@ -10732,7 +10732,18 @@ func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, s
 			if genericFn.MethodRecv != "" {
 				site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
 			}
-			if !ok || !c.info.Impls[traitName][tn] {
+			// A trait object implements the traits it spans: `dyn A + B`
+			// satisfies `T: A`, its methods dispatched at run time in the
+			// instantiated body as anywhere else.
+			dynAt := -1
+			if d, isDyn := args[i].(ast.DynTraitType); isDyn {
+				for k, name := range d.Traits {
+					if name == traitName {
+						dynAt = k
+					}
+				}
+			}
+			if dynAt < 0 && (!ok || !c.info.Impls[traitName][tn]) {
 				c.errfCode(pos, "E021",
 					"type argument %s = %s does not implement trait %s required by %s",
 					tp, demangle(args[i].String()), demangle(traitName), site)
@@ -10754,7 +10765,12 @@ func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, s
 					resolved[k] = substBoundArg(baT, tpSet, sub)
 				}
 				boundArgs = resolved
-				implArgs := c.implTraitArgsFor(traitName, tn, args[i])
+				var implArgs []ast.Type
+				if d, isDyn := args[i].(ast.DynTraitType); isDyn && dynAt >= 0 {
+					implArgs = d.ArgsFor(dynAt)
+				} else {
+					implArgs = c.implTraitArgsFor(traitName, tn, args[i])
+				}
 				if !typeArgsEqual(implArgs, boundArgs) {
 					c.errfCode(pos, "E021",
 						"type argument %s = %s implements %s%s but the bound requires %s%s (in %s)",

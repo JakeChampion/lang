@@ -410,8 +410,8 @@ use b <- maybe_double(a);
 return Some(b + 1);
 ```
 
-desugars at parse time to one lambda per `use`, each returning what the
-enclosing function returns:
+desugars at parse time to one lambda per `use`, each typed from the
+callee's callback parameter, its return type included:
 
 ```fern
 return maybe_double(start, (a: i32) => {
@@ -423,8 +423,9 @@ return maybe_double(start, (a: i32) => {
 
 Each `use` peels one level of nesting off what would otherwise be a
 deeply-indented chain of closures — handy for sequencing fallible
-`Option`/`Result`-returning steps. The binding's type is inferred from
-the callee's callback parameter; write `use b: i32 <- …` to state it. The
+`Option`/`Result`-returning steps, and a `?` in the rest of the block
+propagates to what the callback returns. The binding's type is inferred
+from the callee's callback parameter; write `use b: i32 <- …` to state it. The
 callbacks are ordinary [closures](#closures), so they capture the
 enclosing function's bindings the same way.
 

@@ -683,6 +683,35 @@ func TestDynTraitReachesLambdaAnnotations(t *testing.T) {
 	}
 }
 
+// A trait object satisfies a generic bound on its own trait: `dyn Shape` is
+// a `T: Shape`, in a bare argument and inside a Result's error slot alike,
+// as `http.respond` over a `Result[HttpResponse, dyn http.ToResponse]` needs.
+func TestDynTraitObjectSatisfiesItsBound(t *testing.T) {
+	src := `trait Shape { function area(self: Self): i32; }
+struct Sq { s: i32 }
+impl Shape for Sq { function area(self: Sq): i32 { return self.s * self.s; } }
+function doubled[T: Shape](v: T): i32 { return v.area() * 2; }
+function err_area[T: Shape](r: Result[i32, T]): i32 { match (r) { Ok(v) => { return v; }, Err(e) => { return e.area(); } } return 0; }
+function main(): i32 { let d: dyn Shape = Sq { s: 3 }; let r: Result[i32, dyn Shape] = Err(Sq { s: 2 }); return doubled(d) + err_area(r); }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("expected no error, got: %v", err)
+	}
+	// A dyn object of another trait is still refused.
+	other := `trait Shape { function area(self: Self): i32; }
+trait Named { function name(self: Self): string; }
+struct Sq { s: i32 }
+impl Named for Sq { function name(self: Sq): string { return "sq"; } }
+function doubled[T: Shape](v: T): i32 { return v.area() * 2; }
+function main(): i32 { let d: dyn Named = Sq { s: 3 }; return doubled(d); }`
+	err := checkSource(t, other)
+	if err == nil {
+		t.Fatalf("want E021 for dyn Named against T: Shape, got none")
+	}
+	if code := firstErrCode(err); code != "E021" {
+		t.Errorf("code = %q, want E021: %v", code, err)
+	}
+}
+
 // TestBinaryOperandErrorNoCascade guards two bugs in one: a binary
 // expression with an already-errored operand (here `q()`, an undefined
 // identifier, whose type is nil) must not emit a *second*, cascading E009

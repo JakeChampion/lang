@@ -1789,6 +1789,31 @@ a literal and a call picking different declarations by their form, a
 struct-update literal, and a struct passed to a function. It runs on native,
 interp and wasm and through the self-host on all three of its legs.
 
+## 2026-10-18 — a `use` callback returns what its callee's callback slot returns
+
+`use NAME <- CALL;` left the desugared callback's return type to inference
+from its returns, so a `?` in the rest of the block clashed with a later
+`return Ok(..)` (E002: `Result[i32, E]` against `Result[HttpResponse,
+unknown]`) and a block ending in `Ok(..)` alone lowered as
+`Result[HttpResponse, unknown]`, which the typed lowering refused at the
+call. Native stamps the callback with the ENCLOSING function's return type,
+which agrees with the slot's for every middleware-shaped callee.
+`use_typed` now stamps the callback's return type from the callback slot's
+result (`use_ret_typed`), under the same generic bindings as its parameter,
+and leaves it to inference only when the slot's result names a type
+parameter nothing bound. `conformance/cases/use_callback_result` pins it;
+`tests/stdlib/http_router_test.fern`'s middleware chain is the shape that
+found it.
+
+Two neighbours found on the way, both fixed with their own cases: the Go
+checker refused a `dyn Trait` type argument against a `T: Trait` bound
+(E021), though a trait object implements the traits it spans
+(`dyn_bound_satisfied`); and the self-host monomorphiser's
+`pk_is_fn_spelling` rejected every function spelling with more than one
+parameter as a tuple, so a generic call whose argument was a call through
+such a value kept the template's name and the lowering found no contract
+for it (`generic_call_through_fn_value`).
+
 ## 2026-09-22 — a `use` binding is typed from its callee (#9550's `$wrap0` leaf)
 
 `use NAME <- CALL;` desugars in the parser to CALL with the rest of the block

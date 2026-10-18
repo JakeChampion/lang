@@ -1,0 +1,43 @@
+// A trait object satisfies a generic bound on its own trait: `dyn Shape`
+// is a `T: Shape`, and the instantiated body dispatches its methods at run
+// time as it would on any `dyn Shape` value.
+trait Shape {
+    function area(self: Self): i32;
+}
+
+struct Square { side: i32 }
+struct Rect { w: i32, h: i32 }
+
+impl Shape for Square {
+    function area(self: Square): i32 { return self.side * self.side; }
+}
+
+impl Shape for Rect {
+    function area(self: Rect): i32 { return self.w * self.h; }
+}
+
+function doubled[T: Shape](s: T): i32 {
+    return s.area() * 2;
+}
+
+function pick(big: boolean): Result[i32, dyn Shape] {
+    if (big) {
+        return Err(Rect { w: 4, h: 5 });
+    }
+    return Err(Square { side: 3 });
+}
+
+function area_of[T: Shape](r: Result[i32, T]): i32 {
+    match (r) {
+        Ok(v) => { return v; },
+        Err(s) => { return s.area(); }
+    }
+    return 0;
+}
+
+function main(): i32 {
+    let sq: dyn Shape = Square { side: 3 };
+    let re: dyn Shape = Rect { w: 2, h: 3 };
+    // 18 + 12 + 20 + 9 = 59
+    return doubled(sq) + doubled(re) + area_of(pick(true)) + area_of(pick(false));
+}

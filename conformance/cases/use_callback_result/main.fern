@@ -1,0 +1,45 @@
+// `use NAME <- call(...);` whose callback answers a `Result`: the callback is
+// typed from the callee's callback slot, its return type included, so a `?`
+// or an `Ok` in the rest of the block is checked against what the callee
+// hands back rather than inferred from the block's returns alone.
+function stamped(n: i32, next: (i32) => Result[i32, string]): Result[i32, string] {
+    let v: i32 = next(n + 1)?;
+    return Ok(v * 2);
+}
+
+function half(n: i32): Result[i32, string] {
+    if (n % 2 == 0) {
+        return Ok(n / 2);
+    }
+    return Err("odd");
+}
+
+function run(n: i32): Result[i32, string] {
+    use m <- stamped(n);
+    let h: i32 = half(m)?;
+    return Ok(h + 100);
+}
+
+function plain(n: i32): Result[i32, string] {
+    use m <- stamped(n);
+    return Ok(m);
+}
+
+function main(): i32 {
+    let a: i32 = 0;
+    match (run(7)) {
+        Ok(v) => { a = v; },        // m = 8, h = 4, (4 + 100) * 2 = 208
+        Err(_) => { a = 0 - 1; }
+    }
+    let b: i32 = 0;
+    match (run(8)) {
+        Ok(v) => { b = v; },
+        Err(e) => { b = e.len(); }  // m = 9 is odd: Err("odd"), 3
+    }
+    let c: i32 = 0;
+    match (plain(1)) {
+        Ok(v) => { c = v; },        // m = 2, 2 * 2 = 4
+        Err(_) => { c = 0 - 1; }
+    }
+    return (a - 200) * 10 + b + c;  // 80 + 3 + 4
+}
