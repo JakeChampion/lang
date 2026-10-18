@@ -12,7 +12,7 @@ import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
 import "./rcmemo";
-import "std/cli";
+import "std/envflag";
 
 // asmcore — the emitter-side layer the three IR backends (asm_ir,
 // asm_arm64_ir, wasm_ir) share: the Ty type system, EmitState + its
@@ -584,7 +584,7 @@ pub function new_state(): EmitState {
 // It deliberately does NOT imply FERN_RC_TRACE: per-heap-event output is a
 // probe you point at a reduced repro, not a standing mode.
 pub function sanitize_on(): boolean {
-  return cli.env_flag("FERN_SANITIZE");
+  return envflag.on("FERN_SANITIZE");
 }
 
 // sandbox_on reports whether FERN_SANDBOX asks for the seccomp-bpf filter
@@ -592,7 +592,7 @@ pub function sanitize_on(): boolean {
 // exactly the syscalls its emitted code issues and killing the process on any
 // other.
 pub function sandbox_on(): boolean {
-  return cli.env_flag("FERN_SANDBOX");
+  return envflag.on("FERN_SANDBOX");
 }
 
 // The fatal aborts' cause lines, without their newline: the native backends'
@@ -630,7 +630,7 @@ pub function msg_oom(): string {
 pub function backtrace_on(): boolean {
   match (env("FERN_BACKTRACE")) {
     Some(v) => {
-      return cli.flag_on(v);
+      return envflag.value_on(v);
     },
     None => {
       return true;
@@ -640,7 +640,7 @@ pub function backtrace_on(): boolean {
 
 // size_on is the -size default: FERN_SIZE builds for size.
 pub function size_on(): boolean {
-  return cli.env_flag("FERN_SIZE");
+  return envflag.on("FERN_SIZE");
 }
 
 // leak_check_on reports whether FERN_LEAKCHECK switches on the leak census on
@@ -652,7 +652,7 @@ pub function size_on(): boolean {
 // ending ` from=exit` when the exit() builtin printed it rather than a
 // return from main. The sanitizer folds it in (with_switches).
 pub function leak_check_on(): boolean {
-  return cli.env_flag("FERN_LEAKCHECK");
+  return envflag.on("FERN_LEAKCHECK");
 }
 
 // Switches are the diagnostic modes a build is emitted with: the
@@ -682,7 +682,7 @@ pub function with_switches(s: EmitState, sw: Switches): EmitState {
 // FREE for the census (hev_free runs at the release), so the two detectors
 // compose instead of every correct free reading as a leak.
 pub function rc_free_debug_on(): boolean {
-  return cli.env_flag("FERN_RC_FREE_DEBUG");
+  return envflag.on("FERN_RC_FREE_DEBUG");
 }
 
 // add_shape_lit records `name` as a shape this unit references (deduped), for the
@@ -10384,7 +10384,7 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
 // checks with; `tm` is the module as the checker annotated it.
 pub function entry_check_errors(tm: parser.Module): util.Diag[] {
   // FERN_ENTRY_CHECK_TRACE counts the gate's runs, which a build makes once.
-  if (cli.env_flag("FERN_ENTRY_CHECK_TRACE")) {
+  if (envflag.on("FERN_ENTRY_CHECK_TRACE")) {
     eprint("entry check\n");
   }
   let s: EmitState = new_state();
