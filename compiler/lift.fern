@@ -799,9 +799,14 @@ function lambda_captures(lam: ast.ExprLambda, fd: parser.FuncDecl): string[] {
   return names;
 }
 
-// capture_tvar spells a capture type built from an erased type variable — the
+// capture_tvar spells a capture type built from a type variable — the
 // variable, or the cell box_wide_captures puts it in — and is "" otherwise.
+// The enclosing generic's own variable is rigid (TypeErased); one a caller's
+// inference erased is a typevar-reason unknown.
 function capture_tvar(t: typeinfo.Type): string {
+  if let typeinfo.TypeErased(e) = t {
+    return e.name;
+  }
   if let typeinfo.TypeUnknown(u) = t {
     let tv: string = checker.typevar_reason_name(u.reason);
     if (parser.looks_type_var(tv)) {
