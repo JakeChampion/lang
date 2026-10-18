@@ -58,6 +58,14 @@ var boundCallSiteCases = []struct {
 	{"stdlib-method-generic-primitives-ok",
 		"import \"std/array\";\nfunction main(): i32 { let xs: i32[] = [1, 2]; let bs: u8[] = [3]; let ss: string[] = [\"a\"]; let us: usize[] = []; if (xs.contains(2) && bs.contains(3) && ss.contains(\"a\") && !us.contains(1)) { return 0; } return 1; }\n",
 		nil},
+	// `str` and `string` share one receiver surface, so an impl for either
+	// meets a bound at both.
+	{"impl-for-str-ok",
+		"trait Shout { function shout(self: Self): string; }\nimpl Shout for str { function shout(self: Self): string { return self + \"!\"; } }\nfunction loud[T: Shout](x: T): string { return x.shout(); }\nfunction main(): i32 { let o: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(o, 1, 3); return loud(s).len() + loud(o).len(); }\n",
+		nil},
+	{"impl-for-string-ok-at-str",
+		"trait Shout { function shout(self: Self): string; }\nimpl Shout for string { function shout(self: Self): string { return self + \"!\"; } }\nfunction loud[T: Shout](x: T): string { return x.shout(); }\nfunction main(): i32 { let o: string = \"ab\" + \"cd\"; let s: str = slice_unchecked(o, 1, 3); return loud(s).len() + loud(o).len(); }\n",
+		nil},
 	{"generic-into-generic-ok",
 		"import \"core/cmp\";\nfunction need[T: cmp.Eq](a: T): i32 { return 1; }\nfunction outer[U](x: U): i32 { return need(x); }\nfunction main(): i32 { return 0; }\n",
 		nil},

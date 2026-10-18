@@ -3475,11 +3475,17 @@ function type_implements(s: Scope, t: typeinfo.Type, base: string, module: strin
     return false;
   }
   for imp in s.impls {
-    if (util.base_type_name(imp.impl_type) == tn && bound_names_trait(base, module, imp.trait_name, imp.trait_module)) {
+    if (impl_receiver(imp) == tn && bound_names_trait(base, module, imp.trait_name, imp.trait_module)) {
       return true;
     }
   }
   return derives_bound(s, tn, base, module);
+}
+
+// impl_receiver is the name an impl's methods register under: `impl Tr for
+// str` lands on `string`, as a `str` receiver method does.
+function impl_receiver(imp: parser.ImplInfo): string {
+  return receiver_namespace(util.base_type_name(imp.impl_type));
 }
 
 // impl_type_name is the name `t`'s impls register under (native
@@ -6754,9 +6760,9 @@ function impl_trait_args(bound: parser.TypeRef, module: string, at: typeinfo.Typ
   if let typeinfo.TypeDyn(d) = at {
     return dyn_trait_args(bound, d.traits, s);
   }
-  let base: string = util.base_type_name(type_label(at));
+  let base: string = receiver_namespace(util.base_type_name(type_label(at)));
   for imp in s.impls {
-    if (bound_names_trait(bound.base, module, imp.trait_name, imp.trait_module) && util.base_type_name(imp.impl_type) == base) {
+    if (bound_names_trait(bound.base, module, imp.trait_name, imp.trait_module) && impl_receiver(imp) == base) {
       let (in_, it_) = gc_bind_param(parser.parse_type_ref(imp.impl_type), at, imp.all_type_params, s.type_names(), [], []);
       let out: typeinfo.Type[] = [];
       for targ in parser.parse_type_ref(imp.trait_ref).args {
