@@ -104,9 +104,10 @@ pub enum Segment {
   PathRest(string),
 }
 
-// Route — a pattern as registered: its method ("" for any), its segments
-// and the handler it dispatches to.
-pub struct Route[P] { method: string, pattern: string, segments: Segment[], handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse] }
+// Route — a pattern as registered: its method ("" for any), its segments,
+// the parameters it binds (their names in order, no values yet) and the
+// handler it dispatches to.
+pub struct Route[P] { method: string, pattern: string, segments: Segment[], params: Params, handler: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse] }
 
 // Router — the routes, in registration order, the middleware wrapping
 // every route, outermost first, and the first pattern it refused, which
@@ -146,7 +147,7 @@ pub function (r: Router[P]) route(pattern: string, handler: (HttpRequest, Params
   }
   match (__parse(pattern)) {
     Ok(parsed) => {
-      let route: Route[P] = Route { method: parsed.0, pattern: pattern, segments: parsed.1, handler: handler };
+      let route: Route[P] = Route { method: parsed.0, pattern: pattern, segments: parsed.1, params: Params { names: __names(parsed.1), values: [] }, handler: handler };
       for other in r.routes {
         if (__conflicts(__relation(route.method, route.segments, other.method, other.segments))) {
           return Router { ...r, refused: Some(PatternConflict(pattern, other.pattern)) };
@@ -232,15 +233,16 @@ function __wrapped[P](r: Router[P], i: i32, req: HttpRequest, plat: P): Result[H
 // __dispatch is the route's answer, or the 405 or 404 for a request no
 // route takes.
 function __dispatch[P](r: Router[P], req: HttpRequest, plat: P): Result[HttpResponse, dyn http.ToResponse] {
-  let segs: string[] = __request_segments(req.path);
-  let picked: (i32, string[]) = __pick(r, segs, req.method);
-  if (picked.0 >= 0) {
-    let route: Route[P] = r.routes[picked.0];
+  let end: i32 = __path_end(req.path);
+  let picked: i32 = __pick(r, req.path, end, req.method);
+  if (picked >= 0) {
+    let route: Route[P] = r.routes[picked];
     let h: (HttpRequest, Params, P) => Result[HttpResponse, dyn http.ToResponse] = route.handler;
-    return h(req, __bind(route.segments, segs), plat);
+    return h(req, __bind(route, req.path, end), plat);
   }
-  if (picked.1.len() > 0) {
-    return Ok(http.problem(405, "", "").with_header("allow", picked.1.join(", ")));
+  let allowed: string[] = __allowed(r, req.path, end, req.method);
+  if (allowed.len() > 0) {
+    return Ok(http.problem(405, "", "").with_header("allow", allowed.join(", ")));
   }
   return Ok(http.not_found());
 }
@@ -256,34 +258,37 @@ pub function (r: Router[P]) handler(): (HttpRequest, P) => HttpResponse {
   return (req: HttpRequest, plat: P): HttpResponse => r.handle(req, plat);
 }
 
-// __pick is the index of the most specific route matching the path and
-// method, -1 when none, beside the methods the routes matching the path
-// alone allow.
-function __pick[P](r: Router[P], segs: string[], method: string): (i32, string[]) {
+// __pick is the index of the most specific route matching the path under
+// the method, -1 when none. The path is read in place, segment by segment,
+// so a request allocates nothing to be routed.
+function __pick[P](r: Router[P], path: string, end: i32, method: string): i32 {
   let best: i32 = -1;
-  let allowed: string[] = [];
   let i: i32 = 0;
   while (i < r.routes.len()) {
     let route: Route[P] = r.routes[i];
-    if (__matches(route.segments, segs)) {
-      if (!__method_allows(route.method, method)) {
-        allowed = __allow(allowed, route.method);
-      } else if (best < 0 || __relation(route.method, route.segments, r.routes[best].method, r.routes[best].segments) == REL_NARROWER) {
+    if (__method_allows(route.method, method) && __matches(route.segments, path, end)) {
+      if (best < 0 || __relation(route.method, route.segments, r.routes[best].method, r.routes[best].segments) == REL_NARROWER) {
         best = i;
       }
     }
     i = i + 1;
   }
-  return (best, allowed);
+  return best;
 }
 
-// __allow adds a route's method to an Allow list, HEAD beside GET.
-function __allow(allowed: string[], method: string): string[] {
-  let out: string[] = __add_once(allowed, method);
-  if (method == "GET") {
-    out = __add_once(out, "HEAD");
+// __allowed is the methods the routes matching the path alone admit, for
+// the 405's Allow, HEAD beside GET.
+function __allowed[P](r: Router[P], path: string, end: i32, method: string): string[] {
+  let allowed: string[] = [];
+  for route in r.routes {
+    if (!__method_allows(route.method, method) && __matches(route.segments, path, end)) {
+      allowed = __add_once(allowed, route.method);
+      if (route.method == "GET") {
+        allowed = __add_once(allowed, "HEAD");
+      }
+    }
   }
-  return out;
+  return allowed;
 }
 
 function __add_once(xs: string[], x: string): string[] {
@@ -301,78 +306,123 @@ function __method_allows(route: string, method: string): boolean {
   return route == "" || route == method || route == "GET" && method == "HEAD";
 }
 
-// __request_segments splits the request's path, its query dropped: "/" is
-// [""], "/a/b" is ["a", "b"], "/a/" is ["a", ""].
-function __request_segments(path: string): string[] {
-  let raw: string[] = http.http_url_path_only(path).split("/");
-  let out: string[] = [];
-  let i: i32 = 1;
-  while (i < raw.len()) {
-    out = out.append(raw[i]);
+// __path_end is where the request's path ends: at its query or fragment
+// when it carries one.
+function __path_end(path: string): i32 {
+  let i: i32 = 0;
+  while (i < path.len()) {
+    if (path[i] == b'?' || path[i] == b'#') {
+      return i;
+    }
     i = i + 1;
   }
-  return out;
+  return path.len();
 }
 
-// __matches: the pattern's segments match the request's: a literal its
-// equal, a parameter any non-empty segment, the rest everything from its
-// position, which must exist.
-function __matches(segs: Segment[], req: string[]): boolean {
+// __next_slash is the index of the first `/` at or after `from`, or `end`.
+function __next_slash(path: string, from: i32, end: i32): i32 {
+  let i: i32 = from;
+  while (i < end) {
+    if (path[i] == b'/') {
+      return i;
+    }
+    i = i + 1;
+  }
+  return end;
+}
+
+// __range_is: the path's bytes from `a` to `b` spell `s`.
+function __range_is(path: string, a: i32, b: i32, s: string): boolean {
+  if (b - a != s.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < s.len()) {
+    if (path[a + i] != s[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// __matches: the pattern's segments match the path's, read in place: the
+// i-th segment is what follows the i-th `/`, so a segment exists only
+// where that slash does. A literal matches its equal, a parameter any
+// non-empty segment, the rest everything from its slash on, and a pattern
+// that ends must end where the path does.
+function __matches(segs: Segment[], path: string, end: i32): boolean {
+  let pos: i32 = 0;
   let i: i32 = 0;
   while (i < segs.len()) {
+    if (pos >= end || path[pos] != b'/') {
+      return false;
+    }
     match (segs[i]) {
       PathRest(_) => {
-        return req.len() > i;
+        return true;
       },
       PathLiteral(s) => {
-        if (i >= req.len() || req[i] != s) {
+        let stop: i32 = __next_slash(path, pos + 1, end);
+        if (!__range_is(path, pos + 1, stop, s)) {
           return false;
         }
+        pos = stop;
       },
       PathParam(_) => {
-        if (i >= req.len() || req[i] == "") {
+        let stop: i32 = __next_slash(path, pos + 1, end);
+        if (stop == pos + 1) {
           return false;
         }
+        pos = stop;
       }
     }
     i = i + 1;
   }
-  return req.len() == segs.len();
+  return pos == end;
 }
 
-// __bind is the parameters a matching pattern takes from the request.
-function __bind(segs: Segment[], req: string[]): Params {
+// __names is the parameters a pattern binds, in its order.
+function __names(segs: Segment[]): string[] {
   let names: string[] = [];
+  for seg in segs {
+    let n: string = __bound_name(seg);
+    if (n.len() > 0) {
+      names = names.append(n);
+    }
+  }
+  return names;
+}
+
+// __bind is the parameters a matching route takes from the path, each a
+// copy of its segment; a route binding none hands out the Params it was
+// registered with.
+function __bind[P](route: Route[P], path: string, end: i32): Params {
+  if (route.params.names.len() == 0) {
+    return route.params;
+  }
   let values: string[] = [];
+  let pos: i32 = 0;
   let i: i32 = 0;
-  while (i < segs.len()) {
-    match (segs[i]) {
-      PathParam(n) => {
-        names = names.append(n);
-        values = values.append(req[i]);
+  while (i < route.segments.len()) {
+    match (route.segments[i]) {
+      PathParam(_) => {
+        let stop: i32 = __next_slash(path, pos + 1, end);
+        values = values.append(slice_unchecked(path, pos + 1, stop) + "");
+        pos = stop;
       },
       PathRest(n) => {
-        if (n != "") {
-          names = names.append(n);
-          values = values.append(__rest(req, i));
+        if (n.len() > 0) {
+          values = values.append(slice_unchecked(path, pos + 1, end) + "");
         }
       },
-      PathLiteral(_) => {}
+      PathLiteral(_) => {
+        pos = __next_slash(path, pos + 1, end);
+      }
     }
     i = i + 1;
   }
-  return Params { names: names, values: values };
-}
-
-// __rest joins the request's segments from `from`.
-function __rest(req: string[], from: i32): string {
-  let parts: string[] = [];
-  let i: i32 = from;
-  while (i < req.len()) {
-    parts = parts.append(req[i]);
-    i = i + 1;
-  }
-  return parts.join("/");
+  return Params { ...route.params, values: values };
 }
 
 // __parse reads `[METHOD ]/path` into the method and the segments.
