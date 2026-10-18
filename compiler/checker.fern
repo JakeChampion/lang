@@ -15969,7 +15969,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
             // matches native, which prints the operand's enum in both
             // slots (#9344).
             if (try_ret_other_type(s.try_ret, tu.name)) {
-              out = out.append(dg_at("E042", "`?` on " + tu.name + " requires the surrounding function to return " + tu.name + ", got " + type_label(s.try_ret), u.line, u.col));
+              out = out.append(dg_at("E042", "`?` on " + tu.name + " requires the surrounding function to return " + tu.name + ", got " + try_ret_label(s.try_ret), u.line, u.col));
             } else {
               out = util.append_diags(out, try_residual_diags(s, trt, u));
             }
@@ -16053,9 +16053,12 @@ function e033_cast(u: ast.ExprUnary, cot: typeinfo.Type, tgt: typeinfo.Type): ut
 }
 
 // try_ret_other_type reports whether `ret`, the type a `?` propagates to, is
-// resolved and is not the enum `name`. An unresolved or still-inferred result
-// says nothing.
+// resolved and is not the enum `name`: a type variable of the enclosing
+// generic is resolved. An unresolved or still-inferred result says nothing.
 function try_ret_other_type(ret: typeinfo.Type, name: string): boolean {
+  if (is_type_variable(ret)) {
+    return true;
+  }
   match (ret) {
     typeinfo.TypeUnion(ru) => {
       return ru.name != name;
@@ -16068,6 +16071,14 @@ function try_ret_other_type(ret: typeinfo.Type, name: string): boolean {
     }
   }
   return false;
+}
+
+// try_ret_label spells the type a `?` propagates to, a type variable by its name.
+function try_ret_label(ret: typeinfo.Type): string {
+  if (is_type_variable(ret)) {
+    return callable_typevar_name(ret);
+  }
+  return type_label(ret);
 }
 
 // try_residual_diags: E042 for a `?` on a Result whose error type is not the
@@ -26332,9 +26343,9 @@ pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
     if (!check_func_body(func, fs)) {
       let site: UnknownSite = unknown_site(func.body, fs);
       if (site.found) {
-        return [untyped_statement(site.line, site.col, "in \"" + func.name + "\" (" + site.reason + ")")];
+        return [untyped_code(site.line, site.col, "this statement in \"" + func.name + "\" (" + site.reason + ")")];
       }
-      return [untyped_statement(func.line, func.col, "in the body of \"" + func.name + "\"")];
+      return [untyped_code(func.line, func.col, "the body of \"" + func.name + "\"")];
     }
   }
   let s: Scope = new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
@@ -26342,20 +26353,21 @@ pub function ill_typed_hint(raw_mod: parser.Module): util.Diag[] {
     let r: CheckResult = check_stmt(top_stmt, s);
     s = r.scope;
     if let typeinfo.TypeUnknown(u) = r.ty {
-      return [untyped_statement(ast.stmt_line(top_stmt), ast.stmt_col(top_stmt), "at top level (" + u.reason + ")")];
+      return [untyped_code(ast.stmt_line(top_stmt), ast.stmt_col(top_stmt), "this top-level statement (" + u.reason + ")")];
     }
   }
   return [dg_at("", "internal error: the checker rejected this module without a diagnostic; this is a compiler bug, please report it", 0, 0)];
 }
 
-// untyped_statement is ill_typed_hint's report of a statement at `line`, `col`
-// the checker could not type; `col` 0 is a statement the parser keeps no
-// column for, reported from its line's start.
-function untyped_statement(line: i32, col: i32, place: string): util.Diag {
+// untyped_code is ill_typed_hint's report that the checker could not type
+// `what`, positioned at `line`, `col`; `col` 0 is a statement the parser keeps
+// no column for, reported from its line's start. A positioned uncoded
+// diagnostic prints as `error: internal: ...`, like the compiler's others.
+function untyped_code(line: i32, col: i32, what: string): util.Diag {
   if (col <= 0) {
     col = 1;
   }
-  return dg_at("", "internal error: the checker could not type this statement " + place + " and has no diagnostic for it; this is a compiler bug, please report it", line, col);
+  return dg_at("", "internal: the checker could not type " + what + " and has no diagnostic for it; this is a compiler bug, please report it", line, col);
 }
 
 // =================== VALIDATION ====================

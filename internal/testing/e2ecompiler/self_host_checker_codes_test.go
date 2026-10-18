@@ -2195,6 +2195,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-option-ret-result", "function f(o: Option[i32]): Result[i32, string] { let v: i32 = o?; return Ok(v); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-result-ret-option", "function f(r: Result[i32, string]): Option[i32] { let v: i32 = r?; return Some(v); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-option-ret-struct", "struct P { a: i32 }\nfunction f(o: Option[i32]): P { let v: i32 = o?; return P { a: v }; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-option-ret-type-param", "function h[T](o: Option[i32]): T { let v: i32 = o?; return h[T](o); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-result-ret-type-param", "function h[T](r: Result[i32, string]): T { let v: i32 = r?; return h[T](r); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-option-ret-void", "function f(o: Option[i32]): void { let v: i32 = o?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-writer-write-ret-result", "function a(): Result[i32, IoError] {\n  let w: Writer = stdout();\n  w.write(\"hi\\n\")?;\n  return Ok(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-lambda-ret-i32", "function f(): Option[i32] {\n    let g = (): i32 => { let o: Option[i32] = Some(1); let v: i32 = o?; return v; };\n    return Some(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
