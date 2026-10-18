@@ -4,8 +4,8 @@ package constfold_test
 //
 // constfold.Fold mutates *ast.Program in place: literal arithmetic
 // collapses to single numbers, all-constant-arg calls to pure
-// builtins reduce, dead branches behind compile-time constants get
-// the dead arm dropped. Two distinct properties matter:
+// builtins reduce, and a condition on compile-time constants becomes a
+// literal. Two distinct properties matter:
 //
 //   - Determinism: Fold(parse(src)) produces the same AST every
 //     run. The walker is slice-based today, so determinism is

@@ -58,6 +58,7 @@ func Check(entry string, prog *ast.Program, target string, assets *embed.Set) ([
 	if err != nil {
 		return nil, err
 	}
+	constfold.PruneDeadArms(prog)
 	var warns []Warning
 	if entry != "-" {
 		ws, err := Capabilities(entry, prog)

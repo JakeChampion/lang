@@ -915,6 +915,7 @@ func runInterp(srcPath string, argv []string) (int, error) {
 	if err != nil {
 		return 1, formatErr(err)
 	}
+	constfold.PruneDeadArms(prog)
 	if srcPath != "-" {
 		warns, err := gates.Capabilities(srcPath, prog)
 		for _, w := range warns {

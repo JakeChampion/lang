@@ -79,10 +79,10 @@ func TestFoldWithLeavesTargetOSWithArguments(t *testing.T) {
 }
 
 // A branch on `target_os()` keeps only the arm the target takes once the
-// call is a literal: the dead arm's call is gone from the tree, so the
-// capability gates and the shake never see it. The live arm stays under
-// `if (true)`, which keeps its block's scope.
-func TestFoldWithPrunesTargetBranches(t *testing.T) {
+// fold has made the call a literal and PruneDeadArms has run: the dead arm's
+// call is gone from the tree, so the capability gates and the shake never see
+// it. The live arm stays under `if (true)`, which keeps its block's scope.
+func TestPruneDeadArmsDropsTargetBranches(t *testing.T) {
 	const src = `function main(): i32 {
     if (target_os() == "wasi-http") {
         hosted();
@@ -105,6 +105,7 @@ func TestFoldWithPrunesTargetBranches(t *testing.T) {
 		if err := FoldWith(prog, Inputs{TargetOS: tc.os, TargetArch: tc.arch}); err != nil {
 			t.Fatalf("fold: %v", err)
 		}
+		PruneDeadArms(prog)
 		calls := map[string]bool{}
 		ifs := 0
 		ast.WalkProgram(prog, func(node ast.Node) bool {

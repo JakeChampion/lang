@@ -84,6 +84,7 @@ func LoadCheckMonoFor(t *testing.T, mainPath, target string) (*checker.Info, *as
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
+	constfold.PruneDeadArms(prog)
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
