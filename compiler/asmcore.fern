@@ -10707,8 +10707,8 @@ function callgate_known_names(mod: parser.Module): string[] {
   out = out.append("Ok");
   out = out.append("Err");
   // Declared structs + the built-in variant structs. inject_builtin_enums is
-  // idempotent (each entry is guarded by struct_declared), so this covers the
-  // drivers that skip module_with_builtins as well as those that don't.
+  // idempotent, so this covers the drivers that skip module_with_builtins as
+  // well as those that don't.
   let sd: parser.StructDecl[] = parser.inject_builtin_enums(mod.structs);
   let si: i32 = 0;
   while (si < sd.len()) {
@@ -11682,13 +11682,18 @@ function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {
     if (j < 0 || j > end) {
       j = end;
     }
-    let name = slice_unchecked(t, i, j) + "";
-    let label = dbg_shape_label(s, name);
+    let shape = slice_unchecked(t, i, j) + "";
+    let label = dbg_shape_label(s, shape);
     if (label != "") {
       if (out != "") {
         out = out + ",";
       }
-      out = out + name + "=" + label;
+      // The shape is `Enum$Variant`; the debugger shows the variant.
+      let k = shape.len();
+      while (k > 0 && shape[k - 1] != b'$') {
+        k = k - 1;
+      }
+      out = out + slice_unchecked(shape, k, shape.len()) + "=" + label;
     }
     i = j + 1;
   }

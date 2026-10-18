@@ -10299,12 +10299,15 @@ function name_declared(structs: StructDecl[], name: string): boolean {
   return false;
 }
 
-// add_builtin_variant appends a synthesized enum-variant struct unless the
-// name is already a struct or an enum. The payloads become the fields
-// `__ev`, `__ev1`, …, the same lowering as parse_enum_decl.
+// add_builtin_variant appends a synthesized enum-variant struct unless
+// `enum_name` already owns one of that name. A plain struct or another enum's
+// variant sharing the bare name does not displace it. The payloads become the
+// fields `__ev`, `__ev1`, …, the same lowering as parse_enum_decl.
 function add_builtin_variant(acc: StructDecl[], name: string, payload_types: string[], enum_name: string): StructDecl[] {
-  if (name_declared(acc, name)) {
-    return acc;
+  for sd in acc {
+    if (sd.name == name && sd.enum_owner == enum_name) {
+      return acc;
+    }
   }
   let fields: StructFieldDecl[] = [];
   for t in payload_types {
