@@ -1907,33 +1907,6 @@ pub function to_u8(b: i32[]): u8[] {
   return o;
 }
 
-// io_error_reason is the reason part of a failed file operation's report.
-pub function io_error_reason(e: IoError): string {
-  match (e) {
-    NotFound(_) => {
-      return "not found";
-    },
-    PermissionDenied(_) => {
-      return "permission denied";
-    },
-    AlreadyExists(_) => {
-      return "already exists";
-    },
-    InvalidUtf8(_) => {
-      return "invalid UTF-8";
-    },
-    Interrupted => {
-      return "interrupted";
-    },
-    Unsupported => {
-      return "unsupported";
-    },
-    Other(_, msg, _) => {
-      return msg;
-    }
-  }
-}
-
 // cache_base is fern's per-user cache directory: $FERN_CACHE_DIR when that is
 // set, else the user cache directory's fern — ~/Library/Caches on darwin,
 // elsewhere $XDG_CACHE_HOME, else ~/.cache — as Go's os.UserCacheDir reads

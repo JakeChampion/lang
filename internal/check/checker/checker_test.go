@@ -1636,8 +1636,8 @@ struct Plain { x: i32 }
 function find(): Result[i32, Plain] { return Err(Plain { x: 1 }); }
 function h(): Result[i32, dyn Error] { let v: i32 = find()?; return Ok(v); }
 function main(): i32 { return 0; }`)
-	if err == nil || !strings.Contains(err.Error(), "error types must match") {
-		t.Errorf("`?` with a non-implementing error type should be rejected, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "`?` cannot box Plain into dyn Error: Plain does not implement Error") {
+		t.Errorf("`?` with a non-implementing error type should be rejected, naming the missing impl, got: %v", err)
 	}
 	// Accepted (multi-trait dyn error): Both implements EVERY trait in
 	// `dyn A + B`, so the error converts via the impl-all gate.
@@ -1660,8 +1660,8 @@ impl A for OnlyA { function a(self: Self): i32 { return self.n; } }
 function find(): Result[i32, OnlyA] { return Err(OnlyA { n: 1 }); }
 function h(): Result[i32, dyn A + B] { let v: i32 = find()?; return Ok(v); }
 function main(): i32 { return 0; }`)
-	if err == nil || !strings.Contains(err.Error(), "error types must match") {
-		t.Errorf("`?` into `dyn A + B` with an error implementing only A should be rejected, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "`?` cannot box OnlyA into dyn A + B: OnlyA does not implement B") {
+		t.Errorf("`?` into `dyn A + B` with an error implementing only A should be rejected, naming B, got: %v", err)
 	}
 }
 
@@ -1689,8 +1689,8 @@ struct AppErr { msg: i32 }
 function read(): Result[i32, IoErr] { return Err(IoErr { code: 1 }); }
 function run(): Result[i32, AppErr] { let v: i32 = read()?; return Ok(v); }
 function main(): i32 { return 0; }`)
-	if err == nil || !strings.Contains(err.Error(), "error types must match") {
-		t.Errorf("`?` with no conversion should be rejected, got: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "AppErr has no `from(IoErr)` constructor to convert it") {
+		t.Errorf("`?` with no conversion should be rejected, naming the missing constructor, got: %v", err)
 	}
 }
 
