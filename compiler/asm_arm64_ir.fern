@@ -424,11 +424,17 @@ function emit_mismatch_arm64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState 
   s = mlo.state;
   s = s.write("    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n");
   s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  if (o.kind_tag == 378) {
+  // A packed array holds its length at 0 and its bytes from 8; a string box
+  // holds its data pointer at 0 and its length at 8. mismatch_bytes_str
+  // takes an array as `a` and a string as `b`.
+  if (o.kind_tag == 378 || o.kind_tag == 446) {
     s = s.write("    ldr x5, [x0]\n    add x0, x0, #8\n");
-    s = s.write("    ldr x6, [x2]\n    add x2, x2, #8\n");
   } else {
     s = s.write("    ldr x5, [x0, #8]\n    ldr x0, [x0]\n");
+  }
+  if (o.kind_tag == 378) {
+    s = s.write("    ldr x6, [x2]\n    add x2, x2, #8\n");
+  } else {
     s = s.write("    ldr x6, [x2, #8]\n    ldr x2, [x2]\n");
   }
   // Each offset clamps into [0, len] of its own string.
@@ -657,7 +663,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
     return s;
   }
-  if (o.kind_tag == 245 || o.kind_tag == 378) {  // mismatch / mismatch_bytes
+  if (o.kind_tag == 245 || o.kind_tag == 378 || o.kind_tag == 446) {  // mismatch / mismatch_bytes / mismatch_bytes_str
     return emit_mismatch_arm64(o, s);
   }
   if (o.kind_tag == 234 || o.kind_tag == 360) {  // rmemchr / rmemchr_bytes
