@@ -21980,10 +21980,11 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 	if have == nil || want == nil {
 		return true
 	}
-	// A destination element that is still a type PARAMETER (`let local: T[] =
-	// [1, 2, 3]` inside a generic) names no concrete type for the literal to
-	// contradict — what it settles to is decided at monomorph, not here.
-	if containsParamType(want) {
+	// A destination element naming a callee's type parameter, one nothing in
+	// scope binds, is the call's to infer, so the literal settles to it. The
+	// enclosing declaration's own parameter is a type like any other:
+	// `let local: T[] = [1, 2, 3]` in a generic over T is a mismatch.
+	if _, escaped := paramTypeNotIn(want, c.typeParamsInScope()); escaped {
 		return true
 	}
 	// A NESTED literal settles element-wise: `[[1], [2]]` against `f64[][]`
