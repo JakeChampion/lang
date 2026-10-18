@@ -542,7 +542,19 @@ function __absorb(c: Conn, r: record.Record, ccs: boolean, app: boolean, out: Ou
   }
   match (c.read.open(r)) {
     Ok(o) => {
-      return __content(Conn { ...c, read: o.next }, o.content_type.code(), o.content, app, out);
+      let nc: Conn = Conn { ...c, read: o.next };
+      // Application data is the decrypted record's own buffer, owned here:
+      // it becomes the step's data unmoved when nothing precedes it in the
+      // read, rather than being copied onto an empty accumulator. Every
+      // other content (a post-handshake message, an alert) goes through
+      // __content as the pre-key records do.
+      if (o.content_type.code() == 23 && app && nc.reading == 2) {
+        if (out.data.len() == 0) {
+          return Ok(Absorbed { conn: nc, out: Out { ...out, data: o.content } });
+        }
+        return Ok(Absorbed { conn: nc, out: Out { ...out, data: __join(out.data, o.content) } });
+      }
+      return __content(nc, o.content_type.code(), o.content, app, out);
     },
     Err(e) => {
       return Err(Record(e));
