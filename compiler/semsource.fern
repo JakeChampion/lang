@@ -2216,7 +2216,7 @@ function cast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
   // way a binding's annotation is: a literal that cannot name its own type
   // takes it from here, and the cast itself lowers to nothing.
   let ty: typeinfo.Type = checked(e, s);
-  let ascribes: boolean = semtypes.concrete(ty, false) && ssasem.cast_ascribes(ty);
+  let ascribes: boolean = cast_ascribes(u, ty);
   let want: typeinfo.Type = typeinfo.unchecked();
   if (ascribes) {
     want = ty;
@@ -2233,6 +2233,26 @@ function cast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
     return refused(s, "cast contract: " + typeinfo.spelling(s.values[operand.id]) + " as " + typeinfo.spelling(ty));
   }
   return define(s, ssasem.cast(), [operand.id], 0, "", ty);
+}
+
+// Whether the cast `u` to `ty` is an ascription, the operand lowered at `ty`
+// and the cast itself to nothing: a type that names the operand's own
+// (`ssasem.cast_ascribes`), or an integer type for an unsuffixed integer
+// literal, `10 as i64`, which is that literal at the type's width. The
+// checker has already refused one that does not fit (E047), and a constant
+// rather than a cast of one is what a constructor leaf's argument and a
+// static box's field must be.
+function cast_ascribes(u: ast.ExprUnary, ty: typeinfo.Type): boolean {
+  if (!semtypes.concrete(ty, false)) {
+    return false;
+  }
+  if (ssasem.cast_ascribes(ty)) {
+    return true;
+  }
+  if let ast.ExprNumber(n) = u.operand {
+    return !n.is_float && n.suffix == "" && ssasem.is_integer(ty) && !ssasem.is_usize(ty);
+  }
+  return false;
 }
 
 // `e` as control flow, closing the current block: every block it ends in

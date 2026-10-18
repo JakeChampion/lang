@@ -2806,8 +2806,9 @@ pub function op_struct_make(type_name: string, nfields: i32, decl_index: i32): O
 // evaluation (#6149 — the checker's nullary type constructors were ~21% of the
 // compiler's own allocations, one leaked box per call). Nothing is on the
 // operand stack: the values are stored in `str` as
-// `<type_name>|<v0>,<v1>,…` (i32-width field values in decl order, the same
-// pipe-then-comma packing the reuse-site registries use), and `i32_imm` is the
+// `<type_name>|<v0>,<v1>,…` (field values in decl order as signed decimal, a
+// 64-bit field's whole word among them, the same pipe-then-comma packing the
+// reuse-site registries use), and `i32_imm` is the
 // field count so a reader that only needs the arity never parses. A field
 // holding another static box is that box's own packing in braces,
 // `{<type_name>|…}` (const_struct_ref), and the backends write its address.
