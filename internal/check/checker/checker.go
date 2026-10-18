@@ -7021,7 +7021,7 @@ func (c *checker) typeImplsEqAndHash(typeName string) bool {
 const MapVoidValue = "map value type void is not supported — a set of keys is std/set's `Set`"
 
 // mapKeyTypeError returns an E045 message describing why `k` cannot be
-// a Map key, or "" if it is a usable key. Usable keys are integers,
+// a Map key, or "" if it is a usable key. Usable keys are integers, chars,
 // strings (owned or borrowed), booleans, struct/enum types that
 // implement both Eq and Hash (#2671), and tuples and arrays of usable
 // scalar keys (ast.StructuralMapKey, #10020). A struct/enum that lacks the
@@ -7037,7 +7037,7 @@ const MapVoidValue = "map value type void is not supported — a set of keys is 
 // annotated `Map[boolean, i32]` was accepted and ran.
 func (c *checker) mapKeyTypeError(k ast.Type) string {
 	switch kt := k.(type) {
-	case ast.NumberType, ast.StringType, ast.StrType, ast.BoolType, ast.ParamType:
+	case ast.NumberType, ast.CharType, ast.StringType, ast.StrType, ast.BoolType, ast.ParamType:
 		return ""
 	case ast.StructType:
 		if c.typeImplsEqAndHash(kt.Name) {
