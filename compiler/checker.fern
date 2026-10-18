@@ -18417,7 +18417,7 @@ function const_elems_err(elems: ast.Expr[], earlier: string[]): string {
 // refuses it (#6618).
 //
 // The diagnostic is UNCODED, matching native: an empty `code` renders as
-// `<line>:<col>: <message>` with no `error[…]` segment.
+// `<line>:<col>: error: <message>` with no `[…]` code.
 function const_grammar_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   let earlier: string[] = [];
