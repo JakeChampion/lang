@@ -1,0 +1,16 @@
+contains a yes
+contains q no
+contains astral yes
+sorted 90 97 97 98 128512
+sorted desc 128512 98 97 97 90
+is_sorted no
+cmp -1 1 0
+eq yes no
+hash stable yes
+len 3
+get a 3
+get astral 4
+has c no
+keys 97 98 128512
+get b 2
+literal 8 2

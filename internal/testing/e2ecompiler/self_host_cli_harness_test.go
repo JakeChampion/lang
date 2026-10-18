@@ -17,6 +17,16 @@ type selfHostCLI struct {
 	gcc, stdlib string
 	runner      []string
 	bin         string
+	// flags are passed to every compile ahead of the source, as `-embed DIR`.
+	flags []string
+}
+
+// compileCmd is the CLI compiling src for target to out, with extra flags
+// ahead of the source.
+func (c *selfHostCLI) compileCmd(target, out, src string, extra ...string) *exec.Cmd {
+	args := append([]string{"-target", target}, extra...)
+	args = append(args, c.flags...)
+	return runX86_64Bin(c.runner, c.bin, append(args, "-o", out, src, c.stdlib)...)
 }
 
 func buildSelfHostCLI(t *testing.T) *selfHostCLI {
@@ -41,7 +51,7 @@ func (c *selfHostCLI) emit(t *testing.T, src, target string, env ...string) stri
 		ext = ".wat"
 	}
 	out := filepath.Join(t.TempDir(), "out"+ext)
-	cmd := runX86_64Bin(c.runner, c.bin, "-target", target, "-emit", "asm", "-o", out, src, c.stdlib)
+	cmd := c.compileCmd(target, out, src, "-emit", "asm")
 	cmd.Env = append(os.Environ(), env...)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host CLI -target %s %s: %v\n%s", target, src, err, msg)
@@ -54,7 +64,7 @@ func (c *selfHostCLI) emit(t *testing.T, src, target string, env ...string) stri
 func (c *selfHostCLI) wasmComponent(t *testing.T, src string, env ...string) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "main.wasm")
-	cmd := runX86_64Bin(c.runner, c.bin, "-target", "wasm32-wasi", "-o", bin, src, c.stdlib)
+	cmd := c.compileCmd("wasm32-wasi", bin, src)
 	cmd.Env = append(os.Environ(), env...)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host CLI -target wasm32-wasi %s: %v\n%s", src, err, msg)
@@ -78,7 +88,7 @@ func (c *selfHostCLI) x86Binary(t *testing.T, src string, env ...string) string 
 func (c *selfHostCLI) arm64Binary(t *testing.T, src string, env ...string) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "prog")
-	cmd := runX86_64Bin(c.runner, c.bin, "-target", "arm64-linux", "-o", bin, src, c.stdlib)
+	cmd := c.compileCmd("arm64-linux", bin, src)
 	cmd.Env = append(os.Environ(), env...)
 	if msg, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host CLI -target arm64-linux %s: %v\n%s", src, err, msg)

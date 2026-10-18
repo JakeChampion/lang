@@ -1,0 +1,34 @@
+// An optimising pass's decision to rewrite one function, keyed by the pass and
+// the function's name. `FERN_OPT_BISECT=h` declines every decision whose key
+// hashes below h, so a program the passes miscompile bisects over h to the one
+// decision that breaks it. `FERN_OPT_TRACE` lists each decision asked about on
+// stderr as `opt-decision <hash> <pass> <name>`.
+import "./util";
+import "std/envflag";
+
+pub function key_hash(pass: string, name: string): i64 {
+  return util.roll_text(util.roll_text(util.digest_start(), pass), name) & 4294967295i64;
+}
+
+pub function allowed(pass: string, name: string): boolean {
+  let trace: boolean = envflag.on("FERN_OPT_TRACE");
+  match (env("FERN_OPT_BISECT")) {
+    Some(v) => {
+      let h: i64 = key_hash(pass, name);
+      if (trace) {
+        eprint(line(h, pass, name));
+      }
+      return h >= util.digits_to_i64(v);
+    },
+    None => {
+      if (trace) {
+        eprint(line(key_hash(pass, name), pass, name));
+      }
+      return true;
+    }
+  }
+}
+
+function line(h: i64, pass: string, name: string): string {
+  return "opt-decision " + util.i64_to_string(h) + " " + pass + " " + name;
+}

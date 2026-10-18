@@ -1,0 +1,170 @@
+import "std/i32";
+import "std/i64";
+import "std/u32";
+
+function kind(e: IoError): string {
+  match (e) {
+    NotFound(_) => { return "NotFound"; },
+    PermissionDenied(_) => { return "PermissionDenied"; },
+    AlreadyExists(_) => { return "AlreadyExists"; },
+    InvalidUtf8(_) => { return "InvalidUtf8"; },
+    Interrupted => { return "Interrupted"; },
+    Unsupported => { return "Unsupported"; },
+    Other(_, m, n) => { return f"Other({m}, {n})"; }
+  }
+}
+
+function done(what: string, r: Result[void, IoError]): void {
+  match (r) {
+    Ok(_) => { print(what + ": ok"); },
+    Err(e) => { print(what + ": " + kind(e)); }
+  }
+}
+
+function opt(what: string, r: Option[IoError]): void {
+  match (r) {
+    None => { print(what + ": ok"); },
+    Some(e) => { print(what + ": " + kind(e)); }
+  }
+}
+
+function perm(what: string, r: Result[FileStat, IoError]): void {
+  match (r) {
+    Ok(st) => {
+      let p: u32 = st.mode & 4095u32;
+      let fmt: u32 = st.mode & 61440u32;
+      print(f"{what}: perm={p} fmt={fmt} size={st.size}");
+    },
+    Err(e) => { print(what + ": " + kind(e)); }
+  }
+}
+
+function main(): i32 {
+  let d: string = args()[1];
+  let old: i32 = umask(18);
+  print(f"umask: {umask(old)}");
+  done("write_file_exec", write_file_exec(d + "/run.sh", "#!/bin/sh\necho ran\n"));
+  perm("exec stat", stat(d + "/run.sh"));
+  done("access x", access(d + "/run.sh", 1));
+  done("access missing", access(d + "/nope", 0));
+  done("chmod", chmod(d + "/run.sh", 384));
+  perm("chmod stat", stat(d + "/run.sh"));
+  done("chmod_at", chmod_at(d + "/run.sh", 448, true));
+  perm("chmod_at stat", stat(d + "/run.sh"));
+  done("chown_at", chown_at(d + "/run.sh", geteuid() as i32, getegid() as i32, true));
+  done("mknod fifo", mknod(d + "/fifo", 4516, 0, 0));
+  perm("fifo stat", lstat(d + "/fifo"));
+  sync();
+  print("sync: ok");
+  done("rename_noreplace new", rename_noreplace(d + "/fifo", d + "/fifo2"));
+  match (statfs(d)) {
+    Ok(f) => { print(f"statfs: block_size>0={f.block_size > 0i64} name_max={f.name_max}"); },
+    Err(e) => { print("statfs: " + kind(e)); }
+  }
+  match (mounts()) {
+    Ok(ms) => { print(f"mounts: {ms.len() > 0}"); },
+    Err(e) => { print("mounts: " + kind(e)); }
+  }
+  done("mkdir", create_dir(d + "/dd", 493));
+  done("touch", write_file(d + "/dd/f", "x"));
+  done("mkdir2", create_dir(d + "/dd/sub", 493));
+  match (open_dir(d + "/dd")) {
+    Ok(dir) => {
+      match (dir.entries()) {
+        Ok(es) => { print(f"entries: {es.len()}"); },
+        Err(e) => { print("entries: " + kind(e)); }
+      }
+      perm("dir stat", dir.stat("f"));
+      perm("dir lstat", dir.lstat("f"));
+      done("dir access", dir.access("f", 4));
+      done("dir chmod", dir.chmod("f", 416, true));
+      perm("dir chmod stat", dir.stat("f"));
+      done("dir chown", dir.chown("f", geteuid() as i32, getegid() as i32, true));
+      match (dir.open_dir("sub")) {
+        Ok(sub) => {
+          match (sub.entries()) {
+            Ok(es) => { print(f"sub entries: {es.len()}"); },
+            Err(e) => { print("sub entries: " + kind(e)); }
+          }
+          opt("sub close", sub.close());
+        },
+        Err(e) => { print("dir open_dir: " + kind(e)); }
+      }
+      done("dir remove_file", dir.remove_file("f"));
+      done("dir remove_dir", dir.remove_dir("sub"));
+      opt("dir close", dir.close());
+    },
+    Err(e) => { print("open_dir: " + kind(e)); }
+  }
+  match (open_dir(d + "/missing")) {
+    Ok(_) => { print("open_dir missing: ok"); },
+    Err(e) => { print("open_dir missing: " + kind(e)); }
+  }
+  print(f"ids: {geteuid()} {getegid()} {getuid()} {getgid()} groups={getgroups().len()}");
+  done("setuid", setuid(geteuid() as i64));
+  done("setgid", setgid(getegid() as i64));
+  done("setgroups", setgroups(getgroups()));
+  print("uname: " + uname_field(0));
+  print(f"cpu_count>0: {cpu_count() > 0}");
+  print("hostname: " + hostname());
+  match (getcwd()) {
+    Ok(c) => { print(f"getcwd: {c.len() > 0}"); },
+    Err(e) => { print("getcwd: " + kind(e)); }
+  }
+  done("chdir", chdir(d));
+  match (getcwd()) {
+    Ok(c) => { print(f"getcwd after: {c == d}"); },
+    Err(e) => { print("getcwd after: " + kind(e)); }
+  }
+  done("chroot missing", chroot(d + "/nope"));
+  print(f"rlimit_nofile>0: {rlimit_nofile() > 0i64}");
+  print(f"disable_core_dumps: {disable_core_dumps()}");
+  let pr: i32 = priority();
+  done("set_priority", set_priority(pr));
+  print(f"process_alive(1): {process_alive(1)}");
+  done("signal_send 0", signal_send(1, 0));
+  let r: ProcessResult = subprocess("/bin/echo", ["a", "b"], "");
+  print(f"subprocess: [{r.stdout}] [{r.stderr}] {r.exit_code}");
+  let r2: ProcessResult = subprocess("/bin/sh", ["-c", "cat; echo err >&2; exit 3"], "in");
+  print(f"subprocess2: [{r2.stdout}] [{r2.stderr}] {r2.exit_code}");
+  match (pipe()) {
+    Ok(p) => {
+      opt("pipe write", p.w.write("through"));
+      opt("pipe w close", p.w.close());
+      match (p.r.read_chunk(100)) {
+        Ok(s) => { print("pipe read: " + s); },
+        Err(e) => { print("pipe read: " + kind(e)); }
+      }
+      opt("pipe r close", p.r.close());
+    },
+    Err(e) => { print("pipe: " + kind(e)); }
+  }
+  print(f"proc_fork: {proc_fork()} exec: {proc_exec("/bin/true", [])} exec_as: {proc_exec_as("/bin/true", [], [])}");
+  print(f"waitpid: {proc_waitpid(1)} {proc_waitpid_nohang(1)} {proc_waitpid_status(1)}");
+  let t: i32 = timer_fd(5);
+  print(f"timer_fd ok: {t >= 0}");
+  if (t >= 0) {
+    print(f"poll timer: {poll([t], 1000)}");
+  }
+  print(f"unix_connect missing<0: {unix_connect(d + "/nosock") < 0}");
+  let ls: i32 = unix_listen(d + "/sock", 4);
+  print(f"unix_listen ok: {ls >= 0}");
+  let cs: i32 = unix_connect(d + "/sock");
+  print(f"unix_connect ok: {cs >= 0}");
+  match (window_size(0)) {
+    Ok(_) => { print("window_size: ok"); },
+    Err(e) => { print("window_size: " + kind(e)); }
+  }
+  done("set_window_size", set_window_size(0, 24, 80));
+  match (termios_get(0)) {
+    Ok(_) => { print("termios_get: ok"); },
+    Err(e) => { print("termios_get: " + kind(e)); }
+  }
+  done("termios_set", termios_set(0, 0, []));
+  done("set_extproc", set_extproc(0, true));
+  match (sysctl([1, 1])) {
+    Ok(b) => { print(f"sysctl: {b.len() > 0}"); },
+    Err(e) => { print("sysctl: " + kind(e)); }
+  }
+  return 0;
+}

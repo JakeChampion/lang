@@ -243,20 +243,40 @@ func udpSendto(i *Interp, args []Value, raw bool) (Value, error) {
 	return Number(len(data)), nil
 }
 
+// builtinUdpSend answers `udp_send(host, port, data)`, the one-shot send of a
+// string payload, as udp_send_bytes sends a byte one.
+func builtinUdpSend(_ *Interp, args []Value) (Value, error) {
+	const name = "udp_send"
+	if len(args) != 3 {
+		return nil, fmt.Errorf("%s: expected 3 args, got %d", name, len(args))
+	}
+	data, ok := args[2].(String)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected string data arg, got %T", name, args[2])
+	}
+	return udpSendOnce(name, args[0], args[1], []byte(data))
+}
+
 func builtinUdpSendBytes(_ *Interp, args []Value) (Value, error) {
 	const name = "udp_send_bytes"
 	if len(args) != 3 {
 		return nil, fmt.Errorf("%s: expected 3 args, got %d", name, len(args))
 	}
-	host, ok := args[0].(String)
-	if !ok {
-		return nil, fmt.Errorf("%s: expected string host arg, got %T", name, args[0])
-	}
-	port, err := numberArgs(name, args[1:2], 1)
+	data, err := udpPayload(name, args[2])
 	if err != nil {
 		return nil, err
 	}
-	data, err := udpPayload(name, args[2])
+	return udpSendOnce(name, args[0], args[1], data)
+}
+
+// udpSendOnce sends one datagram to a dotted-quad host from a socket made for
+// it: -3 for a host that is not four decimal octets, before any socket exists.
+func udpSendOnce(name string, hostArg, portArg Value, data []byte) (Value, error) {
+	host, ok := hostArg.(String)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected string host arg, got %T", name, hostArg)
+	}
+	port, err := numberArgs(name, []Value{portArg}, 1)
 	if err != nil {
 		return nil, err
 	}

@@ -227,19 +227,25 @@ on wasm only the leak census is available.
 
 ## Embedding assets
 
-`-embed DIR` compiles every file under `DIR` into the binary.
-`__fern_asset("NAME")` is replaced at compile time by a string literal
-holding the file's bytes, where `NAME` is the file's path relative to
-`DIR` with `/` separators. `__fern_assets()` yields every asset as a
-`(name, contents)` pair, sorted by name.
+`-embed DIR` compiles every file under `DIR` into the binary. `NAME` is
+a file's path relative to `DIR` with `/` separators. Like `read_file` and
+`read_file_bytes`, each asset builtin has a text form and a bytes form:
+
+| Builtin | Yields |
+| --- | --- |
+| `__fern_asset("NAME")` | the file as a `string`; a file that is not valid UTF-8 is a compile error |
+| `__fern_asset_bytes("NAME")` | the file as a `u8[]` |
+| `__fern_assets()` | every file as a `(name, text)` pair, sorted by name; any file that is not valid UTF-8 is a compile error |
+| `__fern_assets_bytes()` | every file as a `(name, bytes)` pair, sorted by name |
 
 ```fern
 const PAGE: string = __fern_asset("html/index.html");
+const ICON: u8[] = __fern_asset_bytes("img/favicon.png");
 
 function main(): i32 {
     print(PAGE);
-    for a in __fern_assets() {
-        print(a.0);   // html/index.html, site.css, …
+    for a in __fern_assets_bytes() {
+        print(a.0);   // html/index.html, img/favicon.png, …
     }
     return 0;
 }
@@ -249,8 +255,8 @@ function main(): i32 {
 fern -embed ./assets -target x86-64-linux -o site site.fern
 ```
 
-Assets are ordinary string literals, so binary files work unchanged and
-reading one costs nothing at run time.
+Each call becomes an ordinary literal, so reading an asset costs nothing
+at run time.
 
 ## Shared libraries
 

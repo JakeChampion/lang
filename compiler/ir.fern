@@ -99,6 +99,13 @@ pub function op_const_i32_text(t: string): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
 }
 
+// op_const_ptr_text is op_const_i32_text at the pointer width: a `usize`
+// literal past the i32 immediate, spliced into a 32-bit immediate on wasm and
+// a full 64-bit one on the register backends.
+pub function op_const_ptr_text(t: string): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: t };
+}
+
 pub function op_const_i64(v: i64): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
@@ -716,6 +723,35 @@ pub function op_raw_load_ptr(): Op {
 
 pub function op_raw_string(): Op {
   return op0(86);
+}
+
+// op_raw_string_frame is `raw_string` with its 24-byte box taken from the
+// FRAME, as op_str_slice_frame takes a slice's: `i32_imm` is `base + 1`,
+// where base is the first of three consecutive local slots reserved for the
+// box, so 0 keeps the heap form. The box is the same {rc -1, data, len} an
+// in-frame slice builds, so every consumer of the pushed box is unchanged.
+// The register backends read the immediate; wasm has no data pointer to
+// share and copies the bytes into a fresh block, which the frame releases.
+// ssarc emits this form for a byte view's sub-range whose whole life is
+// inside the frame that made it.
+pub function op_raw_string_frame(base: i32): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: 86, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+// frame_box_base is the first of the three local slots a frame-form
+// str_slice or raw_string builds its box in, or -1 for any other op. The two
+// are the only ops that write locals without being a store, and the passes
+// that model slot writes read them through this.
+pub function frame_box_base(o: Op): i32 {
+  if ((o.kind_tag == K_STR_SLICE || o.kind_tag == K_RAW_STRING) && o.i32_imm > 0) {
+    return o.i32_imm - 1;
+  }
+  return 0 - 1;
+}
+
+// placed_frame_box is a frame-form op with its box at `base`.
+pub function placed_frame_box(o: Op, base: i32): Op {
+  return Op { ...o, i32_imm: base + 1 };
 }
 
 // syscall3 (#2649 syscall sub-floor): the raw-memory floor's I/O sibling.
@@ -2023,6 +2059,13 @@ pub function op_opt_payload_w(width: i32, is_i64: boolean): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 123, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
+// `opt_set_payload` pops [box, value] and stores the word-sized value over
+// the payload `opt_payload` reads, consuming the value as struct_set does.
+// The lowering's payload take nulls the slot with it (ssarc.steal).
+pub function op_opt_set_payload(): Op {
+  return op0(124);
+}
+
 // `print_str` pops a string value and writes its bytes to stdout (no newline),
 // pushing a dummy result so a statement-level drop balances. `write(s)` is a bare
 // print_str; `print(s)` is two of them, the payload then a "\n" literal.
@@ -3290,6 +3333,8 @@ pub const K_STR_EQ: i32 = 99;
 
 pub const K_STR_SLICE: i32 = 102;
 
+pub const K_RAW_STRING: i32 = 86;
+
 pub const K_STRUCT_SET: i32 = 140;
 
 pub const K_DYN_DISPATCH: i32 = 147;
@@ -3369,7 +3414,7 @@ pub function kind_count(): i32 {
 // transcendentals, string builder and map ops; 198 was the shallow struct
 // copy replaced by the typed lowering.
 pub function kind_retired(id: i32): boolean {
-  return id >= 62 && id <= 66 || id >= 117 && id <= 119 || id == 121 || id >= 124 && id <= 137 || id == 198;
+  return id >= 62 && id <= 66 || id >= 117 && id <= 119 || id == 121 || id >= 125 && id <= 137 || id == 198;
 }
 
 // kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
@@ -4817,6 +4862,9 @@ function kind_id_len15(name: string): i32 {
   if (c == b't' && name == "tcp_listen_with") {
     return 332;
   }
+  if (c == b'o' && name == "opt_set_payload") {
+    return 124;
+  }
   return 0;
 }
 
@@ -5314,6 +5362,9 @@ function kind_name_3(id: i32): string {
   }
   if (id == 123) {
     return "opt_payload";
+  }
+  if (id == 124) {
+    return "opt_set_payload";
   }
   if (id == 138) {
     return "struct_make";
@@ -6307,7 +6358,7 @@ function pops2_mem(t: i32): boolean {
     || t == 98 || t == 99 || t == 100 || t == 101  // str_concat, str_eq, str_cmp, str_index
     || t == 105 || t == 108  // str_split, str_repeat
     || pops2_kernel(t)
-    || t == 140 || t == 144;  // struct_set, tuple_set
+    || t == 124 || t == 140 || t == 144;  // opt_set_payload, struct_set, tuple_set
 }
 
 function pops2_io(t: i32): boolean {
@@ -6559,7 +6610,7 @@ pub function op_pushes(o: Op): i32 {
   // unlike the raw `__store_*` intrinsics next to them, which re-push it so
   // a statement-position drop balances. `struct_set_shape` is not among
   // them: it writes the shape word and leaves the box.
-  if (t == 89 || t == 140 || t == 144) {  // arr_set, struct_set, tuple_set
+  if (t == 89 || t == 124 || t == 140 || t == 144) {  // arr_set, opt_set_payload, struct_set, tuple_set
     return 0;
   }
   if (t == 152 || t == 153 || t == 154 || t == 155 || t == 156) {  // block, loop, if, else, end
@@ -6750,7 +6801,7 @@ pub function fold_const_binaries(ops: Op[]): Op[] {
         let b: Op = cur[i + 1];
         let o: Op = cur[i + 2];
         if (const_i32_readable(b)
-          && is_foldable_binary_kind(o.kind_tag) && o.width != 64 && !o.unsigned
+          && is_foldable_binary_kind(o.kind_tag) && o.width == 0 && !o.unsigned
           && !fold_would_divide_by_zero(o.kind_tag, const_i32_value(b))) {
           out = out.append(op_const_i32(fold_binary_i32(o.kind_tag, const_i32_value(cur[i]), const_i32_value(b))));
           i = i + 3;
@@ -7706,18 +7757,17 @@ function writes_unread(ops: Op[], loads: i32[], k_store: i32, k_tee: i32): boole
 // slot_reads counts the reads of each slot.
 function slot_reads(ops: Op[]): i32[] {
   let k_load: i32 = K_LOAD_LOCAL;
-  let k_str_slice: i32 = K_STR_SLICE;
   let k_dyn: i32 = K_DYN_DISPATCH;
   let loads: i32[] = __alloc_i32(cp_max_slot(ops) + 1);
   for o in ops {
     if (o.kind_tag == k_load) {
       loads = loads.with(o.i32_imm, loads[o.i32_imm] + 1);
     }
-    // Two ops read slots without a load: the frame form of str_slice builds
-    // its box in three slots at `i32_imm - 1`, read through the box's address,
-    // and dyn_dispatch reloads its `width` spilled operands from `i32_imm` on.
-    if (o.kind_tag == k_str_slice && o.i32_imm > 0) {
-      loads = slots_read(loads, o.i32_imm - 1, 3);
+    // Two kinds of op read slots without a load: a frame-form box is built
+    // in three slots (frame_box_base), read through the box's address, and
+    // dyn_dispatch reloads its `width` spilled operands from `i32_imm` on.
+    if (frame_box_base(o) >= 0) {
+      loads = slots_read(loads, frame_box_base(o), 3);
     }
     if (o.kind_tag == k_dyn) {
       loads = slots_read(loads, o.i32_imm, o.width);
@@ -7838,14 +7888,13 @@ function zg_rezero(ops: Op[], i: i32): boolean {
 // zg_first_write gives, per slot, the op index of the first write that can leave
 // it NON-zero, or ops.len() when it has none.
 //
-// str_slice's frame form is the one op that writes locals without being a store
-// (three consecutive slots at `i32_imm - 1`), modelled here as const_propagate
-// models it, so this pass is sound on its own reasoning rather than on the lowering
-// reserving those slots for the view.
+// A frame-form box (frame_box_base) is written without a store, three
+// consecutive slots, modelled here as const_propagate models it, so this pass
+// is sound on its own reasoning rather than on the lowering reserving those
+// slots for the view.
 function zg_first_write(ops: Op[], nslots: i32): i32[] {
   let k_store: i32 = K_STORE_LOCAL;
   let k_tee: i32 = K_TEE_LOCAL;
-  let k_str_slice: i32 = K_STR_SLICE;
   let first: i32[] = [];
   let z: i32 = 0;
   while (z < nslots) {
@@ -7857,10 +7906,10 @@ function zg_first_write(ops: Op[], nslots: i32): i32[] {
     let t: i32 = ops[i].kind_tag;
     if ((t == k_store || t == k_tee) && !zg_rezero(ops, i)) {
       first = zg_mark(first, ops[i].i32_imm, i);
-    } else if (t == k_str_slice && ops[i].i32_imm > 0) {
+    } else if (frame_box_base(ops[i]) >= 0) {
       let fk: i32 = 0;
       while (fk < 3) {
-        first = zg_mark(first, ops[i].i32_imm - 1 + fk, i);
+        first = zg_mark(first, frame_box_base(ops[i]) + fk, i);
         fk = fk + 1;
       }
     }
@@ -8495,7 +8544,6 @@ function cp_loop_body_kill(ops: Op[], at: i32, own has: boolean[]): boolean[] {
   let k_loop: i32 = K_LOOP;
   let k_if: i32 = K_IF;
   let k_end: i32 = K_END;
-  let k_str_slice: i32 = K_STR_SLICE;
   let d: i32 = 0;
   let j: i32 = at + 1;
   while (j < ops.len()) {
@@ -8512,11 +8560,11 @@ function cp_loop_body_kill(ops: Op[], at: i32, own has: boolean[]): boolean[] {
       if (sl >= 0 && sl < has.len()) {
         has = has.with(sl, false);
       }
-    } else if (t == k_str_slice && ops[j].i32_imm > 0) {
+    } else if (frame_box_base(ops[j]) >= 0) {
       // The same three frame slots the main walk unbinds, on the same
       // reasoning: this scan is the loop's half of the write model, and a
       // write it cannot see is a binding assumed across a back-edge.
-      let fb: i32 = ops[j].i32_imm - 1;
+      let fb: i32 = frame_box_base(ops[j]);
       let fk: i32 = 0;
       while (fk < 3) {
         if (fb + fk >= 0 && fb + fk < has.len()) {
@@ -8547,7 +8595,6 @@ pub function const_propagate(ops: Op[]): Op[] {
   let k_end: i32 = K_END;
   let k_br: i32 = K_BR;
   let k_brif: i32 = K_BRIF;
-  let k_str_slice: i32 = K_STR_SLICE;
 
   // known[slot] holds the tracked constant OP, re-emitted verbatim at a load;
   // has[slot] says whether it is live. Carrying the op rather than a value keeps
@@ -8629,16 +8676,15 @@ pub function const_propagate(ops: Op[]): Op[] {
       if (o.i32_imm >= 0 && tgt >= 0) {
         fr_br = fr_br.with(tgt, true);
       }
-    } else if (kt == k_str_slice && o.i32_imm > 0) {
-      // str_slice_frame is the ONE op that writes locals without being a
-      // store: the frame form builds its box in three consecutive slots at
-      // `i32_imm - 1` (the heap form, immediate 0, writes none). Nothing can
-      // bind those slots today — the lowering reserves them for the view,
-      // so no store ever names one — but that
-      // makes this pass sound by a convention in another file rather than by
-      // its own reasoning. Modelling the write costs three unbinds and keeps
-      // the next frame-form op from arriving into a silent stale binding.
-      let fb: i32 = o.i32_imm - 1;
+    } else if (frame_box_base(o) >= 0) {
+      // A frame-form box is written without a store: three consecutive
+      // slots at frame_box_base (the heap form, immediate 0, writes none).
+      // Nothing can bind those slots today — the lowering reserves them for
+      // the view, so no store ever names one — but that makes this pass
+      // sound by a convention in another file rather than by its own
+      // reasoning. Modelling the write costs three unbinds and keeps the
+      // next frame-form op from arriving into a silent stale binding.
+      let fb: i32 = frame_box_base(o);
       let fk: i32 = 0;
       while (fk < 3) {
         let fs: i32 = fb + fk;
@@ -8876,6 +8922,9 @@ pub function render_op(o: Op): string {
     }
     return "str_slice";
   }
+  if (o.kind_tag == 86 && o.i32_imm > 0) {
+    return "raw_string frame:" + util.i32_to_string(o.i32_imm - 1);
+  }
   if (o.kind_tag == 96) {
     return "arr_slice";
   }
@@ -8887,6 +8936,9 @@ pub function render_op(o: Op): string {
   }
   if (o.kind_tag == 123) {
     return "opt_payload";
+  }
+  if (o.kind_tag == 124) {
+    return "opt_set_payload";
   }
   if (o.kind_tag == 138) {
     return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm);

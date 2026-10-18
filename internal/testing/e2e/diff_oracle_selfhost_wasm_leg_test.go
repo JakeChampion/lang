@@ -112,21 +112,34 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 			want := runInterpByteOrSkip(t, src)
 
 			diverged := false
+			class := ""
 			failf := func(format string, args ...any) {
 				if isKnown {
 					diverged = true
 					t.Logf("known divergence (%s): "+format, append([]any{reason}, args...)...)
 					return
 				}
+				if class == "" {
+					class = failureClass(format)
+				}
 				t.Errorf(format, args...)
 			}
 
 			env := passEnv(passes, seed)
 			logPassConfig(t, env)
-			out, exit, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, flags, env)
+			r, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, flags, env, failf)
+			bisect := func(class string) {
+				report, pass := bisectSelfHostSeed(t, fernBin, stdlibRoot, "wasm32-wasi", src, flags, env, func(env []string) bool {
+					r, gap := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, flags, env, func(string, ...any) {})
+					return wasmRunAgrees(r, gap, want)
+				})
+				t.Log(report)
+				recordFinding(t, selfHostFinding{Test: legName(t), Seed: seed, Class: class, Pass: pass})
+			}
 			if gap != "" {
 				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
+					bisect(refusalClass(gap))
 					return
 				}
 				// Same contract as the other legs: a compile bail is a
@@ -141,6 +154,15 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 					seed, knownFile, reason, gap)
 				return
 			}
+			if r == nil {
+				return
+			}
+			defer func() {
+				if class != "" {
+					bisect(class)
+				}
+			}()
+			out, exit := r.stdout+r.stderr, r.exit
 			// A rejected module and a trap are failures whatever the oracle
 			// byte is, so both are asserted before the clamp is consulted.
 			if rejected, why := wasmRejected(out); rejected {
@@ -190,10 +212,25 @@ func selfHostWasmSweep(t *testing.T, gcc, knownFile string, flags []string, pass
 	})
 }
 
+// wasmRunAgrees is the wasm leg's verdict on one run of a seed: a valid
+// module that neither traps nor draws a sanitizer report, and exits with the
+// interpreter's byte where the exit clamp leaves that comparable.
+func wasmRunAgrees(r *selfHostRun, gap string, want int) bool {
+	if r == nil || gap != "" {
+		return false
+	}
+	out := r.stdout + r.stderr
+	if rejected, _ := wasmRejected(out); rejected || strings.Contains(out, "wasm trap:") || strings.Contains(out, "fern-sanitizer:") {
+		return false
+	}
+	return want >= 126 || r.exit == want
+}
+
 // runSelfHostWasmSeed compiles src for wasm32-wasi with the self-host CLI and
-// runs the module under wasmtime. Returns (combined output, exit, "") when it
-// ran and ("", 0, gap) when the compiler bailed.
-func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env []string) (string, int, string) {
+// runs the module under wasmtime. Returns (run, "") when it ran, (nil, gap)
+// when the compiler bailed, and (nil, "") when the compile hung, which is
+// already reported through failf.
+func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, env []string, failf failFunc) (*selfHostRun, string) {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -204,11 +241,15 @@ func runSelfHostWasmSeed(t *testing.T, fernBin, stdlibRoot, src string, flags, e
 	emit := append(append([]string{}, flags...), "-emit", "asm")
 	args := append([]string{"-target", "wasm32-wasi"}, emit...)
 	args = append(args, "-o", watPath, srcPath, stdlibRoot)
-	out, err := selfHostCompileCmd(fernBin, env, args...).CombinedOutput()
+	out, hung, err := compileSelfHostSeed(fernBin, env, args...)
+	if hung {
+		reportCompileHang(failf, src)
+		return nil, ""
+	}
 	if err != nil {
-		return "", 0, fmt.Sprintf("%v\n%s%s", err, out,
+		return nil, fmt.Sprintf("%v\n%s%s", err, out,
 			strictIRBailSite(fernBin, "wasm32-wasi", emit, env, srcPath, stdlibRoot, out))
 	}
-	run := runSelfHostBin(exec.Command("wasmtime", "run", watPath), "")
-	return run.stdout + run.stderr, run.exit, ""
+	r := runSelfHostBin(exec.Command("wasmtime", "run", watPath), "")
+	return &r, ""
 }

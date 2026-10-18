@@ -134,6 +134,22 @@ function main(): i32 { let m = Map { true: 1 }; return m.len(); }`,
 		"",
 	},
 	{
+		"char key",
+		`import "core/map";
+function main(): i32 {
+    let m: Map[char, i32] = map_new(8);
+    m = m.insert('a', 5);
+    return m.get_or('a', 0);
+}`,
+		"",
+	},
+	{
+		"char key in a literal",
+		`import "core/map";
+function main(): i32 { let m = Map { 'a': 1, 'b': 2 }; return m.len(); }`,
+		"",
+	},
+	{
 		"borrowed string key",
 		`import "core/map";
 function main(): i32 {

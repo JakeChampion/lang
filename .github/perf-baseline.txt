@@ -69,7 +69,7 @@ x86_64/closure_call.text	774
 x86_64/closure_call.ir	63018106
 x86_64/enum_match.text	891
 x86_64/enum_match.ir	50850037
-x86_64/http_hello.text	15361
+x86_64/http_hello.text	15395
 x86_64/http_hello.ir	24268390
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
@@ -79,12 +79,12 @@ x86_64/map_probe_chain.text	5597
 x86_64/map_probe_chain.ir	354691233
 x86_64/map_string.text	6536
 x86_64/map_string.ir	62112069	2
-x86_64/ordmap_insert.text	2758
-x86_64/ordmap_insert.ir	109992304
-x86_64/pmap_insert.text	2569
-x86_64/pmap_insert.ir	61190282
-x86_64/pvec_with.text	2710
-x86_64/pvec_with.ir	59205267
+x86_64/ordmap_insert.text	2737
+x86_64/ordmap_insert.ir	107976333
+x86_64/pmap_insert.text	2567
+x86_64/pmap_insert.ir	59526732
+x86_64/pvec_with.text	2611
+x86_64/pvec_with.ir	57131286
 x86_64/record_update.ir	109849111
 x86_64/record_update.text	1346
 x86_64/sort_inplace.text	1135
@@ -239,6 +239,13 @@ x86_64/utf8_ingest_validated.ir	5916089
 # every round allocate nothing. The x86_64 figures are the dev container's
 # perf-bench run; the aarch64 rows (perceus_cfold.ir -3.41%,
 # perceus_deriv.text -1.68%, perceus_deriv.ir -8.93%) are the perf lane's.
+#
+# Re-pinned 2026-10-18 (#12781) on x86_64 ordmap_insert.ir (-1.83%),
+# pmap_insert.ir (-2.72%) and pvec_with.ir (-3.50%), with their `.text` rows
+# and http_hello.text (#12780, +0.22%): a payload read out of an enum held in
+# an array slot or a local is taken rather than retained, so the node the
+# update rebuilds is unique. The figures are the dev container's perf-bench
+# run; the aarch64 rows are not re-measured.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18

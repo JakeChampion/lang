@@ -73,7 +73,8 @@ const STDLIB_EXT: string = ".fern";
 // built with.
 //
 // Non-`.fern` assets are skipped. They are not modules, and an embed root can
-// legitimately hold other things.
+// legitimately hold other text; a binary file there is a compile error, which
+// is `__fern_assets()` refusing a string that could not be valid.
 function embedded_stdlib(): modloader.Overlay {
   let paths: string[] = [];
   let srcs: string[] = [];
@@ -172,10 +173,7 @@ function report_diags(diags: util.Diag[], files: string[]): boolean {
 // With a `-target`, the CLI's target gate (E066) reports beside the checker,
 // and the handler gate (E080) always does, as `fern -check` reports them.
 function check(merged: parser.Module, files: string[], target: string, target_given: boolean): i32 {
-  if (report_diags(asmcore.parse_unknown_errors_module(merged), files)) {
-    return 1;
-  }
-  if (report_diags(asmcore.check_decl_names(merged), files)) {
+  if (report_diags(asmcore.parse_errors(merged), files)) {
     return 1;
   }
   let diags: util.Diag[] = checker.check_module(merged).diags;
@@ -190,7 +188,8 @@ function check(merged: parser.Module, files: string[], target: string, target_gi
 
 // interpret evaluates the bundle and reports the program's own exit code, the
 // same mapping fern.fern uses: an i32 result is the code, a boolean is 1/0,
-// and anything else is 254, which is outside the range a Fern `main` can
+// the program's own abort (an index out of range) is 1 with its message, and
+// anything else is 254, which is outside the range a Fern `main` can
 // return and so cannot be confused with one. The evaluator's own error says
 // why it stopped, on stderr, where the page shows it: a silent 254 is an
 // empty output pane.
@@ -209,6 +208,10 @@ function interpret(merged: parser.Module): i32 {
       return 0;
     },
     interp.VErr(e) => {
+      if (e.abort) {
+        eprint(e.msg);
+        return 1;
+      }
       eprint("fern: interp: " + e.msg);
       return 254;
     },
@@ -327,15 +330,14 @@ function run(): i32 {
 // The pipeline is the CLI's, so the bytes are the ones `fern -target <t>`
 // writes for the same program.
 function emit(merged: parser.Module, files: string[], target: string, form: string): i32 {
-  // The same gates wasm_ir_run puts ahead of emit: each rejects a shape the
-  // emitter would otherwise miscompile rather than refuse.
-  if (report_diags(asmcore.parse_unknown_errors_module(merged), files)) {
+  // The same gates the CLI and wasm_ir_run put ahead of emit: each rejects a
+  // shape the emitter would otherwise miscompile rather than refuse.
+  if (report_diags(asmcore.parse_errors(merged), files)) {
     return 1;
   }
   let errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(merged));
   errs = util.append_diags(errs, asmcore.check_map_new_chain(merged));
   errs = util.append_diags(errs, asmcore.check_undefined_calls(merged));
-  errs = util.append_diags(errs, asmcore.check_decl_names(merged));
   if (errs.len() > 0) {
     eprint(util.format_diags_in(errs, files));
     return 1;

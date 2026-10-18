@@ -122,19 +122,104 @@ function main(): i32 {
 	}
 }
 
-// NUL bytes and bytes >= 0x80 have to survive substitution intact: the
-// emitted literal carries an explicit length, so the NUL is not a
-// terminator and the high bytes are not re-encoded.
-func TestAssetCarriesBinaryBytes(t *testing.T) {
+// firstArrayLit returns the first ArrayLit anywhere in the program.
+func firstArrayLit(t *testing.T, prog *ast.Program) *ast.ArrayLit {
+	t.Helper()
+	var arr *ast.ArrayLit
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if a, ok := n.(*ast.ArrayLit); ok && arr == nil {
+			arr = a
+		}
+		return arr == nil
+	})
+	if arr == nil {
+		t.Fatal("no ArrayLit in the folded program — the asset call was not substituted")
+	}
+	return arr
+}
+
+// u8Bytes reads a u8[] literal back as bytes, failing on anything else.
+func u8Bytes(t *testing.T, e ast.Expr) string {
+	t.Helper()
+	arr, ok := e.(*ast.ArrayLit)
+	if !ok {
+		t.Fatalf("%T is not an array literal", e)
+	}
+	if !ast.Equal(arr.ElemType, ast.NumberType{Width: 8, Signed: false}) {
+		t.Fatalf("array element type is %v, want u8", arr.ElemType)
+	}
+	out := make([]byte, len(arr.Elems))
+	for i, el := range arr.Elems {
+		n, ok := el.(*ast.NumberLit)
+		if !ok || n.Width != 8 || !n.IsUnsigned {
+			t.Fatalf("element %d is %#v, want a u8 literal", i, el)
+		}
+		out[i] = byte(n.Value)
+	}
+	return string(out)
+}
+
+// NUL bytes and bytes >= 0x80 survive the bytes form intact, as u8[].
+func TestAssetBytesCarriesBinaryBytes(t *testing.T) {
 	blob := string([]byte{0x00, 0x80, 0xff, 0x00, 'e', 'n', 'd'})
 	set := assetSet(t, map[string]string{"blob.bin": blob})
 	prog := foldAssets(t, `
 function main(): i32 {
-  let b: string = __fern_asset("blob.bin");
+  let b: u8[] = __fern_asset_bytes("blob.bin");
   return 0;
 }`, set)
-	if got := firstStringLit(t, prog); got != blob {
+	if got := u8Bytes(t, firstArrayLit(t, prog)); got != blob {
 		t.Fatalf("binary asset became % x, want % x", got, blob)
+	}
+}
+
+// The bytes form may initialise a const, and an empty file is a typed empty
+// array rather than one demanding an annotation.
+func TestAssetBytesInConst(t *testing.T) {
+	set := assetSet(t, map[string]string{"icon.png": "\x89PNG", "empty": ""})
+	prog := foldAssets(t, `
+const ICON: u8[] = __fern_asset_bytes("icon.png");
+function main(): i32 {
+  let i: u8[] = ICON;
+  let e: u8[] = __fern_asset_bytes("empty");
+  return 0;
+}`, set)
+	var arrs []*ast.ArrayLit
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if a, ok := n.(*ast.ArrayLit); ok {
+			arrs = append(arrs, a)
+		}
+		return true
+	})
+	if len(arrs) != 2 {
+		t.Fatalf("found %d array literals, want 2", len(arrs))
+	}
+	if got := u8Bytes(t, arrs[0]); got != "\x89PNG" {
+		t.Fatalf("const ICON became % x", got)
+	}
+	if got := u8Bytes(t, arrs[1]); got != "" {
+		t.Fatalf("an empty file became % x", got)
+	}
+}
+
+// A string is always valid UTF-8, so the text form refuses a file that is
+// not, naming it and pointing at the bytes form — in a body and in a const.
+func TestAssetTextRefusesInvalidUTF8(t *testing.T) {
+	set := assetSet(t, map[string]string{"img/favicon.png": "\x89PNG\r\n\x1a\n\xff", "ok.txt": "héllo"})
+	for _, src := range []string{
+		`function main(): i32 { let s: string = __fern_asset("img/favicon.png"); return 0; }`,
+		`const S: string = __fern_asset("img/favicon.png"); function main(): i32 { return 0; }`,
+	} {
+		got := foldAssetsErr(t, src, set)
+		for _, want := range []string{`"img/favicon.png"`, "is not valid UTF-8", "__fern_asset_bytes"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("error %q should contain %q", got, want)
+			}
+		}
+	}
+	prog := foldAssets(t, `function main(): i32 { let s: string = __fern_asset("ok.txt"); return 0; }`, set)
+	if got := firstStringLit(t, prog); got != "héllo" {
+		t.Fatalf("UTF-8 text became %q", got)
 	}
 }
 
@@ -181,6 +266,30 @@ func TestAssetErrors(t *testing.T) {
 			src:  `const P: string = __fern_asset("nope-not-here"); function main(): i32 { let s: string = P; return 0; }`,
 			set:  set,
 			want: "no embedded asset",
+		},
+		{
+			name: "bytes form wrong arity names the bytes form",
+			src:  `function main(): i32 { let b: u8[] = __fern_asset_bytes(); return 0; }`,
+			set:  set,
+			want: "__fern_asset_bytes takes exactly one argument, got 0",
+		},
+		{
+			name: "bytes form unknown asset",
+			src:  `function main(): i32 { let b: u8[] = __fern_asset_bytes("style.cs"); return 0; }`,
+			set:  set,
+			want: `did you mean "style.css"`,
+		},
+		{
+			name: "bytes form without -embed",
+			src:  `function main(): i32 { let b: u8[] = __fern_asset_bytes("a"); return 0; }`,
+			set:  nil,
+			want: `__fern_asset_bytes("a") but no assets were embedded`,
+		},
+		{
+			name: "bytes form under an operator in a const",
+			src:  `const B: u8[] = __fern_asset_bytes("style.css") + __fern_asset_bytes("style.css"); function main(): i32 { return 0; }`,
+			set:  set,
+			want: "__fern_asset_bytes() builds an array",
 		},
 	}
 	for _, tc := range tests {
@@ -278,15 +387,44 @@ function main(): i32 {
 	}
 }
 
-// Binary contents survive enumeration the same way they survive a single
-// __fern_asset lookup.
-func TestAssetsCarriesBinaryBytes(t *testing.T) {
+// The bytes enumeration carries binary contents as u8[], sorted like the
+// text one, and may initialise a const.
+func TestAssetsBytesCarriesBinaryBytes(t *testing.T) {
 	blob := string([]byte{0x00, 0x80, 0xff, 0x00, 'z'})
-	set := assetSet(t, map[string]string{"blob.bin": blob})
-	prog := foldAssets(t, `function main(): i32 { let xs = __fern_assets(); return 0; }`, set)
-	got := tupleElems(t, prog)
-	if len(got) != 1 || got[0][1] != blob {
-		t.Fatalf("enumerated % x, want % x", got, blob)
+	set := assetSet(t, map[string]string{"blob.bin": blob, "a.txt": "AAA"})
+	for _, src := range []string{
+		`function main(): i32 { let xs = __fern_assets_bytes(); return 0; }`,
+		`const XS: (string, u8[])[] = __fern_assets_bytes(); function main(): i32 { let xs = XS; return 0; }`,
+	} {
+		arr := firstArrayLit(t, foldAssets(t, src, set))
+		want := ast.TupleType{Elems: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}}
+		if !ast.Equal(arr.ElemType, want) {
+			t.Fatalf("element type %v, want %v", arr.ElemType, want)
+		}
+		if len(arr.Elems) != 2 {
+			t.Fatalf("enumerated %d assets, want 2", len(arr.Elems))
+		}
+		for i, w := range [][2]string{{"a.txt", "AAA"}, {"blob.bin", blob}} {
+			tup := arr.Elems[i].(*ast.TupleLit)
+			if name := tup.Elems[0].(*ast.StringLit).Value; name != w[0] {
+				t.Errorf("asset %d is %q, want %q", i, name, w[0])
+			}
+			if got := u8Bytes(t, tup.Elems[1]); got != w[1] {
+				t.Errorf("asset %d contents % x, want % x", i, got, w[1])
+			}
+		}
+	}
+}
+
+// The text enumeration refuses a bundle holding a file that is not UTF-8,
+// naming the file.
+func TestAssetsTextRefusesInvalidUTF8(t *testing.T) {
+	set := assetSet(t, map[string]string{"a.txt": "AAA", "font.woff2": "wOF2\xc0\x00"})
+	got := foldAssetsErr(t, `function main(): i32 { let xs = __fern_assets(); return 0; }`, set)
+	for _, want := range []string{`"font.woff2"`, "is not valid UTF-8", "__fern_assets_bytes"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("error %q should contain %q", got, want)
+		}
 	}
 }
 
@@ -336,6 +474,18 @@ func TestAssetsErrors(t *testing.T) {
 			src:  `const A: string = __fern_assets(); function main(): i32 { return 0; }`,
 			set:  set,
 			want: "declared type string does not match initialiser type (string, string)[]",
+		},
+		{
+			name: "bytes enumeration arguments are rejected",
+			src:  `function main(): i32 { let xs = __fern_assets_bytes(1); return 0; }`,
+			set:  set,
+			want: "__fern_assets_bytes takes no arguments, got 1",
+		},
+		{
+			name: "bytes enumeration without -embed",
+			src:  `function main(): i32 { let xs = __fern_assets_bytes(); return 0; }`,
+			set:  nil,
+			want: "__fern_assets_bytes() but no assets were embedded",
 		},
 	}
 	for _, tc := range tests {

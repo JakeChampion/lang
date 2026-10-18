@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -81,6 +82,19 @@ func TestLoadRejectsNonDirectory(t *testing.T) {
 	}
 	if _, err := Load(filepath.Join(root, "nope")); err == nil {
 		t.Fatal("expected an error for a missing embed root")
+	}
+}
+
+// An asset's name reaches the program as a string, so a file name that is
+// not UTF-8 is refused rather than embedded.
+func TestLoadRejectsNonUTF8Name(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "bad\xff.txt"), []byte("x"), 0o644); err != nil {
+		t.Skipf("this filesystem refuses a non-UTF-8 name: %v", err)
+	}
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "is not valid UTF-8") {
+		t.Fatalf("Load = %v, want a non-UTF-8 name refused", err)
 	}
 }
 

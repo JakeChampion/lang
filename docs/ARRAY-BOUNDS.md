@@ -45,8 +45,8 @@ both a negative index and `index >= len`.
 - **wasm** traps (`unreachable`), which `wasmtime` surfaces as exit
   134.
 - **interp** reports a diagnostic (`array index N out of range [0,
-  L)`) and exits non-zero — a friendlier message for `fern -interp`
-  debugging.
+  L)`, `string index N out of range [0, L)`) and exits 1 — `fern -interp`
+  and `fern-oracle -interp` alike, a friendlier message for debugging.
 
 All four agree on the observable contract: an out-of-bounds index
 aborts before producing a value.
@@ -59,8 +59,8 @@ its buffer `sl * n`, and `__fern_strcat` adds the two operand lengths —
 and everything downstream reads the count as unsigned, so the natives
 allocated against the zero-extended value and then walked off it.
 `__alloc_u8` and `__fern_strcat` reject a negative count on both native
-backends. The interpreter has always rejected it (`__alloc_u8: negative
-length`, non-zero exit) and wasm traps.
+backends. Both interpreters reject it (`__alloc_u8: negative
+length`, exit 1) and wasm traps.
 
 A size that wraps to a small NON-negative value is a different outcome
 and stays one: the allocation succeeds at the wrapped size and the copy
@@ -125,8 +125,8 @@ the source; the access-time check compares against the slice's
 past the source — was readable. Backends abort exactly as for an
 index: natives exit 134 (the IR routes construction through the
 `__slice_range(lo, hi, len)` helper), wasm traps, the interpreter
-reports `slice [lo:hi] out of range for length N` and exits
-non-zero. The self-host backends check inside their copying
+reports `slice [lo:hi] out of range for length N` and exits 1.
+The self-host backends check inside their copying
 helpers (`__fern_arr_slice` / `$__fern_substr`) and the inline
 `str_slice` view emit. The inline emit branches to
 `__fern_str_oob_abort`; the native `__fern_arr_slice` is a Fern

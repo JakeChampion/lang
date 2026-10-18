@@ -59,7 +59,7 @@ function tree(): string {
   // real bundle carries — an image, a font, a wasm module — and `read_file`
   // refuses the second of those outright, so a walk built on it embeds text
   // and rejects every directory holding anything else.
-  match (write_file(dir + "/blob.bin", blob_string())) {
+  match (write_file_bytes(dir + "/blob.bin", blob())) {
     Ok(u) => {},
     Err(e) => {
       return "";
@@ -68,17 +68,56 @@ function tree(): string {
   return dir;
 }
 
-// blob_string is "A\0B\xffC": five bytes, one of them NUL and one of them not
-// valid UTF-8 in any position. Built through the unchecked constructor because
-// that is the only way to spell bytes a `string` literal cannot hold.
-function blob_string(): string {
-  let bs: u8[] = [];
-  bs = bs.append(65);
-  bs = bs.append(0);
-  bs = bs.append(66);
-  bs = bs.append(255);
-  bs = bs.append(67);
-  return string_from_bytes_unchecked(bs);
+// blob is "A\0B\xffC": five bytes, one of them NUL and one of them not valid
+// UTF-8 in any position.
+function blob(): u8[] {
+  return [65u8, 0u8, 66u8, 255u8, 67u8];
+}
+
+// bytes_are reports whether `bs` holds exactly the bytes of `want`.
+function bytes_are(bs: u8[], want: u8[]): boolean {
+  if (bs.len() != want.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < bs.len()) {
+    if (bs[i] != want[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// bytes_of renders a `u8[]` literal as its elements' decimal spellings joined
+// by commas, or "" for any other node and "?" for an element that is not a
+// u8 number.
+function bytes_of(e: ast.Expr): string {
+  let out: string = "";
+  match (e) {
+    ast.ExprArray(arr) => {
+      if (arr.elem_ty != "u8") {
+        return "";
+      }
+      for el in arr.elements {
+        if (out.len() > 0) {
+          out = out + ",";
+        }
+        out = out + u8_text(el);
+      }
+    },
+    _ => {}
+  }
+  return out;
+}
+
+function u8_text(e: ast.Expr): string {
+  if let ast.ExprNumber(n) = e {
+    if (n.suffix == "u8") {
+      return n.text;
+    }
+  }
+  return "?";
 }
 
 // var_init_of digs the first StmtVar initialiser out of `main`.
@@ -155,28 +194,20 @@ function main(): i32 {
   if (a.names[3] != "z.txt") {
     return 18;
   }
-  if (a.contents[0] != "AAA") {
+  if (!bytes_are(a.contents[0], "AAA".bytes())) {
     return 19;
   }
-  if (a.contents[2] != "BB") {
+  if (!bytes_are(a.contents[2], "BB".bytes())) {
     return 20;
   }
-  if (a.contents[3] != "ZZZ") {
+  if (!bytes_are(a.contents[3], "ZZZ".bytes())) {
     return 21;
   }
 
-  // Byte-exact, and asserted per byte rather than by comparing to a literal:
-  // the point is that nothing truncated at the NUL and nothing rewrote the
-  // 0xff, which a length check alone would not catch.
-  let blob: string = a.contents[1];
-  if (blob.len() != 5) {
+  // Byte-exact: nothing truncated at the NUL and nothing rewrote the 0xff,
+  // which a length check alone would not catch.
+  if (!bytes_are(a.contents[1], blob())) {
     return 22;
-  }
-  if (blob[0] != 65 || blob[1] != 0 || blob[2] != 66) {
-    return 23;
-  }
-  if (blob[3] != 255 || blob[4] != 67) {
-    return 24;
   }
 
   if (embed.lookup(a, "sub/b.txt") != 2) {
@@ -332,9 +363,48 @@ function main(): i32 {
     return 61;
   }
 
-  // ---- 5. __fern_assets ----------------------------------------------
+  // The text form refuses a file that is not UTF-8, naming it, because the
+  // string it would yield could not be one.
+  let text_of_blob: string = "function main(): i32 { let s: string = __fern_asset(\"blob.bin\"); return 0; }\n";
+  let (e14, err14) = folded_init(text_of_blob, a);
+  if (err14.len() != 1) {
+    return 64;
+  }
+  if (!util.contains(err14[0], "\"blob.bin\"") || !util.contains(err14[0], "is not valid UTF-8")) {
+    return 65;
+  }
+
+  // ---- 5. __fern_asset_bytes -----------------------------------------
+  // Byte-exact, as a u8[] literal: the NUL and the 0xff both survive.
+  let bytes_one: string = "function main(): i32 { let b: u8[] = __fern_asset_bytes(\"blob.bin\"); return 0; }\n";
+  let (e15, err15) = folded_init(bytes_one, a);
+  if (err15.len() != 0) {
+    return 66;
+  }
+  if (bytes_of(e15) != "65,0,66,255,67") {
+    return 67;
+  }
+  // Text is bytes too: the bytes form takes any file.
+  let bytes_text: string = "function main(): i32 { let b: u8[] = __fern_asset_bytes(\"sub/b.txt\"); return 0; }\n";
+  let (e16, err16) = folded_init(bytes_text, a);
+  if (err16.len() != 0 || bytes_of(e16) != "66,66") {
+    return 68;
+  }
+  let bytes_arity: string = "function main(): i32 { let b: u8[] = __fern_asset_bytes(); return 0; }\n";
+  let (e17, err17) = folded_init(bytes_arity, a);
+  if (err17.len() != 1 || !util.contains(err17[0], "__fern_asset_bytes takes exactly one argument, got 0")) {
+    return 69;
+  }
+
+  // ---- 6. __fern_assets / __fern_assets_bytes ------------------------
+  // The text enumeration refuses the whole bundle over its one binary file.
   let all: string = "function main(): i32 { let xs = __fern_assets(); return xs.len(); }\n";
-  let (e9, err9) = folded_init(all, a);
+  let (e18, err18) = folded_init(all, a);
+  if (err18.len() != 1 || !util.contains(err18[0], "\"blob.bin\"")) {
+    return 86;
+  }
+  let all_bytes: string = "function main(): i32 { let xs = __fern_assets_bytes(); return xs.len(); }\n";
+  let (e9, err9) = folded_init(all_bytes, a);
   if (err9.len() != 0) {
     return 70;
   }
@@ -342,7 +412,7 @@ function main(): i32 {
     ast.ExprArray(arr) => {
       // The element type is stamped whether or not the bundle is empty:
       // an unstamped empty literal has no width for the checker.
-      if (arr.elem_ty != "(string, string)") {
+      if (arr.elem_ty != "(string, u8[])") {
         return 71;
       }
       if (arr.elements.len() != 4) {
@@ -356,7 +426,7 @@ function main(): i32 {
           if (str_of(t.elements[0]) != "sub/b.txt") {
             return 74;
           }
-          if (str_of(t.elements[1]) != "BB") {
+          if (bytes_of(t.elements[1]) != "66,66") {
             return 75;
           }
         },
@@ -367,6 +437,23 @@ function main(): i32 {
     },
     _ => {
       return 77;
+    }
+  }
+
+  // A bundle of text enumerates as text.
+  let text_lr: embed.LoadResult = embed.load(dir + "/sub");
+  let (e19, err19) = folded_init(all, text_lr.assets);
+  if (text_lr.err.len() != 0 || err19.len() != 0) {
+    return 87;
+  }
+  match (e19) {
+    ast.ExprArray(arr3) => {
+      if (arr3.elem_ty != "(string, string)" || arr3.elements.len() != 1) {
+        return 88;
+      }
+    },
+    _ => {
+      return 89;
     }
   }
 

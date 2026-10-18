@@ -1,0 +1,69 @@
+import "std/i32";
+
+function text(b: u8[]): string {
+  return string_from_bytes_unchecked(b);
+}
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let ls: i32 = tcp_listen_with(lo, 0, 16, false);
+  print(f"listen ok: {ls >= 0}");
+  let port: i32 = tcp_local_port(ls);
+  print(f"port ok: {port > 0}");
+  print(f"pollable ok: {tcp_pollable(ls) >= 0}");
+  let c: i32 = tcp_connect_with(lo, port, false);
+  print(f"connect ok: {c >= 0}");
+  let s: i32 = tcp_accept(ls);
+  print(f"accept ok: {s >= 0}");
+  print(f"nodelay: {tcp_socket_ctl(c, 1, 1)}");
+  print(f"send: {tcp_send(c, "hello ")}");
+  print(f"send_bytes: {tcp_send_bytes(c, [119u8, 111u8, 114u8, 108u8, 100u8])}");
+  let h: usize = buf_new(8);
+  buf_push(h, "!!buf");
+  print(f"send_buf: {tcp_send_buf(c, h, 2)}");
+  buf_free(h);
+  print(f"poll ready: {poll([s], 1000)}");
+  let got: string = "";
+  while (got.len() < 14) {
+    let b: u8[] = tcp_recv(s, 64);
+    if (b.len() == 0) {
+      break;
+    }
+    got = got + text(b);
+  }
+  print("recv: " + got);
+  print(f"close c: {tcp_close(c)}");
+  print(f"close s: {tcp_close(s)}");
+  print(f"close ls: {tcp_close(ls)}");
+  let packed: i32 = 127 | (1 << 24);
+  let ls2: i32 = tcp_listen(0);
+  print(f"listen0 ok: {ls2 >= 0}");
+  let p2: i32 = tcp_local_port(ls2);
+  let c2: i32 = tcp_connect(packed, p2);
+  print(f"connect packed ok: {c2 >= 0}");
+  let s2: i32 = tcp_accept(ls2);
+  print(f"sendfile bad fd: {tcp_sendfile(c2, 0 - 1, 4) < 0}");
+  print(f"close: {tcp_close(c2)} {tcp_close(s2)} {tcp_close(ls2)}");
+  let u: i32 = udp_bind(lo, 0);
+  print(f"udp_bind ok: {u >= 0}");
+  let up: i32 = tcp_local_port(u);
+  print(f"udp_send: {udp_send("127.0.0.1", up, "dgram")}");
+  print(f"udp_send bad host: {udp_send("localhost", up, "x")}");
+  print(f"udp_send_bytes: {udp_send_bytes("127.0.0.1", up, [1u8, 2u8])}");
+  print(f"udp_sendto: {udp_sendto(u, lo, up, "to-self")}");
+  print(f"udp_sendto_bytes: {udp_sendto_bytes(u, lo, up, [9u8])}");
+  let u2: i32 = udp_bind_with(lo, 0, true);
+  print(f"udp_bind_with ok: {u2 >= 0}");
+  print(f"udp_connect: {udp_connect(u2, lo, up)}");
+  print(f"udp close: {tcp_close(u)} {tcp_close(u2)}");
+  print(f"tcp_ktls: {tcp_ktls(0, 0, 0, []) < 0}");
+  let r: i32 = reactor_new();
+  print(f"reactor ok: {r >= 0}");
+  print(f"reactor_ctl: {reactor_ctl(r, 3, 0, 0)}");
+  print(f"ring_new<0: {ring_new(8) < 0i64}");
+  print(f"ring_ctl<0: {ring_ctl(0i64, 1, 0, 0) < 0}");
+  print(f"ring_wait<0: {ring_wait(0i64, [0, 0], 0) < 0}");
+  print(f"ring_recv<0: {ring_recv(0i64, 0, [0u8]) < 0}");
+  print(f"ring_send_zc<0: {ring_send_zc(0i64, 0, [0u8], 0) < 0}");
+  return 0;
+}

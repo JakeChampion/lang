@@ -99,22 +99,34 @@ func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string, pas
 			src := fernsmith.GenMain(seed)
 			want := runInterpByteOrSkip(t, src)
 
-			diverged := false
+			diverged, class := false, ""
 			failf := func(format string, args ...any) {
 				if isKnown {
 					diverged = true
 					t.Logf("known divergence (%s): "+format, append([]any{reason}, args...)...)
 					return
 				}
+				if class == "" {
+					class = failureClass(format)
+				}
 				t.Errorf(format, args...)
 			}
 
 			env := passEnv(passes, seed)
 			logPassConfig(t, env)
-			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, flags, env)
+			r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, flags, env, failf)
+			bisect := func(class string) {
+				report, pass := bisectSelfHostSeed(t, fernBin, stdlibRoot, "arm64-linux", src, flags, env, func(env []string) bool {
+					r, gap := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, flags, env, func(string, ...any) {})
+					return seedRunAgrees(r, gap, want, src)
+				})
+				t.Log(report)
+				recordFinding(t, selfHostFinding{Test: legName(t), Seed: seed, Class: class, Pass: pass})
+			}
 			if gap != "" {
 				if semRefused(gap) {
 					t.Errorf("the typed lowering refused this seed:\n%s", gap)
+					bisect(refusalClass(gap))
 					return
 				}
 				// Same contract as the x86-64 leg: a compile bail is a
@@ -134,6 +146,9 @@ func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string, pas
 				checkSelfHostSeedExit(*r, want, src, failf)
 				if strings.Contains(r.stderr, "fern-sanitizer:") {
 					failf("the sanitizer reported on the self-host-compiled binary:\n%s\nsrc:\n%s", r.stderr, src)
+				}
+				if class != "" {
+					bisect(class)
 				}
 			}
 			if isKnown && !diverged {
@@ -157,13 +172,14 @@ func selfHostArm64Sweep(t *testing.T, gcc, knownFile string, flags []string, pas
 }
 
 // runSelfHostArm64Seed compiles src for arm64-linux with the self-host CLI and
-// runs the binary it produces. Returns (run, "") when it ran and (nil, gap)
-// when the compiler bailed.
+// runs the binary it produces. Returns (run, "") when it ran, (nil, gap)
+// when the compiler bailed, and (nil, "") when the compile hung, which is
+// already reported through failf.
 //
 // No link step and so no link failure to report: the self-host assembles and
 // links this target itself, which folds what would be the x86-64 leg's link
 // error into the compile failure, naming the unsupported mnemonic.
-func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, flags, env []string) (*selfHostRun, string) {
+func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, flags, env []string, failf failFunc) (*selfHostRun, string) {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -173,7 +189,11 @@ func runSelfHostArm64Seed(t *testing.T, fernBin, stdlibRoot, qemu, src string, f
 	binPath := filepath.Join(dir, "prog")
 	args := append([]string{"-target", "arm64-linux"}, flags...)
 	args = append(args, "-o", binPath, srcPath, stdlibRoot)
-	out, err := selfHostCompileCmd(fernBin, env, args...).CombinedOutput()
+	out, hung, err := compileSelfHostSeed(fernBin, env, args...)
+	if hung {
+		reportCompileHang(failf, src)
+		return nil, ""
+	}
 	if err != nil {
 		return nil, fmt.Sprintf("%v\n%s%s", err, out,
 			strictIRBailSite(fernBin, "arm64-linux", flags, env, srcPath, stdlibRoot, out))

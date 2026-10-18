@@ -287,9 +287,9 @@ func loadMultiFileEntry(srcPath, abs, litSrc string, doc *literate.Document) (en
 // multi-file document's modules when none is marked `entry`.
 var mainFuncRe = regexp.MustCompile(`(?m)^\s*(pub\s+)?(function|fn)\s+main\b`)
 
-// embeddedAssets is set from the -embed flag: the asset bundle that
-// __fern_asset("name") resolves against during const folding. nil when
-// -embed was not passed, which makes any use of the builtin an error.
+// embeddedAssets is set from the -embed flag: the asset bundle the asset
+// builtins resolve against during const folding. nil when -embed was not
+// passed, which makes any use of one an error.
 // It is compile-time state shared by the check / interp / build paths
 // rather than a parameter because `run` already carries fifteen.
 var embeddedAssets *embed.Set
@@ -425,7 +425,7 @@ func main() {
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
 	backend := flag.String("backend", "", backendFlagUsage)
 	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component; `command-module` emits a WASI preview-1 COMMAND module — the same core bytes plus a `_start` that runs main and exits with its value, which is what a preview-1 host (`wasmtime run`, or a browser shim like web/wasi-shim.js) runs directly. Both are the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
-	embedDir := flag.String("embed", "", "embed a directory of assets into the binary at compile time. `__fern_asset(\"NAME\")` in the source is replaced with a string literal holding that file's bytes, where NAME is the file's slash-separated path relative to DIR. Assets are ordinary string literals: immortal (no refcount traffic), zero-copy to hand to user code, and NUL-safe, so binary assets (images, fonts, wasm) work unchanged.")
+	embedDir := flag.String("embed", "", "embed a directory of assets into the binary at compile time. `__fern_asset(\"NAME\")` in the source is replaced with a string literal holding that file's text, which must be valid UTF-8, and `__fern_asset_bytes(\"NAME\")` with a u8[] literal holding its bytes, where NAME is the file's slash-separated path relative to DIR; `__fern_assets()` and `__fern_assets_bytes()` enumerate the bundle the same two ways. Assets are immortal constants: no refcount traffic, zero-copy to hand to user code.")
 	emitDebug := flag.Bool("g", false, "emit a symbol table and DWARF into the native binary so debuggers, nm, backtraces, and profilers can map code addresses to function names and source lines")
 	doFmt := flag.Bool("fmt", false, "format the source files and write them to stdout in order (use -w to write back in place, -d to print a diff, -o OUT with a single file)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite each input file with its formatted output")

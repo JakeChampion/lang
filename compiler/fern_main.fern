@@ -16,6 +16,7 @@ import "./fern";
 import "./pkgfetch";
 import "./util";
 import "std/crypto";
+import "std/error";
 
 function main(): i32 {
   let root: string = stdlib_root();
@@ -63,14 +64,14 @@ function stdlib_root(): string {
     match (create_dir_all(util.dir_of(path))) {
       Ok(_) => {},
       Err(e) => {
-        eprint("fern: cannot create " + util.dir_of(path) + ": " + util.io_error_reason(e));
+        eprint("fern: cannot create " + util.dir_of(path) + ": " + e.message());
         return "";
       }
     }
     match (write_file(path, a.1)) {
       Ok(_) => {},
       Err(e) => {
-        eprint("fern: cannot write " + path + ": " + util.io_error_reason(e));
+        eprint("fern: cannot write " + path + ": " + e.message());
         return "";
       }
     }
@@ -86,7 +87,7 @@ function stdlib_root(): string {
         },
         Err(_) => {}
       }
-      eprint("fern: cannot install the stdlib at " + root + ": " + util.io_error_reason(e));
+      eprint("fern: cannot install the stdlib at " + root + ": " + e.message());
       return "";
     }
   }

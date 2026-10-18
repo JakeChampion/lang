@@ -192,6 +192,26 @@ function main(): i32 {
     return s + m.len();
 }
 `, 106},
+	// A char is a scalar held in the integer column like a u32 (#12809).
+	{"char-annotated", `import "core/map";
+function main(): i32 {
+    let m: Map[char, i32] = map_new(2);
+    m = m.insert('a', 5);
+    m = m.insert('\u{1F600}', 9);
+    m = m.insert('a', 6);
+    let s: i32 = m.get_or('a', 0) + m.get_or('\u{1F600}', 0) + m.get_or('z', 0);
+    if (!m.has('z')) { s = s + 100; }
+    return s + m.len();
+}
+`, 117},
+	{"char-literal", `import "core/map";
+function main(): i32 {
+    let m = Map { 'x': 5, 'y': 9 };
+    let s: i32 = m.get_or('x', 0) + m.get_or('y', 0) + m.get_or('z', 0);
+    if (!m.has('z')) { s = s + 100; }
+    return s + m.len();
+}
+`, 116},
 	// The annotated spellings, which took the integer column already — here
 	// so a fix to the literal path cannot regress them unnoticed.
 	{"boolean-annotated", `import "core/map";

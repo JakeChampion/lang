@@ -23,6 +23,7 @@ import "./parser";
 import "./util";
 import "./astwalk";
 import "./aesref";
+import "./platforms";
 import "std/utf8";
 
 // =================== VALUES ====================
@@ -43,7 +44,10 @@ pub struct VInt { v: i32, is_char: boolean }
 // bits (native's `Number` does too, and takes signedness from the checker's
 // static type); only div / rem / compares / `>>` and the receiver type name
 // read it — the 64-bit twin of the split VUint makes at 32 bits.
-pub struct VInt64 { hi: i32, lo: i32, unsigned: boolean }
+//
+// `ptr` tags a usize (always unsigned too), which wraps at ptr_bits() rather
+// than at 64 (v_usize).
+pub struct VInt64 { hi: i32, lo: i32, unsigned: boolean, ptr: boolean }
 
 // VUint carries a u32 as its 32-bit pattern in an i32 field. Unsigned
 // semantics (div / rem / compares / logical `>>`, docs/INTEGER-SEMANTICS.md)
@@ -101,11 +105,16 @@ pub struct VMap { keys: Value[], values: Value[] }
 // diagnostics and (later) for struct-aware equality.
 pub struct VStruct { type_name: string, field_names: string[], field_values: Value[] }
 
-pub struct VErr { msg: string }
+pub struct VErr { msg: string, abort: boolean }
 
 // VErr is the bottom of the value lattice — it propagates
 // silently through every operator that touches it so the first
 // error wins. Mirrors how the checker's TypeUnknown works.
+//
+// `abort` marks the program's own failure — an out-of-range index, a slice
+// past its source, a negative allocation size — which stops it with the
+// message the Go interpreter prints and exit status 1 (docs/ARRAY-BOUNDS.md).
+// Without it the stop is the interpreter's: something it cannot evaluate.
 
 // VCellI / VCellF are the by-reference binding for a MUTABLE SCALAR CAPTURE
 // (SH-057 / #2850). The language deliberately splits capture semantics: scalars
@@ -147,7 +156,19 @@ pub struct VTry { box: Value }
 // reads it, to pick the associated FuncDecl.
 pub struct VType { name: string }
 
-pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VType;
+// VHandle is an open host handle: the Reader, Writer or Dir that stdin(),
+// open_reader, pipe(), open_dir and their kin answered. The host's handles are
+// opaque records, so the value holds the host's own and each method on it is
+// the host's method. Exactly one of the three is Some.
+pub struct VHandle { r: Option[Reader], w: Option[Writer], d: Option[Dir] }
+
+// VCellA is a variable's array while a builtin may write into it (see "arrays
+// a builtin writes into"): the elements in a host cell every frame the
+// variable was passed through shares. Like the capture cells it lives only in
+// an Env slot, and lookup reads through it.
+pub struct VCellA { c: Cell[i64[]], elem: string }
+
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VType | VHandle | VCellA;
 
 function v_int(n: i32): Value {
   return VInt { v: n, is_char: false };
@@ -181,7 +202,32 @@ function v_type(n: string): Value {
 // sign-extended into the high word); `hi` is the arithmetic-shifted top 32.
 // v_int64 / v_uint64 are the i64 / u64 spellings — same bits, different tag.
 function v_wide(n: i64, unsigned: boolean): Value {
-  return VInt64 { hi: (n >> 32) as i32, lo: (n & 4294967295) as i32, unsigned: unsigned };
+  return VInt64 { hi: (n >> 32) as i32, lo: (n & 4294967295) as i32, unsigned: unsigned, ptr: false };
+}
+
+// ptr_bits is the pointer width of the target this interpreter runs on: the
+// playground's wasm32 build models a 32-bit usize, every other build 64.
+function ptr_bits(): i64 {
+  if (target_arch() == "wasm32") {
+    return 32;
+  }
+  return 64;
+}
+
+// v_usize wraps `n` to the pointer width and tags it a usize.
+function v_usize(n: i64): Value {
+  let w: i64 = n;
+  if (ptr_bits() == 32) {
+    w = uint_zext(n as i32);
+  }
+  return VInt64 { hi: (w >> 32) as i32, lo: w as i32, unsigned: true, ptr: true };
+}
+
+function is_vusize(v: Value): boolean {
+  if let VInt64(i) = v {
+    return i.ptr;
+  }
+  return false;
 }
 
 function v_int64(n: i64): Value {
@@ -257,12 +303,20 @@ function zero_value_of(type_name: string): Value {
   if (type_name == "i64" || type_name == "u64") {
     return v_wide(0, type_name == "u64");
   }
+  if (type_name == "usize") {
+    return v_usize(0);
+  }
   return v_int(0);
 }
 
 function coerce_int_width(val: Value, type_name: string): Value {
   if (type_name == "char") {
     return char_value(val);
+  }
+  // A usize binding takes a value the checker already proved fits (a literal,
+  // or a lossless u8 / u32 widening), so this only retags it.
+  if (type_name == "usize" && is_int_like(val)) {
+    return v_usize(vint_as_i64(val));
   }
   if (type_name == "i64" || type_name == "u64") {
     // A declared u64 also (re)tags the pattern unsigned — the value plane
@@ -598,7 +652,23 @@ function v_struct(type_name: string, names: string[], values: Value[]): Value {
 }
 
 function v_err(msg: string): Value {
-  return VErr { msg: msg };
+  return VErr { msg: msg, abort: false };
+}
+
+function v_abort(msg: string): Value {
+  return VErr { msg: msg, abort: true };
+}
+
+// index_abort is the out-of-range stop for an index into a `what` ("array"
+// or "string") of length n.
+function index_abort(what: string, i: i32, n: i32): Value {
+  return v_abort(what + " index " + util.i32_to_string(i) + " out of range [0, " + util.i32_to_string(n) + ")");
+}
+
+// slice_abort is the stop for a slice [lo:hi] that does not fit a source of
+// length n.
+function slice_abort(lo: i32, hi: i32, n: i32): Value {
+  return v_abort("slice [" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "] out of range for length " + util.i32_to_string(n));
 }
 
 // v_void is the result of an expression that produces no value — a call to a
@@ -620,7 +690,7 @@ function v_void(): Value {
 // VAbsent variant would put a dead arm in every exhaustive match over Value,
 // which is a worse trade than one named constructor.
 function v_absent(): Value {
-  return VErr { msg: "__absent__" };
+  return VErr { msg: "__absent__", abort: false };
 }
 
 // is_err reports an ABRUPT value — one that must propagate out of the
@@ -826,7 +896,7 @@ function interp_char_boundary(s: string, i: i32): boolean {
 // untyped, so a static type — which `dyn Trait` dispatch needs and no runtime
 // value carries — can only enter through the annotation a binding was made
 // under; this is the slot the checker's Scope holds a Type in.
-pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[] }
+pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable }
 
 // new_env seeds a declaration-free scope: the bare-statement driver
 // (eval_program) has no module around it, so the only declarations in reach are
@@ -838,15 +908,14 @@ function new_env(): Env {
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  let no_argv: string[] = [];
-  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), argv: no_argv };
+  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), outs: builtin_outs() };
 }
 
-function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[], argv: string[]): Env {
+function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[], outs: OutTable): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
-  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, argv: argv };
+  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, outs: outs };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
@@ -1009,6 +1078,13 @@ function deref_cell(v: Value): Value {
     },
     VCellF(cf) => {
       return VFloat { v: cf.c.get() };
+    },
+    VCellA(ca) => {
+      let els: Value[] = [];
+      for x in ca.c.get() {
+        els = els.append(v_int(x as i32));
+      }
+      return v_arr_of(els, ca.elem);
     },
     _ => {
       return v;
@@ -1288,6 +1364,224 @@ function cellify_env(e: Env, names: string[]): Env {
   return out;
 }
 
+// ---- arrays a builtin writes into ------------------------------------------
+//
+// tcp_recv_into, udp_recvfrom and reactor_wait fill an array the caller owns,
+// and every holder of that array sees what they wrote: the program's variable,
+// however many functions passed it down. The interpreter's arrays are values,
+// so for the length of one statement a variable it passes to an OUT position
+// is held in a VCellA, which the builtin writes and every frame the variable
+// passed through shares. An out position is one of those builtins' array
+// arguments, or a parameter a function passes to an out position itself.
+//
+// Only the builtin writes through the cell. An assignment to a celled variable
+// replaces the slot as it would any other, so a callee rebinding its parameter
+// is not seen by its caller, as a copy-on-write array's caller would not. A
+// second variable bound to the same array (`let b = a`) does not see the
+// write either: the cell follows the variable passed, not the array (#12841).
+
+// OutTable is a module's out positions as "callee#k" keys, and the callees
+// that have any.
+pub struct OutTable { names: string[], keys: string[] }
+
+function builtin_outs(): OutTable {
+  return OutTable { names: ["tcp_recv_into", "udp_recvfrom", "reactor_wait"], keys: ["tcp_recv_into#1", "udp_recvfrom#1", "udp_recvfrom#2", "reactor_wait#1"] };
+}
+
+function out_key(callee: string, k: i32): string {
+  return callee + "#" + util.i32_to_string(k);
+}
+
+// callee_names is every name a call's callee may be declared under: a plain
+// function, a qualified `ns.f`, or a receiver method named by its field.
+function callee_names(callee: ast.Expr): string[] {
+  match (callee) {
+    ast.ExprIdent(id) => {
+      return [id.name];
+    },
+    ast.ExprFieldAccess(fa) => {
+      if let ast.ExprIdent(ns) = fa.obj {
+        return [ns.name + "." + fa.field, fa.field];
+      }
+      return [fa.field];
+    },
+    _ => {
+      return [];
+    }
+  }
+}
+
+// out_idents_of adds each identifier `e`, a call, passes to an out position.
+function out_idents_of(e: ast.Expr, own acc: string[], outs: OutTable): string[] {
+  let out: string[] = acc;
+  match (e) {
+    ast.ExprCall(c) => {
+      for cn in callee_names(c.callee) {
+        if (util.has_str(outs.names, cn)) {
+          out = out_args_of(c, cn, out, outs);
+        }
+      }
+    },
+    _ => {}
+  }
+  return out;
+}
+
+function out_args_of(c: ast.ExprCall, callee: string, own acc: string[], outs: OutTable): string[] {
+  let out: string[] = acc;
+  let k: i32 = 0;
+  while (k < c.args.len()) {
+    if let ast.ExprIdent(id) = c.args[k] {
+      if (util.has_str(outs.keys, out_key(callee, k))) {
+        out = out.append(id.name);
+      }
+    }
+    k = k + 1;
+  }
+  return out;
+}
+
+// out_table is a module's out positions: the builtins', and every parameter a
+// function passes to one, to a fixed point. Only an array parameter can be
+// one.
+function out_table(funcs: parser.FuncDecl[]): OutTable {
+  let t: OutTable = builtin_outs();
+  let grown: boolean = true;
+  while (grown) {
+    let next: OutTable = t;
+    for fd in funcs {
+      next = mark_out_params(fd, next);
+    }
+    grown = next.keys.len() > t.keys.len();
+    t = next;
+  }
+  return t;
+}
+
+function mark_out_params(fd: parser.FuncDecl, t: OutTable): OutTable {
+  let passed: string[] = [];
+  let scanned: boolean = false;
+  let out: OutTable = t;
+  let k: i32 = 0;
+  while (k < fd.params.len()) {
+    let key: string = out_key(fd.name, k);
+    if (name_ends_with(fd.params[k].type_name, "[]") && !util.has_str(out.keys, key)) {
+      if (!scanned) {
+        passed = body_out_idents(fd.body, out);
+        scanned = true;
+      }
+      if (util.has_str(passed, fd.params[k].name)) {
+        out = OutTable { names: out.names.append(fd.name), keys: out.keys.append(key) };
+      }
+    }
+    k = k + 1;
+  }
+  return out;
+}
+
+function body_out_idents(body: ast.Stmt[], outs: OutTable): string[] {
+  function visit(e: ast.Expr, own a: string[]): string[] {
+    return out_idents_of(e, a, outs);
+  }
+  let acc: string[] = [];
+  for st in body {
+    acc = astwalk.fold_stmt_pruned(st, acc, visit, not_lambda_expr);
+  }
+  return acc;
+}
+
+// stmt_out_idents is the variables `st` itself passes to an out position; its
+// child blocks are their own statements.
+function stmt_out_idents(st: ast.Stmt, outs: OutTable): string[] {
+  function visit(e: ast.Expr, own a: string[]): string[] {
+    return out_idents_of(e, a, outs);
+  }
+  return astwalk.fold_stmt_own_pruned(st, no_names(), visit, not_lambda_expr);
+}
+
+// eval_out_stmt evaluates `st`, holding each variable it passes to an out
+// position in a cell for the length of the statement. A variable already
+// celled is a parameter its caller celled, and stays shared.
+function eval_out_stmt(st: ast.Stmt, env: Env): StepResult {
+  let names: string[] = stmt_out_idents(st, env.outs);
+  if (names.len() == 0) {
+    return eval_stmt(st, env);
+  }
+  let celled: Env = env;
+  let made: string[] = [];
+  for n in names {
+    let idx: i32 = celled.raw_slot(n);
+    if (idx >= 0) {
+      if let VArr(a) = celled.values[idx] {
+        let xs: i64[] = [];
+        for e in a.elements {
+          xs = xs.append(vint_as_i64(e));
+        }
+        celled = celled.update(n, VCellA { c: cell_new(xs), elem: a.elem });
+        made = made.append(n);
+      }
+    }
+  }
+  let r: StepResult = eval_stmt(st, celled);
+  return StepResult { env: uncell_outs(r.env, made), ret: r.ret, sig: r.sig };
+}
+
+function uncell_outs(env: Env, names: string[]): Env {
+  let out: Env = env;
+  for n in names {
+    let idx: i32 = out.raw_slot(n);
+    if (idx >= 0) {
+      if let VCellA(_) = out.values[idx] {
+        out = out.update(n, deref_cell(out.values[idx]));
+      }
+    }
+  }
+  return out;
+}
+
+// eval_call_arg evaluates argument k of a call to `callee`: at an out
+// position, a celled variable is passed as its cell, so the callee's
+// parameter shares it.
+function eval_call_arg(arg: ast.Expr, callee: string, k: i32, env: Env): Value {
+  if let ast.ExprIdent(id) = arg {
+    if (util.has_str(env.outs.names, callee) && util.has_str(env.outs.keys, out_key(callee, k))) {
+      let idx: i32 = env.raw_slot(id.name);
+      if (idx >= 0) {
+        if let VCellA(_) = env.values[idx] {
+          return env.values[idx];
+        }
+      }
+    }
+  }
+  return eval_expr(arg, env);
+}
+
+// store_out writes a builtin's filled array back through argument k, when that
+// argument is a celled variable; any other argument had no holder to see it.
+function store_out(args: Value[], k: i32, xs: i64[]): void {
+  if (k < args.len()) {
+    if let VCellA(ca) = args[k] {
+      ca.c.set(xs);
+    }
+  }
+}
+
+function bytes_as_i64s(b: u8[]): i64[] {
+  let out: i64[] = [];
+  for x in b {
+    out = out.append(x as i64);
+  }
+  return out;
+}
+
+function i32s_as_i64s(b: i32[]): i64[] {
+  let out: i64[] = [];
+  for x in b {
+    out = out.append(x as i64);
+  }
+  return out;
+}
+
 function is_cell(v: Value): boolean {
   match (v) {
     VCellI(_) => {
@@ -1349,6 +1643,9 @@ function cell_value(v: Value): Value {
     },
     VInt64(n) => {
       c.cl.set(vint_as_i64(v));
+      if (n.ptr) {
+        return VCell { ...c, kind: "usize" };
+      }
       if (n.unsigned) {
         return VCell { ...c, kind: "u64" };
       }
@@ -1421,7 +1718,9 @@ function cell_scalar_text(h: usize, v: Value): boolean {
     },
     VInt64(n) => {
       let tag: i32 = 108;
-      if (n.unsigned) {
+      if (n.ptr) {
+        tag = 122;
+      } else if (n.unsigned) {
         tag = 117;
       }
       cell_bits_text(h, tag, vint_as_i64(v));
@@ -1513,8 +1812,11 @@ function cell_scalar_value(tag: i32, bits: i64): Value {
   if (tag == 110) {
     return VUint { v: bits as i32 };
   }
+  if (tag == 122) {
+    return v_usize(bits);
+  }
   if (tag == 108 || tag == 117) {
-    return VInt64 { hi: (bits >> 32i64) as i32, lo: bits as i32, unsigned: tag == 117 };
+    return VInt64 { hi: (bits >> 32i64) as i32, lo: bits as i32, unsigned: tag == 117, ptr: false };
   }
   if (tag == 98) {
     return v_bool(bits != 0i64);
@@ -1615,7 +1917,7 @@ function cell_set_value(c: VCell, v: Value): Value {
       _ => {}
     }
   }
-  if ((c.kind == "i64" || c.kind == "u64") && is_int_like(v)) {
+  if ((c.kind == "i64" || c.kind == "u64" || c.kind == "usize") && is_int_like(v)) {
     c.cl.set(vint_as_i64(v));
     return v_void();
   }
@@ -1662,6 +1964,9 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     if (c.kind == "u64") {
       return v_uint64(c.cl.get());
     }
+    if (c.kind == "usize") {
+      return v_usize(c.cl.get());
+    }
     if (c.kind == "f64") {
       return VFloat { v: c.cf.get() };
     }
@@ -1682,70 +1987,6 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
   return v_err("undefined method `" + name + "` on `Cell`");
 }
 
-// Read the descriptor recorded in the interpreter's opaque stdio handle.
-function stdio_fd(rs: VStruct): i32 {
-  let fd: i32 = 0 - 1;
-  let fi: i32 = 0;
-  while (fi < rs.field_names.len()) {
-    if (rs.field_names[fi] == "fd") {
-      fd = vint_bits(rs.field_values[fi]);
-    }
-    fi = fi + 1;
-  }
-  return fd;
-}
-
-// Read stdin through the host. Byte chunks stay arrays throughout the bridge.
-function reader_method(rs: VStruct, name: string, args: Value[]): Value {
-  if (stdio_fd(rs) != 0) {
-    return v_err("Reader." + name + ": only stdin is readable here");
-  }
-  let r: Reader = stdin();
-  if (name == "close") {
-    if (args.len() != 0) {
-      return v_err("Reader.close takes no arguments");
-    }
-    return option_io_error_value(r.close());
-  }
-  if (name == "read_line") {
-    if (args.len() != 0) {
-      return v_err("Reader.read_line takes no arguments");
-    }
-    return option_string_value(read_line_from_host());
-  }
-  if (args.len() != 1 || !is_i32_arg(args[0])) {
-    return v_err("Reader." + name + " takes one integer argument");
-  }
-  if (name == "read_chunk_bytes") {
-    match (r.read_chunk_bytes(vint_bits(args[0]))) {
-      Ok(chunk) => {
-        return v_variant("Ok", [byte_array_value(chunk)]);
-      },
-      Err(e) => {
-        return v_variant("Err", [io_error_value(e)]);
-      }
-    }
-  }
-  // Define the current text boundary even when stage0 built this interpreter
-  // with its older, unchecked read_chunk runtime. The raw API also owns the
-  // negative-size and I/O-error contract.
-  match (r.read_chunk_bytes(vint_bits(args[0]))) {
-    Ok(chunk) => {
-      match (utf8.from_bytes(chunk)) {
-        Some(text) => {
-          return v_variant("Ok", [v_string(text)]);
-        },
-        None => {
-          return v_variant("Err", [io_error_value(InvalidUtf8(""))]);
-        }
-      }
-    },
-    Err(e) => {
-      return v_variant("Err", [io_error_value(e)]);
-    }
-  }
-}
-
 function byte_array_value(bytes: u8[]): Value {
   let out: Value[] = [];
   let i: i32 = 0;
@@ -1759,8 +2000,7 @@ function byte_array_value(bytes: u8[]): Value {
 // Stage0 can still have a bounded text read_line. Read raw bytes here so the
 // installed stage1 interpreter also returns a complete line without consuming
 // any byte after its newline. Keep the D10 OS-text assumption at publication.
-function read_line_from_host(): Option[string] {
-  let r: Reader = stdin();
+function read_line_from(r: Reader): Option[string] {
   let h: usize = buf_new(256);
   let done: boolean = false;
   while (!done) {
@@ -1887,7 +2127,7 @@ function option_io_error_value(error: Option[IoError]): Value {
   }
 }
 
-function write_count_value(result: Result[i64, IoError]): Value {
+function i64_result_value(result: Result[i64, IoError]): Value {
   match (result) {
     Ok(n) => {
       return v_variant("Ok", [box_i64(n)]);
@@ -1896,61 +2136,6 @@ function write_count_value(result: Result[i64, IoError]): Value {
       return v_variant("Err", [io_error_value(e)]);
     }
   }
-}
-
-// Materialize a host byte array from boxed interpreter values. Neither the
-// program's array nor its aliases are modified or exposed to the host writer.
-function writer_byte_method(w: Writer, name: string, value: Value): Value {
-  if let VArr(a) = value {
-    let bytes: u8[] = __alloc_u8(a.elements.len());
-    let i: i32 = 0;
-    while (i < a.elements.len()) {
-      if (!is_i32_arg(a.elements[i])) {
-        return v_err("Writer." + name + ": expected byte array");
-      }
-      bytes = bytes.with(i, vint_bits(a.elements[i]) as u8);
-      i = i + 1;
-    }
-    if (name == "write_bytes") {
-      return option_io_error_value(w.write_bytes(bytes));
-    }
-    return write_count_value(w.write_some_bytes(bytes));
-  }
-  return v_err("Writer." + name + ": expected byte array");
-}
-
-function writer_method(rs: VStruct, name: string, args: Value[]): Value {
-  let fd: i32 = stdio_fd(rs);
-  if (fd != 1 && fd != 2) {
-    return v_err("Writer." + name + ": only stdout and stderr are writable here");
-  }
-  let w: Writer = stdout();
-  if (fd == 2) {
-    w = stderr();
-  }
-  if (name == "close") {
-    if (args.len() != 0) {
-      return v_err("Writer.close takes no arguments");
-    }
-    return option_io_error_value(w.close());
-  }
-  if (args.len() != 1) {
-    return v_err("Writer." + name + " takes one argument");
-  }
-  if (name == "write_bytes" || name == "write_some_bytes") {
-    return writer_byte_method(w, name, args[0]);
-  }
-  if let VString(s) = args[0] {
-    if (name == "write") {
-      return option_io_error_value(w.write(s.v));
-    }
-    // Nothing reaches the writer, so the caller writes the block itself.
-    if (name == "splice_forever") {
-      return option_io_error_value(Some(Unsupported));
-    }
-    return write_count_value(w.write_some(s.v));
-  }
-  return v_err("Writer." + name + ": expected string");
 }
 
 function option_string_value(o: Option[string]): Value {
@@ -1992,6 +2177,1239 @@ function io_error_value(e: IoError): Value {
       return v_variant("Other", [v_string(p), v_string(m), v_int(n)]);
     }
   }
+}
+
+// =================== HOST BUILTINS ====================
+//
+// A builtin that reaches the host — a file, a socket, a clock, a signal, the
+// process — is answered by calling the same builtin. The interpreter is itself
+// a compiled Fern program, so the call is the one the interpreted program
+// asked for, made one level up with its arguments unboxed and its answer
+// boxed, and the program sees what a build for this host would.
+//
+// Where the Go interpreter keeps a contract of its own, this one keeps it too:
+// it never forks or execs (proc_fork and proc_exec answer -ENOSYS, the waits
+// -ECHILD), never rewinds the arena it runs on, keeps every wait on the
+// reactor (ring_* and tcp_ktls answer -ENOSYS), cannot splice, and has no
+// address space to give the raw syscall and C-call floor.
+//
+// The playground runs this interpreter as a wasi preview-1 core module. A
+// builtin that build cannot reach is kept out of it behind a literal
+// target_arch() test, which constant folding prunes, and refused there at run
+// time.
+
+function arg_at(args: Value[], i: i32): Value {
+  if (i < args.len()) {
+    return deref_cell(args[i]);
+  }
+  return v_absent();
+}
+
+function arg_str(args: Value[], i: i32): string {
+  return vstr_of(arg_at(args, i));
+}
+
+function arg_i32(args: Value[], i: i32): i32 {
+  return vint_as_i64(arg_at(args, i)) as i32;
+}
+
+function arg_i64(args: Value[], i: i32): i64 {
+  return vint_as_i64(arg_at(args, i));
+}
+
+function arg_bool(args: Value[], i: i32): boolean {
+  if let VBool(b) = arg_at(args, i) {
+    return b.v;
+  }
+  return false;
+}
+
+function arg_bytes(args: Value[], i: i32): u8[] {
+  let out: u8[] = [];
+  if let VArr(a) = arg_at(args, i) {
+    for e in a.elements {
+      out = out.append(vint_as_i64(e) as u8);
+    }
+  }
+  return out;
+}
+
+function arg_i32s(args: Value[], i: i32): i32[] {
+  let out: i32[] = [];
+  if let VArr(a) = arg_at(args, i) {
+    for e in a.elements {
+      out = out.append(vint_as_i64(e) as i32);
+    }
+  }
+  return out;
+}
+
+function arg_i64s(args: Value[], i: i32): i64[] {
+  let out: i64[] = [];
+  if let VArr(a) = arg_at(args, i) {
+    for e in a.elements {
+      out = out.append(vint_as_i64(e));
+    }
+  }
+  return out;
+}
+
+function arg_strs(args: Value[], i: i32): string[] {
+  let out: string[] = [];
+  if let VArr(a) = arg_at(args, i) {
+    for e in a.elements {
+      out = out.append(vstr_of(e));
+    }
+  }
+  return out;
+}
+
+function string_array_value(xs: string[]): Value {
+  let out: Value[] = [];
+  for x in xs {
+    out = out.append(v_string(x));
+  }
+  return v_arr_of(out, "string");
+}
+
+function i64_array_value(xs: i64[]): Value {
+  let out: Value[] = [];
+  for x in xs {
+    out = out.append(v_int64(x));
+  }
+  return v_arr_of(out, "i64");
+}
+
+function ok_value(v: Value): Value {
+  return v_variant("Ok", [v]);
+}
+
+function io_err_value(e: IoError): Value {
+  return v_variant("Err", [io_error_value(e)]);
+}
+
+function void_result_value(r: Result[void, IoError]): Value {
+  match (r) {
+    Ok(_) => {
+      return ok_value(v_tuple([]));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function string_result_value(r: Result[string, IoError]): Value {
+  match (r) {
+    Ok(s) => {
+      return ok_value(v_string(s));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function bytes_result_value(r: Result[u8[], IoError]): Value {
+  match (r) {
+    Ok(b) => {
+      return ok_value(byte_array_value(b));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function strings_result_value(r: Result[string[], IoError]): Value {
+  match (r) {
+    Ok(xs) => {
+      return ok_value(string_array_value(xs));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function i64s_result_value(r: Result[i64[], IoError]): Value {
+  match (r) {
+    Ok(xs) => {
+      return ok_value(i64_array_value(xs));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function file_stat_value(st: FileStat): Value {
+  return v_struct(
+    "FileStat", ["is_file", "is_dir", "size", "mode", "nlink", "uid", "gid", "dev", "rdev", "ino", "blksize", "blocks", "atime", "atime_nsec", "mtime", "mtime_nsec", "ctime", "ctime_nsec", "btime", "btime_nsec"],
+    [
+      v_bool(st.is_file), v_bool(st.is_dir), v_int64(st.size), v_uint(st.mode as i32), v_uint(st.nlink as i32), v_uint(st.uid as i32), v_uint(st.gid as i32),
+      v_int64(st.dev), v_int64(st.rdev), v_int64(st.ino), v_int64(st.blksize), v_int64(st.blocks), v_int64(st.atime), v_int64(st.atime_nsec),
+      v_int64(st.mtime), v_int64(st.mtime_nsec), v_int64(st.ctime), v_int64(st.ctime_nsec), v_int64(st.btime), v_int64(st.btime_nsec),
+    ],
+  );
+}
+
+function stat_result_value(r: Result[FileStat, IoError]): Value {
+  match (r) {
+    Ok(st) => {
+      return ok_value(file_stat_value(st));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function dir_entries_result_value(r: Result[DirEntry[], IoError]): Value {
+  match (r) {
+    Ok(es) => {
+      let out: Value[] = [];
+      for de in es {
+        out = out.append(v_struct("DirEntry", ["name", "ino", "kind"], [v_string(de.name), v_int64(de.ino), v_uint(de.kind as i32)]));
+      }
+      return ok_value(v_arr_of(out, "DirEntry"));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function fs_stat_result_value(r: Result[FsStat, IoError]): Value {
+  match (r) {
+    Ok(f) => {
+      return ok_value(v_struct(
+        "FsStat", ["block_size", "blocks", "blocks_free", "blocks_avail", "files", "files_free", "name_max", "path_max", "fs_type", "fsid", "frag_size", "fs_type_name"],
+        [
+          v_int64(f.block_size), v_int64(f.blocks), v_int64(f.blocks_free), v_int64(f.blocks_avail), v_int64(f.files), v_int64(f.files_free),
+          v_int64(f.name_max), v_int64(f.path_max), v_int64(f.fs_type), v_int64(f.fsid), v_int64(f.frag_size), v_string(f.fs_type_name),
+        ],
+      ));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function mounts_result_value(r: Result[MountEntry[], IoError]): Value {
+  match (r) {
+    Ok(ms) => {
+      let out: Value[] = [];
+      for m in ms {
+        out = out.append(v_struct("MountEntry", ["source", "target", "fstype", "dev"], [v_string(m.source), v_string(m.target), v_string(m.fstype), v_int64(m.dev)]));
+      }
+      return ok_value(v_arr_of(out, "MountEntry"));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function win_size_result_value(r: Result[WinSize, IoError]): Value {
+  match (r) {
+    Ok(ws) => {
+      return ok_value(v_struct("WinSize", ["rows", "cols"], [v_int64(ws.rows), v_int64(ws.cols)]));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function reader_value(r: Reader): Value {
+  return VHandle { r: Some(r), w: None, d: None };
+}
+
+function writer_value(w: Writer): Value {
+  return VHandle { r: None, w: Some(w), d: None };
+}
+
+function reader_result_value(r: Result[Reader, IoError]): Value {
+  match (r) {
+    Ok(h) => {
+      return ok_value(reader_value(h));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function writer_result_value(r: Result[Writer, IoError]): Value {
+  match (r) {
+    Ok(h) => {
+      return ok_value(writer_value(h));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function dir_result_value(r: Result[Dir, IoError]): Value {
+  match (r) {
+    Ok(h) => {
+      return ok_value(VHandle { r: None, w: None, d: Some(h) });
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function pipe_result_value(r: Result[Pipe, IoError]): Value {
+  match (r) {
+    Ok(p) => {
+      return ok_value(v_struct("Pipe", ["r", "w"], [reader_value(p.r), writer_value(p.w)]));
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+// handle_kind names a handle's type, the receiver its methods are declared on.
+function handle_kind(h: VHandle): string {
+  match (h.r) {
+    Some(_) => {
+      return "Reader";
+    },
+    None => {}
+  }
+  match (h.w) {
+    Some(_) => {
+      return "Writer";
+    },
+    None => {}
+  }
+  return "Dir";
+}
+
+// handle_fd is the descriptor a handle's one public field reports.
+function handle_fd(h: VHandle): Value {
+  match (h.r) {
+    Some(r) => {
+      return v_int(r.fd);
+    },
+    None => {}
+  }
+  match (h.w) {
+    Some(w) => {
+      return v_int(w.fd);
+    },
+    None => {}
+  }
+  match (h.d) {
+    Some(d) => {
+      return v_int(d.fd);
+    },
+    None => {}
+  }
+  return v_err("empty host handle");
+}
+
+// enosys_errno is ENOSYS in this host's numbering.
+function enosys_errno(): i32 {
+  if (target_os() == "darwin") {
+    return 78;
+  }
+  if (target_arch() == "wasm32") {
+    return 52;
+  }
+  return 38;
+}
+
+function host_enosys(): Value {
+  return v_int(0 - enosys_errno());
+}
+
+// enosys_error is the Err of a call the interpreter refuses to make.
+function enosys_error(path: string): Value {
+  return io_err_value(Other(path, "Function not implemented", enosys_errno()));
+}
+
+// call_host answers a host builtin, or reports `name` undefined. The
+// classification in platforms.fern routes it: the capability says both which
+// family it belongs to and whether the playground's wasm32-wasi build may
+// reach it.
+function call_host(name: string, args: Value[]): Value {
+  if (is_raw_floor(name)) {
+    return v_err(name + " takes machine addresses, and the interpreter has no address space");
+  }
+  let cap: string = platforms.gated_capability(name);
+  let contract: Value = call_host_contract(name, args);
+  if (!is_err(contract)) {
+    return contract;
+  }
+  if (playground_provides(name, cap)) {
+    return call_host_portable(name, cap, args);
+  }
+  if (target_arch() == "wasm32") {
+    return v_err(name + ": the playground this interpreter runs in does not provide it");
+  } else {
+    return call_host_native(name, cap, args);
+  }
+}
+
+// playground_provides reports whether the playground's build of this
+// interpreter, a wasi preview-1 core module, can answer a builtin: its
+// capability is wasm32-wasi's, and it reaches no socket or pollable, which
+// preview 1 has none of.
+function playground_provides(name: string, cap: string): boolean {
+  if (cap.len() > 0 && !platforms.has_capability("wasm32-wasi", cap)) {
+    return false;
+  }
+  return !util.has_str(["tcp", "reactor"], cap) && !util.has_str(["poll", "sleep_ms", "sleep_ns"], name);
+}
+
+// is_raw_floor reports the syscall, C-call and raw-memory floor, whose
+// operands are machine words and addresses among them.
+function is_raw_floor(name: string): boolean {
+  return util.has_str(["__syscall3", "__syscall4", "__syscall5", "__syscall6"], name)
+    || util.has_str(["__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32", "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64"], name)
+    || util.has_str(["__c_call3", "__c_call3_f32", "__c_call3_f64", "__c_call4", "__c_call4_f32", "__c_call4_f64"], name)
+    || util.has_str(["__raw_alloc", "__raw_string", "__raw_arr_box", "__raw_scratch", "__raw_environ", "__raw_splice_pipe", "__raw_cover", "__raw_task_state", "__raw_vdso", "__raw_vg_request"], name);
+}
+
+// call_host_contract answers the builtins whose interpreter answer is fixed
+// rather than the host's, or an error for any other name. The interpreter is
+// the compiler's own process: a chroot or a dropped id would outlast the
+// program and confine or demote the compiler, so those are refused too.
+function call_host_contract(name: string, args: Value[]): Value {
+  if (name == "__heap_mark") {
+    return v_int64(0);
+  }
+  if (name == "__heap_release_to") {
+    return v_void();
+  }
+  if (util.has_str(["proc_fork", "proc_exec", "proc_exec_as"], name)) {
+    return v_int(0 - 38);
+  }
+  if (name == "chroot") {
+    return enosys_error(arg_str(args, 0));
+  }
+  if (util.has_str(["setuid", "setgid", "setgroups"], name)) {
+    return enosys_error("");
+  }
+  if (util.has_str(["proc_waitpid", "proc_waitpid_nohang", "proc_waitpid_status"], name)) {
+    return v_int(0 - 10);
+  }
+  if (util.has_str(["ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_ktls"], name)) {
+    return host_enosys();
+  }
+  return call_host_stub(name);
+}
+
+// call_host_stub answers the builtins with no host behind them here.
+function call_host_stub(name: string): Value {
+  // No pollable is ever real here, so none is ever ready.
+  if (util.has_str(["wasm_poll", "wasm_timer_pollable"], name)) {
+    return v_int(0 - 1);
+  }
+  if (util.has_str(["wasm_block", "wasm_pollable_drop"], name)) {
+    return v_int(0);
+  }
+  // No account database: 0 says use the files.
+  if (name == "__account_entry") {
+    return v_uint64(0);
+  }
+  return v_err("not a contract builtin");
+}
+
+// call_host_portable answers a builtin every host this interpreter runs on
+// provides, wasm32-wasi included.
+function call_host_portable(name: string, cap: string, args: Value[]): Value {
+  if (cap == "fs") {
+    return call_host_fs(name, args);
+  }
+  if (cap == "now") {
+    return call_host_clock(name, args);
+  }
+  if (cap == "signal") {
+    return call_host_signal(name, args);
+  }
+  if (cap == "stdin" || cap == "stdout") {
+    return call_host_stdio(name, args);
+  }
+  return call_host_process(name, args);
+}
+
+function call_host_stdio(name: string, args: Value[]): Value {
+  if (name == "stdin") {
+    return reader_value(stdin());
+  }
+  if (name == "stdout") {
+    return writer_value(stdout());
+  }
+  if (name == "stderr") {
+    return writer_value(stderr());
+  }
+  if (name == "read_line") {
+    return option_string_value(read_line_from(stdin()));
+  }
+  return v_err("undefined function: " + name);
+}
+
+// call_host_process answers the process's own surroundings: its argv and
+// environment, entropy, its name, its exit, and the descriptor questions every
+// target answers.
+function call_host_process(name: string, vals: Value[]): Value {
+  if (name == "args") {
+    return string_array_value(args());
+  }
+  if (name == "set_args") {
+    set_args(arg_strs(vals, 0));
+    return v_void();
+  }
+  if (name == "env" || name == "config_get") {
+    return option_string_value(env(arg_str(vals, 0)));
+  }
+  if (name == "environ") {
+    return string_array_value(environ());
+  }
+  if (name == "hostname") {
+    return v_string(hostname());
+  }
+  if (name == "random_bytes") {
+    return byte_array_value(random_bytes(arg_i32(vals, 0)));
+  }
+  if (name == "random_i32") {
+    return v_int(random_i32());
+  }
+  return call_host_core(name, vals);
+}
+
+function call_host_core(name: string, args: Value[]): Value {
+  if (name == "exit") {
+    exit(arg_i32(args, 0));
+    return v_void();
+  }
+  if (name == "isatty") {
+    return v_bool(isatty(arg_i32(args, 0)));
+  }
+  return v_err("undefined function: " + name);
+}
+
+// call_host_wait answers the waits: on a descriptor, and for a while.
+function call_host_wait(name: string, args: Value[]): Value {
+  if (name == "poll") {
+    return v_int(poll(arg_i32s(args, 0), arg_i32(args, 1)));
+  }
+  if (name == "sleep_ms") {
+    sleep_ms(arg_i64(args, 0));
+    return v_void();
+  }
+  if (name == "sleep_ns") {
+    sleep_ns(arg_i64(args, 0));
+    return v_void();
+  }
+  return v_err("undefined function: " + name);
+}
+
+function call_host_clock(name: string, args: Value[]): Value {
+  if (name == "now_unix_ms") {
+    return v_int64(now_unix_ms());
+  }
+  if (name == "now_ns") {
+    return v_int64(now_ns());
+  }
+  if (name == "monotonic_ns") {
+    return v_int64(monotonic_ns());
+  }
+  if (name == "clock_resolution") {
+    return v_int64(clock_resolution());
+  }
+  if (name == "clock_set") {
+    return void_result_value(clock_set(arg_i64(args, 0), arg_i64(args, 1)));
+  }
+  return v_err("undefined function: " + name);
+}
+
+function call_host_signal(name: string, args: Value[]): Value {
+  let sig: i32 = arg_i32(args, 0);
+  if (name == "signal_ignore") {
+    return v_int(signal_ignore(sig));
+  }
+  if (name == "signal_default") {
+    return v_int(signal_default(sig));
+  }
+  if (name == "signal_catch") {
+    return v_int(signal_catch(sig));
+  }
+  if (name == "signal_catch_interrupting") {
+    return v_int(signal_catch_interrupting(sig));
+  }
+  if (name == "signal_disposition") {
+    return v_int(signal_disposition(sig));
+  }
+  if (name == "signal_raise") {
+    return v_int(signal_raise(sig));
+  }
+  if (name == "signal_taken") {
+    return v_bool(signal_taken(sig));
+  }
+  if (name == "signal_mask") {
+    return v_int64(signal_mask(sig, arg_i64(args, 1)));
+  }
+  return v_err("undefined function: " + name);
+}
+
+function call_host_reactor(name: string, args: Value[]): Value {
+  if (name == "reactor_new") {
+    return v_int(reactor_new());
+  }
+  if (name == "reactor_ctl") {
+    return v_int(reactor_ctl(arg_i32(args, 0), arg_i32(args, 1), arg_i32(args, 2), arg_i32(args, 3)));
+  }
+  if (name == "reactor_wait") {
+    let events: i32[] = arg_i32s(args, 1);
+    let n: i32 = reactor_wait(arg_i32(args, 0), events, arg_i32(args, 2));
+    store_out(args, 1, i32s_as_i64s(events));
+    return v_int(n);
+  }
+  return v_err("undefined function: " + name);
+}
+
+function call_host_fs(name: string, args: Value[]): Value {
+  if (util.has_str(["remove_file", "remove_dir", "remove_dir_all", "create_dir_all"], name)) {
+    return call_host_fs_path(name, arg_str(args, 0));
+  }
+  if (util.has_str(["create_link", "clone_file", "create_symlink", "rename"], name)) {
+    return call_host_fs_paths(name, arg_str(args, 0), arg_str(args, 1));
+  }
+  if (util.has_str(["open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with"], name)) {
+    return call_host_open(name, args);
+  }
+  if (util.has_str(["write_file", "write_file_bytes", "create_dir", "truncate", "set_file_times"], name)) {
+    return call_host_fs_write(name, args);
+  }
+  return call_host_fs_read(name, arg_str(args, 0));
+}
+
+function call_host_fs_path(name: string, path: string): Value {
+  if (name == "remove_file") {
+    return void_result_value(remove_file(path));
+  }
+  if (name == "remove_dir") {
+    return void_result_value(remove_dir(path));
+  }
+  if (name == "remove_dir_all") {
+    return void_result_value(remove_dir_all(path));
+  }
+  return void_result_value(create_dir_all(path));
+}
+
+function call_host_fs_paths(name: string, from: string, to: string): Value {
+  if (name == "create_link") {
+    return void_result_value(create_link(from, to));
+  }
+  if (name == "clone_file") {
+    return void_result_value(clone_file(from, to));
+  }
+  if (name == "create_symlink") {
+    return void_result_value(create_symlink(from, to));
+  }
+  return void_result_value(rename(from, to));
+}
+
+function call_host_open(name: string, args: Value[]): Value {
+  let path: string = arg_str(args, 0);
+  if (name == "open_reader") {
+    return reader_result_value(open_reader(path));
+  }
+  if (name == "open_reader_with") {
+    return reader_result_value(open_reader_with(path, arg_i32(args, 1)));
+  }
+  if (name == "open_writer") {
+    return writer_result_value(open_writer(path));
+  }
+  if (name == "open_writer_with") {
+    return writer_result_value(open_writer_with(path, arg_i32(args, 1)));
+  }
+  if (name == "open_appender") {
+    return writer_result_value(open_appender(path));
+  }
+  return writer_result_value(open_exclusive(path));
+}
+
+function call_host_fs_write(name: string, args: Value[]): Value {
+  let path: string = arg_str(args, 0);
+  if (name == "write_file") {
+    return void_result_value(write_file(path, arg_str(args, 1)));
+  }
+  if (name == "write_file_bytes") {
+    return void_result_value(write_file_bytes(path, arg_bytes(args, 1)));
+  }
+  if (name == "create_dir") {
+    return void_result_value(create_dir(path, arg_i32(args, 1)));
+  }
+  if (name == "truncate") {
+    return void_result_value(truncate(path, arg_i64(args, 1)));
+  }
+  return void_result_value(set_file_times(path, arg_i64(args, 1), arg_i64(args, 2), arg_i64(args, 3), arg_i64(args, 4), arg_i32(args, 5)));
+}
+
+function call_host_fs_read(name: string, path: string): Value {
+  if (name == "read_file") {
+    return string_result_value(read_file(path));
+  }
+  if (name == "read_file_bytes") {
+    return bytes_result_value(read_file_bytes(path));
+  }
+  if (name == "read_link") {
+    return string_result_value(read_link(path));
+  }
+  if (name == "temp_dir") {
+    return string_result_value(temp_dir(path));
+  }
+  if (name == "stat") {
+    return stat_result_value(stat(path));
+  }
+  if (name == "lstat") {
+    return stat_result_value(lstat(path));
+  }
+  return call_host_fs_list(name, path);
+}
+
+function call_host_fs_list(name: string, path: string): Value {
+  if (name == "read_dir") {
+    return strings_result_value(read_dir(path));
+  }
+  if (name == "read_dir_all") {
+    return strings_result_value(read_dir_all(path));
+  }
+  if (name == "read_dir_ino") {
+    return dir_entries_result_value(read_dir_ino(path));
+  }
+  if (name == "read_dir_ino_all") {
+    return dir_entries_result_value(read_dir_ino_all(path));
+  }
+  return v_err("undefined function: " + name);
+}
+
+// call_host_net answers the socket builtins: a descriptor is the host's own.
+function call_host_net(name: string, args: Value[]): Value {
+  if (util.has_str(["udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes"], name)) {
+    return call_host_udp_send(name, args);
+  }
+  if (util.has_str(["udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom"], name)) {
+    return call_host_udp(name, args);
+  }
+  if (util.has_str(["tcp_listen_with", "tcp_connect_with", "tcp_connect", "tcp_listen"], name)) {
+    return call_host_tcp_open(name, args);
+  }
+  if (util.has_str(["tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_recv_into"], name)) {
+    return call_host_tcp_io(name, args);
+  }
+  return call_host_tcp_fd(name, args);
+}
+
+function call_host_udp_send(name: string, args: Value[]): Value {
+  if (name == "udp_send") {
+    return v_int(udp_send(arg_str(args, 0), arg_i32(args, 1), arg_str(args, 2)));
+  }
+  if (name == "udp_send_bytes") {
+    return v_int(udp_send_bytes(arg_str(args, 0), arg_i32(args, 1), arg_bytes(args, 2)));
+  }
+  if (name == "udp_sendto") {
+    return v_int(udp_sendto(arg_i32(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_str(args, 3)));
+  }
+  return v_int(udp_sendto_bytes(arg_i32(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_bytes(args, 3)));
+}
+
+function call_host_udp(name: string, args: Value[]): Value {
+  if (name == "udp_bind") {
+    return v_int(udp_bind(arg_bytes(args, 0), arg_i32(args, 1)));
+  }
+  if (name == "udp_bind_with") {
+    return v_int(udp_bind_with(arg_bytes(args, 0), arg_i32(args, 1), arg_bool(args, 2)));
+  }
+  if (name == "udp_recvfrom") {
+    let buf: u8[] = arg_bytes(args, 1);
+    let from: u8[] = arg_bytes(args, 2);
+    let n: i32 = udp_recvfrom(arg_i32(args, 0), buf, from);
+    store_out(args, 1, bytes_as_i64s(buf));
+    store_out(args, 2, bytes_as_i64s(from));
+    return v_int(n);
+  }
+  return v_int(udp_connect(arg_i32(args, 0), arg_bytes(args, 1), arg_i32(args, 2)));
+}
+
+function call_host_tcp_open(name: string, args: Value[]): Value {
+  if (name == "tcp_listen") {
+    return v_int(tcp_listen(arg_i32(args, 0)));
+  }
+  if (name == "tcp_connect") {
+    return v_int(tcp_connect(arg_i32(args, 0), arg_i32(args, 1)));
+  }
+  if (name == "tcp_listen_with") {
+    return v_int(tcp_listen_with(arg_bytes(args, 0), arg_i32(args, 1), arg_i32(args, 2), arg_bool(args, 3)));
+  }
+  return v_int(tcp_connect_with(arg_bytes(args, 0), arg_i32(args, 1), arg_bool(args, 2)));
+}
+
+function call_host_tcp_io(name: string, args: Value[]): Value {
+  let fd: i32 = arg_i32(args, 0);
+  if (name == "tcp_recv") {
+    return byte_array_value(tcp_recv(fd, arg_i32(args, 1)));
+  }
+  if (name == "tcp_send") {
+    return v_int(tcp_send(fd, arg_str(args, 1)));
+  }
+  if (name == "tcp_send_bytes") {
+    return v_int(tcp_send_bytes(fd, arg_bytes(args, 1)));
+  }
+  if (name == "tcp_send_buf") {
+    return v_int(tcp_send_buf(fd, buf_handle_of(arg_at(args, 1)), arg_i32(args, 2)));
+  }
+  if (name == "tcp_recv_into") {
+    let buf: u8[] = arg_bytes(args, 1);
+    let n: i32 = tcp_recv_into(fd, buf);
+    store_out(args, 1, bytes_as_i64s(buf));
+    return v_int(n);
+  }
+  return v_int(tcp_sendfile(fd, arg_i32(args, 1), arg_i32(args, 2)));
+}
+
+function call_host_tcp_fd(name: string, args: Value[]): Value {
+  let fd: i32 = arg_i32(args, 0);
+  if (name == "tcp_accept") {
+    return v_int(tcp_accept(fd));
+  }
+  if (name == "tcp_close") {
+    return v_int(tcp_close(fd));
+  }
+  if (name == "tcp_local_port") {
+    return v_int(tcp_local_port(fd));
+  }
+  if (name == "tcp_pollable") {
+    return v_int(tcp_pollable(fd));
+  }
+  if (name == "tcp_socket_ctl") {
+    return v_int(tcp_socket_ctl(fd, arg_i32(args, 1), arg_i32(args, 2)));
+  }
+  return v_err("undefined function: " + name);
+}
+
+// call_host_native answers a builtin the playground's build does not provide
+// (see playground_provides). Its one caller keeps it out of that build.
+function call_host_native(name: string, cap: string, args: Value[]): Value {
+  if (cap == "tcp") {
+    return call_host_net(name, args);
+  }
+  if (cap == "reactor") {
+    return call_host_reactor(name, args);
+  }
+  if (util.has_str(["poll", "sleep_ms", "sleep_ns"], name)) {
+    return call_host_wait(name, args);
+  }
+  if (cap == "fsmode") {
+    return call_host_fsmode(name, args);
+  }
+  if (cap == "userid") {
+    return call_host_userid(name, args);
+  }
+  if (cap == "tty") {
+    return call_host_tty(name, args);
+  }
+  if (util.has_str(["proc", "rlimit", "sched", "subprocess"], cap)) {
+    return call_host_proc(name, args);
+  }
+  if (util.has_str(["sysinfo", "cwd", "unix", "pollfd", "sysctl"], cap)) {
+    return call_host_system(name, args);
+  }
+  return call_host_fs_native(name, args);
+}
+
+function call_host_fsmode(name: string, args: Value[]): Value {
+  let path: string = arg_str(args, 0);
+  if (name == "write_file_exec") {
+    return void_result_value(write_file_exec(path, arg_str(args, 1)));
+  }
+  if (name == "access") {
+    return void_result_value(access(path, arg_i32(args, 1)));
+  }
+  if (name == "umask") {
+    return v_int(umask(arg_i32(args, 0)));
+  }
+  if (name == "chmod") {
+    return void_result_value(chmod(path, arg_i32(args, 1)));
+  }
+  if (name == "chmod_at") {
+    return void_result_value(chmod_at(path, arg_i32(args, 1), arg_bool(args, 2)));
+  }
+  return v_err("undefined function: " + name);
+}
+
+function call_host_userid(name: string, args: Value[]): Value {
+  if (name == "geteuid") {
+    return v_uint(geteuid() as i32);
+  }
+  if (name == "getegid") {
+    return v_uint(getegid() as i32);
+  }
+  if (name == "getuid") {
+    return v_uint(getuid() as i32);
+  }
+  if (name == "getgid") {
+    return v_uint(getgid() as i32);
+  }
+  if (name == "getgroups") {
+    return i64_array_value(getgroups());
+  }
+  return v_err("undefined function: " + name);
+}
+
+function call_host_tty(name: string, args: Value[]): Value {
+  let fd: i32 = arg_i32(args, 0);
+  if (name == "window_size") {
+    return win_size_result_value(window_size(fd));
+  }
+  if (name == "set_window_size") {
+    return void_result_value(set_window_size(fd, arg_i32(args, 1), arg_i32(args, 2)));
+  }
+  if (name == "termios_get") {
+    return i64s_result_value(termios_get(fd));
+  }
+  if (name == "termios_set") {
+    return void_result_value(termios_set(fd, arg_i32(args, 1), arg_i64s(args, 2)));
+  }
+  return void_result_value(set_extproc(fd, arg_bool(args, 1)));
+}
+
+function call_host_proc(name: string, args: Value[]): Value {
+  if (name == "subprocess") {
+    let r: ProcessResult = subprocess(arg_str(args, 0), arg_strs(args, 1), arg_str(args, 2));
+    return v_struct("ProcessResult", ["stdout", "stderr", "exit_code"], [v_string(r.stdout), v_string(r.stderr), v_int(r.exit_code)]);
+  }
+  if (name == "pipe") {
+    return pipe_result_value(pipe());
+  }
+  if (name == "process_alive") {
+    return v_bool(process_alive(arg_i32(args, 0)));
+  }
+  if (name == "signal_send") {
+    return void_result_value(signal_send(arg_i32(args, 0), arg_i32(args, 1)));
+  }
+  if (name == "set_process_group") {
+    return void_result_value(set_process_group(arg_i32(args, 0), arg_i32(args, 1)));
+  }
+  return call_host_limits(name, args);
+}
+
+function call_host_limits(name: string, args: Value[]): Value {
+  if (name == "rlimit_nofile") {
+    return v_int64(rlimit_nofile());
+  }
+  if (name == "disable_core_dumps") {
+    return v_bool(disable_core_dumps());
+  }
+  if (name == "priority") {
+    return v_int(priority());
+  }
+  if (name == "set_priority") {
+    return void_result_value(set_priority(arg_i32(args, 0)));
+  }
+  return v_err("undefined function: " + name);
+}
+
+function call_host_system(name: string, args: Value[]): Value {
+  if (name == "uname_field") {
+    return v_string(uname_field(arg_i32(args, 0)));
+  }
+  if (name == "cpu_count") {
+    return v_int(cpu_count());
+  }
+  if (name == "getcwd") {
+    return string_result_value(getcwd());
+  }
+  if (name == "chdir") {
+    return void_result_value(chdir(arg_str(args, 0)));
+  }
+  if (name == "unix_listen") {
+    return v_int(unix_listen(arg_str(args, 0), arg_i32(args, 1)));
+  }
+  if (name == "unix_connect") {
+    return v_int(unix_connect(arg_str(args, 0)));
+  }
+  if (name == "timer_fd") {
+    return v_int(timer_fd(arg_i32(args, 0)));
+  }
+  if (name == "sysctl") {
+    return call_host_sysctl(arg_i32s(args, 0));
+  }
+  return v_err("undefined function: " + name);
+}
+
+// sysctl is Darwin's alone; elsewhere the kernel has no such call.
+function call_host_sysctl(mib: i32[]): Value {
+  if (target_os() == "darwin") {
+    return bytes_result_value(sysctl(mib));
+  } else {
+    return enosys_error("");
+  }
+}
+
+function call_host_fs_native(name: string, args: Value[]): Value {
+  let path: string = arg_str(args, 0);
+  if (name == "mknod") {
+    return void_result_value(mknod(path, arg_i32(args, 1), arg_i32(args, 2), arg_i32(args, 3)));
+  }
+  if (name == "sync") {
+    sync();
+    return v_void();
+  }
+  if (name == "rename_noreplace") {
+    return void_result_value(rename_noreplace(path, arg_str(args, 1)));
+  }
+  if (name == "rename_exchange") {
+    return void_result_value(rename_exchange(path, arg_str(args, 1)));
+  }
+  if (name == "chown_at") {
+    return void_result_value(chown_at(path, arg_i32(args, 1), arg_i32(args, 2), arg_bool(args, 3)));
+  }
+  if (name == "statfs") {
+    return fs_stat_result_value(statfs(path));
+  }
+  if (name == "mounts") {
+    return mounts_result_value(mounts());
+  }
+  if (name == "open_dir") {
+    return dir_result_value(open_dir(path));
+  }
+  return v_err("undefined function: " + name);
+}
+
+// ---- methods on host handles --------------------------------------------
+
+// is_handle_method reports whether `name` is a builtin method of a handle of
+// `kind`; any other name is a receiver function the program or the stdlib
+// declares on the type.
+function is_handle_method(kind: string, name: string): boolean {
+  if (util.has_str(["close", "stat"], name)) {
+    return true;
+  }
+  if (kind == "Dir") {
+    return util.has_str(["open_dir", "entries", "lstat", "access", "remove_file", "remove_dir", "chmod", "chown"], name);
+  }
+  if (util.has_str(["seek", "flags", "isatty", "fsync", "fdatasync", "syncfs", "drop_cache", "dup_onto"], name)) {
+    return true;
+  }
+  if (kind == "Writer") {
+    return util.has_str(["write", "write_some", "write_bytes", "write_some_bytes", "splice_forever", "truncate"], name);
+  }
+  return util.has_str(["read_line", "read_chunk", "read_chunk_bytes", "splice_to", "copy_range_to", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc"], name);
+}
+
+function handle_method(h: VHandle, name: string, args: Value[]): Value {
+  match (h.r) {
+    Some(r) => {
+      return reader_method(r, name, args);
+    },
+    None => {}
+  }
+  match (h.w) {
+    Some(w) => {
+      return writer_method(w, name, args);
+    },
+    None => {}
+  }
+  match (h.d) {
+    Some(d) => {
+      return call_dir_method(d, name, args);
+    },
+    None => {}
+  }
+  return v_err("empty host handle");
+}
+
+function reader_method(r: Reader, name: string, args: Value[]): Value {
+  if (name == "read_line") {
+    return option_string_value(read_line_from(r));
+  }
+  if (name == "read_chunk_bytes") {
+    return bytes_result_value(r.read_chunk_bytes(arg_i32(args, 0)));
+  }
+  if (name == "read_chunk") {
+    return read_chunk_value(r, arg_i32(args, 0));
+  }
+  if (name == "close") {
+    return option_io_error_value(r.close());
+  }
+  // Nothing moves inside the kernel here: the caller copies the bytes itself.
+  if (name == "splice_to" || name == "copy_range_to") {
+    return io_err_value(Unsupported);
+  }
+  if (util.has_str(["window_size", "set_window_size", "termios_get", "termios_set", "set_extproc"], name)) {
+    return call_host(name, with_fd_first(r.fd, args));
+  }
+  return reader_fd_method(r, name, args);
+}
+
+// with_fd_first is a handle method's arguments as the free builtin of the
+// same name takes them: the handle's descriptor first.
+function with_fd_first(fd: i32, args: Value[]): Value[] {
+  let out: Value[] = [v_int(fd)];
+  for a in args {
+    out = out.append(a);
+  }
+  return out;
+}
+
+// read_chunk_value reads one chunk as text. It reads raw bytes and checks the
+// text here, so an interpreter stage0 built with an older, unchecked
+// read_chunk still answers InvalidUtf8 for bytes that are not text.
+function read_chunk_value(r: Reader, n: i32): Value {
+  match (r.read_chunk_bytes(n)) {
+    Ok(chunk) => {
+      match (utf8.from_bytes(chunk)) {
+        Some(text) => {
+          return ok_value(v_string(text));
+        },
+        None => {
+          return io_err_value(InvalidUtf8(""));
+        }
+      }
+    },
+    Err(e) => {
+      return io_err_value(e);
+    }
+  }
+}
+
+function reader_fd_method(r: Reader, name: string, args: Value[]): Value {
+  if (name == "stat") {
+    return stat_result_value(r.stat());
+  }
+  if (name == "seek") {
+    return i64_result_value(r.seek(arg_i64(args, 0), arg_i32(args, 1)));
+  }
+  if (name == "flags") {
+    return i64_result_value(r.flags());
+  }
+  if (name == "isatty") {
+    return v_bool(r.isatty());
+  }
+  if (name == "fsync") {
+    return option_io_error_value(r.fsync());
+  }
+  if (name == "fdatasync") {
+    return option_io_error_value(r.fdatasync());
+  }
+  if (name == "syncfs") {
+    return option_io_error_value(r.syncfs());
+  }
+  if (name == "drop_cache") {
+    return option_io_error_value(r.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
+  }
+  return option_io_error_value(r.dup_onto(arg_i32(args, 0)));
+}
+
+function writer_method(w: Writer, name: string, args: Value[]): Value {
+  if (name == "write") {
+    return option_io_error_value(w.write(arg_str(args, 0)));
+  }
+  if (name == "write_some") {
+    return i64_result_value(w.write_some(arg_str(args, 0)));
+  }
+  if (name == "write_bytes") {
+    return option_io_error_value(w.write_bytes(arg_bytes(args, 0)));
+  }
+  if (name == "write_some_bytes") {
+    return i64_result_value(w.write_some_bytes(arg_bytes(args, 0)));
+  }
+  // Nothing reaches the writer, so the caller writes the block itself.
+  if (name == "splice_forever") {
+    return option_io_error_value(Some(Unsupported));
+  }
+  if (name == "close") {
+    return option_io_error_value(w.close());
+  }
+  if (name == "truncate") {
+    return option_io_error_value(w.truncate(arg_i64(args, 0)));
+  }
+  return writer_fd_method(w, name, args);
+}
+
+function writer_fd_method(w: Writer, name: string, args: Value[]): Value {
+  if (name == "stat") {
+    return stat_result_value(w.stat());
+  }
+  if (name == "seek") {
+    return i64_result_value(w.seek(arg_i64(args, 0), arg_i32(args, 1)));
+  }
+  if (name == "flags") {
+    return i64_result_value(w.flags());
+  }
+  if (name == "isatty") {
+    return v_bool(w.isatty());
+  }
+  if (name == "fsync") {
+    return option_io_error_value(w.fsync());
+  }
+  if (name == "fdatasync") {
+    return option_io_error_value(w.fdatasync());
+  }
+  if (name == "syncfs") {
+    return option_io_error_value(w.syncfs());
+  }
+  if (name == "drop_cache") {
+    return option_io_error_value(w.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
+  }
+  return option_io_error_value(w.dup_onto(arg_i32(args, 0)));
+}
+
+// A Dir comes only from open_dir, which wasm32-wasi does not grant, so its
+// methods are kept out of that build as open_dir is.
+function call_dir_method(d: Dir, name: string, args: Value[]): Value {
+  if (target_arch() == "wasm32") {
+    return v_err("Dir." + name + ": the host this interpreter runs on does not provide `fsdir`");
+  } else {
+    return dir_method(d, name, args);
+  }
+}
+
+function dir_method(d: Dir, name: string, args: Value[]): Value {
+  let entry: string = arg_str(args, 0);
+  if (name == "open_dir") {
+    return dir_result_value(d.open_dir(entry));
+  }
+  if (name == "entries") {
+    return strings_result_value(d.entries());
+  }
+  if (name == "stat") {
+    return stat_result_value(d.stat(entry));
+  }
+  if (name == "lstat") {
+    return stat_result_value(d.lstat(entry));
+  }
+  if (name == "close") {
+    return option_io_error_value(d.close());
+  }
+  return dir_change_method(d, name, entry, args);
+}
+
+function dir_change_method(d: Dir, name: string, entry: string, args: Value[]): Value {
+  if (name == "access") {
+    return void_result_value(d.access(entry, arg_i32(args, 1)));
+  }
+  if (name == "remove_file") {
+    return void_result_value(d.remove_file(entry));
+  }
+  if (name == "remove_dir") {
+    return void_result_value(d.remove_dir(entry));
+  }
+  if (name == "chmod") {
+    return void_result_value(d.chmod(entry, arg_i32(args, 1), arg_bool(args, 2)));
+  }
+  return void_result_value(d.chown(entry, arg_i32(args, 1), arg_i32(args, 2), arg_bool(args, 3)));
 }
 
 // update mutates the slot for an existing name. Linear back-to-
@@ -2185,6 +3603,80 @@ function sat_u64(op: string, a: u64, b: u64): i64 {
   return prod as i64;
 }
 
+// eval_usize_binary is eval_binary at the pointer width: the operands read
+// unsigned, every result wraps at ptr_bits(), and a shift count masks to it.
+function eval_usize_binary(op: string, a: u64, b: u64): Value {
+  let sh: u64 = b & (ptr_bits() - 1) as u64;
+  if (op == "+") {
+    return v_usize((a + b) as i64);
+  }
+  if (op == "-") {
+    return v_usize((a - b) as i64);
+  }
+  if (op == "*") {
+    return v_usize((a * b) as i64);
+  }
+  if (op == "/" || op == "%") {
+    return usize_divide(op == "/", a, b);
+  }
+  if (op == "<<") {
+    return v_usize((a << sh) as i64);
+  }
+  if (op == ">>") {
+    return v_usize((a >> sh) as i64);
+  }
+  return usize_bitwise(op, a, b);
+}
+
+function usize_bitwise(op: string, a: u64, b: u64): Value {
+  if (op == "&") {
+    return v_usize((a & b) as i64);
+  }
+  if (op == "|") {
+    return v_usize((a | b) as i64);
+  }
+  if (op == "^") {
+    return v_usize((a ^ b) as i64);
+  }
+  return usize_compare(op, a, b);
+}
+
+// usize_divide is the total division and remainder: x / 0 == 0, x % 0 == x.
+function usize_divide(quotient: boolean, a: u64, b: u64): Value {
+  if (b == 0 as u64) {
+    if (quotient) {
+      return v_usize(0);
+    }
+    return v_usize(a as i64);
+  }
+  if (quotient) {
+    return v_usize((a / b) as i64);
+  }
+  return v_usize((a % b) as i64);
+}
+
+function usize_compare(op: string, a: u64, b: u64): Value {
+  if (op == "==") {
+    return v_bool(a == b);
+  }
+  if (op == "!=") {
+    return v_bool(a != b);
+  }
+  if (op == "<") {
+    return v_bool(a < b);
+  }
+  if (op == "<=") {
+    return v_bool(a <= b);
+  }
+  if (op == ">") {
+    return v_bool(a > b);
+  }
+  if (op == ">=") {
+    return v_bool(a >= b);
+  }
+  return v_err("operator `" + op + "` is not defined on usize");
+}
+
 // eval_binary applies a binary operator to two already-evaluated
 // operands. Pure in (op, lv, rv) — extracted from eval_expr's
 // ExprBinary arm so the operator semantics live in one place,
@@ -2211,6 +3703,9 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
   // untouched, so i32 overflow wrapping and every existing case behave
   // exactly as before. Total div/mod semantics match the i32 path
   // (x/0 == 0, x%0 == x).
+  if (is_int_like(lv) && is_int_like(rv) && (is_vusize(lv) || is_vusize(rv))) {
+    return eval_usize_binary(op, vint_as_i64(lv) as u64, vint_as_i64(rv) as u64);
+  }
   if (is_int_like(lv) && is_int_like(rv) && (is_vint64(lv) || is_vint64(rv))) {
     let a: i64 = vint_as_i64(lv);
     let b: i64 = vint_as_i64(rv);
@@ -2720,6 +4215,9 @@ function eval_unary(op: string, ov: Value): Value {
         return v_int(0 - i.v);
       },
       VInt64(i) => {
+        if (i.ptr) {
+          return v_usize(0 - unpack_i64(i));
+        }
         return v_wide(0 - unpack_i64(i), i.unsigned);
       },
       VUint(u) => {
@@ -2791,6 +4289,9 @@ function eval_unary(op: string, ov: Value): Value {
   // pattern and drops the unsigned tag).
   if (op == "as_i32") {
     return cast_i32_value(ov);
+  }
+  if (op == "as_usize") {
+    return cast_usize_value(ov);
   }
   // `as u32` is the same 32-bit narrowing but tags the pattern unsigned. A
   // float source is the unsigned SATURATING truncation instead (see
@@ -2940,6 +4441,22 @@ function eval_unary(op: string, ov: Value): Value {
   return v_err("unknown unary op: " + op);
 }
 
+// `as usize` extends an integer to 64 bits by its own signedness and wraps it
+// to the pointer width; a float saturates into the pointer width's unsigned
+// range. Anything else is an address reinterpretation, which moves nothing.
+function cast_usize_value(v: Value): Value {
+  if (is_int_like(v)) {
+    return v_usize(vint_as_i64(v));
+  }
+  if (!is_float_like(v)) {
+    return v;
+  }
+  if (ptr_bits() == 32) {
+    return v_usize(uint_zext(f64_trunc_u32(vfloat_as_f64(v))));
+  }
+  return v_usize(f64_trunc_u64(vfloat_as_f64(v)));
+}
+
 // An explicit i32 cast drops scalar identity along with any wider payload.
 function cast_i32_value(v: Value): Value {
   match (v) {
@@ -3012,7 +4529,7 @@ function resolve_ident_value(name: string, env: Env): Value {
     while (ci < env.funcs.len()) {
       if (env.funcs[ci].name == name && env.funcs[ci].receiver_name.len() == 0 && env.funcs[ci].params.len() == 0 && env.funcs[ci].is_const) {
         let no_args: Value[] = [];
-        return call_func(name, no_args, env.funcs, env.aliases, env.type_decls, env.argv);
+        return call_func(name, no_args, env.funcs, env.aliases, env.type_decls, env.outs);
       }
       ci = ci + 1;
     }
@@ -3329,7 +4846,7 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
   let arg_vals: Value[] = [];
   let i: i32 = 0;
   while (i < c.args.len()) {
-    let av: Value = eval_expr(c.args[i], env);
+    let av: Value = eval_call_arg(c.args[i], name, i, env);
     if (is_err(av)) {
       return av;
     }
@@ -3340,12 +4857,12 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
     return v_variant(variant_name, arg_vals);
   }
   if (is_method) {
-    return call_method(recv, name, arg_vals, env.funcs, env.aliases, env.type_decls, env.argv);
+    return call_method(recv, name, arg_vals, env.funcs, env.aliases, env.type_decls, env.outs);
   }
   if (is_closure) {
-    return call_closure(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, env.argv);
+    return call_closure(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, env.outs);
   }
-  return call_func(name, arg_vals, env.funcs, env.aliases, env.type_decls, env.argv);
+  return call_func(name, arg_vals, env.funcs, env.aliases, env.type_decls, env.outs);
 }
 
 function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
@@ -3362,7 +4879,7 @@ function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
       match (iv) {
         VInt(ii) => {
           if (ii.v < 0 || ii.v >= arr.elements.len()) {
-            return v_err("array index out of range");
+            return index_abort("array", ii.v, arr.elements.len());
           }
           return arr.elements[ii.v];
         },
@@ -3380,7 +4897,7 @@ function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
       match (iv) {
         VInt(ii) => {
           if (ii.v < 0 || ii.v >= s.v.len()) {
-            return v_err("string index out of range");
+            return index_abort("string", ii.v, s.v.len());
           }
           return v_int(s.v[ii.v] as i32);
         },
@@ -3460,7 +4977,7 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
     },
     VArr(a) => {
       if (sb < 0 || eb > a.elements.len() || sb > eb) {
-        return v_err("array slice out of range");
+        return slice_abort(sb, eb, a.elements.len());
       }
       let out: Value[] = [];
       let i: i32 = sb;
@@ -3585,6 +5102,12 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
         return v_err("tuple index `" + fa.field + "` out of range");
       }
       return tv.elements[idx];
+    },
+    VHandle(hv) => {
+      if (fa.field == "fd") {
+        return handle_fd(hv);
+      }
+      return v_err(handle_kind(hv) + " has no field `" + fa.field + "`");
     },
     _ => {
       return v_err("can only field-access a struct or tuple");
@@ -3718,7 +5241,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
 // captured names + values seed the body's env so free idents in
 // the lambda body resolve against the enclosing function's
 // scope. Args bind on top in declaration order.
-function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
+function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
   let fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [] };
   match (cv) {
     VFunc(v) => {
@@ -3731,7 +5254,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
   }
-  let env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, argv: argv };
+  let env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, outs: outs };
   let j: i32 = 0;
   while (j < fv.params.len()) {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
@@ -3770,7 +5293,7 @@ function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string):
 // impl type (`Self` was rewritten to it at parse time), so coercing the result
 // to it gives `i64.zero()` a 64-bit zero rather than the i32 its `return 0`
 // body literally evaluates to.
-function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
+function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
   let ai: i32 = assoc_index(funcs, type_name, name);
   if (ai < 0) {
     return v_err("undefined associated function `" + name + "` on `" + type_name + "`");
@@ -3779,7 +5302,7 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
-  let env: Env = new_module_env(funcs, aliases, type_decls, argv);
+  let env: Env = new_module_env(funcs, aliases, type_decls, outs);
   let j: i32 = 0;
   while (j < fd.params.len()) {
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
@@ -3801,10 +5324,7 @@ function tyarg_of_value(v: Value): string {
       return int_type_name(n);
     },
     VInt64(w) => {
-      if (w.unsigned) {
-        return "u64";
-      }
-      return "i64";
+      return wide_type_name(w);
     },
     VUint(_) => {
       return "u32";
@@ -3885,6 +5405,16 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
   return e;
 }
 
+function wide_type_name(w: VInt64): string {
+  if (w.ptr) {
+    return "usize";
+  }
+  if (w.unsigned) {
+    return "u64";
+  }
+  return "i64";
+}
+
 // value_type_name derives the receiver-type name a runtime value dispatches
 // under: a struct's declared type_name, and the language's primitive
 // type-keyword for a scalar so `function (s: string) len(): i32 { … }`
@@ -3902,10 +5432,7 @@ function value_type_name(v: Value): string {
       return int_type_name(n);
     },
     VInt64(iv64) => {
-      if (iv64.unsigned) {
-        return "u64";
-      }
-      return "i64";
+      return wide_type_name(iv64);
     },
     VUint(_) => {
       return "u32";
@@ -3921,6 +5448,9 @@ function value_type_name(v: Value): string {
     },
     VArr(_) => {
       return "Array";
+    },
+    VHandle(hv) => {
+      return handle_kind(hv);
     },
     _ => {
       return "";
@@ -3954,12 +5484,12 @@ function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: pars
 // map_key_index is the slot of `m` whose key equals `k`, or -1. A struct or
 // enum key compares through its type's cmp.Eq `eq`, derived or written by
 // hand, as the compiled map's keyed probe does; any other key by value.
-function map_key_index(m: VMap, k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): i32 {
+function map_key_index(m: VMap, k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): i32 {
   let by_eq: boolean = has_key_eq(k, funcs, aliases);
   let i: i32 = 0;
   while (i < m.keys.len()) {
     if (by_eq) {
-      if let VBool(b) = call_method(m.keys[i], "eq", [k], funcs, aliases, type_decls, argv) {
+      if let VBool(b) = call_method(m.keys[i], "eq", [k], funcs, aliases, type_decls, outs) {
         if (b.v) {
           return i;
         }
@@ -3985,22 +5515,19 @@ function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlia
   return false;
 }
 
-function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
+function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
   // `i32.zero()` / `T.zero()` — the receiver is a TYPE, not a value, so no
   // value-receiver method can match and only the associated table applies.
   match (recv) {
     VType(tv) => {
-      return call_assoc(tv.name, name, args, funcs, aliases, type_decls, argv);
+      return call_assoc(tv.name, name, args, funcs, aliases, type_decls, outs);
     },
     VCell(uc) => {
       return cell_method(uc, name, args);
     },
-    VStruct(rs) => {
-      if (rs.type_name == "Reader" && (name == "read_chunk" || name == "read_chunk_bytes" || name == "read_line" || name == "close")) {
-        return reader_method(rs, name, args);
-      }
-      if (rs.type_name == "Writer" && (name == "write" || name == "write_some" || name == "splice_forever" || name == "write_bytes" || name == "write_some_bytes" || name == "close")) {
-        return writer_method(rs, name, args);
+    VHandle(hv) => {
+      if (is_handle_method(handle_kind(hv), name)) {
+        return handle_method(hv, name, args);
       }
     },
     _ => {}
@@ -4056,7 +5583,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         }
         let wi: i32 = vint_bits(args[0]);
         if (wi < 0 || wi >= av.elements.len()) {
-          return v_err("array.with: index " + util.i32_to_string(wi) + " out of range [0, " + util.i32_to_string(av.elements.len()) + ")");
+          return index_abort("array", wi, av.elements.len());
         }
         let wout: Value[] = [];
         let wj: i32 = 0;
@@ -4095,7 +5622,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 2) {
           return v_err("map.set: need 2 args");
         }
-        let i: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, argv);
+        let i: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, outs);
         if (i >= 0) {
           // Replace value at slot i.
           let nvs: Value[] = [];
@@ -4116,7 +5643,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 1) {
           return v_err("map.get: need 1 arg");
         }
-        let oi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, argv);
+        let oi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, outs);
         if (oi >= 0) {
           return v_variant("Some", [m.values[oi]]);
         }
@@ -4127,7 +5654,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 2) {
           return v_err("map.get_or: need 2 args");
         }
-        let gi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, argv);
+        let gi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, outs);
         if (gi >= 0) {
           return m.values[gi];
         }
@@ -4137,13 +5664,13 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 1) {
           return v_err("map.has: need 1 arg");
         }
-        return v_bool(map_key_index(m, args[0], funcs, aliases, type_decls, argv) >= 0);
+        return v_bool(map_key_index(m, args[0], funcs, aliases, type_decls, outs) >= 0);
       }
       if (name == "without") {
         if (args.len() != 1) {
           return v_err("map.delete: need 1 arg");
         }
-        let at: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, argv);
+        let at: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, outs);
         let nk: Value[] = [];
         let nv: Value[] = [];
         let di: i32 = 0;
@@ -4180,7 +5707,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
       if (ti >= 0 && ti < tv.elements.len()) {
         match (tv.elements[ti]) {
           VFunc(_) => {
-            return call_closure(tv.elements[ti], args, funcs, aliases, type_decls, argv);
+            return call_closure(tv.elements[ti], args, funcs, aliases, type_decls, outs);
           },
           _ => {}
         }
@@ -4223,7 +5750,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling method `" + name + "`");
       }
-      let env: Env = new_module_env(funcs, aliases, type_decls, argv);
+      let env: Env = new_module_env(funcs, aliases, type_decls, outs);
       env = bind_tyargs(env, fd, true, recv, args);
       // No declared type on the receiver: an array receiver is always the
       // abstract `T[]`, whose element spelling would self-pin an empty
@@ -4259,7 +5786,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
           conv_args = conv_args.append(args[aj]);
           aj = aj + 1;
         }
-        return call_func(funcs[ai].name, conv_args, funcs, aliases, type_decls, argv);
+        return call_func(funcs[ai].name, conv_args, funcs, aliases, type_decls, outs);
       }
       ai = ai + 1;
     }
@@ -4280,7 +5807,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (sv2.field_names[fi] == name) {
           match (sv2.field_values[fi]) {
             VFunc(_) => {
-              return call_closure(sv2.field_values[fi], args, funcs, aliases, type_decls, argv);
+              return call_closure(sv2.field_values[fi], args, funcs, aliases, type_decls, outs);
             },
             _ => {}
           }
@@ -4314,9 +5841,8 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
 // plane has no shape for, and an append MUTATES the buffer two copies of a
 // handle share, which it has no expression for either.
 //
-// The handle is carried as an unsigned 64-bit value, so a pointer-width one
-// survives the round trip out through the interpreted program's `usize`
-// variables and back in as an argument.
+// The handle is carried as a usize, so it survives the round trip out through
+// the interpreted program's `usize` variables and back in as an argument.
 // That makes a handle an ADDRESS rather than a key into a table of live
 // builders, so a handle used after its free is a wild pointer here, not the
 // error internal/oracle/interp answers one with.
@@ -4334,7 +5860,7 @@ function is_buf_builtin(name: string): boolean {
 }
 
 function v_buf_handle(h: usize): Value {
-  return v_wide(h as i64, true);
+  return v_usize(h as i64);
 }
 
 function buf_handle_of(v: Value): usize {
@@ -4919,7 +6445,7 @@ function call_buf_push_range(h: usize, args: Value[]): Value {
   let lo: i32 = int_arg_i32(args[2]);
   let hi: i32 = int_arg_i32(args[3]);
   if (lo < 0 || hi > s.len() || lo > hi) {
-    return v_err("buf_push_range [" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "] out of range for length " + util.i32_to_string(s.len()));
+    return v_abort("buf_push_range [" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "] out of range for length " + util.i32_to_string(s.len()));
   }
   buf_push_range(h, s, lo, hi);
   return v_void();
@@ -5129,7 +6655,7 @@ function str_hash_low32(h: i64): i32 {
   return lo as i32;
 }
 
-function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
+function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
   // The Display-taking I/O trio, matching internal/oracle/interp's builtinPrint /
   // builtinWrite / builtinEprint: print and eprint append a newline, write
   // does not, and eprint goes to stderr. The interpreter is itself a Fern
@@ -5151,7 +6677,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
       VString(_) => {},
       _ => {
         let no_args: Value[] = [];
-        text_val = call_method(args[0], "to_string", no_args, funcs, aliases, type_decls, argv);
+        text_val = call_method(args[0], "to_string", no_args, funcs, aliases, type_decls, outs);
       }
     }
     match (text_val) {
@@ -5210,8 +6736,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     return v_string(target_arch());
   }
   // map_new(cap) — capacity arg is accepted but ignored
-  // since VMap uses dynamic parallel arrays.
-  if (name == "map_new") {
+  // since VMap uses dynamic parallel arrays. `__map_new_i32` is the
+  // constructor parse_map_lit names for a literal with scalar keys.
+  if (name == "map_new" || name == "__map_new_i32") {
     return v_map_new();
   }
   // `__alloc_u8(n)` — the stdlib's staging buffer for every
@@ -5236,7 +6763,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     }
     let an: i32 = vint_bits(args[0]);
     if (an < 0) {
-      return v_err(name + ": negative length " + util.i32_to_string(an));
+      return v_abort(name + ": negative length " + util.i32_to_string(an));
     }
     let zero: Value = v_int(0);
     if (name == "__alloc_i64") {
@@ -5317,7 +6844,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
         let sua: i32 = vint_bits(args[1]);
         let sub: i32 = vint_bits(args[2]);
         if (sua < 0 || sub > s.v.len() || sua > sub) {
-          return v_err("string slice out of range");
+          return slice_abort(sua, sub, s.v.len());
         }
         return v_string(slice_unchecked(s.v, sua, sub));
       },
@@ -5774,52 +7301,14 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
       }
     }
   }
-  // The float reinterpret quartet — `std/float`'s formatter takes a
-  // number apart through these, so every f-string on an f64 reaches them.
-  // The host-facing trio a CLI program reaches first: its argv, its stdin
-  // as a Reader, and a line of it. Each is the same builtin one level up,
-  // as print is; the Reader is fd 0 by construction, which is the only
-  // descriptor a program running here can have opened.
-  if (name == "args") {
-    if (args.len() != 0) {
-      return v_err("args takes no arguments");
-    }
-    let av: Value[] = [];
-    let ai: i32 = 0;
-    while (ai < argv.len()) {
-      av = av.append(v_string(argv[ai]));
-      ai = ai + 1;
-    }
-    return v_arr_of(av, "string");
-  }
-  if (name == "stdin") {
-    if (args.len() != 0) {
-      return v_err("stdin takes no arguments");
-    }
-    return v_struct("Reader", ["fd"], [v_int(0)]);
-  }
-  if (name == "stdout" || name == "stderr") {
-    if (args.len() != 0) {
-      return v_err(name + " takes no arguments");
-    }
-    let fd: i32 = 1;
-    if (name == "stderr") {
-      fd = 2;
-    }
-    return v_struct("Writer", ["fd"], [v_int(fd)]);
-  }
-  if (name == "read_line") {
-    if (args.len() != 0) {
-      return v_err("read_line takes no arguments");
-    }
-    return option_string_value(read_line_from_host());
-  }
   if (name == "cell_new") {
     if (args.len() != 1) {
       return v_err("cell_new takes exactly 1 argument");
     }
     return cell_value(args[0]);
   }
+  // The float reinterpret quartet — `std/float`'s formatter takes a
+  // number apart through these, so every f-string on an f64 reaches them.
   if (name == "f64_bits") {
     if (args.len() != 1 || !is_float_like(args[0])) {
       return v_err("f64_bits: expected 1 float arg");
@@ -5854,7 +7343,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
-      let env: Env = new_module_env(funcs, aliases, type_decls, argv);
+      let env: Env = new_module_env(funcs, aliases, type_decls, outs);
       let no_recv: Value = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args);
       let j: i32 = 0;
@@ -5870,7 +7359,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     }
     i = i + 1;
   }
-  return v_err("undefined function: " + name);
+  return call_host(name, args);
 }
 
 // value_eq: structural equality on Value. Two values of the
@@ -6083,6 +7572,16 @@ function value_eq(a: Value, b: Value): boolean {
       // A type is not a value: it only ever sits in the object position of
       // an associated call, never in an operand one.
       return false;
+    },
+    VHandle(ah) => {
+      if let VHandle(bh) = b {
+        return handle_kind(ah) == handle_kind(bh) && value_eq(handle_fd(ah), handle_fd(bh));
+      }
+      return false;
+    },
+    VCellA(_) => {
+      // Lives only in an Env slot; lookup reads through it.
+      return false;
     }
   }
   return false;
@@ -6102,7 +7601,7 @@ function value_eq(a: Value, b: Value): boolean {
 pub struct StepResult { env: Env, ret: Value, sig: i32 }
 
 function step_none(env: Env): StepResult {
-  return StepResult { env: env, ret: VErr { msg: "" }, sig: 0 };
+  return StepResult { env: env, ret: VErr { msg: "", abort: false }, sig: 0 };
 }
 
 function step_stop(env: Env, v: Value): StepResult {
@@ -6437,10 +7936,10 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       // 2/3 and peels one level off anything deeper (sig - 2), so a
       // 2-level `break outer` unwinds both loops instead of silently
       // degrading to the innermost (which hung `outer: while(true)`).
-      return StepResult { env: env, ret: VErr { msg: "" }, sig: 2 + b.tag * 2 };
+      return StepResult { env: env, ret: VErr { msg: "", abort: false }, sig: 2 + b.tag * 2 };
     },
     ast.StmtContinue(c) => {
-      return StepResult { env: env, ret: VErr { msg: "" }, sig: 3 + c.tag * 2 };
+      return StepResult { env: env, ret: VErr { msg: "", abort: false }, sig: 3 + c.tag * 2 };
     },
     ast.StmtFor(f) => {
       let iv: Value = eval_expr(f.iter, env);
@@ -6614,7 +8113,7 @@ function eval_block(body: ast.Stmt[], env: Env): StepResult {
   let i: i32 = 0;
   while (i < body.len()) {
     cur = cellify_captures(cur, body[i], reassigned);
-    let r: StepResult = eval_stmt(body[i], cur);
+    let r: StepResult = eval_out_stmt(body[i], cur);
     cur = r.env;
     if (r.sig != 0) {
       return StepResult { env: cur, ret: r.ret, sig: r.sig };
@@ -6633,7 +8132,7 @@ function eval_program(prog: ast.Stmt[]): Value {
   let i: i32 = 0;
   while (i < prog.len()) {
     env = cellify_captures(env, prog[i], preassigned);
-    let r: StepResult = eval_stmt(prog[i], env);
+    let r: StepResult = eval_out_stmt(prog[i], env);
     env = r.env;
     if (r.sig != 0) {
       return r.ret;
@@ -6655,8 +8154,11 @@ pub function eval_module(raw_mod: parser.Module): Value {
 }
 
 // eval_module_argv runs a module; `argv` is what the program's `args()`
-// answers, its own path first as the CLI gives a compiled program.
+// answers, its own path first as the CLI gives a compiled program. It is the
+// host's argv from here on, so the program's args() and set_args() are the
+// host's own.
 pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
+  set_args(argv);
   // Lower `for i in LOW..HIGH` range-loops (iter = the synthetic `__range`
   // call) to counting while-loops up front — the interpreter's StmtFor only
   // iterates arrays, so an undesugared `__range` iter would mis-evaluate.
@@ -6671,20 +8173,21 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   // declared on the enum type dispatches on its variant values.
   let all_variants: parser.StructDecl[] = module_type_decls(mod.structs);
   let all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, all_variants);
+  let outs: OutTable = out_table(mod.funcs);
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].name == "main") {
       let empty_args: Value[] = [];
-      return call_func("main", empty_args, mod.funcs, all_aliases, all_variants, argv);
+      return call_func("main", empty_args, mod.funcs, all_aliases, all_variants, outs);
     }
     i = i + 1;
   }
-  let env: Env = new_module_env(mod.funcs, all_aliases, all_variants, argv);
+  let env: Env = new_module_env(mod.funcs, all_aliases, all_variants, outs);
   let mreassigned: string[] = body_assign_names(mod.top_stmts, []);
   let j: i32 = 0;
   while (j < mod.top_stmts.len()) {
     env = cellify_captures(env, mod.top_stmts[j], mreassigned);
-    let r: StepResult = eval_stmt(mod.top_stmts[j], env);
+    let r: StepResult = eval_out_stmt(mod.top_stmts[j], env);
     env = r.env;
     if (r.sig != 0) {
       return r.ret;
@@ -6700,8 +8203,10 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
 // and the environment its statements run in, which sees them.
 pub struct Session { decls: parser.Module, env: Env }
 
+// A session's statements see `-` as their argv, as a stdin-fed program does.
 pub function new_session(): Session {
-  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env([], [], module_type_decls([]), ["-"]) };
+  set_args(["-"]);
+  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env([], [], module_type_decls([]), builtin_outs()) };
 }
 
 function lowered(raw: parser.Module): parser.Module {
@@ -6731,7 +8236,7 @@ pub function (s: Session) declare(m: parser.Module): Session {
   let decls: parser.Module = parser.Module { ...s.decls, funcs: funcs, structs: structs, aliases: aliases };
   let mod: parser.Module = lowered(decls);
   let types: parser.StructDecl[] = module_type_decls(mod.structs);
-  return Session { decls: decls, env: Env { ...s.env, funcs: mod.funcs, aliases: aliases_with_enums(mod.aliases, types), type_decls: types } };
+  return Session { decls: decls, env: Env { ...s.env, funcs: mod.funcs, aliases: aliases_with_enums(mod.aliases, types), type_decls: types, outs: out_table(mod.funcs) } };
 }
 
 function declares_func(m: parser.Module, name: string): boolean {
@@ -6766,7 +8271,7 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
         _ => {}
       }
     }
-    let r: StepResult = eval_stmt(body[k], env);
+    let r: StepResult = eval_out_stmt(body[k], env);
     env = r.env;
     if (r.sig != 0 && is_err(r.ret)) {
       return (Session { ...s, env: env }, true, r.ret);
@@ -6805,7 +8310,7 @@ pub function (s: Session) show(v: Value): string {
     return value_text(v);
   }
   if (method_ret_type(s.env.funcs, value_type_name(v), "to_string") == "string") {
-    match (call_method(v, "to_string", [], s.env.funcs, s.env.aliases, s.env.type_decls, s.env.argv)) {
+    match (call_method(v, "to_string", [], s.env.funcs, s.env.aliases, s.env.type_decls, s.env.outs)) {
       VString(t) => {
         let text: string = t.v;
         return text;

@@ -119,6 +119,7 @@ ci-selftest:
 	node scripts/ci-changes-selftest.mjs
 	node scripts/main-red-selftest.mjs
 	node scripts/perf-gate-selftest.mjs
+	node scripts/nightly-findings-selftest.mjs
 
 # Report the live state of the native-convergence freeze preconditions,
 # derived from the tree. Fails only on a
