@@ -108,7 +108,7 @@ function main(): i32 {
             let core: i32[] = [];
             let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let tbody: i32[] = wit_section_body(blob_to_bytes(FERN_BIN()), 7);
+            let tbody: i32[] = wit_section_body(FERN_BIN(), 7);
             let comp: i32[] = component_from_world(tbody, core);
             let j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }
@@ -225,7 +225,7 @@ function main(): i32 {
             let core: i32[] = [];
             let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let tbody: i32[] = wit_section_body(blob_to_bytes(USER_BIN()), 7);
+            let tbody: i32[] = wit_section_body(USER_BIN(), 7);
             let comp: i32[] = component_from_world(tbody, core);
             let j: i32 = 0;
             while (j < comp.len()) { print_int(comp[j]); write("\n"); j = j + 1; }

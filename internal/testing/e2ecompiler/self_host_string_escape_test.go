@@ -51,9 +51,10 @@ var escapeCases = []struct {
 	// The named escapes, which were already right and must stay right.
 	{"named-escapes", `A\tB\nC\rD`, []byte{'A', '\t', 'B', '\n', 'C', '\r', 'D'}},
 	// High bytes must survive octal escaping in UTF-8 assembly text too.
-	{"high-byte", `A\xffB`, []byte{'A', 0xff, 'B'}},
-	{"high-and-control", `\x80\x00\xff\x1b`, []byte{0x80, 0, 0xff, 0x1b}},
+	{"high-byte", `A\u{FF}B`, []byte("A\u00ffB")},
+	{"high-and-control", `\u{80}\x00\u{FF}\x1b`, []byte("\u0080\x00\u00ff\x1b")},
 	{"unicode", `é水`, []byte("é水")},
+	{"unicode-escape", `\u{1F600}\u{10FFFF}`, []byte("😀\U0010FFFF")},
 	// A REAL backslash followed by a digit. The escaped form is `\\0`, and a
 	// decoder that reads octal greedily past the `\\` would turn it into NUL.
 	{"escaped-backslash-then-digit", `A\\0B`, []byte{'A', '\\', '0', 'B'}},
@@ -213,7 +214,7 @@ func gasEscape(bs []byte) string {
 // Check the actual emitter as well as the decoder's hand-written fixtures.
 func TestSelfHostAssemblyTextUTF8(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	src := mustWrite(t, t.TempDir(), "bytes.fern", escapeProbeSource(`\x80\x00\xff\x1b`))
+	src := mustWrite(t, t.TempDir(), "bytes.fern", escapeProbeSource(`\u{80}\x00\u{FF}\x1b`))
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			asm, err := os.ReadFile(cli.emit(t, src, target))
@@ -223,7 +224,7 @@ func TestSelfHostAssemblyTextUTF8(t *testing.T) {
 			if !utf8.Valid(asm) {
 				t.Fatal("emitted assembly contains invalid UTF-8")
 			}
-			if !bytes.Contains(asm, []byte(`\200\000\377\033`)) {
+			if !bytes.Contains(asm, []byte(`\302\200\000\303\277\033`)) {
 				t.Fatal("emitted assembly lost the expected octal data bytes")
 			}
 		})

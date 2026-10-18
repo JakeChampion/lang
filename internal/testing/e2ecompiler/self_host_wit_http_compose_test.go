@@ -116,7 +116,7 @@ function main(): i32 {
             let core: i32[] = [];
             let i: i32 = 0;
             while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let tbody: i32[] = wit_section_body(blob_to_bytes(proxy_world_payload()), 7);
+            let tbody: i32[] = wit_section_body(hex_to_bytes(proxy_world_payload()), 7);
             let c: Composed = compose_http(tbody, core);
             if (c.refused.len() > 0) { eprint(c.refused); return 3; }
             let j: i32 = 0;

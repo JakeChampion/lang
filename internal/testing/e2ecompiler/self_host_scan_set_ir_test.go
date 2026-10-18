@@ -81,8 +81,8 @@ function main(): i32 {
     if (__scan_set("abc", 0, none) != 3) { return 15; }
     let high: u8[] = space_set();
     high = high.with(255, 1 as u8);
-    if (__scan_set("\x7f\xfe\xff", 0, high) != 2) { return 16; }
-    if (__scan_set("\x7f\xfe\xff", 3, high) != 3) { return 17; }
+    if (__scan_set("\x7f" + string_from_bytes_unchecked([254 as u8, 255 as u8]), 0, high) != 2) { return 16; }
+    if (__scan_set("\x7f" + string_from_bytes_unchecked([254 as u8, 255 as u8]), 3, high) != 3) { return 17; }
     return 42;
 }
 `

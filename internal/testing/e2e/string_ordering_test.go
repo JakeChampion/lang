@@ -35,7 +35,7 @@ function main(): i32 {
     // Byte order, so uppercase sorts before lowercase and a byte above
     // 0x7f sorts after all of ASCII.
     if (!("Z" < "a")) { return 13; }
-    if (!("a" < "\xc3\xa9")) { return 14; }
+    if (!("a" < "\u{e9}")) { return 14; }
     // Long operands exercise the heap form on both sides, past whatever
     // small-string threshold the target uses.
     let long1: string = "the quick brown fox jumps over the lazy dog";

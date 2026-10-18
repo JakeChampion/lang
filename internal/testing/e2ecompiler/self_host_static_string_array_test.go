@@ -41,7 +41,7 @@ func TestSelfHostStaticStringArray(t *testing.T) {
 const staticStringArraySrc = `struct Named { tag: i32, name: string, alts: string[] }
 struct P { a: i32, b: i32 }
 function phrase(i: i32): string {
-  let phrases: string[] = ["OK", "a,b", "{x|y}", "", "\xc3\xa9t\xc3\xa9"];
+  let phrases: string[] = ["OK", "a,b", "{x|y}", "", "été"];
   return phrases[i];
 }
 function named(): Named { return Named { tag: 3, name: "n,1", alts: ["p", "q}"] }; }
@@ -56,7 +56,7 @@ function main(): i32 {
   }
   if (__heap_alloc_count() - before != (0 as i64)) { return 20; }
   if (n != 900) { return 10; }
-  if (phrase(1) != "a,b" || phrase(2) != "{x|y}" || phrase(3) != "" || phrase(4) != "\xc3\xa9t\xc3\xa9") { return 11; }
+  if (phrase(1) != "a,b" || phrase(2) != "{x|y}" || phrase(3) != "" || phrase(4) != "été") { return 11; }
   let nm: Named = named();
   if (nm.name != "n,1" || nm.alts[0] != "p" || nm.alts[1] != "q}" || nm.tag != 3) { return 12; }
   let more: string[] = nm.alts.append("r");

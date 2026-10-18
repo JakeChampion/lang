@@ -71,7 +71,7 @@ function main(): i32 {
         if (__crc32_cksum(0 - 1, base) != ref(0 - 1, base)) { return 3; }
         let at: i32 = 0;
         while (at < n) {
-            let s: string = slice_unchecked(base, 0, at) + "\xff" + slice_unchecked(base, at + 1, n);
+            let s: string = slice_unchecked(base, 0, at) + string_from_bytes_unchecked([255 as u8]) + slice_unchecked(base, at + 1, n);
             if (__crc32_cksum(0, s) != ref(0, s)) { return 4; }
             if (__crc32_cksum(0 - 559038737, s) != ref(0 - 559038737, s)) { return 5; }
             at = at + 1;
@@ -91,9 +91,9 @@ function main(): i32 {
     // two pushes apart at all. One block and eight.
     let hi: string = "";
     let h: i32 = 0;
-    while (h < 16) { hi = hi + "\xff"; h = h + 1; }
+    while (h < 16) { hi = hi + string_from_bytes_unchecked([255 as u8]); h = h + 1; }
     if (__crc32_cksum(0, hi) != 0 - 223276853) { return 10; }
-    while (h < 128) { hi = hi + "\xff"; h = h + 1; }
+    while (h < 128) { hi = hi + string_from_bytes_unchecked([255 as u8]); h = h + 1; }
     if (__crc32_cksum(0, hi) != 0 - 1955225115) { return 14; }
     // The top bit live in the INCOMING crc.
     if (__crc32_cksum(0 - 1, "x") != 0 - 2001448981) { return 11; }

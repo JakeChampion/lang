@@ -152,7 +152,7 @@ function main(): i32 {
     match (temp_dir("pk")) {
         Ok(dir) => {
             let path: string = dir + "/bytes.bin";
-            write_file(path, "\x01\x02xyz\xff");
+            match (write_file_bytes(path, [1 as u8, 2 as u8, b'x', b'y', b'z', 255 as u8])) { Ok(_) => {}, Err(e) => { print("write err"); } }
             match (read_file_bytes(path)) {
                 Ok(bs) => {
                     let t: i32 = 0;
