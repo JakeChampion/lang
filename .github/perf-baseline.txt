@@ -69,7 +69,7 @@ x86_64/closure_call.text	774
 x86_64/closure_call.ir	63018106
 x86_64/enum_match.text	891
 x86_64/enum_match.ir	50850037
-x86_64/http_hello.text	14458
+x86_64/http_hello.text	14881
 x86_64/http_hello.ir	24984411
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
@@ -217,6 +217,12 @@ x86_64/utf8_ingest_validated.ir	5916089
 # are found in one pass, the body deadline starts after the burst's parse, and
 # the version prefix goes through the mismatch kernel. Both figures are the
 # perf lanes' own.
+#
+# Re-pinned 2026-10-18 (#12644) on x86_64/http_hello.text (+2.93%): std/http's
+# `__bytes_are` is the `__mismatch_bytes_str` kernel, inlined at its three
+# callers, in place of a byte loop. `.ir` does not move: the benchmark parses
+# without a previous request, so those compares never run there. The aarch64
+# `.text` row wants the lane's own figure.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
