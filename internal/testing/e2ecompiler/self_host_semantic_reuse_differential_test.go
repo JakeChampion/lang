@@ -476,10 +476,14 @@ function main(): i32 {
     return p.x * 10 + p.y + p.z as i32;
 }`, 69, 1, 1, 6, false, false},
 
+	// `seed` keeps the record off the static data a constant literal is
+	// placed in: the case is about the one allocation the construction makes
+	// and must not pair with.
 	{"degenerate-self-donor", `struct S0 { f0: i32, f1: i64, f2: boolean }
 @noinline function hold(v: S0): i32 { return 0; }
+@noinline function seed(): i32 { return 687i32; }
 function main(): i32 {
-    let v0: S0 = S0 { f0: 687i32, f1: 942i64, f2: false };
+    let v0: S0 = S0 { f0: seed(), f1: 942i64, f2: false };
     if (__rc_underflow_count() != 0) { return 99; }
     return (326i32 & 255i32) + hold(v0);
 }`, 70, 0, 1, 1, false, true},

@@ -597,6 +597,8 @@ func expectedFromCheck(t *testing.T, path, src, out string) []lspDiag {
 				d.Code = code
 			}
 			rest = msg
+		case strings.HasPrefix(rest, "error: "):
+			rest = strings.TrimPrefix(rest, "error: ")
 		}
 		d.Message = strings.TrimPrefix(rest, "fern: ")
 		want = append(want, d)
