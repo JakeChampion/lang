@@ -112,18 +112,11 @@ var keywords = map[string]bool{
 	"break":    true,
 	"continue": true,
 	"return":   true,
-	// Structured-concurrency surface (docs/ASYNC-IMPLEMENTATION-PLAN.md
-	// Phase 3): `concurrent { let a = spawn f(...); … await a … }` fans
-	// out tasks; the parser desugars the block onto the std/task runtime.
-	// `race { spawn …; spawn …; }` — race spawned tasks, first-to-finish wins;
-	// an expression yielding (winnerIndex, result). Desugars onto std/task.select.
-	// (Named `race`, not `select`, so the runtime function `task.select` — already
-	// an identifier — keeps working.)
-	"true":    true,
-	"false":   true,
-	"boolean": true,
-	"void":    true,
-	"string":  true,
+	"true":     true,
+	"false":    true,
+	"boolean":  true,
+	"void":     true,
+	"string":   true,
 	// Sized numeric type names. The legacy `number` alias for
 	// `i32` was removed in the legacy-cleanup pass. `float` is
 	// the width-unqualified alias for f64 (#5363), handled
