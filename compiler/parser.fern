@@ -27562,124 +27562,171 @@ function imports_have_std_json(imports: Import[]): boolean {
   return false;
 }
 
-// parse_derive_attr consumes `@derive(Trait, mod.Trait, …)` (the `@` is
-// at the cursor) and returns the (possibly qualified) trait names.
-function parse_derive_attr(p: Par): (string[], Par) {
+// DeclAttr is the attribute before a top-level declaration: `@derive(…)`'s
+// trait names, or `@import(…)` / `@export(…)`'s WIT pair. An empty name is
+// no attribute.
+struct DeclAttr { name: string, derives: string[], iface: string, wit: string }
+
+function no_decl_attr(): DeclAttr {
+  return DeclAttr { name: "", derives: [], iface: "", wit: "" };
+}
+
+// expected_here is native's P001 "expected WHAT, got X" at the cursor.
+function expected_here(p: Par, what: string): ast.Stmt[] {
+  return [decl_sentinel(p, "expected " + what + ", got " + tok_desc(p.peek()))];
+}
+
+// parse_decl_attr reads the attribute at the cursor's `@`, as native's
+// parseAttribute does. A malformed one returns its P001, with the cursor at
+// the token that broke it.
+function parse_decl_attr(p: Par): (DeclAttr, ast.Stmt[], Par) {
+  let at: Par = p;
+  p = p.advance();  // `@`
+  let name: string = p.peek_ident();
+  if (p.peek_keyword() == "import") {
+    name = "import";
+  }
+  if (name.len() == 0) {
+    return (no_decl_attr(), expected_here(p, "a name"), p);
+  }
+  p = p.advance();
+  if (name == "derive") {
+    return parse_derive_args(p);
+  }
+  if (name == "import" || name == "export") {
+    return parse_wit_pair(name, p);
+  }
+  if (name == "must_consume" || name == "try" || name == "inline" || name == "noinline") {
+    return (DeclAttr { ...no_decl_attr(), name: name }, [], p);
+  }
+  return (no_decl_attr(), [decl_sentinel(at, "unknown attribute @" + name + " (only @derive, @import, @export, @must_consume, @try, @inline, and @noinline are supported)")], p);
+}
+
+// parse_derive_args reads `(Trait, mod.Trait, …)` after `@derive`.
+function parse_derive_args(p: Par): (DeclAttr, ast.Stmt[], Par) {
+  if (p.peek_punct() != "(") {
+    return (no_decl_attr(), expected_here(p, "\"(\""), p);
+  }
+  p = p.advance();
   let derives: string[] = [];
-  p = p.advance();  // `@`
-  if (p.peek_ident() == "derive") {
+  while (true) {
+    let tn: string = p.peek_ident();
+    if (tn.len() == 0) {
+      return (no_decl_attr(), expected_here(p, "a name"), p);
+    }
     p = p.advance();
-  }
-  if (p.peek_punct() == "(") {
-    p = p.advance();
-    while (!p.at_end()) {
-      if (p.peek_punct() == ")") {
-        break;
-      }
-      let tn: string = p.peek_ident();
-      if (tn.len() == 0) {
-        p = p.advance();
-        continue;
-      }
+    if (p.peek_punct() == ".") {
       p = p.advance();
-      while (p.at_path_sep()) {
-        p = p.advance();
-        let seg: string = p.peek_ident();
-        if (seg.len() > 0) {
-          tn = tn + "." + seg;
-          p = p.advance();
-        }
-      }
-      derives = derives.append(tn);
-      if (p.peek_punct() == ",") {
+      let seg: string = p.peek_ident();
+      if (seg.len() > 0) {
+        tn = tn + "." + seg;
         p = p.advance();
       }
     }
-    if (p.peek_punct() == ")") {
-      p = p.advance();
+    derives = derives.append(tn);
+    if (p.peek_punct() != ",") {
+      break;
     }
+    p = p.advance();
   }
-  return (derives, p);
+  if (p.peek_punct() != ")") {
+    return (no_decl_attr(), expected_here(p, "\")\""), p);
+  }
+  return (DeclAttr { ...no_decl_attr(), name: "derive", derives: derives }, [], p.advance());
 }
 
-// parse_import_attr consumes `@import("wasi:iface@x.y.z", "wit-func-name")`
-// (the `@` is at the cursor) and returns the interface + WIT function strings
-// that bind the following body-less function to a WIT import (bring-your-own
-// WIT, P4 — docs/WIT-BRING-YOUR-OWN.md). `is_import` is false when the
-// attribute after `@` is not `import`, so the caller falls back to @derive.
-function parse_import_attr(p: Par): (string, string, boolean, Par) {
-  p = p.advance();  // `@`
-  if (p.peek_keyword() != "import") {
-    return ("", "", false, p);
+// parse_wit_pair reads the `("iface", "name")` that `@import` and `@export`
+// both take.
+function parse_wit_pair(name: string, p: Par): (DeclAttr, ast.Stmt[], Par) {
+  if (p.peek_punct() != "(") {
+    return (no_decl_attr(), expected_here(p, "\"(\""), p);
   }
-  p = p.advance();  // `import`
-  let iface: string = "";
-  let wit: string = "";
-  if (p.peek_punct() == "(") {
+  p = p.advance();
+  let parts: string[] = [];
+  while (parts.len() < 2) {
+    match (p.peek()) {
+      lexer.TokString(s) => {
+        parts = parts.append(s.value);
+        p = p.advance();
+      },
+      _ => {
+        return (no_decl_attr(), expected_here(p, "a string literal"), p);
+      }
+    }
+    let close: string = ",";
+    if (parts.len() == 2) {
+      close = ")";
+    }
+    if (p.peek_punct() != close) {
+      return (no_decl_attr(), expected_here(p, "\"" + close + "\""), p);
+    }
     p = p.advance();
-    match (p.peek()) {
-      lexer.TokString(s) => {
-        iface = s.value;
-        p = p.advance();
-      },
-      _ => {}
-    }
-    if (p.peek_punct() == ",") {
-      p = p.advance();
-    }
-    match (p.peek()) {
-      lexer.TokString(s) => {
-        wit = s.value;
-        p = p.advance();
-      },
-      _ => {}
-    }
-    if (p.peek_punct() == ")") {
-      p = p.advance();
-    }
   }
-  return (iface, wit, true, p);
+  return (DeclAttr { ...no_decl_attr(), name: name, iface: parts[0], wit: parts[1] }, [], p);
 }
 
-// parse_export_attr consumes `@export("wasi:iface@x.y.z", "wit-name")` (the `@`
-// is at the cursor) and returns the (iface, name) pair that binds the following
-// function to a WIT export (P6 — docs/WIT-BRING-YOUR-OWN.md). Reuses
-// the shared (iface, wit, …, Par) tuple shape.
-function parse_export_attr(p: Par): (string, string, boolean, Par) {
-  p = p.advance();  // `@`
-  if (p.peek_ident() != "export") {
-    return ("", "", false, p);
+// attr_fits reports whether attribute `name` may precede a declaration of
+// `kind` (its keyword, or "resource").
+function attr_fits(name: string, kind: string): boolean {
+  if (name.len() == 0) {
+    return true;
   }
-  p = p.advance();  // `export`
-  let iface: string = "";
-  let wit: string = "";
-  if (p.peek_punct() == "(") {
-    p = p.advance();
-    match (p.peek()) {
-      lexer.TokString(s) => {
-        iface = s.value;
-        p = p.advance();
-      },
-      _ => {}
-    }
-    if (p.peek_punct() == ",") {
-      p = p.advance();
-    }
-    match (p.peek()) {
-      lexer.TokString(s) => {
-        wit = s.value;
-        p = p.advance();
-      },
-      _ => {}
-    }
-    if (p.peek_punct() == ")") {
-      p = p.advance();
-    }
+  if (name == "derive" || name == "must_consume") {
+    return kind == "struct" || kind == "enum";
   }
-  return (iface, wit, true, p);
+  if (name == "try") {
+    return kind == "enum";
+  }
+  if (name == "import") {
+    return kind == "function" || kind == "resource";
+  }
+  return kind == "function";
 }
 
-// yields the parsed resource name plus the advanced parser.
+// attr_misplaced is native's diagnostic for attribute `name` before a
+// declaration it does not apply to.
+function attr_misplaced(name: string): string {
+  if (name == "derive" || name == "must_consume") {
+    return "@" + name + " only applies to a `struct` or `enum` declaration";
+  }
+  if (name == "try") {
+    return "@try only applies to an `enum` declaration";
+  }
+  if (name == "import") {
+    return "@import only applies to a function or resource declaration";
+  }
+  if (name == "export") {
+    return "@export only applies to a function declaration";
+  }
+  return "@inline / @noinline only applies to a function declaration";
+}
+
+// pub_errors is native's diagnostic for a `pub` that the cursor, past it and
+// any `(package)`, does not continue.
+function pub_errors(pub_at: Par, p: Par): ast.Stmt[] {
+  if (p.peek_punct() == "(") {
+    let q: Par = p.advance();
+    if (q.peek_ident() == "package") {
+      return expected_here(q.advance(), "\")\"");
+    }
+    return [decl_sentinel(pub_at, "`pub(...)` only supports `pub(package)`")];
+  }
+  if (str_list_contains(["function", "struct", "enum", "type", "trait", "const", "use"], p.peek_keyword()) || str_list_contains(["opaque", "fip", "fbip", "async"], p.peek_ident())) {
+    return [];
+  }
+  return [decl_sentinel(pub_at, "`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, `fbip`, or `async`")];
+}
+
+// skip_failed_decl steps past a top-level declaration that raised its
+// diagnostic, as native does: to the next declaration keyword, and at least
+// one token past where the declaration began.
+function skip_failed_decl(p: Par, start: i32): Par {
+  let q: Par = sync_to_top_level(p);
+  if (q.pos == start) {
+    return q.advance();
+  }
+  return q;
+}
 
 // parse_resource_decl_name consumes `resource Name;` (the contextual `resource`
 // identifier is at the cursor) and returns the parser plus `Name`. The optional
@@ -29711,14 +29758,28 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   let impl_decls: ImplDecl[] = [];
   let flines: FieldLines[] = [];
   let inline_hints: FunctionInlineHint[] = [];
-  let has_inline_hint: boolean = false;
-  let inline_never: boolean = false;
   // Claimed `<Type>.<name>` method symbol keys, and the trait that claimed
   // each — see claim_method_name, which keeps the emitted symbol namespace
   // injective when two traits provide one method for one type.
   let mth_keys: string[] = [];
   let mth_traits: string[] = [];
   while (!p.at_end()) {
+    let decl_start: i32 = p.pos;
+    // One attribute may precede a declaration; attr_fits checks it against
+    // the declaration once its modifiers are read.
+    let attr: DeclAttr = no_decl_attr();
+    if (p.peek_punct() == "@") {
+      let (da, da_bad, da_p) = parse_decl_attr(p);
+      if (da_bad.len() > 0) {
+        for b in da_bad {
+          top_stmts = top_stmts.append(b);
+        }
+        p = skip_failed_decl(da_p, decl_start);
+        continue;
+      }
+      attr = da;
+      p = da_p;
+    }
     let kw: string = p.peek_keyword();
     // Strip `pub` and re-read the keyword so `pub function`, `pub struct`
     // and `pub type` all dispatch correctly. The modifier is CAPTURED for
@@ -29730,229 +29791,21 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     let decl_line: i32 = p.peek_line();
     let decl_col: i32 = p.peek_col();
     if (kw == "pub") {
+      let pub_at: Par = p;
       p = p.advance();
       let (mpk, mpk_p) = consume_pub_package(p);
       p = mpk_p;
       kw = p.peek_keyword();
       decl_pub = !mpk;
       decl_package = mpk;
-    }
-    // `@derive(Trait, …)` attribute on the following struct/enum.
-    // Synthesise the field-wise trait methods (structs); enum
-    // derive is a follow-up. See docs/TRAITS.md.
-    if (p.peek_punct() == "@") {
-      // `@import("iface", "wit-func")` binds the following body-less
-      // function to a WIT import (P4). A probe past `@` distinguishes it
-      // from `@derive`, which keeps the original cursor.
-      let probe: Par = p.advance();
-      if (probe.peek_keyword() == "import") {
-        let (iar_iface, iar_wit, iar_is_import, iar_p) = parse_import_attr(p);
-        p = iar_p;
-        let ik: string = p.peek_keyword();
-        if (ik == "pub") {
-          p = p.advance();
-          let (ik_pk, ik_pk_p) = consume_pub_package(p);
-          p = ik_pk_p;
-          ik = p.peek_keyword();
-          decl_pub = !ik_pk;
-          decl_package = ik_pk;
+      let pub_bad: ast.Stmt[] = pub_errors(pub_at, p);
+      if (pub_bad.len() > 0) {
+        for b in pub_bad {
+          top_stmts = top_stmts.append(b);
         }
-        // `@import(iface, wit) async function …` — the Preview-3 async
-        // import. Same contextual rule as the top-level probe.
-        let i_async: boolean = false;
-        let ia_p: Par = skip_decl_modifier(p, "async", "function");
-        if (ia_p.pos != p.pos) {
-          p = ia_p;
-          ik = "function";
-          i_async = true;
-        }
-        if (ik == "function") {
-          let (ifr_func, ifr_p) = parse_func_decl(p);
-          p = ifr_p;
-          if (verbatim && has_inline_hint) {
-            inline_hints = inline_hints.append(FunctionInlineHint { line: ifr_func.line, col: ifr_func.col, never: inline_never });
-          }
-          has_inline_hint = false;
-          let ifn: FuncDecl = FuncDecl { ...ifr_func, import_iface: iar_iface, import_wit: iar_wit, async: i_async, is_pub: decl_pub, is_package: decl_package };
-          funcs = funcs.append(ifn);
-        } else if (p.peek_ident() == "resource" && p.advance().peek_ident().len() > 0) {
-          // `@import(iface, wit) resource Name;` binds a WIT resource
-          // handle type to its WIT identity (P5). Record it so
-          // lower_defers_prepass_module can synthesize the [resource-drop].
-          let rnr_line: i32 = p.peek_line();
-          let rnr_col: i32 = p.peek_col();
-          let (rnr_name, rnr_p) = parse_resource_decl_name(p);
-          p = rnr_p;
-          resources = resources.append(ResourceDecl { name: rnr_name, iface: iar_iface, wit: iar_wit, line: rnr_line, col: rnr_col });
-        } else {
-          top_stmts = top_stmts.append(decl_sentinel(p, "@import only applies to a function or resource declaration"));
-        }
+        p = skip_failed_decl(p, decl_start);
         continue;
       }
-      if (probe.peek_ident() == "export") {
-        // `@export("iface", "wit-name") function f(…) {…}` binds a
-        // function to a WIT export (P6 — docs/WIT-BRING-YOUR-OWN.md).
-        // The function is parsed normally; the binding is recorded on
-        // Module.exports so the wasm emitter surfaces a core export
-        // `iface#wit-name` the Go composer lifts.
-        let (ear_iface, ear_wit, ear_is_import, ear_p) = parse_export_attr(p);
-        p = ear_p;
-        let xk: string = p.peek_keyword();
-        if (xk == "pub") {
-          p = p.advance();
-          let (xk_pk, xk_pk_p) = consume_pub_package(p);
-          p = xk_pk_p;
-          xk = p.peek_keyword();
-          decl_pub = !xk_pk;
-          decl_package = xk_pk;
-        }
-        if (xk == "function") {
-          let (xfr_func, xfr_p) = parse_func_decl(p);
-          p = xfr_p;
-          if (verbatim && has_inline_hint) {
-            inline_hints = inline_hints.append(FunctionInlineHint { line: xfr_func.line, col: xfr_func.col, never: inline_never });
-          }
-          has_inline_hint = false;
-          funcs = funcs.append(FuncDecl { ...xfr_func, is_pub: decl_pub, is_package: decl_package });
-          exports = exports.append(ExportBinding { func_name: xfr_func.name, iface: ear_iface, wit: ear_wit, c_abi: false });
-        }
-        continue;
-      }
-      if (probe.peek_ident() == "inline" || probe.peek_ident() == "noinline") {
-        // `@noinline` also reaches the declaration (no_inline), for
-        // inline_tiny_leaves; the formatter keeps both hints.
-        has_inline_hint = true;
-        inline_never = probe.peek_ident() == "noinline";
-        p = probe.advance();
-        continue;
-      }
-      if (probe.peek_ident() == "try") {
-        // `@try` marker (docs/TRY.md): stamp the following enum decl
-        // so lowering can tell a `?`-able enum from any other
-        // two-variant one. Enum-only; `@try` before anything else
-        // stays parse-tolerated (dropped), as `@must_consume` does —
-        // native rejects that shape and the self-host only compiles
-        // native-valid programs.
-        p = probe.advance();  // consume `try`
-        let tmk: string = p.peek_keyword();
-        if (tmk == "pub") {
-          p = p.advance();
-          let (tm_pk, tm_pk_p) = consume_pub_package(p);
-          p = tm_pk_p;
-          tmk = p.peek_keyword();
-          decl_pub = !tm_pk;
-          decl_package = tm_pk;
-        }
-        if (tmk == "enum") {
-          let tmeline: i32 = p.peek_line();
-          let tmecol: i32 = p.peek_col();
-          let (tme_name, tme_variants, tme_type_params, tme_vlines, tme_p) = parse_enum_decl(p);
-          p = tme_p;
-          flines = record_field_lines(flines, verbatim, tme_name, tmeline, tme_vlines);
-          enums = enums.append(EnumDecl { name: tme_name, variant_names: enum_variant_names(tme_variants), type_params: tme_type_params, line: tmeline, col: tmecol, must_consume: false, try_marker: true, is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
-          let tmei: i32 = 0;
-          while (tmei < tme_variants.len()) {
-            structs = structs.append(tme_variants[tmei]);
-            tmei = tmei + 1;
-          }
-          continue;
-        }
-        continue;
-      }
-      if (probe.peek_ident() == "must_consume") {
-        // `@must_consume` marker (docs/MUST-CONSUME.md): stamp
-        // the following struct/enum decl so the checker's E067
-        // obligation walk sees the mark. `@must_consume` before
-        // anything other than a struct/enum decl stays
-        // parse-tolerated (dropped) — the native parser rejects
-        // that shape, and the self-host only compiles
-        // native-valid programs.
-        p = probe.advance();  // consume `must_consume`
-        let mck: string = p.peek_keyword();
-        if (mck == "pub") {
-          p = p.advance();
-          let (mck_pk, mck_pk_p) = consume_pub_package(p);
-          p = mck_pk_p;
-          mck = p.peek_keyword();
-          decl_pub = !mck_pk;
-          decl_package = mck_pk;
-        }
-        let mco_p: Par = skip_decl_modifier(p, "opaque", "struct");
-        if (mco_p.pos != p.pos) {
-          p = mco_p;
-          mck = "struct";
-        }
-        if (mck == "struct") {
-          let (mcs_decl, mcs_lines, mcs_p) = parse_struct_decl(p);
-          p = mcs_p;
-          flines = record_field_lines(flines, verbatim, mcs_decl.name, mcs_decl.line, mcs_lines);
-          structs = structs.append(StructDecl { ...mcs_decl, must_consume: true, is_pub: decl_pub, is_package: decl_package });
-          continue;
-        }
-        if (mck == "enum") {
-          let mceline: i32 = p.peek_line();
-          let mcecol: i32 = p.peek_col();
-          let (mce_name, mce_variants, mce_type_params, mce_vlines, mce_p) = parse_enum_decl(p);
-          p = mce_p;
-          flines = record_field_lines(flines, verbatim, mce_name, mceline, mce_vlines);
-          enums = enums.append(EnumDecl { name: mce_name, variant_names: enum_variant_names(mce_variants), type_params: mce_type_params, line: mceline, col: mcecol, must_consume: true, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
-          let mcei: i32 = 0;
-          while (mcei < mce_variants.len()) {
-            structs = structs.append(mce_variants[mcei]);
-            mcei = mcei + 1;
-          }
-          continue;
-        }
-        continue;
-      }
-      let attr_name: string = probe.peek_ident();
-      if (attr_name.len() > 0 && attr_name != "derive") {
-        top_stmts = top_stmts.append(decl_sentinel(p, "unknown attribute @" + attr_name + " (only @derive, @import, @export, @must_consume, @try, @inline, and @noinline are supported)"));
-        p = probe.advance();
-        continue;
-      }
-      let (dr_derives, dr_p) = parse_derive_attr(p);
-      p = dr_p;
-      let dk: string = p.peek_keyword();
-      if (dk == "pub") {
-        p = p.advance();
-        let (dk_pk, dk_pk_p) = consume_pub_package(p);
-        p = dk_pk_p;
-        dk = p.peek_keyword();
-        decl_pub = !dk_pk;
-        decl_package = dk_pk;
-      }
-      let do_p: Par = skip_decl_modifier(p, "opaque", "struct");
-      if (do_p.pos != p.pos) {
-        p = do_p;
-        dk = "struct";
-      }
-      if (dk == "struct") {
-        let (dsr_decl, dsr_lines, dsr_p) = parse_struct_decl(p);
-        p = dsr_p;
-        flines = record_field_lines(flines, verbatim, dsr_decl.name, dsr_decl.line, dsr_lines);
-        structs = structs.append(StructDecl { ...dsr_decl, derives: dr_derives, is_pub: decl_pub, is_package: decl_package });
-        funcs = synth_derives(dsr_decl, dr_derives, funcs, imports_have_std_json(imports));
-        continue;
-      }
-      if (dk == "enum") {
-        let deline: i32 = p.peek_line();
-        let decol: i32 = p.peek_col();
-        let (denr_name, denr_variants, denr_type_params, denr_vlines, denr_p) = parse_enum_decl(p);
-        p = denr_p;
-        flines = record_field_lines(flines, verbatim, denr_name, deline, denr_vlines);
-        enums = enums.append(EnumDecl { name: denr_name, variant_names: enum_variant_names(denr_variants), type_params: denr_type_params, line: deline, col: decol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
-        let dei: i32 = 0;
-        while (dei < denr_variants.len()) {
-          structs = structs.append(StructDecl { ...denr_variants[dei], derives: dr_derives });
-          dei = dei + 1;
-        }
-        // Synthesise variant-wise Display / Eq methods on the
-        // enum type; they dispatch via the enum-method fallback.
-        funcs = synth_enum_derives(denr_name, denr_type_params, denr_variants, dr_derives, funcs, imports_have_std_json(imports));
-        continue;
-      }
-      continue;
     }
     // `fip` / `fbip` are contextual modifiers on a function decl (`fip
     // function …` / `pub fbip(1) function …`), each with an optional
@@ -30017,6 +29870,16 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       p = opaque_p;
       kw = "struct";
     }
+    let is_resource: boolean = p.peek_ident() == "resource" && p.advance().peek_ident().len() > 0;
+    let decl_kind: string = kw;
+    if (is_resource) {
+      decl_kind = "resource";
+    }
+    if (!attr_fits(attr.name, decl_kind)) {
+      top_stmts = top_stmts.append(decl_sentinel(p, attr_misplaced(attr.name)));
+      p = skip_failed_decl(p, decl_start);
+      continue;
+    }
     if (kw == "function") {
       let (fr_func, fr_p) = parse_func_decl(p);
       p = fr_p;
@@ -30025,11 +29888,17 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       if (fr_func.name.len() == 0) {
         p = sync_to_top_level(p);
       }
-      if (verbatim && has_inline_hint) {
-        inline_hints = inline_hints.append(FunctionInlineHint { line: fr_func.line, col: fr_func.col, never: inline_never });
+      let inline_hint: boolean = attr.name == "inline" || attr.name == "noinline";
+      if (verbatim && inline_hint) {
+        inline_hints = inline_hints.append(FunctionInlineHint { line: fr_func.line, col: fr_func.col, never: attr.name == "noinline" });
       }
-      let fr_pub: FuncDecl = FuncDecl { ...fr_func, is_pub: decl_pub, is_package: decl_package, no_inline: has_inline_hint && inline_never };
-      has_inline_hint = false;
+      let fr_pub: FuncDecl = FuncDecl { ...fr_func, is_pub: decl_pub, is_package: decl_package, no_inline: attr.name == "noinline" };
+      if (attr.name == "import") {
+        fr_pub = FuncDecl { ...fr_pub, import_iface: attr.iface, import_wit: attr.wit };
+      }
+      if (attr.name == "export") {
+        exports = exports.append(ExportBinding { func_name: fr_func.name, iface: attr.iface, wit: attr.wit, c_abi: false });
+      }
       let fr_out: FuncDecl = fr_pub;
       if (decl_fip || decl_fbip) {
         fr_out = FuncDecl { ...fr_pub, fip: decl_fip, fbip: decl_fbip, fip_allowance: decl_fip_allowance };
@@ -30049,7 +29918,8 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       let (sr_decl, sr_lines, sr_p) = parse_struct_decl(p);
       p = sr_p;
       flines = record_field_lines(flines, verbatim, sr_decl.name, sr_decl.line, sr_lines);
-      structs = structs.append(StructDecl { ...sr_decl, is_pub: decl_pub, is_package: decl_package });
+      structs = structs.append(StructDecl { ...sr_decl, derives: attr.derives, must_consume: attr.name == "must_consume", is_pub: decl_pub, is_package: decl_package });
+      funcs = synth_derives(sr_decl, attr.derives, funcs, imports_have_std_json(imports));
       continue;
     }
     if (kw == "type") {
@@ -30064,12 +29934,15 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       let (enr_name, enr_variants, enr_type_params, enr_vlines, enr_p) = parse_enum_decl(p);
       p = enr_p;
       flines = record_field_lines(flines, verbatim, enr_name, eline, enr_vlines);
-      enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, line: eline, col: ecol, must_consume: false, try_marker: false, is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
+      enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, line: eline, col: ecol, must_consume: attr.name == "must_consume", try_marker: attr.name == "try", is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
       let ei: i32 = 0;
       while (ei < enr_variants.len()) {
-        structs = structs.append(enr_variants[ei]);
+        structs = structs.append(StructDecl { ...enr_variants[ei], derives: attr.derives });
         ei = ei + 1;
       }
+      // Variant-wise Display / Eq methods on the enum type; they dispatch
+      // via the enum-method fallback.
+      funcs = synth_enum_derives(enr_name, enr_type_params, enr_variants, attr.derives, funcs, imports_have_std_json(imports));
       continue;
     }
     if (kw == "const") {
@@ -30152,18 +30025,15 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     }
     // `resource Name;` — a top-level WIT resource-handle declaration (P5).
     // `resource` is a contextual identifier (not a keyword), so dispatch
-    // here when it's followed by a name. Recorded (with an empty WIT binding
-    // when no `@import` preceded it). See docs/WIT-BRING-YOUR-OWN.md.
-    if (p.peek_ident() == "resource") {
-      let pr: Par = p.advance();
-      if (pr.peek_ident().len() > 0) {
-        let rnr2_line: i32 = p.peek_line();
-        let rnr2_col: i32 = p.peek_col();
-        let (rnr2_name, rnr2_p) = parse_resource_decl_name(p);
-        p = rnr2_p;
-        resources = resources.append(ResourceDecl { name: rnr2_name, iface: "", wit: "", line: rnr2_line, col: rnr2_col });
-        continue;
-      }
+    // here when it's followed by a name. Recorded with the WIT binding of
+    // the `@import` before it, if any. See docs/WIT-BRING-YOUR-OWN.md.
+    if (is_resource) {
+      let rnr_line: i32 = p.peek_line();
+      let rnr_col: i32 = p.peek_col();
+      let (rnr_name, rnr_p) = parse_resource_decl_name(p);
+      p = rnr_p;
+      resources = resources.append(ResourceDecl { name: rnr_name, iface: attr.iface, wit: attr.wit, line: rnr_line, col: rnr_col });
+      continue;
     }
     let (stmtR_stmt, stmtR_p) = parse_stmt(p);
     // Guarantee forward progress: if a malformed top-level token (e.g.
