@@ -209,15 +209,12 @@ function __frame_rest(kind: i32, flags: i32, stream: i32, payload: u8[]): Result
   return Ok(Unknown(UnknownFrame { kind: kind, flags: flags, stream: stream, payload: payload }));
 }
 
-// Padded — a payload with its padding removed (§6.1), and how many bytes
-// the padding took.
-struct Padded { body: u8[], padding: i32 }
-
-// __unpadded strips the padding the PADDED flag announces: the pad length
-// byte, and that many bytes at the end, which must fit.
-function __unpadded(flags: i32, stream: i32, payload: u8[]): Result[Padded, FrameError] {
+// __unpadded strips the padding the PADDED flag announces (§6.1): the pad
+// length byte, and that many bytes at the end, which must fit. The bytes
+// the padding took are the payload's length less the body's.
+function __unpadded(flags: i32, stream: i32, payload: u8[]): Result[u8[], FrameError] {
   if ((flags & 8) == 0) {
-    return Ok(Padded { body: payload, padding: 0 });
+    return Ok(payload);
   }
   if (payload.len() == 0) {
     return Err(__connection(PROTOCOL_ERROR, "a PADDED frame with no pad length"));
@@ -226,23 +223,25 @@ function __unpadded(flags: i32, stream: i32, payload: u8[]): Result[Padded, Fram
   if (pad >= payload.len()) {
     return Err(__connection(PROTOCOL_ERROR, "padding of " + int.int_to_string(pad) + " bytes in a payload of " + int.int_to_string(payload.len())));
   }
-  return Ok(Padded { body: __bytes_range(payload, 1, payload.len() - pad), padding: pad + 1 });
+  return Ok(__bytes_range(payload, 1, payload.len() - pad));
 }
 
 function __data(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
   if (stream == 0) {
     return Err(__connection(PROTOCOL_ERROR, "DATA on stream 0"));
   }
-  let p: Padded = __unpadded(flags, stream, payload)?;
-  return Ok(Data(DataFrame { stream: stream, end_stream: (flags & 1) != 0, data: p.body, padding: p.padding }));
+  let n: i32 = payload.len();
+  let body: u8[] = __unpadded(flags, stream, payload)?;
+  return Ok(Data(DataFrame { stream: stream, end_stream: (flags & 1) != 0, padding: n - body.len(), data: body }));
 }
 
 function __headers(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
   if (stream == 0) {
     return Err(__connection(PROTOCOL_ERROR, "HEADERS on stream 0"));
   }
-  let p: Padded = __unpadded(flags, stream, payload)?;
-  let block: u8[] = p.body;
+  let n: i32 = payload.len();
+  let block: u8[] = __unpadded(flags, stream, payload)?;
+  let padding: i32 = n - block.len();
   let priority: Option[Priority] = None;
   if ((flags & 32) != 0) {
     if (block.len() < 5) {
@@ -251,7 +250,7 @@ function __headers(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameE
     priority = Some(__priority(block, 0));
     block = __bytes_range(block, 5, block.len());
   }
-  return Ok(Headers(HeadersFrame { stream: stream, end_stream: (flags & 1) != 0, end_headers: (flags & 4) != 0, priority: priority, block: block, padding: p.padding }));
+  return Ok(Headers(HeadersFrame { stream: stream, end_stream: (flags & 1) != 0, end_headers: (flags & 4) != 0, priority: priority, block: block, padding: padding }));
 }
 
 // __priority reads the five bytes of a dependency (§6.3).
@@ -322,11 +321,11 @@ function __push_promise(flags: i32, stream: i32, payload: u8[]): Result[Frame, F
   if (stream == 0) {
     return Err(__connection(PROTOCOL_ERROR, "PUSH_PROMISE on stream 0"));
   }
-  let p: Padded = __unpadded(flags, stream, payload)?;
-  if (p.body.len() < 4) {
+  let body: u8[] = __unpadded(flags, stream, payload)?;
+  if (body.len() < 4) {
     return Err(__connection(FRAME_SIZE_ERROR, "PUSH_PROMISE shorter than its promised stream"));
   }
-  return Ok(PushPromise(PushPromiseFrame { stream: stream, promised: __be32(p.body, 0) & MAX_WINDOW, end_headers: (flags & 4) != 0, block: __bytes_range(p.body, 4, p.body.len()) }));
+  return Ok(PushPromise(PushPromiseFrame { stream: stream, promised: __be32(body, 0) & MAX_WINDOW, end_headers: (flags & 4) != 0, block: __bytes_range(body, 4, body.len()) }));
 }
 
 function __ping(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
@@ -446,10 +445,13 @@ function __flag(on: boolean, bit: i32): i32 {
 // __framed is the frame header (§4.1) and the payload.
 function __framed(kind: i32, flags: i32, stream: i32, payload: u8[]): u8[] {
   let n: i32 = payload.len();
-  let head: u8[] = __alloc_u8(HEADER_LEN);
-  __arr_set_len(head, 0);
-  head = head.append((n >> 16 & 255) as u8).append((n >> 8 & 255) as u8).append((n & 255) as u8).append(kind as u8).append(flags as u8);
-  return __be32_bytes(head, stream).concat(payload);
+  let out: u8[] = __alloc_u8(HEADER_LEN + n);
+  out = out.with(0, (n >> 16 & 255) as u8).with(1, (n >> 8 & 255) as u8).with(2, (n & 255) as u8).with(3, kind as u8).with(4, flags as u8);
+  out = out.with(5, (stream >> 24 & 255) as u8).with(6, (stream >> 16 & 255) as u8).with(7, (stream >> 8 & 255) as u8).with(8, (stream & 255) as u8);
+  if (n == 0) {
+    return out;
+  }
+  return __bytes_into(out, HEADER_LEN, payload, 0, n);
 }
 
 // headers_bytes is a HEADERS frame without priority on the wire, as
