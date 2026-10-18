@@ -71,7 +71,15 @@ What a program can contain:
   Two optional traits sit beside it: `Mk0`, whose constructor is an
   associated function the generic `tm0[T: Mk0]` calls as `T.mk0_new(x)`, and
   the generic trait `Tc0[T]`, implemented at `i32` and reached through both
-  `tcg0[T: Tc0[i32]]` and `dyn Tc0[i32]`.
+  `tcg0[T: Tc0[i32]]` and `dyn Tc0[i32]`. A third, `Pr0`, declares an
+  associated type each implementer binds to `i32`, `i64` or `string`;
+  `tp0[H: Pr0](h: H): H::Item` returns the projection at whatever that is,
+  and `dyn Pr0[Item = i32]` dispatches to the `i32` ones.
+- **Consuming receivers** (`ownrecv.go`): `function (own b: OB0) push(x)`,
+  which appends to the struct's array. A cluster reassigns a local through it
+  (`b = b.push(..)`, sometimes in a loop), ends with a last-use call, and
+  sometimes aliases the array first, so an append that grew a shared array in
+  place changes what the alias reads.
 - **Generic structs and enums** (`generics.go`): `G0[T]` and `GO0[T]` with
   methods, a functional update of the generic receiver inside a method, and a
   generic constructor, instantiated at a type drawn from main's pool, boxed
@@ -222,6 +230,4 @@ In order:
    failure bisects to one decision.
 3. Differential oracle inside the coverage-guided loop.
 4. Type-erasure / type-overwrite checker fuzzing, run against both checkers.
-5. The rest of the trait and generics surface in fernsmith: associated-type
-   traits and consuming (`own`) receivers.
-6. Signature-based nightly triage.
+5. Signature-based nightly triage.

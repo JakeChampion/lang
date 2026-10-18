@@ -38,6 +38,14 @@ type traitShape struct {
 //	function tcg0[T: Tc0[i32]](o: T, d: i32): i32 { ... }    // static dispatch
 //	function dc0(o: dyn Tc0[i32], d: i32): i32 { ... }      // dynamic dispatch
 //
+// and, optionally, a trait with an associated type each implementer binds
+// to i32, i64 or string:
+//
+//	trait Pr0 { type Item; function pr0_get(self: Self): Self::Item; }
+//	impl Pr0 for S1 { type Item = i64; function pr0_get(self: Self): Self::Item { return <i64 expr>; } }
+//	function tp0[H: Pr0](h: H): H::Item { return h.pr0_get(); }  // per implementer's Item
+//	function dp0(d: dyn Pr0[Item = i32]): i32 { ... }          // the i32 implementers
+//
 // The impl bodies are generated expressions over `self` and `x`, so each
 // implementer computes something different and a call dispatched to the
 // wrong impl, or a default run where an override should be, changes the
@@ -63,9 +71,15 @@ func (g *Generator) declareTrait(b *strings.Builder) {
 		ts.overrides = append(ts.overrides, !g.flip(0.6))
 	}
 	k1, k2 := g.ch.intN(64), g.ch.intN(64)
-	// `true` = no Mk0, no Tc0.
+	// `true` = no Mk0, no Tc0, no Pr0; an exhausted stream binds Item to i32.
 	assoc := !g.flip(0.5)
 	generic := !g.flip(0.5)
+	var items []gtype
+	if !g.flip(0.5) {
+		for range ts.impls {
+			items = append(items, []gtype{tI32, tI64, tString}[g.ch.intN(3)])
+		}
+	}
 	if g.ch.exhausted() {
 		return
 	}
@@ -107,6 +121,35 @@ func (g *Generator) declareTrait(b *strings.Builder) {
 	}
 	if generic {
 		g.declareGenericTrait(b, ts.impls)
+	}
+	if items != nil {
+		g.declareAssocTypeTrait(b, ts.impls, items)
+	}
+}
+
+// declareAssocTypeTrait writes Pr0, an impl per implementer binding Item to
+// items[i], tp0, and dp0, and registers tp0 at every implementer and dp0 at
+// the ones whose Item is i32.
+func (g *Generator) declareAssocTypeTrait(b *strings.Builder, impls, items []gtype) {
+	b.WriteString("trait Pr0 { type Item; function pr0_get(self: Self): Self::Item; }\n")
+	prevRet := g.currentReturnType
+	for i, t := range impls {
+		fmt.Fprintf(b, "impl Pr0 for %s { type Item = %s; function pr0_get(self: Self): Self::Item { return ",
+			g.typeName(t), g.typeName(items[i]))
+		g.currentReturnType = items[i]
+		sc := newScope(nil)
+		sc.declare(t, "self")
+		g.expr(b, sc, items[i], 1)
+		b.WriteString("; } }\n")
+	}
+	g.currentReturnType = prevRet
+	b.WriteString("function tp0[H: Pr0](h: H): H::Item { return h.pr0_get(); }\n")
+	b.WriteString("function dp0(d: dyn Pr0[Item = i32]): i32 { return (d.pr0_get() * 9i32); }\n")
+	for i, t := range impls {
+		g.helpers = append(g.helpers, helperSig{name: "tp0", params: []gtype{t}, retType: items[i]})
+		if items[i] == tI32 {
+			g.helpers = append(g.helpers, helperSig{name: "dp0", params: []gtype{t}, retType: tI32})
+		}
 	}
 }
 
