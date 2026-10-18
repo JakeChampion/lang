@@ -92,7 +92,7 @@ import "std/tls/client";
 import "std/tls/ktls";
 import "std/tls/verify";
 import "std/crypto";
-import "std/cli";
+import "std/envflag";
 import "std/http/h2";
 import "core/int";
 
@@ -2401,7 +2401,7 @@ function __kernel_session(sock: i32, s: client.Session, req: Request): Result[cl
 }
 
 function __ktls_asked(req: Request): boolean {
-  return req.ktls || cli.env_flag("FERN_KTLS");
+  return req.ktls || envflag.on("FERN_KTLS");
 }
 
 // `__Record` — a record other than application data off an offloaded

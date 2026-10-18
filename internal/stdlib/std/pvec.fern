@@ -43,9 +43,13 @@
 //   append / pop                        amortised O(1) (a trie touch every 32)
 //   len / first / last                  O(1)
 //   to_array / fold / for_each / map    O(n)
+//   iter                                O(n)
 //   from_array                          O(n)
 //   concat(other)                       O(len(other))
 //   slice(lo, hi)                       O(hi - lo)
+
+import "core/iter";
+
 // The trie. `Leaf` holds elements, `Branch` holds children; `Empty` is
 // only ever the root of a vector with no trie part. No methods are
 // declared on this enum (a generic enum with receiver methods is not
@@ -501,6 +505,12 @@ pub function (v: PVec[T]) pop(): PVec[T] {
       return v;
     }
   }
+}
+
+// `iter()` — an Iterator over the elements in order, which is what
+// `for x in v` walks.
+pub function (v: PVec[T]) iter(): iter.ArrayIter[T] {
+  return iter.of(v.to_array());
 }
 
 // `to_array()` — the elements in order, as a plain array.

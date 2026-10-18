@@ -1,0 +1,22 @@
+// A one-parameter generic struct instantiated at a tuple type: its method's
+// clone reads the type argument back as the tuple `(string, i32)`, not as
+// the mangled `tup__string__i32__put` its clone name carries, so `next()`'s
+// declared result resolves. 1 + 1 + 2 + 2 = 6.
+import "core/iter";
+
+function main(): i32 {
+  let it: iter.ArrayIter[(string, i32)] = iter.of([("a", 1), ("bc", 2)]);
+  let n: i32 = 0;
+  while (true) {
+    match (it.next()) {
+      Some(t) => {
+        it = t.1;
+        n = n + t.0.1 + t.0.0.len();
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  return n;
+}
