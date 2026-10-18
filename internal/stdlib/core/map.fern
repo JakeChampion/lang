@@ -22,8 +22,8 @@
 //   +4   len     : i32 — live entry count
 //   +8   keyKind : i32 — 0 = i32-sized scalar, 1 = string,
 //        2 = wide-scalar-boxed (i64/f64 on a narrow-ptr target),
-//        3 = user struct/enum key (hashed/compared via its derived
-//        hash/eq, threaded in per call — see the keyKind-3 section),
+//        3 = user struct/enum key (hashed/compared via its cmp.Hash /
+//        cmp.Eq impl, threaded in per call — see the keyKind-3 section),
 //        4 = the same keyed column holding one counted unit of each key,
 //        which the map's copy retains and __map_drop_keyed_impl
 //        releases (the self-host's routed maps)
@@ -98,7 +98,7 @@ pub function __map_pow2_ceil(n: i32): i32 {
 // kind. Every kind — scalar / string / wide-boxed (0 / 1 / 2) and the
 // user struct/enum key (kind 3) — uses the same 24-byte header (cap,
 // len, keyKind, valTag, hashSeed, pad); buckets start at +24. The user
-// key's derived hash/eq are threaded in as per-call function VALUES
+// key's hash/eq are threaded in as per-call function VALUES
 // (there is no usize->fn cast; E033), NOT stored in the buffer, so
 // kind 3 needs no extra header slots. The helper is retained (rather
 // than inlining the constant at every site) so a future
@@ -197,7 +197,7 @@ function __map_ctrl_set(ctrlBase: usize, cap: i32, i: i32, v: i32): void {
 // as a string on the seeded path: a scalar / wide / user-struct key
 // reaching that branch would hash a non-string as a string. Seeding a
 // user-struct key would need the seed threaded into the key type's
-// derived `hash`, which is codegen's to do, not this module's.
+// `hash`, which is codegen's to do, not this module's.
 function __map_seed(buf: usize): i32 {
   return __load_i32(buf + 16);
 }
@@ -1495,8 +1495,9 @@ pub function __map_clear_impl(m: usize): void {
 //   - keyKind 3 (user struct / enum keys, #2671): such a key is
 //     pointer-shaped (stored in the entries column exactly like a string
 //     key), but the type-erased runtime can't hash or compare it
-//     structurally, so the codegen threads the key type's derived
-//     `hash(self): i32` / `eq(self, other): boolean` in as function
+//     structurally, so the codegen threads the key type's cmp.Hash /
+//     cmp.Eq `hash(self): i32` / `eq(self, other): boolean`, derived or
+//     written by hand, in as function
 //     values. The functions can't be stored in the kv buffer (there is
 //     no usize→fn cast; E033), so they're passed per call.
 //

@@ -6074,10 +6074,10 @@ func moduleFileLabel(module string) string {
 	return filepath.Base(module)
 }
 
-// simpleTraitName strips a trait name's module mangling, so a caller can
+// SimpleTraitName strips a trait name's module mangling, so a caller can
 // name `Ord` without knowing it arrives as `cmp__Ord` (and pass a name it
 // already holds in mangled form unchanged).
-func simpleTraitName(name string) string {
+func SimpleTraitName(name string) string {
 	if i := strings.LastIndex(name, "__"); i >= 0 {
 		return name[i+2:]
 	}
@@ -6129,9 +6129,9 @@ func (in *Info) preferredMethod(key string, owners, prefer []string) (mangled, o
 		if want == "" {
 			continue
 		}
-		want = simpleTraitName(want)
+		want = SimpleTraitName(want)
 		for _, o := range owners {
-			if simpleTraitName(o) != want {
+			if SimpleTraitName(o) != want {
 				continue
 			}
 			if m, found := in.TraitMethods[o+"."+key]; found {
@@ -6912,7 +6912,7 @@ func demangleAll(s string) string {
 // "Default", or "Debug". Returns "" for any other trait — only these are
 // derivable.
 func deriveKind(name string) string {
-	switch simple := simpleTraitName(name); simple {
+	switch simple := SimpleTraitName(name); simple {
 	case "Eq", "Display", "Ord", "Hash", "Json", "FromJson", "Default", "Debug":
 		return simple
 	}
@@ -6980,7 +6980,7 @@ func fromJsonElem(t ast.Type) ast.Type {
 
 // typeImplsEqAndHash reports whether the named struct/enum implements
 // BOTH Eq and Hash — the requirement for using it as a Map key, whose
-// derived `hash` / `eq` methods drive the type-erased map runtime's
+// `hash` / `eq` methods, derived or hand-written, drive the map runtime's
 // keyed bucket choice + key comparison (#2671). Trait names in
 // c.info.Impls may be module-mangled (`cmp__Hash`), so classify by
 // simple name via deriveKind, which already strips the prefix.
