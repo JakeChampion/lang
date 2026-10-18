@@ -213,3 +213,25 @@ func TestForEachOverIteratorChecks(t *testing.T) {
 		t.Errorf("the element should bind at the Iterator's element type (string), got: %v", err)
 	}
 }
+
+// A `for x in xs` inside a `defer` block lowers like any other, so its body is
+// checked and no ForEach survives the check.
+func TestForEachInDeferLowers(t *testing.T) {
+	prog, err := parser.Parse(`function f(xs: i32[]): i32 { defer { for x in xs { let y: i32 = x; } } return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if _, ok := n.(*ast.ForEach); ok {
+			t.Fatalf("a ForEach survived the check inside a defer")
+		}
+		return true
+	})
+	err = checkSource(t, "struct S { n: i32 }\nfunction main(): i32 { let xs: i32[] = [1]; defer { for y in xs { let x: i32 = S { n: y }; } } return 0; }\n")
+	if !hasCode(err, "E003") {
+		t.Errorf("the loop body inside a defer should be checked, got: %v", err)
+	}
+}

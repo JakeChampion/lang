@@ -3601,7 +3601,7 @@ func (p *parser) forHeaderPatternAhead() bool {
 // The pattern is carried on the ForEach node unlowered, because which loop it
 // becomes depends on the iterand's TYPE and the parser has none: an array binds
 // the pattern against each element, a Map against each entry. The checker owns
-// that choice (checkPatternForEach), and swaps its lowering into the statement
+// that choice (checkForEach), and swaps its lowering into the statement
 // slot this node stands in.
 func (p *parser) parseForEachPattern(kw lexer.Token, label string) (ast.Stmt, error) {
 	pos := p.peek().Pos
