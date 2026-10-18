@@ -103,10 +103,11 @@ under ptrace, pinned at 3 the same way (the reactor wait, the read and the
 send) with no `clock_gettime` among them: the clocks read through the vDSO
 (#12537), where before it they were eight more per request.
 `TestSelfHostVdsoClockNoSyscall` is the same zero for a program of 100k
-bare reads. Both run on the host's own ISA only, x86-64 in `ci.yml` and
-both ISAs in `perf.yml`'s bench job: under qemu the guest vDSO's
-`clock_gettime` is a trampoline that makes the syscall, so an emulated leg
-would count one per read whatever the runtime did.
+bare reads. Both run on the host's own ISA only, x86-64 and aarch64 alike
+(`ci.yml`'s self-host shards and `perf.yml`'s bench job each run on both):
+under qemu the guest vDSO's `clock_gettime` is a trampoline that makes the
+syscall, so an emulated leg would count one per read whatever the runtime
+did.
 `TestSelfHostRouterAllocs` (`internal/testing/e2ecompiler`) counts what
 std/http/router adds to a request on x86-64, arm64 and wasm, pinned per
 target as a ratchet: a literal route costs its handler alone, and a route
