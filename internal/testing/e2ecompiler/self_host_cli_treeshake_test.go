@@ -548,16 +548,15 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostTreeshakeMapStructRootsMapsOnlyWhenLive pins that a struct
-// with a map field roots the map runtime only when the struct is live. One
-// nothing names, like std/cli's parse results in a program that imports
-// std/cli for one helper, used to keep all of it: std/http reaches std/cli
-// through std/fetch, so every HTTP program carried the map runtime.
-// The second program names the struct only in the signature of a nested
-// function nothing calls, which still releases its parameter, so its drop
-// glue reaches __map_drop_impl and the runtime must stay. The third names it
-// only as the `Self` of an impl method kept for dynamic dispatch.
-func TestSelfHostTreeshakeMapStructRootsMapsOnlyWhenLive(t *testing.T) {
+// TestSelfHostTreeshakeKeepsMapRuntimeOnlyForLiveMapsX86_64 pins that a struct
+// holding a map roots core/map's runtime only when the program can reach the
+// struct. std/cli declares `CliArgs { opts: Map[string, string], … }`, and
+// importing std/cli for one helper carried the whole map runtime into every
+// server, 30% of bench/http_hello's code. A struct named only in the
+// signature of a nested function nothing calls, or only as the `Self` of an
+// impl method kept for dynamic dispatch, still has its drop glue emitted,
+// which reaches __map_drop_impl, so the runtime must stay for those.
+func TestSelfHostTreeshakeKeepsMapRuntimeOnlyForLiveMapsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("file-loading CLI test runs only natively (argv paths)")
@@ -569,36 +568,61 @@ func TestSelfHostTreeshakeMapStructRootsMapsOnlyWhenLive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stdlib path: %v", err)
 	}
-	for _, c := range []struct {
-		name     string
-		src      string
-		wantMaps bool
+	cases := []struct {
+		name, src string
+		maps      bool
 	}{
-		{"unused", "import \"core/map\";\nstruct S { m: Map[string, string] }\nfunction main(): i32 {\n    return 3;\n}\n", false},
-		{"signature", "import \"core/map\";\nstruct S { m: Map[string, string] }\nfunction main(): i32 {\n    function g(s: S): i32 { return 1; }\n    return 3;\n}\n", true},
-		{"self", "import \"core/map\";\nstruct S { m: Map[i32, i32] }\ntrait T { function get(self: Self): i32; }\nimpl T for S { function get(self: Self): i32 { return 1; } }\nstruct U { n: i32 }\nimpl T for U { function get(self: Self): i32 { return self.n; } }\nfunction f(o: dyn T): i32 { return o.get(); }\nfunction main(): i32 { return f(U { n: 3 }); }\n", true},
-	} {
+		{"cli-without-maps", `import "std/cli";
+function main(): i32 { if (cli.cli_dim("a").len() == 0) { return 1; } return 0; }
+`, false},
+		{"unused-map-struct", `import "core/map";
+struct S { m: Map[string, string] }
+function main(): i32 { return 0; }
+`, false},
+		{"live-map-struct", `import "core/map";
+struct Opts { m: Map[string, i32] }
+function main(): i32 { let o: Opts = Opts { m: map_new(4) }; let p: Opts = Opts { m: o.m.insert("a", 1) }; return p.m.len() - 1; }
+`, true},
+		{"signature-only", `import "core/map";
+struct S { m: Map[string, string] }
+function main(): i32 {
+    function g(s: S): i32 { return 1; }
+    return 0;
+}
+`, true},
+		{"self-only", `import "core/map";
+struct S { m: Map[i32, i32] }
+trait T { function get(self: Self): i32; }
+impl T for S { function get(self: Self): i32 { return 1; } }
+struct U { n: i32 }
+impl T for U { function get(self: Self): i32 { return self.n; } }
+function f(o: dyn T): i32 { return o.get(); }
+function main(): i32 { return f(U { n: 0 }); }
+`, true},
+	}
+	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			prog := filepath.Join(dir, "ts_map_struct_"+c.name+".fern")
+			prog := filepath.Join(dir, "ts_map_"+c.name+".fern")
 			if err := os.WriteFile(prog, []byte(c.src), 0o644); err != nil {
 				t.Fatalf("write program: %v", err)
 			}
-			asmPath := filepath.Join(dir, "ts_map_struct_"+c.name+".s")
+			asmPath := filepath.Join(dir, "ts_map_"+c.name+".s")
 			if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", "-o", asmPath, prog, stdlib).CombinedOutput(); err != nil {
 				t.Fatalf("self-host compile failed: %v\n%s", err, out)
 			}
-			asm, err := os.ReadFile(asmPath)
+			asmBytes, err := os.ReadFile(asmPath)
 			if err != nil {
 				t.Fatalf("read asm: %v", err)
 			}
-			if got := strings.Contains(string(asm), "\n__fn_map_new_impl:"); got != c.wantMaps {
-				t.Errorf("map runtime emitted = %v, want %v", got, c.wantMaps)
+			asm := string(asmBytes)
+			if got := strings.Contains(asm, "\n__fn_map_new_impl:"); got != c.maps {
+				t.Errorf("map runtime emitted = %v, want %v", got, c.maps)
 			}
-			bin := buildBin(t, gcc, dir, "ts_map_struct_"+c.name, string(asm))
+			bin := buildBin(t, gcc, dir, "ts_map_"+c.name, asm)
 			run := exec.Command(bin)
 			_ = run.Run()
-			if code := run.ProcessState.ExitCode(); code != 3 {
-				t.Errorf("program exited %d, want 3", code)
+			if code := run.ProcessState.ExitCode(); code != 0 {
+				t.Errorf("program exited %d, want 0", code)
 			}
 		})
 	}
