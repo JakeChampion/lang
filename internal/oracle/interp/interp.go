@@ -8878,7 +8878,10 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 // arrSetLen is `__arr_set_len(a, n)`: a's length set to n, within the room
 // its allocation has. An interpreter array is a slice value, so the new
 // length reaches the binding the call names rather than the buffer; a copy
-// taken before the call keeps the length it had.
+// taken before the call keeps the length it had. The slice's capacity is
+// not the runtime's room (an append here copies, where the runtime grows
+// in place), so a length past it grows the slice, and a slot nothing has
+// written reads as zero, as a fresh allocation's do.
 func (i *Interp) arrSetLen(target ast.Expr, args []Value, env *env) (Value, error) {
 	a, ok := args[0].(Array)
 	if !ok {
@@ -8888,14 +8891,31 @@ func (i *Interp) arrSetLen(target ast.Expr, args []Value, env *env) (Value, erro
 	if !ok {
 		return nil, fmt.Errorf("__arr_set_len: expected number length, got %T", args[1])
 	}
-	if n < 0 || int(n) > cap(a.E) {
-		return nil, fmt.Errorf("__arr_set_len: length %d outside the array's room %d", int64(n), cap(a.E))
+	if n < 0 {
+		return nil, fmt.Errorf("__arr_set_len: length %d below zero", int64(n))
 	}
 	id, ok := target.(*ast.Ident)
 	if !ok {
 		return nil, fmt.Errorf("__arr_set_len: the array must be a variable")
 	}
-	env.set(id.Name, Array{E: a.E[:int(n)], h: a.h})
+	e := a.E
+	if int(n) <= len(e) {
+		e = e[:int(n)]
+	} else {
+		if int(n) > cap(e) {
+			grown := make([]Value, int(n))
+			copy(grown, e)
+			e = grown
+		} else {
+			e = e[:int(n)]
+		}
+		for k := range e {
+			if e[k] == nil || e[k] == unclaimedSlot {
+				e[k] = Number(0)
+			}
+		}
+	}
+	env.set(id.Name, Array{E: e, h: a.h})
 	return Void{}, nil
 }
 
