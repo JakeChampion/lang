@@ -321,10 +321,12 @@ int_bit_accessors                                    0
 int_byte_swap                                        0
 int_checked_div                                      0
 int_checked_ops                                      0
+int_checked_shl                                      0
 int_div_rem_by_zero                                  0
 int_extend_signedness                                0
 int_min_arithmetic                                   0
 int_saturating_ops                                   0
+int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
 io_error_other_closed_stdout                         0
