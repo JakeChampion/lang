@@ -44,7 +44,7 @@ func runX86Bin(qemu, binPath string, args ...string) *exec.Cmd {
 }
 
 // `fern -target x86-64-linux` builds with no external toolchain, mirroring
-// arm64. Exercises the default path and the --run temp-binary path.
+// arm64. Exercises the default path and the -run temp-binary path.
 func TestX86_64NativeIsCLIDefault(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -79,13 +79,13 @@ func TestX86_64NativeIsCLIDefault(t *testing.T) {
 		// shells out to qemu-x86_64, so skip there if it's unavailable.
 		if runtime.GOARCH != "amd64" {
 			if _, err := exec.LookPath("qemu-x86_64"); err != nil {
-				t.Skip("--run on this host needs qemu-x86_64")
+				t.Skip("-run on this host needs qemu-x86_64")
 			}
 		}
-		cmd := exec.Command(bin, "-target", "x86-64-linux", "--run", src)
+		cmd := exec.Command(bin, "-target", "x86-64-linux", "-run", src)
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != 42 {
-			t.Errorf("fern --run exit = %d, want 42", code)
+			t.Errorf("fern -run exit = %d, want 42", code)
 		}
 	})
 
