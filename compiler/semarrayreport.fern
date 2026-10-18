@@ -5,8 +5,33 @@ import "std/cli";
 
 pub struct Site { owner: string, stage: string, plan: string, reason: i32, storage: string }
 
-pub function enabled(): boolean {
-  return cli.env_flag("FERN_ARRAY_REPORT");
+// Where a compile writes the report: nowhere, stderr (FERN_ARRAY_REPORT=1)
+// or stdout (`fern -array-report`).
+pub function off(): i32 {
+  return 0;
+}
+
+pub function to_stderr(): i32 {
+  return 1;
+}
+
+pub function to_stdout(): i32 {
+  return 2;
+}
+
+pub function from_env(): i32 {
+  if (cli.env_flag("FERN_ARRAY_REPORT")) {
+    return to_stderr();
+  }
+  return off();
+}
+
+pub function write(sink: i32, text: string): void {
+  if (sink == to_stdout()) {
+    print(text);
+  } else if (sink == to_stderr()) {
+    eprint(text);
+  }
 }
 
 // Named ordinals keep planner decisions tied to the closed diagnostic tags.

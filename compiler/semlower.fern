@@ -638,7 +638,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
     eprint("FERN_SEM_IR: the typed lowering refused " + util.i32_to_string(refused_n) + " declarations and instances; the FERN_SEM_IR lines above name each");
     exit(3);
   }
-  array_storage_report(mod, built, r);
+  array_storage_report(mod, built, r, opts.array_report);
   tally("module", "produced " + util.i32_to_string(n) + " of "
     + util.i32_to_string(mod.funcs.len()) + " declarations and "
     + util.i32_to_string(instances.len()) + " of "
@@ -766,8 +766,8 @@ function contract_rows(cs: ssasem.Contracts, r: Rows): string[] {
   return out;
 }
 
-function array_storage_report(mod: parser.Module, built: semsource.Built, r: Rows): i32 {
-  if (!semarrayreport.enabled()) {
+function array_storage_report(mod: parser.Module, built: semsource.Built, r: Rows, sink: i32): i32 {
+  if (sink == semarrayreport.off()) {
     return 0;
   }
   let sites: semarrayreport.Site[] = [];
@@ -783,9 +783,9 @@ function array_storage_report(mod: parser.Module, built: semsource.Built, r: Row
     }
     i = i + 1;
   }
-  eprint(semarrayreport.render_kind("map storage", semarrayreport.storage_reasons(), sites));
-  eprint(semarrayreport.render_kind("scale storage", semarrayreport.scale_storage_reasons(), scales));
-  eprint(semarrayreport.render_kind("append storage", semarrayreport.append_reasons(), appends));
+  semarrayreport.write(sink, semarrayreport.render_kind("map storage", semarrayreport.storage_reasons(), sites));
+  semarrayreport.write(sink, semarrayreport.render_kind("scale storage", semarrayreport.scale_storage_reasons(), scales));
+  semarrayreport.write(sink, semarrayreport.render_kind("append storage", semarrayreport.append_reasons(), appends));
   return 0;
 }
 
@@ -998,8 +998,8 @@ pub function view_escape_diags(mod: parser.Module): util.Diag[] {
 
 // build_opts are the build's choices for target_substitution, for a caller
 // that does not import semsource.
-pub function build_opts(debug_lines: boolean, size: boolean, whole: boolean): semsource.BuildOpts {
-  return semsource.BuildOpts { debug_lines: debug_lines, size: size, whole: whole };
+pub function build_opts(debug_lines: boolean, size: boolean, whole: boolean, array_report: i32): semsource.BuildOpts {
+  return semsource.BuildOpts { debug_lines: debug_lines, size: size, whole: whole, array_report: array_report };
 }
 
 // target_substitution produces the typed lowering of the checker-typed `typed`
@@ -1045,13 +1045,13 @@ pub function driven(mod: parser.Module, target: string): Driven {
 // `target_os()` / `target_arch()` are folded to the target's names first, as
 // the CLI folds them: no backend emits a body for either.
 pub function driven_annotated(annotated: parser.Module, target: string): Driven {
-  return driven_with(annotated, target, semsource.plain_build());
+  return driven_with(annotated, target, build_opts(false, false, false, semarrayreport.from_env()));
 }
 
 // driven_shaken is driven_annotated for a whole program the caller has shaken
 // (treeshake), which the lowering may then narrow further, as the CLI's does.
 pub function driven_shaken(annotated: parser.Module, target: string): Driven {
-  return driven_with(annotated, target, build_opts(false, false, true));
+  return driven_with(annotated, target, build_opts(false, false, true, semarrayreport.from_env()));
 }
 
 function driven_with(annotated: parser.Module, target: string, opts: semsource.BuildOpts): Driven {

@@ -83,6 +83,7 @@ the run.
 | `FERN_SANITIZE` | The same as `-sanitize`. |
 | `FERN_LEAKCHECK` | The leak census of `-sanitize` on its own. |
 | `FERN_COVER` | The same as `-cover`. |
+| `FERN_ARRAY_REPORT` | Print the `-array-report` report on stderr during an ordinary compile. |
 | `FERN_PROFILE` | `cpu`, `alloc`, `cpu-pprof` or `alloc-pprof`: build a self-profiling executable. `FERN_PROFILE_FILE` names the pprof output. |
 | `FERN_DIAG_FORMAT` | `terse` is the same as `-q`. |
 | `FERN_CACHE_DIR` | Where `fern` keeps its cache, in place of the user cache directory. |
@@ -114,6 +115,7 @@ silently.
 | `fern -targets` | List the targets and their capabilities. |
 | `fern -capabilities FILE` | Report which of `net`, `fs`, `env`, `subprocess`, `time`, `random` each package can reach, with an example call chain. |
 | `fern -effects FILE` | The same report per function instead of per package. |
+| `fern -array-report FILE` | Compile `FILE` for the target and print the array decisions the compiler made: each `std/array` chain's fusion verdict and the map storage and ndarray kernel decisions, each with the reason that decided it. Writes no output, so it takes neither `-o` nor `-run`. |
 | `fern -doc FILE` | A Markdown reference page from a module's doc comments; `-o OUTDIR DIR` writes one page per module. |
 | `fern -version` | Print the commit this binary was built from and the target it was built for. |
 
