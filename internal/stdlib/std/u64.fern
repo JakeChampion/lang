@@ -291,11 +291,11 @@ pub function (n: u64) overflowing_rem(other: u64): (u64, boolean) {
 // and for `checked_shl` also when bits are shifted out
 // (docs/INTEGER-SEMANTICS.md).
 pub function (n: u64) checked_shl(rhs: i32): Option[u64] {
-  return n <<? (rhs as u64);
+  return n <<? rhs as u64;
 }
 
 pub function (n: u64) checked_shr(rhs: i32): Option[u64] {
-  return n >>? (rhs as u64);
+  return n >>? rhs as u64;
 }
 
 // `(n: u64) sqrt_floor()` — floor of the integer square root, via Newton's

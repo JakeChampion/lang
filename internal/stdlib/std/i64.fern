@@ -618,11 +618,11 @@ pub function (n: i64) overflowing_neg(): (i64, boolean) {
 // and for `checked_shl` also when bits are shifted out
 // (docs/INTEGER-SEMANTICS.md).
 pub function (n: i64) checked_shl(rhs: i32): Option[i64] {
-  return n <<? (rhs as i64);
+  return n <<? rhs as i64;
 }
 
 pub function (n: i64) checked_shr(rhs: i32): Option[i64] {
-  return n >>? (rhs as i64);
+  return n >>? rhs as i64;
 }
 
 // `(n: i64) sqrt_floor()` — floor of the integer square root, the i64 sibling
