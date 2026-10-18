@@ -1,0 +1,5 @@
+function main(): i32 {
+  let s: string = "abc";
+  let i: i32 = 7;
+  return s[i] as i32;
+}

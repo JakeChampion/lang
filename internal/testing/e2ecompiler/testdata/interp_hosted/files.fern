@@ -1,0 +1,245 @@
+import "std/i32";
+import "std/i64";
+import "std/u32";
+
+function kind(e: IoError): string {
+  match (e) {
+    NotFound(_) => { return "NotFound"; },
+    PermissionDenied(_) => { return "PermissionDenied"; },
+    AlreadyExists(_) => { return "AlreadyExists"; },
+    InvalidUtf8(_) => { return "InvalidUtf8"; },
+    Interrupted => { return "Interrupted"; },
+    Unsupported => { return "Unsupported"; },
+    Other(_, m, n) => { return f"Other({m}, {n})"; }
+  }
+}
+
+function done(what: string, r: Result[void, IoError]): void {
+  match (r) {
+    Ok(_) => { print(what + ": ok"); },
+    Err(e) => { print(what + ": " + kind(e)); }
+  }
+}
+
+function opt(what: string, r: Option[IoError]): void {
+  match (r) {
+    None => { print(what + ": ok"); },
+    Some(e) => { print(what + ": " + kind(e)); }
+  }
+}
+
+function sorted(xs: string[]): string[] {
+  let out: string[] = xs;
+  let i: i32 = 1;
+  while (i < out.len()) {
+    let j: i32 = i;
+    while (j > 0 && out[j - 1] > out[j]) {
+      let t: string = out[j - 1];
+      out = out.with(j - 1, out[j]).with(j, t);
+      j = j - 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function show_list(what: string, r: Result[string[], IoError]): void {
+  match (r) {
+    Ok(xs) => {
+      let s: string[] = sorted(xs);
+      let line: string = what + ":";
+      for x in s {
+        line = line + " " + x;
+      }
+      print(line);
+    },
+    Err(e) => { print(what + ": " + kind(e)); }
+  }
+}
+
+function show_stat(what: string, r: Result[FileStat, IoError]): void {
+  match (r) {
+    Ok(st) => {
+      let perm: u32 = st.mode & 511u32;
+      print(f"{what}: file={st.is_file} dir={st.is_dir} size={st.size} perm={perm} nlink={st.nlink}");
+    },
+    Err(e) => { print(what + ": " + kind(e)); }
+  }
+}
+
+function main(): i32 {
+  let d: string = args()[1];
+  done("write_file", write_file(d + "/a.txt", "hello\nworld\n"));
+  match (read_file(d + "/a.txt")) {
+    Ok(s) => { write("read_file: " + s); },
+    Err(e) => { print("read_file: " + kind(e)); }
+  }
+  match (read_file(d + "/missing")) {
+    Ok(_) => { print("read_file missing: ok"); },
+    Err(e) => { print("read_file missing: " + kind(e)); }
+  }
+  done("write_file_bytes", write_file_bytes(d + "/b.bin", [104u8, 105u8, 255u8]));
+  match (read_file_bytes(d + "/b.bin")) {
+    Ok(b) => { print(f"read_file_bytes: {b.len()} {b[2]}"); },
+    Err(e) => { print("read_file_bytes: " + kind(e)); }
+  }
+  match (read_file(d + "/b.bin")) {
+    Ok(_) => { print("read_file bytes: ok"); },
+    Err(e) => { print("read_file bytes: " + kind(e)); }
+  }
+  show_stat("stat", stat(d + "/a.txt"));
+  done("create_dir", create_dir(d + "/sub", 493));
+  done("create_dir again", create_dir(d + "/sub", 493));
+  done("create_dir_all", create_dir_all(d + "/deep/er/est"));
+  show_stat("stat dir", stat(d + "/sub"));
+  done("create_symlink", create_symlink("a.txt", d + "/link"));
+  match (read_link(d + "/link")) {
+    Ok(s) => { print("read_link: " + s); },
+    Err(e) => { print("read_link: " + kind(e)); }
+  }
+  show_stat("lstat link", lstat(d + "/link"));
+  show_stat("stat link", stat(d + "/link"));
+  done("create_link", create_link(d + "/a.txt", d + "/hard"));
+  show_stat("stat hard", stat(d + "/hard"));
+  done("rename", rename(d + "/hard", d + "/hard2"));
+  done("rename_noreplace", rename_noreplace(d + "/hard2", d + "/a.txt"));
+  done("rename_exchange", rename_exchange(d + "/b.bin", d + "/hard2"));
+  show_stat("stat exchanged", stat(d + "/b.bin"));
+  done("clone_file", clone_file(d + "/a.txt", d + "/cloned"));
+  done("write clone", write_file(d + "/clone", "hello world"));
+  done("truncate", truncate(d + "/clone", 3i64));
+  show_stat("stat truncated", stat(d + "/clone"));
+  done("set_file_times", set_file_times(d + "/clone", 1000i64, 0i64, 2000i64, 5i64, 0));
+  match (stat(d + "/clone")) {
+    Ok(st) => { print(f"mtime: {st.mtime} {st.mtime_nsec} atime: {st.atime}"); },
+    Err(e) => { print("mtime: " + kind(e)); }
+  }
+  show_list("read_dir", read_dir(d));
+  show_list("read_dir_all", read_dir_all(d));
+  match (read_dir_ino(d + "/deep")) {
+    Ok(es) => {
+      for de in es {
+        print(f"read_dir_ino: {de.name} kind={de.kind} ino>0={de.ino > 0i64}");
+      }
+    },
+    Err(e) => { print("read_dir_ino: " + kind(e)); }
+  }
+  match (read_dir_ino_all(d + "/deep")) {
+    Ok(es) => { print(f"read_dir_ino_all: {es.len()}"); },
+    Err(e) => { print("read_dir_ino_all: " + kind(e)); }
+  }
+  match (open_writer(d + "/w.txt")) {
+    Ok(w) => {
+      opt("write", w.write("one\n"));
+      opt("write_bytes", w.write_bytes([116u8, 119u8, 111u8, 10u8]));
+      match (w.write_some("three\n")) {
+        Ok(n) => { print(f"write_some: {n}"); },
+        Err(e) => { print("write_some: " + kind(e)); }
+      }
+      match (w.write_some_bytes([52u8, 10u8])) {
+        Ok(n) => { print(f"write_some_bytes: {n}"); },
+        Err(e) => { print("write_some_bytes: " + kind(e)); }
+      }
+      show_stat("writer stat", w.stat());
+      match (w.seek(0i64, 1)) {
+        Ok(n) => { print(f"writer seek: {n}"); },
+        Err(e) => { print("writer seek: " + kind(e)); }
+      }
+      match (w.flags()) {
+        Ok(f) => { print(f"writer flags: {f & 3i64}"); },
+        Err(e) => { print("writer flags: " + kind(e)); }
+      }
+      print(f"writer isatty: {w.isatty()}");
+      opt("writer fsync", w.fsync());
+      opt("writer fdatasync", w.fdatasync());
+      opt("writer syncfs", w.syncfs());
+      opt("writer drop_cache", w.drop_cache(0i64, 0i64));
+      opt("writer truncate", w.truncate(16i64));
+      opt("writer splice_forever", w.splice_forever("y\n"));
+      opt("writer close", w.close());
+    },
+    Err(e) => { print("open_writer: " + kind(e)); }
+  }
+  match (open_appender(d + "/w.txt")) {
+    Ok(w) => {
+      opt("append", w.write("five\n"));
+      opt("appender close", w.close());
+    },
+    Err(e) => { print("open_appender: " + kind(e)); }
+  }
+  match (open_exclusive(d + "/w.txt")) {
+    Ok(_) => { print("open_exclusive existing: ok"); },
+    Err(e) => { print("open_exclusive existing: " + kind(e)); }
+  }
+  match (open_exclusive(d + "/x.txt")) {
+    Ok(w) => { opt("open_exclusive new", w.close()); },
+    Err(e) => { print("open_exclusive new: " + kind(e)); }
+  }
+  match (open_writer_with(d + "/y.txt", 0)) {
+    Ok(w) => { opt("open_writer_with", w.close()); },
+    Err(e) => { print("open_writer_with: " + kind(e)); }
+  }
+  match (open_reader(d + "/w.txt")) {
+    Ok(r) => {
+      match (r.read_line()) {
+        Some(l) => { print("read_line: " + l); },
+        None => { print("read_line: none"); }
+      }
+      match (r.read_chunk(4)) {
+        Ok(s) => { print("read_chunk: [" + s + "]"); },
+        Err(e) => { print("read_chunk: " + kind(e)); }
+      }
+      match (r.read_chunk_bytes(3)) {
+        Ok(b) => { print(f"read_chunk_bytes: {b.len()} {b[0]}"); },
+        Err(e) => { print("read_chunk_bytes: " + kind(e)); }
+      }
+      match (r.seek(0i64, 0)) {
+        Ok(n) => { print(f"reader seek: {n}"); },
+        Err(e) => { print("reader seek: " + kind(e)); }
+      }
+      show_stat("reader stat", r.stat());
+      print(f"reader isatty: {r.isatty()}");
+      match (r.flags()) {
+        Ok(f) => { print(f"reader flags: {f & 3i64}"); },
+        Err(e) => { print("reader flags: " + kind(e)); }
+      }
+      opt("reader fsync", r.fsync());
+      opt("reader fdatasync", r.fdatasync());
+      opt("reader syncfs", r.syncfs());
+      opt("reader drop_cache", r.drop_cache(0i64, 0i64));
+      match (open_writer(d + "/z.txt")) {
+        Ok(w) => {
+          match (r.splice_to(w, 100)) {
+            Ok(n) => { print(f"splice_to: {n}"); },
+            Err(e) => { print("splice_to: " + kind(e)); }
+          }
+          match (r.copy_range_to(w, 100)) {
+            Ok(n) => { print(f"copy_range_to: {n}"); },
+            Err(e) => { print("copy_range_to: " + kind(e)); }
+          }
+          opt("z close", w.close());
+        },
+        Err(e) => { print("open_writer z: " + kind(e)); }
+      }
+      opt("reader close", r.close());
+    },
+    Err(e) => { print("open_reader: " + kind(e)); }
+  }
+  match (open_reader_with(d + "/w.txt", 0)) {
+    Ok(r) => { opt("open_reader_with", r.close()); },
+    Err(e) => { print("open_reader_with: " + kind(e)); }
+  }
+  match (temp_dir("fernt")) {
+    Ok(t) => {
+      print(f"temp_dir: {t.len() > 0}");
+      done("remove temp", remove_dir(t));
+    },
+    Err(e) => { print("temp_dir: " + kind(e)); }
+  }
+  done("remove_file", remove_file(d + "/clone"));
+  done("remove_file missing", remove_file(d + "/clone"));
+  done("remove_dir", remove_dir(d + "/sub"));
+  done("remove_dir_all", remove_dir_all(d + "/deep"));
+  show_list("read_dir after", read_dir(d));
+  return 0;
+}

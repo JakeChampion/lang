@@ -1,0 +1,5 @@
+function main(): i32 {
+  let a: i32[] = [1, 2, 3];
+  let i: i32 = 0 - 1;
+  return a[i];
+}

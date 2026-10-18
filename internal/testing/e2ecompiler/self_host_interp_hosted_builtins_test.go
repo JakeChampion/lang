@@ -1,0 +1,76 @@
+package e2ecompiler
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+// The interpreter `fern -interp` runs is the self-host one (compiler/interp.fern),
+// and it answers every builtin a hosted target provides the way `fern-oracle
+// -interp` does (#12662). Each program under testdata/interp_hosted calls one
+// family of them and prints what it got; both interpreters run it with the same
+// environment, each in a fresh directory passed as its first argument, and must
+// print the same stdout and stderr and exit with the same status.
+//
+// The abort rows are the language's own failures: an index or slice out of
+// range, a negative allocation and a failed assert stop the program with the
+// Go interpreter's message and exit status 1 (docs/ARRAY-BOUNDS.md).
+func TestSelfHostInterpHostedBuiltinsMatchOracle(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the programs name Linux paths and errnos")
+	}
+	cli := buildSelfHostCLI(t)
+	oracle := buildFernCLIBin(t)
+	files, err := filepath.Glob(filepath.Join("testdata", "interp_hosted", "*.fern"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no programs under testdata/interp_hosted: %v", err)
+	}
+	for _, prog := range files {
+		prog, _ := filepath.Abs(prog)
+		t.Run(strings.TrimSuffix(filepath.Base(prog), ".fern"), func(t *testing.T) {
+			oDir, sDir := t.TempDir(), t.TempDir()
+			oCmd := exec.Command(oracle, "-interp", prog, oDir)
+			sCmd := runX86_64Bin(cli.runner, cli.bin, "-interp", prog, cli.stdlib, sDir)
+			for _, c := range []*exec.Cmd{oCmd, sCmd} {
+				c.Env = append(os.Environ(), "FERN_HOSTED_PROBE=yes")
+			}
+			oOut, oErr, oCode := runInterpCLI(t, oCmd, "")
+			sOut, sErr, sCode := runInterpCLI(t, sCmd, "")
+			if sOut != oOut || sErr != oErr || sCode != oCode {
+				t.Errorf("fern -interp and fern-oracle -interp disagree\n"+
+					"fern -interp:        exit %d\nstdout:\n%s\nstderr:\n%s\n"+
+					"fern-oracle -interp: exit %d\nstdout:\n%s\nstderr:\n%s",
+					sCode, sOut, sErr, oCode, oOut, oErr)
+			}
+			if strings.Contains(sErr, "fern: interp:") {
+				t.Errorf("the self-host interpreter could not evaluate the program:\n%s", sErr)
+			}
+		})
+	}
+}
+
+// The raw syscall and C-call floor take machine addresses, which neither
+// interpreter has: the self-host one says so rather than reporting the name
+// undefined.
+func TestSelfHostInterpRefusesTheRawFloor(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, call := range []string{
+		"__syscall3(39, 0i64, 0i64, 0i64) as i32",
+		"__c_call0(0 as usize) as i32",
+	} {
+		t.Run(strings.Fields(call)[0], func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "raw.fern")
+			if err := os.WriteFile(src, []byte("function main(): i32 { return "+call+"; }\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, stderr, code := runInterpCLI(t, runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib), "")
+			if code != 254 || !strings.Contains(stderr, "takes machine addresses, and the interpreter has no address space") {
+				t.Errorf("exit %d, stderr %q; want 254 and the address-space refusal", code, stderr)
+			}
+		})
+	}
+}
