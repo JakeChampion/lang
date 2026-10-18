@@ -85,7 +85,7 @@ function added(cs: h3q.Conn[], socks: i32[], cfg: conn.Config, ip: string): Resu
   let Ok(_) = net.set_nonblocking(sock, true) else {
     return Err("nonblocking failed");
   };
-  let q: conn.Conn = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), monotonic_ns())?;
+  let q: conn.Conn = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), monotonic_ns(), now_unix_ms())?;
   return Ok((cs.append(h3q.client(q, h3.config())), socks.append(sock)));
 }
 

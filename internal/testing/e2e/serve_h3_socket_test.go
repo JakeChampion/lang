@@ -125,7 +125,7 @@ function main(): i32 {
   let Some(local) = net.socket_addr_parse(argv[2]) else { return 2; };
   let Ok(roots) = verify.roots_from_file(argv[3]) else { return 2; };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side("localhost", roots));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), monotonic_ns()) else { return 2; };
+  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), monotonic_ns(), now_unix_ms()) else { return 2; };
   let Ok(sock) = net.udp_socket(local) else { return 2; };
   let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
   let c: h3q.Conn = h3q.client(q, h3.config());

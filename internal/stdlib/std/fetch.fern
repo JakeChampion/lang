@@ -996,7 +996,7 @@ pub function (sh: Shared) sockets(): i32[] {
 function __driven_kernel(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32] {
   let session: client.Session = d.tls;
   if (bytes.len() == 0) {
-    match (__kernel_record(d.fd, d.tls)) {
+    match (__kernel_record(d.fd, d.tls, now_unix_ms())) {
       RecordTaken(step) => {
         session = step.session;
         if (step.closed) {
@@ -1070,7 +1070,7 @@ pub function (sh: Shared) event(fd: i32, readable: boolean): Option[i32] {
     __driven_failed(sh, fd, __closed_early(0));
     return Some(fd);
   }
-  match (d.tls.read(bytes)) {
+  match (d.tls.read(bytes, now_unix_ms())) {
     Ok(step) => {
       let fed: h2.Step = d.h2.read(step.data);
       let streams: i32 = __mail_answered(sh, fd, fed.events, d.streams);
@@ -2322,12 +2322,12 @@ function __ktls_asked(req: Request): boolean {
 // failure.
 enum __Record { RecordTaken(client.Step), RecordsEnded, RecordAwaited, RecordFailed(FetchError) }
 
-// `__kernel_record(sock, s)` — the record a read on the offloaded socket
-// `sock` stopped short at, given to the session `s`.
-function __kernel_record(sock: i32, s: client.Session): __Record {
+// `__kernel_record(sock, s, now)` — the record a read on the offloaded
+// socket `sock` stopped short at, given to the session `s` at `now`.
+function __kernel_record(sock: i32, s: client.Session, now: i64): __Record {
   match (ktls.read_now(sock)) {
     ktls.Opened(t, content) => {
-      match (s.read(ktls.framed(t, content))) {
+      match (s.read(ktls.framed(t, content), now)) {
         Ok(step) => {
           if (ktls.send_records(sock, step.output) < 0) {
             return RecordFailed(Tls("the connection closed while the session answered a record"));
@@ -2431,7 +2431,7 @@ function __tunnel_status(head: string): Result[void, FetchError] {
 // chain checked against `roots`, the system's when none are given.
 function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i64, given: Option[verify.Roots]): Result[client.Session, FetchError] {
   let roots: verify.Roots = __roots(given)?;
-  let step: client.Step = __tls(client.start(client.config(__tls_name(host), roots).with_alpn(["h2", "http/1.1"])))?;
+  let step: client.Step = __tls(client.start(client.config(__tls_name(host), roots).with_alpn(["h2", "http/1.1"]), tr.wall_ms()))?;
   __write_all(tr, fd, step.output)?;
   let s: client.Session = step.session;
   while (!s.connected()) {
@@ -2486,7 +2486,7 @@ function __roots(given: Option[verify.Roots]): Result[verify.Roots, FetchError] 
 // `__tls_read(tr, fd, s, input)` — `input` read by the session, or the
 // failure, its alert sent to the server first.
 function __tls_read[T: Transport](tr: T, fd: i32, s: client.Session, input: [u8]): Result[client.Step, FetchError] {
-  match (s.read(input)) {
+  match (s.read(input, tr.wall_ms())) {
     Ok(step) => {
       return Ok(step);
     },
@@ -3069,7 +3069,7 @@ function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, tim
     if (raw.len() > 0) {
       return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: raw });
     }
-    match (__kernel_record(tr.socket(conn.fd), session)) {
+    match (__kernel_record(tr.socket(conn.fd), session, tr.wall_ms())) {
       RecordTaken(step) => {
         session = step.session;
         if (step.closed) {
