@@ -13199,6 +13199,10 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       if (is_cast_op(u.op)) {
         return slice_unchecked(u.op, 3, u.op.len()) + "";
       }
+      // An `as?` downcast is the Option of its target.
+      if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
+        return "Option[" + slice_unchecked(u.op, 4, u.op.len()) + "]";
+      }
       return mono_infer(u.operand, env, funcs);
     },
     ast.ExprStructLit(sl) => {

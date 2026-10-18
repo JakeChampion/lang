@@ -136,7 +136,7 @@ A `.fern.md` file is also accepted directly by every mode that takes a
 fern -interp prog.fern.md            # tangle, then run through the interpreter
 fern -check  prog.fern.md            # tangle, then type-check
 fern -o prog prog.fern.md            # tangle, then compile + link
-fern --run   prog.fern.md            # tangle, compile, and run
+fern -run    prog.fern.md            # tangle, compile, and run
 ```
 
 Disk-relative `import` paths inside a literate file resolve against the

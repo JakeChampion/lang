@@ -2201,6 +2201,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-option-ret-result", "function f(o: Option[i32]): Result[i32, string] { let v: i32 = o?; return Ok(v); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-result-ret-option", "function f(r: Result[i32, string]): Option[i32] { let v: i32 = r?; return Some(v); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-option-ret-struct", "struct P { a: i32 }\nfunction f(o: Option[i32]): P { let v: i32 = o?; return P { a: v }; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-option-ret-type-param", "function h[T](o: Option[i32]): T { let v: i32 = o?; return h[T](o); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-result-ret-type-param", "function h[T](r: Result[i32, string]): T { let v: i32 = r?; return h[T](r); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-option-ret-void", "function f(o: Option[i32]): void { let v: i32 = o?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-writer-write-ret-result", "function a(): Result[i32, IoError] {\n  let w: Writer = stdout();\n  w.write(\"hi\\n\")?;\n  return Ok(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-lambda-ret-i32", "function f(): Option[i32] {\n    let g = (): i32 => { let o: Option[i32] = Some(1); let v: i32 = o?; return v; };\n    return Some(1);\n}\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
@@ -2361,6 +2363,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// `let r = Ok(1);`) is a payload the binding never holds: a pattern
 		// binding of it is unreachable, and storing one in it is E003.
 		{"unsettled-payload-binding-ok", "enum E[T] { A(T), B }\nfunction main(): i32 {\n  let a: i32 = 4;\n  let o = None;\n  let r = Ok(1);\n  let e = E.B;\n  let n: i32 = a % (match (o) { Some(x) => x, None => a });\n  n = n + (match (r) { Ok(x) => x, Err(y) => y - (y +| y) });\n  return n + (match (e) { E.A(x) => x, E.B => 2 });\n}\n", nil},
+		{"unsettled-residual-try-ok", "function f(): Result[i32, string] { let r = Ok(3); return Ok(r? + 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"unsettled-payload-store-some", "function main(): i32 { let o = None; o = Some(3); return 0; }\n", []string{"E003"}},
 		{"unsettled-payload-store-err", "function main(): i32 { let r = Ok(1); r = Err(\"s\"); return 0; }\n", []string{"E003"}},
 		{"unsettled-payload-store-variant", "enum E[T] { A(T), B }\nfunction main(): i32 { let e = E.B; e = E.A(3); return 0; }\n", []string{"E003"}},

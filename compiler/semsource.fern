@@ -2051,6 +2051,13 @@ function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
   }
   let fnames: string[] = variant_names(s, from, flayout);
   let rnames: string[] = variant_names(s, s.result, rlayout);
+  // A failure no value holds (`Ok(1)`'s Err) leaves the success edge alone.
+  if (fnames.len() == 1 && rnames.len() == 2 && fnames[0] == rnames[0]) {
+    let only: Payloads = arm_payloads(s, from, fnames[0], flayout);
+    if (only.found && only.types.len() == 1) {
+      return define(s, ssasem.variant_get(), [v.id], 0, fnames[0], only.types[0]);
+    }
+  }
   if (fnames.len() != 2 || rnames.len() != 2) {
     return refused(s, "try of a union that is not two variants");
   }

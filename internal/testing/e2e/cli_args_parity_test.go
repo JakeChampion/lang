@@ -31,7 +31,7 @@ const argsEchoProgram = `function main(): i32 {
 // same vector under -interp and in a compiled binary for the same command tail
 // (#8465): the interp path used to strip a `--` separator that the compile
 // path forwarded to the program verbatim, so `fern -interp p.fern -- --filter x`
-// and `fern --run p.fern -- --filter x` disagreed. -interp is the reference
+// and `fern -run p.fern -- --filter x` disagreed. -interp is the reference
 // oracle for the backends, so a divergence here tests stdlib argument parsing
 // against one convention and ships it under another.
 func TestArgsParityInterpVsCompiled(t *testing.T) {
@@ -76,7 +76,7 @@ func TestArgsParityInterpVsCompiled(t *testing.T) {
 		},
 	}}
 
-	// One compiled engine per register target `--run` can execute here. The
+	// One compiled engine per register target `-run` can execute here. The
 	// host's own target always runs (natively, no emulator involved); the
 	// foreign one runs under its user-mode emulator when that is on PATH and
 	// skips otherwise. The per-arch CI matrix runs this test on both hosts, so
@@ -107,7 +107,7 @@ func TestArgsParityInterpVsCompiled(t *testing.T) {
 				if !ok {
 					t.Skipf("no way to run %s binaries on this host", target)
 				}
-				return runFernProgram(t, bin, append([]string{"--run", "-target", target, src}, tail...))
+				return runFernProgram(t, bin, append([]string{"-run", "-target", target, src}, tail...))
 			},
 			argv0: compiledArgv0,
 		})
@@ -157,7 +157,7 @@ func TestFlagAfterFileIsRefusedByBothEngines(t *testing.T) {
 	for _, argv := range [][]string{
 		{src, "-o", out},
 		{"-interp", src, "-o", out},
-		{"--run", "-target", "x86-64-linux", src, "-o", out},
+		{"-run", "-target", "x86-64-linux", src, "-o", out},
 	} {
 		cmd := exec.Command(bin, argv...)
 		var stdout, stderr strings.Builder

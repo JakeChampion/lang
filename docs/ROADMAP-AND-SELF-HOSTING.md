@@ -1312,7 +1312,7 @@ Component Type encoder, and the preview-1 → preview-2 adapter
 natively in Go (`component.ClassifyCore` → `component.Compose`,
 see `cmd/fern/main.go`), with no `wasm-tools` shell-out and no
 preview-1 adapter. The only external process the toolchain
-still spawns is the linker (and qemu under `--run`) — building
+still spawns is the linker (and qemu under `-run`) — building
 and running wasm output needs neither `wasm-tools` nor the
 adapter. A handful of e2e tests still call `wasm-tools print`
 to inspect a composed component, but that's a test-only

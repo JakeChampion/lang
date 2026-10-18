@@ -177,9 +177,10 @@ regression test where the bug lived:
 - **`let v = None;` broke the re-check** (#12636, Go checker). The stamped
   bare `Option` failed its own arity when monomorphisation re-checked a
   function that also made a generic call. `TestUninstantiatedEnumLocalSurvivesRecheck`.
-- **An `Err` payload nothing typed fit any array** (#12638, self-host
-  checker). `let r = Ok(5);` leaves `E` unbound, and the payload was taken
-  for a wildcard in an array, a tuple, a variant payload and a map value.
+- **The checkers disagreed on an `Err` payload nothing typed** (#12638).
+  `let r = Ok(5);` leaves `E` unbound. The fix first made the payload refuse
+  to sit in a typed array, tuple, variant or map. #12788 replaced that rule:
+  the payload is never held, so its arm is unreachable and it fits anywhere.
   `TestSelfHostUnboundPayloadCheck`.
 - **No E040 for an uninferred receiver** (#12632, self-host checker).
   `let o = GNil; o.count()` binds no `T`. Rows in
@@ -227,8 +228,13 @@ regression test where the bug lived:
   `_`. The self-host checker refused it uncoded, and the lowering refused a
   `Some(x)` arm on a bare None. Both checkers accepted storing a settled
   value into the binding, which the interpreter then mis-ran. Now the binding
-  is unreachable (never) and the store is E003. Rows `unsettled-payload-*`,
-  `TestPartialEnumPayloadInference`, `TestSelfHostBareNoneBinding`.
+  is unreachable (never), a `?` on it has nothing to propagate, and the store
+  is E003. Rows `unsettled-*`, `TestPartialEnumPayloadInference`,
+  `TestSelfHostBareNoneBinding`.
+- **A bounded generic called with an `as?` payload had no instance**
+  (#12797, self-host monomorphiser), which typed `x as? S` as `x`'s own type,
+  so `match (d as? S) { Some(s) => tg(s, …) }` left `tg` uninstantiated.
+  `TestSelfHostDynTraitIR` row `downcast-into-bounded-generic`.
 - **A `for` loop inside a `defer` went unchecked** (#12789, Go parser): the
   foreach desugar did not enter a `defer`, and the checker has no case for
   a standing ForEach. `TestForEachInDeferLowers`.
