@@ -98,6 +98,11 @@ three (`docs/NET-P0-MESSAGE-LAYER-PLAN.md` §6). The pin is a ratchet the same
 way: a count above it fails as a regression and one below it fails until
 the pin is lowered. The slack it allows is per second of the run, for the
 Date the loop reformats once a second.
+`TestSelfHostRouterAllocs` (`internal/testing/e2ecompiler`) counts what
+std/http/router adds to a request on x86-64, arm64 and wasm, pinned per
+target as a ratchet: a literal route costs its handler alone, and a route
+with one parameter adds the value's copy, the values array and the Params
+record.
 `TestSelfHostServeAllocsPerRequestTwoFetch` counts the same way around a
 handler that makes two `plat.http` requests through a proxy, the nightly
 two-fetch profile, over 10k requests on x86-64: the fetch client's
