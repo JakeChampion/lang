@@ -3786,8 +3786,10 @@ func (p *parser) parseForEachPattern(kw lexer.Token, label string) (ast.Stmt, er
 // generic type-args list as opposed to an indexing / slicing
 // `[...]`, using only shapes an index cannot take: a first token
 // that is a type keyword (i32, string, void, ...), or a name list
-// holding a top-level comma (`[Box, Loc]`) or a nested `[` opening
-// a type keyword or `[]` (`[Pair[i32]]`, `[Box[]]`). The closing
+// holding a top-level comma (`[Box, Loc]`), a nested `[` opening
+// a type keyword or `[]` (`[Pair[i32]]`, `[Box[]]`), a `(` opening a
+// type keyword (`[(i32, string)]`), or a function type's `=>`
+// (`[(Box) => Loc]`). The closing
 // `]` must be followed by `opener`: `(` for a call's type args
 // (`f[i32](args)`), `{` for a struct literal's
 // (`Box[i32] { … }`). A lone name before `(` (`f[Box](x)`) stays
@@ -3810,12 +3812,14 @@ func (p *parser) peekTypeArgs(opener string) bool {
 		// `Name[...] {` is only ever a struct literal; the caller gates it
 		// on noStructLit, as it does the bare `Name { … }` form.
 		typeShaped = opener == "{"
+	case next.Kind == lexer.Punct && next.Text == "(":
+		// A tuple or function type; the walk decides.
 	default:
 		return false
 	}
 	// Walk forward looking for the matching `]` at the same
 	// bracket depth. Then check the token after is `opener`.
-	depth := 1
+	depth, parens := 1, 0
 	for j := p.i + 1; j < len(p.tokens); j++ {
 		t := p.tokens[j]
 		if t.Kind != lexer.Punct {
@@ -3831,6 +3835,10 @@ func (p *parser) peekTypeArgs(opener string) bool {
 				}
 			}
 		case ",":
+			if depth == 1 && parens == 0 {
+				typeShaped = true
+			}
+		case "=>":
 			if depth == 1 {
 				typeShaped = true
 			}
@@ -3838,10 +3846,16 @@ func (p *parser) peekTypeArgs(opener string) bool {
 			return false
 		case "(":
 			// A call inside the bracket makes it an index expression; a `(`
-			// after `[` or `,` opens a tuple or function type.
+			// after `[`, `,` or `(` opens a tuple or function type.
 			if pt := p.tokens[j-1]; pt.Kind != lexer.Punct || pt.Text == "]" || pt.Text == ")" {
 				return false
 			}
+			parens++
+			if j+1 < len(p.tokens) && p.tokens[j+1].Kind == lexer.Keyword && isTypeKeyword(p.tokens[j+1].Text) {
+				typeShaped = true
+			}
+		case ")":
+			parens--
 		case "]":
 			depth--
 			if depth == 0 {
