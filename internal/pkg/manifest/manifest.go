@@ -491,19 +491,23 @@ func parseDep(val string) (Dep, error) {
 }
 
 // splitTopLevel splits an inline-table body on commas that sit outside
-// any `[...]` — so an array-valued entry (`capabilities = ["net", "fs"]`)
-// stays one item. The manifest grammar has no nested tables or strings
-// containing brackets, so counting depth is sufficient.
+// any quoted string or `[...]` — so an array-valued entry
+// (`capabilities = ["net", "fs"]`) stays one item, and so does a path
+// containing a comma or a bracket.
 func splitTopLevel(body string) []string {
 	var out []string
 	depth, start := 0, 0
+	quoted := false
 	for i, r := range body {
-		switch r {
-		case '[':
+		switch {
+		case r == '"':
+			quoted = !quoted
+		case quoted:
+		case r == '[':
 			depth++
-		case ']':
+		case r == ']':
 			depth--
-		case ',':
+		case r == ',':
 			if depth == 0 {
 				out = append(out, body[start:i])
 				start = i + 1

@@ -153,7 +153,7 @@ func parseSource(val string) (Source, error) {
 			s.URL = v
 		case "hash":
 			if !validHashShape(v) {
-				return Source{}, fmt.Errorf("hash must be `sha256:` + 64 hex digits, got %q", v)
+				return Source{}, fmt.Errorf("hash must be `sha256:` + 64 lowercase hex digits of the archive bytes, got %q", v)
 			}
 			s.Hash = v
 		default:
