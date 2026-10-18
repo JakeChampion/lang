@@ -116,6 +116,28 @@ the language.
 | Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased, or one `let`, parameter, result or struct-field type replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
 | Coverage feedback | steers mutation toward new self-host compiler paths, and every input that reaches one is judged by the exit-byte differential | `TestSelfHostCoverageGuidedFuzz` |
 
+### Bisecting a failure to one decision
+
+Each optimising pass asks `compiler/optbisect.fern` before it rewrites a
+function: inlining a callee, fusing a pipeline, a byte-copy loop, an ndarray
+kernel, reuse in one function's rc lowering. The decision's key is the pass
+and the function's name. `FERN_OPT_TRACE=1` lists every decision with its key's
+hash, and `FERN_OPT_BISECT=h` declines each one hashing below `h`. Declining
+a decision leaves the function as it was, so the answer must not change.
+When a differential leg fails a seed, or the typed lowering refuses one, it
+bisects `h` over the traced hashes (`e2eharness.BisectOptDecisions`) and logs
+the decision the failure follows: `inline da0`, not a whole program and a set
+of switches. A test process bisects at most 16 seeds, so a fault that fails
+most of a window costs a shard minutes, not its budget.
+
+Each failed seed is also a signature: the leg, the failure's class (its
+message without the seed's numbers, or the typed lowering's refusal reason
+without the function), and the bisected pass. With `FERN_FINDINGS` set, the
+legs append one JSON line per failed seed, and the nightly report posts
+them grouped by signature (`scripts/nightly-findings.mjs`), with a count and
+the first seeds of each. One fault failing two hundred seeds is one row, and
+the same row on consecutive nights is the same bug.
+
 ### Measuring it: the mutation score
 
 `TestFernsmithMutationScore` (`FERN_MUTATION_SCORE=N`) plants one fault at a
@@ -268,8 +290,10 @@ built. Citations are to the paper that introduced the technique.
    (Cranelift's `cranelift-control`, LLVM's opt-bisect-limit). The compiler has
    switches (`FERN_SELFHOST_NO_REUSE`, `FERN_SEM_INLINE`,
    `FERN_NO_ARRAY_FUSION`, ...). Done: the differential legs flip them per
-   generated program. Next is a fuel counter, so a failure bisects to the one
-   decision that caused it.
+   generated program, and a failure bisects to the one (pass, function)
+   decision that caused it. The key is a hash rather than a running count, so
+   the compiler needs no mutable state, and the key of a decision does not
+   depend on which other decisions were declined.
 5. **Component fuzzers with symbolic checkers** (regalloc2's checker,
    cranelift-fuzzgen, CLIR): generate SSA directly and check the register
    allocator and the rc plan replay in isolation.
@@ -293,7 +317,9 @@ built. Citations are to the paper that introduced the technique.
 11. **Triage**: one signature per finding (pass + bail site, or sanitizer
     report + function) instead of one issue per night, ranked by
     Furthest-Point-First (Chen et al., PLDI 2013), with each reduced repro
-    promoted to a regression test.
+    promoted to a regression test. Done: the signature (leg, failure class,
+    bisected pass) and the grouped nightly table. Next is the ranking and
+    the promotion of each reduced repro.
 
 ## Roadmap
 
@@ -301,6 +327,5 @@ In order:
 
 1. Mutation-score floor in CI once the score is measured over enough mutants
    to be stable, and the survivors worked down.
-2. Chaos fuel: a decision counter in the compiler, so a pass-configuration
-   failure bisects to one decision.
-3. Signature-based nightly triage.
+2. Rank the nightly signatures (Furthest-Point-First) and promote each
+   reduced repro to a regression test.

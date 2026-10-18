@@ -8,6 +8,7 @@ import "./semrecords";
 import "./semtypes";
 import "./typeinfo";
 import "./util";
+import "./optbisect";
 import "std/envflag";
 
 pub function value_mode(): i32 {
@@ -3984,9 +3985,10 @@ pub function no_reuse(): Reuse {
 // builds in a donor's box and no map is updated in place: donors take their
 // normal drops and constructions allocate. Reuse on and off are
 // observationally identical (self_host_reuse_differential_test.go); off
-// trades only allocation count and peak heap.
-pub function reuse_layer_disabled(): boolean {
-  return envflag.on("FERN_SELFHOST_NO_REUSE");
+// trades only allocation count and peak heap. The decision bisect
+// (optbisect) can turn it off for one function.
+pub function reuse_layer_disabled(name: string): boolean {
+  return envflag.on("FERN_SELFHOST_NO_REUSE") || !optbisect.allowed("reuse", name);
 }
 
 // `p` with its links and reuse tables. A static box, whose drop the lowering
@@ -4000,7 +4002,7 @@ pub function with_reuse(f: ssasem.Func, p: Plan): Plan {
   }
   let idx: i32[][] = step_index(p);
   let links: i32[] = links_of(f, p, idx);
-  let off: boolean = reuse_layer_disabled();
+  let off: boolean = reuse_layer_disabled(f.graph.name);
   let vr: VariantReads = variant_reads(f, p);
   let carry: Carry = carried_pairs(f, p, idx, links, off, vr);
   let uses: ssasem.Uses = p.analysis.uses;
