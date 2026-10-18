@@ -146,8 +146,12 @@ func mutantVerdict(t *testing.T, bin, stdlibRoot string, progs []string, wants [
 		return "smoke"
 	}
 	for i, src := range progs {
-		r, gap := runSelfHostSeed(t, bin, stdlibRoot, src, sanitize, nil, quiet)
+		failed := ""
+		note := func(format string, args ...any) { failed = fmt.Sprintf(format, args...) }
+		r, gap := runSelfHostSeed(t, bin, stdlibRoot, src, sanitize, nil, note)
 		switch {
+		case r == nil && strings.Contains(failed, "did not finish"):
+			return fmt.Sprintf("killed@%d (compiler hang)", i)
 		case gap != "" || r == nil:
 			return fmt.Sprintf("killed@%d (no binary)", i)
 		case r.timedOut:
