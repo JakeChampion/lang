@@ -247,6 +247,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"result-method-without-import", "function main(): i32 { let r: Result[i32, string] = Ok(2); return r.unwrap_or(0); }\n", []string{"E043"}},
 		{"struct-destructure-unknown-field", "struct Point { x: i32, y: i32 }\nfunction main(): i32 { let p: Point = Point { x: 1, y: 2 }; let Point { x, z } = p; return x; }\n", []string{"E043"}},
 		{"enum-method-missing", "enum Color { Red, Green }\nfunction main(): i32 { let c: Color = Color.Red; return c.nope(); }\n", []string{"E043"}},
+		// A boolean has one builtin method, `to_string`, which needs no import
+		// (#12657); any other name is E043 rather than a lowering refusal.
+		{"boolean-method-missing", "function main(): i32 { let b = true; return b.nope(); }\n", []string{"E043"}},
+		{"boolean-to-string-builtin", "function main(): i32 { let b = true; let s: string = b.to_string(); print(f\"<{b}>\"); print(b); return s.len(); }\n", nil},
+		{"boolean-to-string-is-a-string", "function main(): i32 { let n: i32 = true.to_string(); return n; }\n", []string{"E003"}},
+		{"unsigned-negation", "function main(): i32 { let x: u32 = 5; let y: u32 = -x; let z: u8 = 1; let w: u8 = -z; let d: usize = 2; let e: usize = -d; return 0; }\n", nil},
 		{"union-method-missing", "struct Circle { r: i32 }\nstruct Square { s: i32 }\ntype Shape = Circle | Square;\nfunction main(): i32 { let sh: Shape = Circle { r: 1 }; return sh.area(); }\n", []string{"E043"}},
 		{"enum-and-union-methods-ok", "enum Color { Red, Green }\nfunction (c: Color) n(): i32 { return 1; }\nenum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) size(): i32 { return 1; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\ntype Shape = Circle | Square;\nfunction (sh: Shape) area(): i32 { return 1; }\nfunction (o: Option[T]) mine(): i32 { return 2; }\nfunction main(): i32 { let c: Color = Color.Red; let b: Box[i32] = Full(1); let sh: Shape = Circle { r: 1 }; let x: Option[i32] = Some(3); return c.n() + b.size() + sh.area() + x.mine(); }\n", nil},
 		{"enum-trait-method-ok", "trait Named { function name(self: Self): i32; }\nenum Color { Red, Green }\nimpl Named for Color { function name(self: Self): i32 { return 3; } }\nfunction main(): i32 { let c: Color = Color.Red; return c.name(); }\n", nil},

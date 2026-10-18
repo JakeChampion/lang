@@ -5241,6 +5241,7 @@ function builtin_sigs(): string[] {
     "__method_Writer_truncate(Writer, i64): Option[IoError]",
     "__method_Writer_write(Writer, string): Option[IoError]",
     "__method_Writer_write_some(Writer, string): Result[i64, IoError]",
+    "__method_boolean_to_string(boolean): string",
     "__method_string_as_bytes(string): [u8]",
     "__method_string_len(string): i32",
     "access(string, i32): Result[void, IoError]",
@@ -14782,8 +14783,9 @@ function display_dispatch_name(t: typeinfo.Type): string {
 
 // display_resolves reports whether `t.to_string(): string` resolves in `s` —
 // the Display spine's question (docs/TRAITS.md §3a), native's
-// typeImplementsDisplay: a `to_string` method on the type's dispatch name, or
-// an `impl Display` / `@derive(cmp.Display)` on its declaration. The import
+// typeImplementsDisplay: a `to_string` method on the type's dispatch name, an
+// `impl Display` / `@derive(cmp.Display)` on its declaration, or a builtin
+// `to_string` (a boolean's, which needs no import). The import
 // closure is what puts a scalar's stdlib method in `s.methods`, so `print(7)`
 // resolves with `core/cmp` imported and not without, as native has it.
 function display_resolves(t: typeinfo.Type, s: Scope): boolean {
@@ -14791,7 +14793,7 @@ function display_resolves(t: typeinfo.Type, s: Scope): boolean {
   if (tn.len() == 0) {
     return false;
   }
-  return s.has_method("to_string", tn) || conforms_by_impl_or_derive(s, tn, "Display");
+  return s.has_method("to_string", tn) || conforms_by_impl_or_derive(s, tn, "Display") || !is_unknown(builtin_method_sig(tn, "to_string"));
 }
 
 // display_unjudged: an argument type the Display spine neither rewrites nor
@@ -15308,6 +15310,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           out = util.append_diags(out, uninferred_method_diags(c, float_label(f), mfa.field, s.lookup_method(mfa.field, float_label(f))));
         },
         typeinfo.TypeBool(_) => {
+          if (s.method_missing(recv, mfa.field)) {
+            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+          }
           out = util.append_diags(out, uninferred_method_diags(c, "boolean", mfa.field, s.lookup_method(mfa.field, "boolean")));
         },
         typeinfo.TypeString(_) => {
@@ -16827,6 +16832,9 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
     },
     typeinfo.TypeFloat(f) => {
       return s.lookup_method(field, float_label(f)).name.len() == 0;
+    },
+    typeinfo.TypeBool(_) => {
+      return s.lookup_method(field, "boolean").name.len() == 0 && is_unknown(builtin_method_sig("boolean", field));
     },
     typeinfo.TypeString(_) => {
       return field != "len" && field != "as_bytes" && s.lookup_method(field, "string").name.len() == 0;

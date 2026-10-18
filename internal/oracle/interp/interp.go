@@ -839,6 +839,7 @@ func New() *Interp {
 	// already copy-on-write at the language level.
 	i.Builtins["__method_string_bytes"] = &Builtin{Fn: builtinStringBytes}
 	i.Builtins["__method_string_as_bytes"] = &Builtin{Fn: builtinStringBytes}
+	i.Builtins["__method_boolean_to_string"] = &Builtin{Fn: builtinBoolToString}
 	i.Builtins["stdin"] = &Builtin{Fn: builtinStdin}
 	i.Builtins["read_line"] = &Builtin{Fn: builtinReadLine}
 	i.Builtins["stdout"] = &Builtin{Fn: builtinStdout}
@@ -6176,6 +6177,20 @@ func builtinSetArgs(i *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
+func builtinBoolToString(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("boolean.to_string(): expected 1 arg (receiver), got %d", len(args))
+	}
+	b, ok := args[0].(Bool)
+	if !ok {
+		return nil, fmt.Errorf("boolean.to_string(): receiver is %T, not a boolean", args[0])
+	}
+	if b {
+		return String("true"), nil
+	}
+	return String("false"), nil
+}
+
 func builtinLen(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf(".len(): expected 1 arg (receiver), got %d", len(args))
@@ -6874,6 +6889,10 @@ func builtinBufFree(i *Interp, args []Value) (Value, error) {
 // rather than whichever registration claimed the flat mangling.
 func (i *Interp) Register(fn *ast.FuncDecl) {
 	i.Funcs[fn.Name] = fn
+	// A declared boolean `to_string` takes over from the builtin of its name.
+	if fn.Name == "__method_boolean_to_string" {
+		delete(i.Builtins, fn.Name)
+	}
 	if fn.ImplTrait != "" && fn.MethodRecv != "" && fn.MethodSimpleName != "" {
 		i.traitMethods[fn.ImplTrait+"."+fn.MethodRecv+"."+fn.MethodSimpleName] = fn.Name
 	}
