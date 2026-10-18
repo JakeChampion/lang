@@ -11472,16 +11472,25 @@ function split_dunder(s: string): string[] {
 // one piece where it names a declared struct or enum, taking that type's own
 // arguments with it where it is generic, and every other token is a piece by
 // itself. A key whose tokens already number `n` splits as `split_dunder` does.
+// A one-parameter key is the piece itself unless it is a tuple, whose
+// `tup`/`put` tokens read back as the tuple type.
 function split_key(s: string, n: i32, structs: StructDecl[], enums: EnumDecl[]): string[] {
-  if (n <= 1) {
+  if (n <= 1 && !util.str_has_prefix(s, "tup__")) {
     return [s];
   }
   let tokens: string[] = split_dunder(s);
-  if (tokens.len() <= n) {
+  if (n > 1 && tokens.len() <= n) {
     return tokens;
   }
-  let g: Grouped = group_tokens(tokens, 0, n, tokens.len() - n, structs, enums);
-  if (g.pieces.len() != n || g.at != tokens.len()) {
+  let want: i32 = n;
+  if (want < 1) {
+    want = 1;
+  }
+  let g: Grouped = group_tokens(tokens, 0, want, tokens.len() - want, structs, enums);
+  if (g.pieces.len() != want || g.at != tokens.len()) {
+    if (n <= 1) {
+      return [s];
+    }
     return tokens;
   }
   return g.pieces;
