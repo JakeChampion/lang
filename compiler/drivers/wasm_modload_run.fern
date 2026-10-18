@@ -160,8 +160,11 @@ function write_cached(cf: string, ns: string, obj: wasm_objfile.UnitObj): void {
 
 function read_cached(cf: string, ns: string): wasm_objfile.MaybeUnit {
   if (cf.len() > 0) {
-    match (read_file(cf)) {
-      Ok(cached) => {
+    // Read as bytes: a unit's string table holds its literals verbatim, and a
+    // `\xNN` literal need not be UTF-8, which read_file refuses.
+    match (read_file_bytes(cf)) {
+      Ok(bytes) => {
+        let cached: string = string_from_bytes_unchecked(bytes);
         // An object written by an older compiler carries an older
         // magic. The key hashes sources and signatures, not the object
         // FORMAT, so nothing else here would tell the two apart — and
