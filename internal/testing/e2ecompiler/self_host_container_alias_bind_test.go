@@ -685,12 +685,13 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		{
 			// `<scalar>.to_string()`: the "STR:" class has TEN producer families and each
 			// grants the credit at its own site, so these rows walk the families that
-			// allocate observably.
+			// allocate observably: 0 to 99 format from a constant table, so the
+			// row formats 100 to 199.
 			name: "string_alias_to_string_producer",
 			src: `import "std/i32";
-function round(i: i32): i32 { let t: string = i.to_string(); let v: string = t; return v.len() + i; }
+function round(i: i32): i32 { let n: i32 = i + 100; let t: string = n.to_string(); let v: string = t; return v.len() + i; }
 function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 77, allocs: 200, frees: 200,
+			want: 21, allocs: 200, frees: 200,
 		},
 		{
 			// `xs.join(sep)`. Base: allocs=700 frees=500, 3200 live.
