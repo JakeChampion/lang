@@ -11628,8 +11628,8 @@ function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
 // replacing a hand-written stack-arg wrapper in emit_ir_runtime.
 //
 // The typed lowering (EmitState.rt_lower) produces the bodies. Emitted
-// entry-only and gated on the helper's need by the caller; emit_runtime_globls
-// already `.globl`s the symbol so the per-module link resolves it.
+// entry-only and gated on the helper's need by the caller; export_runtime_fns
+// `.globl`s each function so the per-module link resolves it.
 function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.EmitState {
   let m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   let fns: parser.FuncDecl[] = m.funcs;
@@ -11646,6 +11646,7 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   let bodies: irtables.LowerResult[] = lowered.bodies;
   let physical = physicalbody.collection(lowered);
   let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical)), s.memo);
+  s = asmcore.export_runtime_fns(s, fns);
   let i: i32 = 0;
   while (i < fns.len()) {
     s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), asmcore.no_prelift(), fns[i], s, vgate);

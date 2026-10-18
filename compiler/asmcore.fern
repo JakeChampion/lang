@@ -11456,13 +11456,29 @@ pub function shape_label(s: EmitState, name: string): string {
   return shape_sym(name);
 }
 
+// export_runtime_fns marks both entries of each Fern-written runtime function
+// `.globl` in a per-module unit (str_ns != ""), so a library unit's call links
+// against the entry's single copy. The whole-program emit writes nothing.
+pub function export_runtime_fns(s: EmitState, fns: parser.FuncDecl[]): EmitState {
+  if (s.str_ns.len() == 0) {
+    return s;
+  }
+  for f in fns {
+    let label: string = "__fn_" + sanitize_label(f.name);
+    s = s.write(".globl " + label + "\n.globl " + label + ".r\n");
+  }
+  return s;
+}
+
 // emit_runtime_globls exports the shared `__fern_*` / `__fn___fern_*` runtime
 // entry points `.globl` so a library module's `call __fern_alloc` (etc.) — an
 // unresolved extern in that module — links against the single copy the entry
 // module emits (#3451 step 3 / #3455). Only the entry calls this (it owns the
-// runtime). A `.globl` for a symbol the entry doesn't actually define (its need
-// wasn't present) is a harmless UND entry as long as nothing references it; a
-// symbol the entry DOES define is exported. This is emitted only in per-module
+// runtime). It lists the helpers written outside emit_ir_runtime_fern_fn,
+// whose functions export_runtime_fns marks as they are emitted. A `.globl`
+// for a symbol the entry doesn't actually define (its need wasn't present) is
+// a harmless UND entry as long as nothing references it; a symbol the entry
+// DOES define is exported. This is emitted only in per-module
 // mode (globl_defs) — the whole-program emitter never calls it, so its output
 // is unchanged.
 pub function emit_runtime_globls(s: EmitState): EmitState {
@@ -11485,46 +11501,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // The helpers only a typed body calls: the packed-byte twins, a dead
     // string view's release, the raw floor's free and the map hash seed.
     "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
-    "__fn___fern_arr_slice_u8", "__fn___fern_string_from_bytes_u8", "__fn___fern_string_from_bytes_range_u8",
     "__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
-    // xs.reverse() / xs.concat(ys) / a[start:end] (#3457): a LIBRARY module's
-    // call resolves against the entry module's single definition, exactly
-    // like the heap helpers above.
-    "__fn___fern_arr_slice", "__fn___fern_arr_str_join", "__fn___fern_arr_concat", "__fn___fern_bytes_owned", "__fn___fern_bytes_range", "__fn___fern_bytes_into",
-    "__fn___fern_bytes_append_range", "__fn___fern_bytes_write_range",
-    "__fn___fern_str_concat", "__fn___fern_str_eq",
-    "__fn___fern_string_from_bytes", "__fn___fern_str_bytes",
-    "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",
-    "__fn___fern_str_replace", "__fn___fern_str_trim",
-    "__fn___fern_str_to_lower", "__fn___fern_str_to_upper",
-    // The stdout/stderr leaves are Fern on BOTH register backends now (#2649),
-    // so only the stack-ABI symbols exist; the register-ABI __fern_print_str /
-    // __fern_eprint_str / __fern_putchar are gone.
-    "__fn___fern_print_str",
-    "__fn___fern_eprint_str", "__fn___fern_putchar",
-    "__fn___fern_read_line", "__fn___fern_read_file", "__fn___fern_read_file_bytes",
-    "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
-    "__fn___fern_write_file_bytes", "__fn___fern_write_file_bytes_u8",
-    "__fn___fern_reader_read_chunk_bytes", "__fn___fern_reader_read_chunk_bytes_u8", "__fn___fern_writer_write_bytes", "__fn___fern_writer_write_bytes_u8", "__fn___fern_writer_write_some_bytes", "__fn___fern_writer_write_some_bytes_u8",
-    "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir",
-    "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_read_dir_ino", "__fn___fern_read_dir_ino_all", "__fn___fern_remove_file",
-    "__fn___fern_create_dir_all",
-    "__fn___fern_create_dir", "__fn___fern_remove_dir",
-    "__fn___fern_create_link", "__fn___fern_create_symlink",
-    "__fn___fern_rename", "__fn___fern_rename_noreplace", "__fn___fern_rename_exchange",
-    "__fn___fern_read_link", "__fn___fern_getxattr", "__fn___fern_getxattr_bytes", "__fn___fern_getxattr_bytes_u8", "__fn___fern_lgetxattr", "__fn___fern_lgetxattr_bytes", "__fn___fern_lgetxattr_bytes_u8", "__fn___fern_setxattr", "__fn___fern_setxattr_bytes", "__fn___fern_setxattr_bytes_u8", "__fn___fern_lsetxattr", "__fn___fern_lsetxattr_bytes", "__fn___fern_lsetxattr_bytes_u8", "__fn___fern_umask",
-    "__fn___fern_chmod", "__fn___fern_chmod_at", "__fn___fern_set_file_times", "__fn___fern_truncate",
-    "__fn___fern_mknod", "__fn___fern_chown_at",
-    "__fn___fern_window_size", "__fn___fern_pipe",
-    "__fn___fern_open_dir", "__fn___fern_dir_open", "__fn___fern_dir_entries", "__fn___fern_dir_stat",
-    "__fn___fern_dir_access", "__fn___fern_dir_unlink", "__fn___fern_dir_chmod", "__fn___fern_dir_chown",
-    "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_mounts", "__fn___fern_subprocess",
-    "__fern_args", "__fern_arg_at",
-    "__fn___fern_hostname",
-    "__fn___fern_signal_ignore", "__fn___fern_signal_default",
-    "__fn___fern_signal_mask", "__fn___fern_signal_disposition",
-    "__fn___fern_signal_catch", "__fn___fern_signal_raise",
-    "__fn___fern_chdir",
     // The capacity-carrying string builder (#8773). __fern_buf_reserve is
     // internal to the bundle — no call crosses a unit boundary to it.
     "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_bytes_mapped", "__fern_buf_push_bytes_filtered", "__fern_buf_push_filtered", "__fern_buf_push_expanded", "__fern_buf_push_bytes_expanded",
@@ -11532,66 +11509,17 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_buf_free",
     "__fern_buf_take_bytes", "__fern_buf_take_bytes_u8",
     "__fern_buf_push_bytes_range", "__fern_buf_push_bytes_range_u8",
-    // crash-only supervision (#5686): the entry owns fork / wait4.
-    "__fern_buf_push_bytes_mapped_u8", "__fern_buf_push_bytes_filtered_u8", "__fern_buf_push_bytes_expanded_u8", "__fn___fern_proc_fork", "__fn___fern_proc_waitpid",
-    "__fn___fern_proc_waitpid_nohang", "__fn___fern_proc_waitpid_status", "__fn___fern_proc_exec",
-    // The constant-time marks.
-    "__fn___fern_ct_secret", "__fn___fern_ct_public",
-    "__fn___fern_proc_exec_as",
-    // one pid's liveness, delivering a signal to one, and this
-    // process's descriptor ceiling.
-    "__fn___fern_process_alive", "__fn___fern_signal_send",
-    "__fn___fern_set_process_group", "__fn___fern_rlimit_nofile",
-    "__fn___fern_disable_core_dumps",
-    // and how it competes for the CPU.
-    "__fn___fern_priority", "__fn___fern_set_priority",
-    // the wall clock's resolution, and setting it.
-    "__fn___fern_clock_resolution", "__fn___fern_clock_set",
-    // random_bytes and random_i32 are Fern on BOTH register backends now
-    // (#2649), so only the stack-ABI symbols exist; the register-ABI
-    // __fern_random_bytes / __fern_random_i32 are gone.
-    "__fn___fern_random_bytes", "__fn___fern_random_i32",
-    // clocks (#2649): register-ABI symbols kept for arm64/AST (hand-asm); the
-    // x86-64 IR path defines the Fern-compiled __fn___fern_*_ns. Both listed
-    // during the transition (a .globl of an undefined symbol is a no-op).
-    // (__fern_now_unix_ms is already listed below.)
-    "__fern_monotonic_ns", "__fern_now_ns",
-    "__fn___fern_monotonic_ns", "__fn___fern_now_ns", "__fn___fern_now_unix_ms",
-    "__fn___fern_poll",
-    "__fn___fern_timer_fd",
-    "__fn___fern_tcp_connect", "__fn___fern_tcp_close",
-    "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept", "__fn___fern_tcp_local_port",
-    "__fn___fern_tcp_send_bytes", "__fn___fern_tcp_send_bytes_u8",
-    "__fn___fern_udp_send_bytes", "__fn___fern_udp_send_bytes_u8", "__fn___fern_udp_sendto_bytes", "__fn___fern_udp_sendto_bytes_u8",
-    "__fn___fern_udp_bind", "__fn___fern_udp_bind_with", "__fn___fern_udp_connect", "__fn___fern_udp_sendto", "__fn___fern_udp_recvfrom",
-    "__fn___fern_tcp_connect_with", "__fn___fern_unix_listen", "__fn___fern_unix_connect",
-    "__fn___fern_tcp_listen_with", "__fn___fern_tcp_socket_ctl",
-    // Typed socket calls use packed address and data arrays. Library units
-    // reference these helpers in the entry's single runtime too.
-    "__fn___fern_tcp_listen_with_u8", "__fn___fern_tcp_connect_with_u8",
-    "__fn___fern_tcp_recv_u8", "__fn___fern_tcp_recv_into_u8", "__fn___fern_tcp_ktls_u8",
-    "__fn___fern_udp_bind_u8", "__fn___fern_udp_bind_with_u8", "__fn___fern_udp_connect_u8",
-    "__fn___fern_udp_sendto_u8", "__fn___fern_udp_recvfrom_u8",
-    "__fn___fern_ring_new", "__fn___fern_ring_ctl", "__fn___fern_ring_wait", "__fn___fern_ring_recv_u8", "__fn___fern_ring_send_zc_u8",
-    "__fn___fern_reactor_new", "__fn___fern_reactor_ctl", "__fn___fern_reactor_wait", "__fn___fern_tcp_recv_into", "__fn___fern_tcp_sendfile", "__fn___fern_tcp_send_buf",
-    "__fn___fern_open_res", "__fn___fern_writer_write",
-    "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fn___fern_sleep_ns",
+    "__fern_buf_push_bytes_mapped_u8", "__fern_buf_push_bytes_filtered_u8", "__fern_buf_push_bytes_expanded_u8",
+    "__fern_args", "__fern_arg_at",
+    // The reference-count and string-ownership helpers every unit's lowering
+    // calls, which the entry writes outside emit_ir_runtime_fern_fn.
     "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique", "__fn___fern_arr_inc_elems", "__fn___fern_arr_own_elems",
     "__fn___fern_str_own", "__fn___fern_str_borrow", "__fn___fern_str_grow", "__fn___fern_str_grow_range",
     "__fn___fern_str_grow_fresh", "__fn___fern_str_grow_fresh_range", "__fn___fern_account_entry",
     "__fn___fern_set_args",
     "__fn___fern_alloc_reuse",
-    "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
-    "__fn___fern_i64_to_string", "__fn___fern_u64_to_string",
-    "__fn___fern_str_cmp",
-    // string RC reclaim (#2649): a LIBRARY module that reclaims a fresh string
-    // (`let b = a + a` → __fern_str_free) references this symbol; the entry
-    // owns the single definition (emit_ir_runtime), so export it for the
-    // per-module link like every other shared runtime helper.
-    "__fn___fern_str_free",
-    // Raw string-array release is shared by argument replacement and the
-    // diagnostic exit path. The entry owns its Fern source definition.
-    "__fn___fern_str_arr_free",
+    "__fn___fern_rc_underflow_count",
+    "__fn___fern_str_eq", "__fn___fern_str_free",
     // The register entries of the helpers that have one (ssa_reg_helper),
     // called from every unit like the stack entries they sit beside, and
     // the two entries past the floor test the inline release guard enters.

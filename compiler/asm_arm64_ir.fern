@@ -6705,6 +6705,7 @@ pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore
   let bodies: irtables.LowerResult[] = lowered.bodies;
   let physical = physicalbody.collection(lowered);
   let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical)), s.memo);
+  s = asmcore.export_runtime_fns(s, fns);
   let i: i32 = 0;
   while (i < fns.len()) {
     s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), asmcore.no_prelift(), fns[i], s, vgate);
