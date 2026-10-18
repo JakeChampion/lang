@@ -1,0 +1,7 @@
+// exit ends the program at once with its status; nothing after it runs.
+function main(): i32 {
+  print("hi");
+  exit(7);
+  print("not reached");
+  return 0;
+}

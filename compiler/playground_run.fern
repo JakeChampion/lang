@@ -189,7 +189,8 @@ function check(merged: parser.Module, files: string[], target: string, target_gi
 
 // interpret evaluates the bundle and reports the program's own exit code, the
 // same mapping fern.fern uses: an i32 result is the code, a boolean is 1/0,
-// and anything else is 254, which is outside the range a Fern `main` can
+// the program's own abort (an index out of range) is 1 with its message, and
+// anything else is 254, which is outside the range a Fern `main` can
 // return and so cannot be confused with one. The evaluator's own error says
 // why it stopped, on stderr, where the page shows it: a silent 254 is an
 // empty output pane.
@@ -208,6 +209,10 @@ function interpret(merged: parser.Module): i32 {
       return 0;
     },
     interp.VErr(e) => {
+      if (e.abort) {
+        eprint(e.msg);
+        return 1;
+      }
       eprint("fern: interp: " + e.msg);
       return 254;
     },

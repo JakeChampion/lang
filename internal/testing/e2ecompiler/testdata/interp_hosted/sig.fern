@@ -1,0 +1,22 @@
+import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+  print(f"ignore: {signal_ignore(10)}");
+  print(f"disposition ignored: {signal_disposition(10)}");
+  print(f"raise ignored: {signal_raise(10)}");
+  print(f"default: {signal_default(10)}");
+  print(f"disposition default: {signal_disposition(10)}");
+  print(f"catch: {signal_catch(12)}");
+  print(f"taken before: {signal_taken(12)}");
+  print(f"raise caught: {signal_raise(12)}");
+  sleep_ms(100i64);
+  print(f"taken after: {signal_taken(12)}");
+  print(f"taken again: {signal_taken(12)}");
+  print(f"catch_interrupting: {signal_catch_interrupting(12)}");
+  print(f"disposition caught: {signal_disposition(12)}");
+  print(f"ignore kill: {signal_ignore(9)}");
+  print(f"mask query: {signal_mask(0, 0i64)}");
+  print(f"default 12: {signal_default(12)}");
+  return 0;
+}
