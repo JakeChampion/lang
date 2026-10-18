@@ -1,0 +1,54 @@
+import "core/int";
+import "std/i32";
+
+// Named-field variant patterns with renaming and `..` where patterns nest: in
+// a payload slot (`Some(Rect { w: ww, .. })`), and with a sub-pattern in a
+// field (`Rect { w: 0, .. }`, `Tagged { tag: Some(t), .. }`). A field's
+// sub-pattern makes the arm refutable, so the later `..` arm for the same
+// variant still runs for the values it turns away.
+enum Shape {
+    Circle { r: i32 },
+    Rect { w: i32, h: i32 },
+}
+
+enum Node {
+    Tagged { tag: Option[string], depth: i32 },
+    Plain,
+}
+
+function first_width(o: Option[Shape]): i32 {
+    match (o) {
+        Some(Rect { w: ww, .. }) => { return ww; },
+        Some(Circle { r: radius }) => { return 2 * radius; },
+        None => { return 0; },
+    }
+}
+
+function flat(s: Shape): string {
+    return match (s) {
+        Rect { w: 0, h: hh } => "flat " + hh.to_string(),
+        Rect { .. } => "solid",
+        Circle { .. } => "round",
+    };
+}
+
+function tag_len(n: Node): i32 {
+    match (n) {
+        Tagged { tag: Some(t), depth: d } => { return t.len() + d; },
+        Tagged { depth, .. } => { return depth; },
+        Plain => { return 0; },
+    }
+}
+
+function main(): i32 {
+    print(first_width(Some(Rect(7, 1))).to_string());
+    print(first_width(Some(Circle(4))).to_string());
+    print(first_width(None).to_string());
+    print(flat(Rect(0, 5)));
+    print(flat(Rect(2, 5)));
+    print(flat(Circle(1)));
+    print(tag_len(Tagged(Some("leaf"), 2)).to_string());
+    print(tag_len(Tagged(None, 3)).to_string());
+    print(tag_len(Plain).to_string());
+    return 0;
+}

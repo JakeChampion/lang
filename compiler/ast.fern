@@ -593,12 +593,14 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target
 // `field_names`, when non-empty, marks a RECORD-form pattern — `Rect { h, w }`
 // binds by field name in any order — and holds the FIELDS as written, with the
 // bindings holding the locals each was bound to (they differ only under the
-// `f: local` renaming form). It is a transient parse artefact:
+// `f: local` renaming form). rest_written records a trailing `..`, which lets
+// the pattern leave fields out. Both are transient parse artefacts:
 // resolve_variant_fields_module rewrites a settled pattern into the equivalent
-// positional one (bindings in declaration order) and clears it, so the checker
-// and codegen only ever see positional patterns. A pattern that still carries
-// names after that pass named a field the variant does not have, named one
-// twice, missed one, or renamed one — all E015 at the checker.
+// positional one (bindings in declaration order, `_` at an omitted field) and
+// clears them, so the checker and codegen only ever see positional patterns. A
+// pattern that still carries names after that pass named a field the variant
+// does not have, named one twice, or missed one without `..` — all E015 at the
+// checker.
 // lit_cond is the condition a literal payload slot implies: `Sm(0)` binds the
 // slot to a synthetic name and tests it, so the pattern carries
 // `__pl<line>_<col> == 0` and has_lit_cond is set. The PARSER folds it into
@@ -611,7 +613,7 @@ pub struct StmtAssign { target: string, value: Expr, line: i32, col: i32, target
 // Pattern cannot express a tuple, so the data is stored here and build_merged_arm
 // turns it into a build_tuple_match inner match rather than the variant one.
 // Empty tup_kinds means no tuple sub-pattern.
-pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string, field_names: string[], lit_cond: Expr, has_lit_cond: boolean, tup_kinds: i32[], tup_binds: string[], tup_lits: Expr[], tup_pats: Pattern[] }
+pub struct PatVariant { type_name: string, binding: string, extra_bindings: string[], nested: Pattern[], at_binding: string, field_names: string[], lit_cond: Expr, has_lit_cond: boolean, tup_kinds: i32[], tup_binds: string[], tup_lits: Expr[], tup_pats: Pattern[], rest_written: boolean }
 
 pub struct PatWildcard { tag: i32 }
 
