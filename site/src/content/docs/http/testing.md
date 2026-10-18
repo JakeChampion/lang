@@ -23,26 +23,18 @@ import "std/http/router";
 import "std/mock_platform";
 import "std/platform";
 
-function routes[P: platform.Platform](): Result[router.Router[P], router.RouteError] {
-    let r: router.Router[P] = router.new();
-    return Ok(r.get("/users/{id}", show)?);
+function routes[P: platform.Platform](): router.Router[P] {
+    return router.new[P]().get("/users/{id}", show);
 }
 
-function show[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): HttpResponse {
-    return http.respond(page(params));
-}
-
-function page(params: router.Params): Result[HttpResponse, http.HttpError] {
+function show[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] {
     let id: i32 = params.int("id")?;
     return Ok(http.json("{\"id\":" + id.to_string() + "}"));
 }
 
 function send(method: string, path: string): HttpResponse {
     let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-    match (routes[mock_platform.MockPlatform]()) {
-        Ok(r) => { return r.handle(http.request(method, path), m); },
-        Err(e) => { return http.internal_error(e.message()); }
-    }
+    return routes[mock_platform.MockPlatform]().handle(http.request(method, path), m);
 }
 
 function main(): i32 {

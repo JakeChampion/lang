@@ -6,9 +6,9 @@
 //
 //     import "std/http/compress";
 //
-//     function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+//     function page(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
 //       use req <- compress.compressed(req);
-//       return http.ok(page());
+//       return Ok(http.html(render()));
 //     }
 //
 // Only a body held whole (`BodyText`, `BodyBytes`) is compressed; a file
@@ -36,15 +36,15 @@ pub function options(): Options {
   return Options { min_size: 1024, codings: ["zstd", "gzip"] };
 }
 
-// `compressed(req, next)` — the middleware: `next`'s response through
-// `response` under `options()`.
-pub function compressed(req: HttpRequest, next: (HttpRequest) => HttpResponse): HttpResponse {
-  return response(req, next(req), options());
+// `compressed(req, next)` — the middleware: `next`'s response, a failure's
+// answer included, through `response` under `options()`.
+pub function compressed(req: HttpRequest, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(response(req, http.respond(next(req)), options()));
 }
 
 // `compressed_with(req, o, next)` — `compressed` under `o`.
-pub function compressed_with(req: HttpRequest, o: Options, next: (HttpRequest) => HttpResponse): HttpResponse {
-  return response(req, next(req), o);
+pub function compressed_with(req: HttpRequest, o: Options, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(response(req, http.respond(next(req)), o));
 }
 
 // `response(req, resp, o)` — `resp` with its body in the coding `req`

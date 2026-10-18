@@ -1195,10 +1195,17 @@ func TestRunnerTLSMozillaExamplePasses(t *testing.T) {
 }
 
 // `tests/stdlib/http_router_test.fern` refuses malformed and conflicting
-// patterns, dispatches by precedence with 404 and 405, binds parameters and
-// runs a `use` chain of middleware over a route.
+// patterns and keeps the refusal, dispatches by precedence with 404 and 405,
+// binds parameters, answers a handler's failures of two types and runs a
+// `use` chain of middleware over a route.
 func TestRunnerHTTPRouterExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_router", "std/http/router", 8)
+	runnerSuitePasses(t, "http_router", "std/http/router", 10)
+}
+
+// `tests/stdlib/http_json_of_test.fern` answers a struct through its
+// `json.Json` impl with the media type set.
+func TestRunnerHTTPJsonOfExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_json_of", "std/http json_of", 3)
 }
 
 // `tests/stdlib/http_hpack_test.fern` runs RFC 7541's Appendix C through
@@ -1335,7 +1342,7 @@ func TestRunnerHTTPTraceExamplePasses(t *testing.T) {
 // `tests/stdlib/http_accesslog_test.fern` pins the access log's record in
 // the OTel log data model's OTLP/JSON spelling.
 func TestRunnerHTTPAccessLogExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_accesslog", "std/http/accesslog", 4)
+	runnerSuitePasses(t, "http_accesslog", "std/http/accesslog", 5)
 }
 
 // `tests/stdlib/brotli_test.fern` decodes streams the reference brotli

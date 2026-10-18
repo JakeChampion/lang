@@ -37,18 +37,24 @@ a change to both for a value only routed requests have.
 handler**, so `use` composes a chain in a straight line:
 
 ```fern
-function timed(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => HttpResponse): HttpResponse {
+function timed(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   let started: i64 = plat.elapsed_ns();
-  let resp: HttpResponse = next(req);
+  let resp: HttpResponse = http.respond(next(req));
   plat.log(req.method + " " + req.path + " " + (plat.elapsed_ns() - started).to_string() + "ns");
-  return resp;
+  return Ok(resp);
 }
 
-function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   use req <- timed(req, plat);
-  return http.respond(show(params));
+  let id: i32 = params.int("id")?;
+  return Ok(show(id));
 }
 ```
+
+A route handler answers `Result[HttpResponse, dyn http.ToResponse]`, so it
+fails with `?` on any error that answers for itself and the router makes
+the reply; a middleware answers the same, reading the response through
+`http.respond` when it needs it.
 
 A middleware that stops the chain returns without calling `next`; one that
 produces a value gives it to `next` as a second argument, and the handler

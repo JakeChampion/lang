@@ -293,9 +293,9 @@ function test_a_handler_runs_over_the_simulation(): test.TestOutcome {
 }
 
 // The served side of a route: the user's id, under the access log.
-function __user(req: HttpRequest, params: router.Params, plat: sim_platform.SimPlatform): HttpResponse {
+function __user(req: HttpRequest, params: router.Params, plat: sim_platform.SimPlatform): Result[HttpResponse, dyn http.ToResponse] {
   use logged <- accesslog.logged(req, plat);
-  return http.ok("user " + params.values[0]);
+  return Ok(http.ok("user " + params.values[0]));
 }
 
 // A router with its middleware served in memory on the simulated network:
@@ -306,10 +306,7 @@ function __user(req: HttpRequest, params: router.Params, plat: sim_platform.SimP
 function test_router_served_in_memory(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let server_plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.net(d));
-  let Ok(r) = router.new[sim_platform.SimPlatform]().get("/users/{id}", __user) else {
-    return test.fail("route");
-  };
-  let h: (HttpRequest, sim_platform.SimPlatform) => HttpResponse = r.handler();
+  let h: (HttpRequest, sim_platform.SimPlatform) => HttpResponse = router.new[sim_platform.SimPlatform]().get("/users/{id}", __user).handler();
   let n: sim_fetch.Net = sim_fetch.net(d).host("api.test", [ORIGIN]).serve(ORIGIN, 80, (req: HttpRequest): HttpResponse => h(req, server_plat));
   let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
   match (plat.http(fetch.get("http://api.test/users/7"))) {

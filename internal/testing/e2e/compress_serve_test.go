@@ -88,9 +88,9 @@ function page(req: HttpRequest): HttpResponse {
   return http.ok(lines()).with_content_type("text/plain");
 }
 
-function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+function handle(req: HttpRequest, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   use req <- compress.compressed(req);
-  return page(req);
+  return Ok(page(req));
 }
 
 function main(): i32 {

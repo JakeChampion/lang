@@ -3,13 +3,14 @@
 //
 //     import "std/http/accesslog";
 //
-//     function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+//     function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
 //       use req <- accesslog.logged(req, plat);
-//       return http.respond(show(params));
+//       return show(params);
 //     }
 //
 // A middleware by std/http/router's convention: `logged` runs `next`, then
-// writes the record of the request and its response through `plat.log`.
+// writes the record of the request and its response, a failure's answer
+// included, through `plat.log`.
 // The record is a log record by the OTel data model, spelled as OTLP/JSON
 // spells it:
 //
@@ -39,11 +40,11 @@ import "std/i64";
 
 // `logged(req, plat, next)` — `next` run for `req`, its response returned
 // once its record is written through `plat.log`.
-pub function logged[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest) => HttpResponse): HttpResponse {
+pub function logged[P: platform.Platform](req: HttpRequest, plat: P, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
   let started: i64 = plat.elapsed_ns();
-  let resp: HttpResponse = next(req);
+  let resp: HttpResponse = http.respond(next(req));
   plat.log(record(req, resp, plat, plat.elapsed_ns() - started));
-  return resp;
+  return Ok(resp);
 }
 
 // `record(req, resp, plat, took_ns)` — the JSON line for `req` answered by

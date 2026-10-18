@@ -170,13 +170,13 @@ function test_compressible(): test.TestOutcome {
   return test.assert_eq(out, "tttttttffff");
 }
 
-function handler(req: HttpRequest): HttpResponse {
+function handler(req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
   use req <- compress.compressed(req);
-  return html();
+  return Ok(html());
 }
 
 function test_middleware(): test.TestOutcome {
-  return test.assert_eq(summary(handler(req(["Accept-Encoding", "gzip"]))), "gzip Accept-Encoding same");
+  return test.assert_eq(summary(http.respond(handler(req(["Accept-Encoding", "gzip"])))), "gzip Accept-Encoding same");
 }
 
 function main(): i32 {

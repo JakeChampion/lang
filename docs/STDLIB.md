@@ -2036,7 +2036,9 @@ serializer.
   `http.internal_error(body)`, `http.redirect(location)`,
   `http.no_content()`; typed-body variants that set `Content-Type` up
   front: `http.json(body)` / `http.json_status(status, body)` /
-  `http.html(body)` / `http.plain(body)`; `http.problem(status, title,
+  `http.html(body)` / `http.plain(body)`; `http.json_of(v)` /
+  `http.json_of_status(status, v)` serialise `v` through its `json.Json`
+  impl (`tests/stdlib/http_json_of_test.fern`); `http.problem(status, title,
   detail)` for an RFC 9457 problem document
 - **Bodies:** `HttpResponse.body` is a `Body`: `BodyText(string)`,
   `BodyBytes(u8[])`, `BodyStream(Stream)` (the stream's remainder),
@@ -2461,8 +2463,9 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   `no-transform`, a 206, a bodiless status, a file or a stream is left as
   it is, and so is a body the coding would not shrink.
 - `compressed(req, next)` and `compressed_with(req, o, next)` are the
-  middleware; `options()` is 1 KiB and up, in zstd or gzip, zstd when the
-  client ranks the two alike.
+  middleware, by std/http/router's convention (`next` answers a `Result`,
+  and so do they); `options()` is 1 KiB and up, in zstd or gzip, zstd when
+  the client ranks the two alike.
 - `encode(coding, body)` is the body in a coding this module writes
   (zstd through `std/zstd`, gzip through `std/deflate`), None otherwise. `compressible(ct)` is
   text, `+json` and `+xml` types, JSON, JavaScript, XML, WebAssembly,
@@ -2576,8 +2579,9 @@ function users_show(req: HttpRequest, params: router.Params, plat: platform.Host
 ```
 
 - `logged(req, plat, next)` — a middleware by std/http/router's
-  convention: `next` runs, its response is returned, and its record is
-  logged.
+  convention: `next` runs, its `Result` is answered through `http.respond`
+  so a failure is logged as the response it becomes, the record is
+  written, and the response is returned as `Ok`.
 - `record(req, resp, plat, took_ns)` — the line itself: `timeUnixNano`
   from `plat.now_ms()`, `severityNumber` and `severityText` (INFO 9, or
   ERROR 17 for a 5xx), `body` (`METHOD path status`), `traceId` and
@@ -2768,21 +2772,17 @@ import "std/http/router";
 import "std/platform";
 import "std/serve";
 
-function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
-  return http.respond(show(params));
-}
-
-function show(params: router.Params): Result[HttpResponse, http.HttpError] {
+function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   let id: i32 = params.int("id")?;
   return Ok(http.json("{\"id\":" + id.to_string() + "}"));
 }
 
-function routes(): Result[router.Router[platform.Host], router.RouteError] {
-  let r: router.Router[platform.Host] = router.new();
-  r = r.get("/users/{id}", users_show)?;
-  r = r.post("/users", users_create)?;
-  r = r.route("/static/", files)?;
-  return Ok(r);
+function routes(): router.Router[platform.Host] {
+  return router.new[platform.Host]().get("/users/{id}", users_show).post("/users", users_create).route("/static/", files);
+}
+
+function main(): i32 {
+  return serve.run(8080, serve.config(), routes().handler());
 }
 ```
 
@@ -2793,29 +2793,40 @@ function routes(): Result[router.Router[platform.Host], router.RouteError] {
   it, and no method any method. The most specific pattern takes precedence:
   a literal over a parameter, a parameter over the rest, a method over none.
   A GET route answers HEAD.
+- A route handler is `(req, params, plat)` answering
+  `Result[HttpResponse, dyn http.ToResponse]`: it fails with `?` on any
+  error that answers for itself (`http.HttpError`, `http.BodyError`, a
+  form's, a cookie's, a fetch's), and the router turns the failure into
+  the reply through `http.respond`. `Router[P]` is generic over the
+  platform type.
 - `route(pattern, handler)` and `get` / `post` / `put` / `patch` / `delete`
-  answer the router with the route added, or `RouteError`: `BadPattern` for
-  one malformed, `PatternConflict` for one that could tie with a registered
-  pattern on some request (`/a/{x}` against `/{y}/b`, say), so a program
-  learns at startup, never at the request. `message()` says which.
+  answer the router with the route added, so registration chains. A
+  pattern refused — `BadPattern` for one malformed, `PatternConflict` for
+  one that could tie with a registered pattern on some request (`/a/{x}`
+  against `/{y}/b`, say) — is kept as the router's first refusal through
+  every registration after it: `check()` answers `Err(RouteError)` with
+  it (`message()` says which), `handler()` reports it on stderr and exits
+  2 before anything is served, and `handle` answers 500 naming it until
+  then, so a program learns at startup, never at the request.
 - `handle(req, plat)` answers the request: the handler's response, 405
   with `Allow` (HEAD listed beside GET) when routes match the path under
   other methods, 404 when none matches it. `handler()` is the closure
-  `serve.run` takes. A route handler is `(req, params, plat)`; `Router[P]`
-  is generic over the platform type.
+  `serve.run` takes.
 - `Params` holds the values a pattern bound, in its order, as the
   request's path holds them (decoded once already, by the serve loop or
   the wasi-http entry):
   `get(name)` is the value when bound; `param(name)` answers a 500
   `HttpError` for a name the pattern does not bind, `int(name)` a 400 for a
-  value that is not an integer, so a handler writes `params.int("id")?` and
-  `http.respond` makes the problem+json. `no_params()` is for a handler
-  called outside the router.
+  value that is not an integer, so a handler writes `params.int("id")?`.
+  `no_params()` is for a handler called outside the router.
 - Middleware is a plain function whose last parameter is the next handler,
-  composed with `use`: `use req <- timed(req, plat);` then the rest of the
-  handler. One that stops the chain returns without calling `next`; one
-  that produces a value gives it to `next`, and the handler behind it takes
-  it as a parameter (`tests/stdlib/http_router_test.fern`).
+  `(HttpRequest) => Result[HttpResponse, dyn http.ToResponse]`, answering
+  the same, composed with `use`: `use req <- timed(req, plat);` then the
+  rest of the handler. One that stops the chain returns without calling
+  `next`; one that produces a value gives it to `next`, and the handler
+  behind it takes it as a parameter; one that reads the response calls
+  `http.respond(next(req))`, so a failure behind it is the answer it
+  becomes (`tests/stdlib/http_router_test.fern`).
 
 ### `std/http/hpack`
 

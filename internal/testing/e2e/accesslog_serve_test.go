@@ -52,24 +52,15 @@ import "std/http/router";
 import "std/http/accesslog";
 import "std/platform";
 import "std/serve";
-import "std/result";
 
-function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): HttpResponse {
+function users_show(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   use req <- accesslog.logged(req, plat);
-  return http.ok("user " + params.param("id").unwrap_or(""));
+  let id: string = params.param("id")?;
+  return Ok(http.ok("user " + id));
 }
 
 function main(): i32 {
-  match (router.new[platform.Host]().get("/users/{id}", users_show)) {
-    Ok(r) => {
-      return serve.run(0, serve.Config { ...serve.config(), trace: true }, r.handler());
-    },
-    Err(e) => {
-      print(e.message());
-      return 1;
-    }
-  }
-  return 1;
+  return serve.run(0, serve.Config { ...serve.config(), trace: true }, router.new[platform.Host]().get("/users/{id}", users_show).handler());
 }
 `
 
