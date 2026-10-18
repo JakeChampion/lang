@@ -1,0 +1,60 @@
+// std/envflag — the boolean FERN_* environment switches, read by one rule:
+// unset, "", `0`, `false` and `off`, in any ASCII case, are off; anything
+// else is on. internal/envflag is the Go reader and scripts/flag-lib the
+// shell one; each is held to the same table.
+//
+// It imports nothing, so the compiler's own modules and the stdlib's
+// network loops can read a switch without loading a module they do not use.
+
+// `value_on(value)` — whether a switch set to `value` is on.
+pub function value_on(value: string): boolean {
+  return !(value == "" || value == "0" || __folds_to(value, "false") || __folds_to(value, "off"));
+}
+
+// `on(name)` — whether the environment switches `name` on: off when it is
+// unset, otherwise what `value_on` makes of its value.
+pub function on(name: string): boolean {
+  match (env(name)) {
+    Some(v) => {
+      return value_on(v);
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// `value(name)` — the variable's value, with an empty value counted as
+// unset: the reading a directory such as `$HOME` or `$XDG_CACHE_HOME`
+// wants.
+pub function value(name: string): Option[string] {
+  match (env(name)) {
+    Some(v) => {
+      if (v != "") {
+        return Some(v);
+      }
+    },
+    None => {}
+  }
+  return None;
+}
+
+// __folds_to reports whether `s` is the lower-case ASCII word `w` with only
+// A-Z folded.
+function __folds_to(s: string, w: string): boolean {
+  if (s.len() != w.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < s.len()) {
+    let c: u8 = s[i];
+    if (c >= b'A' && c <= b'Z') {
+      c = c + 32u8;
+    }
+    if (c != w[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}

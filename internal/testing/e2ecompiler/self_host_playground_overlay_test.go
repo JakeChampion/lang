@@ -374,7 +374,7 @@ func playgroundResolves(t *testing.T, bin string) {
 	// An empty directory: no std/ tree, no fern.toml, nothing to resolve
 	// against. Every import has to come from the embedded bundle.
 	empty := t.TempDir()
-	wat, stderr, code := runPlayground(t, bin, empty, playgroundProgram)
+	wat, stderr, code := runPlayground(t, bin, empty, playgroundProgram, "-emit", "asm")
 	if code != 0 {
 		t.Fatalf("driver exited %d in an empty directory, want 0\n%s", code, stderr)
 	}
@@ -396,7 +396,7 @@ func playgroundIgnoresDecoy(t *testing.T, bin string) {
 		[]byte("pub function gcd(a: i64, b: i64): i64 { return 999; }\n"), 0o644); err != nil {
 		t.Fatalf("write decoy: %v", err)
 	}
-	wat, stderr, code := runPlayground(t, bin, decoy, playgroundProgram)
+	wat, stderr, code := runPlayground(t, bin, decoy, playgroundProgram, "-emit", "asm")
 	if code != 0 {
 		t.Fatalf("driver exited %d, want 0\n%s", code, stderr)
 	}
@@ -456,7 +456,7 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 	// no `_start`, so a plain run exits 0 having called nothing — which reads
 	// as an empty answer rather than as an error. No `--dir`, so the guest has
 	// no preopens and path_open cannot succeed.
-	run := exec.Command("wasmtime", "run", "--invoke", "main", mod)
+	run := exec.Command("wasmtime", "run", "--invoke", "main", mod, "-emit", "asm")
 	run.Dir = t.TempDir()
 	run.Stdin = strings.NewReader(playgroundProgram)
 	var out strings.Builder
@@ -474,7 +474,7 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 
 	// Agreement with the native build, byte for byte.
 	native := buildPlaygroundDriver(t)
-	nativeWat, _, code := runPlayground(t, native, t.TempDir(), playgroundProgram)
+	nativeWat, _, code := runPlayground(t, native, t.TempDir(), playgroundProgram, "-emit", "asm")
 	if code != 0 {
 		t.Fatalf("natively-hosted driver exited %d", code)
 	}
@@ -525,6 +525,26 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 	nativeSession, _, _ := runPlayground(t, native, t.TempDir(), in, "-lsp")
 	if got := strings.TrimSuffix(srvOut.String(), "0\n"); got != nativeSession {
 		t.Errorf("wasm-hosted -lsp answered\n%s\nnatively-hosted\n%s", got, nativeSession)
+	}
+
+	// `-interp` hosted in wasm models wasm32's 32-bit usize, the width the
+	// same program compiled for the page's target has.
+	usizeSrc, usizeWant := usizeCase(t, "usize_wraps_at_32_bits")
+	usizeProg, err := os.ReadFile(usizeSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ip := exec.Command("wasmtime", "run", "--invoke", "main", mod, "-interp")
+	ip.Dir = t.TempDir()
+	ip.Stdin = strings.NewReader(string(usizeProg))
+	var ipOut, ipErr strings.Builder
+	ip.Stdout = &ipOut
+	ip.Stderr = &ipErr
+	if err := ip.Run(); err != nil {
+		t.Fatalf("wasm-hosted -interp failed: %v\n%s", err, ipErr.String())
+	}
+	if got := strings.TrimSuffix(ipOut.String(), "0\n"); got != usizeWant {
+		t.Errorf("wasm-hosted -interp printed\n%s\nwant\n%s\nstderr:\n%s", got, usizeWant, ipErr.String())
 	}
 }
 

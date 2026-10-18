@@ -43,7 +43,10 @@ pub struct VInt { v: i32, is_char: boolean }
 // bits (native's `Number` does too, and takes signedness from the checker's
 // static type); only div / rem / compares / `>>` and the receiver type name
 // read it — the 64-bit twin of the split VUint makes at 32 bits.
-pub struct VInt64 { hi: i32, lo: i32, unsigned: boolean }
+//
+// `ptr` tags a usize (always unsigned too), which wraps at ptr_bits() rather
+// than at 64 (v_usize).
+pub struct VInt64 { hi: i32, lo: i32, unsigned: boolean, ptr: boolean }
 
 // VUint carries a u32 as its 32-bit pattern in an i32 field. Unsigned
 // semantics (div / rem / compares / logical `>>`, docs/INTEGER-SEMANTICS.md)
@@ -181,7 +184,32 @@ function v_type(n: string): Value {
 // sign-extended into the high word); `hi` is the arithmetic-shifted top 32.
 // v_int64 / v_uint64 are the i64 / u64 spellings — same bits, different tag.
 function v_wide(n: i64, unsigned: boolean): Value {
-  return VInt64 { hi: (n >> 32) as i32, lo: (n & 4294967295) as i32, unsigned: unsigned };
+  return VInt64 { hi: (n >> 32) as i32, lo: (n & 4294967295) as i32, unsigned: unsigned, ptr: false };
+}
+
+// ptr_bits is the pointer width of the target this interpreter runs on: the
+// playground's wasm32 build models a 32-bit usize, every other build 64.
+function ptr_bits(): i64 {
+  if (target_arch() == "wasm32") {
+    return 32;
+  }
+  return 64;
+}
+
+// v_usize wraps `n` to the pointer width and tags it a usize.
+function v_usize(n: i64): Value {
+  let w: i64 = n;
+  if (ptr_bits() == 32) {
+    w = uint_zext(n as i32);
+  }
+  return VInt64 { hi: (w >> 32) as i32, lo: w as i32, unsigned: true, ptr: true };
+}
+
+function is_vusize(v: Value): boolean {
+  if let VInt64(i) = v {
+    return i.ptr;
+  }
+  return false;
 }
 
 function v_int64(n: i64): Value {
@@ -257,12 +285,20 @@ function zero_value_of(type_name: string): Value {
   if (type_name == "i64" || type_name == "u64") {
     return v_wide(0, type_name == "u64");
   }
+  if (type_name == "usize") {
+    return v_usize(0);
+  }
   return v_int(0);
 }
 
 function coerce_int_width(val: Value, type_name: string): Value {
   if (type_name == "char") {
     return char_value(val);
+  }
+  // A usize binding takes a value the checker already proved fits (a literal,
+  // or a lossless u8 / u32 widening), so this only retags it.
+  if (type_name == "usize" && is_int_like(val)) {
+    return v_usize(vint_as_i64(val));
   }
   if (type_name == "i64" || type_name == "u64") {
     // A declared u64 also (re)tags the pattern unsigned — the value plane
@@ -735,7 +771,7 @@ function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, en
     fields = fields.append(parser.StructFieldDecl { name: fname, type_name: "", fn_ret: "", fn_param_types: "" });
     f = f + 1;
   }
-  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
+  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 // variant_arity returns the payload count of the enum variant of this name, or
@@ -1349,6 +1385,9 @@ function cell_value(v: Value): Value {
     },
     VInt64(n) => {
       c.cl.set(vint_as_i64(v));
+      if (n.ptr) {
+        return VCell { ...c, kind: "usize" };
+      }
       if (n.unsigned) {
         return VCell { ...c, kind: "u64" };
       }
@@ -1421,7 +1460,9 @@ function cell_scalar_text(h: usize, v: Value): boolean {
     },
     VInt64(n) => {
       let tag: i32 = 108;
-      if (n.unsigned) {
+      if (n.ptr) {
+        tag = 122;
+      } else if (n.unsigned) {
         tag = 117;
       }
       cell_bits_text(h, tag, vint_as_i64(v));
@@ -1513,8 +1554,11 @@ function cell_scalar_value(tag: i32, bits: i64): Value {
   if (tag == 110) {
     return VUint { v: bits as i32 };
   }
+  if (tag == 122) {
+    return v_usize(bits);
+  }
   if (tag == 108 || tag == 117) {
-    return VInt64 { hi: (bits >> 32i64) as i32, lo: bits as i32, unsigned: tag == 117 };
+    return VInt64 { hi: (bits >> 32i64) as i32, lo: bits as i32, unsigned: tag == 117, ptr: false };
   }
   if (tag == 98) {
     return v_bool(bits != 0i64);
@@ -1615,7 +1659,7 @@ function cell_set_value(c: VCell, v: Value): Value {
       _ => {}
     }
   }
-  if ((c.kind == "i64" || c.kind == "u64") && is_int_like(v)) {
+  if ((c.kind == "i64" || c.kind == "u64" || c.kind == "usize") && is_int_like(v)) {
     c.cl.set(vint_as_i64(v));
     return v_void();
   }
@@ -1661,6 +1705,9 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     }
     if (c.kind == "u64") {
       return v_uint64(c.cl.get());
+    }
+    if (c.kind == "usize") {
+      return v_usize(c.cl.get());
     }
     if (c.kind == "f64") {
       return VFloat { v: c.cf.get() };
@@ -2185,10 +2232,99 @@ function sat_u64(op: string, a: u64, b: u64): i64 {
   return prod as i64;
 }
 
+// eval_usize_binary is eval_binary at the pointer width: the operands read
+// unsigned, every result wraps at ptr_bits(), and a shift count masks to it.
+function eval_usize_binary(op: string, a: u64, b: u64): Value {
+  let sh: u64 = b & (ptr_bits() - 1) as u64;
+  if (op == "+") {
+    return v_usize((a + b) as i64);
+  }
+  if (op == "-") {
+    return v_usize((a - b) as i64);
+  }
+  if (op == "*") {
+    return v_usize((a * b) as i64);
+  }
+  if (op == "/" || op == "%") {
+    return usize_divide(op == "/", a, b);
+  }
+  if (op == "<<") {
+    return v_usize((a << sh) as i64);
+  }
+  if (op == ">>") {
+    return v_usize((a >> sh) as i64);
+  }
+  return usize_bitwise(op, a, b);
+}
+
+function usize_bitwise(op: string, a: u64, b: u64): Value {
+  if (op == "&") {
+    return v_usize((a & b) as i64);
+  }
+  if (op == "|") {
+    return v_usize((a | b) as i64);
+  }
+  if (op == "^") {
+    return v_usize((a ^ b) as i64);
+  }
+  return usize_compare(op, a, b);
+}
+
+// usize_divide is the total division and remainder: x / 0 == 0, x % 0 == x.
+function usize_divide(quotient: boolean, a: u64, b: u64): Value {
+  if (b == 0 as u64) {
+    if (quotient) {
+      return v_usize(0);
+    }
+    return v_usize(a as i64);
+  }
+  if (quotient) {
+    return v_usize((a / b) as i64);
+  }
+  return v_usize((a % b) as i64);
+}
+
+function usize_compare(op: string, a: u64, b: u64): Value {
+  if (op == "==") {
+    return v_bool(a == b);
+  }
+  if (op == "!=") {
+    return v_bool(a != b);
+  }
+  if (op == "<") {
+    return v_bool(a < b);
+  }
+  if (op == "<=") {
+    return v_bool(a <= b);
+  }
+  if (op == ">") {
+    return v_bool(a > b);
+  }
+  if (op == ">=") {
+    return v_bool(a >= b);
+  }
+  return v_err("operator `" + op + "` is not defined on usize");
+}
+
 // eval_binary applies a binary operator to two already-evaluated
 // operands. Pure in (op, lv, rv) — extracted from eval_expr's
 // ExprBinary arm so the operator semantics live in one place,
 // mirroring the VM's apply_binary (SH-048).
+// strings_ordered applies an ordering operator to two strings, compared by
+// their bytes.
+function strings_ordered(op: string, a: string, b: string): boolean {
+  if (op == "<") {
+    return a < b;
+  }
+  if (op == "<=") {
+    return a <= b;
+  }
+  if (op == ">") {
+    return a > b;
+  }
+  return a >= b;
+}
+
 function eval_binary(op: string, lv: Value, rv: Value): Value {
   // 64-bit integer arithmetic: when either operand is a VInt64, widen
   // both to i64, compute in 64 bits, then box back (narrowing to a VInt
@@ -2196,6 +2332,9 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
   // untouched, so i32 overflow wrapping and every existing case behave
   // exactly as before. Total div/mod semantics match the i32 path
   // (x/0 == 0, x%0 == x).
+  if (is_int_like(lv) && is_int_like(rv) && (is_vusize(lv) || is_vusize(rv))) {
+    return eval_usize_binary(op, vint_as_i64(lv) as u64, vint_as_i64(rv) as u64);
+  }
   if (is_int_like(lv) && is_int_like(rv) && (is_vint64(lv) || is_vint64(rv))) {
     let a: i64 = vint_as_i64(lv);
     let b: i64 = vint_as_i64(rv);
@@ -2588,8 +2727,14 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
           }
         }
       },
+      VString(ls) => {
+        if let VString(rs) = rv {
+          return v_bool(strings_ordered(op, ls.v, rs.v));
+        }
+        return v_err("comparison rhs not a string");
+      },
       _ => {
-        return v_err("comparison lhs not i32 or f64");
+        return v_err("comparison lhs not i32, f64 or string");
       }
     }
   }
@@ -2699,6 +2844,9 @@ function eval_unary(op: string, ov: Value): Value {
         return v_int(0 - i.v);
       },
       VInt64(i) => {
+        if (i.ptr) {
+          return v_usize(0 - unpack_i64(i));
+        }
         return v_wide(0 - unpack_i64(i), i.unsigned);
       },
       VUint(u) => {
@@ -2770,6 +2918,9 @@ function eval_unary(op: string, ov: Value): Value {
   // pattern and drops the unsigned tag).
   if (op == "as_i32") {
     return cast_i32_value(ov);
+  }
+  if (op == "as_usize") {
+    return cast_usize_value(ov);
   }
   // `as u32` is the same 32-bit narrowing but tags the pattern unsigned. A
   // float source is the unsigned SATURATING truncation instead (see
@@ -2917,6 +3068,22 @@ function eval_unary(op: string, ov: Value): Value {
     return ov;
   }
   return v_err("unknown unary op: " + op);
+}
+
+// `as usize` extends an integer to 64 bits by its own signedness and wraps it
+// to the pointer width; a float saturates into the pointer width's unsigned
+// range. Anything else is an address reinterpretation, which moves nothing.
+function cast_usize_value(v: Value): Value {
+  if (is_int_like(v)) {
+    return v_usize(vint_as_i64(v));
+  }
+  if (!is_float_like(v)) {
+    return v;
+  }
+  if (ptr_bits() == 32) {
+    return v_usize(uint_zext(f64_trunc_u32(vfloat_as_f64(v))));
+  }
+  return v_usize(f64_trunc_u64(vfloat_as_f64(v)));
 }
 
 // An explicit i32 cast drops scalar identity along with any wider payload.
@@ -3780,10 +3947,7 @@ function tyarg_of_value(v: Value): string {
       return int_type_name(n);
     },
     VInt64(w) => {
-      if (w.unsigned) {
-        return "u64";
-      }
-      return "i64";
+      return wide_type_name(w);
     },
     VUint(_) => {
       return "u32";
@@ -3864,6 +4028,16 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
   return e;
 }
 
+function wide_type_name(w: VInt64): string {
+  if (w.ptr) {
+    return "usize";
+  }
+  if (w.unsigned) {
+    return "u64";
+  }
+  return "i64";
+}
+
 // value_type_name derives the receiver-type name a runtime value dispatches
 // under: a struct's declared type_name, and the language's primitive
 // type-keyword for a scalar so `function (s: string) len(): i32 { … }`
@@ -3881,10 +4055,7 @@ function value_type_name(v: Value): string {
       return int_type_name(n);
     },
     VInt64(iv64) => {
-      if (iv64.unsigned) {
-        return "u64";
-      }
-      return "i64";
+      return wide_type_name(iv64);
     },
     VUint(_) => {
       return "u32";
@@ -4293,9 +4464,8 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
 // plane has no shape for, and an append MUTATES the buffer two copies of a
 // handle share, which it has no expression for either.
 //
-// The handle is carried as an unsigned 64-bit value, so a pointer-width one
-// survives the round trip out through the interpreted program's `usize`
-// variables and back in as an argument.
+// The handle is carried as a usize, so it survives the round trip out through
+// the interpreted program's `usize` variables and back in as an argument.
 // That makes a handle an ADDRESS rather than a key into a table of live
 // builders, so a handle used after its free is a wild pointer here, not the
 // error internal/oracle/interp answers one with.
@@ -4313,7 +4483,7 @@ function is_buf_builtin(name: string): boolean {
 }
 
 function v_buf_handle(h: usize): Value {
-  return v_wide(h as i64, true);
+  return v_usize(h as i64);
 }
 
 function buf_handle_of(v: Value): usize {
@@ -5189,8 +5359,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     return v_string(target_arch());
   }
   // map_new(cap) — capacity arg is accepted but ignored
-  // since VMap uses dynamic parallel arrays.
-  if (name == "map_new") {
+  // since VMap uses dynamic parallel arrays. `__map_new_i32` is the
+  // constructor parse_map_lit names for a literal with scalar keys.
+  if (name == "map_new" || name == "__map_new_i32") {
     return v_map_new();
   }
   // `__alloc_u8(n)` — the stdlib's staging buffer for every
@@ -6422,18 +6593,17 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return StepResult { env: env, ret: VErr { msg: "" }, sig: 3 + c.tag * 2 };
     },
     ast.StmtFor(f) => {
-      // Evaluate the iter expression — must be a VArr.
       let iv: Value = eval_expr(f.iter, env);
       if (is_err(iv)) {
         return step_stop(env, iv);
       }
       let elems: Value[] = [];
-      match (iv) {
-        VArr(a) => {
-          elems = a.elements;
+      match (for_elements(iv)) {
+        Some(walked) => {
+          elems = walked;
         },
-        _ => {
-          return step_stop(env, v_err("for-in iter not an array"));
+        None => {
+          return eval_iterator_for(f, iv, env);
         }
       }
       // Each iteration binds f.var_name to the current
@@ -6451,7 +6621,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       let cur: Env = env;
       let i: i32 = 0;
       while (i < elems.len()) {
-        let iter_env: Env = cur.bind_decl(f.var_name, elems[i], elem_ty);
+        let iter_env: Env = bind_element(cur, f.var_name, elems[i], elem_ty);
         let step: StepResult = eval_block(f.body, iter_env);
         if (step.sig == 2) {
           return step_none(trim_env(step.env, base));
@@ -6479,6 +6649,84 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
     }
   }
   return step_stop(env, v_err("unhandled Stmt variant"));
+}
+
+// for_elements is what a `for` walks without the Iterator protocol: an
+// array's elements, a string's bytes and a Map's (key, value) entries.
+function for_elements(iv: Value): Option[Value[]] {
+  let elems: Value[] = [];
+  match (iv) {
+    VArr(a) => {
+      return Some(a.elements);
+    },
+    VString(sv) => {
+      for b in sv.v {
+        elems = elems.append(v_int(b as i32));
+      }
+      return Some(elems);
+    },
+    VMap(m) => {
+      let i: i32 = 0;
+      while (i < m.keys.len()) {
+        elems = elems.append(v_tuple([m.keys[i], m.values[i]]));
+        i = i + 1;
+      }
+      return Some(elems);
+    },
+    _ => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// bind_element binds a `for` header to one element: a tuple header
+// (`for (k, v) in m`) binds each name to its slot.
+function bind_element(env: Env, header: string, elem: Value, elem_ty: string): Env {
+  if (is_destructure_name(header)) {
+    if let VTuple(tv) = elem {
+      let names: string[] = split_binding_names(header);
+      if (names.len() == tv.elements.len()) {
+        let out: Env = env;
+        let i: i32 = 0;
+        while (i < names.len()) {
+          out = out.bind(names[i], tv.elements[i]);
+          i = i + 1;
+        }
+        return out;
+      }
+    }
+  }
+  return env.bind_decl(header, elem, elem_ty);
+}
+
+// eval_iterator_for runs a `for` whose iterand `iv` is a core/iter Iterator,
+// or has an `iter()` returning one, as the loop the compiler lowers it to
+// (parser.iterator_loop) over the iterand evaluated once.
+function eval_iterator_for(f: ast.StmtFor, iv: Value, env: Env): StepResult {
+  let held: ast.Expr = ast.ExprIdent { name: "$for_subject", line: 0, col: 0, ty: "" };
+  let subject: ast.Expr = held;
+  if (!receiver_has_method(env.funcs, iv, "next")) {
+    if (!receiver_has_method(env.funcs, iv, "iter")) {
+      return step_stop(env, v_err("for-in iter is not iterable"));
+    }
+    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: held, field: "iter", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+  }
+  let base: i32 = env.names.len();
+  let step: StepResult = eval_stmt(parser.iterator_loop(f, subject, 0), env.bind("$for_subject", iv));
+  return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
+}
+
+// receiver_has_method reports whether a method `name` dispatches on `recv`
+// by its type, as call_method finds one.
+function receiver_has_method(funcs: parser.FuncDecl[], recv: Value, name: string): boolean {
+  let rt: string = value_type_name(recv);
+  for fd in funcs {
+    if (fd.name == name && fd.receiver_name.len() > 0 && util.base_type_name(fd.receiver_type) == rt) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // trim_env drops bindings past index `base`. Used by the while
@@ -6919,7 +7167,24 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
+  return check_string_ordering();
+}
 
+// check_string_ordering: `<` / `<=` / `>` / `>=` order strings by their bytes,
+// which core/cmp's `Ord for string` (and so every OrdMap keyed by string)
+// relies on.
+function check_string_ordering(): i32 {
+  let r: Value = run_source("let n = 0; if (\"apple\" < \"pear\") { n = n + 1; } if (\"b\" <= \"b\") { n = n + 2; } if (\"ab\" > \"a\") { n = n + 4; } if (\"a\" >= \"b\") { n = n + 8; } return n;");
+  match (r) {
+    VInt(i) => {
+      if (i.v != 7) {
+        return 940;
+      }
+    },
+    _ => {
+      return 941;
+    }
+  }
   return 0;
 }
 
@@ -7814,7 +8079,7 @@ function check_for_in_loops(): i32 {
     }
   }
 
-  // For-in: iter not an array → VErr.
+  // For-in: iter not iterable → VErr.
   let src60: string = "function main(): i32 { for n in 7 { } return 0; }";
   let r60: Value = run_module(src60);
   match (r60) {
@@ -7823,7 +8088,37 @@ function check_for_in_loops(): i32 {
       return 600;
     }
   }
+  return check_for_in_subjects();
+}
 
+// check_for_in_subjects: a string walks its bytes, a Map and an array of
+// tuples bind a pattern header per entry, and a value with `next()` (or an
+// `iter()` returning one) walks through the Iterator protocol, advancing
+// before the body so `continue` moves on.
+function check_for_in_subjects(): i32 {
+  let srcs: string[] = [
+    "function main(): i32 { let n: i32 = 0; for b in \"ab\" { n = n + (b as i32); } return n; }",
+    "function main(): i32 { let m = map_new(); m = m.insert(\"a\", 1); m = m.insert(\"bc\", 2); let n: i32 = 0; for (k, v) in m { n = n + k.len() * 10 + v; } return n; }",
+    "function main(): i32 { let n: i32 = 0; for (a, b) in [(1, 2), (3, 4)] { n = n + a * b; } return n; }",
+    "struct Cd { n: i32 }\nfunction (c: Cd) next(): Option[(i32, Cd)] { if (c.n == 0) { return None; } return Some((c.n, Cd { n: c.n - 1 })); }\nfunction main(): i32 { let n: i32 = 0; let c: Cd = Cd { n: 4 }; for v in c { if (v == 2) { continue; } n = n + v; } return n; }",
+    "struct Cd { n: i32 }\nstruct Box { n: i32 }\nfunction (c: Cd) next(): Option[(i32, Cd)] { if (c.n == 0) { return None; } return Some((c.n, Cd { n: c.n - 1 })); }\nfunction (b: Box) iter(): Cd { return Cd { n: b.n }; }\nfunction main(): i32 { let n: i32 = 0; let b: Box = Box { n: 3 }; for v in b { n = n + v; } return n; }",
+  ];
+  let wants: i32[] = [195, 33, 14, 8, 6];
+  let i: i32 = 0;
+  while (i < srcs.len()) {
+    let r: Value = run_module(srcs[i]);
+    match (r) {
+      VInt(got) => {
+        if (got.v != wants[i]) {
+          return 920 + i;
+        }
+      },
+      _ => {
+        return 930 + i;
+      }
+    }
+    i = i + 1;
+  }
   return 0;
 }
 

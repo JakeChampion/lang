@@ -122,7 +122,8 @@ the language.
 time in the lowering, rc and x86-64 emission sources — an operator swap or a
 deleted assignment — builds the faulty compiler, and checks whether any of
 `FERN_MUTATION_SEEDS` generated programs, built under `-sanitize`, tells it
-apart from the interpreter. A fault the compiler cannot even build is
+apart from the interpreter. A mutant compiler that runs past two minutes on
+one program is killed as a hang. A fault the compiler cannot even build is
 "stillborn" and not scored; one that breaks a trivial program is reported apart.
 The score is the share of the rest that fernsmith kills, and the list of
 survivors is the generator's to-do list: each is a fault no generated program
@@ -237,7 +238,7 @@ regression test where the bug lived:
   `TestSelfHostDynTraitIR` row `downcast-into-bounded-generic`.
 - **A `for` loop inside a `defer` went unchecked** (#12789, Go parser): the
   foreach desugar did not enter a `defer`, and the checker has no case for
-  a standing ForEach. `TestForEachInDeferDesugars`.
+  a standing ForEach. `TestForEachInDeferLowers`.
 - **A generator bug**: the ownership cluster reassigned a variable whose type
   can reach a function while a later closure captured it (E049 by the
   language's own rule). The generator now asks `reachesFn` first.

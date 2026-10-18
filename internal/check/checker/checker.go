@@ -29,7 +29,7 @@ type Error struct {
 	Note    string // optional: free-text hint rendered as `note:`
 	Msg     string
 	Path    string // source file path; filled by errf from c.current.SourceModule
-	ErrCode string // optional: stable error code (E001…), surfaces in the header + `lang explain` output
+	ErrCode string // optional: stable error code (E001…), surfaces in the header + `fern -explain` output
 	// Fix is an optional machine-applicable suggestion rendered as a
 	// `help:` line (diag.Suggestion — span + replacement + title). Only
 	// attached when applying the replacement is guaranteed to re-parse.
@@ -6378,19 +6378,13 @@ func forEachHandle(t ast.Type, fn func(ast.HandleType)) {
 
 // validateResourceHandles is the sole reporter of resource-handle type-level
 // errors: every `own R` / `borrow R` must name a declared `resource`. It walks
-// every function signature (params + return) and local var annotation, once,
-// reporting each unknown resource a single time. Mirrors validateDynTraitTypes
-// (P5 — docs/WIT-BRING-YOUR-OWN.md).
+// every function signature (params + return), struct field and local
+// annotation (P5 — docs/WIT-BRING-YOUR-OWN.md).
 func (c *checker) validateResourceHandles(prog *ast.Program) {
-	reported := map[string]bool{}
 	visit := func(t ast.Type, pos ast.Position) {
 		forEachHandle(t, func(h ast.HandleType) {
-			if reported[h.Resource] {
-				return
-			}
 			if _, ok := c.info.Resources[h.Resource]; !ok {
-				reported[h.Resource] = true
-				c.errfCode(pos, "E021", "unknown resource %q in handle type %q", demangle(h.Resource), h.String())
+				c.errfCode(pos, "E021", "%s", handleNotResource(h))
 			}
 		})
 	}
@@ -6403,6 +6397,28 @@ func (c *checker) validateResourceHandles(prog *ast.Program) {
 			c.walkDeclaredTypes(fn.Body, visit)
 		}
 	}
+	for _, sd := range prog.Structs {
+		for _, f := range sd.Fields {
+			visit(f.Type, sd.P)
+		}
+	}
+	for _, ed := range prog.Enums {
+		for _, v := range ed.Variants {
+			for _, t := range v.Payloads {
+				visit(t, ed.P)
+			}
+		}
+	}
+}
+
+// handleNotResource is the E021 for a handle type over a name that is not a
+// `resource`, which is what a consuming parameter written `xs: own T` reads as.
+func handleNotResource(h ast.HandleType) string {
+	name := demangle(h.Resource)
+	if h.Borrowed {
+		return fmt.Sprintf("`%s` is not a resource, so `borrow %s` is not a handle type; a parameter borrows by default, written `name: %s`", name, name, name)
+	}
+	return fmt.Sprintf("`%s` is not a resource, so `own %s` is not a handle type; a consuming parameter is written `own name: %s`", name, name, name)
 }
 
 // validateExports checks `@export` functions (P6 — bind a Fern function to a
@@ -7005,7 +7021,7 @@ func (c *checker) typeImplsEqAndHash(typeName string) bool {
 const MapVoidValue = "map value type void is not supported — a set of keys is std/set's `Set`"
 
 // mapKeyTypeError returns an E045 message describing why `k` cannot be
-// a Map key, or "" if it is a usable key. Usable keys are integers,
+// a Map key, or "" if it is a usable key. Usable keys are integers, chars,
 // strings (owned or borrowed), booleans, struct/enum types that
 // implement both Eq and Hash (#2671), and tuples and arrays of usable
 // scalar keys (ast.StructuralMapKey, #10020). A struct/enum that lacks the
@@ -7021,7 +7037,7 @@ const MapVoidValue = "map value type void is not supported — a set of keys is 
 // annotated `Map[boolean, i32]` was accepted and ran.
 func (c *checker) mapKeyTypeError(k ast.Type) string {
 	switch kt := k.(type) {
-	case ast.NumberType, ast.StringType, ast.StrType, ast.BoolType, ast.ParamType:
+	case ast.NumberType, ast.CharType, ast.StringType, ast.StrType, ast.BoolType, ast.ParamType:
 		return ""
 	case ast.StructType:
 		if c.typeImplsEqAndHash(kt.Name) {
@@ -9576,7 +9592,9 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			*slot = ast.StructType{Name: t.Name, Args: args}
 			return
 		}
-		if ed, ok := c.info.Enums[t.Name]; ok {
+		// No arguments is the bare form the StructType case above makes of
+		// an enum name, so resolving it again must accept it too.
+		if ed, ok := c.info.Enums[t.Name]; ok && len(args) > 0 {
 			if len(ed.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
 				c.errfCode(ed.P, "E019", "%s", arityMsg("enum "+t.Name, len(ed.TypeParams), len(args), "type argument"))
 			}
@@ -12093,7 +12111,7 @@ func arityMsg(subject string, want, got int, unit string) string {
 // to the emission. Codes line up with the per-code catalogue
 // under `internal/syntax/diag/explanations/`; surfacing them in the
 // header lets users search for the error + look up the
-// long-form explanation via `lang explain CODE`.
+// long-form explanation via `fern -explain CODE`.
 //
 // Phase 1: codes stamped on a handful of common error sites
 // (undefined identifier, type mismatches, missing struct
@@ -12847,7 +12865,7 @@ func scalarModuleFor(t ast.Type) string {
 	switch x := t.(type) {
 	case ast.NumberType:
 		if !x.IsSigned() {
-			if x.NormalWidth() == 64 {
+			if x.NormalWidth() == 64 || x.IsPointerWidth() {
 				mod = "std/u64"
 			} else if x.NormalWidth() == 8 {
 				// u8's method surface lives in std/i32, not std/u32:
@@ -15588,8 +15606,8 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			bs := newScope(s)
 			prevMutualRec := c.mutualRecSiblings
 			c.mutualRecSiblings = nil
-			for _, st := range blk.Stmts {
-				c.checkStmt(st, bs)
+			for i, st := range blk.Stmts {
+				blk.Stmts[i] = c.checkStmtLoweringForEach(st, bs)
 			}
 			c.mutualRecSiblings = prevMutualRec
 			if blk.Tail != nil {
@@ -15664,17 +15682,6 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			} else if widened := c.widenCompositeByLiterals(got, n.Init); widened != nil {
 				c.settleNumeric(n.Init, widened)
 				got = widened
-			}
-			// A generic enum the init leaves uninstantiated (`let o = None;`)
-			// is not stamped: a re-check infers it again, where reading the
-			// stamp back as an annotation would fail its arity.
-			if et, ok := got.(ast.EnumType); ok && len(et.Args) == 0 {
-				if ed := c.info.Enums[et.Name]; ed != nil && len(ed.TypeParams) > 0 {
-					s.bindVar(n.Name, got, n)
-					c.info.VarTypes[n] = got
-					c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
-					return
-				}
 			}
 			n.Type = got
 			if litLocal {
@@ -16179,50 +16186,12 @@ func scrutineeSub(ed *ast.EnumDecl, et ast.EnumType) map[string]ast.Type {
 	return sub
 }
 
-// resolveVariantBindings validates a variant pattern's bindings and
-// returns them, with their (type-substituted) types, in declaration
-// (payload) order — ready to declare in a per-arm scope and to drive the
-// position-based IR lowering. For a positional pattern it checks arity
-// and pairs binding[i] with payload[i]. For a named-field pattern
-// (named=true) each binding is a field name: every field must be named
-// exactly once (any order), and the result is the variant's fields in
-// declaration order. Errors report at pos. See docs/NAMED-FIELD-VARIANTS.md.
-func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVariant, bindings []string, named bool, sub map[string]ast.Type) ([]string, []ast.Type) {
-	if named && len(variant.FieldNames) > 0 {
-		outNames := make([]string, len(variant.FieldNames))
-		outTypes := make([]ast.Type, len(variant.FieldNames))
-		copy(outNames, variant.FieldNames)
-		for i := range variant.FieldNames {
-			outTypes[i] = substituteType(variant.Payloads[i], sub)
-		}
-		seen := map[string]bool{}
-		for _, b := range bindings {
-			idx := -1
-			for i, fn := range variant.FieldNames {
-				if fn == b {
-					idx = i
-					break
-				}
-			}
-			if idx < 0 {
-				c.errfCode(pos, "E015", "variant %s has no field %q", variant.Name, b)
-				continue
-			}
-			if seen[b] {
-				c.errfCode(pos, "E015", "field %q bound more than once in pattern for %s", b, variant.Name)
-			}
-			seen[b] = true
-		}
-		if len(seen) != len(variant.FieldNames) {
-			c.errfCode(pos, "E015", "named-field pattern for %s must bind all %d field(s) (%s)",
-				variant.Name, len(variant.FieldNames), strings.Join(variant.FieldNames, ", "))
-		}
-		return outNames, outTypes
-	}
-	if named && len(variant.FieldNames) == 0 {
-		c.errfCode(pos, "E015", "variant %s has positional payloads; match it as %s(...), not %s { ... }",
-			variant.Name, variant.Name, variant.Name)
-	}
+// resolveVariantBindings types a positional variant pattern's bindings: it
+// checks arity and pairs binding[i] with payload[i], type-substituted, ready
+// to declare in a per-arm scope and to drive the position-based IR lowering.
+// A named-field pattern reaches it already rewritten into this form by
+// settleNamedVariantPattern. Errors report at pos.
+func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVariant, bindings []string, sub map[string]ast.Type) ([]string, []ast.Type) {
 	if len(bindings) != len(variant.Payloads) {
 		c.errfCode(pos, "E015", "%s", payloadCountMsg(variant.Name, len(variant.Payloads), len(bindings)))
 	}
@@ -16236,6 +16205,57 @@ func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVari
 		}
 	}
 	return bindings, outTypes
+}
+
+// settleNamedVariantPattern rewrites a named-field variant pattern
+// (`Rect { w: ww, .. }`) into its positional equivalent: fields[k] is the
+// field projected at position k, bindings[k] the local it binds ("" where
+// payloads[k] holds a sub-pattern instead). The result is the variant's
+// fields in declaration order, with `_` at each field the pattern leaves out,
+// which is also what makes `..` cover those fields for exhaustiveness. Every
+// field may be named once, and all of them must be unless the pattern ends in
+// `..`. A settled pattern settles to itself, so a re-check after
+// monomorphisation is a no-op. See docs/NAMED-FIELD-VARIANTS.md.
+func (c *checker) settleNamedVariantPattern(pos ast.Position, variant *ast.EnumVariant, fields, bindings []string, payloads []*ast.TuplePatElem, rest bool) ([]string, []*ast.TuplePatElem) {
+	if len(variant.FieldNames) == 0 {
+		c.errfCode(pos, "E015", "variant %s has positional payloads; match it as %s(...), not %s { ... }",
+			variant.Name, variant.Name, variant.Name)
+		return bindings, payloads
+	}
+	outNames := make([]string, len(variant.FieldNames))
+	var outPayloads []*ast.TuplePatElem
+	bound := make([]bool, len(variant.FieldNames))
+	for k, f := range fields {
+		idx := slices.Index(variant.FieldNames, f)
+		if idx < 0 {
+			c.errfCode(pos, "E015", "variant %s has no field %q", variant.Name, f)
+			continue
+		}
+		if bound[idx] {
+			c.errfCode(pos, "E015", "field %q bound more than once in pattern for %s", f, variant.Name)
+			continue
+		}
+		bound[idx] = true
+		outNames[idx] = bindings[k]
+		if k < len(payloads) && payloads[k] != nil {
+			if outPayloads == nil {
+				outPayloads = make([]*ast.TuplePatElem, len(variant.FieldNames))
+			}
+			outPayloads[idx] = payloads[k]
+		}
+	}
+	omitted := false
+	for i := range outNames {
+		if !bound[i] {
+			outNames[i] = "_"
+			omitted = true
+		}
+	}
+	if omitted && !rest {
+		c.errfCode(pos, "E015", "named-field pattern for %s must bind all %d field(s) (%s), or end in `..` to leave the rest out",
+			variant.Name, len(variant.FieldNames), strings.Join(variant.FieldNames, ", "))
+	}
+	return outNames, outPayloads
 }
 
 // errPayloadlessVariantBinder reports the bare-name-is-a-binder hazard: a
@@ -16430,7 +16450,11 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 			el.VariantName, ed.Name, variantSpellingHint(el.VariantName, ed))
 		return
 	}
-	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, variant, el.VariantBindings, false, scrutineeSub(ed, et))
+	if el.VariantFieldNames != nil {
+		el.VariantBindings, el.VariantPayloads = c.settleNamedVariantPattern(pos, variant, el.VariantFieldNames, el.VariantBindings, el.VariantPayloads, el.RestWritten)
+		el.VariantFieldNames = slices.Clone(variant.FieldNames)
+	}
+	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, variant, el.VariantBindings, scrutineeSub(ed, et))
 	for i, name := range el.VariantBindings {
 		// A slot carrying a sub-pattern binds nothing itself — its pattern
 		// does, under the same element rules, so it routes back through
@@ -16768,24 +16792,10 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		// pattern (`Rect { w, h }`) is validated + reordered into
 		// declaration order here.
 		if arm.NamedFields {
-			renamed := false
-			for i := range arm.Bindings {
-				if i < len(arm.FieldNames) && arm.FieldNames[i] != "" && arm.FieldNames[i] != arm.Bindings[i] {
-					if !renamed {
-						c.errfCode(arm.P, "E015", "enum named-field pattern for %s does not support renaming (`field: local`) — bind the field by name (`%s { %s }`)", variant.Name, variant.Name, arm.FieldNames[i])
-						renamed = true
-					}
-					arm.Bindings[i] = arm.FieldNames[i]
-				}
-			}
-			// Enum variant patterns never project through FieldNames (only
-			// struct matches do), and resolveVariantBindings reorders
-			// Bindings into declaration order — leaving FieldNames stale.
-			// Clear it so a re-check (post-monomorph) doesn't misfire the
-			// rename guard on a legitimately reordered shorthand pattern.
-			arm.FieldNames = nil
+			arm.Bindings, arm.Payloads = c.settleNamedVariantPattern(arm.P, variant, arm.FieldNames, arm.Bindings, arm.Payloads, arm.RestWritten)
+			arm.FieldNames = slices.Clone(variant.FieldNames)
 		}
-		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, sub)
 		// A refutable arm may still complete its variant's coverage together
 		// with its siblings — see payloadsExhaustive, applied per variant once
 		// every arm is in. Snapshotted AFTER resolveVariantBindings, which is
@@ -17669,24 +17679,10 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
 		}
 		if arm.NamedFields {
-			renamed := false
-			for i := range arm.Bindings {
-				if i < len(arm.FieldNames) && arm.FieldNames[i] != "" && arm.FieldNames[i] != arm.Bindings[i] {
-					if !renamed {
-						c.errfCode(arm.P, "E015", "enum named-field pattern for %s does not support renaming (`field: local`) — bind the field by name (`%s { %s }`)", variant.Name, variant.Name, arm.FieldNames[i])
-						renamed = true
-					}
-					arm.Bindings[i] = arm.FieldNames[i]
-				}
-			}
-			// Enum variant patterns never project through FieldNames (only
-			// struct matches do), and resolveVariantBindings reorders
-			// Bindings into declaration order — leaving FieldNames stale.
-			// Clear it so a re-check (post-monomorph) doesn't misfire the
-			// rename guard on a legitimately reordered shorthand pattern.
-			arm.FieldNames = nil
+			arm.Bindings, arm.Payloads = c.settleNamedVariantPattern(arm.P, variant, arm.FieldNames, arm.Bindings, arm.Payloads, arm.RestWritten)
+			arm.FieldNames = slices.Clone(variant.FieldNames)
 		}
-		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, sub)
 		// A refutable arm may still complete its variant's coverage together
 		// with its siblings — see payloadsExhaustive, applied per variant once
 		// every arm is in. Snapshotted AFTER resolveVariantBindings, which is

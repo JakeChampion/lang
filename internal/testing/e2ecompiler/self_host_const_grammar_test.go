@@ -107,7 +107,7 @@ func constDiagLines(out string) []string {
 		if !strings.Contains(line, ": const ") {
 			continue
 		}
-		// native: "<path>:2:1: const C: …"  self-host: "2:1: const C: …"
+		// both: "<path>:2:1: error: const C: …"
 		if i := strings.Index(line, ": const "); i >= 0 {
 			if j := strings.LastIndex(line[:i], ".fern:"); j >= 0 {
 				line = line[j+len(".fern:"):]

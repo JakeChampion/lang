@@ -2758,11 +2758,8 @@ function main(): i32 {
 	// IR op nobody wrote (`syscall3`), and before that it emitted the op as a WAT
 	// COMMENT, so the assembler blamed the comment marker ("unknown instruction:
 	// ;;"). Both halves are asserted — the exit code and the builtin's name.
-	//
-	// `timer_fd` is refused one stage earlier than the raw floor: it is gated on
-	// `pollfd`, which no wasi profile grants, so the CLI's E066 capability gate
-	// answers before wasm_ir's pre-emit gate is reached. Same requirement of the
-	// diagnostic either way — name the builtin.
+	// Each is refused by the CLI's E066 target gate, on the capability no wasi
+	// profile grants.
 	t.Run("wasm-unsupported-builtin-names-the-builtin", func(t *testing.T) {
 		for _, tc := range []struct {
 			name    string
@@ -2770,7 +2767,7 @@ function main(): i32 {
 			mustSay []string
 		}{
 			{"syscall-floor", "function main(): i32 { let r: i64 = __syscall3(1, 1, 0, 0); return 0; }\n", []string{"__syscall3", "E066", "syscall"}},
-			{"raw-memory-floor", "function main(): i32 { let p: usize = __raw_alloc(64); return 0; }\n", []string{"__raw_alloc", "not supported on the wasm target"}},
+			{"raw-memory-floor", "function main(): i32 { let p: usize = __raw_alloc(64); return 0; }\n", []string{"__raw_alloc", "E066", "rawmem"}},
 			{"timer-fd", "function main(): i32 { return timer_fd(10); }\n", []string{"timer_fd", "E066", "pollfd"}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {

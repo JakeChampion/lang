@@ -183,8 +183,12 @@ function arr_push_borrowed_op(elem: typeinfo.Type): ir.Op {
 // boolean and a void occupy one word, a string is its own box, a function
 // value is the env box its captures are stored in, and a handle is the
 // descriptor word. The handle is read here rather than under the nominal
-// ladder below, which would look for a schema no handle has.
+// ladder below, which would look for a schema no handle has. A never slot
+// (a `never[]`'s element) holds no value at all.
 function supported_leaf(t: typeinfo.Type): boolean {
+  if (semtypes.is_never(t)) {
+    return true;
+  }
   if let typeinfo.TypeBool(_) = t {
     return true;
   }
@@ -1779,7 +1783,7 @@ function walk_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean 
   }
   // A handle stores as the descriptor word and its release walks
   // nothing, so a field or payload of one is walkable without a schema.
-  if (semtypes.is_handle(t)) {
+  if (semtypes.is_handle(t) || semtypes.is_never(t)) {
     return true;
   }
   if let typeinfo.TypeI32(_) = t {
@@ -3803,6 +3807,9 @@ function constant(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
   if (ins.kind_tag == 1 && ssasem.is_u32(f.values[ins.result])) {
     return emit(r, ir.op_const_i32_text(ins.str));
   }
+  if (ins.kind_tag == 1 && ins.str != "" && ssasem.is_usize(f.values[ins.result])) {
+    return emit(r, ir.op_const_ptr_text(ins.str));
+  }
   if (ins.kind_tag == 1 && ssasem.is_f64(f.values[ins.result])) {
     return emit(r, ir.op_const_f64_text(ins.str));
   }
@@ -3865,6 +3872,9 @@ function static_name(f: ssasem.Func, ins: ssa.SInst): string {
   }
   if (ins.kind_tag == ssasem.record_new()) {
     return record_name(f.values[ins.result]);
+  }
+  if (ins.kind_tag == ssasem.variant_new()) {
+    return ssasem.variant_key(f.values[ins.result], ins.str);
   }
   return ins.str;
 }

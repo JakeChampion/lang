@@ -1,0 +1,37 @@
+import "core/int";
+import "std/i32";
+
+// Renaming and `..` together in a named-field variant pattern: the renamed
+// field binds its local, the omitted ones match anything. A guarded arm does
+// not cover its variant, so the unguarded `Entry { .. }` after it still runs
+// for the entries the guard turns away.
+enum Item {
+    Entry { key: string, count: i32, weight: i32 },
+    Empty,
+}
+
+function score(it: Item): i32 {
+    match (it) {
+        Entry { count: n, .. } when n > 10 => { return 100; },
+        Entry { weight: kg, key: k, .. } => { return k.len() + kg; },
+        Empty => { return 0; },
+    }
+}
+
+function label(it: Item): string {
+    return match (it) {
+        Entry { key: name, .. } => name,
+        Empty => "-",
+    };
+}
+
+function main(): i32 {
+    let items: Item[] = [Entry("apple", 3, 7), Entry("fig", 20, 1), Empty];
+    let total: i32 = 0;
+    for it in items {
+        print(label(it));
+        total = total + score(it);
+    }
+    print(total.to_string());
+    return 0;
+}

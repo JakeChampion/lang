@@ -1,0 +1,18 @@
+// `..` leaves a named-field variant's other fields out, but every field the
+// pattern does name must be one the variant declares: `depth` is not a field
+// of Rect.
+enum Shape {
+    Circle { r: i32 },
+    Rect { w: i32, h: i32 },
+}
+
+function width(s: Shape): i32 {
+    match (s) {
+        Rect { w: ww, depth: d, .. } => { return ww; },
+        Circle { .. } => { return 0; },
+    }
+}
+
+function main(): i32 {
+    return width(Rect(1, 2));
+}

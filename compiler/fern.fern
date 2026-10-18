@@ -103,7 +103,7 @@ import "./lspassist";
 import "./lspquery";
 import "./lsprefs";
 import "./lsptokens";
-import "std/cli";
+import "std/envflag";
 import "std/error";
 
 // blank_line_map marks the 1-based source lines that hold nothing but
@@ -1682,7 +1682,8 @@ function usage_lines(embedded: boolean): string[] {
     "       fern -resolve | -vendor | -fetch [DIR]",
     "       fern -lsp | -repl [-target ISA-ENV]" + root,
     "       fern -cover-report [-lcov] FILE",
-    "       fern -explain [CODE] | -targets | -lint-rules | -version | -h",
+    "       fern -explain [CODE]" + root,
+    "       fern -targets | -lint-rules | -version | -h",
     "Flags go before FILE. The program's arguments follow FILE" + unless_embedded(embedded, " and STDLIB") + ", behind -- when the first begins with -.",
     "A flag takes one dash or two. A value follows as -flag VALUE or -flag=VALUE; a flag without one is a boolean, also written -flag=true or -flag=false.",
   ];
@@ -1826,8 +1827,9 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
   return write_file_exec(out_path, data);
 }
 
-// capability_findings is every call to a builtin the target does not grant
-// (E066 — platforms.fern), one finding per violation.
+// capability_diags is every call to a builtin the target does not grant
+// (E066 — platforms.fern), one diagnostic per violation. The playground
+// driver runs this same gate, so the browser refuses what the CLI does.
 //
 // Two passes, because reachability is the expensive half. The flat scan over
 // the whole bundle over-approximates: an imported stdlib wrapper nothing calls
@@ -1838,39 +1840,27 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
 // enforceTargetCapabilities); the cheap pre-pass is only about not shaking a
 // module whose answer cannot change. An empty shaken answer is an accept: the
 // pre-pass fired on a builtin only unreachable code reaches.
-function capability_findings(merged: parser.Module, target: string): Finding[] {
-  let out: Finding[] = [];
+pub function capability_diags(merged: parser.Module, target: string): util.Diag[] {
+  let out: util.Diag[] = [];
   if (platforms.enforce(merged, target).len() == 0) {
     return out;
   }
   for v in platforms.enforce(treeshake.treeshake(merged), target) {
-    out = out.append(violation_finding("E066", platforms.violation_message(v), v.fn_module, v.line, v.col));
+    out = out.append(platforms.violation_diag(v));
   }
   return out;
 }
 
-// ambient_findings is every host effect a handler reaches around its
+// ambient_diags is every host effect a handler reaches around its
 // platform (E080 — ambient.fern). Target-independent, so it runs on
 // every check and every build, on the bundle before the shake: a handler is
 // judged on what its body reaches.
-function ambient_findings(merged: parser.Module): Finding[] {
-  let out: Finding[] = [];
+pub function ambient_diags(merged: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
   for v in ambient.enforce(merged) {
-    out = out.append(violation_finding("E080", ambient.violation_message(v), v.fn_module, v.line, v.col));
+    out = out.append(util.violation_diag("E080", ambient.violation_message(v), v.fn_module, v.line, v.col));
   }
   return out;
-}
-
-// violation_finding places a reachability violation. Only the entry module's
-// positions index the file being reported on — an imported module's line
-// numbers index ITS source, so a violation from one degrades to a
-// position-less finding whose message names the function and module instead.
-// Native's renderer makes the same split.
-function violation_finding(code: string, msg: string, fn_module: string, line: i32, col: i32): Finding {
-  if (fn_module.len() > 0) {
-    line = 0;
-  }
-  return Finding { diag: util.Diag { related: [], code: code, message: msg, line: line, col: col, fix: None }, warning: false, path: "" };
 }
 
 // read_manifest parses `<dir>fern.toml`, or an empty manifest when the entry
@@ -3190,10 +3180,10 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   // built for.
   let bounds: Finding[] = [];
   if (target_given) {
-    bounds = capability_findings(merged, target);
+    bounds = errors_of(capability_diags(merged, target));
   }
   bounds = util.append_all(bounds, package_findings(merged, b.pkgs));
-  bounds = util.append_all(bounds, ambient_findings(merged));
+  bounds = util.append_all(bounds, errors_of(ambient_diags(merged)));
   let fs: Finding[] = util.append_all(errors_of(mt.diags), bounds);
   if (mt.all_well_typed) {
     if (has_error(bounds)) {
@@ -3265,7 +3255,7 @@ function interp_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
     fs = with_findings(fs, package_findings(merged, pkgs));
   }
   if (!has_error(fs)) {
-    fs = with_findings(fs, ambient_findings(merged));
+    fs = with_findings(fs, errors_of(ambient_diags(merged)));
   }
   return fs;
 }
@@ -4761,39 +4751,44 @@ function print_version(root: string): i32 {
   return 0;
 }
 
-// explain is `fern -explain CODE`: the long-form explanation the embedded tree
-// carries under explanations/, or, with no code, the codes there are.
-function explain(root: string, code: string): i32 {
-  let dir: string = root + "/explanations";
+// explain_cli is `fern -explain [CODE]`. A build without an embedded tree takes
+// the stdlib root after it, as `-lsp` does, and reads that tree's explanations.
+function explain_cli(pos: string[], embedded_root: string, code: string): i32 {
+  if (pos.len() > 1 || pos.len() == 1 && embedded_root.len() > 0) {
+    return usage(embedded_root.len() > 0);
+  }
+  if (pos.len() == 1) {
+    return explain(explanations_dir(util.clean_path(pos[0])), code);
+  }
+  if (embedded_root.len() == 0) {
+    eprint("fern: -explain: this build carries no explanations: pass the stdlib root after the code (-explain CODE STDLIB, or -explain= STDLIB to list the codes)");
+    return 2;
+  }
+  return explain(embedded_root + "/explanations", code);
+}
+
+// explanations_dir is where the stdlib root `root` keeps the explanations:
+// explanations/ in an embedded tree, the diag package's in the source tree.
+function explanations_dir(root: string): string {
+  if let Ok(_) = read_dir(root + "/explanations") {
+    return root + "/explanations";
+  }
+  return util.clean_path(root + "/../syntax/diag/explanations");
+}
+
+// explain prints the explanation of `code` from the pages in `dir`, or, with
+// no code, the codes there are.
+function explain(dir: string, code: string): i32 {
   let codes: string[] = [];
-  if (root.len() > 0) {
-    if let Ok(names) = read_dir(dir) {
-      for n in names {
-        if (n.len() > 3 && slice_unchecked(n, n.len() - 3, n.len()) == ".md") {
-          let c: string = slice_unchecked(n, 0, n.len() - 3) + "";
-          let at: i32 = codes.len();
-          while (at > 0 && util.str_less(c, codes[at - 1])) {
-            at = at - 1;
-          }
-          let sorted: string[] = [];
-          let k: i32 = 0;
-          while (k < codes.len()) {
-            if (k == at) {
-              sorted = sorted.append(c);
-            }
-            sorted = sorted.append(codes[k]);
-            k = k + 1;
-          }
-          if (at == codes.len()) {
-            sorted = sorted.append(c);
-          }
-          codes = sorted;
-        }
+  if let Ok(names) = read_dir(dir) {
+    for n in names {
+      if (n.len() > 3 && slice_unchecked(n, n.len() - 3, n.len()) == ".md") {
+        codes = literate.insert_sorted(codes, slice_unchecked(n, 0, n.len() - 3) + "");
       }
     }
   }
   if (codes.len() == 0) {
-    eprint("fern: -explain: this build carries no explanations");
+    eprint("fern: -explain: no explanations under " + dir);
     return 1;
   }
   if (code.len() == 0) {
@@ -4807,16 +4802,7 @@ function explain(root: string, code: string): i32 {
   let canonical: string = code.trim().to_upper();
   match (read_file(dir + "/" + canonical + ".md")) {
     Ok(body) => {
-      let header: string = "error " + canonical + ":";
-      if (isatty(1)) {
-        match (env("NO_COLOR")) {
-          Some(_) => {},
-          None => {
-            header = "\x1b[1;31m" + header + "\x1b[0m";
-          }
-        }
-      }
-      write(header + "\n\n" + body + "\n");
+      write(explain_text(canonical, body));
       return 0;
     },
     Err(_) => {
@@ -4831,6 +4817,30 @@ function explain(root: string, code: string): i32 {
       return 1;
     }
   }
+}
+
+// explain_text is the page `body` of `canonical` under its header: the page's
+// `# CODE — title` heading becomes an `error CODE: title` line.
+function explain_text(canonical: string, body: string): string {
+  let header: string = "error " + canonical + ":";
+  if (isatty(1)) {
+    match (env("NO_COLOR")) {
+      Some(_) => {},
+      None => {
+        header = "\x1b[1;31m" + header + "\x1b[0m";
+      }
+    }
+  }
+  let heading: string = "# " + canonical + " — ";
+  let nl: i32 = util.index_of_sub(body, "\n");
+  if (nl <= heading.len() || !util.str_has_prefix(body, heading)) {
+    return header + "\n\n" + body + "\n";
+  }
+  let at: i32 = nl;
+  while (at < body.len() && body[at] == b'\n') {
+    at = at + 1;
+  }
+  return header + " " + slice_unchecked(body, heading.len(), nl) + "\n\n" + slice_unchecked(body, at, body.len()) + "\n";
 }
 
 // cover_report is `fern -cover-report FILE` (`-` for stdin): fold a saved
@@ -4949,6 +4959,55 @@ function parse_tool_flag(tf: ToolFlags, f: CliArg): (ToolFlags, i32) {
   return (ToolFlags { ...tf, color_mode: f.value }, 0);
 }
 
+// target_refusal is why `target` cannot be compiled for, or "" when it names
+// a target: the one line listing every target the platforms table answers
+// for. The playground driver refuses with the same line.
+pub function target_refusal(target: string): string {
+  if (platforms.for_target(target).known) {
+    return "";
+  }
+  let msg: string = "fern: unknown -target: " + target + " (want one of:";
+  for t in platforms.targets() {
+    msg = msg + " " + t;
+  }
+  return msg + ")";
+}
+
+// emit_refusal is why `-emit emit` is not an output form for `target`, or ""
+// when it is ("" names the target's default form). The playground driver
+// takes the same vocabulary and refuses with the same lines.
+//
+// Native's `-emit command-module` is a WASI preview-1 command: the core
+// bytes plus a `_start` that runs main and exits with its value, and an
+// exported memory — the shape `wasmtime run` and a browser shim run. This
+// compiler's core module already has both (and exports `main`, #10768), so
+// the two forms are one artifact here (core_form) and the spelling is
+// accepted for the one target native gives it (#11408).
+pub function emit_refusal(target: string, emit: string): string {
+  if (emit == "command-module" && target != "wasm32-wasi") {
+    return "fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)";
+  }
+  if (emit.len() > 0 && emit != "asm" && emit != "core-module" && emit != "command-module") {
+    return "fern: unknown -emit: " + emit + " (want asm, core-module, command-module, or omit it for the target's default output form)";
+  }
+  if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
+    return "fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit";
+  }
+  return "";
+}
+
+// backend_refusal is why nothing can be emitted for `target`, or "" when a
+// backend lowers it. Native reports the same shape from its descriptor's
+// NoBackend flag. A freestanding target type-checks (against an empty
+// capability set) and has nothing to lower with, so refusing is the correct
+// answer — the alternative is an artifact built for the wrong machine.
+pub function backend_refusal(target: string): string {
+  if (platforms.emits_code(target)) {
+    return "";
+  }
+  return "fern: -target " + target + ": check-only — no backend emits for this target yet";
+}
+
 // output_form is the output form of a compile with `emit` asked for, or why
 // it cannot be written: stdout takes only a target's text, so a compile with
 // nowhere to write prints a native target's assembly rather than its
@@ -4969,7 +5028,7 @@ function output_form(target: string, emit: string, has_out: boolean): (string, s
 
 // core_form is the form `emit` names: a command module is this compiler's
 // core module.
-function core_form(emit: string): string {
+pub function core_form(emit: string): string {
   if (emit == "command-module") {
     return "core-module";
   }
@@ -5401,7 +5460,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   let harden: boolean = false;
   // `-cover` (or FERN_COVER) instruments the program with line and branch
   // counters it reports to stderr at exit (cover.fern).
-  let cover_on: boolean = cli.env_flag("FERN_COVER");
+  let cover_on: boolean = envflag.on("FERN_COVER");
   let have_entry: boolean = false;
   // Whether -target was given, as distinct from the default above. It only
   // matters to `-check`: native type-checks against a capability set only
@@ -5551,7 +5610,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     return print_version(root);
   }
   if (tf.explain) {
-    return explain(root, tf.explain_code);
+    return explain_cli(pos, embedded_root, tf.explain_code);
   }
   if (tf.cover_report) {
     return cover_report(entry_path, have_entry, tf.lcov);
@@ -5611,17 +5670,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     return run_add(pos, fetcher);
   }
 
-  if (!platforms.for_target(target).known) {
-    // One eprint, not one per name: eprint appends its own newline, so a
-    // loop of them prints the target list down the left margin.
-    let msg: string = "fern: unknown -target: " + target + " (want one of:";
-    let tn: string[] = platforms.targets();
-    let ti: i32 = 0;
-    while (ti < tn.len()) {
-      msg = msg + " " + tn[ti];
-      ti = ti + 1;
-    }
-    eprint(msg + ")");
+  let bad_target: string = target_refusal(target);
+  if (bad_target.len() > 0) {
+    eprint(bad_target);
     return 2;
   }
 
@@ -5676,22 +5727,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     eprint("fern: -cover: -target " + target + " has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover");
     return 2;
   }
-  // Native's `-emit command-module` is a WASI preview-1 command: the core
-  // bytes plus a `_start` that runs main and exits with its value, and an
-  // exported memory — the shape `wasmtime run` and a browser shim run. This
-  // compiler's core module already has both (and exports `main`, #10768), so
-  // the two forms are one artifact here (output_form) and the spelling is
-  // accepted for the one target native gives it (#11408).
-  if (emit == "command-module" && target != "wasm32-wasi") {
-    eprint("fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)");
-    return 2;
-  }
-  if (emit.len() > 0 && emit != "asm" && emit != "core-module" && emit != "command-module") {
-    eprint("fern: unknown -emit: " + emit + " (want asm, core-module, command-module, or omit it for the target's default output form)");
-    return 2;
-  }
-  if (emit == "core-module" && platforms.for_target(target).isa != "wasm32") {
-    eprint("fern: -emit core-module is a wasm output form; -target " + target + " has no core module to emit");
+  let bad_emit: string = emit_refusal(target, emit);
+  if (bad_emit.len() > 0) {
+    eprint(bad_emit);
     return 2;
   }
   let run_dir: string = "";
@@ -5910,7 +5948,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true }) };
     }
   }
-  if (eprint_findings(st, capability_findings(merged, target), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, errors_of(capability_diags(merged, target)), entry_path, b.files, b.maps)) {
     return 1;
   }
 
@@ -5923,7 +5961,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
 
   // The bag boundary (E080 — ambient.fern): a handler reaching a host
   // effect around its platform, on either compiler.
-  if (eprint_findings(st, ambient_findings(merged), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, errors_of(ambient_diags(merged)), entry_path, b.files, b.maps)) {
     return 1;
   }
 
@@ -5983,12 +6021,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // diagnostic moves.
   merged = treeshake.treeshake(merged);
 
-  if (!platforms.emits_code(target)) {
-    // Native reports the same shape from its descriptor's NoBackend flag.
-    // A freestanding target type-checks (against an empty capability set)
-    // and has nothing to lower with, so refusing here is the correct answer
-    // — the alternative is an artifact built for the wrong machine.
-    eprint("fern: -target " + target + ": check-only — no backend emits for this target yet");
+  let no_backend: string = backend_refusal(target);
+  if (no_backend.len() > 0) {
+    eprint(no_backend);
     return 2;
   }
 

@@ -3,9 +3,9 @@
 // that reads a `///MODULE`-marked bundle off stdin, this takes an ENTRY
 // file path on argv, resolves its imports off disk (the shared
 // ./modloader), merges them with flatten.bundle, runs the self-hosted type
-// checker over the merged module, and prints the diagnostic CODE of every
-// diagnostic, one per line; an uncoded one (the const-grammar rule) prints as
-// a tab and its message. Exits 1 when any diagnostic was emitted, else 0.
+// checker over the merged module, and prints every diagnostic as its code, a
+// tab and its message, one per line (an uncoded one, the const-grammar rule,
+// has an empty code). Exits 1 when any diagnostic was emitted, else 0.
 //
 //     $ checker_modload_run path/to/main.fern
 //
@@ -46,11 +46,7 @@ function main(): i32 {
       let mt: checker.ModuleTypes = checker.check_module(merged);
       let j: i32 = 0;
       while (j < mt.diags.len()) {
-        if (mt.diags[j].code.len() > 0) {
-          print(mt.diags[j].code);
-        } else {
-          print("\t" + mt.diags[j].message);
-        }
+        print(mt.diags[j].code + "\t" + mt.diags[j].message);
         j = j + 1;
       }
       if (mt.diags.len() > 0) {

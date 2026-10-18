@@ -110,7 +110,7 @@ silently.
 | `fern -check FILE` | Type-check `FILE` and its imports. Silent on success; prints diagnostics and exits 1 on the first error. `-` reads stdin. Given a package directory it checks the package; given a workspace root it checks every member. |
 | `fern -interp FILE` | Run through the interpreter: no codegen, no binary. `main()`'s return value is the exit code. `-` reads stdin. |
 | `fern -repl` | Interactive session; see [REPL](#repl). |
-| `fern -explain E030` | Print the long-form explanation of an error code. An unknown code prints the list of known ones. |
+| `fern -explain E030` | Print the long-form explanation of an error code. A bare `fern -explain` lists the codes, and an unknown code prints the list too. |
 | `fern -targets` | List the targets and their capabilities. |
 | `fern -capabilities FILE` | Report which of `net`, `fs`, `env`, `subprocess`, `time`, `random` each package can reach, with an example call chain. |
 | `fern -effects FILE` | The same report per function instead of per package. |

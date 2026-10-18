@@ -7,10 +7,9 @@ import (
 )
 
 // TestSelfHostWasmUnsupportedBuiltins pins the wasm ERROR ENDPOINTS: builtins
-// with no wasm meaning at all, which both wasm drivers must reject before emit
-// with a clean diagnostic — non-zero exit, a message naming the feature on
-// stderr, and NO WAT — rather than emitting a call against a symbol nothing
-// defines.
+// with no wasm meaning at all, which both wasm drivers reject before emit with
+// the CLI's target gate — E066 naming the builtin, non-zero exit, and NO WAT —
+// rather than emitting a call against a symbol nothing defines.
 //
 //   - subprocess (#4320) — child-process spawning, unsupportable on wasm/WASI.
 //   - timer_fd (#4317) — the native fd-based CLOCK_MONOTONIC timerfd. wasm has
@@ -20,13 +19,10 @@ import (
 //     `unknown func: failed to find name $timer_fd`.
 //   - __c_call<n> (#4375) — the C-FFI call primitive. wasm has no C ABI, so
 //     there is no __c_call runtime on any wasm path.
-//   - the raw-memory / syscall floor (#6946) — __raw_alloc,
-//     __raw_string, __raw_scratch, __raw_environ,
-//     __raw_splice_pipe, __raw_cover, __raw_arr_box,
-//     __raw_vg_request, __syscall3, __syscall4, __syscall5.
-//     They exist so the register backends' runtime helpers can be written in
-//     Fern; wasm has neither a raw address space nor syscalls. Unclassified,
-//     they would reach instruction selection, which has no op for them.
+//   - the raw-memory / syscall floor (#6946) — `rawmem` (__raw_alloc,
+//     __raw_environ, …) and `syscall` (__syscall3 … __syscall6). They exist so
+//     the register backends' runtime helpers can be written in Fern; wasm
+//     serves those helpers with hand-written WAT and lowers none of them.
 //
 // Both stdin drivers, wasm_ir_run and wasm_run, are exercised.
 func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
@@ -70,10 +66,9 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 			mustSay: "timer_fd",
 		},
 		{
-			// FFI __c_call<n> (#4375) is written directly as a builtin call, so its
-			// callee ident is collected by wasm_unsupported_builtin. Wasm has no C
-			// ABI — no __c_call runtime on any wasm path — so both drivers reject it.
-			// ircore.is_c_call classifies the ident.
+			// FFI __c_call<n> (#4375) is written directly as a builtin call. Wasm
+			// has no C ABI — no __c_call runtime on any wasm path — so both drivers
+			// reject it on `cabi`.
 			name:    "c_call",
 			src:     `function main(): i32 { let cb: usize = 0; return __c_call0(cb) as i32; }` + "\n",
 			mustSay: "__c_call0",
@@ -129,8 +124,8 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 				if strings.TrimSpace(out) != "" {
 					t.Errorf("expected NO WAT on stdout for a rejected %s program, got %d bytes", tc.name, len(out))
 				}
-				if !strings.Contains(errOut, tc.mustSay) || !strings.Contains(errOut, "not supported") {
-					t.Errorf("stderr %q does not mention %s / not supported", errOut, tc.mustSay)
+				if !strings.Contains(errOut, "required by `"+tc.mustSay+"`") || !strings.Contains(errOut, "error[E066]") {
+					t.Errorf("stderr %q is not E066 naming %s", errOut, tc.mustSay)
 				}
 			})
 		}

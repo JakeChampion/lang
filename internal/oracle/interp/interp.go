@@ -8215,8 +8215,9 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			// Sub-i32 targets must wrap too — `5000000000 as u8`
 			// is 0 on every codegen backend; the interpreter used
 			// to leave it unnarrowed.
+			tw := resolvePtrWidth(tgt.NormalWidth())
 			if src, ok := v.(Number); ok {
-				return Number(narrowInt(int64(src), tgt.NormalWidth(), !tgt.IsSigned())), nil
+				return Number(narrowInt(int64(src), tw, !tgt.IsSigned())), nil
 			}
 			// float → int (truncate-toward-zero, saturating: NaN
 			// → 0, out-of-range clamps to the destination's
@@ -8228,12 +8229,12 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			// destination saturates to i32 and then wraps to its
 			// width — matching the codegen backends.
 			if src, ok := v.(Float); ok {
-				sw := tgt.NormalWidth()
+				sw := tw
 				if sw < 32 {
 					sw = 32
 				}
 				n := saturateFloatToInt(src.V, sw, tgt.IsSigned())
-				return Number(narrowInt(n, tgt.NormalWidth(), !tgt.IsSigned())), nil
+				return Number(narrowInt(n, tw, !tgt.IsSigned())), nil
 			}
 		}
 		if tgt, ok := x.Target.(ast.FloatType); ok {
@@ -8515,7 +8516,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		case "-":
 			if n, ok := v.(Number); ok {
 				if typ, checked := x.CheckedType.(ast.NumberType); checked {
-					return Number(narrowInt(-int64(n), typ.NormalWidth(), !typ.IsSigned())), nil
+					return Number(narrowInt(-int64(n), resolvePtrWidth(typ.NormalWidth()), !typ.IsSigned())), nil
 				}
 				return -n, nil
 			}
@@ -9085,9 +9086,10 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 func shiftCount(rn Number, width int) Number {
 	// Sub-i32 and i32 values all shift in 32-bit lanes (the codegen
 	// backends widen u8 to i32 for arithmetic), so their count masks
-	// to 0..31; i64 and usize, which runs at the host's 64 bits, mask to
-	// 0..63. Width 0 (REPL, pre-checker) keeps the historical 64-bit masking.
-	if width == 64 || width == 0 || width == ast.WidthPtr {
+	// to 0..31; i64 masks to 0..63, and usize arrives resolved to the host's
+	// pointer width. Width 0 (REPL, pre-checker) keeps the historical 64-bit
+	// masking.
+	if width == 64 || width == 0 {
 		return rn & 63
 	}
 	return rn & 31
@@ -9143,6 +9145,19 @@ func saturateFloatToInt(f float64, width int, signed bool) int64 {
 		return 4294967295 // u32 max, stored as its positive value
 	}
 	return int64(uint32(t))
+}
+
+// hostPtrBits is usize's width here. target_arch() answers with the host, so
+// the pointer width is the host's too: 64 bits on every host Go runs this on,
+// 32 on wasm32. A variable so a test can model a 32-bit target.
+var hostPtrBits = strconv.IntSize
+
+// resolvePtrWidth turns usize's ast.WidthPtr into hostPtrBits.
+func resolvePtrWidth(width int) int {
+	if width == ast.WidthPtr {
+		return hostPtrBits
+	}
+	return width
 }
 
 // narrowInt wraps an int64 to a `width`-bit integer, matching the
@@ -9357,8 +9372,9 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		// unsigned compares & shifts see only the canonical bits.
 		// Width 0 (REPL paths where the checker hasn't fired)
 		// keeps the historical 64-bit semantics.
+		width := resolvePtrWidth(b.IntWidth)
 		mask := func(v Number) Number {
-			switch b.IntWidth {
+			switch width {
 			case 8:
 				return Number(uint8(int64(v)))
 			case 32:
@@ -9378,7 +9394,7 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		// form, so it is stored as its bit pattern (handled by the op's
 		// own uint64 view); width 64 here is identity.
 		signExtend := func(v Number) Number {
-			switch b.IntWidth {
+			switch width {
 			case 8:
 				// Always unsigned (u8 — i8 was retired in #4408).
 				return Number(uint8(int64(v)))
@@ -9431,7 +9447,7 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 			// type's [MIN, MAX] rather than wrap. The result is in
 			// range by construction, so signExtend only normalises
 			// the stored representation.
-			return signExtend(satArith(b.Op, ln, rn, b.IntWidth, b.IsUnsigned, signExtend)), nil
+			return signExtend(satArith(b.Op, ln, rn, width, b.IsUnsigned, signExtend)), nil
 		case "&":
 			return signExtend(ln & rn), nil
 		case "|":
@@ -9439,9 +9455,9 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 		case "^":
 			return signExtend(ln ^ rn), nil
 		case "<<":
-			return signExtend(ln << shiftCount(rn, b.IntWidth)), nil
+			return signExtend(ln << shiftCount(rn, width)), nil
 		case ">>":
-			sc := shiftCount(rn, b.IntWidth)
+			sc := shiftCount(rn, width)
 			if b.IsUnsigned {
 				return signExtend(Number(uint64(ln) >> sc)), nil
 			}

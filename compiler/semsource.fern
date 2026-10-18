@@ -34,7 +34,7 @@ import "./semarrayreport";
 import "./semreach";
 import "./flatten";
 import "./treeshake";
-import "std/cli";
+import "std/envflag";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
 // — has no body of its own: it is produced once per instantiation its callers
@@ -466,7 +466,14 @@ function dyn_set_end(spelling: string, i: i32): i32 {
 // A record the front end cloned at a variable (`Slot__0_T`, from `Slot[T]`
 // inside a generic over T) is one record per binding: its variables become
 // its arguments, so each instance builds the record at its own types.
+//
+// A generic enum named without arguments is settled here too
+// (`argued`), so every type the lowering reads off the checker gets it.
 function resolved(t: typeinfo.Type, template: boolean, b: ssasem.Binding, scope: checker.Scope): typeinfo.Type {
+  return argued(resolved_checked(t, template, b, scope), scope);
+}
+
+function resolved_checked(t: typeinfo.Type, template: boolean, b: ssasem.Binding, scope: checker.Scope): typeinfo.Type {
   if (!template) {
     return runtime_callable_type(t);
   }
@@ -572,17 +579,17 @@ function runtime_callable_types(ts: typeinfo.Type[]): typeinfo.Type[] {
 
 function resolved_within(t: typeinfo.Type, b: ssasem.Binding, scope: checker.Scope): typeinfo.Type {
   if let typeinfo.TypeArray(a) = t {
-    return typeinfo.TypeArray { elem: resolved(a.elem, true, b, scope), view: a.view };
+    return typeinfo.TypeArray { elem: resolved_checked(a.elem, true, b, scope), view: a.view };
   }
   if let typeinfo.TypeTuple(tup) = t {
     return typeinfo.TypeTuple { elements: resolved_list(tup.elements, b, scope) };
   }
   if let typeinfo.TypeFunc(fn) = t {
     let params: typeinfo.Type[] = resolved_list(fn.param_types, b, scope);
-    return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: resolved(fn.ret_type, true, b, scope) };
+    return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: resolved_checked(fn.ret_type, true, b, scope) };
   }
   if let typeinfo.TypeMap(m) = t {
-    return typeinfo.TypeMap { key: resolved(m.key, true, b, scope), value: resolved(m.value, true, b, scope) };
+    return typeinfo.TypeMap { key: resolved_checked(m.key, true, b, scope), value: resolved_checked(m.value, true, b, scope) };
   }
   if let typeinfo.TypeStruct(r) = t {
     if (r.args.len() == 0) {
@@ -603,9 +610,109 @@ function resolved_within(t: typeinfo.Type, b: ssasem.Binding, scope: checker.Sco
 function resolved_list(ts: typeinfo.Type[], b: ssasem.Binding, scope: checker.Scope): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   for t in ts {
-    out = out.append(resolved(t, true, b, scope));
+    out = out.append(resolved_checked(t, true, b, scope));
   }
   return out;
+}
+
+// resolved_types is each of `ts`, read the way `resolved` reads a type
+// outside a template: the field and payload types a declaration spells.
+function resolved_types(ts: typeinfo.Type[], scope: checker.Scope): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  for t in ts {
+    out = out.append(resolved(t, false, ssasem.unbound(), scope));
+  }
+  return out;
+}
+
+// A generic enum named without arguments (`s: Shape` for `enum Shape[T]`)
+// holds no payload that spells a parameter, so `argued` settles each at
+// never, as the Go checker's scrutineeSub binds it and as a bare `None`
+// payload settles (`settled_payload`).
+function argued(t: typeinfo.Type, scope: checker.Scope): typeinfo.Type {
+  if (!names_argless_enum(t, scope)) {
+    return t;
+  }
+  match (t) {
+    typeinfo.TypeUnion(u) => {
+      return typeinfo.TypeUnion { ...u, args: union_arguments(u, scope) };
+    },
+    typeinfo.TypeArray(a) => {
+      return typeinfo.TypeArray { ...a, elem: argued(a.elem, scope) };
+    },
+    typeinfo.TypeTuple(tup) => {
+      return typeinfo.TypeTuple { elements: argued_list(tup.elements, scope) };
+    },
+    typeinfo.TypeMap(m) => {
+      return typeinfo.TypeMap { key: argued(m.key, scope), value: argued(m.value, scope) };
+    },
+    typeinfo.TypeStruct(r) => {
+      return typeinfo.TypeStruct { ...r, args: argued_list(r.args, scope) };
+    },
+    typeinfo.TypeFunc(f) => {
+      return typeinfo.TypeFunc { ...f, param_types: argued_list(f.param_types, scope), ret_type: argued(f.ret_type, scope) };
+    },
+    _ => {
+      return t;
+    }
+  }
+}
+
+function union_arguments(u: typeinfo.TypeUnion, scope: checker.Scope): typeinfo.Type[] {
+  if (u.args.len() > 0) {
+    return argued_list(u.args, scope);
+  }
+  let args: typeinfo.Type[] = [];
+  for _ in checker.union_sig(scope, u.name).type_params {
+    args = args.append(typeinfo.TypeNever { tag: 0 });
+  }
+  return args;
+}
+
+function argued_list(ts: typeinfo.Type[], scope: checker.Scope): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  for t in ts {
+    out = out.append(argued(t, scope));
+  }
+  return out;
+}
+
+function names_argless_enum(t: typeinfo.Type, scope: checker.Scope): boolean {
+  match (t) {
+    typeinfo.TypeUnion(u) => {
+      if (u.args.len() == 0) {
+        return checker.union_sig(scope, u.name).type_params.len() > 0;
+      }
+      return any_names_argless_enum(u.args, scope);
+    },
+    typeinfo.TypeArray(a) => {
+      return names_argless_enum(a.elem, scope);
+    },
+    typeinfo.TypeTuple(tup) => {
+      return any_names_argless_enum(tup.elements, scope);
+    },
+    typeinfo.TypeMap(m) => {
+      return names_argless_enum(m.key, scope) || names_argless_enum(m.value, scope);
+    },
+    typeinfo.TypeStruct(r) => {
+      return any_names_argless_enum(r.args, scope);
+    },
+    typeinfo.TypeFunc(f) => {
+      return names_argless_enum(f.ret_type, scope) || any_names_argless_enum(f.param_types, scope);
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function any_names_argless_enum(ts: typeinfo.Type[], scope: checker.Scope): boolean {
+  for t in ts {
+    if (names_argless_enum(t, scope)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The variables a record's fields spell, in order of first occurrence, through
@@ -843,8 +950,9 @@ function literal_type(suffix: string): typeinfo.Type {
 // byte, and `65` in an i32 position an i32. A suffix names the type outright.
 // Either way the value has to fit what it lands in, which `ssasem` holds the
 // constant to.
-// A literal with no i32 immediate to hold it — either 64-bit width, or a u32,
-// whose range reaches past the immediate's sign bit — carries its SOURCE TEXT
+// A literal with no i32 immediate to hold it — either 64-bit width, a u32,
+// whose range reaches past the immediate's sign bit, or a usize past it —
+// carries its SOURCE TEXT
 // instead, which is also how the AST lowering hands the same literal to the
 // backends, rather than through a parse and re-format.
 // A float literal is an f64 unless something names the narrower width: the
@@ -889,15 +997,9 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
   if (!semtypes.concrete(ty, false)) {
     return refused(s, "unsupported literal width");
   }
-  // An address rides the i32 immediate, which carries every value below
-  // 2^31 exactly. Past that the register backends sign-extend the constant
-  // and wasm wraps it, and the pointer width has no immediate of its own to
-  // fall back on, so the literal is refused for its RANGE rather than for
-  // being written at the width at all.
-  if (ssasem.is_usize(ty) && parser.literal_is_i64(n.text)) {
-    return refused(s, "address literal past the immediate");
-  }
-  if (ssasem.text_constant(ty)) {
+  // The i32 immediate carries an address below 2^31 exactly; past that the
+  // literal carries its text, which each backend splices at its own width.
+  if (ssasem.text_constant(ty) || ssasem.is_usize(ty) && parser.literal_is_i64(n.text)) {
     return define(s, 1, [], 0, decimal_text(n.text), ty);
   }
   return define(s, 1, [], util.lit_to_i32(n.text), "", ty);
@@ -1067,7 +1169,7 @@ function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32)
     return builtin_payloads(whole, name);
   }
   let sig: checker.StructSig = checker.instantiated_variant(checker.variant_shape_sig(s.scope, name, union_name(whole)), s.scope, whole);
-  return Payloads { found: sig.name.len() > 0, types: runtime_callable_types(sig.field_types), unit: false };
+  return Payloads { found: sig.name.len() > 0, types: resolved_types(sig.field_types, s.scope), unit: false };
 }
 
 function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
@@ -1075,7 +1177,7 @@ function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: 
     return builtin_payloads(whole, name);
   }
   let sig: checker.StructSig = checker.instantiated_variant(checker.variant_sig(s.scope, name, union_name(whole)), s.scope, whole);
-  return Payloads { found: sig.name.len() > 0, types: runtime_callable_types(sig.field_types), unit: false };
+  return Payloads { found: sig.name.len() > 0, types: resolved_types(sig.field_types, s.scope), unit: false };
 }
 
 // The union a variant literal builds. The checker types a declared enum's
@@ -1438,7 +1540,7 @@ function record_schema(name: string, s: State): checker.StructSig {
   if (sig.type_params.len() > 0 || sig.enum_owner.len() > 0) {
     return checker.struct_sig(s.scope, "");
   }
-  return checker.StructSig { ...sig, field_types: runtime_callable_types(sig.field_types) };
+  return checker.StructSig { ...sig, field_types: resolved_types(sig.field_types, s.scope) };
 }
 
 // The schema of record type `t`: its declaration's, read at the arguments a
@@ -4710,7 +4812,7 @@ function pattern_shape_error(pv: ast.PatVariant): string {
   if (pv.nested.len() > 0 || pv.has_lit_cond) {
     return "unsupported pattern";
   }
-  if (pv.tup_kinds.len() > 0 || pv.field_names.len() > 0) {
+  if (pv.tup_kinds.len() > 0 || parser.is_record_pattern(pv)) {
     return "unsupported pattern";
   }
   if (qualified(pv.type_name)) {
@@ -6688,11 +6790,11 @@ function fields_resolved(sig: checker.StructSig): boolean {
   return true;
 }
 
-function fields_of(sig: checker.StructSig): semrecords.Field[] {
+function fields_of(sig: checker.StructSig, scope: checker.Scope): semrecords.Field[] {
   let fields: semrecords.Field[] = [];
   let i: i32 = 0;
   while (i < sig.field_names.len()) {
-    fields = fields.append(semrecords.Field { name: sig.field_names[i], ty: runtime_callable_type(sig.field_types[i]) });
+    fields = fields.append(semrecords.Field { name: sig.field_names[i], ty: resolved(sig.field_types[i], false, ssasem.unbound(), scope) });
     i = i + 1;
   }
   return fields;
@@ -6718,7 +6820,7 @@ function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: S
   if (!fields_resolved(sig)) {
     return Schemas { ...out, ok: false, why: "unresolved record field type" };
   }
-  let fields: semrecords.Field[] = fields_of(sig);
+  let fields: semrecords.Field[] = fields_of(sig, s.scope);
   return with_new_record(out, semrecords.Record { ty: t, fields: fields, views: type_holds_view(t, s.views, s.impls), nests_func: fields_nest_func(fields) });
 }
 
@@ -6758,7 +6860,7 @@ function laid_variants(s: State, whole: typeinfo.Type, layout: i32): semrecords.
   let variants: semrecords.Variant[] = [];
   for name in union_variants(s, union_name(whole)) {
     let sig: checker.StructSig = checker.instantiated_variant(checker.variant_shape_sig(s.scope, name, union_name(whole)), s.scope, whole);
-    variants = variants.append(semrecords.Variant { name: name, fields: fields_of(sig) });
+    variants = variants.append(semrecords.Variant { name: name, fields: fields_of(sig, s.scope) });
   }
   return variants;
 }
@@ -9425,7 +9527,7 @@ function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
 function inline_on(): boolean {
   match (env("FERN_SEM_INLINE")) {
     Some(v) => {
-      return cli.flag_on(v);
+      return envflag.value_on(v);
     },
     None => {
       return true;
@@ -9578,7 +9680,7 @@ function stdlib_names(all: Produced[], names: string[], decls: parser.FuncDecl[]
 }
 
 function kernel_switch_on(name: string): boolean {
-  return !cli.env_flag(name);
+  return !envflag.on(name);
 }
 
 function ndarray_open(all: Produced[], names: string[], mod: parser.Module, funcs: ssasem.Func[]): boolean[] {
@@ -9610,7 +9712,7 @@ function ndarray_open(all: Produced[], names: string[], mod: parser.Module, func
 }
 
 function fusion_on(): boolean {
-  return !cli.env_flag("FERN_NO_ARRAY_FUSION");
+  return !envflag.on("FERN_NO_ARRAY_FUSION");
 }
 
 // The implementations a dyn call on `method` over `traits` reaches: the

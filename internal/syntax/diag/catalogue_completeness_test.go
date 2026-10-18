@@ -20,7 +20,7 @@ var emittedCodeRE = regexp.MustCompile(`(?:err\w*Code\(|ErrCode:\s*|\bCode:\s*)[
 
 // TestEmittedCodesHaveExplanations is the catalogue-completeness gate
 // (#4413 Rec §4): every diagnostic code the checker / parser / modload
-// actually EMITS must have a `fern explain`-able explanation under
+// actually EMITS must have a `fern -explain`-able explanation under
 // internal/syntax/diag/explanations/, so `fern -explain <code>` never bottoms out
 // on "unknown code" for a diagnostic a user can hit. It scrapes the
 // emission sites from source (rather than a hand-maintained list, which

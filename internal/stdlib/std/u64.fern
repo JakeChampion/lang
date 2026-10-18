@@ -1,4 +1,5 @@
-// std/u64 — unsigned 64-bit integer receiver methods.
+// std/u64 — unsigned 64-bit integer receiver methods, and `usize`'s
+// `to_string`, since every usize fits a u64 on every target.
 //
 // Counterpart to std/u32 for the wider type. No prelude: a
 // program `import "std/u64";` to bring these methods into scope
@@ -35,6 +36,12 @@ pub function (n: u64) clamp(lo: u64, hi: u64): u64 {
 // `__int_to_string_u64` treats its argument as unsigned given
 // `neg == 0`.
 pub function (n: u64) to_string(): string {
+  return int.__int_to_string_u64(n as i64, 0);
+}
+
+// `(n: usize) to_string()` — decimal representation. The cast zero-extends
+// a 32-bit usize on wasm32 and moves nothing on a 64-bit target.
+pub function (n: usize) to_string(): string {
   return int.__int_to_string_u64(n as i64, 0);
 }
 

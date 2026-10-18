@@ -53,7 +53,7 @@ a community project, and this review scores it accordingly where relevant.
   differential testing, a type-correct grammar fuzzer, and 5,100+ Go test
   functions.
 - Diagnostics engineered like a product: 63 checker error codes each with a
-  long-form `fern explain E0xx` page, aggregated (not first-fail) errors,
+  long-form `fern -explain E0xx` page, aggregated (not first-fail) errors,
   Levenshtein did-you-mean hints, and caret-rendered source context.
 
 **Biggest weaknesses.**
@@ -563,7 +563,7 @@ themselves).
 ## Learnability
 
 - **Beginners** get an above-average deal *given the absence of any
-  community*: the tutorial/reference/playground site, `fern explain E0xx`
+  community*: the tutorial/reference/playground site, `fern -explain E0xx`
   long-form pages for all 66 diagnostics, aggregated errors with
   did-you-mean hints, and a REPL and `-interp` mode for instant feedback.
   They also inherit the sharp edges: byte-indexed strings, wrap-on-overflow
@@ -859,7 +859,7 @@ retry in the HEAD commit) and self-host builds are resource-monsters
 - **Formatter**: `fern -fmt` with write-back and diff modes, parse→print
   idempotence-tested.
 - **Docs**: `ferndoc` generates the stdlib reference from doc comments into
-  the Astro/Starlight site; `fern explain E0xx` ships offline explanations.
+  the Astro/Starlight site; `fern -explain E0xx` ships offline explanations.
 - **Literate toolchain**: `-tangle`/`-weave`(-html)/`-doctest` with
   diagnostic remapping.
 - **Test runner**: TAP-13, pure Fern, self-tested.

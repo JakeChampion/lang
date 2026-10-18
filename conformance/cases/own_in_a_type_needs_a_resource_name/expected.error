@@ -1,0 +1,1 @@
+`own` in a type must be followed by a resource name (`own R` for a `resource R`); a consuming parameter is written `own name: T`

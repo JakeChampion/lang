@@ -1,6 +1,7 @@
 package platforms
 
 import (
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -206,5 +207,21 @@ func TestSelfHostListingMatches(t *testing.T) {
 		if !slices.Equal(d.HandlerKinds, kinds[d.Environment]) {
 			t.Errorf("target %q: handler kinds here %v, in the self-host %v", name, d.HandlerKinds, kinds[d.Environment])
 		}
+	}
+}
+
+// TestSelfHostEquivalentsMatch pins the builtin E066 points a refused call at,
+// so the two compilers' messages name the same alternative.
+func TestSelfHostEquivalentsMatch(t *testing.T) {
+	body := regexp.MustCompile(`(?s)function equivalent\(builtin: string\): string \{(.*?)\n\}`).FindStringSubmatch(readSelfHostPlatforms(t))
+	if body == nil {
+		t.Fatalf("no equivalent() found in %s — the extraction pattern has gone stale", selfHostPlatformsSrc)
+	}
+	found := map[string]string{}
+	for _, m := range regexp.MustCompile(`if \(builtin == "([^"]+)"\) \{\s*return "([^"]+)";`).FindAllStringSubmatch(body[1], -1) {
+		found[m[1]] = m[2]
+	}
+	if !maps.Equal(found, equivalents) {
+		t.Errorf("equivalents here %v, in the self-host %v", equivalents, found)
 	}
 }

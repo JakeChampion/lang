@@ -157,12 +157,14 @@ function ts_routed_map_roots(): string[] {
 }
 
 // ts_with_key_roots adds to `rs` the cmp.Eq `eq` and cmp.Hash `hash` of every
-// struct and enum, derived or written by hand: a map keyed by one probes
-// through them (ssasem.keyed_map_key_fn), and no source spells that call.
+// live struct and enum (ts_live_type_names), derived or written by hand: a map
+// keyed by one probes through them (ssasem.keyed_map_key_fn), and no source
+// spells that call. A type nothing kept names keys no map.
 function ts_with_key_roots(mod: parser.Module, rs: RefSet): RefSet {
+  let live: string[] = ts_live_type_names(mod, rs);
   for fd in mod.funcs {
     let base: string = util.base_type_name(fd.receiver_type);
-    if (ts_key_method(fd) && ts_nominal(mod, base)) {
+    if (ts_key_method(fd) && ts_nominal(mod, base) && util.index_of_str(live, base) >= 0) {
       rs = ts_with_root(rs, ts_qualified_root(base, fd.name));
     }
   }
@@ -795,7 +797,7 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
     return true;
   }
   for fd in mod.funcs {
-    if (ts_kept_name(fd, rs) && ts_mentions_map(ts_sig_types(fd))) {
+    if (ts_kept_name(fd, rs) && ts_mentions_map(ts_named_types(fd))) {
       return true;
     }
   }
@@ -834,7 +836,7 @@ function ts_live_type_names(mod: parser.Module, rs: RefSet): string[] {
   let live: string[] = [];
   for fd in mod.funcs {
     if (ts_kept_name(fd, rs)) {
-      for t in ts_sig_types(fd) {
+      for t in ts_named_types(fd) {
         live = ts_add_type_words(live, t);
       }
     }
@@ -914,27 +916,32 @@ function ts_mentions_map(types: string[]): boolean {
   return false;
 }
 
-// ts_sig_types are the parameter and return types of a function and of every
-// lambda or nested function in its body.
-function ts_sig_types(fd: parser.FuncDecl): string[] {
-  let types: string[] = [fd.ret_type];
+// ts_named_types are the types a function names: its parameter, return and
+// receiver types (a `self: Self` parameter names the receiver), those of every
+// lambda or nested function in its body, and the type of every struct literal
+// there.
+function ts_named_types(fd: parser.FuncDecl): string[] {
+  let types: string[] = [fd.ret_type, fd.receiver_type];
   for p in fd.params {
     types = types.append(p.type_name);
   }
   for st in fd.body {
-    types = astwalk.fold_stmt(st, types, ts_lambda_sig_types);
+    types = astwalk.fold_stmt(st, types, ts_expr_types);
   }
   return types;
 }
 
-// ts_lambda_sig_types collects the parameter and return types of a lambda or
-// nested function.
-function ts_lambda_sig_types(e: ast.Expr, own acc: string[]): string[] {
+// ts_expr_types collects the parameter and return types of a lambda or nested
+// function, and a struct literal's type.
+function ts_expr_types(e: ast.Expr, own acc: string[]): string[] {
   if let ast.ExprLambda(l) = e {
     acc = acc.append(l.ret_type);
     for p in l.params {
       acc = acc.append(p.type_name);
     }
+  }
+  if let ast.ExprStructLit(lit) = e {
+    acc = acc.append(lit.type_name);
   }
   return acc;
 }

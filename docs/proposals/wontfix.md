@@ -72,8 +72,9 @@ often confused:
 The x86-64 and arm64 legs check exact values. On wasm, compare stdout.
 
 **`__c_call<n>` (FFI), `subprocess` and `timer_fd` are clean errors on wasm, by
-design.** There is no wasm C ABI to call into. `wasm_unsupported_builtin`
-rejects them before emit; that is the intended endpoint, not a missing feature.
+design.** There is no wasm C ABI to call into. E066 rejects them before emit,
+on capabilities no wasm world grants; that is the intended endpoint, not a
+missing feature.
 
 **The Go module path (`github.com/jakechampion/lang`) and the Pages URLs still
 say `lang`, deliberately.** They cross the GitHub-repo boundary; renaming them
