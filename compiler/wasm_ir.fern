@@ -5906,6 +5906,24 @@ function wat_integer_text(text: string): string {
   return text;
 }
 
+// wasm_text_const is a text constant's literal, refusing a `usize` one past
+// the 32 bits an address has on wasm32: the checker admits a usize literal up
+// to u64::MAX, which only the 64-bit targets hold.
+function wasm_text_const(o: ir.Op): string {
+  if (o.width != ir.width_ptr()) {
+    return o.str;
+  }
+  let fits: boolean = parser.magnitude_fits(o.str, 0, "4294967295");
+  if (parser.is_hex_lit(o.str)) {
+    fits = parser.magnitude_fits(o.str, 2, "ffffffff");
+  }
+  if (!fits) {
+    eprint("error: literal " + o.str + " does not fit in usize on wasm32, where usize is 32 bits");
+    exit(1);
+  }
+  return o.str;
+}
+
 // emit_ir_op renders one IR op as WAT.
 //
 // The ladder moved here VERBATIM: the names it reads are rebound from the
@@ -5940,7 +5958,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 2) {  // const_i32_text
     // Integer literal source text — the wasm text parser handles the base
     // (hex `0x..`) and the full i32/u32 immediate range.
-    parts = parts.append("    i32.const " + wat_integer_text(o.str) + "\n");
+    parts = parts.append("    i32.const " + wat_integer_text(wasm_text_const(o)) + "\n");
   } else if (o.kind_tag == 3) {  // const_i64
     // 64-bit immediate (source text). load_local / store_local on i64
     // slots use the same local.get/local.set — the local's declared i64

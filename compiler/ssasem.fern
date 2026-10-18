@@ -1396,7 +1396,8 @@ function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
     }
     return "";
   }
-  if (ins.str != "") {
+  // An address past the i32 immediate carries its text (semsource.number).
+  if (ins.str != "" && (!is_usize(result) || ins.imm != 0)) {
     return "narrow constant carries text";
   }
   if (is_u8(result) && (ins.imm < 0 || ins.imm > 255)) {

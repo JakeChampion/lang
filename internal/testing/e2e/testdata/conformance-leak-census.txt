@@ -1004,6 +1004,8 @@ user_enum_mixed                                      0
 user_enum_payloaded_then_payloadless                 0
 user_enum_payloadless                                0
 user_fn_shadows_stdlib_param                         0
+usize_wraps_at_32_bits                               0
+usize_wraps_at_64_bits                               0
 utf8_codepoints                                      0
 value_block_branch_tail                              0
 value_block_generic_call_arm                         0

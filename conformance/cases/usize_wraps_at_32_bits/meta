@@ -1,0 +1,7 @@
+waiver: harness-limit
+reason: usize is the target's pointer width, so its wrap point is defined
+  per target and a case carries one expected.stdout. This case pins wasm32;
+  usize_wraps_at_64_bits pins the 64-bit targets with the same operations.
+  The interpreter models its host, which is 64-bit wherever the corpus runs;
+  internal/oracle/interp's TestUsizeWrapsAtTheHostPointerWidth pins its
+  32-bit rule.

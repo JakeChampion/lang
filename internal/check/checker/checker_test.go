@@ -9341,6 +9341,9 @@ func TestScalarModuleHintIsFollowable(t *testing.T) {
 		{"u8 points at std/i32", `let s: string = "A"; let b: u8 = s[0]; print(b.to_string());`, `std/i32`},
 		{"u32 still points at std/u32", `let x: u32 = 5; print(x.to_string());`, `std/u32`},
 		{"u64 still points at std/u64", `let x: u64 = 5; print(x.to_string());`, `std/u64`},
+		// usize's to_string is std/u64's, which every usize fits; the hint
+		// named std/u32, which has none.
+		{"usize points at std/u64", `let x: usize = 5; print(x.to_string());`, `std/u64`},
 		{"i64 still points at std/i64", `let x: i64 = 5; print(x.to_string());`, `std/i64`},
 		// A `str` view had NO hint at all: scalarModuleFor had no StrType case,
 		// so the message fell through to the builtin list ("it has: as_bytes,

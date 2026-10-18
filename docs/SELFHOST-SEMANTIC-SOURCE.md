@@ -182,7 +182,9 @@ Unsupported constructs refuse the whole function with a reason.
   mask the low word, which is what truncates a pointer). An operator at it
   carries `width_ptr()` too, which the SSA lift resolves to 64 on the register
   backends; the saturating and checked operators are refused, as native's
-  checker refuses them, and so is a literal past the immediate. The string
+  checker refuses them. A literal past the i32 immediate carries its text
+  (`op_const_ptr_text`), which wasm splices into a 32-bit immediate and the
+  register backends into a 64-bit one. The string
   builder's handle is one, and its seven builtins have contracts: the handle
   is a value with no unit and no drop, the pushes read the string they copy,
   and `buf_take` hands back a fresh string of the caller's own (`handle_out`,
