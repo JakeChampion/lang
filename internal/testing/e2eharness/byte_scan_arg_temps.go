@@ -18,6 +18,7 @@ function main(): i32 {
         if (__str_hash(s + "h", 7) != __str_hash("abch", 7)) { return 7; }
         if (__count_runs_bytes([0u8, 1u8, 0u8, 1u8], 0, [0u8, 1u8]) != 2) { return 5; }
         if (__mismatch_bytes([1u8, 2u8], 0, [1u8, 3u8], 0, 2) != 1) { return 6; }
+        if (__mismatch_bytes_str([97u8, 98u8], 0, s + "", 0, 2) != 2) { return 8; }
         sum = sum + __memchr_bytes([1u8, 2u8], 2, 0);
         sum = sum + __rmemchr_bytes([2u8, 1u8], 2, 1);
         sum = sum + __count_byte_bytes(fresh(), 0);

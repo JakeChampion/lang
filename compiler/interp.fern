@@ -4707,6 +4707,44 @@ function call_mismatch_bytes(args: Value[]): Value {
   return v_err("__mismatch_bytes: first range must be an array");
 }
 
+// Compare a borrowed byte-array range with a string range, with the clamps
+// __mismatch_bytes applies.
+function call_mismatch_bytes_str(args: Value[]): Value {
+  if (args.len() != 5) {
+    return v_err("__mismatch_bytes_str: expected 5 args");
+  }
+  if (!is_i32_arg(args[1]) || !is_i32_arg(args[3]) || !is_i32_arg(args[4])) {
+    return v_err("__mismatch_bytes_str: bounds must be integers");
+  }
+  if (!is_string_arg(args[2])) {
+    return v_err("__mismatch_bytes_str: second range must be a string");
+  }
+  if let VArr(a) = args[0] {
+    let b: string = vstr_of(args[2]);
+    let ao: i32 = clamp_offset(vint_bits(args[1]), a.elements.len());
+    let bo: i32 = clamp_offset(vint_bits(args[3]), b.len());
+    let n: i32 = vint_bits(args[4]);
+    if (n > a.elements.len() - ao) {
+      n = a.elements.len() - ao;
+    }
+    if (n > b.len() - bo) {
+      n = b.len() - bo;
+    }
+    if (n < 0) {
+      n = 0;
+    }
+    let i: i32 = 0;
+    while (i < n) {
+      if (vint_bits(a.elements[ao + i]) != b[bo + i] as i32) {
+        return v_int(i);
+      }
+      i = i + 1;
+    }
+    return v_int(n);
+  }
+  return v_err("__mismatch_bytes_str: first range must be an array");
+}
+
 // Borrow the array and find the first matching byte at or after the start.
 function call_memchr_bytes(args: Value[]): Value {
   if (args.len() != 3) {
@@ -5279,6 +5317,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   }
   if (name == "__mismatch_bytes") {
     return call_mismatch_bytes(args);
+  }
+  if (name == "__mismatch_bytes_str") {
+    return call_mismatch_bytes_str(args);
   }
   if (name == "__outer_mul_f64") {
     return call_outer_mul_f64(args);

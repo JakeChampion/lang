@@ -1186,6 +1186,40 @@ func New() *Interp {
 		}
 		return Number(n), nil
 	}}
+	i.Builtins["__mismatch_bytes_str"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 5 {
+			return nil, fmt.Errorf("__mismatch_bytes_str: expected 5 args, got %d", len(args))
+		}
+		a, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__mismatch_bytes_str: expected an array, got %T", args[0])
+		}
+		bs, ok := args[2].(String)
+		if !ok {
+			return nil, fmt.Errorf("__mismatch_bytes_str: expected a string, got %T", args[2])
+		}
+		nums := [3]int{}
+		for k, at := range [3]int{1, 3, 4} {
+			v, ok := args[at].(Number)
+			if !ok {
+				return nil, fmt.Errorf("__mismatch_bytes_str: expected an integer at %d, got %T", at, args[at])
+			}
+			nums[k] = int(int64(v))
+		}
+		bb := []byte(string(bs))
+		ao, bo := clampOffset(nums[0], len(a.E)), clampOffset(nums[1], len(bb))
+		n := max(0, min(nums[2], len(a.E)-ao, len(bb)-bo))
+		for at := 0; at < n; at++ {
+			av, aok := a.E[ao+at].(Number)
+			if !aok {
+				return nil, fmt.Errorf("__mismatch_bytes_str: non-byte element at %d", at)
+			}
+			if av != Number(bb[bo+at]) {
+				return Number(at), nil
+			}
+		}
+		return Number(n), nil
+	}}
 	i.Builtins["__mismatch"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 5 {
 			return nil, fmt.Errorf("__mismatch: expected 5 args, got %d", len(args))

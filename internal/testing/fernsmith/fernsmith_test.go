@@ -1424,8 +1424,10 @@ func TestShrinkMainBytesReachesPastTruncation(t *testing.T) {
 // of a program-declared array type, a projection through a nested value, a
 // functional update, the ownership cluster and its reassignment of a shared
 // value, a fuel-bounded recursive helper and its self-call, the state fold,
-// the closure cluster, the user trait's impls, calls and dyn cluster, and the
-// generic struct and enum cluster.
+// the closure cluster, the user trait's impls, calls and dyn cluster (a trait
+// object in a struct field and in a tuple, an `as?` downcast), the associated
+// function, generic trait and associated-type trait beside it, the
+// own-receiver cluster, and the generic struct and enum cluster.
 // Each floor is about half the rate measured over
 // 1024 seeds (in parentheses), so a change that leaves a shape technically
 // reachable but rare fails here rather than quietly thinning what the oracles

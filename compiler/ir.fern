@@ -881,6 +881,13 @@ pub function op_mismatch_bytes(): Op {
   return op0(378);
 }
 
+// Borrowed byte-array range against a string range: pops [arr, ao, str, bo,
+// n] with mismatch's clamps. packed() selects native byte storage for the
+// array; the string's layout is the target's own.
+pub function op_mismatch_bytes_str(): Op {
+  return op0(446);
+}
+
 // rmemchr (docs/ATLAS-PLATFORM-PLAN.md §3.3, memchr's nominated sibling):
 // pops [str, byte, from] → the i32 index of the LAST `byte` at or before
 // `from`, or -1. Allocates nothing and reads only the source bytes.
@@ -4902,6 +4909,9 @@ function kind_id_len18(name: string): i32 {
   if (c == b'a' && name == "arr_push_owned_f64") {
     return 303;
   }
+  if (c == b'm' && name == "mismatch_bytes_str") {
+    return 446;
+  }
   return 0;
 }
 
@@ -5921,6 +5931,9 @@ pub function kind_name(id: i32): string {
   if (id == 411) {
     return "bswap";
   }
+  if (id == 446) {
+    return "mismatch_bytes_str";
+  }
   if (id == 410) {
     return "sha256_hw_blocks";
   }
@@ -6484,7 +6497,7 @@ function kind_pops(t: i32): i32 {
   if (t == 206) {  // syscall4
     return 5;
   }
-  if (t == 245 || t == 378 || t == 444 || t == 445) {  // mismatch: a, ao, b, bo, n; aes_gcm_seal / _open: rk, h, nonce, aad, data
+  if (t == 245 || t == 378 || t == 446 || t == 444 || t == 445) {  // mismatch: a, ao, b, bo, n; aes_gcm_seal / _open: rk, h, nonce, aad, data
     return 5;
   }
   if (t == 228 || t == 382) {  // syscall5, inner_mul_add_f64
@@ -9181,7 +9194,7 @@ pub function is_str_op_kind(tag: i32): boolean {
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98
     || tag == 99 || tag == 100 || tag == 225 || tag == 227
-    || tag == 234 || tag == 235 || tag == 245 || tag == 253
+    || tag == 234 || tag == 235 || tag == 245 || tag == 253 || tag == 446
     || tag == 309 || tag == 322 || tag == 324 || tag == 327 || tag == 329 || tag == 390
     || is_aes_gcm_op(tag) || is_sha_blocks_op(tag) || tag == 433;
 }

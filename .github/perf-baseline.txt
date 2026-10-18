@@ -69,7 +69,7 @@ x86_64/closure_call.text	774
 x86_64/closure_call.ir	63018106
 x86_64/enum_match.text	891
 x86_64/enum_match.ir	50850037
-x86_64/http_hello.text	14458
+x86_64/http_hello.text	14881
 x86_64/http_hello.ir	24984411
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
@@ -218,6 +218,12 @@ x86_64/utf8_ingest_validated.ir	5916089
 # the version prefix goes through the mismatch kernel. Both figures are the
 # perf lanes' own.
 #
+# Re-pinned 2026-10-18 (#12644) on http_hello.text (x86_64 +2.93%, aarch64
+# +3.23%): std/http's `__bytes_are` is the `__mismatch_bytes_str` kernel,
+# inlined at its three callers, in place of a byte loop. `.ir` does not move:
+# the benchmark parses without a previous request, so those compares never
+# run there. Both figures are the perf lanes' own.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -244,7 +250,7 @@ aarch64/closure_call.text	965
 aarch64/closure_call.ir	72624111
 aarch64/enum_match.text	1085
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	14914
+aarch64/http_hello.text	15395
 aarch64/http_hello.ir	27116643
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
