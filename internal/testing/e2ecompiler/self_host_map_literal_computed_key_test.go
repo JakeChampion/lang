@@ -63,11 +63,12 @@ function main(): i32 {
 }`},
 	// A computed key whose decisive literal is two nodes down, under the
 	// out-of-range saturating shift the original generated seed used.
-	// 296 <<| 403 masks to 296 << 19. 5 + 1 = 6.
+	// 352 <<| 422 saturates (the count is past the width), so the key is
+	// 560 | MAX == MAX. 5 + 1 = 6.
 	{"nested_shift_key", `import "core/map";
 function main(): i32 {
     let m: Map[i32, i32] = Map { (560i32 | ((372i32 & 865i32) <<| 422i32)): 5i32 };
-    return m.get_or(23088i32, 0i32) + m.len();
+    return m.get_or(2147483647i32, 0i32) + m.len();
 }`},
 	// The string direction must NOT flip: a computed STRING key stays
 	// string-keyed. 5 + 1 = 6.

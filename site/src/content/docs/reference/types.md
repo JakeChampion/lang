@@ -61,9 +61,11 @@ function main(): i32 {
 ```
 
 `/?` and `%?` also answer `None` for a zero divisor and for `MIN / -1`,
-and `<<?` / `>>?` for a shift count outside the width. Both families are
-integer-only, and the saturating ones reject `usize` (`E009`) because its
-bounds depend on the target. The full contract is
+and `<<?` / `>>?` for a shift count outside the width. A left shift
+overflows when it shifts bits out, so `255u8 <<? 1` is `None` and
+`255u8 <<| 1` is `255`; a right shift cannot overflow, so there is no
+`>>|`. Both families are integer-only, and both reject `usize` (`E009`)
+because its bounds depend on the target. The full contract is
 [`docs/INTEGER-SEMANTICS.md`](https://github.com/JakeChampion/lang/blob/main/docs/INTEGER-SEMANTICS.md).
 
 ## Strings, characters and bytes

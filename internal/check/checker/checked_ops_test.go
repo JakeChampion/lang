@@ -82,6 +82,10 @@ function main(): i32 { return match (f()) { Some(v) => v as i32, None => 0 }; }`
 	if err := checkSource(t, `function main(): i32 { let a: usize = 1; let b: usize = 2; match (a +? b) { Some(v) => { return 1; }, None => { return 0; } } }`); err == nil || strings.Contains(err.Error(), "non-enum") {
 		t.Errorf("want the usize E009 alone, got: %v", err)
 	}
+	// ... and it is an Option[usize], so returning it is no second error.
+	if err := checkSource(t, `function f(a: usize, n: usize): Option[usize] { return a <<? n; }`); err == nil || strings.Contains(err.Error(), "E002") || strings.Contains(err.Error(), "expected Option[usize]") {
+		t.Errorf("want the usize E009 alone, got: %v", err)
+	}
 	// /? and %? are integer-only and usize-rejecting too.
 	mustErr(`function main(): i32 { let a: f64 = 1.0; let b: f64 = 2.0; let c: Option[f64] = a /? b; return 0; }`,
 		`requires an integer type`)

@@ -777,7 +777,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 		// match. Tracked per operator group because the desugars differ:
 		// a carry / sign-pattern test for +? and -?, a division
 		// round-trip for *?, divisor and MIN/-1 guards for /? and %?,
-		// a count-range test for the shifts.
+		// a count-range test (and for <<? a round trip) for the shifts.
 		if strings.Contains(src, " +? ") || strings.Contains(src, " -? ") {
 			want["checked add or subtract"] = true
 		}

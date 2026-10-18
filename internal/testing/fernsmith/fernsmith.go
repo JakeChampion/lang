@@ -2850,7 +2850,8 @@ func (g *Generator) numericExpr(b *strings.Builder, sc *scope, t gtype, depth in
 // there is no checked IR opcode either, and the desugar is a wider spread of
 // per-operator predicates — a carry-out test for unsigned `+?`, a sign-pattern
 // test for signed `+?`, a division round-trip for `*?`, divisor and `MIN / -1`
-// guards for `/?` / `%?`, a range test for the shifts.
+// guards for `/?` / `%?`, a range test for the shifts plus a shift-back round
+// trip for `<<?`.
 //
 // Verified identical on interp / x86-64 / arm64 / wasm before adding, values
 // matching those documented: `MAX +? 1` → None, `40 +? 2` → Some(42),
@@ -2863,10 +2864,10 @@ func (g *Generator) emitCheckedFold(b *strings.Builder, sc *scope, t gtype, dept
 	// Ordered by the size the checker desugars each one to, cheapest first,
 	// because an exhausted stream takes index 0 and the contract is that
 	// truncation never grows the program. Measured in AST nodes over the
-	// whole match production: shifts 25, `+?` / `-?` 29, `/?` / `%?` 35,
-	// `*?` 41 — the overflow test each check expands to differs by
+	// whole match production: `>>?` 25, `+?` / `-?` 29, `<<?` 31, `/?` /
+	// `%?` 35, `*?` 41 — the overflow test each check expands to differs by
 	// operator, so this is not a table where the order is cosmetic.
-	op := []string{"<<?", ">>?", "+?", "-?", "/?", "%?", "*?"}[g.ch.intN(7)]
+	op := []string{">>?", "+?", "-?", "<<?", "/?", "%?", "*?"}[g.ch.intN(7)]
 	bind := fmt.Sprintf("__chk_v%d", g.optBindCounter)
 	g.optBindCounter++
 	b.WriteString("(match ((")

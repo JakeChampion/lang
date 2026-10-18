@@ -2041,12 +2041,29 @@ function sat_exact(op: string, a: i64, b: i64): i64 {
   if (op == "-|") {
     return a - b;
   }
-  // The count is masked to the 32-bit lane the callers work in, so the
-  // widest exact product here is (2^32-1) * 2^31 — still inside i64.
+  // An out-of-range count saturates any non-zero value, so it answers a
+  // value past every 32-bit bound with `a`'s sign. In range, the widest
+  // exact result is (2^32-1) * 2^31, still inside i64.
   if (op == "<<|") {
-    return a << (b & 31);
+    if (b < 0 || b >= 32) {
+      return sat_shl_oor(a);
+    }
+    return a << b;
   }
   return a * b;
+}
+
+// sat_shl_oor is `a <<| n` for a count past the width at host i64: zero stays
+// zero, anything else lands beyond the clamp bound on its own side.
+function sat_shl_oor(a: i64): i64 {
+  let big: i64 = 4611686018427387904;
+  if (a > 0) {
+    return big;
+  }
+  if (a < 0) {
+    return 0 - big;
+  }
+  return 0;
 }
 
 // sat_clamp clamps an exact result into [minv, maxv].
@@ -2092,13 +2109,17 @@ function sat_i64(op: string, a: i64, b: i64): i64 {
     // bound would need a ceiling division an arithmetic shift cannot
     // give. `>>` is arithmetic, so it restores `a` iff nothing was
     // shifted out.
-    let sc: i64 = b & 63;
-    let sh: i64 = a << sc;
-    if (sh >> sc == a) {
-      return sh;
+    if (b >= 0 && b < 64) {
+      let sh: i64 = a << b;
+      if (sh >> b == a) {
+        return sh;
+      }
     }
     if (a < 0) {
       return minv;
+    }
+    if (a == 0) {
+      return 0;
     }
     return maxv;
   }
@@ -2146,10 +2167,14 @@ function sat_u64(op: string, a: u64, b: u64): i64 {
     return d as i64;
   }
   if (op == "<<|") {
-    let sc: u64 = b & 63 as u64;
-    let sh: u64 = a << sc;
-    if (sh >> sc == a) {
-      return sh as i64;
+    if (b < 64 as u64) {
+      let sh: u64 = a << b;
+      if (sh >> b == a) {
+        return sh as i64;
+      }
+    }
+    if (a == 0 as u64) {
+      return 0;
     }
     return maxv as i64;
   }

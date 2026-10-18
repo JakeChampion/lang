@@ -10089,6 +10089,7 @@ func (c *checker) paramComparison(n *ast.Binary, lt, rt ast.Type, method string,
 //	signed    a +? b  ⇔ (a^b) >= 0 && (s^a) < 0   (same sign in, sign flip)
 //	signed    a -? b  ⇔ (a^b) <  0 && (s^a) < 0
 //	signed    a *? b  ⇔ a != 0 && (s / a != b || (a == -1 && b == MIN))
+//	          a <<? b ⇔ b out of range || (s >> b) != a
 //
 // The signed `*?` division round-trip agrees spuriously on exactly the
 // `(-1, MIN)` pair (`MIN / -1 == MIN` because Fern's division is total),
@@ -10118,18 +10119,19 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 	switch {
 	case n.Op == "<<?" || n.Op == ">>?":
 		// Checked shift: `None` when the shift count is out of range —
-		// negative (signed operands only) or `>= width`. `s` is Fern's
-		// masked shift (`a << (b & (width-1))`), which never traps, so it
-		// is computed up front like the other non-div cases; on the None
-		// path it just isn't read. `>=` picks the operand's signed /
-		// unsigned comparison, so an unsigned count only needs the upper
-		// bound.
+		// negative (signed operands only) or `>= width` — and, for `<<?`,
+		// when shifting `s` back does not restore `a` because bits or the
+		// sign were shifted out. `s` is Fern's masked shift, which never
+		// traps, so it is computed up front like the other non-div cases.
+		// `>=` picks the operand's signed / unsigned comparison, so an
+		// unsigned count only needs the upper bound.
 		wLit := int64(t.NormalWidth())
-		hiOOR := bin(">=", id(rN), num(wLit))
-		if unsigned {
-			overflow = hiOOR
-		} else {
-			overflow = bin("||", bin("<", id(rN), num(0)), hiOOR)
+		overflow = bin(">=", id(rN), num(wLit))
+		if !unsigned {
+			overflow = bin("||", bin("<", id(rN), num(0)), overflow)
+		}
+		if n.Op == "<<?" {
+			overflow = bin("||", overflow, bin("!=", bin(">>", id(sN), id(rN)), id(lN)))
 		}
 	case baseOp == "/" || baseOp == "%":
 		// Checked divide / remainder: `None` on a zero divisor, and for
@@ -20104,8 +20106,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// Checked integer arithmetic (#5542): `Some(result)` when the
 			// exact result fits the operand type, `None` on overflow —
 			// for `/?` / `%?` on a zero divisor or the signed `MIN / -1`,
-			// and for `<<?` / `>>?` on an out-of-range shift count
-			// (`< 0` or `>= width`). Integer only — no float form, no
+			// for `<<?` / `>>?` on an out-of-range shift count
+			// (`< 0` or `>= width`), and for `<<?` when bits are shifted
+			// out. Integer only — no float form, no
 			// composite overload — and it desugars to a block-expr over
 			// ordinary `Option`, `if`, and arithmetic, so every backend
 			// (interp + all codegen) lowers it for free via CheckedLowered.
@@ -20117,7 +20120,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			for _, t := range []ast.Type{lt, rt} {
 				if nt, ok := t.(ast.NumberType); ok && nt.IsPointerWidth() {
 					c.errfCode(n.P, "E009", "checked operator %q is not supported on `usize` — its overflow bound is target-width-dependent; cast to a fixed-width integer (`as u64`) first", n.Op)
-					return ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}}
+					return ast.EnumType{Name: "Option", Args: []ast.Type{nt}}
 				}
 			}
 			common, ok := commonIntegerWidth(lt, rt)

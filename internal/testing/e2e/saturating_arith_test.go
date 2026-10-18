@@ -67,8 +67,7 @@ function main(): i32 {
     if ((m -| m) != 0) { return 52; }
 
     // Saturating shift-left. Unlike the other three it post-checks by
-    // shifting back: the negative-side pre-check bound would need a ceiling
-    // division that an arithmetic shift cannot express.
+    // shifting back.
     if ((1 <<| 30) != 1073741824) { return 70; }
     if ((1 <<| 31) != 2147483647) { return 71; }
     if ((2 <<| 30) != 2147483647) { return 72; }
@@ -78,9 +77,16 @@ function main(): i32 {
     if (((0 - 1) <<| 0) != (0 - 1)) { return 76; }
     if (((0 - 1073741824) <<| 1) != i32min) { return 77; }
     if ((1073741824 <<| 1) != 2147483647) { return 78; }
-    // The count is masked exactly as the wrapping shift masks it, so a
-    // count past the width wraps to a small one rather than saturating.
-    if ((3 <<| 32) != 3) { return 79; }
+    // A count at or past the width, or a negative one, saturates every
+    // non-zero value; the wrapping shift masks it instead.
+    if ((3 <<| 32) != 2147483647) { return 79; }
+    if (((0 - 3) <<| 32) != i32min) { return 93; }
+    if ((0 <<| 32) != 0) { return 94; }
+    if ((3 <<| (0 - 1)) != 2147483647) { return 95; }
+    if (((1 as u8) <<| (8 as u8)) != 255) { return 96; }
+    if (((1 as u32) <<| (32 as u32)) != 4294967295) { return 97; }
+    if (((1 as i64) <<| (64 as i64)) != 9223372036854775807) { return 98; }
+    if (((1 as u64) <<| (64 as u64)) != 18446744073709551615) { return 99; }
     // u8 wraps into its 8-bit slot, so the round-trip has to see the
     // wrapped value: 200u8 << 1 is 144, which shifts back to 72, not 200.
     if ((u <<| v) != 255) { return 80; }

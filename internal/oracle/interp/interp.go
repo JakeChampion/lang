@@ -9121,11 +9121,16 @@ func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend fun
 				res = ul - ur
 			}
 		case "<<|":
-			c := uint64(shiftCount(rn, width))
-			if ul > maxU>>c {
+			// A count at or past the width saturates every non-zero value.
+			switch {
+			case ur >= uint64(width):
+				if ul != 0 {
+					res = maxU
+				}
+			case ul > maxU>>ur:
 				res = maxU
-			} else {
-				res = ul << c
+			default:
+				res = ul << ur
 			}
 		default:
 			if ul != 0 && ur > maxU/ul {
@@ -9167,9 +9172,18 @@ func satArith(op string, ln, rn Number, width int, unsigned bool, signExtend fun
 		// `a <<| c` overflows iff |a| exceeds the largest magnitude
 		// that survives the shift. The two sides differ because |MIN|
 		// is one larger than MAX; both bounds are exact divisions of a
-		// power of two (and collapse to 0 once the masked count runs
-		// past the width, which correctly saturates every non-zero a).
-		c := uint64(shiftCount(rn, width))
+		// power of two. A negative count, or one at or past the width,
+		// saturates every non-zero a.
+		if ir < 0 || ir >= int64(width) {
+			switch {
+			case il < 0:
+				return Number(minS)
+			case il > 0:
+				return Number(maxS)
+			}
+			return 0
+		}
+		c := uint64(ir)
 		if il < 0 {
 			if uint64(-(il+1))+1 > (uint64(maxS)+1)>>c {
 				return Number(minS)
