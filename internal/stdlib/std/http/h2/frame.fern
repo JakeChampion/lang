@@ -170,6 +170,37 @@ pub function read(buf: u8[], from: i32, max_frame: i32): Result[Read, FrameError
   return Ok(Got(__frame(kind, flags, stream, payload)?, HEADER_LEN + len));
 }
 
+// plain_headers_at is the payload length of the frame at `from` when it
+// is a HEADERS frame whole in `buf` under `max_frame`, on a stream, with
+// END_HEADERS and without PADDED or PRIORITY: the frame a request starts
+// with, which a connection reads straight off its buffer without the
+// record `read` builds. -1 for any other frame, or one not yet whole.
+pub function plain_headers_at(buf: u8[], from: i32, max_frame: i32): i32 {
+  if (buf.len() - from < HEADER_LEN) {
+    return 0 - 1;
+  }
+  let len: i32 = __be24(buf, from);
+  let flags: i32 = buf[from + 4] as i32;
+  if (buf[from + 3] as i32 != HEADERS || len > max_frame || buf.len() - from - HEADER_LEN < len) {
+    return 0 - 1;
+  }
+  if ((flags & 4) == 0 || (flags & 40) != 0 || stream_at(buf, from) == 0) {
+    return 0 - 1;
+  }
+  return len;
+}
+
+// stream_at is the stream of the frame whose header is at `from`.
+pub function stream_at(buf: u8[], from: i32): i32 {
+  return __be32(buf, from + 5) & MAX_WINDOW;
+}
+
+// end_stream_at is whether the frame whose header is at `from` carries
+// END_STREAM.
+pub function end_stream_at(buf: u8[], from: i32): boolean {
+  return (buf[from + 4] as i32 & 1) != 0;
+}
+
 // __frame reads a payload as the frame its type says.
 function __frame(kind: i32, flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
   if (kind == DATA) {

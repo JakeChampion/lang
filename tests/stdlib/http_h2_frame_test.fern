@@ -205,8 +205,36 @@ function test_headers_data(): test.TestOutcome {
   return test.assert_eq(got, "");
 }
 
+// plain is `plain_headers_at` over a frame in hex at offset 2, with its
+// stream and END_STREAM when it is one.
+function plain(block: string): string {
+  let buf: u8[] = [0 as u8, 0 as u8].concat(hex.hex_decode(block));
+  let len: i32 = frame.plain_headers_at(buf, 2, frame.MIN_FRAME_SIZE);
+  if (len < 0) {
+    return "-";
+  }
+  let out: string = int.int_to_string(len) + " on " + int.int_to_string(frame.stream_at(buf, 2));
+  if (frame.end_stream_at(buf, 2)) {
+    return out + " END_STREAM";
+  }
+  return out;
+}
+
+// The frame a request starts with is found by its header alone: a whole
+// HEADERS frame on a stream with END_HEADERS and neither PADDED nor
+// PRIORITY; a partial one, any other type or flag set, stream 0 and a
+// frame over the size allowed are not.
+function test_plain_headers(): test.TestOutcome {
+  let got: string = plain("000002010500000001" + "8286") + "|" + plain("000002010400000003" + "8286") + "|" + plain("0000020105000000") + "|" + plain("000003010500000001" + "82") + "|" + plain("000002000500000001" + "8286") + "|" + plain("000002010100000001" + "8286") + "|" + plain("000003010d00000001" + "008286") + "|" + plain("000007012500000001" + "00000000008286") + "|" + plain("000002010500000000" + "8286") + "|" + plain("000001090400000001" + "86");
+  let big: u8[] = __alloc_u8(frame.MIN_FRAME_SIZE + 1);
+  let over: u8[] = frame.encode(frame.Headers(frame.HeadersFrame { stream: 1, end_stream: true, end_headers: true, priority: None, block: big, padding: 0 }));
+  got = got + "|" + int.int_to_string(frame.plain_headers_at(over, 0, frame.MIN_FRAME_SIZE)) + "|" + int.int_to_string(frame.plain_headers_at(over, 0, frame.MIN_FRAME_SIZE + 1));
+  return test.assert_eq(got, "2 on 1 END_STREAM|2 on 3|-|-|-|-|-|-|-|-|-1|16385");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/h2/frame");
+  r = r.it("the plain HEADERS frame a request starts with", test_plain_headers);
   r = r.it("a HEADERS and a DATA frame in one buffer", test_headers_data);
   r = r.it("the client preface", test_preface);
   r = r.it("every frame type round-trips", test_round_trips);
