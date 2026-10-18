@@ -361,10 +361,10 @@ in the repo:
 - `wide_numerics_test.fern` — i64 / u32 / u64 assertions
 - `filesystem_ops_test.fern` — read_dir / remove_file /
   remove_dir_all builtins
-- `lang_binary_e2e_test.fern` — the canonical migration
+- `fern_binary_e2e_test.fern` — the canonical migration
   shape: spawn the `fern` binary itself, drive it through
   `-interp` / `-check` against tempdir fixtures, assert on
-  `(exit, stdout, stderr)`. Gated on `$LANG_BIN` being set
+  `(exit, stdout, stderr)`. Gated on `$FERN_BIN` being set
   so dev laptops without the env var skip cleanly.
 - `helpers_test.fern` — multi-substring / string-diff /
   range / file-state / `must_temp_dir` convenience helpers
