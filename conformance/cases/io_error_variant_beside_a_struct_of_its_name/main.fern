@@ -1,0 +1,67 @@
+// A program's own struct may share a bare name with a builtin IoError variant.
+// The struct does not displace the variant: std/error's `message()` matches
+// IoError's `NotFound` and `Interrupted`, and this program's arms do too.
+import "std/error";
+import "std/i32";
+
+struct NotFound { what: string }
+struct Interrupted { code: i32 }
+
+impl error.Error for NotFound {
+  function message(self: Self): string {
+    return "no " + self.what;
+  }
+}
+
+function kind(e: IoError): string {
+  match (e) {
+    NotFound(path) => {
+      return "missing " + path;
+    },
+    Interrupted => {
+      return "interrupted";
+    },
+    _ => {
+      return "other";
+    }
+  }
+}
+
+function find(ok: boolean): Result[i32, NotFound] {
+  if (ok) {
+    return Ok(1);
+  }
+  return Err(NotFound { what: "key" });
+}
+
+function missing(path: string): Result[string, IoError] {
+  return Err(NotFound(path));
+}
+
+function load(path: string, ok: boolean): Result[i32, dyn error.Error] {
+  let n: i32 = find(ok)?;
+  let text: string = missing(path)?;
+  return Ok(n + text.len());
+}
+
+function report(r: Result[i32, dyn error.Error]): void {
+  match (r) {
+    Ok(n) => {
+      print("ok " + n.to_string());
+    },
+    Err(e) => {
+      print(e.message());
+    }
+  }
+}
+
+function main(): i32 {
+  report(load("/nonexistent/fern-io-variant", false));
+  report(load("/nonexistent/fern-io-variant", true));
+  print(kind(NotFound("/etc/x")));
+  print(kind(Interrupted));
+  let s: Interrupted = Interrupted { code: 4 };
+  let n: NotFound = NotFound { what: "y" };
+  print(n.what + s.code.to_string());
+  return 0;
+}

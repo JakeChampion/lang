@@ -137,6 +137,22 @@ pub function csv_nth(enc: string, n: i32): string {
   return "";
 }
 
+// variant_shape is the runtime identity a box of enum `owner`'s variant `name`
+// carries at word 0. It names the owner, so neither a struct nor another
+// enum's variant of the same bare name shares it.
+pub function variant_shape(owner: string, name: string): string {
+  return owner + "$" + name;
+}
+
+// decl_shape is the runtime identity of a box of decl `d`. A generic enum's
+// instance decl is already named by its shape (semlower.instance_variants).
+pub function decl_shape(d: parser.StructDecl): string {
+  if (d.enum_owner.len() == 0 || util.index_of_sub(d.name, "$") >= 0) {
+    return d.name;
+  }
+  return variant_shape(d.enum_owner, d.name);
+}
+
 // variant_decl_index returns the index in `structs` of the variant `name`
 // declared by enum `owner`, or -1. Two enums may declare the same variant
 // name, so a qualified `Enum.Variant` has to ask whether such a decl EXISTS
