@@ -1807,6 +1807,25 @@ function (s: Scope) overload_ret(method: string, t: typeinfo.Type): typeinfo.Typ
   return s.lookup_method(method, recv).ret_type;
 }
 
+// downcast_operand_ok reports whether an `as?` operand may be a `dyn Trait`
+// value: a dyn, or a type not known here.
+function downcast_operand_ok(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeDyn(_) => {
+      return true;
+    },
+    typeinfo.TypeUnknown(_) => {
+      return true;
+    },
+    typeinfo.TypeNever(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
 // is_primitive_type reports whether t is one of the scalar primitives
 // (i32 / bool / string / f64). Used by the E034 array-element check to
 // stay conservative — it only compares element types when both are
@@ -15895,15 +15914,10 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
     out = util.append_diags(out, cast_diags(u, tgt, check_expr(u.operand, s), s));
   }
   // E059: an `as?` downcast (`x as? T`, parsed as the unary op
-  // `as?_<T>`) requires a `dyn Trait` value on the left. The self-
-  // host has no dyn-trait Type — a real `dyn Trait` value resolves
-  // to `unknown` here — so a CONCRETE scalar primitive operand
-  // (i32 / f64 / bool / string) can never be a dyn value and is
-  // flagged, while an unknown (possibly-dyn) operand is left alone.
-  // Same sound, zero-false-positive conservatism as E033 / E042.
+  // `as?_T`) requires a `dyn Trait` value on the left.
   if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
     let aot: typeinfo.Type = check_expr(u.operand, s);
-    if (is_primitive_type(aot)) {
+    if (!downcast_operand_ok(aot)) {
       out = out.append(dg_at("E059", "`as?` downcast requires a `dyn Trait` value on the left, got " + type_label(aot), u.line, u.col));
     }
   }
