@@ -160,15 +160,32 @@ SETTINGS timeout is optional and not enforced).
    (`read` copies out what it keeps), the connection carrying the Date its
    responses get (`with_date`) in place of a response rebuilt around a
    header map, and the handler started from its request rather than a
-   framed record built around it. What is left is the request handed over
-   (its record, header map and strings), the HPACK fields (a box each),
-   the result boxes and run records the state machine's steps rebuild
-   where the planner carries no reuse token across the branch, the frame
-   records, the body's bytes copied out of its string, `int_to_string`'s
-   two allocations for content-length, and the connection copied out of
-   the loop's table at each turn, which wants a take out of an array slot
-   the language does not have (lifting the slot by hand cost two boxes
-   more, not one less).
+   framed record built around it; and 41.0 to 21.0 under 22, with the
+   instructions per request under callgrind from 14,888 to 12,592 (the
+   HTTP/1.1 hello runs 10,165): a header block read one field at a time
+   through `hpack.Decoding` with no `Field` box, array or result (the
+   stream it builds carries "malformed" as a bit of `seen`, since a
+   `Result` kept live on its `Err` arm retained the stream across the
+   call and each field copied it), a response that fits written in one
+   buffer from the body's own bytes (`frame.headers_room`,
+   `headers_data`, `hpack.Encoder.begin_in`; the buffer parameters `own`,
+   as a bare array parameter stays borrowed and its first append copied
+   the buffer), `int_to_string` a constant for 0 to 99, the request's
+   HEADERS frame read off the inbox without the record `frame.read`
+   builds (`frame.plain_headers_at`), a frame taken off and counted in
+   one update, and a block's readers keeping their run whole until they
+   rebuild it. What is left, 21 a request: the two literal strings; the
+   request handed over (its record, body, event and the events array,
+   the stream's record and the streams array, the `host` map and its two
+   arrays, and `http_request_target`'s copy of the target); the decoding
+   and encoding records, the response buffer and the two steps; the
+   serve loop's `__H2Answered` and `Http2` box; the block copied out of
+   the inbox, which wants a string made from a view; and the connection
+   copied out of the loop's table at each turn, which wants a take out of
+   an array slot the language does not have: reading the slot's element
+   and overwriting the slot anchors the table to the element, so the
+   table's rebuild copies all of it (650 instructions and a box more a
+   request, measured again on this round).
 5. **h2spec nightly (landed).** `scripts/net-h2spec` on `net-nightly.yml`:
    h2spec 2.6.0 strict over h2c against `scripts/net-h2spec.d/server.fern`,
    146 cases, every one green or the job fails, the counts recorded under
