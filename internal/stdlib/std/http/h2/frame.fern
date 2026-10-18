@@ -170,6 +170,37 @@ pub function read(buf: u8[], from: i32, max_frame: i32): Result[Read, FrameError
   return Ok(Got(__frame(kind, flags, stream, payload)?, HEADER_LEN + len));
 }
 
+// plain_headers_at is the payload length of the frame at `from` when it
+// is a HEADERS frame whole in `buf` under `max_frame`, on a stream, with
+// END_HEADERS and without PADDED or PRIORITY: the frame a request starts
+// with, which a connection reads straight off its buffer without the
+// record `read` builds. -1 for any other frame, or one not yet whole.
+pub function plain_headers_at(buf: u8[], from: i32, max_frame: i32): i32 {
+  if (buf.len() - from < HEADER_LEN) {
+    return 0 - 1;
+  }
+  let len: i32 = __be24(buf, from);
+  let flags: i32 = buf[from + 4] as i32;
+  if (buf[from + 3] as i32 != HEADERS || len > max_frame || buf.len() - from - HEADER_LEN < len) {
+    return 0 - 1;
+  }
+  if ((flags & 4) == 0 || (flags & 40) != 0 || stream_at(buf, from) == 0) {
+    return 0 - 1;
+  }
+  return len;
+}
+
+// stream_at is the stream of the frame whose header is at `from`.
+pub function stream_at(buf: u8[], from: i32): i32 {
+  return __be32(buf, from + 5) & MAX_WINDOW;
+}
+
+// end_stream_at is whether the frame whose header is at `from` carries
+// END_STREAM.
+pub function end_stream_at(buf: u8[], from: i32): boolean {
+  return (buf[from + 4] as i32 & 1) != 0;
+}
+
 // __frame reads a payload as the frame its type says.
 function __frame(kind: i32, flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
   if (kind == DATA) {
@@ -445,13 +476,56 @@ function __flag(on: boolean, bit: i32): i32 {
 // __framed is the frame header (§4.1) and the payload.
 function __framed(kind: i32, flags: i32, stream: i32, payload: u8[]): u8[] {
   let n: i32 = payload.len();
-  let out: u8[] = __alloc_u8(HEADER_LEN + n);
-  out = out.with(0, (n >> 16 & 255) as u8).with(1, (n >> 8 & 255) as u8).with(2, (n & 255) as u8).with(3, kind as u8).with(4, flags as u8);
-  out = out.with(5, (stream >> 24 & 255) as u8).with(6, (stream >> 16 & 255) as u8).with(7, (stream >> 8 & 255) as u8).with(8, (stream & 255) as u8);
+  let out: u8[] = header_into(__alloc_u8(HEADER_LEN + n), 0, kind, flags, stream, n);
   if (n == 0) {
     return out;
   }
   return __bytes_into(out, HEADER_LEN, payload, 0, n);
+}
+
+// header_into is `out` with the header (§4.1) of a frame of `kind`, `flags`
+// and `stream` carrying `len` bytes written over its nine bytes at `at`.
+pub function header_into(own out: u8[], at: i32, kind: i32, flags: i32, stream: i32, len: i32): u8[] {
+  out = out.with(at, (len >> 16 & 255) as u8).with(at + 1, (len >> 8 & 255) as u8).with(at + 2, (len & 255) as u8).with(at + 3, kind as u8).with(at + 4, flags as u8);
+  return out.with(at + 5, (stream >> 24 & 255) as u8).with(at + 6, (stream >> 16 & 255) as u8).with(at + 7, (stream >> 8 & 255) as u8).with(at + 8, (stream & 255) as u8);
+}
+
+// BLOCK_ROOM is the header block a `headers_room` buffer holds without
+// growing.
+pub const BLOCK_ROOM: i32 = 128;
+
+// headers_room is a buffer for a response sent whole, a HEADERS frame and a
+// DATA frame of `data_len` bytes in one allocation: the HEADERS frame's
+// header is reserved, its block is appended by the caller, and
+// `headers_data` frames both.
+pub function headers_room(data_len: i32): u8[] {
+  let out: u8[] = __alloc_u8(HEADER_LEN + BLOCK_ROOM + HEADER_LEN + data_len);
+  __arr_set_len(out, HEADER_LEN);
+  return out;
+}
+
+// headers_data is `out`, a `headers_room` buffer with its block appended,
+// framed: the HEADERS frame's header written over the reserved bytes with
+// END_HEADERS, and the first `n` bytes of `data` after it as a DATA frame
+// with END_STREAM, or END_STREAM on the HEADERS frame when `n` is 0. A
+// block that outgrew the room is copied into a buffer that fits both.
+pub function headers_data(own out: u8[], stream: i32, data: [u8], n: i32): u8[] {
+  let block_len: i32 = out.len() - HEADER_LEN;
+  let total: i32 = out.len();
+  if (n > 0) {
+    total = total + HEADER_LEN + n;
+  }
+  if (block_len > BLOCK_ROOM) {
+    out = __bytes_into(__alloc_u8(total), 0, out[0:out.len()], 0, out.len());
+  } else {
+    __arr_set_len(out, total);
+  }
+  if (n == 0) {
+    return header_into(out, 0, HEADERS, 5, stream, block_len);
+  }
+  out = header_into(out, 0, HEADERS, 4, stream, block_len);
+  out = header_into(out, HEADER_LEN + block_len, DATA, 1, stream, n);
+  return __bytes_into(out, HEADER_LEN + block_len + HEADER_LEN, data, 0, n);
 }
 
 // headers_bytes is a HEADERS frame without priority on the wire, as
