@@ -120,13 +120,15 @@ struct Rewrite { f: ssasem.Func, changed: boolean }
 // `funcs[i]` is spliced into its callers when `inlinable[i]` and it is a leaf,
 // or called once (or from a few places, every return a construction) and
 // `unnamed[i]`: nothing outside the bodies names it, so the splice leaves no
-// second copy. `rewrite[i]` says which functions may be
-// rewritten at all. `names[i]` is the key a call to `funcs[i]` carries, and
+// second copy. `uncalled[i]`, wider than `unnamed[i]` by the methods,
+// says nothing outside the bodies calls it, which pairing its result needs.
+// `rewrite[i]` says which functions may be rewritten at all. `names[i]` is
+// the key a call to `funcs[i]` carries, and
 // `modes[i]` its parameters' modes.
 // A -size build (`size`) splices only what is called once, which the
 // program does not grow by: no leaf and no shared body is copied, nor one
 // the splices grow into either.
-pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], size: boolean): Inlined {
+pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], uncalled: boolean[], size: boolean): Inlined {
   let ix: util.NameIndex = util.name_index(names);
   let calls: i32[] = call_counts(funcs0, ix);
   let cycle: i32[] = ownership.cycles(callees_of_all(funcs0, ix));
@@ -149,7 +151,7 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let rounds: Inlined = done.out;
   sp = grown_leaves(rounds, done.sp);
   let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
-  let out: Inlined = split_all(paired_all(rounds, names, rewrite, unnamed), rewrite, modes);
+  let out: Inlined = split_all(paired_all(rounds, names, rewrite, uncalled), rewrite, modes);
   match (env("FERN_SEM_DUMP")) {
     Some(want) => {
       for f in out.funcs {
@@ -407,8 +409,8 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
 // Variant returns paired (sempair) once nothing more is spliced, so split
 // reads the rebuilt variants apart; a construction a return no longer reads
 // goes with it.
-function paired_all(prev: Inlined, names: string[], rewrite: boolean[], unnamed: boolean[]): Inlined {
-  let p: sempair.Paired = sempair.pair_returns(prev.funcs, names, rewrite, unnamed);
+function paired_all(prev: Inlined, names: string[], rewrite: boolean[], uncalled: boolean[]): Inlined {
+  let p: sempair.Paired = sempair.pair_returns(prev.funcs, names, rewrite, uncalled);
   let funcs: ssasem.Func[] = p.funcs;
   let rewritten: boolean[] = prev.rewritten;
   let i: i32 = 0;
@@ -531,7 +533,7 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
   // resulting callback to satisfy the small scalar-leaf limit. This scratch
   // view does not replace non-fused callers or remove any function body.
   let ix: util.NameIndex = util.name_index(names);
-  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, false).funcs;
+  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, inlinable, false).funcs;
   // A shared helper cannot take the single-use path. The first pass can
   // expose its leaf body, so rebuild the leaf table before preparing its
   // callback callers. Only callback bodies change in this second scratch pass.
@@ -541,7 +543,7 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
     callbacks = callbacks.append(inlinable[ci] && unused_environment(candidates[ci]) >= 0);
     ci = ci + 1;
   }
-  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, false).funcs;
+  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, inlinable, false).funcs;
   let leaves: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
