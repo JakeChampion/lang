@@ -982,7 +982,7 @@ function main(): i32 {
     let spanLowered = ssarc.lower(spanFunc, [1], spanPlan, declTab, ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none());
     if (!spanLowered.ok) { eprint(spanLowered.why); return 119; }
     let spanDecl: i32 = 0 - 1;
-    for o in spanLowered.ops { if (o.str == "W") { spanDecl = o.decl; } }
+    for o in spanLowered.ops { if (o.str == "Span$W") { spanDecl = o.decl; } }
     if (irtables.decl_at_field_type(declTab, spanDecl, 0) != "i64") { return 120; }
     // A constant with no signed i32 immediate to use carries the literal's
     // text instead; a narrow signed one carries none, and neither may carry both.
