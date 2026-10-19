@@ -118,6 +118,7 @@ boolean_logic                                        0
 boolean_scalar_dispatch                              0
 both_arms_read_p                                     0
 break_continue                                       0
+byte_view_of_a_field_after_a_failed_try              0
 bytes_writer                                         0
 c2_consuming_reuse                                   0
 call_of_a_call_through_a_function_value              0
