@@ -102,8 +102,10 @@ pub struct VMap { keys: Value[], values: Value[] }
 // VStruct holds a user-defined struct value. Parallel arrays
 // for field names and corresponding evaluated values.
 // type_name is the struct's declared name — useful for
-// diagnostics and (later) for struct-aware equality.
-pub struct VStruct { type_name: string, field_names: string[], field_values: Value[] }
+// diagnostics and (later) for struct-aware equality. A variant's `owner` is
+// the enum it was built as, which its bare name may not decide; "" for a
+// struct, or a variant whose enum the construction did not name.
+pub struct VStruct { type_name: string, field_names: string[], field_values: Value[], owner: string }
 
 pub struct VErr { msg: string, abort: boolean }
 
@@ -648,7 +650,7 @@ function v_map_new(): Value {
 }
 
 function v_struct(type_name: string, names: string[], values: Value[]): Value {
-  return VStruct { type_name: type_name, field_names: names, field_values: values };
+  return VStruct { type_name: type_name, field_names: names, field_values: values, owner: "" };
 }
 
 function v_err(msg: string): Value {
@@ -845,6 +847,11 @@ function user_func_exists(name: string, funcs: parser.FuncDecl[]): boolean {
 // `__ev` / `__ev1` / … names, which is the marker StmtMatch keys on to bind a
 // `V(a, b, …)` pattern positionally. A nullary variant has no fields.
 function v_variant(name: string, args: Value[]): Value {
+  return v_variant_of("", name, args);
+}
+
+// v_variant_of is v_variant built as enum `owner`'s.
+function v_variant_of(owner: string, name: string, args: Value[]): Value {
   let vnames: string[] = [];
   let vi: i32 = 0;
   while (vi < args.len()) {
@@ -855,7 +862,46 @@ function v_variant(name: string, args: Value[]): Value {
     }
     vi = vi + 1;
   }
-  return v_struct(name, vnames, args);
+  return VStruct { type_name: name, field_names: vnames, field_values: args, owner: owner };
+}
+
+// variant_owner is the one enum declaring variant `name`, or "" when none or
+// several do.
+function variant_owner(name: string, decls: parser.StructDecl[]): string {
+  let owner: string = "";
+  for d in decls {
+    if (d.name == name && d.enum_owner.len() > 0) {
+      if (owner.len() > 0) {
+        return "";
+      }
+      owner = d.enum_owner;
+    }
+  }
+  return owner;
+}
+
+// qualified_owner is the enum a `qual.name` variant was built as: `qual` when
+// it is an enum declaring `name`, else (a module qualifier) the one enum that
+// does.
+function qualified_owner(qual: string, name: string, decls: parser.StructDecl[]): string {
+  for d in decls {
+    if (d.name == name && d.enum_owner == qual) {
+      return qual;
+    }
+  }
+  return variant_owner(name, decls);
+}
+
+// variant_of_enum reports a variant value of enum `base`: by the enum it was
+// built as when that is known, else by its name among the enum's variants.
+function variant_of_enum(v: Value, base: string, aliases: parser.TypeAlias[]): boolean {
+  if let VStruct(sv) = v {
+    if (sv.owner.len() > 0) {
+      return sv.owner == base;
+    }
+    return is_variant_of_alias_interp(sv.type_name, base, aliases);
+  }
+  return false;
 }
 
 // interp_char_boundary reports whether byte offset `i` starts a UTF-8 code
@@ -2156,25 +2202,25 @@ function io_error_value(e: IoError): Value {
   let none: Value[] = [];
   match (e) {
     NotFound(p) => {
-      return v_variant("NotFound", [v_string(p)]);
+      return v_variant_of("IoError", "NotFound", [v_string(p)]);
     },
     PermissionDenied(p) => {
-      return v_variant("PermissionDenied", [v_string(p)]);
+      return v_variant_of("IoError", "PermissionDenied", [v_string(p)]);
     },
     AlreadyExists(p) => {
-      return v_variant("AlreadyExists", [v_string(p)]);
+      return v_variant_of("IoError", "AlreadyExists", [v_string(p)]);
     },
     InvalidUtf8(p) => {
-      return v_variant("InvalidUtf8", [v_string(p)]);
+      return v_variant_of("IoError", "InvalidUtf8", [v_string(p)]);
     },
     Interrupted => {
-      return v_variant("Interrupted", none);
+      return v_variant_of("IoError", "Interrupted", none);
     },
     Unsupported => {
-      return v_variant("Unsupported", none);
+      return v_variant_of("IoError", "Unsupported", none);
     },
     Other(p, m, n) => {
-      return v_variant("Other", [v_string(p), v_string(m), v_int(n)]);
+      return v_variant_of("IoError", "Other", [v_string(p), v_string(m), v_int(n)]);
     }
   }
 }
@@ -4541,7 +4587,7 @@ function resolve_ident_value(name: string, env: Env): Value {
     // naming it without calling it is a checker error upstream.
     if (variant_arity(name, env.type_decls) == 0 && !user_func_exists(name, env.funcs)) {
       let none_args: Value[] = [];
-      return v_variant(name, none_args);
+      return v_variant_of(variant_owner(name, env.type_decls), name, none_args);
     }
     // A top-level function named as a VALUE rather than called —
     // `[inc, dbl]`, or passing `inc` to a higher-order function
@@ -4712,6 +4758,7 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
   let is_closure: boolean = false;
   let is_variant: boolean = false;
   let variant_name: string = "";
+  let variant_enum: string = "";
   let recv: Value = v_absent();
   let closure_val: Value = v_absent();
   match (c.callee) {
@@ -4739,6 +4786,7 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
       if (!is_closure && variant_arity(name, env.type_decls) >= 0 && !user_func_exists(name, env.funcs)) {
         is_variant = true;
         variant_name = name;
+        variant_enum = variant_owner(name, env.type_decls);
       }
     },
     ast.ExprFieldAccess(fa) => {
@@ -4809,6 +4857,9 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
         if (variant_call) {
           is_variant = true;
           variant_name = fa.field;
+          if let ast.ExprIdent(qid) = fa.obj {
+            variant_enum = qualified_owner(qid.name, fa.field, env.type_decls);
+          }
         } else {
           name = fa.field;
           is_method = true;
@@ -4854,7 +4905,7 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
     i = i + 1;
   }
   if (is_variant) {
-    return v_variant(variant_name, arg_vals);
+    return v_variant_of(variant_enum, variant_name, arg_vals);
   }
   if (is_method) {
     return call_method(recv, name, arg_vals, env.funcs, env.aliases, env.type_decls, env.outs);
@@ -5075,10 +5126,9 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
     // program a bare undefined-identifier object only
     // arises for an enum type name.
     match (fa.obj) {
-      ast.ExprIdent(_) => {
-        let no_names: string[] = [];
+      ast.ExprIdent(qid) => {
         let no_vals: Value[] = [];
-        return v_struct(fa.field, no_names, no_vals);
+        return v_variant_of(qualified_owner(qid.name, fa.field, env.type_decls), fa.field, no_vals);
       },
       _ => {
         return ov;
@@ -5507,7 +5557,7 @@ function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlia
   if let VStruct(sv) = k {
     for fd in funcs {
       let base: string = util.base_type_name(fd.receiver_type);
-      if (fd.name == "eq" && fd.impl_trait == "Eq" && (base == sv.type_name || is_variant_of_alias_interp(sv.type_name, base, aliases))) {
+      if (fd.name == "eq" && fd.impl_trait == "Eq" && (base == sv.type_name || variant_of_enum(k, base, aliases))) {
         return true;
       }
     }
@@ -5737,7 +5787,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     // Union-receiver methods: a method declared on a union
     // (`function (sh: Shape) area()`) matches when recv's
     // struct type_name is in the union's variant list.
-    if (!rt_match && is_variant_of_alias_interp(recv_type, receiver_base, aliases)) {
+    if (!rt_match && variant_of_enum(recv, receiver_base, aliases)) {
       rt_match = true;
     }
     // Array-receiver methods, all of std/array: every array value answers
