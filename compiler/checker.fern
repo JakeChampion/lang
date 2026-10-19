@@ -8663,7 +8663,7 @@ function type_from_spelling(name: string, tn: TypeNames): typeinfo.Type {
 // type_from_ref_names is the one resolution ladder: parse the spelling once
 // (parse_type_ref), then pattern-match on the tree. Resolution order is
 // primitives → array → fn → tuple → Map → builtin generic enum → generic
-// instantiation → struct → union → unknown. `render_type_ref(r)` recovers a
+// instantiation → union → struct → unknown. `render_type_ref(r)` recovers a
 // node's canonical spelling for the scalar / struct / union name compares and
 // the unknown reason; for canonical inputs (what the parser feeds every caller)
 // this equals the original substring.
@@ -8805,6 +8805,15 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   // Only fires for an actual instantiation (args present); a bare `Box`
   // resolves through the full-spelling loop as before.
   if (r.args.len() > 0) {
+    if (tn.unions.has(r.base)) {
+      // A spelling that drops the argument names the GENERIC enum, which the
+      // enum monomorphiser has dropped by the time anything reads it back.
+      let uinst: typeinfo.Type[] = [];
+      for arg in r.args {
+        uinst = uinst.append(enum_argument_from_ref(arg, tn));
+      }
+      return t_union_g(r.base, uinst);
+    }
     if (tn.structs.has(r.base)) {
       // Carry the resolved instantiation args so field access can
       // substitute a type-parameter field (`Box[i32].v` → i32);
@@ -8815,25 +8824,16 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
       }
       return t_struct_g(r.base, gargs);
     }
-    if (tn.unions.has(r.base)) {
-      // Same for a generic ENUM, and for the same reason: a spelling that
-      // drops the argument names the GENERIC, which the enum monomorphiser
-      // has dropped by the time anything reads it back.
-      let uinst: typeinfo.Type[] = [];
-      for arg in r.args {
-        uinst = uinst.append(enum_argument_from_ref(arg, tn));
-      }
-      return t_union_g(r.base, uinst);
-    }
   }
   // Any other shape (a bare name, a single-element tuple, a Map with <2 args, a
   // non-Map generic whose base names no declared type) resolves by its full
-  // spelling: struct → union → unknown.
-  if (tn.structs.has(name)) {
-    return t_struct(name);
-  }
+  // spelling: union → struct → unknown. A union and a struct share a name only
+  // when the struct is another enum's variant, which is not a type head.
   if (tn.unions.has(name)) {
     return t_union(name);
+  }
+  if (tn.structs.has(name)) {
+    return t_struct(name);
   }
   // The front end injects Reader / Writer / MapIter / … as struct
   // declarations on every program (checker.go's builtinStructDecls), so

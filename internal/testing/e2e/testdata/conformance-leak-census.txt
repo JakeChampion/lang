@@ -343,6 +343,7 @@ io_error_other_closed_stdout                         0
 io_error_other_is_a_directory                        0
 io_error_other_not_a_directory                       0
 io_error_variant_beside_a_struct_of_its_name         0
+io_error_variant_beside_an_enum_of_its_name          0
 iter_build_consume                                   0
 json_array_field                                     0
 json_error_location                                  0
