@@ -2170,9 +2170,11 @@ function sig_table(sigs: FuncSig[]): SigTable {
 // the struct table, which lookup_struct scanned end to end per query.
 pub struct StructTable {
   structs: StructSig[],
-  // The declared names, in `structs` order, which is also what the type
-  // resolvers read (TypeNames).
+  // The declared names, in `structs` order.
   index: util.NameIndex,
+  // The names a type spelling resolves to a struct by (TypeNames):
+  // `type_head_names`.
+  heads: util.NameIndex,
   // The module's declared `resource` names, which a handle type names.
   resources: util.NameIndex,
   // The module's spellings resolved once, carried here so a scope's
@@ -2262,12 +2264,27 @@ function spelling_of_stmt(st: ast.Stmt, own acc: string[]): string[] {
 }
 
 // struct_table indexes `structs` by name.
-function struct_table(structs: StructSig[], resources: string[], spellings: SpellMemo): StructTable {
+function struct_table(structs: StructSig[], union_names: string[], resources: string[], spellings: SpellMemo): StructTable {
   let names: string[] = [];
   for sd in structs {
     names = names.append(sd.name);
   }
-  return StructTable { structs: structs, index: util.name_index(names), resources: util.name_index(resources), spellings: spellings };
+  return StructTable { structs: structs, index: util.name_index(names), heads: util.name_index(type_head_names(structs, union_names)), resources: util.name_index(resources), spellings: spellings };
+}
+
+// type_head_names is the struct names a type spelling may resolve to. An
+// enum's variant is a StructDecl too, but it is not a type head, so one
+// sharing its name with an enum (IoError's `Other` beside a program's own
+// `enum Other`) does not claim that name from it.
+function type_head_names(structs: StructSig[], union_names: string[]): string[] {
+  let unions: util.NameIndex = util.name_index(union_names);
+  let out: string[] = [];
+  for sd in structs {
+    if (sd.enum_owner.len() == 0 || !unions.has(sd.name)) {
+      out = out.append(sd.name);
+    }
+  }
+  return out;
 }
 
 function resource_names(mod: parser.Module): string[] {
@@ -2547,7 +2564,7 @@ function new_scope(): Scope {
   let ss: StructSig[] = [];
   let us: UnionSig[] = [];
   let ms: MethodSig[] = [];
-  let structs: StructTable = struct_table(ss, [], no_spellings());
+  let structs: StructTable = struct_table(ss, [], [], no_spellings());
   let unions: UnionTable = union_table(us);
   return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
 }
@@ -2622,7 +2639,7 @@ function (s: Scope) type_names(): TypeNames {
 }
 
 function type_names_of(structs: StructTable, unions: UnionTable): TypeNames {
-  return TypeNames { structs: structs.index, unions: unions.index, resources: structs.resources, spellings: structs.spellings };
+  return TypeNames { structs: structs.heads, unions: unions.index, resources: structs.resources, spellings: structs.spellings };
 }
 
 function (s: Scope) resolve_type(name: string): typeinfo.Type {
@@ -8566,9 +8583,13 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
   // First pass: build a name-only table so type_from_name
   // can resolve struct → struct references (e.g. a `Box`
   // with an `inner: Point` field needs Point already known).
+  // Variants are left out as type_head_names leaves them.
+  let unions: util.NameIndex = util.name_index(union_names);
   let names: string[] = [];
   for sd in structs {
-    names = names.append(sd.name);
+    if (sd.enum_owner.len() == 0 || !unions.has(sd.name)) {
+      names = names.append(sd.name);
+    }
   }
   let tn: TypeNames = type_names(names, union_names, resources);
   // Second pass: resolve fields with the full name set
@@ -8616,7 +8637,8 @@ pub function type_from_name_with_struct_names(name: string, struct_names: string
 // A struct name and an alias name can't collide — collect_union_sigs rejects the
 // overlap at module build time.
 pub function type_from_name_with_structs_unions(name: string, structs: StructSig[], unions: UnionSig[]): typeinfo.Type {
-  return type_from_spelling(name, type_names(struct_sig_names(structs), union_sig_names(unions), []));
+  let union_names: string[] = union_sig_names(unions);
+  return type_from_spelling(name, type_names(type_head_names(structs, union_names), union_names, []));
 }
 
 pub function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): typeinfo.Type {
@@ -26248,10 +26270,6 @@ function module_env(mod: parser.Module): ModuleEnv {
   // module lowering hands it (annotate_module) reads a built-in's fields too.
   let rnames: string[] = resource_names(mod);
   let structs: StructSig[] = collect_struct_sigs(parser.inject_builtin_enums(mod.structs), declared_union_names(mod), rnames);
-  let struct_names: string[] = [];
-  for sd in structs {
-    struct_names = struct_names.append(sd.name);
-  }
   let unions: UnionSig[] = collect_union_sigs(mod);
   // An enum registers as a union sig, so an enum-typed scrutinee types to
   // TypeUnion and E030 exhaustiveness covers it as it covers an alias.
@@ -26259,11 +26277,11 @@ function module_env(mod: parser.Module): ModuleEnv {
     unions = unions.append(enum_union_sig(ed));
   }
   let union_names: string[] = union_sig_names(unions);
-  let tn: TypeNames = with_spellings(type_names(struct_names, union_names, rnames), mod);
+  let tn: TypeNames = with_spellings(type_names(type_head_names(structs, union_names), union_names, rnames), mod);
   let sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   return ModuleEnv {
     sigs: sig_table(sigs),
-    structs: struct_table(structs, rnames, tn.spellings),
+    structs: struct_table(structs, union_names, rnames, tn.spellings),
     unions: union_table(unions),
     methods: method_table(collect_method_sigs(mod.funcs, tn)),
     imports: import_paths_of(mod),

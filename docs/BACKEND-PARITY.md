@@ -404,7 +404,9 @@ under this one there is nothing left below us for it to miss.
 We support only the **latest** version of each target's host OS or
 runtime. The CI runner labels reflect that policy:
 
-- Linux: `ubuntu-latest` (tracks the current Ubuntu LTS image).
+- Linux: pinned to `ubuntu-24.04` (x86_64) and `ubuntu-24.04-arm`
+  (aarch64) rather than the floating `ubuntu-latest`, for the
+  reason macOS is pinned. The pin is bumped in a dedicated PR.
 - macOS: pinned to a specific recent label (currently
   `macos-15` = Sequoia, on Apple Silicon arm64). We deliberately
   do NOT use `macos-latest` because that floating label has

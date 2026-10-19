@@ -125,7 +125,7 @@ concurrency:
 jobs:
   bench:
     name: net-nightly-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Room for the HTTP/3 tools' first build, before the cache holds them.
     timeout-minutes: 45
     # The Rust toolchain that builds the hyper server is pinned in
@@ -180,7 +180,7 @@ jobs:
   # `scripts/perf-history show soak/echo.rss_end_kb` is the trend.
   soak:
     name: net-soak-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -204,7 +204,7 @@ jobs:
 
   interop:
     name: net-interop-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -216,7 +216,7 @@ jobs:
 
   tls-interop:
     name: net-tls-interop-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       MISE_ENV: net-nightly
@@ -250,7 +250,7 @@ jobs:
 
   tls-fuzz:
     name: net-tls-fuzz-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -265,7 +265,7 @@ jobs:
 
   autobahn:
     name: net-autobahn-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -282,7 +282,7 @@ jobs:
 
   io-uring:
     name: net-io-uring-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       FERN_IO_URING: "1"
@@ -311,7 +311,7 @@ jobs:
 
   httplint:
     name: net-httplint-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -336,7 +336,7 @@ jobs:
 
   quic-interop:
     name: net-quic-interop-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -351,7 +351,7 @@ jobs:
 
   h2spec:
     name: net-h2spec-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -376,7 +376,7 @@ jobs:
 
   grpc:
     name: net-grpc-interop-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7

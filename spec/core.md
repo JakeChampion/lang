@@ -188,6 +188,7 @@ is the number of slots it leaves.
 | `opt_make` | 120 | 1 | 1 |
 | `opt_tag` | 122 | 1 | 1 |
 | `opt_payload` | 123 | 1 | 1 |
+| `opt_set_payload` | 124 | 2 | 0 |
 | `struct_make` | 138 | n | 1 |
 | `struct_get` | 139 | 1 | 1 |
 | `struct_set` | 140 | 2 | 0 |

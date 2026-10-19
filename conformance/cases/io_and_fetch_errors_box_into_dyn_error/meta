@@ -1,0 +1,7 @@
+waiver: harness-limit
+reason: the wasm leg runs the core module under a bare `wasmtime run`, which
+  defines neither the wasi:sockets imports std/fetch brings in, so the module
+  does not instantiate, nor a preopened directory for read_file to fail in
+  with NotFound. TestWASMStdError covers a concrete error boxed into
+  `dyn error.Error` on wasm, and TestWasmIoErrorOtherText* the runtime's
+  IoError text with a directory mounted.

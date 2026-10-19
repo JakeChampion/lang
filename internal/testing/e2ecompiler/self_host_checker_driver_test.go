@@ -60,7 +60,7 @@ func TestSelfHostCheckerDriverX86_64(t *testing.T) {
 		{"destructure-non-tuple-e024", "function main(): i32 { let (a, b) = 5; return a; }\n", 1, "error[E024]"},
 		// A loop over a value no loop iterates is reported AT the loop, not
 		// later as an uninferable statement in its body.
-		{"for-over-struct-e034", "struct Box { k: i32 }\nfunction main(): i32 {\n  let b: Box = Box { k: 1 };\n  let n: i32 = 0;\n  for it in b {\n    n = n + it.k;\n  }\n  return n;\n}\n", 1, "error[E034]: indexing non-array value of type Box (5:"},
+		{"for-over-struct-e083", "struct Box { k: i32 }\nfunction main(): i32 {\n  let b: Box = Box { k: 1 };\n  let n: i32 = 0;\n  for it in b {\n    n = n + it.k;\n  }\n  return n;\n}\n", 1, "error[E083]: cannot iterate over a value of type Box: `for` walks an array, a string, a Map, a range, an iter.Iterator, or a value whose iter() returns one (5:13)"},
 		{"destructure-field-type-e002", "struct P { x: string }\nfunction main(): i32 { let p: P = P { x: \"s\" }; let P { x } = p; return x; }\n", 1, "error[E002]"},
 		{"value-match-settled-local", valueMatchSettledLocal, 0, ""},
 		{"method-callable-param-binds", methodCallableParamBinds, 0, ""},

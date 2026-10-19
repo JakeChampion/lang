@@ -131,17 +131,20 @@ function main(): i32 {
 			want: 6, allocs: 9, frees: 9,
 		},
 		{
-			// A string VALUE column shared between the clone and the alias.
+			// A string VALUE column shared between the clone and the alias. The
+			// numbers formatted here and below are 100 and up, as 0 to 99 come
+			// from a constant table and allocate nothing.
 			name: "string_values",
 			src: `import "core/map";
 import "std/i32";
 function round(i: i32): i32 {
     let m: Map[string, string] = map_new(4);
     let q: Map[string, string] = m;
-    m = m.insert("k", i.to_string());
+    let n: i32 = i + 100;
+    m = m.insert("k", n.to_string());
     return (q.get_or("k", "").len() + m.get_or("k", "").len() + i) % 91;
 }` + mapAliasGroupMain("100"),
-			want: 72, allocs: 600, frees: 600,
+			want: 8, allocs: 600, frees: 600,
 		},
 		{
 			// Fresh string KEYS as well, one insert before the alias and one after.
@@ -150,12 +153,13 @@ function round(i: i32): i32 {
 import "std/i32";
 function round(i: i32): i32 {
     let m: Map[string, string] = map_new(4);
-    m = m.insert(i.to_string(), i.to_string());
+    let n: i32 = i + 100;
+    m = m.insert(n.to_string(), n.to_string());
     let q: Map[string, string] = m;
-    m = m.insert((i + 1).to_string(), (i + 1).to_string());
-    return (q.len() + m.len() + m.get_or(i.to_string(), "").len() + i) % 91;
+    m = m.insert((n + 1).to_string(), (n + 1).to_string());
+    return (q.len() + m.len() + m.get_or(n.to_string(), "").len() + i) % 91;
 }` + mapAliasGroupMain("100"),
-			want: 16, allocs: 1400, frees: 1400,
+			want: 35, allocs: 1400, frees: 1400,
 		},
 		{
 			// The #7212 shape: a tuple holds the old box at an element.

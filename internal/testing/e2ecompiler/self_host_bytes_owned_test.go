@@ -12,8 +12,9 @@ import (
 // `__bytes_owned`: a slice of a packed u8[], a string's bytes (a view tagged
 // as string-backed), an empty slice, a whole array lent as a view, and a copy
 // grown afterwards, which must not touch the source. The last line counts
-// what 100 copies of an eight-byte slice allocate: the slice's borrowed view
-// box and the copy, two each.
+// what 100 copies of an eight-byte slice allocate: the copy alone on the
+// native targets, which build the slice's view in the frame, and on wasm the
+// view's copy of the bytes as well.
 const bytesOwnedProgram = `import "std/i32";
 import "std/i64";
 
@@ -53,9 +54,9 @@ function main(): i32 {
 `
 
 func TestSelfHostBytesOwned(t *testing.T) {
-	want := "5 8869 18 721642 0 10 6 3\n800 200\n"
+	native := "5 8869 18 721642 0 10 6 3\n800 100\n"
 	runSemanticProgram(t, "bytesowned", bytesOwnedProgram, []string{"owned"},
-		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
+		map[string]string{"arm64-linux": native, "x86-64-linux": native, "x86-64-sanitize": native, "wasm32-wasi": "5 8869 18 721642 0 10 6 3\n800 200\n"})
 }
 
 // bytesRangeProgram copies windows with `__bytes_range`: of a packed u8[], of

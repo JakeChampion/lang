@@ -573,7 +573,11 @@ pub function tid_get(name: string): string {
 // module does file I/O — without this the emitted WAT would name an undeclared
 // global and fail to parse.
 pub function tid_named(): string[] {
-  return ["FileStat", "DirEntry", "NotFound", "PermissionDenied", "AlreadyExists", "Interrupted", "Unsupported", "InvalidUtf8", "Other"];
+  return ["FileStat", "DirEntry", io_error_shape("NotFound"), io_error_shape("PermissionDenied"), io_error_shape("AlreadyExists"), io_error_shape("Interrupted"), io_error_shape("Unsupported"), io_error_shape("InvalidUtf8"), io_error_shape("Other")];
+}
+
+function io_error_shape(variant: string): string {
+  return irtables.variant_shape("IoError", variant);
 }
 
 // tid_globals_section declares one immutable global per type id: every struct in
@@ -584,9 +588,10 @@ pub function tid_globals_section(structs: irtables.StructTab): string {
   let seen: string[] = [];
   let i: i32 = 0;
   while (i < structs.decls.len()) {
-    if (util.index_of_str(seen, structs.decls[i].name) < 0) {
-      seen = seen.append(structs.decls[i].name);
-      parts = parts.append("  (global " + tid_global(structs.decls[i].name) + " i32 (i32.const " + util.i32_to_string(struct_type_id(structs, structs.decls[i].name)) + "))\n");
+    let shape: string = irtables.decl_shape(structs.decls[i]);
+    if (util.index_of_str(seen, shape) < 0) {
+      seen = seen.append(shape);
+      parts = parts.append("  (global " + tid_global(shape) + " i32 (i32.const " + util.i32_to_string(i) + "))\n");
     }
     i = i + 1;
   }
@@ -6753,13 +6758,13 @@ pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irtables.L
   return emit_functions_view(ns, im, cache, im.funcs, irtables.struct_tab(im.structs), physical);
 }
 
-// struct_type_id returns a struct's runtime type id = its index in the module's
-// struct table. (For scalar-field structs with static field access it is never
+// struct_type_id returns the runtime type id of `shape` (irtables.decl_shape) =
+// the index of its decl in the module's struct table. (For scalar-field structs with static field access it is never
 // read, but it occupies the 8-byte header slot so fields land at 8 + i*8.)
-function struct_type_id(structs: irtables.StructTab, name: string): i32 {
+function struct_type_id(structs: irtables.StructTab, shape: string): i32 {
   let i: i32 = 0;
   while (i < structs.decls.len()) {
-    if (structs.decls[i].name == name) {
+    if (irtables.decl_shape(structs.decls[i]) == shape) {
       return i;
     }
     i = i + 1;
@@ -6874,37 +6879,37 @@ pub function build_io_error_func(sv: string[]): string {
   // ENOENT(44) -> NotFound(path)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 44)) (then\n";
   o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1) + ")))\n";
-  o = o + "      (i32.store (local.get $r) (global.get " + tid_global("NotFound") + "))\n";
+  o = o + "      (i32.store (local.get $r) (global.get " + tid_global(io_error_shape("NotFound")) + "))\n";
   o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
   o = o + "      (return (local.get $r))))\n";
   // EACCES(2) -> PermissionDenied(path)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 2)) (then\n";
   o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1) + ")))\n";
-  o = o + "      (i32.store (local.get $r) (global.get " + tid_global("PermissionDenied") + "))\n";
+  o = o + "      (i32.store (local.get $r) (global.get " + tid_global(io_error_shape("PermissionDenied")) + "))\n";
   o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
   o = o + "      (return (local.get $r))))\n";
   // EEXIST(20) -> AlreadyExists(path)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 20)) (then\n";
   o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1) + ")))\n";
-  o = o + "      (i32.store (local.get $r) (global.get " + tid_global("AlreadyExists") + "))\n";
+  o = o + "      (i32.store (local.get $r) (global.get " + tid_global(io_error_shape("AlreadyExists")) + "))\n";
   o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
   o = o + "      (return (local.get $r))))\n";
   // EINTR(27) -> Interrupted (payloadless)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 27)) (then\n";
   o = o + "      (drop (call $__fern_arr_dec (local.get $path)))\n";
   o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(0) + ")))\n";
-  o = o + "      (i32.store (local.get $r) (global.get " + tid_global("Interrupted") + "))\n";
+  o = o + "      (i32.store (local.get $r) (global.get " + tid_global(io_error_shape("Interrupted")) + "))\n";
   o = o + "      (return (local.get $r))))\n";
   // refused_errno() -> Unsupported (payloadless)
   o = o + "    (if (i32.eq (local.get $errno) " + refused_errno() + ") (then\n";
   o = o + "      (drop (call $__fern_arr_dec (local.get $path)))\n";
   o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(0) + ")))\n";
-  o = o + "      (i32.store (local.get $r) (global.get " + tid_global("Unsupported") + "))\n";
+  o = o + "      (i32.store (local.get $r) (global.get " + tid_global(io_error_shape("Unsupported")) + "))\n";
   o = o + "      (return (local.get $r))))\n";
   // EILSEQ(25) -> InvalidUtf8(path)
   o = o + "    (if (i32.eq (local.get $errno) (i32.const 25)) (then\n";
   o = o + "      (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(1) + ")))\n";
-  o = o + "      (i32.store (local.get $r) (global.get " + tid_global("InvalidUtf8") + "))\n";
+  o = o + "      (i32.store (local.get $r) (global.get " + tid_global(io_error_shape("InvalidUtf8")) + "))\n";
   o = o + "      (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
   o = o + "      (return (local.get $r))))\n";
   // default -> Other(path, strerror(errno), $l) (#8265): $l is the errno's
@@ -6942,7 +6947,7 @@ pub function build_io_error_func(sv: string[]): string {
   o = o + "      (block $wd (loop $wl (local.set $t (i32.sub (local.get $t) (i32.const 1))) (i32.store8 (local.get $t) (i32.add (i32.const 48) (i32.rem_u (local.get $n) (i32.const 10)))) (local.set $n (i32.div_u (local.get $n) (i32.const 10))) (br_if $wd (i32.eqz (local.get $n))) (br $wl)))\n";
   o = o + "    ))\n";
   o = o + "    (local.set $r (call $__fern_str_box (i32.const " + io_err_box_bytes(3) + ")))\n";
-  o = o + "    (i32.store (local.get $r) (global.get " + tid_global("Other") + "))\n";
+  o = o + "    (i32.store (local.get $r) (global.get " + tid_global(io_error_shape("Other")) + "))\n";
   o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(0) + ")) (local.get $path))\n";
   o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(1) + ")) (local.get $e))\n";
   o = o + "    (i64.store (i32.add (local.get $r) (i32.const " + io_err_field_off(2) + ")) (i64.extend_i32_u (local.get $l)))\n";
