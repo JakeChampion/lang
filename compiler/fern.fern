@@ -96,6 +96,7 @@ import "./x86_native";
 import "./elf";
 import "./ircore";
 import "./emitforms";
+import "./semarrayreport";
 import "./semlower";
 import "./cover";
 import "./lsp";
@@ -1537,6 +1538,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-check", "", "type-check FILE, - for stdin, or the package or workspace under DIR"),
       cli_flag("-capabilities", "", "the capabilities each package of the program reaches"),
       cli_flag("-effects", "", "the effect row of every function"),
+      cli_flag("-array-report", "", "the array decisions compiling FILE makes, on stdout, writing no output (also FERN_ARRAY_REPORT=1 on stderr)"),
       cli_flag("-targets", "", "list the supported targets and what each provides"),
     ] },
     FlagGroup { title: "fmt", flags: [
@@ -5440,6 +5442,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // `-cover` (or FERN_COVER) instruments the program with line and branch
   // counters it reports to stderr at exit (cover.fern).
   let cover_on: boolean = envflag.on("FERN_COVER");
+  // `-array-report` (or FERN_ARRAY_REPORT, on stderr): the array decisions
+  // the typed lowering makes (semarrayreport).
+  let array_report: i32 = semarrayreport.from_env();
   let have_entry: boolean = false;
   // Whether -target was given, as distinct from the default above. It only
   // matters to `-check`: native type-checks against a capability set only
@@ -5535,6 +5540,10 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       mode_caps = f.on;
     } else if (f.name == "-effects") {
       mode_effects = f.on;
+    } else if (f.name == "-array-report") {
+      if (f.on) {
+        array_report = semarrayreport.to_stdout();
+      }
     } else if (f.name == "-tangle") {
       // Literate: expand a .fern.md document's chunks into Fern source.
       // It reads a document, not a module, so it never loads imports.
@@ -5690,6 +5699,10 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   if (!have_entry) {
     return usage(embedded);
   }
+  if (array_report == semarrayreport.to_stdout() && (tf.run_it || out_path.len() > 0)) {
+    eprint("fern: -array-report prints the report and writes no output, so it takes neither -o nor -run");
+    return 2;
+  }
 
   // `-check <DIR>` checks the package governing DIR, or every member of the
   // workspace it roots. A file argument takes the single-entry path below,
@@ -5778,7 +5791,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     return code;
   }
   let (form, refused) = output_form(target, emit, out_path.len() > 0);
-  if (refused.len() > 0 && !(mode_check || mode_interp || mode_caps || mode_effects)) {
+  if (refused.len() > 0 && !(mode_check || mode_interp || mode_caps || mode_effects || array_report == semarrayreport.to_stdout())) {
     eprint("fern: " + refused);
     return 2;
   }
@@ -6022,7 +6035,11 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // statement, the emitter renders the marks as `.loc` rows over the `.file`
   // table prepended below, and the image writer encodes .debug_line (#11410).
   let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden } };
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden } };
+  // The lowering above made and printed every array decision.
+  if (array_report == semarrayreport.to_stdout()) {
+    return 0;
+  }
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {

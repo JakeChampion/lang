@@ -113,6 +113,7 @@ the language.
 | Pass configuration | an optimisation whose off switch changes the answer, or a bug only the unoptimised path has | the non-sanitize `TestDifferential_SelfHost{X86_64,Arm64,Wasm}` legs compile half the seeds with a seed-chosen subset of `selfHostPassSwitches` (reuse, unit-plan replay, inlining, array fusion, the ndarray kernels) off |
 | **Sanitizer** | rc over-release, use of a freed block, leaks — wrong memory with a right answer | `TestDifferential_SelfHostSanitize{X86_64,Arm64,Wasm}`; wasm carries the leak census only |
 | Go checker vs self-host checker | a program one checker accepts and the other rejects | the self-host legs: a seed the self-host refuses to compile fails or skips by cause |
+| Compiler self-checks | a lowering the compiler's own verifiers reject: the typed lowering refusing part of a program, the rc certifier showing unbalanced counts, the IR verifier finding malformed IR | every self-host leg and the coverage loop fail such a seed (`compilerRefused`) rather than skip it as a coverage gap |
 | Checker mutants | a soundness hole or a completeness gap in either checker, on programs fernsmith never writes: each with one `let` annotation erased, or one `let`, parameter, result or struct-field type replaced (`fernsmith.TypeMutants`); both checkers must agree, and an erased program that checks must compute the original's answer | `TestDifferential_CheckerMutants` |
 | Coverage feedback | steers mutation toward new self-host compiler paths, and every input that reaches one is judged by the exit-byte differential | `TestSelfHostCoverageGuidedFuzz` |
 
@@ -278,8 +279,10 @@ built. Citations are to the paper that introduced the technique.
 1. **Memory-management oracles on every generated program.** No published
    compiler fuzzer checks refcount correctness; Fern has the sanitizer, the
    rc certifier and the leak census already. Done on all three targets (the
-   sanitizer legs), and reuse off is one of the pass configurations below;
-   next is running the certifier in report mode.
+   sanitizer legs), and reuse off is one of the pass configurations below.
+   The rc certifier runs on every compile, and its finding fails the seed.
+   Next is its report mode's census of values it could not prove, which
+   no leg reads yet.
 2. **State hashing** (Csmith, PLDI 2011; rustlantis, OOPSLA 2024; DUMPLING,
    NDSS 2025). Done as the state fold.
 3. **Swarm configuration and generation policies** (Groce et al., ISSTA 2012:
