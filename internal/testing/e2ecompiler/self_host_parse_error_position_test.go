@@ -235,9 +235,10 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"float-range-p002",
 			"function main(): i32 {\n  let big: f64 = 1e999;\n  return 0;\n}\n",
 			"error[P002]: in fn 'main': invalid float literal \"1e999\": value out of range (2:18)"},
-		// The nameless-function P001 raised by parse_unknown_errors_module
-		// itself, before any walk, and nothing after it: the parser skips the
-		// rest of the declaration, as native does.
+		// A nameless function: this gate leaves its P001 to check_decl_names
+		// (asmcore.parse_errors runs both), and reports nothing after it
+		// either, since the parser skips the rest of the declaration, as
+		// native does.
 		//
 		// `function (…)` here is a malformed DECLARATION, not the anonymous
 		// function expression #2673 retired, so it does not migrate to an
@@ -246,7 +247,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// source with `expected a name, got "("`.
 		{"malformed-fn-decl",
 			"function (): i32 {\n  return 1;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
-			"error[P001]: malformed function declaration: its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:1)"},
+			""},
 		// A placeholder with tokens left over is one P001 per f-string, at the
 		// first leftover token of the first bad placeholder, as native reports
 		// it (#12648); a later f-string is reported on its own.
