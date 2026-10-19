@@ -34,10 +34,10 @@ func TestSelfHostFetchFutureModloadIRX86_64(t *testing.T) {
 
 	prog := `import "std/async";
 import "std/fetch";
+import "std/net";
 function main(): i32 {
-    let host: i32 = 127 | (1 << 24);
     let none: u8[] = [];
-    let f: async.Future[u8[]] = fetch.fetch_future(host, 8080, "/");
+    let f: async.Future[u8[]] = fetch.fetch_future(net.socket_addr(net.ipv4_loopback(), 8080), "/");
     let fs: async.Future[u8[]][] = [f];
     let bodies: u8[][] = async.gather(fs, none);
     return bodies[0].len();
