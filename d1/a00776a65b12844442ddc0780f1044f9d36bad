@@ -353,3 +353,26 @@ httplint/range.bad	0
 httplint/range.warn	1
 httplint/fresh.bad	0
 httplint/fresh.warn	0
+
+# lane: net-soak
+soak/static.requests	31877777
+soak/static.failed	0
+soak/static.rss_warm_kb	1956
+soak/static.rss_end_kb	1956
+soak/static.rss_growth_kb	0
+soak/static.allocs	278497
+soak/static.live_bytes	0
+soak/echo.requests	22987996
+soak/echo.failed	0
+soak/echo.rss_warm_kb	1992
+soak/echo.rss_end_kb	1992
+soak/echo.rss_growth_kb	0
+soak/echo.allocs	1180167770
+soak/echo.live_bytes	0
+soak/recent.requests	17092874
+soak/recent.failed	0
+soak/recent.rss_warm_kb	1952
+soak/recent.rss_end_kb	1952
+soak/recent.rss_growth_kb	0
+soak/recent.allocs	434142800
+soak/recent.live_bytes	0
