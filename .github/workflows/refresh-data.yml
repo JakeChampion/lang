@@ -55,7 +55,7 @@ jobs:
         # which is what makes the `&& ||` form safe here.
         source: ${{ fromJSON((github.event_name == 'schedule' || inputs.source == 'all') && '["publicsuffix", "roots", "toolchain-tables", "toolchain"]' || format('["{0}"]', inputs.source)) }}
     name: refresh-${{ matrix.source }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7

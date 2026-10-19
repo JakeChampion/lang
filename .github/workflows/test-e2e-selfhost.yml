@@ -117,7 +117,7 @@ jobs:
   # visible.
   cli:
     name: cli-driver-tests-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -204,7 +204,7 @@ jobs:
   # compiler's codegen.
   driver-sizes:
     name: driver-sizes-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
@@ -246,7 +246,7 @@ jobs:
   # `stage2` the two that run what stage 1 built.
   selfhost-fixpoints:
     name: selfhost-fixpoints-x86_64-${{ matrix.group }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -315,7 +315,7 @@ jobs:
   # timed out two workers that each held one of them.
   selfhost-stdtest:
     name: selfhost-stdtest-${{ matrix.leg }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     strategy:
       fail-fast: false
@@ -382,7 +382,7 @@ jobs:
 
   wasm-wholecompiler-link:
     name: wasm-wholecompiler-link-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -405,7 +405,7 @@ jobs:
 
   arm64-permodule-wholecompiler:
     name: arm64-permodule-wholecompiler-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
@@ -433,7 +433,7 @@ jobs:
   # emits rather than their sum.
   semantic-wholecompiler:
     name: semantic-wholecompiler-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -455,7 +455,7 @@ jobs:
   # THE FIXTURE CORPUS THROUGH THE SELF-HOST COMPILER, one leg per target.
   fixtures-selfhost:
     name: fixtures-selfhost-${{ matrix.leg }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ matrix.job-minutes }}
     strategy:
       fail-fast: false
@@ -485,7 +485,7 @@ jobs:
   # t.Skips without wasmtime, so its job installs it.
   diff-selfhost:
     name: diff-selfhost-${{ matrix.target }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -542,18 +542,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 0 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 1 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 2 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 3 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 4 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 5 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 6 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 7 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 8 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 9 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 10 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 12, shard: 11 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 0 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 1 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 2 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 3 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 4 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 5 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 6 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 7 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 8 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 9 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 10 }
+          - { runner: ubuntu-24.04, host: x86_64, nshard: 12, shard: 11 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-selfhost-${{ matrix.host }}-shard${{ matrix.shard }}
@@ -664,7 +664,7 @@ jobs:
   verify:
     needs: test
     if: ${{ !cancelled() && needs.test.result != 'skipped' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
       FERN_CI_TOLERATE_VANISHED_SHARDS: "0"
