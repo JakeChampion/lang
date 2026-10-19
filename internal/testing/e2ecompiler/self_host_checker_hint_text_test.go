@@ -349,8 +349,8 @@ function main(): i32 { return 0; }`,
 		spelling: "got boolean",
 	},
 	{
-		// `?` on the Option a Writer's write returns, in a function returning
-		// Result: the message names the declared return with its arguments.
+		// `?` on an Option in a function returning Result: the message names
+		// the declared return with its arguments.
 		name: "E042 Option operand in a Result function names the return",
 		src: `function a(): Result[i32, IoError] {
   let x: Option[i32] = Some(1);
