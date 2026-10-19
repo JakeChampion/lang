@@ -1143,11 +1143,10 @@ pub function (sh: Shared) event(fd: i32, readable: boolean): Option[i32] {
     return None;
   }
   let d: Driven = rows[at];
-  let buf: u8[] = __alloc_u8(65536);
   let bytes: u8[] = [];
-  match (net.read(fd, buf)) {
-    Ok(n) => {
-      bytes = buf.take(n);
+  match (net.read_up_to(fd, 65536)) {
+    Ok(got) => {
+      bytes = got;
     },
     Err(e) => {
       return __driven_read_failed(sh, at, d, e);
@@ -3865,14 +3864,13 @@ function __fetch_drain(c: i32, chunks: u8[][]): async.Future[u8[]] {
       return Ready(none);
     }
     let dropped: i32 = wasm_pollable_drop(woken);
-    let buf: u8[] = __alloc_u8(4096);
-    match (net.read(c, buf)) {
-      Ok(n) => {
-        if (n == 0) {
+    match (net.read_up_to(c, 4096)) {
+      Ok(got) => {
+        if (got.len() == 0) {
           tcp_close(c);
           return Ready(__body_of(__join_bytes(chunks)));
         }
-        return __fetch_drain(c, chunks.append(buf.take(n)));
+        return __fetch_drain(c, chunks.append(got));
       },
       Err(e) => {
         if (e.eq(net.WouldBlock)) {
