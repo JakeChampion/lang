@@ -156,9 +156,9 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 // the handler started from its request rather than a framed record built
 // around it; 247.2 here with a byte slice's view descriptor in the frame
 // (#12780) and payloads taken out of enum slots (#12781); 230.33 on
-// arm64-darwin with methods' variant returns paired, where 247.33 was
-// measured before.
-const ServeAllocsH3Ceiling = 231
+// arm64-darwin and 231.19 on the x86-64 runner with methods' variant returns
+// paired, where 247.33 was measured before.
+const ServeAllocsH3Ceiling = 232
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)
