@@ -1,5 +1,6 @@
 import "std/i32";
 import "std/i64";
+import "std/io";
 
 function kind(e: IoError): string {
   match (e) {
@@ -60,9 +61,10 @@ function main(): i32 {
   __heap_release_to(m);
   print(f"heap mark: {m}");
   print(f"account: {__account_entry(0, 0 as usize) == 0 as usize}");
-  match (stdin().read_line()) {
-    Some(l) => { print("stdin: " + l); },
-    None => { print("stdin: eof"); }
+  match (io.read_line(stdin())) {
+    Ok(Some(l)) => { print("stdin: " + l); },
+    Ok(None()) => { print("stdin: eof"); },
+    Err(e) => { print("stdin: " + kind(e)); }
   }
   opt_print(stdout().write("stdout handle\n"));
   opt_print(stderr().write("stderr handle\n"));
