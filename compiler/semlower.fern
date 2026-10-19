@@ -671,15 +671,19 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
 // Scalarized record results no longer carry the original box's unit. Select
 // that actual result from the same produced body as the physical lowering;
 // legacy variant/pair contracts retain their per-word reference information.
+// A contract is keyed by the produced function's name, which for a method
+// carries its receiver where the method's graph is named bare.
 function physical_contracts(built: semsource.Built): ssasem.Contract[] {
   let out: ssasem.Contract[] = built.contracts.list;
+  let i: i32 = 0;
   for p in util.append_all(built.decls, built.instances) {
-    if (p.ok && ssasem.is_wide(p.func.result)) {
-      let at: i32 = built.contracts.names.find(p.func.graph.name);
+    if (p.ok && ssasem.is_wide(p.func.result) && i < built.names.len()) {
+      let at: i32 = built.contracts.names.find(built.names[i]);
       if (at >= 0 && semrecords.find(built.records, out[at].result) >= 0) {
         out = out.with(at, ssasem.Contract { ...out[at], result: p.func.result });
       }
     }
+    i = i + 1;
   }
   return out;
 }
