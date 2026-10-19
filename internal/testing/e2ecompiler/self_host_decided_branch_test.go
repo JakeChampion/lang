@@ -62,8 +62,8 @@ function main(): i32 {
 var shapeLabelRe = regexp.MustCompile(`(?m)^(\.S\d+): \.ascii "([^"]*)"`)
 var shapeTestRe = regexp.MustCompile(`cmpq \$(\.S\d+), `)
 
-// variantTests counts, per variant name, the shapes `body` compares a box's
-// shape word against.
+// variantTests counts, per variant shape (`Enum$Variant`), the shapes `body`
+// compares a box's shape word against.
 func variantTests(asm, body string) map[string]int {
 	names := map[string]string{}
 	for _, m := range shapeLabelRe.FindAllStringSubmatch(asm, -1) {
@@ -80,8 +80,8 @@ func TestSelfHostDecidedBranchShapeX86_64(t *testing.T) {
 	emit, run := x86ShapeHarness(t)
 	asm := emit(t, decidedBranchShapeSrc)
 	want := map[string]map[string]int{
-		"kind":   {"Node": 1, "Red": 1},
-		"weight": {"Patch": 1, "Light": 1, "Mid": 1},
+		"kind":   {"Tree$Node": 1, "Color$Red": 1},
+		"weight": {"Swatch$Patch": 1, "Shade$Light": 1, "Shade$Mid": 1},
 	}
 	for fn, w := range want {
 		got := variantTests(asm, fnText(t, asm, fn))

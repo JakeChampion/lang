@@ -77,13 +77,17 @@ function data_read(value: i32): ir.Op {
 // every phi-edge assignment. These scalar locals hold no ownership unit.
 // The typed lifetime plan keeps the descriptor and backing bytes alive;
 // reads use the decoded data/length without redispatching inside loops.
+// A path on which the value is dead may assign it the null placeholder,
+// which decodes to length 0 rather than being read.
 function decode(value: i32, base: i32): ir.Op[] {
   return [
     ir.op_load_local(value), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0),
     ir.op_load_local(value), ir.op_const_i32(0 - 2), ir.op_raw_addr(), ir.op_str_data(), ir.op_store_local(base),
     ir.op_load_local(value), ir.op_const_i32(0 - 2), ir.op_raw_addr(), ir.op_str_len(), ir.op_store_local(base + 1),
     ir.op_else(), ir.op_load_local(value), ir.op_const_i32(8), ir.op_raw_addr(), ir.op_store_local(base),
-    ir.op_load_local(value), ir.op_arr_len(), ir.op_store_local(base + 1), ir.op_end(),
+    ir.op_const_i32(0), ir.op_store_local(base + 1),
+    ir.op_load_local(value), ir.op_const_i32(0), ir.op_bin("ne", ir.width_ptr(), false), ir.op_if(0),
+    ir.op_load_local(value), ir.op_arr_len(), ir.op_store_local(base + 1), ir.op_end(), ir.op_end(),
   ];
 }
 

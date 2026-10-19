@@ -45,7 +45,7 @@ jobs:
   # blank output pane two suites later. No browser, so it is the fast one.
   shim:
     name: shim
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -69,7 +69,7 @@ jobs:
 
   playwright:
     name: playwright
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -127,7 +127,7 @@ jobs:
 
   bombadil:
     name: bombadil
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -161,7 +161,7 @@ jobs:
         run: |
           mkdir -p "$HOME/.local/bin"
           # Pick the right binary for the runner's arch. Linux
-          # ubuntu-latest is x86_64; the arm64 mapping is here so
+          # ubuntu-24.04 is x86_64; the arm64 mapping is here so
           # this step keeps working when we add a matrix entry.
           case "$(uname -m)" in
             x86_64)  asset=bombadil-x86_64-linux ;;

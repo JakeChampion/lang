@@ -13,7 +13,7 @@ func TestSelfHostCaptureContractRewritesX86_64(t *testing.T) {
 	cases := []struct{ name, mode, source, want string }{
 		{"elide first capture", "elide", `function f(n: i64, text: string): i32 { let cb = (): i32 => { assert(n > 0); return text.len(); }; return cb(); }`, "text:string;"},
 		{"elide all captures", "elide", `function f(n: i64): i32 { let cb = (): i32 => { assert(n > 0); return 7; }; return cb(); }`, ""},
-		{"elide keeps unknown", "elide", `function f[T](n: i64, opaque: T): i32 { let cb = (): i32 => { assert(n > 0); opaque; return 7; }; return cb(); }`, "opaque:unknown;"},
+		{"elide keeps a type parameter", "elide", `function f[T](n: i64, opaque: T): i32 { let cb = (): i32 => { assert(n > 0); opaque; return 7; }; return cb(); }`, "opaque:rigid;"},
 		{"cell keeps width", "box", `function f(): i64 { let n: i64 = 7i64; let cb = (): i64 => n; return cb(); }`, "$cell$n:Cell[i64];"},
 		{"cell keeps callable", "box", `function f(): i64 { let n: () => i64 = source; let cb = (): i64 => n(); return cb(); } function source(): i64 { return 7i64; }`, "$cell$n:Cell[(() => i64)];"},
 		{"substitution adds typed capture", "subst", `function f(n: f32, g: () => f32): f32 { let cb = (): f32 => g(); return cb(); }`, "n:f32;"},
@@ -41,6 +41,7 @@ function report(body: ast.Stmt[]): string {
     for cap in lambdas[0].captures {
         let ty = typeinfo.spelling(cap.ty);
         if let typeinfo.TypeUnknown(u) = cap.ty { ty = "unknown"; }
+        if let typeinfo.TypeErased(e) = cap.ty { ty = "rigid"; }
         out = out + cap.name + ":" + ty + ";";
     }
     return out;

@@ -13,8 +13,8 @@
 // This file is that same set of types written as plain Fern. The
 // import-driven driver (asm_modload_run.fern) loads it like any other
 // module and merges its decls into the program before codegen. Because
-// `inject_builtin_enums` guards every entry with `struct_declared(...)`,
-// the synthetic table degrades to a no-op once these real decls are
+// `inject_builtin_enums` skips a variant its enum already owns, the
+// synthetic table degrades to a no-op once these real decls are
 // present — so this module SUPERSEDES the hand-built table without any
 // change to the legacy bundle path (which simply doesn't load this file
 // and keeps falling back to the synthetic injection).

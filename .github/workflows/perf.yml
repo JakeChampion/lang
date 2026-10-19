@@ -63,7 +63,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest,    host: x86_64  }
+          - { runner: ubuntu-24.04,     host: x86_64  }
           - { runner: ubuntu-24.04-arm, host: aarch64 }
     name: perf-${{ matrix.host }}
     permissions:
@@ -156,7 +156,7 @@ jobs:
     name: selfhost-perf-x86_64
     permissions:
       contents: write
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern

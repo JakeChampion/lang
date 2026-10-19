@@ -1061,7 +1061,7 @@ function drop_variant_fields(own r: irtables.LowerResult, slot: i32, t: typeinfo
     if (semrecords.inhabited(v) && fields_have_children(v.fields)) {
       r = else_if_open(r, open);
       r = emit(r, ir.op_load_local(slot));
-      r = emit(r, ir.op_variant_is(ssasem.variant_key(t, v.name)));
+      r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
       r = emit(r, ir.op_if(0));
       r = drop_record_fields(r, slot, v.fields, scratch, f, false);
       open = open + 1;
@@ -1126,7 +1126,7 @@ function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ss
     let tail: i32 = self_tail_field(v, t);
     r = else_if_open(r, open);
     r = emit(r, ir.op_load_local(node));
-    r = emit(r, ir.op_variant_is(ssasem.variant_key(t, v.name)));
+    r = emit(r, ir.op_variant_is(member_shape(f, t, v.name)));
     r = emit(r, ir.op_if(0));
     let i: i32 = 0;
     while (i < v.fields.len()) {
@@ -1540,7 +1540,7 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
   if (ins.kind_tag == ssasem.variant_new()) {
     let owner: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, f.values[ins.result])];
     fields = owner.variants[variant_tag(f, f.values[ins.result], ins.str)].fields;
-    shape = ssasem.variant_key(variant_union(f, ins), ins.str);
+    shape = member_shape(f, variant_union(f, ins), ins.str);
   } else {
     fields = record_fields(f.values[ins.result], f);
     shape = record_name(f.values[ins.result]);
@@ -2563,8 +2563,8 @@ function dbg_type(f: ssasem.Func, t: typeinfo.Type, open: string[]): string {
 }
 
 // dbg_enum describes a declared enum whose variants carry nothing,
-// `%Name{North,East,...}`: its value points at a box whose word 0 is the
-// variant's shape, which the emitter names and the link resolves.
+// `%Name{Name$North,Name$East,...}`: its value points at a box whose word 0 is
+// the variant's shape, which the emitter names and the link resolves.
 function dbg_enum(f: ssasem.Func, t: typeinfo.Type, s: string): string {
   let at: i32 = semrecords.find_enum(f.enums, t);
   if (at < 0 || f.enums[at].layout != semrecords.layout_variant()) {
@@ -2578,7 +2578,7 @@ function dbg_enum(f: ssasem.Func, t: typeinfo.Type, s: string): string {
     if (out != "") {
       out = out + ",";
     }
-    out = out + v.name;
+    out = out + member_shape(f, t, v.name);
   }
   return "%" + dbg_type_name(s) + "{" + out + "}";
 }
@@ -3698,10 +3698,10 @@ function variant(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, st
     return option_site(r, f, ins, whole);
   }
   if (ins.kind_tag == ssasem.variant_new()) {
-    return emit(r, ir.op_struct_make(ssasem.variant_key(whole, ins.str), ins.args.len(), decl_of(f, ins, structs)));
+    return emit(r, ir.op_struct_make(member_shape(f, whole, ins.str), ins.args.len(), decl_of(f, ins, structs)));
   }
   if (ins.kind_tag == ssasem.variant_is()) {
-    return emit(r, ir.op_variant_is(ssasem.variant_key(whole, ins.str)));
+    return emit(r, ir.op_variant_is(member_shape(f, whole, ins.str)));
   }
   return field_get(r, f, ins);
 }
@@ -3720,7 +3720,7 @@ function dyn_test(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
     if (!first) {
       r = emit(r, ir.op_load_local(ins.args[0]));
     }
-    r = emit(r, ir.op_variant_is(v.name));
+    r = emit(r, ir.op_variant_is(member_shape(f, f.enums[at].ty, v.name)));
     if (!first) {
       r = emit(r, ir.op_bin("or", 0, false));
     }
@@ -3744,6 +3744,16 @@ function enum_layout(f: ssasem.Func, t: typeinfo.Type): i32 {
     return 0;
   }
   return f.enums[at].layout;
+}
+
+// The word-0 identity of union `whole`'s member `name`: a declared enum's
+// variant names its enum (irtables.variant_shape); a struct-union member's box
+// is its own struct's.
+function member_shape(f: ssasem.Func, whole: typeinfo.Type, name: string): string {
+  if (enum_layout(f, whole) == semrecords.layout_variant()) {
+    return irtables.variant_shape(ssasem.type_key(whole), name);
+  }
+  return ssasem.variant_key(whole, name);
 }
 
 function variant_tag(f: ssasem.Func, t: typeinfo.Type, name: string): i32 {
@@ -3883,7 +3893,7 @@ function static_name(f: ssasem.Func, ins: ssa.SInst): string {
     return record_name(f.values[ins.result]);
   }
   if (ins.kind_tag == ssasem.variant_new()) {
-    return ssasem.variant_key(f.values[ins.result], ins.str);
+    return member_shape(f, f.values[ins.result], ins.str);
   }
   return ins.str;
 }

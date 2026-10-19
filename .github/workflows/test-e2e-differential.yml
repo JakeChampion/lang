@@ -59,7 +59,7 @@ jobs:
         # Per-arch: each runner runs its own register target natively plus
         # wasm, and skips the other target (see the header note).
         host:
-          - { runner: ubuntu-latest,    name: x86_64  }
+          - { runner: ubuntu-24.04,     name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
         # Two shards per arch, each half the 2048-seed sweep. See the
         # shard-count note above before changing this; nshard rides along so the partition

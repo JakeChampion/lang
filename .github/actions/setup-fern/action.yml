@@ -123,7 +123,7 @@ runs:
     # output links under lld as well as bfd. Both look for ld.lld under that
     # exact name.
     #
-    # `ubuntu-latest` ships the VERSIONED linker (`ld.lld-18`) but not the `lld`
+    # `ubuntu-24.04` ships the VERSIONED linker (`ld.lld-18`) but not the `lld`
     # package that provides the unversioned `ld.lld` gcc's `-fuse-ld=lld` looks
     # for, so the apt branch below used to run in every job: measured 10.4 s on
     # run 33888241907, across the ~39 jobs that use this action. Symlinking the
