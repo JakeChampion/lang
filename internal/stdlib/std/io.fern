@@ -18,23 +18,8 @@
 // declares `import "std/io";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
 
+import "std/io_outcome";
 import "std/utf8" as utf8;
-
-// The pinned stage0 types the handle writes and closes as Option[IoError] and
-// the current checkers as Result[void, IoError]; `.failure()` reads either, so
-// the sources stage0 compiles (this module, std/io_buffered and the
-// compiler's interpreter) build under both. Delete both once the pin is
-// refreshed (#12844).
-pub function (o: Option[IoError]) failure(): Option[IoError] {
-  return o;
-}
-
-pub function (r: Result[void, IoError]) failure(): Option[IoError] {
-  if let Err(e) = r {
-    return Some(e);
-  }
-  return None;
-}
 
 // The successful caller owns this packed buffer and must free it. Keeping
 // it packed lets the text boundary validate without a whole-input u8[] copy.

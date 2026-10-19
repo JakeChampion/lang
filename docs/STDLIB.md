@@ -4030,6 +4030,17 @@ borrowed reader after use.
   A valid partial line preceding an I/O failure is returned once. `None`
   without an error means EOF. Use `ByteLineReader` for arbitrary bytes.
 
+### `std/io_outcome`
+
+`.failure()`, the `IoError` a handle operation with no value reports, read
+off either `Option[IoError]` (what the pinned stage0 types such an
+operation as) or `Result[void, IoError]` (what it returns today). It
+imports nothing; std/io, std/io_buffered and the compiler's interpreter
+read their outcomes through it so stage0 builds them. It goes when the pin
+is refreshed (#12844).
+
+- `failure(): Option[IoError]` — on either shape, the error or `None`.
+
 ### `std/time`
 
 Date/time module shaped after jiff / NodaTime, backing the

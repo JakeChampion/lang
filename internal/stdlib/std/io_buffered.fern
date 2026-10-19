@@ -19,7 +19,7 @@
 // the whole input. Both are below.
 //
 import "core/mem";
-import "std/io";
+import "std/io_outcome";
 import "std/string";
 import "std/utf8" as utf8;
 
