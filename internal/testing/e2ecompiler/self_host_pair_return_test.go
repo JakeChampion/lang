@@ -465,9 +465,127 @@ function main(): i32 {
 }
 `
 
+// A method pairs as a function does: a receiver method and a trait method
+// called through a generic return their variant's tag and payload, so the
+// loop builds only the Chunk boxes nested in the Ok payloads, six of them.
+// A trait's implementations reached through `dyn` stay boxed, since the
+// dispatch calls them with the boxed result.
+const pairMethodProg = `import "std/bench";
+
+enum Got { Chunk(string), Empty, Late }
+
+trait Source {
+  function next(self: Self, n: i32): Result[Got, i32];
+}
+
+struct Feed { s: string, k: i32 }
+
+impl Source for Feed {
+  function next(self: Feed, n: i32): Result[Got, i32] {
+    if (n % 4 == 3) {
+      return Err(n);
+    }
+    if (n % 4 == 2) {
+      return Ok(Empty);
+    }
+    return Ok(Chunk(self.s));
+  }
+}
+
+// A trait reached through a dyn value: the dispatch calls each
+// implementation with the boxed result, so they stay unpaired.
+trait Peer {
+  function next(self: Self, n: i32): Result[Got, i32];
+}
+
+struct Other { s: string }
+
+impl Peer for Other {
+  function next(self: Other, n: i32): Result[Got, i32] {
+    if (n % 2 == 0) {
+      return Ok(Late);
+    }
+    return Ok(Chunk(self.s));
+  }
+}
+
+@noinline function (f: Feed) peek(n: i32): Option[string] {
+  if (n % 2 == 0) {
+    return Some(f.s);
+  }
+  return None;
+}
+
+function take[T: Source](src: T, n: i32): i32 {
+  match (src.next(n)) {
+    Ok(Chunk(s)) => {
+      return s.len();
+    },
+    Ok(Empty()) => {
+      return 100;
+    },
+    Ok(Late()) => {
+      return 1000;
+    },
+    Err(e) => {
+      return e * 10000;
+    }
+  }
+  return 0;
+}
+
+function through(d: dyn Peer, n: i32): i32 {
+  match (d.next(n)) {
+    Ok(Chunk(s)) => {
+      return s.len();
+    },
+    Ok(Late()) => {
+      return 7;
+    },
+    _ => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let f: Feed = Feed { s: "hey" + "".to_string(), k: 1 };
+  let total: i32 = 0;
+  let i: i32 = 0;
+  let a0: i64 = bench.alloc_count();
+  while (i < 12) {
+    total = total + take(f, i);
+    match (f.peek(i)) {
+      Some(s) => {
+        total = total + s.len();
+      },
+      None => {
+        total = total + 1;
+      }
+    }
+    i = i + 1;
+  }
+  let allocated: i64 = bench.alloc_count() - a0;
+  let o: Other = Other { s: "abcd" + "".to_string() };
+  total = total + through(o, 0) + through(o, 1);
+  print(total.to_string() + " " + allocated.to_string());
+  if (total != 210353) {
+    return 1;
+  }
+  if (allocated != 6) {
+    return 2;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
+`
+
 func TestSelfHostPairReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}}
+	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}}
 	for _, prog := range progs {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(prog.name+"/"+target, func(t *testing.T) {
