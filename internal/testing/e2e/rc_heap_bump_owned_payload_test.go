@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// A match over `read_chunk` / `read_line` / `read_file` / `read_file_bytes`
+// A match over `read_chunk` / `io.read_line` / `read_file` / `read_file_bytes`
 // binds a payload the runtime built fresh for the caller inside an immortal
 // Option / Result box. Nothing released it: the box needed no release, the
 // binding was a borrow, and the exit sweep skipped it — so every chunk of a
-// streaming loop and every line of a read_line loop leaked (#8396). The
+// streaming loop and every line of a line-reading loop leaked (#8396). The
 // bindings are counted owners now (consumingBindings), dropped at the bind
 // site on the next iteration and by the exit sweep otherwise, with a `_`
 // dropped on the spot.
@@ -29,6 +29,7 @@ import (
 // 99 = over-release, 90s = the fixture files could not be written.
 const ownedPayloadFamilySrc = `import "std/i32";
 import "std/i64";
+import "std/io";
 import "std/string";
 function put(path: string, content: string): i32 {
     match (write_file(path, content)) { Ok(_) => { return 0; }, Err(_) => { return 1; } }
@@ -56,9 +57,9 @@ function lines(path: string): i32 {
         Ok(r) => {
             let acc: i32 = 0;
             while (true) {
-                match (r.read_line()) {
-                    Some(l) => { acc = acc + l.len(); },
-                    None => { break; }
+                match (io.read_line(r)) {
+                    Ok(Some(l)) => { acc = acc + l.len(); },
+                    _ => { break; }
                 }
             }
             match (r.close()) { Some(_) => { return -3; }, None => {} }

@@ -93,7 +93,7 @@ directly and never `__suspend`.
 
 Only the stdlib calls `__suspend`, in one place: `async.wait_any`, which
 the fetch client's connect, DNS and receive waits go through
-(`tcp.tcp_recv_deadline`, `dns.first_readable` and `dns.readable_within`,
+(`net.read_deadline`, `dns.first_readable` and `dns.readable_within`,
 `dns.connect_race`). A handler that calls `plat.http` suspends without a
 word of syntax, which is the colorless property #9856 keeps.
 
@@ -292,8 +292,8 @@ winning a tie with the data it would have read. Ties between tasks are the
 seeded PRNG's, so a run is a function of the seed.
 
 The transport reports the cancellation rather than swallowing it:
-`Transport.read` answers `tcp.Recv` — `Chunk`, `Elapsed`, or `Abandoned`
-when the task's wait answered `cancelled()` — and `tcp_recv_deadline` is
+`Transport.read` answers `net.Recv` — `Chunk`, `Elapsed`, or `Abandoned`
+when the task's wait answered `cancelled()` — and `net.read_deadline` is
 that primitive on a socket; `connect_race` leaves the race as
 `Interrupted` on a cancelled wait instead of spinning on it until the
 deadline. The client maps both to `FetchError.Cancelled`, so a handler's

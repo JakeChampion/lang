@@ -5889,12 +5889,21 @@ function __supervisor_events(sup: __Supervisor, events: i32[]): __Supervisor {
 
 // __supervisor_snapshot(sup, i) — worker `i`'s pipe read: what it holds is
 // added to the bytes read before, and the last complete snapshot in them
-// becomes the worker's.
+// becomes the worker's. A pipe at its end or failing leaves the snapshots as
+// they were; the worker's exit is what the reaper acts on.
 function __supervisor_snapshot(sup: __Supervisor, i: i32): __Supervisor {
-  let got: u8[] = tcp_recv(sup.pipes[i], 65536);
-  if (got.len() == 0) {
+  let room: u8[] = __alloc_u8(65536);
+  let n: i32 = 0;
+  match (net.read(sup.pipes[i], room)) {
+    Ok(k) => {
+      n = k;
+    },
+    Err(_) => {}
+  }
+  if (n == 0) {
     return sup;
   }
+  let got: u8[] = room.take(n);
   let framed: (string[], string) = metrics.frames(sup.partial[i] + string_from_bytes_unchecked(got));
   sup = __Supervisor { ...sup, partial: sup.partial.with(i, framed.1) };
   if (framed.0.len() > 0) {

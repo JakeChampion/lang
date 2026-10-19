@@ -42,19 +42,16 @@ func startTcpPongServer(t *testing.T) int {
 // checks tcp_pollable identity, sends "ping", recvs the reply, and returns its
 // length (the server replies with 6 bytes, so a healthy round-trip exits 6).
 func tcpClientIRProgram(port int) string {
-	// 127.0.0.1 in network byte order = 127 | (1 << 24) = 16777343.
-	const host = 127 | (1 << 24)
 	return fmt.Sprintf(`function main(): i32 {
-    let host: i32 = %d;
-    let c: i32 = tcp_connect(host, %d);
+    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
     if (c < 0) { return 100; }
     if (tcp_pollable(c) != c) { tcp_close(c); return 102; }
-    let req: string = "ping";
-    if (tcp_send(c, req) < 0) { tcp_close(c); return 101; }
-    let resp: u8[] = tcp_recv(c, 64);
+    if (tcp_send_bytes(c, [112u8, 105u8, 110u8, 103u8]) < 0) { tcp_close(c); return 101; }
+    let resp: u8[] = __alloc_u8(64);
+    let n: i32 = tcp_recv_into(c, resp);
     tcp_close(c);
-    return resp.len();
-}`, host, port)
+    return n;
+}`, port)
 }
 
 // The TCP operations use the self-host IR path and its Fern runtime helpers.
@@ -81,8 +78,8 @@ func TestSelfHostTcpClientIRX86_64(t *testing.T) {
 	if strings.Contains(string(asm), "__fern_tcp_pollable") {
 		t.Fatal("native pollable identity still calls a runtime helper")
 	}
-	for _, sym := range []string{"call __fn___fern_tcp_connect", "call __fn___fern_tcp_send", "call __fn___fern_tcp_recv", "call __fn___fern_tcp_close"} {
-		if !strings.Contains(string(asm), sym) {
+	for _, sym := range []string{"__fn___fern_tcp_connect_with_u8", "__fn___fern_tcp_send_bytes_u8", "__fn___fern_tcp_recv_into_u8", "__fn___fern_tcp_close"} {
+		if !strings.Contains(string(asm), "call "+sym+"\n") {
 			t.Errorf("emitted asm missing %q (tcp op did not lower through the IR path)", sym)
 		}
 	}

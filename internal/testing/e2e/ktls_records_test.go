@@ -74,7 +74,7 @@ import "std/tls/record";
 // the kernel's key structure (record.Protection.kernel_info) is shown to
 // carry the key, the IV, the salt and the sequence number.
 function suite(name: string, s: keyschedule.CipherSuite, ln: i32): string {
-  let c: i32 = tcp_connect(16777343, tcp_local_port(ln));
+  let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
   let a: i32 = tcp_accept(ln);
   if (c < 0 || a < 0) {
     return name + " connect";
@@ -95,10 +95,15 @@ function suite(name: string, s: keyschedule.CipherSuite, ln: i32): string {
   if (tx != 0) {
     return name + " tx " + tx.to_string();
   }
-  if (tcp_send(a, "sealed by the kernel") != 20) {
+  if (tcp_send_bytes(a, [115u8, 101u8, 97u8, 108u8, 101u8, 100u8, 32u8, 98u8, 121u8, 32u8, 116u8, 104u8, 101u8, 32u8, 107u8, 101u8, 114u8, 110u8, 101u8, 108u8]) != 20) {
     return name + " send";
   }
-  let raw: u8[] = tcp_recv(c, 4096);
+  let rawbuf: u8[] = __alloc_u8(4096);
+  let nraw: i32 = tcp_recv_into(c, rawbuf);
+  if (nraw <= 0) {
+    return name + " recv " + nraw.to_string();
+  }
+  let raw: u8[] = rawbuf.take(nraw);
   let opened: string = "";
   match (record.deframe(raw)) {
     Ok(d) => {

@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostReadErrorWasmIR runs the wasm stdin readers with a directory as
-// stdin, so every fd_read fails (EISDIR) and must read as end of input. The
-// helpers take the byte count fd_read writes to scratch address 8; on an error
-// nothing is written there, and a count left by an earlier call (the `write`
-// each program starts with) was taken for bytes read: read_line returned
-// Some.
+// TestSelfHostReadErrorWasmIR runs the wasm stdin reader with a directory as
+// stdin, so every fd_read fails (EISDIR) and must read as an error, never as
+// bytes or the end of input. The helper takes the byte count fd_read writes to
+// scratch address 8; on an error nothing is written there, and a count left by
+// an earlier call (the `write` each program starts with) must not be taken for
+// bytes read.
 func TestSelfHostReadErrorWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm read-error e2e")
@@ -27,9 +27,9 @@ func TestSelfHostReadErrorWasmIR(t *testing.T) {
 		name, src string
 		wantExit  int
 	}{
-		{"read_line_is_none", `function main(): i32 {
+		{"read_chunk_bytes_is_err", `function main(): i32 {
     write("x");
-    match (read_line()) { Some(_) => { return 1; }, None => { return 0; } }
+    match (stdin().read_chunk_bytes(4)) { Ok(_) => { return 1; }, Err(_) => { return 0; } }
     return 9;
 }`, 0},
 	}

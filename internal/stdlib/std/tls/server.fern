@@ -20,7 +20,6 @@ import "std/crypto";
 import "std/crypto/chacha20poly1305";
 import "std/i32";
 import "std/net";
-import "std/tcp";
 import "std/time";
 import "std/tls/handshake";
 import "std/tls/identity";
@@ -940,15 +939,18 @@ function __await(fd: i32, deadline: i64): Result[Option[u8[]], TlsError] {
 // __recv_fd is the next bytes off the socket within `wait`, empty at the
 // end of the stream, or None when the wait passed first.
 function __recv_fd(fd: i32, wait: Duration): Result[Option[u8[]], TlsError] {
-  match (tcp.tcp_recv_deadline(fd, 65536, wait)) {
-    tcp.Chunk(b) => {
+  match (net.read_deadline(fd, 65536, wait)) {
+    Ok(net.Chunk(b)) => {
       return Ok(Some(b));
     },
-    tcp.Elapsed => {
+    Ok(net.Elapsed()) => {
       return Ok(None);
     },
-    tcp.Abandoned => {
+    Ok(net.Abandoned()) => {
       return Err(NetFailed(net.Interrupted));
+    },
+    Err(e) => {
+      return Err(NetFailed(e));
     }
   }
   return Ok(None);

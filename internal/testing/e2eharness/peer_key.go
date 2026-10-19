@@ -2,7 +2,7 @@ package e2eharness
 
 // PeerKeyProbe exercises `tcp_socket_ctl` op 7, the peer's address as a
 // 32-bit key, over a loopback connection: both ends of one answer
-// 127.0.0.1 packed as `tcp_connect` takes it, a listener answers 0, and
+// 127.0.0.1 packed as `packed_v4` packs it, a listener answers 0, and
 // std/net's `peer_key` reads the same through its Option. Exit 42 and
 // "ok" on stdout iff every check holds, else the number of the first
 // failing check.
@@ -21,7 +21,7 @@ function main(): i32 {
     if (ln < 0) { return fail(1); }
     let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
-    let c: i32 = tcp_connect(16777343, port);
+    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
     if (c < 0) { return fail(3); }
     let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(4); }

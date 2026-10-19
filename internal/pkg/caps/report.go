@@ -38,7 +38,7 @@ type Row struct {
 // pkgOf maps a FuncDecl.BodyModule to the owning package's stable
 // identity; returning "" marks the module as fold-through (the stdlib):
 // its functions are traversal nodes, never roots, so `std/fetch`'s
-// tcp_connect shows up on the row of whichever package calls into
+// tcp_connect_with shows up on the row of whichever package calls into
 // std/fetch.
 //
 // Attribution choices (see docs/PACKAGE-CAPABILITIES-BRIEF.md):

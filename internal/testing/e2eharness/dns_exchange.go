@@ -393,6 +393,17 @@ func DnsDialSource(first string, port int) string {
 import "std/time";
 import "std/net";
 
+// recv reads once from fd within five seconds: the bytes, none at the end
+// of the stream, when nothing came, or when the read failed.
+function recv(fd: i32, max: i32): u8[] {
+    match (net.read_watched(fd, max, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => { return b; },
+        _ => {}
+    }
+    let none: u8[] = [];
+    return none;
+}
+
 function main(): i32 {
     let first: net.IpAddr = net.ipv4_unspecified();
     match (net.ip_parse(%q)) {
@@ -402,8 +413,8 @@ function main(): i32 {
     let opts: dns.DialOptions = dns.DialOptions { fallback: time.duration_millis(200 as i64), timeout: time.duration_seconds(5 as i64) };
     match (dns.connect_race([first, net.ipv4_loopback()], %d, opts)) {
         Ok(sock) => {
-            tcp_send(sock, "hi");
-            let got: u8[] = tcp_recv(sock, 16);
+            tcp_send_bytes(sock, [104u8, 105u8]);
+            let got: u8[] = recv(sock, 16);
             print(string_from_bytes_unchecked(got));
             tcp_close(sock);
             return 0;

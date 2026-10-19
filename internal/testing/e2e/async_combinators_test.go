@@ -92,56 +92,54 @@ func TestAsyncCombinatorsRealFd(t *testing.T) {
 		}
 	}()
 
-	const host = 127 | (1 << 24)
-
 	gatherSrc := fmt.Sprintf(`import "std/async";
 
 function fetch_future(conn: i32): async.Future[i32] {
     function resume(woken_fd: i32): async.Future[i32] {
-        let resp: u8[] = tcp_recv(woken_fd, 4096);
-        if (resp.len() > 0) { return Ready(1); }
+        let resp: u8[] = __alloc_u8(4096);
+        if (tcp_recv_into(woken_fd, resp) > 0) { return Ready(1); }
         return Ready(0);
     }
     return Pending(conn, resume);
 }
 
 function main(): i32 {
-    let c1: i32 = tcp_connect(%d, %d);
-    let c2: i32 = tcp_connect(%d, %d);
+    let c1: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    let c2: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
     if (c1 < 0) { return 81; }
     if (c2 < 0) { return 82; }
-    if (tcp_send(c1, "GET /1 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 83; }
-    if (tcp_send(c2, "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 84; }
+    if (tcp_send_bytes(c1, [71u8, 69u8, 84u8, 32u8, 47u8, 49u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 83; }
+    if (tcp_send_bytes(c2, [71u8, 69u8, 84u8, 32u8, 47u8, 50u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 84; }
     let fs: async.Future[i32][] = [fetch_future(c1), fetch_future(c2)];
     let r: i32[] = async.gather(fs, -1);
     if (r[0] == 1 && r[1] == 1) { return 42; }
     return 85;
-}`, host, port, host, port)
+}`, port, port)
 
 	raceSrc := fmt.Sprintf(`import "std/async";
 
 function fetch_future(conn: i32): async.Future[i32] {
     function resume(woken_fd: i32): async.Future[i32] {
         if (woken_fd == async.cancelled()) { return Ready(0); }
-        let resp: u8[] = tcp_recv(woken_fd, 4096);
-        if (resp.len() > 0) { return Ready(1); }
+        let resp: u8[] = __alloc_u8(4096);
+        if (tcp_recv_into(woken_fd, resp) > 0) { return Ready(1); }
         return Ready(0);
     }
     return Pending(conn, resume);
 }
 
 function main(): i32 {
-    let c1: i32 = tcp_connect(%d, %d);
-    let c2: i32 = tcp_connect(%d, %d);
+    let c1: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    let c2: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
     if (c1 < 0) { return 81; }
     if (c2 < 0) { return 82; }
-    if (tcp_send(c1, "GET /1 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 83; }
-    if (tcp_send(c2, "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n") < 0) { return 84; }
+    if (tcp_send_bytes(c1, [71u8, 69u8, 84u8, 32u8, 47u8, 49u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 83; }
+    if (tcp_send_bytes(c2, [71u8, 69u8, 84u8, 32u8, 47u8, 50u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 84; }
     let fs: async.Future[i32][] = [fetch_future(c1), fetch_future(c2)];
     let (winner, result) = async.race(fs, -1);
     if (winner >= 0 && result == 1) { return 42; }
     return 86;
-}`, host, port, host, port)
+}`, port, port)
 
 	dir := t.TempDir()
 	progs := []struct {

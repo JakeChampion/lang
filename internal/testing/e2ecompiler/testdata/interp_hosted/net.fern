@@ -1,7 +1,7 @@
 import "std/i32";
 
-function text(b: u8[]): string {
-  return string_from_bytes_unchecked(b);
+function text(b: u8[], n: i32): string {
+  return string_from_bytes_unchecked(b.take(n));
 }
 
 function main(): i32 {
@@ -16,7 +16,7 @@ function main(): i32 {
   let s: i32 = tcp_accept(ls);
   print(f"accept ok: {s >= 0}");
   print(f"nodelay: {tcp_socket_ctl(c, 1, 1)}");
-  print(f"send: {tcp_send(c, "hello ")}");
+  print(f"send: {tcp_send_bytes(c, "hello ".bytes())}");
   print(f"send_bytes: {tcp_send_bytes(c, [119u8, 111u8, 114u8, 108u8, 100u8])}");
   let h: usize = buf_new(8);
   buf_push(h, "!!buf");
@@ -24,32 +24,29 @@ function main(): i32 {
   buf_free(h);
   print(f"poll ready: {poll([s], 1000)}");
   let got: string = "";
+  let b: u8[] = __alloc_u8(64);
   while (got.len() < 14) {
-    let b: u8[] = tcp_recv(s, 64);
-    if (b.len() == 0) {
+    let n: i32 = tcp_recv_into(s, b);
+    if (n <= 0) {
       break;
     }
-    got = got + text(b);
+    got = got + text(b, n);
   }
   print("recv: " + got);
   print(f"close c: {tcp_close(c)}");
   print(f"close s: {tcp_close(s)}");
   print(f"close ls: {tcp_close(ls)}");
-  let packed: i32 = 127 | (1 << 24);
   let ls2: i32 = tcp_listen(0);
   print(f"listen0 ok: {ls2 >= 0}");
   let p2: i32 = tcp_local_port(ls2);
-  let c2: i32 = tcp_connect(packed, p2);
-  print(f"connect packed ok: {c2 >= 0}");
+  let c2: i32 = tcp_connect_with(lo, p2, false);
+  print(f"connect ok: {c2 >= 0}");
   let s2: i32 = tcp_accept(ls2);
   print(f"sendfile bad fd: {tcp_sendfile(c2, 0 - 1, 4) < 0}");
   print(f"close: {tcp_close(c2)} {tcp_close(s2)} {tcp_close(ls2)}");
   let u: i32 = udp_bind(lo, 0);
   print(f"udp_bind ok: {u >= 0}");
   let up: i32 = tcp_local_port(u);
-  print(f"udp_send: {udp_send("127.0.0.1", up, "dgram")}");
-  print(f"udp_send bad host: {udp_send("localhost", up, "x")}");
-  print(f"udp_send_bytes: {udp_send_bytes("127.0.0.1", up, [1u8, 2u8])}");
   print(f"udp_sendto: {udp_sendto(u, lo, up, "to-self")}");
   print(f"udp_sendto_bytes: {udp_sendto_bytes(u, lo, up, [9u8])}");
   let u2: i32 = udp_bind_with(lo, 0, true);

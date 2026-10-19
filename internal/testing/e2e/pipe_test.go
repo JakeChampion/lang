@@ -50,13 +50,13 @@ func pipeSource(forks bool) string {
     };
     match (p.w.write("through\n")) { None => {}, Some(_) => { return 11; } }
     p.w.close();
-    match (p.r.read_line()) {
-        Some(line) => { if (line != "through\n") { return 12; } },
-        None => { return 13; },
+    match (p.r.read_chunk(64)) {
+        Ok(got) => { if (got != "through\n") { return 12; } },
+        Err(_) => { return 13; },
     }
-    match (p.r.read_line()) {
-        Some(_) => { return 14; },
-        None => {},
+    match (p.r.read_chunk(64)) {
+        Ok(got) => { if (got.len() != 0) { return 14; } },
+        Err(_) => { return 15; },
     }
     p.r.close();` + child + `
     return 7;

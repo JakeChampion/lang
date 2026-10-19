@@ -43,9 +43,10 @@ func TestWasmTcpConnectOutbound(t *testing.T) {
 	}()
 
 	// Guest: read PORT from env, connect to 127.0.0.1:PORT, send a
-	// request, recv the reply, print it. 127.0.0.1 packs (std/fetch
-	// ipv4 convention a|b<<8|c<<16|d<<24) to 127 | 1<<24.
-	src := `function port_from_env(): i32 {
+	// request, read the reply, print it.
+	src := `import "std/net";
+
+function port_from_env(): i32 {
     match (env("PORT")) {
         Some(s) => {
             let n: i32 = 0;
@@ -64,12 +65,15 @@ func TestWasmTcpConnectOutbound(t *testing.T) {
 }
 
 function main(): i32 {
-    let host: i32 = 127 | (1 << 24);   // 127.0.0.1
-    let c: i32 = tcp_connect(host, port_from_env());
-    if (c < 0) { return 1; }
-    if (tcp_send(c, "GET / HTTP/1.1\r\nConnection: close\r\n\r\n") < 0) { return 2; }
-    let resp: string = string_from_bytes_unchecked(tcp_recv(c, 4096));
-    print(resp);
+    let c: i32 = match (net.connect(net.socket_addr(net.ipv4_loopback(), port_from_env()))) {
+        Ok(c) => c,
+        Err(_) => { return 1; },
+    };
+    match (net.write(c, [71u8, 69u8, 84u8, 32u8, 47u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 67u8, 111u8, 110u8, 110u8, 101u8, 99u8, 116u8, 105u8, 111u8, 110u8, 58u8, 32u8, 99u8, 108u8, 111u8, 115u8, 101u8, 13u8, 10u8, 13u8, 10u8])) { Err(_) => { return 2; }, Ok(_) => {} }
+    match (net.read_watched(c, 4096, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => { print(string_from_bytes_unchecked(b)); },
+        _ => { return 3; },
+    }
     tcp_close(c);
     return 0;
 }`

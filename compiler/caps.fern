@@ -17,7 +17,7 @@
 //
 // Reachability, not syntax, is what makes this different from the target
 // boundary: `helper` reaches `net` when anything it declares can call
-// tcp_connect, however many stdlib frames sit in between. So the analysis is a
+// tcp_connect_with, however many stdlib frames sit in between. So the analysis is a
 // call-graph walk (analyze), and the report and enforcement are two readings of
 // its one result — the report is all usage, enforcement is usage minus grants.
 
@@ -58,14 +58,9 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "tcp_listen", capability: "net" },
     BuiltinCap { builtin: "tcp_accept", capability: "net" },
     BuiltinCap { builtin: "tcp_local_port", capability: "net" },
-    BuiltinCap { builtin: "tcp_connect", capability: "net" },
-    BuiltinCap { builtin: "tcp_recv", capability: "net" },
-    BuiltinCap { builtin: "tcp_send", capability: "net" },
     BuiltinCap { builtin: "tcp_send_bytes", capability: "net" },
     BuiltinCap { builtin: "tcp_close", capability: "net" },
     BuiltinCap { builtin: "tcp_pollable", capability: "net" },
-    BuiltinCap { builtin: "udp_send", capability: "net" },
-    BuiltinCap { builtin: "udp_send_bytes", capability: "net" },
     BuiltinCap { builtin: "tcp_listen_with", capability: "net" },
     BuiltinCap { builtin: "tcp_socket_ctl", capability: "net" },
     BuiltinCap { builtin: "tcp_sendfile", capability: "net" },
@@ -208,7 +203,7 @@ pub function ungated(): string[] {
   return [
     "__outer_mul_f64",
     "__inner_mul_add_f64",
-    "putchar", "print", "write", "eprint", "read_line",
+    "putchar", "print", "write", "eprint",
     "stdin", "stdout", "stderr", "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "target_os", "target_arch", "args", "set_args", "exit",
     "signal_ignore", "signal_default",
     // Catching is a disposition too: the handler only sets a flag this
@@ -301,7 +296,7 @@ pub function classified(name: string): boolean {
 //     A dependency with no key is warn-and-allow, the migration default.
 //
 // A module with no Pkg entry folds through: its functions are traversal nodes,
-// never roots, so a stdlib module's tcp_connect shows up on the row of
+// never roots, so a stdlib module's tcp_connect_with shows up on the row of
 // whichever package calls into it.
 pub struct Pkg {
   module: string,

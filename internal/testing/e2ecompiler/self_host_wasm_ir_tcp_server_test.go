@@ -169,15 +169,15 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
 	// source; portsByComp carries it from compile time to dial time.
 	t.Run("listen_accept_echo", func(t *testing.T) {
 		port := freePort(t)
-		src := fmt.Sprintf(`function main(): i32 {
+		src := fmt.Sprintf(wasmRecvHelper+`function main(): i32 {
     let l: i32 = tcp_listen(%d);
     if (l < 0) { write("listen-failed\n"); return 1; }
     write("listening\n");
     let c: i32 = tcp_accept(l);
     if (c < 0) { write("accept-failed\n"); return 1; }
-    let r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
+    let r: string = recv(c, 64);
     write("recv="); write(r);
-    let n: i32 = tcp_send(c, "pong");
+    let n: i32 = tcp_send_bytes(c, [112u8, 111u8, 110u8, 103u8]);
     write(" sent="); print_int(n); write("\n");
     tcp_close(c);
     tcp_close(l);
@@ -237,8 +237,9 @@ func TestSelfHostWasmIRTcpServer(t *testing.T) {
     let ps: i32[] = [p];
     let i: i32 = wasm_poll(ps);
     write("polled="); print_int(i);
-    let r: string = string_from_bytes_unchecked(tcp_recv(c, 64));
-    write(" recv="); write(r); write("\n");
+    let buf: u8[] = [0u8, 0u8, 0u8, 0u8];
+    let n: i32 = tcp_recv_into(c, buf);
+    write(" recv="); if (n == 4) { write(string_from_bytes_unchecked(buf)); } write("\n");
     wasm_pollable_drop(p);
     tcp_close(c);
     tcp_close(l);

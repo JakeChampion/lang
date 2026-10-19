@@ -36,7 +36,7 @@ var traitDefaultCases = []traitDefaultCase{
 	{"env", "env", `env("HOME");`},
 	{"env", "hostname", `hostname();`},
 	{"fs", "read_file", `read_file("/etc/hostname");`},
-	{"net", "tcp_connect", `tcp_connect(1, 80);`},
+	{"net", "tcp_close", `tcp_close(1);`},
 	{"random", "random_i32", `random_i32();`},
 	{"subprocess", "subprocess", `subprocess("/bin/true", [], "");`},
 	{"time", "now_unix_ms", `now_unix_ms();`},

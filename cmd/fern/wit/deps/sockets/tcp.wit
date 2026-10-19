@@ -7,7 +7,7 @@ package wasi:sockets@0.2.0;
 // set-listen-backlog-size, set-keep-alive-enabled, shutdown and
 // remote-address. The rest of the full API is not lowered.
 //
-// start/finish-connect back the OUTBOUND client (tcp_connect, #4318).
+// start/finish-connect back the OUTBOUND client (tcp_connect_with, #4318).
 // They are declared here for the SELF-HOST wasm path, which composes via
 // `wasm-tools component embed` + `component new` and therefore resolves
 // imports against this file. Native emits the same two imports but never

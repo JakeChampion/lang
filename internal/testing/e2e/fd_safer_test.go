@@ -42,22 +42,24 @@ const fdSaferStdoutSrc = `function main(): i32 {
 }
 `
 
-// fdSaferStdinSrc opens a file with fd 0 closed. read_line() on stdin must
-// answer None (exit 2 if it read the FILE's first line), and the reader
+// fdSaferStdinSrc opens a file with fd 0 closed. A line read from stdin must
+// not answer a line (exit 2 if it read the FILE's first line), and the reader
 // must still hand back that line.
-const fdSaferStdinSrc = `function main(): i32 {
+const fdSaferStdinSrc = `import "std/io";
+
+function main(): i32 {
     match (open_reader("data.txt")) {
         Ok(r) => {
-            match (read_line()) {
-                Some(line) => { return 2; },
-                None => { }
+            match (io.read_line(stdin())) {
+                Ok(Some(line)) => { return 2; },
+                _ => { }
             }
-            match (r.read_line()) {
-                Some(line) => {
+            match (io.read_line(r)) {
+                Ok(Some(line)) => {
                     if (line != "FROM-FILE\n") { return 3; }
                     return 0;
                 },
-                None => { return 4; }
+                _ => { return 4; }
             }
         },
         Err(e) => { return 5; }
@@ -129,7 +131,7 @@ func TestOpenedHandleNeverLandsOnAStandardDescriptor(t *testing.T) {
 			}
 			prog = build("stdin_closed", fdSaferStdinSrc)
 			if code := run(prog, closedStdio, nil); code != 0 {
-				t.Errorf("with fd 0 closed: exit %d, want 0 (2 = read_line() read the opened file)", code)
+				t.Errorf("with fd 0 closed: exit %d, want 0 (2 = stdin read the opened file)", code)
 			}
 		})
 	}

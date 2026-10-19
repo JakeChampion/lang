@@ -119,7 +119,7 @@ function main(): i32 {
 }`,
 		"helper/fern.toml": "[package]\nname = \"helper\"\n",
 		"helper/lib.fern": `pub function save(s: string): void {
-  let fd: i32 = tcp_connect(0, 80);
+  let fd: i32 = tcp_close(0);
   write_file("/tmp/fern-caps-out.txt", s);
 }`,
 	})
@@ -128,7 +128,7 @@ function main(): i32 {
 	if err == nil {
 		t.Fatal("expected an E070 violation, got none")
 	}
-	want := `package "helper" reaches 'net' (tcp_connect) without a capability grant: lib__save → tcp_connect; add "net" to its capabilities in fern.toml or remove the call`
+	want := `package "helper" reaches 'net' (tcp_close) without a capability grant: lib__save → tcp_close; add "net" to its capabilities in fern.toml or remove the call`
 	if got := err.Error(); !strings.Contains(got, want) {
 		t.Errorf("error:\ngot  %q\nwant substring %q", got, want)
 	}
@@ -180,7 +180,7 @@ func TestEnforceCapabilitiesRootSilent(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n",
 		"app/main.fern": `function main(): i32 {
-  let fd: i32 = tcp_connect(0, 80);
+  let fd: i32 = tcp_close(0);
   write_file("/tmp/fern-caps-out.txt", "x");
   return 0;
 }`,
@@ -220,21 +220,21 @@ pub function fetch(s: string): void {
 }`,
 		"b/fern.toml": "[package]\nname = \"b\"\nlib = \"b.fern\"\n",
 		"b/b.fern": `pub function send(s: string): void {
-  let fd: i32 = tcp_connect(0, 80);
+  let fd: i32 = tcp_close(0);
 }`,
 	})
 	err, warns := runEnforce(t, filepath.Join(root, "app", "main.fern"))
 	if err == nil {
 		t.Fatal("expected a's transitive net reach to violate, got none")
 	}
-	want := `package "a" reaches 'net' (tcp_connect) without a capability grant: a__fetch → b__send → tcp_connect; add "net" to its capabilities in fern.toml or remove the call`
+	want := `package "a" reaches 'net' (tcp_close) without a capability grant: a__fetch → b__send → tcp_close; add "net" to its capabilities in fern.toml or remove the call`
 	if got := err.Error(); !strings.Contains(got, want) {
 		t.Errorf("error:\ngot  %q\nwant substring %q", got, want)
 	}
 	if strings.Contains(err.Error(), `package "b"`) {
 		t.Errorf("b is ungoverned (warn-and-allow) and must not be an error: %q", err.Error())
 	}
-	wantWarn := "warning: package \"b\" reaches 'net' (tcp_connect) but no capabilities key governs it: b__send → tcp_connect; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)\n"
+	wantWarn := "warning: package \"b\" reaches 'net' (tcp_close) but no capabilities key governs it: b__send → tcp_close; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)\n"
 	if warns != wantWarn {
 		t.Errorf("warnings:\ngot  %q\nwant %q", warns, wantWarn)
 	}

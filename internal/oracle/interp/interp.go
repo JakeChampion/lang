@@ -567,7 +567,7 @@ type Interp struct {
 	// tests / the REPL can override it to capture diagnostic
 	// output independently of Stdout.
 	Stderr io.Writer
-	// Stdin is where `read_line` reads. Defaults to os.Stdin;
+	// Stdin is where `stdin()` reads. Defaults to os.Stdin;
 	// tests / the REPL can override it to feed scripted input.
 	Stdin io.Reader
 	// Env is the source of `env(name)` lookups. nil means
@@ -592,8 +592,7 @@ type Interp struct {
 	// The interpreter never closes the host's own stdio, but from then
 	// on it answers for the stream the way the kernel answers for a
 	// closed fd: handle methods and a second close fail with EBADF,
-	// print / write / eprint / putchar write nothing, and read_line()
-	// reads nothing.
+	// print / write / eprint / putchar write nothing.
 	closedStd map[int64]bool
 	// deferStack is a per-call list of expressions to evaluate at
 	// function exit, in LIFO order. callFunc / callClosure push
@@ -621,7 +620,7 @@ type Interp struct {
 	// from tcpNextHandle so poll and tcp_close take it like a socket.
 	timerFds map[int64]int
 	// tcpNonblocking holds the connections tcp_socket_ctl put into
-	// non-blocking mode, which tcp_recv honours with a zero deadline.
+	// non-blocking mode, which tcp_recv_into honours with a zero deadline.
 	tcpNonblocking map[int64]bool
 	// reactors holds the readiness sets reactor_new made (reactor.go).
 	reactors    map[int64]*reactor
@@ -770,7 +769,6 @@ func New() *Interp {
 	i.Builtins["open_exclusive"] = &Builtin{Fn: builtinOpenExclusive}
 	i.Builtins["open_reader_with"] = &Builtin{Fn: builtinOpenReaderWith}
 	i.Builtins["open_writer_with"] = &Builtin{Fn: builtinOpenWriterWith}
-	i.Builtins["__method_Reader_read_line"] = &Builtin{Fn: builtinReaderReadLine}
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
 	i.Builtins["__method_Reader_read_chunk_bytes"] = &Builtin{Fn: builtinReaderReadChunkBytes}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
@@ -876,7 +874,6 @@ func New() *Interp {
 	i.Builtins["__method_string_as_bytes"] = &Builtin{Fn: builtinStringBytes}
 	i.Builtins["__method_boolean_to_string"] = &Builtin{Fn: builtinBoolToString}
 	i.Builtins["stdin"] = &Builtin{Fn: builtinStdin}
-	i.Builtins["read_line"] = &Builtin{Fn: builtinReadLine}
 	i.Builtins["stdout"] = &Builtin{Fn: builtinStdout}
 	i.Builtins["stderr"] = &Builtin{Fn: builtinStderr}
 	i.Builtins["exit"] = &Builtin{Fn: builtinExit}
@@ -1845,10 +1842,7 @@ func New() *Interp {
 	i.Builtins["tcp_accept"] = &Builtin{Fn: builtinTcpAccept}
 	i.Builtins["tcp_local_port"] = &Builtin{Fn: builtinTcpLocalPort}
 	i.Builtins["tcp_listen_with"] = &Builtin{Fn: builtinTcpListenWith}
-	i.Builtins["tcp_connect"] = &Builtin{Fn: builtinTcpConnect}
 	i.Builtins["tcp_socket_ctl"] = &Builtin{Fn: builtinTcpSocketCtl}
-	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
-	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
 	i.Builtins["tcp_send_bytes"] = &Builtin{Fn: builtinTcpSendBytes}
 	i.Builtins["tcp_sendfile"] = &Builtin{Fn: builtinTcpSendfile}
 	i.Builtins["tcp_send_buf"] = &Builtin{Fn: builtinTcpSendBuf}
@@ -1870,9 +1864,7 @@ func New() *Interp {
 	i.Builtins["udp_connect"] = &Builtin{Fn: builtinUdpConnect}
 	i.Builtins["udp_sendto"] = &Builtin{Fn: builtinUdpSendto}
 	i.Builtins["udp_sendto_bytes"] = &Builtin{Fn: builtinUdpSendtoBytes}
-	i.Builtins["udp_send"] = &Builtin{Fn: builtinUdpSend}
 	i.Builtins["timer_fd"] = &Builtin{Fn: builtinTimerFd}
-	i.Builtins["udp_send_bytes"] = &Builtin{Fn: builtinUdpSendBytes}
 	i.Builtins["udp_recvfrom"] = &Builtin{Fn: builtinUdpRecvfrom}
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
 	i.Builtins["tcp_pollable"] = &Builtin{Fn: builtinTcpPollable}
@@ -1939,36 +1931,6 @@ func builtinTcpAccept(i *Interp, args []Value) (Value, error) {
 	return Number(cid), nil
 }
 
-func builtinTcpRecv(i *Interp, args []Value) (Value, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("tcp_recv: expected 2 args, got %d", len(args))
-	}
-	id, ok := args[0].(Number)
-	if !ok {
-		return nil, fmt.Errorf("tcp_recv: expected number fd arg, got %T", args[0])
-	}
-	max, ok := args[1].(Number)
-	if !ok {
-		return nil, fmt.Errorf("tcp_recv: expected number max arg, got %T", args[1])
-	}
-	conn, ok := i.tcpConns[int64(id)]
-	if !ok {
-		return arrayOf(), nil
-	}
-	buf := make([]byte, int(max))
-	// A non-blocking socket reads what is there and answers empty
-	// otherwise, which is what a native read's -EAGAIN clamps to.
-	n, err := readSocket(conn, buf, i.tcpNonblocking[int64(id)])
-	if err != nil || n <= 0 {
-		return arrayOf(), nil
-	}
-	out := newArray(n)
-	for j := 0; j < n; j++ {
-		out.E[j] = Number(buf[j])
-	}
-	return out, nil
-}
-
 // builtinTcpSendfile answers tcp_sendfile(fd, file, max) as a read of the
 // open file followed by one socket write: the bytes the socket took, 0 at
 // the file's end, or -errno. The file is moved back over the bytes the
@@ -2019,21 +1981,6 @@ func builtinTcpSendfile(i *Interp, args []Value) (Value, error) {
 		return Number(errnoOf(werr)), nil
 	}
 	return Number(sent), nil
-}
-
-func builtinTcpSend(i *Interp, args []Value) (Value, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("tcp_send: expected 2 args, got %d", len(args))
-	}
-	id, ok := args[0].(Number)
-	if !ok {
-		return nil, fmt.Errorf("tcp_send: expected number fd arg, got %T", args[0])
-	}
-	data, ok := args[1].(String)
-	if !ok {
-		return nil, fmt.Errorf("tcp_send: expected string data arg, got %T", args[1])
-	}
-	return tcpSendData(i, id, []byte(data))
 }
 
 func builtinTcpSendBytes(i *Interp, args []Value) (Value, error) {
@@ -2219,9 +2166,6 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 	return Number(id), nil
 }
 
-// builtinTcpConnect is the interpreter's `tcp_connect(host_be, port)`: the
-// packed network-order IPv4 address the native helpers take, dialled
-// through Go's net package. A connection handle, or -1.
 // builtinTcpConnectWith is `tcp_connect_with(addr, port, nonblocking)`.
 // The interpreter has no non-blocking dial: it connects before answering,
 // so control op 5 reports the result at once and a refused dial is
@@ -2297,25 +2241,9 @@ func (i *Interp) dialTcp(ip net.IP, port int) (Value, error) {
 	return Number(id), nil
 }
 
-func builtinTcpConnect(i *Interp, args []Value) (Value, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("tcp_connect: expected 2 args, got %d", len(args))
-	}
-	host, ok := args[0].(Number)
-	if !ok {
-		return nil, fmt.Errorf("tcp_connect: expected number host arg, got %T", args[0])
-	}
-	port, ok := args[1].(Number)
-	if !ok {
-		return nil, fmt.Errorf("tcp_connect: expected number port arg, got %T", args[1])
-	}
-	h := uint32(host)
-	return i.dialTcp(net.IPv4(byte(h), byte(h>>8), byte(h>>16), byte(h>>24)), int(port))
-}
-
 // builtinTcpSocketCtl is the interpreter's `tcp_socket_ctl(fd, op, arg)`,
 // over the net package's own controls: op 1 SetNoDelay, 2 SetKeepAlive, 3
-// the non-blocking flag tcp_recv honours, 4 CloseRead / CloseWrite / both,
+// the non-blocking flag tcp_recv_into honours, 4 CloseRead / CloseWrite / both,
 // 6 the host's send queue, 7 the peer's address key (peerKey), 8 the
 // listener's SO_REUSEPORT group steered by CPU (hostSteerByCPU). 0, -1
 // for a handle that is not a connection, -22 for an unknown op.
@@ -2520,8 +2448,8 @@ func builtinWasmTimerPollable(_ *Interp, args []Value) (Value, error) {
 }
 
 // peerKey is the 32-bit key socket control op 7 answers for a peer's
-// address: an IPv4 address packed as `tcp_connect` takes it (the first
-// octet in the low byte, a v4-mapped IPv6 address counting as IPv4), any
+// address: an IPv4 address packed with the first octet in the low byte
+// (a v4-mapped IPv6 address counting as IPv4), any
 // other IPv6 address the two words of its first eight bytes XORed and
 // never 0, so the peers of one /64 share a key. The native runtimes
 // compute the same value from the sockaddr.
@@ -5656,68 +5584,6 @@ func streamFd(v Value) (int64, error) {
 		return 0, fmt.Errorf("Reader/Writer.fd not a number")
 	}
 	return int64(fd), nil
-}
-
-func builtinReaderReadLine(i *Interp, args []Value) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("Reader.read_line: expected 1 arg")
-	}
-	r, err := readerStream(i, args[0])
-	if errors.Is(err, errClosedHandle) {
-		return optionNone(), nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var buf []byte
-	one := make([]byte, 1)
-	for {
-		n, err := r.Read(one)
-		if n > 0 {
-			buf = append(buf, one[0])
-			if one[0] == '\n' {
-				return optionSome(String(string(buf))), nil
-			}
-		}
-		if err != nil {
-			if len(buf) == 0 {
-				return optionNone(), nil
-			}
-			return optionSome(String(string(buf))), nil
-		}
-	}
-}
-
-// builtinReadLine implements the bare `read_line(): Option[string]`
-// builtin — reads one line from stdin (i.Stdin), including the
-// trailing '\n' if present. Returns Some(line) or None at EOF
-// before any byte. Mirrors builtinReaderReadLine but reads stdin
-// directly rather than a Reader receiver.
-func builtinReadLine(i *Interp, args []Value) (Value, error) {
-	if len(args) != 0 {
-		return nil, fmt.Errorf("read_line: expected 0 args")
-	}
-	if i.closedStd[0] {
-		return optionNone(), nil
-	}
-	var buf []byte
-	one := make([]byte, 1)
-	stdin := interruptibleReader(i.Stdin)
-	for {
-		n, err := stdin.Read(one)
-		if n > 0 {
-			buf = append(buf, one[0])
-			if one[0] == '\n' {
-				return optionSome(String(string(buf))), nil
-			}
-		}
-		if err != nil {
-			if len(buf) == 0 {
-				return optionNone(), nil
-			}
-			return optionSome(String(string(buf))), nil
-		}
-	}
 }
 
 func builtinReaderReadChunk(i *Interp, args []Value) (Value, error) {

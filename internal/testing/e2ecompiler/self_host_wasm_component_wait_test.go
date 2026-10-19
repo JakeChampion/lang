@@ -141,7 +141,7 @@ function main(): i32 {
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
     let ln: i32 = tcp_listen_with(any, 0, 4, false);
     if (ln < 0) { return fail(1); }
-    let c: i32 = tcp_connect(16777343, tcp_local_port(ln));
+    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], tcp_local_port(ln), false);
     if (c < 0) { return fail(2); }
     let a: i32 = tcp_accept(ln);
     let tries: i32 = 0;
@@ -233,7 +233,7 @@ function main(): i32 {
     let all: i32[] = [];
     let i: i32 = 0;
     while (i < 20) {
-        let c: i32 = tcp_connect(16777343, port);
+        let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
         if (c < 0) { return fail(3); }
         let a: i32 = tcp_accept(ln);
         let tries: i32 = 0;
@@ -261,7 +261,7 @@ function main(): i32 {
     if (after != before) { return fail(8); }
     i = 0;
     while (i < 20) {
-        if (tcp_send(cs[i], "x") != 1) { return fail(9); }
+        if (tcp_send_bytes(cs[i], [120u8]) != 1) { return fail(9); }
         i = i + 1;
     }
     if (!all_report(r, events, accs, 1)) { return fail(10); }

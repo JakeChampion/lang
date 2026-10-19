@@ -190,35 +190,23 @@ pub function sleep_scratch_bytes(): i32 {
 
 // ip_flat_addr is the 48-byte wasi:sockets ip-socket-address record
 // $__fern_ip_flat writes: the family discriminant and the eleven payload
-// words each bind, connect and stream pushes. ip_box_addr and ip_box2_addr
-// are two 16-byte packed `u8[]` boxes (len, cap, the four octets, padding;
-// no rc/bsz header below the pointer, since nothing counts or releases a
-// scratch box and only $__fern_ip_flat reads one) for the bodies that still
-// take a packed IPv4 address (tcp_connect, udp_send) and bind to 0.0.0.0.
-// Scratch rather than heap: a socket body consumes them before it returns,
-// none holds one across a call into another socket body, and an allocation
-// here is one more `__heap_alloc_count()` tick per call, which the guest
-// storage probes pin at exactly one.
+// words each bind, connect and stream pushes. Scratch rather than heap: a
+// socket body consumes it before it returns, none holds it across a call
+// into another socket body, and an allocation here is one more
+// `__heap_alloc_count()` tick per call, which the guest storage probes pin
+// at exactly one.
 pub function ip_flat_addr(): i32 {
   return (sleep_scratch_addr() + sleep_scratch_bytes() + 7) / 8 * 8;
 }
 
-pub function ip_box_addr(): i32 {
-  return ip_flat_addr() + 48;
-}
-
-pub function ip_box2_addr(): i32 {
-  return ip_box_addr() + 16;
-}
-
-// io_ret_addr is the 16-byte record the stream verbs ($__fern_tcp_recv,
-// tcp_recv_into, tcp_send, tcp_send_bytes, tcp_send_buf), the reactor wait and
+// io_ret_addr is the 16-byte record the stream verbs ($__fern_tcp_recv_into,
+// tcp_send_bytes, tcp_send_buf), the reactor wait and
 // the preview2 wall clock have the host write their result into. 8-aligned,
 // for the clock's u64 seconds. Static for the reason sleep_scratch_addr is:
 // the record is dead before the body returns, and none of these bodies calls
 // another while it holds it.
 pub function io_ret_addr(): i32 {
-  return ip_box2_addr() + 16;
+  return ip_flat_addr() + 48;
 }
 
 // str_region_base is where a unit's string-literal region starts: the low
@@ -263,16 +251,11 @@ pub function need(needs: string[], name: string): boolean {
 
 // The datagram ops that open a socket record, and the ones that send.
 function need_udp_socket(needs: string[]): boolean {
-  return need_any(needs, ["udp_send", "udp_send_bytes", "udp_bind", "udp_connect"]);
+  return need_any(needs, ["udp_bind", "udp_connect"]);
 }
 
 function need_udp_send(needs: string[]): boolean {
-  return need_any(needs, ["udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes"]);
-}
-
-// The ops that dial: tcp_connect is tcp_connect_with without the flag.
-function need_tcp_connect(needs: string[]): boolean {
-  return need_any(needs, ["tcp_connect", "tcp_connect_with"]);
+  return need_any(needs, ["udp_sendto", "udp_sendto_bytes"]);
 }
 
 function need_any(needs: string[], names: string[]): boolean {
@@ -304,13 +287,13 @@ pub function need_ops(): string[] {
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "monotonic_ns", "now_ns", "now_unix_ms", "clock_resolution", "clock_set", "clone_file", "poll", "print_str", "putchar",
     "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache",
     "fd_dup_onto", "reader_seek", "reader_splice", "reader_copy_range", "writer_splice_forever", "fd_flags", "writer_truncate", "read_dir",
-    "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_file", "read_file_bytes", "read_line",
+    "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_file", "read_file_bytes",
     "reader_close", "remove_dir_all", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "read_link", "set_file_times",
     "truncate", "sleep_ms", "sleep_ns", "stat", "lstat", "str_bytes", "str_from_bytes", "str_from_bytes_range",
-    "str_split", "tcp_accept", "tcp_close", "tcp_connect", "tcp_listen", "tcp_listen_with",
-    "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_socket_ctl", "temp_dir",
-    "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes", "tcp_connect_with", "wasm_block",
+    "str_split", "tcp_accept", "tcp_close", "tcp_listen", "tcp_listen_with",
+    "tcp_local_port", "tcp_pollable", "tcp_send_bytes", "tcp_socket_ctl", "temp_dir",
+    "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_sendto", "udp_sendto_bytes", "tcp_connect_with", "wasm_block",
     "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_recv_into", "tcp_ktls", "tcp_sendfile", "tcp_send_buf",
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "write_file_bytes", "open_file",
     "writer_write", "write_some", "write_bytes", "write_some_bytes", "buf_take_bytes", "buf_push_bytes_range",
@@ -2465,7 +2448,7 @@ function need_write_file(needs: string[]): boolean {
 }
 
 function need_fd_read(needs: string[]): boolean {
-  return need_any(needs, ["read_line", "read_chunk", "read_chunk_bytes"]);
+  return need_any(needs, ["read_chunk", "read_chunk_bytes"]);
 }
 
 // need_dir_list: the module lists a directory (read_dir and its variants, or
@@ -2501,7 +2484,7 @@ function need_fd_table(needs: string[]): boolean {
 // fern world (component_framable).
 function component_fs_needs(): string[] {
   return [
-    "open_file", "open_with", "reader_close", "read_line", "read_chunk", "read_chunk_bytes",
+    "open_file", "open_with", "reader_close", "read_chunk", "read_chunk_bytes",
     "fd_stat", "fd_fsync", "fd_fdatasync", "fd_drop_cache", "reader_seek", "fd_flags", "writer_truncate",
     "stat", "lstat", "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "create_dir", "create_dir_all", "remove_file",
     "remove_dir", "remove_dir_all", "rename", "read_link", "create_symlink", "create_link",
@@ -3761,7 +3744,7 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
   if (mode == 2 && module_is_proxy(mod)) {
     needs = needs.append("@proxy");
   }
-  // stdin() and the bare read_line() read fd 0, which leaves no need of its
+  // stdin() reads fd 0, which leaves no need of its
   // own, so a component core marks it here: its first read fetches
   // wasi:cli/stdin's stream.
   if (mode == 2 && calls_any(called_names(mod), stdin_builtins())) {
@@ -3922,7 +3905,7 @@ pub function wasi_poll_import(): string {
 // wasm has no file descriptors, so the i32 the language hands back is this
 // pointer; a negative value is -errno.
 // The wasi:sockets network handle import. Split out of the tcp bundle because
-// udp_send needs it too, and a duplicate import is an invalid module — so it
+// udp_bind needs it too, and a duplicate import is an invalid module — so it
 // gets one gate covering every socket op rather than living inside one of them.
 pub function wasi_instance_network_import(): string {
   return "  (import \"wasi:sockets/instance-network@0.2.0\" \"instance-network\" (func $__fern_wasi_instance_network (result i32)))\n";
@@ -3970,16 +3953,12 @@ pub function network_handle_func(): string {
   return o;
 }
 
-// $__fern_tcp_connect(host_be, port) -> i32. The outbound client:
-// create-tcp-socket -> start-connect -> subscribe -> block (wait for the
-// connection to establish) -> drop the pollable -> finish-connect, yielding the
-// 16-byte struct above, or -errno.
-//
-// host_be packs the IPv4 address a | b<<8 | c<<16 | d<<24 (the std/fetch `ipv4`
-// convention), unpacked here into the four octets of the ip-socket-address
-// ipv4 arm. start-connect's canonical flattening is 15 i32: self, network,
-// variant disc (0 = ipv4), then 11 payload slots of which ipv4 uses 5 (port +
-// 4 octets) and pads the rest for the larger ipv6 arm, then the retptr.
+// $__fern_tcp_connect_with(addr, port, nonblocking) -> i32. The outbound
+// client: create-tcp-socket -> start-connect -> subscribe -> block (wait for
+// the connection to establish) -> drop the pollable -> finish-connect,
+// yielding the 16-byte struct above, or -errno. start-connect's canonical
+// flattening is 15 i32: self, network, the twelve ip-socket-address words,
+// then the retptr.
 //
 // Every step's result<> puts its discriminant byte at retptr+0 and, on the Err
 // arm, the error-code at retptr+4 — hence the repeated "if disc then return
@@ -4035,21 +4014,6 @@ function ip_flat_words(): string {
   return "      (i32.load offset=0 (local.get $flat))\n      (i32.load offset=4 (local.get $flat))\n      (i32.load offset=8 (local.get $flat))\n      (i32.load offset=12 (local.get $flat))\n      (i32.load offset=16 (local.get $flat))\n      (i32.load offset=20 (local.get $flat))\n      (i32.load offset=24 (local.get $flat))\n      (i32.load offset=28 (local.get $flat))\n      (i32.load offset=32 (local.get $flat))\n      (i32.load offset=36 (local.get $flat))\n      (i32.load offset=40 (local.get $flat))\n      (i32.load offset=44 (local.get $flat))\n";
 }
 
-// $__fern_ip4_box(host_be, box) -> the packed u8[] box at `box` (ip_box_addr
-// or ip_box2_addr) holding the four octets of the IPv4 address packed in
-// network order, first octet in the low byte, for the callers that still take
-// one (tcp_connect, udp_send's parsed literal). The little-endian store lays
-// the octets out in order.
-pub function ip4_box_func(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_ip4_box (param $host i32) (param $a i32) (result i32)\n";
-  o = o + "    (i32.store (local.get $a) (i32.const 4))\n";
-  o = o + "    (i32.store offset=4 (local.get $a) (i32.const 4))\n";
-  o = o + "    (i32.store offset=8 (local.get $a) (local.get $host))\n";
-  o = o + "    (local.get $a))\n";
-  return o;
-}
-
 pub function tcp_connect_with_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_tcp_connect_with (param $addr i32) (param $port i32) (param $nb i32) (result i32)\n";
@@ -4091,15 +4055,6 @@ pub function tcp_connect_with_func(): string {
   o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
   o = o + "    (i32.store offset=12 (local.get $st) (i32.const 1))\n";
   o = o + "    (local.get $st))\n";
-  return o;
-}
-
-// $__fern_tcp_connect(host_be, port) is $__fern_tcp_connect_with without
-// the non-blocking flag, the packed address boxed in scratch for it.
-pub function tcp_connect_func(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_tcp_connect (param $host i32) (param $port i32) (result i32)\n";
-  o = o + "    (call $__fern_tcp_connect_with (call $__fern_ip4_box (local.get $host) (i32.const " + util.i32_to_string(ip_box_addr()) + ")) (local.get $port) (i32.const 0)))\n";
   return o;
 }
 
@@ -4446,9 +4401,8 @@ pub function tcp_pollable_func(has_udp: boolean): string {
 // --- UDP send (#4375 item 3) --------------------------------------------------
 //
 // The wasi:sockets/udp imports, in the pieces the datagram ops reach:
-// the socket set (create, bind, stream and the three drops) for udp_bind,
-// udp_connect and udp_send; the send set for udp_sendto and udp_send; the
-// receive set for udp_recvfrom; and local-address when tcp_local_port
+// the socket set (create, bind, stream and the three drops) for udp_bind
+// and udp_connect; the send set for udp_sendto; the receive set for udp_recvfrom; and local-address when tcp_local_port
 // can meet a datagram record.
 pub function wasi_udp_socket_imports(): string {
   let o: string = "";
@@ -4748,53 +4702,6 @@ pub function tcp_recv_into_func(): string {
   return o;
 }
 
-// $__fern_ipv4_parse(s, dst) -> i32: parse a dotted-quad "a.b.c.d" string block,
-// store the four octets at `dst` packed a | b<<8 | c<<16 | d<<24, and return 0;
-// -1 on a malformed host, leaving `dst` untouched.
-//
-// The packed quad cannot share a channel with the status: any address whose
-// LAST octet is >= 128 sets bit 31, so it reads as a negative i32 — which is
-// exactly what a caller checking the result for failure sees. Returning both
-// through one i32 rejected every 10.x.x.200 / 192.168.x.255 host (#7740).
-//
-// Native does this inline in __fern_udp_send and has to normalise the string
-// first (its SSO form may not be contiguous); a self-host string block is
-// always `[len@+0][bytes@+4]`, so the bytes are already contiguous and the
-// parse reads them directly. Split out as its own function because it is the
-// one piece here with real branching, and it is far easier to reason about (and
-// to reuse, should udp_recv or a host-literal tcp_connect want it) on its own.
-pub function ipv4_parse_func(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_ipv4_parse (param $s i32) (param $dst i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32) (local $b i32) (local $acc i32) (local $n i32) (local $out i32) (local $digits i32)\n";
-  o = o + "    (local.set $len (i32.load (local.get $s)))\n";
-  o = o + "    (block $done\n";
-  o = o + "      (loop $more\n";
-  o = o + "        (br_if $done (i32.ge_u (local.get $i) (local.get $len)))\n";
-  o = o + "        (local.set $b (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-  o = o + "        (if (i32.eq (local.get $b) (i32.const 46))\n";
-  o = o + "          (then\n";
-  o = o + "            (if (i32.eqz (local.get $digits)) (then (return (i32.const -1))))\n";
-  o = o + "            (if (i32.ge_u (local.get $n) (i32.const 3)) (then (return (i32.const -1))))\n";
-  o = o + "            (local.set $out (i32.or (local.get $out) (i32.shl (local.get $acc) (i32.mul (local.get $n) (i32.const 8)))))\n";
-  o = o + "            (local.set $n (i32.add (local.get $n) (i32.const 1)))\n";
-  o = o + "            (local.set $acc (i32.const 0))\n";
-  o = o + "            (local.set $digits (i32.const 0)))\n";
-  o = o + "          (else\n";
-  o = o + "            (if (i32.or (i32.lt_u (local.get $b) (i32.const 48)) (i32.gt_u (local.get $b) (i32.const 57)))\n";
-  o = o + "              (then (return (i32.const -1))))\n";
-  o = o + "            (local.set $acc (i32.add (i32.mul (local.get $acc) (i32.const 10)) (i32.sub (local.get $b) (i32.const 48))))\n";
-  o = o + "            (if (i32.gt_u (local.get $acc) (i32.const 255)) (then (return (i32.const -1))))\n";
-  o = o + "            (local.set $digits (i32.add (local.get $digits) (i32.const 1)))))\n";
-  o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "        (br $more)))\n";
-  o = o + "    (if (i32.or (i32.ne (local.get $n) (i32.const 3)) (i32.eqz (local.get $digits)))\n";
-  o = o + "      (then (return (i32.const -1))))\n";
-  o = o + "    (i32.store (local.get $dst) (i32.or (local.get $out) (i32.shl (local.get $acc) (i32.const 24))))\n";
-  o = o + "    (i32.const 0))\n";
-  return o;
-}
-
 // The datagram sockets (#9853). A datagram "fd" is the tcp record with the
 // udp-socket handle at +0, the incoming and outgoing datagram-stream handles
 // at +4 and +8, and at +12 the kind: 2 for a socket without streams, 3 for
@@ -5020,80 +4927,22 @@ pub function udp_recvfrom_func(): string {
   return o;
 }
 
-// $__fern_udp_send(host, port, data) -> bytes accepted by the host, or -errno
-// (or -EINVAL on a malformed host literal): a socket bound to an ephemeral
-// port, one udp_sendto to host:port, and the socket closed again.
-pub function udp_send_func(raw: boolean): string {
-  let suffix: string = "";
-  if (raw) {
-    suffix = "_bytes";
-  }
-  let o: string = "";
-  o = o + "  (func $__fern_udp_send" + suffix + " (param $host i32) (param $port i32) (param $data i32) (result i32)\n";
-  o = o + "    (local $ip i32) (local $ret i32) (local $c i32) (local $sent i32)\n";
-  o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
-  o = o + "    (if (i32.lt_s (call $__fern_ipv4_parse (local.get $host) (local.get $ret)) (i32.const 0))\n";
-  o = o + "      (then (call $__fern_raw_free (local.get $ret) (i32.const 16)) (return (i32.const -28))))\n";
-  o = o + "    (local.set $ip (i32.load (local.get $ret)))\n";
-  o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
-  o = o + "    (local.set $c (call $__fern_udp_bind (call $__fern_ip4_box (i32.const 0) (i32.const " + util.i32_to_string(ip_box_addr()) + ")) (i32.const 0)))\n";
-  o = o + "    (if (i32.lt_s (local.get $c) (i32.const 0)) (then (return (local.get $c))))\n";
-  o = o + "    (local.set $sent (call $__fern_udp_sendto" + suffix + " (local.get $c) (call $__fern_ip4_box (local.get $ip) (i32.const " + util.i32_to_string(ip_box2_addr()) + ")) (local.get $port) (local.get $data)))\n";
-  o = o + "    (drop (call $__fern_udp_close (local.get $c)))\n";
-  o = o + "    (local.get $sent))\n";
-  return o;
-}
-
-// Stream imports for tcp_send / tcp_recv (#4318 slice 2). Both are already in
-// the vendored cmd/fern/wit/deps/io/streams.wit, so unlike connect this slice
-// needs no WIT change.
+// Stream imports for the socket stream verbs (#4318 slice 2). Both are
+// already in the vendored cmd/fern/wit/deps/io/streams.wit, so unlike connect
+// this slice needs no WIT change.
 pub function wasi_stream_io_imports(): string {
   let o: string = "";
   o = o + "  (import \"wasi:io/error@0.2.0\" \"[resource-drop]error\" (func $__fern_wasi_io_error_drop (param i32)))\n";
   o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $__fern_wasi_stream_write (param i32 i32 i32 i32)))\n";
-  o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]input-stream.blocking-read\" (func $__fern_wasi_stream_read (param i32 i64 i32)))\n";
   return o;
 }
 
-// $__fern_tcp_send(conn, s) -> i32: bytes written, or -1 on a stream error.
-//
-// A self-host string block is `[len@+0][bytes@+4]` — ONE pointer, not native's
-// (ptr, len) pair, and no SSO form to normalise. That difference is the whole
-// reason this helper is not a transcription of native's buildTcpSendBody.
-//
-// The output-stream is mem[conn+8]. wasmtime caps blocking-write-and-flush at
-// 4 KiB per call, so anything longer drains through a chunked loop; a stream
-// error mid-flight short-circuits to -1 (preview-2 stream errors carry no errno
-// through the variant we use, so -1 is the only sensible negative sentinel).
-pub function tcp_send_func(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_tcp_send (param $c i32) (param $s i32) (result i32)\n";
-  o = o + "    (local $st i32) (local $ret i32) (local $len i32) (local $off i32) (local $n i32)\n";
-  o = o + "    (local.set $st (i32.load offset=8 (local.get $c)))\n";
-  o = o + "    (local.set $len (i32.load (local.get $s)))\n";
-  o = o + "    (local.set $ret (i32.const " + util.i32_to_string(io_ret_addr()) + "))\n";
-  o = o + "    (block $done\n";
-  o = o + "      (loop $more\n";
-  o = o + "        (br_if $done (i32.ge_u (local.get $off) (local.get $len)))\n";
-  o = o + "        (local.set $n (i32.sub (local.get $len) (local.get $off)))\n";
-  o = o + "        (if (i32.gt_u (local.get $n) (i32.const 4096))\n";
-  o = o + "          (then (local.set $n (i32.const 4096))))\n";
-  o = o + "        (call $__fern_wasi_stream_write (local.get $st)\n";
-  o = o + "          (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $off))\n";
-  o = o + "          (local.get $n) (local.get $ret))\n";
-  o = o + "        (if (i32.load8_u (local.get $ret)) (then\n";
-  o = o + "          (if (i32.eqz (i32.load8_u offset=4 (local.get $ret))) (then\n";
-  o = o + "            (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
-  o = o + "          (return (i32.const -1))))\n";
-  o = o + "        (local.set $off (i32.add (local.get $off) (local.get $n)))\n";
-  o = o + "        (br $more)))\n";
-  o = o + "    (local.get $len))\n";
-  return o;
-}
-
-// The packed u8[]'s bytes go to the host in place, at most 4096 per write as
-// tcp_send's do. Report accepted progress after a later failure so callers do
-// not resend it.
+// $__fern_tcp_send_bytes(conn, a): the packed u8[]'s bytes go to the host in
+// place through the output-stream at mem[conn+8]. wasmtime caps
+// blocking-write-and-flush at 4 KiB per call, so anything longer drains
+// through a chunked loop. Accepted progress is reported after a later
+// failure so callers do not resend it; a failure with none is -1, since
+// preview-2 stream errors carry no errno through the variant we use.
 pub function tcp_send_bytes_func(): string {
   let o: string = "  (func $__fern_tcp_send_bytes (param $c i32) (param $a i32) (result i32)\n";
   o = o + "    (local $st i32) (local $ret i32) (local $len i32) (local $off i32) (local $n i32)\n";
@@ -5137,44 +4986,6 @@ pub function tcp_send_buf_func(): string {
   o = o + "        (return (i32.const -1))))\n";
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n))) (br $more)))\n";
   o = o + "    (local.get $len))\n";
-  return o;
-}
-
-// $__fern_tcp_recv(conn, max) -> u8[]: up to `max` bytes as a fresh packed
-// `[len][cap][bytes]` array block, or the EMPTY array on a stream error /
-// clean EOF.
-//
-// The input-stream is mem[conn+4]. blocking-read's retptr is 12 bytes: disc@+0,
-// then the returned list as data-ptr@+4 and length@+8. The bytes are copied
-// into the array block, then the guest-owned canonical list is released.
-pub function tcp_recv_func(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_tcp_recv (param $c i32) (param $max i32) (result i32)\n";
-  o = o + "    (local $st i32) (local $ret i32) (local $n i32) (local $src i32) (local $arr i32)\n";
-  o = o + "    (if (i32.le_s (local.get $max) (i32.const 0)) (then\n";
-  o = o + "      (local.set $arr (call $__fern_arr_box (i32.const 0)))\n";
-  o = o + "      (i32.store (local.get $arr) (i32.const 0))\n";
-  o = o + "      (i32.store offset=4 (local.get $arr) (i32.const 0))\n";
-  o = o + "      (return (local.get $arr))))\n";
-  o = o + "    (local.set $st (i32.load offset=4 (local.get $c)))\n";
-  o = o + "    (local.set $ret (i32.const " + util.i32_to_string(io_ret_addr()) + "))\n";
-  o = o + "    (call $__fern_wasi_stream_read (local.get $st)\n";
-  o = o + "      (i64.extend_i32_u (local.get $max)) (local.get $ret))\n";
-  o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
-  o = o + "      (if (i32.eqz (i32.load8_u offset=4 (local.get $ret))) (then\n";
-  o = o + "        (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
-  o = o + "      (local.set $arr (call $__fern_arr_box (i32.const 0)))\n";
-  o = o + "      (i32.store (local.get $arr) (i32.const 0))\n";
-  o = o + "      (i32.store (i32.add (local.get $arr) (i32.const 4)) (i32.const 0))\n";
-  o = o + "      (return (local.get $arr))))\n";
-  o = o + "    (local.set $src (i32.load offset=4 (local.get $ret)))\n";
-  o = o + "    (local.set $n (i32.load offset=8 (local.get $ret)))\n";
-  o = o + "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
-  o = o + "    (i32.store (local.get $arr) (local.get $n))\n";
-  o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
-  o = o + "    (memory.copy (i32.add (local.get $arr) (i32.const 8)) (local.get $src) (local.get $n))\n";
-  o = o + "    (if (local.get $n) (then (call $__fern_raw_free (local.get $src) (local.get $n))))\n";
-  o = o + "    (local.get $arr))\n";
   return o;
 }
 
@@ -5517,7 +5328,7 @@ function emit_map_hash_seed_wat(): string {
 // a call to an imported WASI function.
 function is_host_op_kind(tag: i32): boolean {
   return tag == 163 || tag == 164 || tag == 182 || tag == 184
-    || tag == 183 || tag == 389 || tag == 388 || tag == 209 || tag == 168 || tag == 169 || tag == 233 || tag == 170 || tag == 352
+    || tag == 183 || tag == 389 || tag == 388 || tag == 209 || tag == 169 || tag == 233 || tag == 170 || tag == 352
     || tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 308 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231
     || tag == 171 || tag == 310 || tag == 391 || tag == 432 || tag == 172 || tag == 180 || tag == 249 || tag == 166
     || tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264
@@ -5572,12 +5383,6 @@ function emit_host_op_wat(o: ir.Op): string {
   if (o.kind_tag == 405) {  // clone_file
     // [src, dest] -> Result[void, IoError]: always Err(Unsupported).
     return "    call $__fern_clone_file\n";
-  }
-  if (o.kind_tag == 168) {  // read_line
-    // [fd] -> read one line from it, push a fresh Option[string]. The helper
-    // ($__fern_read_line, param fd i32, result i32) is emitted caller-side in
-    // wasm_ir_run with the fd_read import + the heap runtime.
-    return "    call $__fern_read_line\n";
   }
   if (o.kind_tag == 169) {  // read_file
     // stack: path strblock ptr -> read the whole named file, push a
@@ -6120,18 +5925,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_pollable_drop\n");
   } else if (o.kind_tag == 162) {  // wasm_block
     parts = emit_wasm_wasm_block(parts);
-  } else if (o.kind_tag == 208) {  // udp_send
-    // udp_send(host, port, data) -> bytes accepted, or -errno / -1 on a
-    // malformed host literal. All three args are on the stack (#4375).
-    parts = parts.append("    call $__fern_udp_send\n");
   } else if (o.kind_tag >= 334 && o.kind_tag <= 338 || o.kind_tag >= 341 && o.kind_tag <= 344 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442) {  // udp_*, tcp_connect_with, reactor_*, tcp_recv_into, ring_*, tcp_ktls
     // The datagram sockets, the started connect and the reactor floor:
     // every arg is on the stack, the helper's i32 answer replaces them.
     parts = parts.append("    call $__fern_" + ir.kind_name(o.kind_tag) + "\n");
-  } else if (o.kind_tag == 110) {  // tcp_connect
-    // tcp_connect(host_be, port) -> 16-byte connection struct pointer,
-    // or -errno. Both args are already on the stack (#4318).
-    parts = parts.append("    call $__fern_tcp_connect\n");
   } else if (o.kind_tag == 200) {  // tcp_listen
     // tcp_listen(port) -> 16-byte listener struct pointer, or -errno.
     parts = parts.append("    call $__fern_tcp_listen\n");
@@ -6154,20 +5951,12 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 112) {  // tcp_pollable
     // tcp_pollable(conn) -> a wasi:io/poll pollable for the socket.
     parts = parts.append("    call $__fern_tcp_pollable\n");
-  } else if (o.kind_tag == 114) {  // tcp_send
-    // tcp_send(conn, s) -> bytes written, or -1. Both args on the stack.
-    parts = parts.append("    call $__fern_tcp_send\n");
   } else if (o.kind_tag == 353) {
     parts = parts.append("    call $__fern_tcp_send_bytes\n");
   } else if (o.kind_tag == 387) {
     parts = parts.append("    call $__fern_tcp_send_buf\n");
-  } else if (o.kind_tag == 354) {
-    parts = parts.append("    call $__fern_udp_send_bytes\n");
   } else if (o.kind_tag == 355) {
     parts = parts.append("    call $__fern_udp_sendto_bytes\n");
-  } else if (o.kind_tag == 115) {  // tcp_recv
-    // tcp_recv(conn, max) -> a fresh u8[] array block (empty on error/EOF).
-    parts = parts.append("    call $__fern_tcp_recv\n");
   } else if (o.kind_tag == 116) {  // tcp_close
     // tcp_close(conn) -> 0. Drops the streams then the socket.
     parts = parts.append("    call $__fern_tcp_close\n");
@@ -7347,7 +7136,7 @@ pub function fd_read_func(): string {
   return o;
 }
 
-// stdin_fd_read_import emits the standalone wasi fd_read import that read_line
+// stdin_fd_read_import emits the standalone wasi fd_read import that read_chunk
 // uses to read stdin (fd 0). file_imports ALSO imports fd_read for
 // read_file, so the caller (wasm_ir_run) must emit only one of the two — this
 // one when the module reads stdin but does NOT do path-based file I/O.
@@ -10844,7 +10633,7 @@ pub function open_with_func(): string {
 // A zero-byte write with bytes still outstanding makes no progress, so the loop
 // stops there and reports success, matching native's body and the register
 // backends' short-write loop. Option box shape [tag@0, payload@4] via
-// $__fern_str_box, like read_line's.
+// $__fern_str_box.
 pub function writer_write_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_writer_write (param $fd i32) (param $box i32) (result i32)\n";
@@ -10980,71 +10769,11 @@ pub function writer_truncate_func(): string {
   return o;
 }
 
-// read_line_func emits $__fern_read_line (fd -> Option[string]): one line of
-// the fd INCLUDING its trailing '\n', Some(line) / None at EOF (#4369 — matches
-// native, replacing the old bare-string-stripped block). Reads the fd ONE BYTE at
-// a time via fd_read (iovec {ptr,len} at addr 0, byte count at addr 8), stopping
-// at '\n' (len includes it), boxes [len:i32][bytes], and wraps it in an Option
-// box [tag@0, payload@4] via __fern_str_box — the same string + Option layout
-// reader_read_chunk_func builds. Heap-gated (op_allocates).
-pub function read_line_func(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_read_line (param $fd i32) (result i32)\n";
-  o = o + "    (local $buf i32) (local $cap i32) (local $grown i32) (local $nread i32) (local $len i32) (local $blk i32) (local $i i32) (local $opt i32)\n";
-  o = o + "    (local.set $cap (i32.const 256))\n";
-  o = o + "    (local.set $buf (call $__fern_alloc (local.get $cap)))\n";
-  o = o + "    (local.set $len (i32.const 0))\n";
-  // One fd_read per byte, stopping at '\n'. The old shape read up to 256 bytes
-  // in one call and boxed only as far as the first newline, DISCARDING the
-  // rest of the buffer — so a read-until-EOF loop got one line and then a real
-  // EOF (#6052). Reading a byte at a time never consumes input this call will
-  // not return, which is what native does and what makes the loop terminate on
-  // the right line.
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (if (i32.eq (local.get $len) (local.get $cap)) (then\n";
-  o = o + "        (local.set $grown (call $__fern_alloc (i32.mul (local.get $cap) (i32.const 2))))\n";
-  o = o + "        (memory.copy (local.get $grown) (local.get $buf) (local.get $len))\n";
-  o = o + "        (call $__fern_raw_free (local.get $buf) (local.get $cap))\n";
-  o = o + "        (local.set $buf (local.get $grown))\n";
-  o = o + "        (local.set $cap (i32.mul (local.get $cap) (i32.const 2)))))\n";
-  o = o + "      (i32.store (i32.const 0) (i32.add (local.get $buf) (local.get $len)))\n";
-  o = o + "      (i32.store (i32.const 4) (i32.const 1))\n";
-  o = o + "      (if (call $__fern_fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
-  o = o + "      (local.set $nread (i32.load (i32.const 8)))\n";
-  o = o + "      (br_if $d (i32.eqz (local.get $nread)))\n";
-  o = o + "      (local.set $len (i32.add (local.get $len) (i32.const 1)))\n";
-  o = o + "      (br_if $d (i32.eq (i32.load8_u (i32.add (local.get $buf) (i32.sub (local.get $len) (i32.const 1)))) (i32.const 10)))\n";
-  o = o + "      (br $c)))\n";
-  // EOF before any byte -> None. Any bytes at all (even without a trailing
-  // newline) -> Some, so a final unterminated line is still returned.
-  o = o + "    (if (i32.eqz (local.get $len)) (then\n";
-  o = o + "      (call $__fern_raw_free (local.get $buf) (local.get $cap))\n";
-  o = o + "      (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "      (i32.store (local.get $opt) (i32.const 1))\n";
-  o = o + "      (i32.store (i32.add (local.get $opt) (i32.const 4)) (i32.const 0))\n";
-  o = o + "      (return (local.get $opt))))\n";
-  o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
-  o = o + "    (i32.store (local.get $blk) (local.get $len))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $cd (loop $cc\n";
-  o = o + "      (br_if $cd (i32.ge_u (local.get $i) (local.get $len)))\n";
-  o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (local.get $buf) (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $cc)))\n";
-  o = o + "    (call $__fern_raw_free (local.get $buf) (local.get $cap))\n";
-  o = o + "    (local.set $opt (call $__fern_str_box (i32.const 8)))\n";
-  o = o + "    (i32.store (local.get $opt) (i32.const 0))\n";
-  o = o + "    (i32.store (i32.add (local.get $opt) (i32.const 4)) (local.get $blk))\n";
-  o = o + "    (local.get $opt))\n";
-  return o;
-}
-
 // reader_read_chunk_func emits $__fern_reader_read_chunk(fd, n) ->
 // Result[string, IoError] — the wasm sibling of asm_ir's
 // __fern_reader_read_chunk (x86 uses sys_read; wasm uses preview1 fd_read). A
 // Reader is just its fd (an i32; stdin() = fd 0). Reads up to n bytes from fd
-// via fd_read (iovec {ptr,len} at addr 0, byte count at addr 8 — the same
-// scratch idiom as read_line) directly into a fresh string block
+// via fd_read (iovec {ptr,len} at addr 0, byte count at addr 8) directly into a fresh string block
 // [len:i32][bytes], then wraps it in a box [tag@0, payload@4]: Ok(chunk)
 // (tag 0), which at end of input is that same block with length 0, or Err
 // (tag 1) carrying the classified errno. A read carries no PATH, so it is
@@ -12309,7 +12038,7 @@ function p1_file_io(needs: string[]): boolean {
 
 // p1_fd_read: the preview-1 module imports fd_read, which $__fern_fd_read wraps.
 function p1_fd_read(needs: string[]): boolean {
-  return p1_file_io(needs) || need_any(needs, ["read_line", "read_chunk", "read_chunk_bytes"]);
+  return p1_file_io(needs) || need_fd_read(needs);
 }
 
 function preview1_imports(needs: string[], lc: boolean): string {
@@ -12349,12 +12078,12 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (need_dir_list(needs)) {
     parts = parts.append(readdir_fd_import());
   }
-  // read_line / read_chunk read stdin (fd 0) via fd_read.
+  // read_chunk reads stdin (fd 0) via fd_read.
   // file_imports above already imports fd_read for path-based file I/O, so
   // emit the standalone fd_read import ONLY when the module reads stdin but
   // does NOT do file I/O — otherwise fd_read would be imported twice (an
   // invalid module).
-  if (need_any(needs, ["read_line", "read_chunk", "read_chunk_bytes"]) && !p1_file_io(needs)) {
+  if (need_fd_read(needs) && !p1_file_io(needs)) {
     parts = parts.append(stdin_fd_read_import());
   }
   // $__fern_fd_read asks fd_fdstat_get whether an EBADF read was of a
@@ -12468,22 +12197,22 @@ function preview1_imports(needs: string[], lc: boolean): string {
 // on a timer pollable rather than on preview 1's poll_oneoff.
 function preview2_wasi_imports(needs: string[], sleep_p2: boolean): string {
   let parts: string[] = [];
-  // tcp_connect / tcp_close (#4318): the wasi:sockets + stream-drop imports.
+  // tcp_connect_with / tcp_close (#4318): the wasi:sockets + stream-drop imports.
   // connect also BLOCKS on the socket's pollable to wait for the connection
   // to establish, so it needs pollable.block / [resource-drop]pollable — but
   // only when the module has not already imported them for wasm_block /
   // wasm_pollable_drop, since a duplicate import is an invalid module.
-  // instance-network is shared by the tcp set and udp_send; one gate so it
+  // instance-network is shared by the tcp set and udp_bind; one gate so it
   // is emitted exactly once (a duplicate import is an invalid module).
-  if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable"]) || need_udp_socket(needs)) {
+  if (need_any(needs, ["tcp_connect_with", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable"]) || need_udp_socket(needs)) {
     parts = parts.append(wasi_instance_network_import());
   }
-  if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable", "tcp_socket_ctl", "reactor_ctl"])) {
+  if (need_any(needs, ["tcp_connect_with", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable", "tcp_socket_ctl", "reactor_ctl"])) {
     parts = parts.append(wasi_sockets_imports());
   }
-  // tcp_send / tcp_recv need the stream read/write imports (#4318 slice 2);
-  // tcp_recv_into needs the error drop among them.
-  if (need_any(needs, ["tcp_send", "tcp_send_bytes", "tcp_send_buf", "tcp_recv", "tcp_recv_into"])) {
+  // The stream verbs need the stream write import (#4318 slice 2);
+  // tcp_recv_into needs the error drop beside it.
+  if (need_any(needs, ["tcp_send_bytes", "tcp_send_buf", "tcp_recv_into"])) {
     parts = parts.append(wasi_stream_io_imports());
   }
   // The reactor's own imports: the stream subscribes and the non-blocking
@@ -12519,8 +12248,8 @@ function preview2_wasi_imports(needs: string[], sleep_p2: boolean): string {
   if (need(needs, "tcp_socket_ctl") && need(needs, "udp_bind")) {
     parts = parts.append(wasi_udp_remote_address_import());
   }
-  // udp_send pulls the wasi:sockets/udp set plus the pollable block/drop it
-  // uses for the send-permit wait (#4375). The network handle is shared
+  // The datagram ops pull the wasi:sockets/udp set plus the pollable
+  // block/drop the send-permit wait uses (#4375). The network handle is shared
   // with the tcp ops; the pollable imports are gated so they are not
   // emitted twice when a tcp op already brought them in.
   if (need_udp_socket(needs)) {
@@ -12544,7 +12273,7 @@ function preview2_wasi_imports(needs: string[], sleep_p2: boolean): string {
   // drop and the list-typed poll. A duplicate import is an invalid module, so
   // each is emitted once, for every op that names it.
   let udp_waits: boolean = need_udp_send(needs) || need(needs, "udp_recvfrom");
-  let connects: boolean = need_tcp_connect(needs) || need(needs, "tcp_accept");
+  let connects: boolean = need(needs, "tcp_connect_with") || need(needs, "tcp_accept");
   let sleeps: boolean = sleep_p2 && need_any(needs, ["sleep_ms", "sleep_ns"]);
   if (need_any(needs, ["wasm_timer_pollable", "poll", "reactor_wait"]) || sleeps) {
     parts = parts.append(wasi_subscribe_duration_import());
@@ -12960,7 +12689,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
     "@allocates", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_buf",
     "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
-    "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_send_bytes", "tcp_send_buf", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_send_bytes", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
+    "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect_with", "tcp_send_bytes", "tcp_send_buf", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
   ])) {
     parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count"), lc));
     parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
@@ -13091,17 +12820,11 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(poll_fds_func());
   }
   // cabi_realloc is the canonical ABI's GUEST allocator, needed by every op
-  // whose import RETURNS a list: wasm_poll (list<u32>) and tcp_recv
-  // (list<u8>). One shared gate so it is emitted exactly once — a second
-  // definition is a duplicate-export error.
-  // Every op whose component import carries a LIST needs the guest
-  // allocator exported. tcp_send belongs here too — its
-  // blocking-write-and-flush takes a list<u8>, and `component new`
-  // rejects the module without it ("does not export a function named
-  // cabi_realloc"). That was missed when tcp_send landed because the
-  // test paired it with tcp_recv, whose own gate satisfied the
-  // requirement and hid it; a send-only program failed to compose.
-  // One shared gate, so it is emitted exactly once.
+  // whose import RETURNS a list (wasm_poll's list<u32>, a stream read's
+  // list<u8>) or takes one (blocking-write-and-flush's list<u8>):
+  // `component new` rejects the module without it ("does not export a
+  // function named cabi_realloc"). One shared gate, so it is emitted
+  // exactly once — a second definition is a duplicate-export error.
   // env / args on mode 2 join this gate: their preview2 imports return a
   // LIST, which the canonical ABI materialises in GUEST memory through the
   // exported cabi_realloc — without it `component new` rejects the module.
@@ -13113,47 +12836,35 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // needs the canonical allocator (export_needs_realloc). Like the heap gate
   // above, these come from the module's declarations, not from `needs`.
   if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need_any(needs, [
-    "wasm_poll", "tcp_recv", "poll", "tcp_send", "tcp_send_bytes", "tcp_send_buf", "udp_send", "udp_send_bytes", "udp_recvfrom", "reactor_wait", "tcp_recv_into",
+    "wasm_poll", "poll", "tcp_send_bytes", "tcp_send_buf", "udp_recvfrom", "reactor_wait", "tcp_recv_into",
   ]) || mode == 2 && (need_any(needs, ["env", "environ", "args"]) || need_preopen_p2(needs) || need_fd_read(needs))) {
     parts = parts.append(cabi_realloc_helper());
   }
   // $__fern_network_handle is shared by every socket op; emitted with
   // whichever one pulls it in.
-  if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with", "udp_send", "udp_send_bytes", "udp_bind"])) {
+  if (need_any(needs, ["tcp_connect_with", "tcp_listen", "tcp_listen_with", "udp_bind"])) {
     parts = parts.append(network_handle_func());
   }
-  if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_send_bytes", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom"])) {
+  if (need_any(needs, ["tcp_connect_with", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom"])) {
     parts = parts.append(wasi_socket_errno_func());
   }
-  if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen_with", "udp_send", "udp_send_bytes", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes"])) {
+  if (need_any(needs, ["tcp_connect_with", "tcp_listen_with", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes"])) {
     parts = parts.append(ip_flat_func());
   }
-  if (need_any(needs, ["tcp_connect", "udp_send", "udp_send_bytes"])) {
-    parts = parts.append(ip4_box_func());
-  }
-  if (need_tcp_connect(needs)) {
+  if (need(needs, "tcp_connect_with")) {
     parts = parts.append(tcp_connect_with_func());
   }
   if (need(needs, "wasm_pollable_drop")) {
     parts = parts.append(pollable_drop_func());
   }
-  if (need(needs, "tcp_connect")) {
-    parts = parts.append(tcp_connect_func());
-  }
   if (need(needs, "tcp_close")) {
     parts = parts.append(tcp_close_func(need_udp_socket(needs)));
-  }
-  if (need(needs, "tcp_send")) {
-    parts = parts.append(tcp_send_func());
   }
   if (need(needs, "tcp_send_bytes")) {
     parts = parts.append(tcp_send_bytes_func());
   }
   if (need(needs, "tcp_send_buf")) {
     parts = parts.append(tcp_send_buf_func());
-  }
-  if (need(needs, "tcp_recv")) {
-    parts = parts.append(tcp_recv_func());
   }
   if (need(needs, "tcp_listen")) {
     parts = parts.append(tcp_listen_func());
@@ -13179,7 +12890,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need_udp_socket(needs)) {
     parts = parts.append(udp_close_func());
   }
-  if (need_any(needs, ["udp_send", "udp_send_bytes", "udp_bind"])) {
+  if (need(needs, "udp_bind")) {
     parts = parts.append(udp_bind_func());
   }
   if (need(needs, "udp_bind_with")) {
@@ -13188,23 +12899,14 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "udp_connect")) {
     parts = parts.append(udp_connect_func());
   }
-  if (need_any(needs, ["udp_send", "udp_sendto"])) {
+  if (need(needs, "udp_sendto")) {
     parts = parts.append(udp_sendto_func(false));
   }
-  if (need_any(needs, ["udp_send_bytes", "udp_sendto_bytes"])) {
+  if (need(needs, "udp_sendto_bytes")) {
     parts = parts.append(udp_sendto_func(true));
   }
   if (need(needs, "udp_recvfrom")) {
     parts = parts.append(udp_recvfrom_func());
-  }
-  if (need_any(needs, ["udp_send", "udp_send_bytes"])) {
-    parts = parts.append(ipv4_parse_func());
-  }
-  if (need(needs, "udp_send")) {
-    parts = parts.append(udp_send_func(false));
-  }
-  if (need(needs, "udp_send_bytes")) {
-    parts = parts.append(udp_send_func(true));
   }
   if (need(needs, "reactor_new")) {
     parts = parts.append(reactor_new_func());
@@ -13267,10 +12969,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "write_some_bytes")) {
     parts = parts.append(writer_bytes_func(false, mode == 2));
-  }
-  // $__fern_read_line boxes a line of stdin (heap-gated via op_allocates).
-  if (need(needs, "read_line")) {
-    parts = parts.append(read_line_func());
   }
   // $__fern_reader_read_chunk(fd,n) / $__fern_reader_close(fd) back the
   // Reader intrinsics (r.read_chunk(n) / r.close()) — a Reader is just its fd
@@ -16931,7 +16629,7 @@ function calls_any(calls: Map[string, boolean], names: string[]): boolean {
 // stdin_builtins: the builtins that read fd 0 without the program holding a
 // Reader for it first.
 function stdin_builtins(): string[] {
-  return ["stdin", "read_line"];
+  return ["stdin"];
 }
 
 // fs_builtins are the filesystem builtins past read_file / write_file, and
@@ -16939,7 +16637,7 @@ function stdin_builtins(): string[] {
 function fs_builtins(): string[] {
   return [
     "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with",
-    "stdin", "read_line", "stat", "lstat", "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "create_dir", "create_dir_all", "remove_file",
+    "stdin", "stat", "lstat", "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "create_dir", "create_dir_all", "remove_file",
     "remove_dir", "remove_dir_all", "rename", "read_link", "create_symlink", "create_link", "truncate",
     "set_file_times", "temp_dir",
   ];
@@ -16949,9 +16647,9 @@ function fs_builtins(): string[] {
 // preview-2 sockets on every framing, and no fixed component shape wires them.
 function socket_builtins(): string[] {
   return [
-    "tcp_accept", "tcp_close", "tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
-    "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_recv_into", "tcp_send", "tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_socket_ctl",
-    "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes",
+    "tcp_accept", "tcp_close", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
+    "tcp_local_port", "tcp_pollable", "tcp_recv_into", "tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_socket_ctl",
+    "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_sendto", "udp_sendto_bytes",
   ];
 }
 

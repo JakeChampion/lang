@@ -13,14 +13,14 @@ import (
 
 func NativeTCPCensusCases() []struct{ Name, Source string } {
 	cases := []struct{ Name, Source string }{}
-	read := `function read(c: i32, limit: i32): i32 {
-    let bytes: u8[] = tcp_recv(c, limit);
+	read := BytesOf + `function read(c: i32, buf: u8[]): i32 {
+    let n: i32 = tcp_recv_into(c, buf);
     let i: i32 = 0;
-    while (i < bytes.len()) {
-        if (bytes[i] != 120) { return -1; }
+    while (i < n) {
+        if (buf[i] != 120u8) { return 0 - 1000; }
         i = i + 1;
     }
-    return bytes.len();
+    return n;
 }
 `
 	for _, n := range []int{0, 1, 7, 4097} {
@@ -29,15 +29,16 @@ func NativeTCPCensusCases() []struct{ Name, Source string } {
     if (listener < 0) { return 1; }
     let port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 2; }
-    let client: i32 = tcp_connect(127 + 16777216, port);
+    let client: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
     if (client < 0) { return 3; }
     let server: i32 = tcp_accept(listener);
     if (server < 0) { return 4; }
-    if (tcp_send(client, %q) != %d) { return 5; }
+    if (tcp_send_bytes(client, bytes_of(%q)) != %d) { return 5; }
     if (tcp_close(client) != 0) { return 6; }
+    let buf: u8[] = __alloc_u8(4096);
     let total: i32 = 0;
-    let n: i32 = read(server, 4096);
-    while (n > 0) { total = total + n; n = read(server, 4096); }
+    let n: i32 = read(server, buf);
+    while (n > 0) { total = total + n; n = read(server, buf); }
     if (n < 0 || total != %d) { return 7; }
     if (tcp_close(server) != 0 || tcp_close(listener) != 0) { return 8; }
     return 0;
@@ -54,18 +55,18 @@ function main(): i32 {
 `, strings.Repeat("x", n), n, n)
 		cases = append(cases, struct{ Name, Source string }{fmt.Sprintf("bytes%d", n), src})
 	}
-	for _, limit := range []int{4096, 0, -1} {
-		src := read + fmt.Sprintf(`function main(): i32 {
+	// A read of a descriptor that is not open is an error, never the end of
+	// the stream, and leaves nothing allocated.
+	cases = append(cases, struct{ Name, Source string }{"invalid-fd", read + `function main(): i32 {
     let i: i32 = 0;
     while (i < 32) {
-        if (read(-1, %d) != 0) { return 1; }
+        let buf: u8[] = __alloc_u8(4096);
+        if (read(-1, buf) >= 0) { return 1; }
         i = i + 1;
     }
     return 0;
 }
-`, limit)
-		cases = append(cases, struct{ Name, Source string }{fmt.Sprintf("invalid-fd-limit%d", limit), src})
-	}
+`})
 	return cases
 }
 

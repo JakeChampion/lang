@@ -10,7 +10,7 @@ import (
 // TestSelfHostStage2Compiler builds a reusable, stdin-driven
 // self-hosted compiler and exercises it across real language features.
 //
-// Stage 1 compiles an entry that reads a program from stdin (a read_line
+// Stage 1 compiles an entry that reads a program from stdin (a read_chunk
 // loop), lexes → parses → lowers it through semlower and emits it with
 // asm_ir, using the file-based modload driver; gcc links it into ONE
 // self-hosted compiler binary — effectively a Fern-authored `fern`.
@@ -24,21 +24,19 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
 	// stage 1: a stdin-driven self-hosted compiler — its entry reads a
-	// program via a read_line loop, lexes → parses → emits — compiled from
-	// FILES by the file-based asm driver (no ///MODULE bundle).
+	// program from stdin, lexes → parses → emits — compiled from FILES by the
+	// file-based asm driver (no ///MODULE bundle).
 	entry := "import \"./lexer\";\n" +
 		"import \"./parser\";\n" +
 		"import \"./asm_ir\";\n" +
 		"import \"./semlower\";\n" +
 		"function main(): i32 {\n" +
 		"    let src: string = \"\";\n" +
+		"    let r: Reader = stdin();\n" +
 		"    while (true) {\n" +
-		// read_line() returns Option[string] (#4369): Some(line INCLUDING the
-		// trailing '\n') / None at EOF. Accumulate each already-newline-terminated
-		// line until EOF; a blank line is Some("\n"), not None.
-		"        match (read_line()) {\n" +
-		"            Some(line) => { src = src + line; },\n" +
-		"            None => { break; },\n" +
+		"        match (r.read_chunk(65536)) {\n" +
+		"            Ok(chunk) => { if (chunk.len() == 0) { break; } src = src + chunk; },\n" +
+		"            Err(_) => { break; },\n" +
 		"        }\n" +
 		"    }\n" +
 		"    let d: semlower.Driven = semlower.driven(parser.parse_module(lexer.tokenize(src)), \"x86-64-linux\");\n" +
@@ -54,9 +52,7 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 	t.Logf("stage 1: self-hosted compiler built (%d bytes asm)", len(compilerAsm))
 
 	// stage 2: compile a table of programs with the self-hosted
-	// compiler; each emitted binary's exit code must match. Programs
-	// are single-line (the read_line loop stops at the first blank
-	// line / EOF).
+	// compiler; each emitted binary's exit code must match.
 	cases := []struct {
 		name string
 		src  string

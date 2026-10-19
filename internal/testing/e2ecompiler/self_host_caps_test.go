@@ -234,7 +234,7 @@ func TestSelfHostCapabilitiesReportAgreesWithNative(t *testing.T) {
 
 	proj := t.TempDir()
 	entry := writeCapsProject(t, proj, "helper = { path = \"../helper\" }",
-		"pub function save(s: string): i32 {\n  write_file(\"/tmp/fern-caps-e2e.txt\", s);\n  tcp_connect(0, 80);\n  return 0;\n}\n")
+		"pub function save(s: string): i32 {\n  write_file(\"/tmp/fern-caps-e2e.txt\", s);\n  tcp_close(0);\n  return 0;\n}\n")
 
 	nativeOut, err := exec.Command(nativeBin, "-capabilities", entry).CombinedOutput()
 	if err != nil {

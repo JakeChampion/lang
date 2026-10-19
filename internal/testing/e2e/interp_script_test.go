@@ -104,17 +104,19 @@ function main(): i32 {
 	}
 }
 
-// Bare `read_line()` builtin through the interpreter. Reads one
-// line from stdin and returns its length via the Some arm (0 at
-// EOF via None). Mirrors the wasm / native read_line coverage.
+// io.read_line through the interpreter: one line from stdin answers its
+// length, EOF answers 0.
 func TestInterpScriptReadLine(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(src, []byte(`function main(): i32 {
-    match (read_line()) {
-        Some(line) => { return line.len(); },
-        None => { return 0; }
+	if err := os.WriteFile(src, []byte(`import "std/io";
+
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => { return line.len(); },
+        Ok(None()) => { return 0; },
+        Err(_) => { return 99; }
     }
     return 0;
 }

@@ -118,16 +118,8 @@ function emit_ir_map_hash_seed(s: asmcore.EmitState): asmcore.EmitState {
 // __fern_timer_fd is a Fern runtime function (#2649): asmcore.rt_src_timer_fd —
 // timerfd_create then timerfd_settime over an itimerspec in __fern_scratch.
 
-// __fern_tcp_connect is a Fern runtime function (#2649):
-// asmcore.rt_src_tcp_connect — socket + connect over the shared sockaddr_head.
-
 // __fern_tcp_close is a Fern runtime function (#2649): asmcore.rt_src_tcp_close — close(2).
 
-// __fern_tcp_recv is a Fern runtime function (#2649): asmcore.rt_src_tcp_recv
-// — read(2) into a scratch buffer, spread into a fresh u8[] box (#5714).
-
-// __fern_tcp_send is a Fern runtime function (#2649): asmcore.rt_src_tcp_send
-// sendto(2) with MSG_NOSIGNAL from the string's buffer, via __raw_data.
 // __fern_tcp_listen is a Fern runtime function (#2649):
 // asmcore.rt_src_tcp_listen — socket + bind + listen over a sockaddr_in built
 // byte-wise in __fern_scratch.
@@ -2006,7 +1998,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
 function needs_heap_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "heap", "i32_to_string", "u32_to_string",
-    "str_read_line", "buf", "reader",
+    "buf", "reader",
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
@@ -3750,8 +3742,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // __fern_print_str is a Fern runtime function (#2649):
   // asmcore.rt_src_print_str, lowered through the IR pipeline via
   // emit_ir_runtime_fern_fn in the entry block, not a hand-written body here.
-  // __fern_read_line, __fern_reader_read_chunk and __fern_reader_close are Fern
-  // runtime functions (#2649): asmcore.rt_src_read_line / rt_src_reader_read_chunk
+  // __fern_reader_read_chunk and __fern_reader_close are Fern
+  // runtime functions (#2649): asmcore.rt_src_reader_read_chunk
   // / rt_src_reader_close, lowered through the IR pipeline via
   // emit_ir_runtime_fern_fn in the entry block. Their Option and string boxes come
   // from ordinary lowering now, so they carry the rc header at box-8 the
@@ -8308,9 +8300,6 @@ function ssa_host_need(op: string): string {
       return op;
     }
   }
-  if (op == "read_line") {
-    return "str_read_line";
-  }
   if (op == "read_chunk" || op == "reader_close") {
     return "reader";
   }
@@ -10828,37 +10817,14 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    call __fn___fern_environ\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("environ");
-  } else if (o.kind_tag == 110) {  // tcp_connect
-    // [host_be, port]; __fern_tcp_connect(%rdi=host_be, %rsi=port) -> fd
-    // (or -errno) in %rax.
-    // [host_be, port] with port on top; the stack ABI wants param[0]
-    // (host_be) lowest, so pop and re-push swapped.
-    s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
-    s = s.write("    call __fn___fern_tcp_connect\n    addq $16, %rsp\n    pushq %rax\n");
-    s = s.need("tcp_connect");
-  } else if (o.kind_tag == 114) {  // tcp_send
-    // [fd, str box] with the box on top; the stack ABI wants param[0]
-    // (fd) lowest, so pop and re-push swapped.
-    s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
-    s = s.write("    call __fn___fern_tcp_send\n    addq $16, %rsp\n    pushq %rax\n");
-    s = s.need("tcp_send");
-  } else if (o.kind_tag == 208) {  // udp_send
-    // [host, port, data] with data on top; the stack ABI wants param[0]
-    // (host) lowest, so pop and re-push reversed. Before #6917 this op had
-    // no case at all and fell through to the comment fallback, which
-    // dropped the call.
-    s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
-    s = s.write("    call __fn___fern_udp_send\n    addq $24, %rsp\n    pushq %rax\n");
-    s = s.need("udp_send");
   } else if (o.kind_tag == 333) {  // tcp_socket_ctl
     // [a, b, c] with c on top; the stack ABI wants param[0] lowest, so
-    // pop and re-push reversed, as udp_send does.
+    // pop and re-push reversed.
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_tcp_socket_ctl\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("tcp_socket_ctl");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag >= 353 && o.kind_tag <= 355 || o.kind_tag == 387 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442) {  // socket calls, including byte sends, the ring and kernel TLS
-    // [args] with the last on top; pop and re-push reversed, as udp_send
-    // does. recvfrom spreads the datagram into the caller's array from a
+  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag == 387 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442) {  // socket calls, including byte sends, the ring and kernel TLS
+    // [args] with the last on top; pop and re-push reversed. recvfrom spreads the datagram into the caller's array from a
     // raw buffer, so it needs the heap.
     let udp_name: string = ir.kind_name(o.kind_tag) + asmcore.packed_suffix(ir.is_packed(o));
     let udp_argc: i32 = ir.op_pops(o);
@@ -10874,18 +10840,10 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
       k = k - 1;
     }
     s = s.write("    call __fn___fern_" + udp_name + "\n    addq $" + util.i32_to_string(8 * udp_argc) + ", %rsp\n    pushq %rax\n");
-    if (o.kind_tag == 337 || o.kind_tag == 343 || o.kind_tag == 344 || o.kind_tag >= 353 && o.kind_tag <= 355 || o.kind_tag >= 436 && o.kind_tag <= 438) {
+    if (o.kind_tag == 337 || o.kind_tag == 343 || o.kind_tag == 344 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag >= 436 && o.kind_tag <= 438) {
       s = s.need("heap");
     }
     s = s.need(udp_name);
-  } else if (o.kind_tag == 115) {  // tcp_recv
-    // [fd, max] with max on top; the stack ABI wants param[0] (fd)
-    // lowest, so pop and re-push swapped.
-    s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
-    let tr: string = "tcp_recv" + asmcore.packed_suffix(ir.is_packed(o));
-    s = s.write("    call __fn___fern_" + tr + "\n    addq $16, %rsp\n    pushq %rax\n");
-    s = s.need("heap");
-    s = s.need(tr);
   } else if (o.kind_tag == 116) {  // tcp_close
     // [fd] IS param[0] already, so the stack ABI needs no marshalling:
     // call, drop the arg slot, push the result. 0 / -errno.
@@ -12370,10 +12328,6 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes_u8("x86_64"), s);
   }
-  if (s.has_need("tcp_recv_u8")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_u8("x86_64"), s);
-  }
   if (s.has_need("tcp_recv_into_u8")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into_u8("x86_64"), s);
@@ -12508,9 +12462,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
     "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
     "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps",
-    "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "putchar",
-    "udp_send_bytes", "udp_send_bytes_u8", "udp_sendto_bytes", "udp_sendto_bytes_u8",
-    "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",
+    "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
+    "udp_sendto_bytes", "udp_sendto_bytes_u8",
+    "eprint", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",
     "tcp_listen_with_u8", "udp_bind_u8", "udp_bind_with_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
     "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe",
     "rlimit_nofile", "signal_ignore", "signal_default", "signal_catch", "signal_mask",
@@ -12533,10 +12487,6 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
   // they sit with the clocks rather than in the heap runtime: a program that only
   // prints must still link.
-  if (s.has_need("str_read_line")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line("x86_64"), s);
-  }
   if (s.has_need("str_print")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str("x86_64"), s);
@@ -12931,10 +12881,6 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count("x86_64"), s);
   }
-  if (s.has_need("udp_send")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send("x86_64"), s);
-  }
   if (s.has_need("tcp_listen_with")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86_64", false), s);
@@ -13040,33 +12986,15 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into("x86_64"), s);
   }
-  if (s.has_need("tcp_connect")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect("x86_64"), s);
-  }
   if (s.has_need("tcp_close")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close("x86_64"), s);
-  }
-  if (s.has_need("tcp_recv")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv("x86_64"), s);
-  }
-  if (s.has_need("tcp_send")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send("x86_64"), s);
   }
   if (s.has_need("tcp_send_bytes")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86_64", false), s);
   }
   if (s.has_need("tcp_send_bytes_u8")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86_64", true), s);
-  }
-  if (s.has_need("udp_send_bytes")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send_bytes("x86_64", false), s);
-  }
-  if (s.has_need("udp_send_bytes_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send_bytes("x86_64", true), s);
   }
   if (s.has_need("udp_sendto_bytes")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto_bytes("x86_64", false), s);

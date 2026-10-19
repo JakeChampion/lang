@@ -134,15 +134,15 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		}
 	})
 
-	// r.read_line() reads the RECEIVER's fd, not stdin: a file Reader's lines are
-	// the file's. "a\nbb\n" is 2 + 3 bytes with newlines included → 5 (#7758).
-	t.Run("reader-read-line", func(t *testing.T) {
+	// r.read_chunk_bytes(n) reads the RECEIVER's fd, not stdin: a file Reader's
+	// bytes are the file's. "a\nbb\n" is 5 bytes, read two at a time (#7758).
+	t.Run("reader-read-chunks", func(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "rl.txt"), []byte("a\nbb\n"), 0o644); err != nil {
 			t.Fatalf("seed rl.txt: %v", err)
 		}
-		src := `function main(): i32 { match (open_reader("rl.txt")) { Ok(r) => { let n: i32 = 0; while (true) { match (r.read_line()) { Some(l) => { n = n + l.len(); }, None => { r.close(); return n; } } } r.close(); return n; }, Err(_) => { return 90; } } return 91; }`
+		src := `function main(): i32 { match (open_reader("rl.txt")) { Ok(r) => { let n: i32 = 0; while (true) { match (r.read_chunk_bytes(2)) { Ok(b) => { if (b.len() == 0) { r.close(); return n; } n = n + b.len(); }, Err(_) => { r.close(); return 92; } } } r.close(); return n; }, Err(_) => { return 90; } } return 91; }`
 		if code := run(t, src); code != 5 {
-			t.Fatalf("reader-read-line exit %d, want 5 (r.read_line reads the file, not stdin; #7758)", code)
+			t.Fatalf("reader-read-chunks exit %d, want 5 (r.read_chunk_bytes reads the file, not stdin; #7758)", code)
 		}
 	})
 }

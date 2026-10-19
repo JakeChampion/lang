@@ -870,6 +870,11 @@ Zero-config stderr wrappers plus a leveled logger (#2683).
 - `read_input_bytes(path): Result[u8[], IoError]`: raw stdin for `"-"` or
   `""`, otherwise the contents of a file. These byte APIs preserve malformed
   UTF-8 and encodings split across read boundaries.
+- `read_line(reader): Result[Option[string], IoError]`: the next line,
+  trailing `\n` kept, read a byte at a time so nothing past the newline is
+  consumed. `Ok(None)` is the end of input, an unterminated last line is
+  `Ok(Some(line))`, a read failure is the `IoError`, and a line that is not
+  UTF-8 is `Err(InvalidUtf8(""))`.
 
 ### `std/errno`
 
@@ -3208,7 +3213,8 @@ IPv6 address carrying an IPv4 one (IPv4-mapped, NAT64's well-known
 local-use 64:ff9b:1::/48 is global only under every prefix length the
 operator may pick. `(a).embedded_v4(bits)` is the address a NAT64 address
 carries under a prefix of `bits` in RFC 6052's layout. `packed_v4()`
-bridges an `IpAddr` to the packed IPv4 argument `tcp_connect` takes.
+is a `V4` as one network-order `i32` (`a | b << 8 | c << 16 | d << 24`),
+the key `peer_key` answers for an IPv4 peer.
 
 `Prefix` is an address block: `prefix_parse` reads `10.0.0.0/8`,
 `2001:db8::/32` or a bare address (the block of that one address), and
@@ -3225,7 +3231,7 @@ numbering `target_os()` names, and `errno()` is the inverse.
 
 The socket controls are typed faces over the descriptor builtins
 `tcp_listen_with` and `tcp_socket_ctl`, on the same `i32` descriptors the
-`tcp_*` builtins and `std/tcp` use:
+`tcp_*` builtins use:
 
 - `listen_at(addr, opts)` — a listener bound to a `SocketAddr` of either
   family with `ListenOptions { backlog, reuse_port }`; `::` takes every
@@ -3247,6 +3253,14 @@ The socket controls are typed faces over the descriptor builtins
   its length: the byte count, `Ok(0)` at the end of the stream, or the
   `NetError`. On wasi:sockets every read is non-blocking, so a reader
   waits for readability first (`async.wait_any`).
+- `read_deadline(sock, max, deadline)` — up to `max` bytes, waiting at most
+  `deadline` for the socket to become readable: `Ok(Chunk(bytes))`, empty
+  at the end of the stream; `Ok(Elapsed)` at the deadline; `Ok(Abandoned)`
+  when the waiting task was cancelled first (`async.cancelled()`); or the
+  `NetError` the read reported, so a reset connection is an error and
+  never the end of the stream. `read_watched(sock, max, ms, interest)` is
+  the same read with the wait in milliseconds and the interest word given
+  (`async.KEEP` or `async.WATCHED` for a descriptor that stays watched).
 - `write(sock, data)` — `data` written to a connected stream: the bytes
   accepted (fewer than `data` holds when a non-blocking socket fills), or
   the `NetError`; a write never raises SIGPIPE.
@@ -3263,13 +3277,13 @@ The socket controls are typed faces over the descriptor builtins
   rather than the v4-mapped `V6` the socket reports; `Other(ENOTCONN)`
   for a socket with no peer.
 - `peer_key(sock)` — the peer's address as one 32-bit key, or `None` for
-  a socket with no peer: an IPv4 address packed as `tcp_connect` takes
+  a socket with no peer: an IPv4 address packed as `packed_v4` packs
   it (the first octet in the low byte), a v4-mapped IPv6 address its IPv4
   one, any other IPv6 address the two words of its first eight bytes
   XORed, so the peers of one /64 share a key. What
   `serve.Config.max_connections_per_ip` counts by.
 - `shutdown(sock, how)` — `Shutdown.Read`, `Write` or `Both`; a write-side
-  shutdown is the end of stream the peer's `tcp_recv` reads as EOF.
+  shutdown is the end of stream the peer's `read` answers as `Ok(0)`.
 
 On wasm, `set_nodelay`, `set_nonblocking` and `send_queue` answer
 `Other(58)` (`ENOTSUP`): wasi:sockets 0.2 has neither control and no
@@ -3683,18 +3697,11 @@ points that run a handler under it.
   synthesised main and the wasi-http entry included, keeps the
   HttpResponse-shaped entry.
 
-### `std/tcp`
-
-- `tcp_recv_deadline(fd, max, deadline): Recv` —
-  recv bounded by a readability deadline: `Chunk(bytes)` in time
-  (empty = EOF), `Elapsed` at the deadline, `Abandoned` when the task
-  waiting was cancelled first (`async.cancelled()`). On interp (where
-  `poll` is a stub) it degrades to a blocking recv.
+### Socket builtins
 
 The raw socket primitives `tcp_listen` / `tcp_accept` /
-`tcp_local_port` / `tcp_recv` / `tcp_send` / `tcp_close` are
-runtime-provided, emitted by codegen from extern stubs at module
-boundary — not declared in this module.
+`tcp_local_port` / `tcp_recv_into` / `tcp_send_bytes` / `tcp_close` are
+runtime-provided; `std/net` is the typed face over them.
 
 `tcp_local_port(sock)` answers the port a socket is bound to, or a
 negative errno. It is what makes `tcp_listen(0)` usable: the host
@@ -3867,7 +3874,7 @@ answer is `Result[HttpResponse, FetchError]`.
   of the response; total runs from the start to the last byte read.
 - **Transport:** the dialled route reaches the network only through
   `trait Transport` (`now_ns`, `lookup`, `connect`, `write`, `read` under
-  a wait answering `tcp.Recv`, `close`, and `idle`, its pool), and
+  a wait answering `Result[net.Recv, net.NetError]`, `close`, and `idle`, its pool), and
   `send_on(tr, req, policy)` is
   `send` over any transport under a `Policy { public_only, proxies, roots, jar, allow }`,
   `roots` the store a server's chain must reach, the machine's when None,
@@ -3877,7 +3884,7 @@ answer is `Result[HttpResponse, FetchError]`.
   `plat.http`'s, and `public_policy_via(proxies)` the same route through
   `proxies` in place of the environment's.
   `sockets()` is the machine's (the system resolver, `dns.connect_race`,
-  `tcp_recv_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
+  `net.read_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
   scripts one in virtual time.
 - **HTTP/2:** an `https` origin that chooses `h2` by ALPN is spoken to
   over HTTP/2 (`std/http/h2`'s client side): the request on a stream of
@@ -3916,12 +3923,11 @@ answer is `Result[HttpResponse, FetchError]`.
   exercises the same client a real one does. `lookup` answers a `Lookup`:
   the addresses to dial and, when asked to be judged, the addresses the
   network named with the ones they carry, which the block list reads.
-- **Awaitable:** `fetch_future(host_be, port, path):
+- **Awaitable:** `fetch_future(addr: net.SocketAddr, path):
   async.Future[u8[]]` resolves to the response body (empty on any
   failure, a `path` that `http_target_ok` refuses included, which never
   connects) — fan out through `async.gather` / `async.race` /
-  `async.with_deadline`. `ipv4(a,b,c,d)` packs the dotted-quad it and
-  `tcp_connect` take.
+  `async.with_deadline`.
 
 ### `std/headers`
 
@@ -4152,7 +4158,7 @@ old `concurrent { … }` / `await` keyword surface.
   said `KEEP` for and unwatches or closes them itself, a scheduler honours
   the two only on a driver whose `keeps` says a watch outlives its wait,
   and `interest_bits(interest)` is the interest without them. `wait_any` blocks when no task is
-  current, which is how std/tcp's recv-with-deadline and std/dns's connect
+  current, which is how `net.read_deadline` and std/dns's connect
   and exchange waits work in a plain program; under a scheduler the
   self-host compiler lowers every function that reaches it to a resumable
   form, and the native compiler keeps the blocking fallback, where

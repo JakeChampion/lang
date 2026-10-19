@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Self-host RC: a match over read_chunk / read_line owns the payload it binds
+// Self-host RC: a match over read_chunk owns the payload it binds
 // (#8402, the self-host half of native's #8396 / #8399).
 //
 // The runtime hands back an Option / Result box whose success payload is a fresh
@@ -71,25 +71,6 @@ func readChunkDiscardSrc(size, rounds int) string {
 }`, rounds, size)
 }
 
-// readLineDrainSrc drains `rounds` complete lines. Both the returned string
-// and every growth buffer must be reclaimed, so a longer line must not cost
-// more live bytes after the same number of calls.
-func readLineDrainSrc(rounds int) string {
-	return fmt.Sprintf(`function main(): i32 {
-    let r: Reader = stdin();
-    let acc: i32 = 0;
-    let i: i32 = 0;
-    while (i < %d) {
-        match (r.read_line()) {
-            Some(line) => { acc = acc + line.len(); },
-            None => { return 9; }
-        }
-        i = i + 1;
-    }
-    return acc %% 251;
-}`, rounds)
-}
-
 // runWithStdin runs a built binary against `stdin` and returns its stderr and
 // exit code. hevRun gives the child no stdin at all, and a reader probe needs
 // bytes to read.
@@ -134,17 +115,6 @@ func TestSelfHostOwnedPayloadReclaimX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	const rounds = 24
-	// One line per round for the read_line probe; a wide input must not
-	// multiply the CALL count, or the per-call box constant "scales" on its
-	// own (the #8396 measurement trap).
-	lines := func(width int) []byte {
-		var b bytes.Buffer
-		for i := 0; i < rounds; i++ {
-			b.Write(bytes.Repeat([]byte{'a'}, width))
-			b.WriteByte('\n')
-		}
-		return b.Bytes()
-	}
 
 	for _, tc := range []struct {
 		name          string
@@ -167,20 +137,6 @@ func TestSelfHostOwnedPayloadReclaimX86_64(t *testing.T) {
 			inNarrow:      bytes.Repeat([]byte{'x'}, 16*rounds),
 			inWide:        bytes.Repeat([]byte{'x'}, 1024*rounds),
 			wantExitEqual: true,
-		},
-		{
-			name:     "read_line_bound",
-			narrow:   readLineDrainSrc(rounds),
-			wide:     readLineDrainSrc(rounds),
-			inNarrow: lines(3),
-			inWide:   lines(200),
-		},
-		{
-			name:     "read_line_growth",
-			narrow:   readLineDrainSrc(rounds),
-			wide:     readLineDrainSrc(rounds),
-			inNarrow: lines(200),
-			inWide:   lines(8192),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

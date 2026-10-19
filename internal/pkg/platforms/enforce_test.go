@@ -394,6 +394,24 @@ func TestEnforceStdoutStreamByTarget(t *testing.T) {
 	}
 }
 
+// A flat-loaded stdlib program keeps each module's free functions under
+// their bare names, so std/net's `write` sits beside the builtin of that
+// name and `net.write(...)` is a call to `write`. The declared function is
+// the callee, not the builtin: the call reaches no capability.
+func TestReachDeclaredFunctionShadowsBuiltin(t *testing.T) {
+	prog, err := parser.Parse(`function write(data: u8[]): i32 { return data.len(); }
+function main(): i32 { let b: u8[] = []; return write(b); }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := platforms.Reach(prog); len(got) != 0 {
+		t.Fatalf("reach = %v, want none: write is a declared function", got)
+	}
+	if vs := platforms.Enforce(prog, "wasm32-wasi-http"); len(vs) != 0 {
+		t.Fatalf("violations = %+v, want none: write is a declared function", vs)
+	}
+}
+
 // The completeness contract at the TARGET level (#6508), mirroring the
 // one internal/pkg/caps holds at the package level. Every user-callable
 // builtin the checker pre-declares is either gated on a capability or

@@ -9,15 +9,15 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmComponentReadLine builds programs that read stdin through the
-// bare read_line() builtin as wasm32-wasi components with the self-host CLI.
-// read_line reads fd 0 without the program naming a Reader, so nothing but the
-// call itself says the component needs wasi:cli/stdin: the CLI refused the
-// read-only program as having no import for it, and composed the one that also
-// printed without fetching the stdin stream, so its read_line saw EOF.
+// TestSelfHostWasmComponentReadLine builds programs that read stdin through
+// io.read_line(stdin()) as wasm32-wasi components with the self-host CLI. The
+// stdin() call is all that says the component needs wasi:cli/stdin: the CLI
+// once refused a read-only program as having no import for it, and composed
+// one that also printed without fetching the stdin stream, so its read saw
+// EOF.
 //
 // A line keeps its newline, as the interpreter's does, a last line without one
-// is still returned, and EOF is None. A component reports only 0 or non-zero,
+// is still returned, and EOF is Ok(None). A component reports only 0 or non-zero,
 // so each program's answer is that and what it prints.
 func TestSelfHostWasmComponentReadLine(t *testing.T) {
 	requireWasmTools(t)
@@ -30,41 +30,46 @@ func TestSelfHostWasmComponentReadLine(t *testing.T) {
 		name, src string
 		runs      []run
 	}{
-		{"read_line", `function main(): i32 {
-    match (read_line()) {
-        Some(line) => { return 0; },
-        None => { return 1; }
+		{"read_line", `import "std/io";
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => { return 0; },
+        _ => { return 1; }
     }
     return 1;
 }`, []run{{"hello\n", "", true}, {"", "", false}}},
-		{"read_line print", `function main(): i32 {
-    match (read_line()) {
-        Some(line) => { print(line); return 0; },
-        None => { return 1; }
+		{"read_line print", `import "std/io";
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => { print(line); return 0; },
+        _ => { return 1; }
     }
     return 1;
 }`, []run{{"hello\n", "hello\n\n", true}, {"", "", false}}},
-		{"read_line exit", `function main(): i32 {
-    match (read_line()) {
-        Some(line) => { exit(0); return 0; },
-        None => { exit(1); return 1; }
+		{"read_line exit", `import "std/io";
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => { exit(0); return 0; },
+        _ => { exit(1); return 1; }
     }
     return 5;
 }`, []run{{"hi\n", "", true}, {"", "", false}}},
-		{"read_line print exit", `function main(): i32 {
-    match (read_line()) {
-        Some(line) => { print(line); exit(0); return 0; },
-        None => { exit(2); return 2; }
+		{"read_line print exit", `import "std/io";
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => { print(line); exit(0); return 0; },
+        _ => { exit(2); return 2; }
     }
     return 5;
 }`, []run{{"echo me\n", "echo me\n\n", true}, {"", "", false}}},
-		{"every line", `function main(): i32 {
+		{"every line", `import "std/io";
+function main(): i32 {
     let n: i32 = 0;
     let done: boolean = false;
     while (!done) {
-        match (read_line()) {
-            Some(line) => { print("[" + line + "]"); n = n + 1; },
-            None => { done = true; }
+        match (io.read_line(stdin())) {
+            Ok(Some(line)) => { print("[" + line + "]"); n = n + 1; },
+            _ => { done = true; }
         }
     }
     if (n == 3) { return 0; }

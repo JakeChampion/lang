@@ -2043,37 +2043,6 @@ function byte_array_value(bytes: u8[]): Value {
   return v_arr_of(out, "u8");
 }
 
-// Stage0 can still have a bounded text read_line. Read raw bytes here so the
-// installed stage1 interpreter also returns a complete line without consuming
-// any byte after its newline. Keep the D10 OS-text assumption at publication.
-function read_line_from(r: Reader): Option[string] {
-  let h: usize = buf_new(256);
-  let done: boolean = false;
-  while (!done) {
-    match (r.read_chunk_bytes(1)) {
-      Ok(chunk) => {
-        if (chunk.len() == 0) {
-          done = true;
-        } else {
-          buf_push_byte(h, chunk[0] as i32);
-          if (chunk[0] == 10 as u8) {
-            done = true;
-          }
-        }
-      },
-      Err(_) => {
-        done = true;
-      }
-    }
-  }
-  let bytes: u8[] = buf_take_bytes(h);
-  buf_free(h);
-  if (bytes.len() == 0) {
-    return None;
-  }
-  return Some(string_from_bytes_unchecked(bytes));
-}
-
 function call_xattr(name: string, args: Value[]): Value {
   let reading: boolean = name == "getxattr" || name == "lgetxattr" || name == "getxattr_bytes" || name == "lgetxattr_bytes";
   let count: i32 = 3;
@@ -2697,9 +2666,6 @@ function call_host_stdio(name: string, args: Value[]): Value {
   if (name == "stderr") {
     return writer_value(stderr());
   }
-  if (name == "read_line") {
-    return option_string_value(read_line_from(stdin()));
-  }
   return v_err("undefined function: " + name);
 }
 
@@ -2942,28 +2908,22 @@ function call_host_fs_list(name: string, path: string): Value {
 
 // call_host_net answers the socket builtins: a descriptor is the host's own.
 function call_host_net(name: string, args: Value[]): Value {
-  if (util.has_str(["udp_send", "udp_send_bytes", "udp_sendto", "udp_sendto_bytes"], name)) {
+  if (util.has_str(["udp_sendto", "udp_sendto_bytes"], name)) {
     return call_host_udp_send(name, args);
   }
   if (util.has_str(["udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom"], name)) {
     return call_host_udp(name, args);
   }
-  if (util.has_str(["tcp_listen_with", "tcp_connect_with", "tcp_connect", "tcp_listen"], name)) {
+  if (util.has_str(["tcp_listen_with", "tcp_connect_with", "tcp_listen"], name)) {
     return call_host_tcp_open(name, args);
   }
-  if (util.has_str(["tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_recv_into"], name)) {
+  if (util.has_str(["tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_recv_into"], name)) {
     return call_host_tcp_io(name, args);
   }
   return call_host_tcp_fd(name, args);
 }
 
 function call_host_udp_send(name: string, args: Value[]): Value {
-  if (name == "udp_send") {
-    return v_int(udp_send(arg_str(args, 0), arg_i32(args, 1), arg_str(args, 2)));
-  }
-  if (name == "udp_send_bytes") {
-    return v_int(udp_send_bytes(arg_str(args, 0), arg_i32(args, 1), arg_bytes(args, 2)));
-  }
   if (name == "udp_sendto") {
     return v_int(udp_sendto(arg_i32(args, 0), arg_bytes(args, 1), arg_i32(args, 2), arg_str(args, 3)));
   }
@@ -2992,9 +2952,6 @@ function call_host_tcp_open(name: string, args: Value[]): Value {
   if (name == "tcp_listen") {
     return v_int(tcp_listen(arg_i32(args, 0)));
   }
-  if (name == "tcp_connect") {
-    return v_int(tcp_connect(arg_i32(args, 0), arg_i32(args, 1)));
-  }
   if (name == "tcp_listen_with") {
     return v_int(tcp_listen_with(arg_bytes(args, 0), arg_i32(args, 1), arg_i32(args, 2), arg_bool(args, 3)));
   }
@@ -3003,12 +2960,6 @@ function call_host_tcp_open(name: string, args: Value[]): Value {
 
 function call_host_tcp_io(name: string, args: Value[]): Value {
   let fd: i32 = arg_i32(args, 0);
-  if (name == "tcp_recv") {
-    return byte_array_value(tcp_recv(fd, arg_i32(args, 1)));
-  }
-  if (name == "tcp_send") {
-    return v_int(tcp_send(fd, arg_str(args, 1)));
-  }
   if (name == "tcp_send_bytes") {
     return v_int(tcp_send_bytes(fd, arg_bytes(args, 1)));
   }
@@ -3251,7 +3202,7 @@ function is_handle_method(kind: string, name: string): boolean {
   if (kind == "Writer") {
     return util.has_str(["write", "write_some", "write_bytes", "write_some_bytes", "splice_forever", "truncate"], name);
   }
-  return util.has_str(["read_line", "read_chunk", "read_chunk_bytes", "splice_to", "copy_range_to", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc"], name);
+  return util.has_str(["read_chunk", "read_chunk_bytes", "splice_to", "copy_range_to", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc"], name);
 }
 
 function handle_method(h: VHandle, name: string, args: Value[]): Value {
@@ -3277,9 +3228,6 @@ function handle_method(h: VHandle, name: string, args: Value[]): Value {
 }
 
 function reader_method(r: Reader, name: string, args: Value[]): Value {
-  if (name == "read_line") {
-    return option_string_value(read_line_from(r));
-  }
   if (name == "read_chunk_bytes") {
     return bytes_result_value(r.read_chunk_bytes(arg_i32(args, 0)));
   }

@@ -28,7 +28,7 @@ func TestSelfHostWasmTCPRecvGuestStorage(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		max  int
-	}{{"recv", 3}, {"recv-zero", 0}, {"recv-negative", -1}} {
+	}{{"recv", 3}, {"recv-zero", 0}} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := e2eharness.WasiStreamRecvStorageProbe(tc.max)
 			cmd := runX86_64Bin(runner, bin)

@@ -9,8 +9,8 @@ import (
 )
 
 // The wasm runtime's I/O helpers gave back none of their scratch (#9305): the
-// string builder abandoned every outgrown buffer, read_line its
-// 256-byte line buffer, stat and fd_stat their 64-byte record, and
+// string builder abandoned every outgrown buffer, stat and fd_stat their
+// 64-byte record, and
 // remove_dir_all a 4 KiB readdir buffer per directory, every child path, the
 // name array and every recursive result box. Each program below touches one
 // helper and has to balance.
@@ -34,10 +34,11 @@ func TestSelfHostWasmIOScratchReleased(t *testing.T) {
     buf_free(h);
     return (t.len() + u.len()) % 101;
 }`, "", (1000 + 5) % 101, nil},
-		{"read_line", `function main(): i32 {
+		{"read_line", `import "std/io";
+function main(): i32 {
     let n: i32 = 0;
-    match (read_line()) { Some(l) => { n = l.len(); }, None => { n = 50; } }
-    match (read_line()) { Some(l) => { n = n + 100; }, None => { n = n + 1; } }
+    match (io.read_line(stdin())) { Ok(Some(l)) => { n = l.len(); }, _ => { n = 50; } }
+    match (io.read_line(stdin())) { Ok(Some(l)) => { n = n + 100; }, _ => { n = n + 1; } }
     return n;
 }`, "hello\n", 7, nil},
 		{"stat", `function main(): i32 {

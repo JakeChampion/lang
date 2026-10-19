@@ -11,10 +11,10 @@ import (
 // package warns, and the root package is exempt from both.
 func TestEnforce(t *testing.T) {
 	rows := []caps.Row{
-		{Package: "app", Uses: []caps.Use{{Capability: "net", Chain: []string{"main", "tcp_connect"}}}},
+		{Package: "app", Uses: []caps.Use{{Capability: "net", Chain: []string{"main", "tcp_close"}}}},
 		{Package: "governed", Uses: []caps.Use{
 			{Capability: "fs", Chain: []string{"lib__save", "write_file"}},
-			{Capability: "net", Chain: []string{"lib__save", "tcp_connect"}},
+			{Capability: "net", Chain: []string{"lib__save", "tcp_close"}},
 		}},
 		{Package: "ungoverned", Uses: []caps.Use{{Capability: "fs", Chain: []string{"lib__save", "write_file"}}}},
 	}
@@ -26,7 +26,7 @@ func TestEnforce(t *testing.T) {
 	if len(errs) != 1 || errs[0].Package != "governed" || errs[0].Capability != "net" {
 		t.Fatalf("errs: %+v", errs)
 	}
-	wantErr := `package "governed" reaches 'net' (tcp_connect) without a capability grant: lib__save → tcp_connect; add "net" to its capabilities in fern.toml or remove the call`
+	wantErr := `package "governed" reaches 'net' (tcp_close) without a capability grant: lib__save → tcp_close; add "net" to its capabilities in fern.toml or remove the call`
 	if got := errs[0].Message(); got != wantErr {
 		t.Errorf("error message:\ngot  %q\nwant %q", got, wantErr)
 	}

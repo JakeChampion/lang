@@ -1,10 +1,13 @@
+import "std/io";
+
 // Reads one line from stdin. Returns 1 when a line is present, 0 at
 // EOF. The fixture feeds "x\n" on stdin, so the expected exit is 1 —
 // this checks the stdin file is wired through to every backend.
 function main(): i32 {
-    match (stdin().read_line()) {
-        Some(_) => { return 1; },
-        None => { return 0; }
+    match (io.read_line(stdin())) {
+        Ok(Some(_)) => { return 1; },
+        Ok(None()) => { return 0; },
+        Err(_) => { return 2; }
     }
     return -1;
 }
