@@ -29,7 +29,6 @@ const udpSendBytesProgram = `function main(): i32 {
     assert(udp_connect(fd, addr, UDP_PORT) == 0);
     assert(udp_sendto_bytes(fd, empty, 0, [0u8, 255u8]) == 2);
     assert(tcp_close(fd) == 0);
-    UDP_ONESHOT
     assert(data.len() == 8193 && retained.len() == 8193);
     for i in 0..8193 { assert(data[i] == (i % 256) as u8); }
     assert(addr[addr.len() - 1] == 1u8);
@@ -98,14 +97,7 @@ func checkUDPSendBytesFamilies(t *testing.T, compile func(string, string) *exec.
 				data[i] = byte(i)
 			}
 			want := [][]byte{data, data, {255, 0, 128}, {}, {0, 255}}
-			oneshot := ""
-			if family.network == "udp4" {
-				oneshot = `assert(udp_send_bytes("127.0.0.1", UDP_PORT, data) == data.len());
-    assert(udp_send_bytes("127.0.0.1", UDP_PORT, empty) == 0);
-    assert(udp_send_bytes("invalid", UDP_PORT, data) < 0);`
-				want = append(want, data, []byte{})
-			}
-			program := strings.NewReplacer("UDP_ONESHOT", oneshot, "UDP_ADDRESS", family.address).Replace(udpSendBytesProgram)
+			program := strings.ReplaceAll(udpSendBytesProgram, "UDP_ADDRESS", family.address)
 			program = strings.ReplaceAll(program, "UDP_PORT", port)
 			dir := t.TempDir()
 			src, bin := filepath.Join(dir, "send.fern"), filepath.Join(dir, "send")

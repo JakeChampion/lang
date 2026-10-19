@@ -48,7 +48,6 @@ import "std/fetch";
 import "std/http";
 import "std/net";
 import "std/dns";
-import "std/tcp";
 import "std/i64";
 import "core/int";
 import "std/hex";
@@ -325,29 +324,29 @@ impl fetch.Transport for Net {
     __set_conn(self, conn, __row(conn, row[1], port, route, answer, 0, self.drv.clock_ns.get() + first_ms * 1000000, 1));
     return bytes.len();
   }
-  function read(self: Net, conn: i32, max: i32, wait_ms: i64): tcp.Recv {
+  function read(self: Net, conn: i32, max: i32, wait_ms: i64): Result[net.Recv, net.NetError] {
     let row: string[] = __conn(self, conn);
     let now: i64 = self.drv.clock_ns.get();
     let deadline: i64 = now + wait_ms * 1000000;
     let route: i32 = __field(row, 3);
     if (row.len() == 0 || route == 0 - 1) {
-      return __elapsed(self, deadline);
+      return Ok(__elapsed(self, deadline));
     }
     let a: Answer = __answer(self, route, __field(row, 4));
     let offset: i32 = __field(row, 5);
     if (offset >= a.bytes.len()) {
       if (a.close) {
         let none: u8[] = [];
-        return tcp.Chunk(none);
+        return Ok(net.Chunk(none));
       }
-      return __elapsed(self, deadline);
+      return Ok(__elapsed(self, deadline));
     }
     let ready: i64 = __field64(row, 6);
     if (ready > deadline) {
-      return __elapsed(self, deadline);
+      return Ok(__elapsed(self, deadline));
     }
     if (!self.drv.advance_to(ready)) {
-      return tcp.Abandoned;
+      return Ok(net.Abandoned);
     }
     let size: i32 = a.bytes.len() - offset;
     if (a.chunk > 0 && a.chunk < size) {
@@ -363,7 +362,7 @@ impl fetch.Transport for Net {
       k = k + 1;
     }
     __set_conn(self, conn, __row(conn, row[1], __field(row, 2), route, __field(row, 4), offset + size, self.drv.clock_ns.get() + a.chunk_ms * 1000000, 1));
-    return tcp.Chunk(out);
+    return Ok(net.Chunk(out));
   }
   function close(self: Net, conn: i32): i32 {
     let row: string[] = __conn(self, conn);
@@ -701,11 +700,11 @@ function __addrs_of(n: Net, host: string): net.IpAddr[] {
 
 // `__elapsed(n, to_ns)` — a wait passed with nothing at `to_ns`, or
 // `Abandoned` when the task waiting was cancelled first.
-function __elapsed(n: Net, to_ns: i64): tcp.Recv {
+function __elapsed(n: Net, to_ns: i64): net.Recv {
   if (!n.drv.advance_to(to_ns)) {
-    return tcp.Abandoned;
+    return net.Abandoned;
   }
-  return tcp.Elapsed;
+  return net.Elapsed;
 }
 
 // Search the fixed ASCII delimiters without interpreting payload as text.

@@ -148,7 +148,7 @@ function main(): i32 {
 		// the only correct answer is its index. A stub returns -1 → exit 99.
 		//
 		// The leading -1 in the fd set is essential, not padding. poll(2)
-		// ignores a negative fd by contract and std/tcp relies on that —
+		// ignores a negative fd by contract and std/async relies on that —
 		// it puts wasm_timer_pollable(...), which is -1 on native, straight
 		// into the set. kevent(2) does NOT ignore one; it fails that
 		// registration with EBADF. Without the skip this returns 99 too.
@@ -161,8 +161,7 @@ function main(): i32 {
   let port: i32 = 18475;
   let listener: i32 = tcp_listen(port);
   if (listener < 0) { return 90; }
-  let host_be: i32 = 127 | (0 << 8) | (0 << 16) | (1 << 24);
-  let c: i32 = tcp_connect(host_be, port);
+  let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
   if (c < 0) { return 91; }
   let fds: i32[] = [0 - 1, listener];
   if (poll(fds, 2000) != 1) { return 99; }

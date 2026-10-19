@@ -899,13 +899,13 @@ world-driven composer (P2) wires it.
    - **World coverage — UDP sockets — ✅ done.** Sockets had only ever
      composed through the bespoke native registry; the `fern` world now also
      imports `wasi:sockets/udp` + `wasi:sockets/udp-create-socket`, so an
-     extern program that also calls `udp_send()` composes through
+     extern program that also sends a datagram composes through
      `ComposeFromWorldAuto`. This is the first socket shape the world-driven
      composer wires generically — the whole flow (`create-udp-socket`,
      `udp-socket.start-bind` / `finish-bind` / `stream`,
      `outgoing-datagram-stream.check-send` / `send` / `subscribe`, plus the
      three resource-drops) lowers without bespoke socket knowledge. Gated by
-     `TestExternImportWithBuiltinUDPViaCLI` (an extern + `udp_send()` whose
+     `TestExternImportWithBuiltinUDPViaCLI` (an extern + `udp_sendto()` whose
      datagram a real listener receives).
    - **World coverage — wall-clock `now()` — ✅ done.** `wasi:clocks/wall-clock`
      gained `now` (the `now_ns()` builtin). Unlike monotonic `now` (a `u64`),

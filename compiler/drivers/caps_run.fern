@@ -172,7 +172,7 @@ function main(): i32 {
   // counts for the package that declares it. The report says what the
   // package's code COULD do.
   let dead: parser.Module = parse("function main(): i32 { return 0; }\n"
-    + "function helper__unused(): void { tcp_connect(0, 80); }\n");
+    + "function helper__unused(): void { tcp_close(0); }\n");
   if (row_caps(caps.analyze(dead, app_pkgs(true, ["net"])), "helper") != "net") {
     return 14;
   }
@@ -185,7 +185,7 @@ function main(): i32 {
   // row of whichever package calls into it, and the stdlib gets no row.
   let thru: parser.Module = parse("function main(): i32 { helper__get(); return 0; }\n"
     + "function helper__get(): void { fetch__send(); }\n"
-    + "function fetch__send(): void { tcp_connect(0, 80); }\n");
+    + "function fetch__send(): void { tcp_close(0); }\n");
   let trows: caps.Row[] = caps.analyze(thru, app_pkgs(true, ["net"]));
   if (trows.len() != 2) {
     return 16;
@@ -263,7 +263,7 @@ function main(): i32 {
   // The ROOT package is never enforced or warned, however much it reaches:
   // grants restrict dependencies, and the program's author is trusting
   // themselves.
-  let rootonly: parser.Module = parse("function main(): i32 { write_file(\"/tmp/x\", \"y\"); tcp_connect(0, 80); return 0; }\n");
+  let rootonly: parser.Module = parse("function main(): i32 { write_file(\"/tmp/x\", \"y\"); tcp_close(0); return 0; }\n");
   let rp: caps.Pkg[] = app_pkgs(true, []);
   if (caps.enforce(caps.analyze(rootonly, rp), rp).len() != 0) {
     return 39;

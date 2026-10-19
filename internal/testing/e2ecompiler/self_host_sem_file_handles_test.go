@@ -60,9 +60,9 @@ func selfHostSemFileHandleSource(base string) string {
     match (open_reader_with(%[1]q + "/f.txt", 0)) {
         Err(_) => { return 60; },
         Ok(r) => {
-            match (r.read_line()) {
-                None => { return 61; },
-                Some(line) => { if (line != "flagged\n") { return 62; } }
+            match (r.read_chunk(4096)) {
+                Err(_) => { return 61; },
+                Ok(line) => { if (line != "flagged\n") { return 62; } }
             }
             match (r.close()) { Err(_) => { return 63; }, Ok(_) => {} }
         }

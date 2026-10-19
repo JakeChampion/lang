@@ -271,16 +271,6 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 			[]string{"\n__fern_eprint_str:"},
 		},
 		{
-			// read_line — Option[string] over read(2), one byte per syscall so no
-			// byte past the newline is consumed. The old hand-asm body
-			// (__fern_read_line: / .Lrl_*) is gone; op_read_line calls the
-			// stack-ABI __fn___fern_read_line, which boxes with __raw_string.
-			"read_line",
-			`function main(): i32 { match (read_line()) { Some(s) => { return s.len(); }, None => { return 0; }, } }`,
-			"__fn___fern_read_line",
-			[]string{"\n__fern_read_line:", ".Lrl_loop", ".Lrl_box", ".Lrl_none"},
-		},
-		{
 			// reader_read_chunk — the Reader half of the same read(2), taking the
 			// fd rather than assuming 0. The old hand-asm body
 			// (__fern_reader_read_chunk: / .Lirc_*) is gone; op_read_chunk calls

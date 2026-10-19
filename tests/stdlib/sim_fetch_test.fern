@@ -7,6 +7,7 @@ import "std/http";
 import "std/hash";
 import "std/string";
 import "std/utf8";
+import "std/net";
 
 // tests/stdlib/sim_fetch_test.fern — std/fetch's client over the
 // scripted network in std/sim_fetch. Every behaviour of the dialled route
@@ -893,7 +894,7 @@ function test_served_route_first_and_refuses_malformed(): test.TestOutcome {
     return test.fail("write");
   }
   match (n.read(conn, 4096, 100)) {
-    Chunk(bytes) => {
+    Ok(net.Chunk(bytes)) => {
       let Some(text) = utf8.from_bytes(bytes) else {
         return test.fail("not utf-8");
       };
@@ -901,22 +902,28 @@ function test_served_route_first_and_refuses_malformed(): test.TestOutcome {
         return test.fail(text);
       }
     },
-    Elapsed => {
+    Ok(net.Elapsed()) => {
       return test.fail("elapsed");
     },
-    Abandoned => {
+    Ok(net.Abandoned()) => {
       return test.fail("abandoned");
+    },
+    Err(e) => {
+      return test.fail(e.message());
     }
   }
   match (n.read(conn, 4096, 100)) {
-    Chunk(bytes) => {
+    Ok(net.Chunk(bytes)) => {
       return test.assert_eq(bytes.len(), 0);
     },
-    Elapsed => {
+    Ok(net.Elapsed()) => {
       return test.fail("the connection stayed open");
     },
-    Abandoned => {
+    Ok(net.Abandoned()) => {
       return test.fail("abandoned");
+    },
+    Err(e) => {
+      return test.fail(e.message());
     }
   }
   return test.fail("unreachable");

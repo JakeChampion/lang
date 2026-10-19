@@ -1,3 +1,4 @@
+import "std/io";
 import "std/string";
 // Reads lines until EOF, summing the parsed integers.
 // stdin "10\n15\n17\n" -> 42.
@@ -5,14 +6,15 @@ function main(): i32 {
     let total: i32 = 0;
     let done: boolean = false;
     while (!done) {
-        match (read_line()) {
-            Some(line) => {
+        match (io.read_line(stdin())) {
+            Ok(Some(line)) => {
                 match (line.trim().parse_int()) {
                     Some(n) => { total = total + n; },
                     None => { }
                 }
             },
-            None => { done = true; }
+            Ok(None()) => { done = true; },
+            Err(_) => { return 255; }
         }
     }
     return total;

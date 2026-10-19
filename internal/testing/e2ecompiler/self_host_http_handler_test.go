@@ -145,9 +145,9 @@ function main(): i32 {
     if (fd < 0) { return 91; }
     let c: i32 = tcp_accept(fd);
     if (c < 0) { return 92; }
-    let req: u8[] = tcp_recv(c, 4096);
-    if (req.len() == 0) { return 93; }
-    let n: i32 = tcp_send(c, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nrawok");
+    let req: u8[] = __alloc_u8(4096);
+    if (tcp_recv_into(c, req) <= 0) { return 93; }
+    let n: i32 = tcp_send_bytes(c, [72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 32u8, 50u8, 48u8, 48u8, 32u8, 79u8, 75u8, 13u8, 10u8, 67u8, 111u8, 110u8, 116u8, 101u8, 110u8, 116u8, 45u8, 76u8, 101u8, 110u8, 103u8, 116u8, 104u8, 58u8, 32u8, 53u8, 13u8, 10u8, 13u8, 10u8, 114u8, 97u8, 119u8, 111u8, 107u8]);
     tcp_close(c);
     tcp_close(fd);
     if (n < 0) { return 94; }

@@ -7734,7 +7734,6 @@ function handle_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "open_exclusive", params: [t_string()], modes: path, result: t_io_result(writer) },
     ssasem.Contract { name: "open_reader_with", params: [t_string(), t_i32()], modes: path_flags, result: t_io_result(reader) },
     ssasem.Contract { name: "open_writer_with", params: [t_string(), t_i32()], modes: path_flags, result: t_io_result(writer) },
-    ssasem.Contract { name: "Reader.read_line", params: [reader], modes: value, result: t_option(t_string()) },
     ssasem.Contract { name: "Reader.read_chunk", params: [reader, t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(t_string()) },
     ssasem.Contract { name: "Reader.read_chunk_bytes", params: [reader, t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
     ssasem.Contract { name: "Reader.close", params: [reader], modes: value, result: done },
@@ -7857,11 +7856,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "sync", params: [], modes: [], result: t_void() },
     ssasem.Contract { name: "poll", params: [fds, t_i32()], modes: [b, v], result: t_i32() },
     ssasem.Contract { name: "timer_fd", params: [t_i32()], modes: [v], result: t_i32() },
-    ssasem.Contract { name: "tcp_send", params: [t_i32(), t_string()], modes: [v, b], result: t_i32() },
     ssasem.Contract { name: "tcp_send_bytes", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
-    ssasem.Contract { name: "udp_send", params: [t_string(), t_i32(), t_string()], modes: [b, v, b], result: t_i32() },
-    ssasem.Contract { name: "udp_send_bytes", params: [t_string(), t_i32(), bytes], modes: [b, v, b], result: t_i32() },
-    ssasem.Contract { name: "tcp_recv", params: [t_i32(), t_i32()], modes: [v, v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
     ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "tcp_listen_with", params: [bytes, t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: t_i32() },
     ssasem.Contract { name: "tcp_socket_ctl", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
@@ -7935,7 +7930,6 @@ function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contr
     ssasem.Contract { name: "create_link", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "clone_file", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_symlink", params: [t_string(), t_string()], modes: [b, b], result: done },
-    ssasem.Contract { name: "tcp_connect", params: [t_i32(), t_i32()], modes: [v, v], result: t_i32() },
     ssasem.Contract { name: "tcp_listen", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "tcp_accept", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "tcp_local_port", params: [t_i32()], modes: [v], result: t_i32() },
@@ -8386,7 +8380,7 @@ function builder_contracts(): ssasem.Contract[] {
 // The builtins whose result is one of the front end's generic unions. Each
 // contract names the INSTANTIATION, because that is what says what the caller
 // owns: each reads the string it is lent and copies whatever it keeps, so the
-// box owns every part of itself — `env`'s value, `read_line`'s line,
+// box owns every part of itself — `env`'s value,
 // `read_file`'s contents, `read_file_bytes`'s buffer, `read_dir`'s names,
 // `stat`'s record, and the IoError an error arm carries. The writers and the
 // two directory walks read their path and contents the same way and hand back
@@ -8397,7 +8391,6 @@ function union_result_contracts(): ssasem.Contract[] {
   let out: ssasem.Contract[] = [
     ssasem.Contract { name: "env", params: [t_string()], modes: path, result: t_option(t_string()) },
     ssasem.Contract { name: "config_get", params: [t_string()], modes: path, result: t_option(t_string()) },
-    ssasem.Contract { name: "read_line", params: [], modes: [], result: t_option(t_string()) },
     ssasem.Contract { name: "read_file", params: [t_string()], modes: path, result: t_io_result(t_string()) },
     ssasem.Contract { name: "read_file_bytes", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_u8(), view: false }) },
     ssasem.Contract { name: "read_dir", params: [t_string()], modes: path, result: t_io_result(typeinfo.TypeArray { elem: t_string(), view: false }) },

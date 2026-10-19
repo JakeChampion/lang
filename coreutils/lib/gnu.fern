@@ -26,6 +26,7 @@
 // measured from the reference binaries and reimplemented.
 import "std/string";
 import "std/array";
+import "std/io";
 import "std/io_buffered";
 import "std/errno";
 
@@ -2237,13 +2238,13 @@ pub function prompt(msg: string): boolean {
 }
 
 // `yesno()` — glibc's yesno(): one line from stdin, yes when it starts
-// with `y` or `Y` in the C locale. End of input is no.
+// with `y` or `Y` in the C locale. End of input and a failed read are no.
 pub function yesno(): boolean {
-  match (read_line()) {
-    Some(l) => {
+  match (io.read_line(stdin())) {
+    Ok(Some(l)) => {
       return l.len() > 0 && (l[0] as i32 == 121 || l[0] as i32 == 89);
     },
-    None => {
+    _ => {
       return false;
     }
   }

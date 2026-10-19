@@ -14,7 +14,7 @@ import (
 // Closing stdout, stderr or stdin closes the stream for the whole process,
 // as close(2) on fd 0/1/2 does: a later Writer or Reader on it, including
 // one a fresh stdout() / stdin() returns, answers EBADF, and print, write,
-// eprint, putchar and read_line() reach nothing. On a preview-2 component
+// eprint and putchar reach nothing. On a preview-2 component
 // stdout() and stderr() share one cached stream, so closing one dropped
 // the handle every later use passed back to the host, which trapped.
 //
@@ -48,14 +48,15 @@ const stderrCloseSource = `function main(): i32 {
 }
 `
 
-// stdin carries a line, so a read that reached it would answer Some.
-const stdinCloseSource = `function main(): i32 {
+// stdin carries a line, so a read that reached it would answer Ok.
+const stdinCloseSource = `import "std/io";
+
+function main(): i32 {
     let r = stdin();
     match (r.close()) { Err(_) => { print("fail 1"); return 1; }, Ok(_) => {} }
-    match (r.read_line()) { Some(_) => { print("fail 2"); return 2; }, None => {} }
-    match (stdin().read_line()) { Some(_) => { print("fail 3"); return 3; }, None => {} }
+    match (io.read_line(r)) { Ok(_) => { print("fail 2"); return 2; }, Err(_) => {} }
+    match (io.read_line(stdin())) { Ok(_) => { print("fail 3"); return 3; }, Err(_) => {} }
     match (stdin().read_chunk(4)) { Ok(_) => { print("fail 4"); return 4; }, Err(_) => {} }
-    match (read_line()) { Some(_) => { print("fail 5"); return 5; }, None => {} }
     match (stdin().close()) { Ok(_) => { print("fail 6"); return 6; }, Err(_) => {} }
     print("done");
     return 0;
@@ -178,13 +179,16 @@ const failedWriteSource = `function main(): i32 {
 }
 `
 
-const failedReadLineSource = `function main(): i32 {
+// io.read_line answers a failed read as an error, not as the end of input.
+const failedReadLineSource = `import "std/io";
+
+function main(): i32 {
     let i: i32 = 0;
     while (i < 200) {
         match (open_reader("mem")) {
             Err(_) => { return 1; },
             Ok(r) => {
-                match (r.read_line()) { Some(_) => { return 2; }, None => {} }
+                match (io.read_line(r)) { Ok(_) => { return 2; }, Err(_) => {} }
                 r.close();
             }
         }

@@ -3789,8 +3789,9 @@ pub struct IfChain { par: Par, stmt: ast.Stmt, rt: string, needs_default_return:
 // terminal `return E` becomes `val = E`. Leading statements are untouched, so
 // a user `return` among them still returns from the enclosing function — the
 // same rule iife_rewrite_arm_body applies to the StmtMatch form. A body whose
-// last statement is not a return (a divergent arm) is left alone; the value
-// local keeps its zero.
+// last statement is not a return is left alone, and so is a diverging block's
+// unreachable tail (branch_dead_tail): a store of it would type the value local
+// from the enclosing function's return value.
 function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
   if (body.len() == 0) {
     return body;
@@ -3802,6 +3803,9 @@ function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
       while (i < body.len() - 1) {
         out = out.append(body[i]);
         i = i + 1;
+      }
+      if (stmts_exit(out, false)) {
+        return out;
       }
       return out.append(s_assign(val, r.value));
     },
@@ -4953,13 +4957,20 @@ function branch_stmt_start(p: Par): boolean {
 // conservative stance the Go side takes), an `if` needs both arms, and a `match`
 // needs every arm.
 pub function branch_stmts_diverge(stmts: ast.Stmt[]): boolean {
+  return stmts_exit(stmts, true);
+}
+
+// stmts_exit is branch_stmts_diverge with the `loop { … }` stance chosen:
+// `loops` false counts a loop as one that may break, so only a `return`,
+// `break` or `continue` on every path exits.
+function stmts_exit(stmts: ast.Stmt[], loops: boolean): boolean {
   if (stmts.len() == 0) {
     return false;
   }
-  return branch_stmt_diverges(stmts[stmts.len() - 1]);
+  return stmt_exits(stmts[stmts.len() - 1], loops);
 }
 
-function branch_stmt_diverges(st: ast.Stmt): boolean {
+function stmt_exits(st: ast.Stmt, loops: boolean): boolean {
   match (st) {
     ast.StmtReturn(_) => {
       return true;
@@ -4971,13 +4982,13 @@ function branch_stmt_diverges(st: ast.Stmt): boolean {
       return true;
     },
     ast.StmtWhile(w) => {
-      return w.is_loop;
+      return loops && w.is_loop;
     },
     ast.StmtIf(f) => {
       if (f.else_body.len() == 0) {
         return false;
       }
-      return branch_stmts_diverge(f.then_body) && branch_stmts_diverge(f.else_body);
+      return stmts_exit(f.then_body, loops) && stmts_exit(f.else_body, loops);
     },
     ast.StmtMatch(m) => {
       if (m.arms.len() == 0) {
@@ -4985,7 +4996,7 @@ function branch_stmt_diverges(st: ast.Stmt): boolean {
       }
       let i: i32 = 0;
       while (i < m.arms.len()) {
-        if (!branch_stmts_diverge(m.arms[i].body)) {
+        if (!stmts_exit(m.arms[i].body, loops)) {
           return false;
         }
         i = i + 1;
@@ -4997,6 +5008,42 @@ function branch_stmt_diverges(st: ast.Stmt): boolean {
     }
   }
   return false;
+}
+
+// exiting_if_tail is the `if` statement behind an if-expression `e` whose
+// branches all leave before their value (each a block parse_branch_body gave
+// an unreachable tail), with those tails dropped, else None.
+function exiting_if_tail(e: ast.Expr): Option[ast.Stmt] {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprLambda(lam) = c.callee {
+      if (lam.origin != ORIGIN_IF_EXPR || c.args.len() != 0 || lam.body.len() != 1) {
+        return None;
+      }
+      if let ast.StmtIf(f) = lam.body[0] {
+        if (branch_exits_early(f.then_body) && branch_exits_early(f.else_body)) {
+          let st: ast.Stmt = ast.StmtIf { ...f, then_body: without_last(f.then_body), else_body: without_last(f.else_body) };
+          return Some(st);
+        }
+      }
+    }
+  }
+  return None;
+}
+
+// branch_exits_early reports whether a value branch's statements before its
+// terminal `return` already exit, a `loop` counted as one that may break.
+function branch_exits_early(body: ast.Stmt[]): boolean {
+  return body.len() >= 2 && stmts_exit(without_last(body), false);
+}
+
+function without_last(body: ast.Stmt[]): ast.Stmt[] {
+  let out: ast.Stmt[] = [];
+  let i: i32 = 0;
+  while (i + 1 < body.len()) {
+    out = out.append(body[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // branch_dead_tail picks the UNREACHABLE value a diverging branch is given so
@@ -5169,6 +5216,14 @@ function parse_branch_body_written(p: Par): (ast.Stmt[], string, boolean, Par) {
   let have_tail: boolean = bi_have_tail;
   let tail: ast.Expr = bi_tail;
   p = bi_p;
+  // A trailing `if` whose every branch leaves is the statement it reads as,
+  // not a value: its branches' tails are unreachable filler.
+  if (have_tail) {
+    if let Some(st) = exiting_if_tail(tail) {
+      leading = leading.append(st);
+      have_tail = false;
+    }
+  }
   if (have_tail) {
     rt = if_expr_rt(tail);
   }
@@ -10370,7 +10425,7 @@ pub function builtin_function_names(): string[] {
     // is the NICE value: -20 is the most favourable and 19 the least.
     "priority", "set_priority",
     // stdin / readers
-    "stdin", "stdout", "stderr", "isatty", "read_line",
+    "stdin", "stdout", "stderr", "isatty",
     // the two halves of the compile target's name, literals once compiled
     "target_os", "target_arch",
     "open_reader", "open_writer", "open_appender", "open_exclusive",
@@ -10455,10 +10510,10 @@ pub function builtin_function_names(): string[] {
     // float / int bit reinterprets
     "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
     // networking
-    "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_send_bytes", "tcp_close",
-    "udp_send", "tcp_connect", "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl",
+    "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_send_bytes", "tcp_close",
+    "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl",
     "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
-    "udp_send_bytes", "udp_sendto_bytes",
+    "udp_sendto_bytes",
     "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_recv_into", "tcp_ktls", "tcp_sendfile", "tcp_send_buf",
   ];
 }

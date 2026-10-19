@@ -9,14 +9,13 @@ import (
 	"time"
 )
 
-// tcp_recv returns u8[] (D9, #5714): every byte value passes through
-// unmodified — including 0x00, which the old string shape could carry
-// but consumers routinely truncated at — and the empty array is the
-// sole sentinel for EOF, error, and max <= 0 alike. The 5-byte payload
-// against max=4096 also pins the short-read contract: len is the
-// actual count, not the capacity. The arm64 and wasm helpers are covered
-// by their own tcp e2e suites.
-func TestSelfHostTcpRecvBytesX86_64(t *testing.T) {
+// tcp_recv_into reads into the caller's u8[] (D9, #5714): every byte value
+// passes through unmodified, including 0x00; an empty buffer reads nothing;
+// and 0 is the end of the stream, which no error answers. The 5-byte
+// payload into a 4096-byte buffer also pins the short-read contract: the
+// count is the bytes read, not the capacity. The arm64 and wasm helpers are
+// covered by their own tcp e2e suites.
+func TestSelfHostTcpRecvIntoBytesX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
@@ -27,24 +26,23 @@ func TestSelfHostTcpRecvBytesX86_64(t *testing.T) {
 	probe.Close()
 
 	// Distinct exit codes localise a failed step: 9x = setup,
-	// 97 = max<=0 sentinel, 93 = short-read len, 8x = byte value,
-	// 86 = EOF sentinel, 42 = all paths held.
+	// 97 = empty buffer, 93 = short-read count, 8x = byte value,
+	// 86 = end of stream, 42 = all paths held.
 	src := fmt.Sprintf(`function main(): i32 {
     let fd: i32 = tcp_listen(%d);
     if (fd < 0) { return 91; }
     let c: i32 = tcp_accept(fd);
     if (c < 0) { return 92; }
-    let zero: u8[] = tcp_recv(c, 0);
-    if (zero.len() != 0) { return 97; }
-    let req: u8[] = tcp_recv(c, 4096);
-    if (req.len() != 5) { return 93; }
+    let none: u8[] = [];
+    if (tcp_recv_into(c, none) != 0) { return 97; }
+    let req: u8[] = __alloc_u8(4096);
+    if (tcp_recv_into(c, req) != 5) { return 93; }
     if (req[0] != 0) { return 81; }
     if (req[1] != 255) { return 82; }
     if (req[2] != 128) { return 83; }
     if (req[3] != 10) { return 84; }
     if (req[4] != 65) { return 85; }
-    let eofb: u8[] = tcp_recv(c, 100);
-    if (eofb.len() != 0) { return 86; }
+    if (tcp_recv_into(c, req) != 0) { return 86; }
     tcp_close(c);
     tcp_close(fd);
     return 42;

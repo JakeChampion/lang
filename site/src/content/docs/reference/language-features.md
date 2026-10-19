@@ -102,12 +102,13 @@ returns, no matter how it returns. Multiple defers run in **last-in,
 first-out** order — so cleanup unwinds in the reverse of acquisition.
 
 ```fern
+import "std/io";
 import "std/option";
 
 function first_line(path: string): Result[string, IoError] {
     let r: Reader = open_reader(path)?;
     defer r.close();          // runs on every exit path below
-    return Ok(r.read_line().unwrap_or(""));
+    return Ok(io.read_line(r)?.unwrap_or(""));
 }
 ```
 
@@ -121,7 +122,7 @@ its own iteration left:
 for path in paths {
     let r: Reader = open_reader(path)?;
     defer r.close();          // closes this iteration's reader, before the next
-    lines = lines.append(r.read_line().unwrap_or(""));
+    lines = lines.append(io.read_line(r)?.unwrap_or(""));
 }
 ```
 

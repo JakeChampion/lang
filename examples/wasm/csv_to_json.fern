@@ -16,23 +16,9 @@
 //   [{"name":"ada","age":"36"},{"name":"grace","age":"85"}]
 // json.json_encode for the final emit; std/string for the
 // (string).split / (string).trim methods inside row_to_object.
+import "std/io";
 import "std/json";
 import "std/string";
-
-function read_all(r: Reader): string {
-  let out: string = "";
-  while (true) {
-    match (r.read_line()) {
-      Some(line) => {
-        out = out + line + "\n";
-      },
-      None => {
-        return out;
-      }
-    }
-  }
-  return out;  // unreachable
-}
 
 function row_to_object(headers: string[], row: string[]): json.JsonValue {
   let m: json.JsonObject = json.object();
@@ -45,7 +31,17 @@ function row_to_object(headers: string[], row: string[]): json.JsonValue {
 }
 
 function main(): i32 {
-  let raw: str = read_all(stdin()).trim();
+  let text: string = "";
+  match (io.read_all_stdin()) {
+    Ok(t) => {
+      text = t;
+    },
+    Err(_) => {
+      eprint("csv_to_json: cannot read stdin");
+      return 1;
+    }
+  }
+  let raw: str = text.trim();
   let lines: string[] = raw.split("\n");
   if (lines.len() == 0 || lines[0].is_empty()) {
     print("[]");

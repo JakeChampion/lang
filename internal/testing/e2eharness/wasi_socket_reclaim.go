@@ -15,13 +15,16 @@ import (
 
 // WasiSocketStorageProbe repeats a complete operation, preserving its result
 // while checking that the guest heap stops growing after the first iteration.
-// The host fault fixture runs the same loop at every failure stage.
+// The host fault fixture runs the same loop at every failure stage. `any`,
+// the unspecified IPv4 address, is in scope for expr, allocated before the
+// loop so the per-iteration count is the operation's alone.
 func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 	close := ""
 	if closeSocket {
 		close = "if (h >= 0) { result = tcp_close(h); }"
 	}
 	return `function main(): i32 {
+    let any: u8[] = [0u8, 0u8, 0u8, 0u8];
     let i: i32 = 0;
     let stable: i64 = 0;
     let result: i32 = 0;
@@ -40,17 +43,29 @@ func WasiSocketStorageProbe(expr string, closeSocket bool) string {
 }`
 }
 
+// UDPSendOnce is one datagram to addr:port from a socket bound to an
+// ephemeral port and closed again: the bytes the host accepted, or -errno.
+const UDPSendOnce = `function send_once(addr: u8[], port: i32, data: string): i32 {
+    let s: i32 = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
+    if (s < 0) { return s; }
+    let n: i32 = udp_sendto(s, addr, port, data);
+    tcp_close(s);
+    return n;
+}
+`
+
 // WasiUDPStorageProbe covers both inline-string spills and borrowed string
-// buffers. Normalize successful byte counts for the host ownership oracle.
-func WasiUDPStorageProbe(host, data string) string {
-	return fmt.Sprintf(`function main(): i32 {
-    let host: string = %q;
+// buffers, sending to addr (a Fern u8[] literal). Normalize successful byte
+// counts for the host ownership oracle.
+func WasiUDPStorageProbe(addr, data string) string {
+	return UDPSendOnce + fmt.Sprintf(`function main(): i32 {
+    let addr: u8[] = %s;
     let data: string = %q;
     let i: i32 = 0;
     let stable: i64 = 0;
     let result: i32 = 0;
     while (i < 32) {
-        result = udp_send(host, 1, data);
+        result = send_once(addr, 1, data);
         if (result >= 0) {
             if (result != data.len()) { return -1002; }
             result = 1;
@@ -58,33 +73,54 @@ func WasiUDPStorageProbe(host, data string) string {
         let used: i64 = __heap_bump_bytes();
         if (i == 0) { stable = used; }
         if (used != stable) { return -1000; }
-        if (host != %q || data != %q) { return -1003; }
+        if (data != %q) { return -1003; }
         i = i + 1;
     }
     return result;
-}`, host, data, host, data)
+}`, addr, data, data)
 }
 
+// WasiStreamSendStorageProbe writes data on connection record 0 each round.
+// A write the host took only part of is the failed send it reports, so the
+// oracle sees -1 for it as it does for a write that took nothing.
 func WasiStreamSendStorageProbe(data string) string {
-	return strings.ReplaceAll(WasiUDPStorageProbe("127.0.0.1", data), "udp_send(host, 1, data)", "tcp_send(0, data)")
-}
-
-func WasiStreamRecvStorageProbe(max int) string {
-	return fmt.Sprintf(`function read(): i32 {
-    let data: u8[] = tcp_recv(0, %d);
-    let i: i32 = 0;
-    while (i < data.len()) {
-        if (data[i] != 120) { return -1002; }
-        i = i + 1;
-    }
-    return data.len();
-}
-function main(): i32 {
+	return BytesOf + fmt.Sprintf(`function main(): i32 {
+    let data: u8[] = bytes_of(%q);
     let i: i32 = 0;
     let stable: i64 = 0;
     let result: i32 = 0;
     while (i < 32) {
-        result = read();
+        result = tcp_send_bytes(0, data);
+        if (result >= 0 && result < data.len()) { result = -1; }
+        if (result >= 0) { result = 1; }
+        let used: i64 = __heap_bump_bytes();
+        if (i == 0) { stable = used; }
+        if (used != stable) { return -1000; }
+        i = i + 1;
+    }
+    return result;
+}`, data)
+}
+
+// WasiStreamRecvStorageProbe reads connection record 0 into one max-byte
+// buffer each round.
+func WasiStreamRecvStorageProbe(max int) string {
+	return fmt.Sprintf(`function read(buf: u8[]): i32 {
+    let n: i32 = tcp_recv_into(0, buf);
+    let i: i32 = 0;
+    while (i < n) {
+        if (buf[i] != 120u8) { return -1002; }
+        i = i + 1;
+    }
+    return n;
+}
+function main(): i32 {
+    let buf: u8[] = __alloc_u8(%d);
+    let i: i32 = 0;
+    let stable: i64 = 0;
+    let result: i32 = 0;
+    while (i < 32) {
+        result = read(buf);
         let used: i64 = __heap_bump_bytes();
         if (i == 0) { stable = used; }
         if (used != stable) { return -1000; }
@@ -100,13 +136,9 @@ function main(): i32 {
 // children traps. Each setup phase can report unknown (error-code zero).
 func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	t.Helper()
-	invalidHost := operation == "udp-invalid"
 	emptySend, chunkedSend := operation == "send-empty", operation == "send-chunked"
 	if emptySend || chunkedSend {
 		operation = "send"
-	}
-	if invalidHost {
-		operation = "udp"
 	}
 	closing := strings.HasSuffix(operation, "-close")
 	operation = strings.TrimSuffix(operation, "-close")
@@ -148,7 +180,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	if seen == 0 || strings.Contains(wat, "(import ") {
 		t.Fatal("unhandled core import syntax")
 	}
-	steps := map[string]int{"listen": 5, "connect": 3, "accept": 1, "port": 1, "udp": 6, "send": 2, "recv": 3, "recv-zero": 1, "recv-negative": 1}[operation]
+	steps := map[string]int{"listen": 5, "connect": 3, "accept": 1, "port": 1, "udp": 6, "send": 2, "recv": 3, "recv-zero": 1}[operation]
 	if steps == 0 {
 		t.Fatal("unknown socket operation")
 	}
@@ -171,13 +203,13 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		socket, streams = 0, 0
 		successFailure = "(i32.ne (local.get $result) (i32.const 0))"
 	}
-	if invalidHost {
-		steps, socket, streams = 0, 0, 0
-		successFailure = "(i32.ne (local.get $result) (i32.const -28))"
-	}
-	errorResult := -29
+	errorResult := "(i32.const -29)"
 	if strings.HasPrefix(operation, "recv") {
-		socket, streams, errorResult = 0, 0, 0
+		// A read of nothing yet is -EAGAIN (step 1), the end of the stream
+		// 0 (step 2), and a stream error -EIO (step 3): an error is never
+		// the end of the stream.
+		socket, streams = 0, 0
+		errorResult = "(select (i32.const -6) (select (i32.const 0) (i32.const -29) (i32.eq (local.get $step) (i32.const 2))) (i32.eq (local.get $step) (i32.const 1)))"
 		successFailure = "(i32.ne (local.get $result) (i32.const 3))"
 		if operation != "recv" {
 			steps = 0
@@ -187,7 +219,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	if operation == "send" {
 		socket, streams = 0, 0
 		successFailure = "(i32.ne (local.get $result) (i32.const 1))"
-		errorResult = -1
+		errorResult = "(i32.const -1)"
 		if emptySend {
 			steps = 0
 		}
@@ -201,6 +233,11 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 		// The accepted socket gets a distinct handle (0 or 7) and owns its
 		// streams. The listener remains host-owned and must never be dropped.
 		borrowedListener = "(i32.store (i32.const 0) (i32.const 42))"
+	}
+	if strings.HasPrefix(operation, "recv") {
+		// A connection record at address zero: the read checks its kind
+		// word (1, a connection) before it reads the input stream.
+		borrowedListener = "(i32.store offset=12 (i32.const 0) (i32.const 1))"
 	}
 	census := ""
 	if strings.Contains(wat, "(global $__fern_lc_alloc_count ") {
@@ -223,7 +260,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
     %s
     (local.set $result (call %s))
     (if (local.get $step) (then
-      (if (i32.ne (local.get $result) (i32.const %d)) (then (return (i32.const 1)))))
+      (if (i32.ne (local.get $result) %s) (then (return (i32.const 1)))))
     (else
       (if %s (then (return (i32.const 2))))))
     (if (i32.ne (global.get $fh_socket) (select (i32.const 0) (i32.const %d) (local.get $step))) (then (return (i32.const 3))))
@@ -299,7 +336,7 @@ func socketHostBody(operation, moduleName, name string) string {
 	if strings.HasSuffix(name, "pollable.block") {
 		return "(if (i32.eqz (global.get $fh_poll)) (then unreachable))"
 	}
-	if strings.HasSuffix(name, "input-stream.blocking-read") {
+	if strings.HasSuffix(name, "input-stream.read") {
 		if operation != "recv" {
 			return "unreachable"
 		}
@@ -391,3 +428,16 @@ func socketHostBody(operation, moduleName, name string) string {
 	}
 	return fmt.Sprintf("(if (i32.eq (global.get $fh_fail) (i32.const %d)) (then (i32.store (local.get %d) (i32.const 1)) (i32.store8 offset=%d (local.get %d) (i32.const 0))) (else (i32.store (local.get %d) (i32.const 0)) %s %s))", phase, ret, errAt, ret, ret, payload, own)
 }
+
+// BytesOf is a Fern `bytes_of(s)`: the string's bytes as a fresh u8[],
+// written out so a probe needs no stdlib module for it.
+const BytesOf = `function bytes_of(s: string): u8[] {
+    let out: u8[] = __alloc_u8(s.len());
+    let i: i32 = 0;
+    while (i < s.len()) {
+        out = out.with(i, s[i]);
+        i = i + 1;
+    }
+    return out;
+}
+`

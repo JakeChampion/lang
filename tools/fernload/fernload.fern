@@ -28,6 +28,7 @@ import "std/http";
 import "std/net";
 import "std/async";
 import "std/url";
+import "std/string";
 import "core/int";
 
 const CONNECTING: i32 = 0;
@@ -53,7 +54,7 @@ const DRAIN_NS: i64 = 2000000000;
 struct Conn { fd: i32, state: i32, due_ns: i64, sent_ns: i64, buf: u8[] }
 
 // The run: where to connect, the request bytes, and the rate's terms.
-struct Plan { addr: net.SocketAddr, request: string, rate: i64, connections: i32, duration_ns: i64 }
+struct Plan { addr: net.SocketAddr, request: u8[], rate: i64, connections: i32, duration_ns: i64 }
 
 // What the run counted: requests sent, responses read, requests lost, the
 // corrected and the raw latency histograms, and the longest corrected
@@ -114,7 +115,7 @@ function plan(raw: string, parsed: cli.CliArgs): Result[Plan, string] {
   let connections: i64 = option_i64(parsed, "connections", 16)?;
   let duration: i64 = option_i64(parsed, "duration", 10)?;
   let request: string = "GET " + target + " HTTP/1.1\r\nHost: " + u.host + ":" + int.int_to_string(port) + "\r\nUser-Agent: fernload\r\n\r\n";
-  return Ok(Plan { addr: net.socket_addr(ip, port), request: request, rate: rate, connections: connections as i32, duration_ns: duration * 1000000000 });
+  return Ok(Plan { addr: net.socket_addr(ip, port), request: request.bytes(), rate: rate, connections: connections as i32, duration_ns: duration * 1000000000 });
 }
 
 // option_i64 is the option as a positive count, or `fallback` when absent.
@@ -283,7 +284,7 @@ function conn_of(conns: Conn[], fd: i32): i32 {
 function send(c: Conn, p: Plan, due: i64, now: i64): Conn {
   // A write the socket does not take whole leaves the connection dead,
   // and the read side reports the request as the lost one it is.
-  tcp_send(c.fd, p.request);
+  let sent: Result[i32, net.NetError] = net.write(c.fd, p.request);
   let none: u8[] = [];
   return Conn { ...c, state: BUSY, due_ns: due, sent_ns: now, buf: none };
 }

@@ -39,7 +39,7 @@ var Capabilities = []string{"env", "fs", "net", "random", "subprocess", "time"}
 //     (clock_set), and creating time-driven wakeups (sleep_ms /
 //     timer_fd / wasm_timer_pollable) — the surface a "package is
 //     sim-pure" property would need to gate.
-//   - stdio (print / eprint / read_line / stdin / stdout / stderr /
+//   - stdio (print / eprint / stdin / stdout / stderr /
 //     putchar / write) and argv (`args`) have no v1 capability; they
 //     are host-mediated channels the invoker already handed the
 //     process, not ambient authority a dependency escalates through.
@@ -47,14 +47,9 @@ var BuiltinCaps = map[string]string{
 	"tcp_listen":       "net",
 	"tcp_accept":       "net",
 	"tcp_local_port":   "net",
-	"tcp_connect":      "net",
-	"tcp_recv":         "net",
-	"tcp_send":         "net",
 	"tcp_send_bytes":   "net",
 	"tcp_close":        "net",
 	"tcp_pollable":     "net",
-	"udp_send":         "net",
-	"udp_send_bytes":   "net",
 	"udp_bind":         "net",
 	"udp_bind_with":    "net",
 	"udp_connect":      "net",
@@ -229,7 +224,6 @@ var Ungated = map[string]bool{
 	"print":               true,
 	"write":               true,
 	"eprint":              true,
-	"read_line":           true,
 	"stdin":               true,
 	"stdout":              true,
 	"stderr":              true,

@@ -4,7 +4,7 @@ package e2eharness
 // over a loopback connection: a listener with a chosen backlog and
 // SO_REUSEPORT, a second listener on the same port where the target
 // load-balances one (Linux), no-delay and keep-alive on the accepted side,
-// a non-blocking read that answers empty rather than waiting, a write-side
+// a non-blocking read that answers -EAGAIN rather than waiting, a write-side
 // shutdown the peer reads as end of stream, the -EINVAL an unknown op
 // draws, the CPU steering of a SO_REUSEPORT group (op 8) where the
 // host has it, and the local address (op 9) and the peer's (op 10) as
@@ -13,9 +13,31 @@ package e2eharness
 // the wasm legs read stdout.
 func SocketCtlProbe() string {
 	return `import "core/int";
+import "std/async";
 
 function fail(n: i32): i32 {
     print(int.int_to_string(n));
+    return n;
+}
+
+function eagain(): i32 {
+    if (target_os() == "darwin") { return 35; }
+    if (target_os() == "wasi") { return 6; }
+    return 11;
+}
+
+// recv waits for c to be readable, since a wasi:sockets read never blocks,
+// then reads into buf: the count, 0 at the end of the stream, or -errno. A
+// wake that finds nothing yet (-EAGAIN) waits again.
+function recv(c: i32, buf: u8[]): i32 {
+    let set: i32[] = [c, 1];
+    let n: i32 = 0 - eagain();
+    let tries: i32 = 0;
+    while (n == 0 - eagain() && tries < 100) {
+        async.wait_any(set, 5000);
+        n = tcp_recv_into(c, buf);
+        tries = tries + 1;
+    }
     return n;
 }
 
@@ -32,8 +54,7 @@ function main(): i32 {
         if (ln2 < 0) { return fail(3); }
         tcp_close(ln2);
     }
-    // 127.0.0.1 packed in network order: 127 | 1 << 24.
-    let c: i32 = tcp_connect(16777343, port);
+    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
     if (c < 0) { return fail(4); }
     let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(5); }
@@ -45,16 +66,15 @@ function main(): i32 {
     } else {
         if (tcp_socket_ctl(a, 1, 1) != 0) { return fail(6); }
         if (tcp_socket_ctl(c, 3, 1) != 0) { return fail(8); }
-        let nothing: u8[] = tcp_recv(c, 16);
-        if (nothing.len() != 0) { return fail(9); }
+        let nothing: u8[] = [0u8, 0u8];
+        if (tcp_recv_into(c, nothing) >= 0) { return fail(9); }
         if (tcp_socket_ctl(c, 3, 0) != 0) { return fail(10); }
     }
-    if (tcp_send(a, "hi") != 2) { return fail(11); }
+    if (tcp_send_bytes(a, [104u8, 105u8]) != 2) { return fail(11); }
     if (tcp_socket_ctl(a, 4, 1) != 0) { return fail(12); }
-    let got: u8[] = tcp_recv(c, 16);
-    if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(13); }
-    let eof: u8[] = tcp_recv(c, 16);
-    if (eof.len() != 0) { return fail(14); }
+    let got: u8[] = [0u8, 0u8, 0u8, 0u8];
+    if (recv(c, got) != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(13); }
+    if (recv(c, got) != 0) { return fail(14); }
     if (tcp_socket_ctl(a, 11, 0) >= 0) { return fail(15); }
     // Op 9 is the local address as 16-bit groups and the port: the
     // accepted side is 127.0.0.1, so family 4, 127 << 8 then 1, nothing
@@ -153,8 +173,11 @@ function main(): i32 {
     }
     let port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
-    let c: i32 = tcp_connect(16777343, port);
-    if (c < 0) { return fail(3); }
+    let c: i32 = 0;
+    match (net.connect(net.socket_addr(net.ipv4_loopback(), port))) {
+        Ok(fd) => { c = fd; },
+        Err(e) => { return fail(3); },
+    }
     let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(4); }
     if (!ok(net.set_keepalive(a, true))) { return fail(5); }
@@ -195,11 +218,12 @@ function main(): i32 {
     tcp_close(c);
     tcp_close(a);
     tcp_close(ln);
-    // Nothing listens on the port now, so a dial is refused, and the errno
-    // the builtin answers names it.
-    let refused: i32 = tcp_connect(16777343, port);
-    if (refused >= 0) { return fail(16); }
-    if (!net.error_from_errno(refused).eq(net.ConnectionRefused)) { return fail(17); }
+    // Nothing listens on the port now, so a dial is refused, and the error
+    // names it.
+    match (net.connect(net.socket_addr(net.ipv4_loopback(), port))) {
+        Ok(fd) => { return fail(16); },
+        Err(e) => { if (!e.eq(net.ConnectionRefused)) { return fail(17); } },
+    }
     print("ok");
     return 42;
 }

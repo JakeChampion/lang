@@ -18,23 +18,9 @@
 // (string).to_lower and the tokenisation byte-class methods;
 // std/i32 for the f-string interpolation of counts.
 import "core/map";
+import "std/io";
 import "std/string";
 import "std/i32";
-
-function read_all(r: Reader): string {
-  let out: string = "";
-  while (true) {
-    match (r.read_line()) {
-      Some(line) => {
-        out = out + line + "\n";
-      },
-      None => {
-        return out;
-      }
-    }
-  }
-  return out;  // unreachable
-}
 
 // Tokenize on whitespace. Simplification: ASCII punctuation
 // stays attached to words. A real version would walk bytes
@@ -86,9 +72,16 @@ function sort_pairs(keys: string[], counts: i32[]): (string[], i32[]) {
 }
 
 function main(): i32 {
-  let r: Reader = stdin();
-  defer r.close();
-  let text: string = read_all(r);
+  let text: string = "";
+  match (io.read_all_stdin()) {
+    Ok(t) => {
+      text = t;
+    },
+    Err(_) => {
+      eprint("word_freq: cannot read stdin");
+      return 1;
+    }
+  }
   let words: string[] = tokenize(text);
   let counts: Map[string, i32] = map_new(64);
   let i: i32 = 0;

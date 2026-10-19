@@ -10829,36 +10829,13 @@ func TestArm64FloatBitCast(t *testing.T) {
 }
 
 func TestArm64ReadLine(t *testing.T) {
-	src := `function main(): i32 {
-    match (stdin().read_line()) {
-        Some(_) => { return 1; },
-        None => { return 0; }
-    }
-    return 0 - 1;
-}`
-	binPath, qemu := compileArm64Bin(t, src)
-	runCase := func(stdin string, want int) {
-		t.Helper()
-		cmd := runArm64Bin(qemu, binPath)
-		cmd.Stdin = strings.NewReader(stdin)
-		_, _ = cmd.CombinedOutput()
-		if got := cmd.ProcessState.ExitCode(); got != want {
-			t.Errorf("stdin=%q: exit = %d, want %d", stdin, got, want)
-		}
-	}
-	runCase("", 0)        // EOF before any byte → None
-	runCase("hello\n", 1) // Some(line)
-}
+	src := `import "std/io";
 
-// Bare `read_line()` builtin — the stdin-only path through
-// __fern_read_line (distinct from stdin().read_line()'s
-// receiver-aware __fern_reader_read_line). Exercises the same
-// .bss buffer + byte loop + Some/None wrap.
-func TestArm64ReadLineBuiltin(t *testing.T) {
-	src := `function main(): i32 {
-    match (read_line()) {
-        Some(_) => { return 1; },
-        None => { return 0; }
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(_)) => { return 1; },
+        Ok(None()) => { return 0; },
+        Err(_) => { return 2; }
     }
     return 0 - 1;
 }`
@@ -10878,7 +10855,7 @@ func TestArm64ReadLineBuiltin(t *testing.T) {
 
 // Reader / Writer file I/O round-trip. open_writer +
 // Writer.write + Writer.close; open_appender; open_reader +
-// Reader.read_chunk / Reader.read_line / Reader.close. Mirrors
+// Reader.read_chunk / io.read_line / Reader.close. Mirrors
 // TestWASMOpenAppender / TestWASMReaderReadChunk /
 // TestWASMStreamingRoundtrip.
 func TestArm64ReaderWriter(t *testing.T) {
@@ -10927,7 +10904,9 @@ func TestArm64ReaderWriter(t *testing.T) {
     }
     return 0 - 1;
 }`, "hello: world", 0},
-		{"streaming_roundtrip_lines", `function main(): i32 {
+		{"streaming_roundtrip_lines", `import "std/io";
+
+function main(): i32 {
     match (open_writer("rt.txt")) {
         Ok(w) => {
             match (w.write("line 1\n")) { Err(_) => { return 1; }, Ok(_) => {} }
@@ -10938,9 +10917,9 @@ func TestArm64ReaderWriter(t *testing.T) {
     }
     match (open_reader("rt.txt")) {
         Ok(r) => {
-            match (r.read_line()) { Some(line) => { write(line); }, None => { return 5; } }
-            match (r.read_line()) { Some(line) => { write(line); }, None => { return 6; } }
-            match (r.read_line()) { Some(_) => { return 7; }, None => {} }
+            match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 5; } }
+            match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 6; } }
+            match (io.read_line(r)) { Ok(None()) => {}, _ => { return 7; } }
             match (r.close()) { Err(_) => { return 8; }, Ok(_) => {} }
             return 0;
         },

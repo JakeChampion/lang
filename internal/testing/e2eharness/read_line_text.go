@@ -9,7 +9,12 @@ import (
 	"unicode/utf8"
 )
 
-const ReadLineTextProgram = `function emit_length(n: i32): void {
+// ReadLineTextProgram reads stdin line by line through io.read_line,
+// framing each line with its length, then checks that end of input stays
+// Ok(None) and that a read of the closed stream is an error.
+const ReadLineTextProgram = `import "std/io";
+
+function emit_length(n: i32): void {
   if (n >= 10) { emit_length(n / 10); }
   putchar(48 + n % 10);
 }
@@ -24,22 +29,19 @@ function main(): i32 {
   let count: i32 = 0;
   let done: boolean = false;
   while (!done) {
-    let next: Option[string] = None;
-    if (count % 2 == 0) { next = read_line(); } else { next = r.read_line(); }
-    match (next) {
-      Some(s) => {
+    match (io.read_line(r)) {
+      Ok(Some(s)) => {
         if (count == 0) { held = s; }
         emit(s);
         count = count + 1;
       },
-      None => { done = true; }
+      Ok(None()) => { done = true; },
+      Err(_) => { return 6; }
     }
   }
-  match (read_line()) { Some(_) => { return 1; }, None => {} }
-  match (r.read_line()) { Some(_) => { return 2; }, None => {} }
+  match (io.read_line(r)) { Ok(None()) => {}, _ => { return 1; } }
   match (r.close()) { Err(_) => { return 3; }, Ok(_) => {} }
-  match (read_line()) { Some(_) => { return 4; }, None => {} }
-  match (r.read_line()) { Some(_) => { return 5; }, None => {} }
+  match (io.read_line(r)) { Err(_) => {}, _ => { return 4; } }
   print("retained");
   emit(held);
   return 0;
@@ -91,7 +93,7 @@ func CheckReadLineText(t *testing.T, command func() *exec.Cmd, census func(*test
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
 			if err := cmd.Run(); err != nil {
-				t.Fatalf("read_line: %v\n%s", err, stderr.Bytes())
+				t.Fatalf("io.read_line: %v\n%s", err, stderr.Bytes())
 			}
 			if !bytes.Equal(stdout.Bytes(), want.Bytes()) {
 				t.Fatalf("complete line frames differ: got %d bytes, want %d; output valid UTF-8=%v", stdout.Len(), want.Len(), utf8.Valid(stdout.Bytes()))

@@ -408,7 +408,7 @@ type DynCoercion struct {
 // builtinEnumDecls returns the synthetic enum declarations the
 // checker injects into every program: `Option[T]` and
 // `Result[T, E]`. Variant order matters — runtime helpers
-// (`$read_line`, `$env`) hardcode the tag indices, so `Some` is
+// (`$env`, `$read_file`) hardcode the tag indices, so `Some` is
 // 0, `None` is 1, `Ok` is 0, `Err` is 1; and the IR's pair-form
 // lowering hard-codes the same `OpMakeSomeI32 → tag=0` /
 // `OpMakeOkI32 → tag=0` mapping. Letting a user redeclare
@@ -2291,7 +2291,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// stream socket listening at the filesystem path, unix_connect(path)
 	// one connected to the listener there; each a descriptor or -errno,
 	// and both -ENAMETOOLONG for a path longer than the address holds.
-	// tcp_accept, tcp_recv, tcp_send and tcp_close take the descriptors.
+	// tcp_accept, tcp_recv_into, tcp_send_bytes and tcp_close take the descriptors.
 	// Native only: neither WASI world has a filesystem namespace for
 	// sockets, so the `unix` capability refuses them there.
 	c.info.FuncSigs["unix_listen"] = &ast.FuncType{
@@ -2366,32 +2366,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.NumberType{},
 	}
-	// tcp_recv(fd, max): u8[] — one blocking read of at most max
-	// bytes; socket data is raw bytes (D9, #5714). The empty array
-	// signals EOF / error / closed alike.
-	c.info.FuncSigs["tcp_recv"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
-		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
-	}
-	c.info.FuncSigs["tcp_send"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.StringType{}},
-		Result: ast.NumberType{},
-	}
 	c.info.FuncSigs["tcp_send_bytes"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["tcp_close"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
-		Result: ast.NumberType{},
-	}
-	// tcp_connect(host_be, port): number — outbound client connect (the
-	// upstream-fetch half of the edge-handler use case). host_be is the
-	// IPv4 in network byte order packed into an i32
-	// (a | b<<8 | c<<16 | d<<24); returns the connected fd, or -errno.
-	// x86-64 first; arm64 follows.
-	c.info.FuncSigs["tcp_connect"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
 	// tcp_pollable(conn): number — a wasi:io/poll pollable handle for a
@@ -2455,20 +2435,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["wasm_pollable_drop"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.NumberType{Width: 32, Signed: true},
-	}
-	// udp_send(host, port, data): number — one-shot fire-and-forget UDP
-	// datagram. host is an IPv4 literal ("a.b.c.d"); binds an ephemeral
-	// local port, connects to host:port, sends data, and tears the
-	// socket down. Returns the bytes accepted by the host, or a negative
-	// errno on failure. (Send-only / IPv4-literal v1 — for telemetry /
-	// syslog to a local agent.)
-	c.info.FuncSigs["udp_send"] = &ast.FuncType{
-		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}},
-		Result: ast.NumberType{},
-	}
-	c.info.FuncSigs["udp_send_bytes"] = &ast.FuncType{
-		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, u8s},
-		Result: ast.NumberType{},
 	}
 	// The datagram sockets (#9853). udp_bind(addr, port): a socket bound
 	// to addr:port (the unspecified address for every interface, port 0
@@ -2703,21 +2669,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			ast.VoidType{},
 			ast.EnumType{Name: "IoError"},
 		}},
-	}
-	// read_line(): Option[string] — read one line from stdin
-	// (including the trailing '\n' if present), returning
-	// Some(line) or None at end-of-file before any byte. The
-	// ergonomic stdin reader for CLI tools — the bare counterpart
-	// to `stdin().read_line()`. Implemented on every backend
-	// (native reads byte-by-byte into a scratch buffer; wasm wraps
-	// preview-1 `fd_read` / preview-2 `wasi:cli/stdin::get-stdin` +
-	// `wasi:io/streams::blocking-read`). The line is assumed to be
-	// UTF-8, not validated: `None` means end-of-file, so there is no
-	// arm to refuse a stray byte into, and `r.read_chunk(n)` is the
-	// byte reader (docs/STRINGS-SOTA.md, D9).
-	c.info.FuncSigs["read_line"] = &ast.FuncType{
-		Params: []ast.Type{},
-		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
 	}
 	// sleep_ms(ms): void — best-effort sleep for the given
 	// duration. Useful in tests that want to wait for a
@@ -4181,7 +4132,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	// Auto-injected methods on Reader / Writer. The names are
 	// the mangled forms the existing method-call rewrite uses
-	// (`r.read_line()` → `__method_Reader_read_line(r)`); we
+	// (`r.read_chunk(n)` → `__method_Reader_read_chunk(r, n)`); we
 	// pre-populate Methods + FuncSigs so the rewrite finds them
 	// and so codegen can resolve the call to a runtime helper
 	// emitted at the same name.
@@ -4192,8 +4143,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		fullParams := append([]ast.Type{ast.StructType{Name: structName}}, params...)
 		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
 	}
-	optionString := ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}}
-	registerStructMethod("Reader", "read_line", nil, optionString)
 	// read_chunk validates one physical read as UTF-8, returning InvalidUtf8
 	// for malformed or incomplete scalars. It consumes the bytes even on
 	// rejection. Buffered text uses LineReader; raw input uses the byte method.

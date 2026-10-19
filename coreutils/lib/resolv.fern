@@ -10,7 +10,7 @@
 //
 // An address is carried as the in_addr WORD: the four octets in memory
 // order read as a little-endian integer, `a | b<<8 | c<<16 | d<<24`. That
-// is the form `tcp_connect` takes and the one gethostid shifts.
+// is the form `packed_v4` answers and the one gethostid shifts.
 //
 // Where this differs from glibc, and why (docs/COREUTILS.md):
 //   - Only `files` and `dns` are implemented. Any other source on the

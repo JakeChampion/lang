@@ -7,10 +7,6 @@ import (
 	"time"
 )
 
-// LoopbackHostBE is 127.0.0.1 in network byte order, the form
-// `fetch.fetch_future` takes its host in: 127 | (1 << 24).
-const LoopbackHostBE = 127 | (1 << 24)
-
 // StartBodyUpstream listens on the loopback interface and answers every
 // connection's first request with a 200 carrying body, then closes. It
 // returns the port.
@@ -45,12 +41,14 @@ func StartBodyUpstream(t *testing.T, body []byte) int {
 func FetchFutureFanoutSource(port int) string {
 	return fmt.Sprintf(`import "std/async";
 import "std/fetch";
+import "std/net";
 import "std/utf8";
 
 function main(): i32 {
     let none: u8[] = [];
-    let f1: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/1");
-    let f2: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/2");
+    let up: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %d);
+    let f1: async.Future[u8[]] = fetch.fetch_future(up, "/1");
+    let f2: async.Future[u8[]] = fetch.fetch_future(up, "/2");
     let fs: async.Future[u8[]][] = [f1, f2];
     let bodies: u8[][] = async.gather(fs, none);
     let b0: boolean = false;
@@ -59,7 +57,7 @@ function main(): i32 {
     match (utf8.from_bytes(bodies[1])) { Some(t) => { b1 = t == "hello-world"; }, None => {}, }
     if (b0 && b1) { return 42; }
     return 85;
-}`, LoopbackHostBE, port, LoopbackHostBE, port)
+}`, port)
 }
 
 // FetchFutureLargeBodySource is a program that reads one `bodyLen`-byte
@@ -68,14 +66,15 @@ function main(): i32 {
 func FetchFutureLargeBodySource(port, bodyLen int) string {
 	return fmt.Sprintf(`import "std/async";
 import "std/fetch";
+import "std/net";
 function main(): i32 {
     let none: u8[] = [];
-    let f: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/big");
+    let f: async.Future[u8[]] = fetch.fetch_future(net.socket_addr(net.ipv4_loopback(), %d), "/big");
     let fs: async.Future[u8[]][] = [f];
     let bodies: u8[][] = async.gather(fs, none);
     if (bodies[0].len() == %d) { return 42; }
     return bodies[0].len() & 127;  // distinct small code on a truncated read
-}`, LoopbackHostBE, port, bodyLen)
+}`, port, bodyLen)
 }
 
 // AlphabetBody is n bytes cycling through the lowercase alphabet.
@@ -96,6 +95,7 @@ func AlphabetBody(n int) []byte {
 func FetchAccumulatorSource(port, bodyLen int) string {
 	return fmt.Sprintf(`import "std/async";
 import "std/fetch";
+import "std/net";
 
 function main(): i32 {
     match (fetch.send(fetch.get("http://127.0.0.1:%[1]d/"))) {
@@ -104,14 +104,14 @@ function main(): i32 {
     }
     // send's buffer is a plain local, so it grows in place.
     if (__arr_push_shared_count() != 0) { return 2; }
-    let h: i32 = fetch.ipv4(127, 0, 0, 1);
+    let h: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), %[1]d);
     let none: u8[] = [];
-    let fs: async.Future[u8[]][] = [fetch.fetch_future(h, %[1]d, "/")];
+    let fs: async.Future[u8[]][] = [fetch.fetch_future(h, "/")];
     let bodies: u8[][] = async.gather(fs, none);
     if (bodies[0].len() != %[2]d) { return 3; }
     // A path that cannot stand on a request line resolves to the empty
     // body without connecting.
-    let bad: async.Future[u8[]][] = [fetch.fetch_future(h, %[1]d, "/a\r\nX-Injected: 1")];
+    let bad: async.Future[u8[]][] = [fetch.fetch_future(h, "/a\r\nX-Injected: 1")];
     let refused: u8[][] = async.gather(bad, none);
     if (refused[0].len() != 0) { return 6; }
     // __fetch_drain's list IS captured, so its appends cross the cliff —

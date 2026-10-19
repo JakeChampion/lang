@@ -24,7 +24,7 @@ const WasiTCPCensusProbe = `function main(): i32 {
         if (listener < 0) { return 1; }
         let port: i32 = tcp_local_port(listener);
         if (port <= 0) { return 2; }
-        let client: i32 = tcp_connect(127 + 16777216, port);
+        let client: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
         if (client < 0) { return 3; }
         let server: i32 = tcp_accept(listener);
         if (server < 0) { return 4; }
@@ -103,7 +103,10 @@ func WasiUDPCensusProbe(t *testing.T, data string) (string, func()) {
 	src := fmt.Sprintf(`function main(): i32 {
     let i: i32 = 0;
     while (i < 32) {
-        if (udp_send("127.0.0.1", %d, %q) != %d) { return 1; }
+        let s: i32 = udp_bind([0u8, 0u8, 0u8, 0u8], 0);
+        if (s < 0) { return 2; }
+        if (udp_sendto(s, [127u8, 0u8, 0u8, 1u8], %d, %q) != %d) { return 1; }
+        if (tcp_close(s) != 0) { return 3; }
         i = i + 1;
     }
     return 0;
@@ -165,35 +168,45 @@ func wasiTCPStreamCensusProbe(t *testing.T, data string, receive bool) (string, 
 		}
 		done <- nil
 	}()
-	src := fmt.Sprintf(`function main(): i32 {
+	src := BytesOf + fmt.Sprintf(`function main(): i32 {
     let i: i32 = 0;
     while (i < 32) {
-        let c: i32 = tcp_connect(127 + 16777216, %d);
+        let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
         if (c < 0) { return 1; }
-        if (tcp_send(c, %q) != %d) { return 2; }
+        if (tcp_send_bytes(c, bytes_of(%q)) != %d) { return 2; }
         if (tcp_close(c) != 0) { return 3; }
         i = i + 1;
     }
     return 0;
 }`, listener.Addr().(*net.TCPAddr).Port, data, len(data))
 	if receive {
-		src = fmt.Sprintf(`function read(c: i32): i32 {
-    let bytes: u8[] = tcp_recv(c, 4096);
+		src = fmt.Sprintf(`// read waits for c to be readable, since a wasi:sockets read never
+// blocks, then reads into buf, waiting again while a wake finds nothing
+// (-EAGAIN, 6 in the WASI numbering).
+function read(c: i32, buf: u8[]): i32 {
+    let n: i32 = 0 - 6;
+    while (n == 0 - 6) {
+        let p: i32 = tcp_pollable(c);
+        wasm_block(p);
+        wasm_pollable_drop(p);
+        n = tcp_recv_into(c, buf);
+    }
     let i: i32 = 0;
-    while (i < bytes.len()) {
-        if (bytes[i] != 120) { return -1; }
+    while (i < n) {
+        if (buf[i] != 120u8) { return 0 - 1000; }
         i = i + 1;
     }
-    return bytes.len();
+    return n;
 }
 function main(): i32 {
     let i: i32 = 0;
     while (i < 32) {
-        let c: i32 = tcp_connect(127 + 16777216, %d);
+        let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
         if (c < 0) { return 1; }
+        let buf: u8[] = __alloc_u8(4096);
         let total: i32 = 0;
-        let n: i32 = read(c);
-        while (n > 0) { total = total + n; n = read(c); }
+        let n: i32 = read(c, buf);
+        while (n > 0) { total = total + n; n = read(c, buf); }
         if (n < 0 || total != %d) { return 2; }
         if (tcp_close(c) != 0) { return 3; }
         i = i + 1;

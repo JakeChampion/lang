@@ -97,14 +97,15 @@ order. This is the canonical edge fan-out: hit a cache and a primary, take both.
 ```fern
 import "std/async";
 import "std/fetch";
+import "std/net";
 
 function handle(): i32 {
-    let cache: i32   = fetch.ipv4(10, 0, 0, 1);
-    let primary: i32 = fetch.ipv4(10, 0, 0, 2);
+    let cache: net.SocketAddr   = net.socket_addr(net.ipv4(10, 0, 0, 1), 80);
+    let primary: net.SocketAddr = net.socket_addr(net.ipv4(10, 0, 0, 2), 80);
     let none: u8[] = [];
     let bodies: u8[][] = async.gather([
-        fetch.fetch_future(cache,   80, "/key"),
-        fetch.fetch_future(primary, 80, "/key"),
+        fetch.fetch_future(cache,   "/key"),
+        fetch.fetch_future(primary, "/key"),
     ], none);                     // the fallback for a future that can't complete
     return bodies.len();          // both fetches overlapped on one thread
 }
@@ -130,12 +131,13 @@ not safe to repeat.
 ```fern
 import "std/async";
 import "std/fetch";
+import "std/net";
 
-function fastest(a: i32, b: i32): u8[] {
+function fastest(a: net.SocketAddr, b: net.SocketAddr): u8[] {
     let none: u8[] = [];
     let fs: async.Future[u8[]][] = [
-        fetch.fetch_future(a, 80, "/k"),
-        fetch.fetch_future(b, 80, "/k"),
+        fetch.fetch_future(a, "/k"),
+        fetch.fetch_future(b, "/k"),
     ];
     let (winner, body) = async.race(fs, none);
     // `winner` is the index that finished first; `body` its result.
@@ -157,8 +159,8 @@ stragglers (their slots come back `None`).
 
 ```fern
 let bodies: Option[u8[]][] = async.with_deadline(time.duration_millis(250), [
-    fetch.fetch_future(cache,   80, "/k"),
-    fetch.fetch_future(primary, 80, "/k"),
+    fetch.fetch_future(cache,   "/k"),
+    fetch.fetch_future(primary, "/k"),
 ]);   // any upstream slower than 250ms lands as None
 ```
 
@@ -279,15 +281,14 @@ program and its generator seed for replay
 ## 7. The awaitable fetch: `fetch.fetch_future`
 
 ```fern
-pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u8[]]
+pub function fetch_future(addr: net.SocketAddr, path: string): async.Future[u8[]]
 ```
 
 Opens the connection and sends the request **non-blocking**, then returns a
 `Pending` future that resolves to the response **body** once the socket is
 readable. Drive several through `gather` / `race` / `with_deadline` and their
 reads overlap on one thread. A connect/send failure resolves immediately to the
-empty body so a dead upstream never stalls the fan-out. (`host_be` is the IPv4
-address in network byte order — build it with `fetch.ipv4(a,b,c,d)`.)
+empty body so a dead upstream never stalls the fan-out.
 
 The body is `u8[]`, not `string`: an upstream serves whatever bytes it likes, so
 a text-typed response would be a `string` that is not well-formed UTF-8
@@ -308,7 +309,7 @@ the whole call chain above the wait saves its live locals and returns to the
 scheduler, and runs on from the wait when the scheduler resumes it. Nothing
 is written at the call site: a function that calls `wait_any`, or calls one
 that does, is lowered that way by reachability (`compiler/suspend.fern`).
-The fetch client's waits are such calls: `tcp.tcp_recv_deadline`, the DNS
+The fetch client's waits are such calls: `net.read_deadline`, the DNS
 exchange's receive waits and `dns.connect_race`'s connect wait all go
 through `wait_any`, so a `fetch.send` inside a task parks at each of them.
 
@@ -406,7 +407,7 @@ that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
 - A task cancelled while the fetch client resolves a name sees the resolver's
   `NoReply` (as `FetchError.Dns`), not `Cancelled`: the DNS exchange's waits
   answer `cancelled()` as a passed deadline. Its connect and read waits
-  report the cancellation (`tcp.Recv.Abandoned`, `net.Interrupted`), which
+  report the cancellation (`net.Abandoned`, `net.Interrupted`), which
   the client maps to `FetchError.Cancelled`.
 - `with_deadline` enforces its deadline on **both** native and wasm: native via
   `poll(2)`'s timeout arg; wasm by appending a real timer pollable

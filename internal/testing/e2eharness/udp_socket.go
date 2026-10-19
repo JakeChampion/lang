@@ -294,6 +294,18 @@ function main(): i32 {
 // iff every check holds, else the number of the first failing check.
 func ConnectProbe() string {
 	return `import "core/int";
+import "std/net";
+
+// recv reads once from fd within five seconds: the bytes, none at the end
+// of the stream, when nothing came, or when the read failed.
+function recv(fd: i32, max: i32): u8[] {
+    match (net.read_watched(fd, max, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => { return b; },
+        _ => {}
+    }
+    let none: u8[] = [];
+    return none;
+}
 
 function fail(n: i32): i32 {
     print(int.int_to_string(n));
@@ -341,11 +353,11 @@ function main(): i32 {
     // nothing queued yet. wasm has no blocking mode to switch back to, and
     // its tcp_recv waits regardless.
     if (target_os() != "wasi" && tcp_socket_ctl(c, 3, 0) != 0) { return fail(7); }
-    if (tcp_send(c, "hi") != 2) { return fail(8); }
-    let got: u8[] = tcp_recv(a, 16);
+    if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(8); }
+    let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(9); }
-    if (tcp_send(a, "yo") != 2) { return fail(10); }
-    let back: u8[] = tcp_recv(c, 16);
+    if (tcp_send_bytes(a, [121u8, 111u8]) != 2) { return fail(10); }
+    let back: u8[] = recv(c, 16);
     if (back.len() != 2 || back[0] != 121u8) { return fail(11); }
     tcp_close(a);
     tcp_close(c);
@@ -372,6 +384,17 @@ function main(): i32 {
 func NetConnectProbe() string {
 	return `import "core/int";
 import "std/net";
+
+// recv reads once from fd within five seconds: the bytes, none at the end
+// of the stream, when nothing came, or when the read failed.
+function recv(fd: i32, max: i32): u8[] {
+    match (net.read_watched(fd, max, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => { return b; },
+        _ => {}
+    }
+    let none: u8[] = [];
+    return none;
+}
 
 function fail(n: i32): i32 {
     print(int.int_to_string(n));
@@ -419,8 +442,8 @@ function main(): i32 {
     if (settle(c) != 0) { return fail(4); }
     let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(5); }
-    if (tcp_send(c, "hi") != 2) { return fail(6); }
-    let got: u8[] = tcp_recv(a, 16);
+    if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(6); }
+    let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8) { return fail(7); }
     tcp_close(a);
     tcp_close(c);

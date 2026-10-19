@@ -5324,7 +5324,6 @@ function builtin_sigs(): string[] {
     "__method_Reader_read_chunk_bytes(Reader, i32): Result[u8[], IoError]",
     "__method_Writer_write_bytes(Writer, [u8]): Result[void, IoError]",
     "__method_Writer_write_some_bytes(Writer, [u8]): Result[i64, IoError]",
-    "__method_Reader_read_line(Reader): Option[string]",
     "__method_Reader_seek(Reader, i64, i32): Result[i64, IoError]",
     "__method_Reader_set_extproc(Reader, boolean): Result[void, IoError]",
     "__method_Reader_set_window_size(Reader, i32, i32): Result[void, IoError]",
@@ -5445,7 +5444,6 @@ function builtin_sigs(): string[] {
     "read_dir_ino_all(string): Result[DirEntry[], IoError]",
     "read_file(string): Result[string, IoError]",
     "read_file_bytes(string): Result[u8[], IoError]",
-    "read_line(): Option[string]",
     "read_link(string): Result[string, IoError]",
     "remove_dir(string): Result[void, IoError]",
     "remove_dir_all(string): Result[void, IoError]",
@@ -5488,14 +5486,11 @@ function builtin_sigs(): string[] {
     "target_os(): string",
     "tcp_accept(i32): i32",
     "tcp_close(i32): i32",
-    "tcp_connect(i32, i32): i32",
     "tcp_connect_with(u8[], i32, boolean): i32",
     "tcp_listen(i32): i32",
     "tcp_listen_with(u8[], i32, i32, boolean): i32",
     "tcp_local_port(i32): i32",
     "tcp_pollable(i32): i32",
-    "tcp_recv(i32, i32): u8[]",
-    "tcp_send(i32, string): i32",
     "tcp_send_bytes(i32, u8[]): i32",
     "tcp_socket_ctl(i32, i32, i32): i32",
     "tcp_sendfile(i32, i32, i32): i32",
@@ -5519,8 +5514,6 @@ function builtin_sigs(): string[] {
     "udp_bind_with(u8[], i32, boolean): i32",
     "udp_connect(i32, u8[], i32): i32",
     "udp_recvfrom(i32, u8[], u8[]): i32",
-    "udp_send(string, i32, string): i32",
-    "udp_send_bytes(string, i32, u8[]): i32",
     "udp_sendto(i32, u8[], i32, string): i32",
     "udp_sendto_bytes(i32, u8[], i32, u8[]): i32",
     "umask(i32): i32",
@@ -8861,7 +8854,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   // declarations on every program (checker.go's builtinStructDecls), so
   // naming one resolves to that struct even though no module declares it.
   // Their FIELDS stay unregistered — `lookup_struct` misses, which is what
-  // keeps `r.read_line()` a builtin method rather than an E043 field read,
+  // keeps `r.read_chunk(n)` a builtin method rather than an E043 field read,
   // and what keeps the handle out of the reference-counted shapes.
   //
   // `Map` and `Cell` are excluded: they are containers resolved by the
@@ -21674,11 +21667,11 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
-    "hostname", "map_new", "mounts", "pipe", "random_bytes", "read_line", "set_priority",
+    "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority",
     "setgid", "setuid",
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",
-    "tcp_recv", "termios_get", "uname_field", "window_size",
+    "termios_get", "uname_field", "window_size",
     "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal", "__aes_gcm_open", "__sha256_hw_blocks", "__sha1_hw_blocks",
   ];
   // `termios_set` is deliberately absent beside its read half: it TAKES the
@@ -22565,7 +22558,7 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
   // an unknown type. Reader / Writer / MapIter reach here even on a module
   // carrying the injected decls: they are opaque handles whose methods the
   // checker resolves as builtins, so declaring them would turn every
-  // `r.read_line()` into a field read (E043).
+  // `r.read_chunk(n)` into a field read (E043).
   if (parser.is_reserved_struct_name(type_name) || parser.is_reserved_enum_name(type_name)) {
     return false;
   }

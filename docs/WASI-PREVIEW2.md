@@ -155,10 +155,11 @@ The user-facing builtins keep their preview-1 shape for
 backward compatibility — every "fd" the program sees from
 `tcp_listen` / `tcp_accept` is now a heap pointer to a 12-byte
 struct `(tcp_socket, input_stream, output_stream)`. Listener
-structs leave the two stream slots zero. `tcp_recv` /
-`tcp_send` / `tcp_close` consume that struct: recv blocks-reads
-from the input-stream slot, send chunks through the
-output-stream via `$__streams_write`, and close drops streams
+structs leave the two stream slots zero. `tcp_recv_into` /
+`tcp_send_bytes` / `tcp_close` consume that struct: a receive reads the
+input-stream slot without blocking (-EAGAIN while it is empty, 0 at the end
+of the stream, -EIO on a stream error), a send chunks through the
+output-stream, and close drops streams
 first then the parent socket (the canonical-ABI rejects parent
 drops with live children).
 

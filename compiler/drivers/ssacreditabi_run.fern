@@ -314,7 +314,13 @@ function origin_schema_controls(sub: ircore.Sub): void {
         changed = changed.append(semrecords.Record { ...r, views: true });
       }
     }
-    let why = ((): string => if (boundary == 0) { return "missing origin caller schema"; } else { if (boundary == 2) { return "origin caller child is not flat"; } else { return "unsupported origin caller layout"; } })();
+    let why = ((): string => if (boundary == 0) { return "missing origin caller schema"; } else {
+      if (boundary == 2) {
+        return "origin caller child is not flat";
+      } else {
+        return "unsupported origin caller layout";
+      }
+    })();
     origin_caller_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(changed) }, "select_parent", why);
   }
 }

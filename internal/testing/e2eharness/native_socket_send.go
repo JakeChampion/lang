@@ -17,15 +17,15 @@ func NativeSocketSendProbe(payload string, shut bool) string {
 	if shut {
 		result, rounds = -int(syscall.EPIPE), 32
 	}
-	return fmt.Sprintf(`function main(): i32 {
+	return BytesOf + fmt.Sprintf(`function main(): i32 {
     let sig: i32 = %d;
     signal_default(sig);
     if (signal_disposition(sig) != 0) { return 92; }
-    let data: string = %q;
-    if (tcp_send(-1, data) != -%d) { return 90; }
+    let data: u8[] = bytes_of(%q);
+    if (tcp_send_bytes(-1, data) != -%d) { return 90; }
     let i: i32 = 0;
     while (i < %d) {
-        if (tcp_send(3, data) != %d) { return 91; }
+        if (tcp_send_bytes(3, data) != %d) { return 91; }
         i = i + 1;
     }
     if (signal_disposition(sig) != 0) { return 93; }
@@ -68,7 +68,7 @@ func CheckNativeSocketSend(t *testing.T, command *exec.Cmd, payload string, shut
 	cmd.Env, cmd.Dir = command.Env, command.Dir
 	cmd.ExtraFiles = append(cmd.ExtraFiles, file)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("tcp_send must return without SIGPIPE: %v\n%s", err, out)
+		t.Fatalf("tcp_send_bytes must return without SIGPIPE: %v\n%s", err, out)
 	}
 	if !shut {
 		if err := peer.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
@@ -79,7 +79,7 @@ func CheckNativeSocketSend(t *testing.T, command *exec.Cmd, payload string, shut
 			t.Fatal(err)
 		}
 		if string(got) != payload {
-			t.Fatal("tcp_send changed payload bytes")
+			t.Fatal("tcp_send_bytes changed payload bytes")
 		}
 	}
 }

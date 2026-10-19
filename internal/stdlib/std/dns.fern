@@ -1360,7 +1360,7 @@ function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
 
 // The message behind the two-byte length on `sock`, each read awaited up
 // to `deadline`: `NoReply` when it passes, `Malformed` when the peer
-// closes short of the length.
+// closes short of the length, `Socket` when a read fails.
 function read_framed(sock: i32, deadline: i64): Result[u8[], DnsError] {
   let buf: u8[] = [];
   let want: i32 = -1;
@@ -1369,16 +1369,35 @@ function read_framed(sock: i32, deadline: i64): Result[u8[], DnsError] {
     if (left <= 0 || !readable_within(sock, left)) {
       return Err(NoReply);
     }
-    let chunk: u8[] = tcp_recv(sock, 4096);
-    if (chunk.len() == 0) {
-      return Err(Malformed);
-    }
-    buf = buf.concat(chunk);
+    buf = buf.concat(read_some(sock)?);
     if (want < 0 && buf.len() >= 2) {
       want = 2 + be16(buf, 0);
     }
   }
   return Ok(buf.drop(2).take(want - 2));
+}
+
+// `read_some(sock)` — what one read of a readable `sock` holds: none when
+// the wake found nothing yet, `Malformed` at the end of the stream, `Socket`
+// when the read fails.
+function read_some(sock: i32): Result[u8[], DnsError] {
+  let room: u8[] = __alloc_u8(4096);
+  match (net.read(sock, room)) {
+    Ok(n) => {
+      if (n == 0) {
+        return Err(Malformed);
+      }
+      return Ok(room.take(n));
+    },
+    Err(e) => {
+      if (e.eq(net.WouldBlock)) {
+        let none: u8[] = [];
+        return Ok(none);
+      }
+      return Err(Socket(e));
+    }
+  }
+  return Err(Malformed);
 }
 
 // `ask(conf, q)` — res_send: `q` put to the nameservers of `conf` in

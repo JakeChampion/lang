@@ -1098,29 +1098,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 			"",
 		},
-		// read_line() returns Option[string] (#4369): Some(line INCLUDING the
-		// trailing '\n') / None at EOF. `s.len()` therefore counts the newline.
-		{
-			"read-line-len",
-			"function main(): i32 { match (read_line()) { Some(s) => { return s.len(); }, None => { return 0; }, } }",
-			6,
-			"",
-			"hello\n",
-		},
-		{
-			"read-line-echo",
-			"function main(): i32 { match (read_line()) { Some(s) => { write(s); return 0; }, None => { return 1; }, } }",
-			0,
-			"world\n",
-			"world\n",
-		},
-		{
-			"read-line-compare",
-			"function main(): i32 { match (read_line()) { Some(s) => { if (s == \"yes\\n\") { return 1; } return 0; }, None => { return 0; }, } }",
-			1,
-			"",
-			"yes\n",
-		},
 		{
 			"string-array-literal-print",
 			"function main(): i32 { let arr = [\"hi\", \"bye\"]; write(arr[0]); write(\"\\n\"); write(arr[1]); write(\"\\n\"); return 0; }",

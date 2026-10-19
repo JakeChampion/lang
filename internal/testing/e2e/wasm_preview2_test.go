@@ -103,8 +103,8 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 
 // TestWasmPreview2StdinReadLine exercises the native preview-2
 // stdin path: `wasi:cli/stdin.get-stdin` +
-// `wasi:io/streams.input-stream.blocking-read`, with the host
-// allocating each byte through our `cabi_realloc` export. Echoes
+// `wasi:io/streams.input-stream.blocking-read` under io.read_line, with
+// the host allocating each byte through our `cabi_realloc` export. Echoes
 // each line back via the streams stdout writer (step 3a), so this
 // test covers the full preview-2 stdio surface.
 func TestWasmPreview2StdinReadLine(t *testing.T) {
@@ -121,13 +121,16 @@ func TestWasmPreview2StdinReadLine(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "echo.fern")
 	// Loop until EOF, writing each line back. write() doesn't add
-	// a newline; read_line preserves the trailing '\n', so we get
+	// a newline; io.read_line keeps the trailing '\n', so we get
 	// byte-for-byte echo.
-	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
+	if err := os.WriteFile(srcPath, []byte(`import "std/io";
+
+function main(): i32 {
     while (true) {
-        match (stdin().read_line()) {
-            Some(line) => { write(line); },
-            None => { return 0; }
+        match (io.read_line(stdin())) {
+            Ok(Some(line)) => { write(line); },
+            Ok(None()) => { return 0; },
+            Err(_) => { return 1; }
         }
     }
     return 0;
@@ -188,7 +191,9 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "fs.fern")
-	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
+	if err := os.WriteFile(srcPath, []byte(`import "std/io";
+
+function main(): i32 {
     match (open_writer("out.txt")) {
         Ok(w) => {
             match (w.write("line 1\n")) { Err(_) => { return 1; }, Ok(_) => {} }
@@ -199,9 +204,9 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
     }
     match (open_reader("out.txt")) {
         Ok(r) => {
-            match (r.read_line()) { Some(line) => { write(line); }, None => { return 5; } }
-            match (r.read_line()) { Some(line) => { write(line); }, None => { return 6; } }
-            match (r.read_line()) { Some(_) => { return 7; }, None => {} }
+            match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 5; } }
+            match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 6; } }
+            match (io.read_line(r)) { Ok(None()) => {}, _ => { return 7; } }
             match (r.close()) { Err(_) => { return 8; }, Ok(_) => {} }
         },
         Err(_) => { return 9; }
@@ -392,10 +397,12 @@ func TestWasmPreview2FileCloseAdapterFree(t *testing.T) {
 	}
 
 	// Phase 2: read-only + close → input-stream resource.drop.
-	reader := build("reader", `function main(): i32 {
+	reader := build("reader", `import "std/io";
+
+function main(): i32 {
     match (open_reader("f.txt")) {
         Ok(r) => {
-            match (r.read_line()) { Some(line) => { write(line); }, None => { return 1; } }
+            match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 1; } }
             match (r.close()) { Err(_) => { return 2; }, Ok(_) => {} }
             return 0;
         },
@@ -520,6 +527,7 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	// takes whatever port is free and `tcp_local_port` reads it
 	// back off the socket, so no port is named anywhere.
 	src := `import "core/int";
+import "std/net";
 
 function main(): i32 {
     let sock = tcp_listen(0);
@@ -529,9 +537,11 @@ function main(): i32 {
     print(int.int_to_string(port));
     let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    let msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
-    let sent = tcp_send(conn, msg);
-    if (sent < 0) { return 3; }
+    let msg: u8[] = match (net.read_watched(conn, 1024, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => b,
+        _ => { return 5; },
+    };
+    match (net.write(conn, msg)) { Err(_) => { return 3; }, Ok(_) => {} }
     tcp_close(conn);
     tcp_close(sock);
     return 0;
@@ -592,7 +602,7 @@ function main(): i32 {
 	if _, err := conn.Write([]byte(want)); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	// Half-close the write side so the guest's blocking-read
+	// Half-close the write side so the guest's read
 	// returns even if it asked for more bytes than we sent.
 	if cw, ok := conn.(*net.TCPConn); ok {
 		cw.CloseWrite()
@@ -644,7 +654,7 @@ func readGuestPort(t *testing.T, stdout io.Reader, serr *bytes.Buffer) int {
 // TestWasmPreview2TcpServerStdoutAdapterFree composes an adapter-free
 // TCP echo server that also print()s — TCP + CLI-stream stdout mixing.
 // The composed request surfaces wasi:cli/stdout.get-stdout and reuses
-// tcp_send's output-stream.blocking-write-and-flush lowering for the log
+// net.write's output-stream.blocking-write-and-flush lowering for the log
 // write. Built with `-target wasm32-wasi` (no adapter); a Go client round-trips
 // a payload, and the print output is verified in wasmtime's stdout.
 func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
@@ -667,16 +677,20 @@ func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "echolog.fern")
-	src := strings.Replace(`function main(): i32 {
+	src := strings.Replace(`import "std/net";
+
+function main(): i32 {
     let sock = tcp_listen(__PORT__);
     if (sock < 0) { return 1; }
     print("LISTENING");
     let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
-    let msg: string = string_from_bytes_unchecked(tcp_recv(conn, 1024));
+    let msg: u8[] = match (net.read_watched(conn, 1024, 5000i64, 1)) {
+        Ok(net.Chunk(b)) => b,
+        _ => { return 5; },
+    };
     print("GOTDATA");
-    let sent = tcp_send(conn, msg);
-    if (sent < 0) { return 3; }
+    match (net.write(conn, msg)) { Err(_) => { return 3; }, Ok(_) => {} }
     tcp_close(conn);
     tcp_close(sock);
     return 0;
@@ -758,20 +772,20 @@ func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 }
 
 // TestWasmPreview2UdpSendAdapterFree drives the send-only UDP path:
-// `udp_send(host, port, data)` composed adapter-free (`-target wasm32-wasi`,
+// net.udp_socket + net.send_to composed adapter-free (`-target wasm32-wasi`,
 // no -wasi-adapter) through the unified composer. A Go net.ListenPacket
 // UDP socket stands in for the agent; the guest creates a socket, binds
 // an ephemeral port, connects to the listener, sends one datagram, and
 // exits 0. The test then reads the datagram off the socket and checks
 // its bytes — proving the create → bind → stream → send → drop pipeline
 // runs end-to-end on wasmtime's host sockets.
-// TestWasmPreview2UdpSendStdoutAdapterFree is the udp_send path plus
+// TestWasmPreview2UdpSendStdoutAdapterFree is the UDP send path plus
 // print() — a telemetry client that logs. UDP's datagram path isn't
 // io/streams, so the composed request pulls in a fresh wasi:io/streams
 // (output side) + wasi:cli/stdout for the log write. The datagram is
 // received by a Go socket and the log line lands on the guest's stdout.
 // runWasmtimeUDPFlaky runs a one-shot UDP-datagram preview2 component under
-// wasmtime with a bounded retry. The wasi:sockets udp_send path races
+// wasmtime with a bounded retry. The wasi:sockets UDP send path races
 // intermittently under wasmtime (ephemeral-port bind / send-teardown timing):
 // it exit-1's on roughly 1-in-3 runs and clears on an identical re-run — the
 // classic environmental-race signature tracked in #4358. A genuine fault
@@ -813,9 +827,9 @@ func TestWasmPreview2UdpSendStdoutAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "send.fern")
-	src := "function main(): i32 {\n" +
+	src := fernUDPSend + "function main(): i32 {\n" +
 		"    print(\"emitting metric\");\n" +
-		"    if (udp_send(\"127.0.0.1\", " + itoa(port) + ", \"metric:1|c\") > 0) { return 0; }\n" +
+		"    if (send_datagram(net.ipv4_loopback(), " + itoa(port) + ", \"metric:1|c\")) { return 0; }\n" +
 		"    return 1;\n" +
 		"}\n"
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -867,9 +881,8 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "send.fern")
-	src := "function main(): i32 {\n" +
-		"    let n: i32 = udp_send(\"127.0.0.1\", " + itoa(port) + ", \"ping-from-fern\");\n" +
-		"    if (n > 0) { return 0; }\n" +
+	src := fernUDPSend + "function main(): i32 {\n" +
+		"    if (send_datagram(net.ipv4_loopback(), " + itoa(port) + ", \"ping-from-fern\")) { return 0; }\n" +
 		"    return 1;\n" +
 		"}\n"
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -883,7 +896,7 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 	componentPath := filepath.Join(dir, "send.component.wasm")
 	emit := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath)
 	if out, err := emit.CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (udp_send, no adapter): %v\n%s", err, out)
+		t.Fatalf("fern -target wasm (udp send, no adapter): %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -891,7 +904,7 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 
 	// Run the client (synchronous: sends one datagram, exits 0) several
 	// times against the one compiled component. The repeat is the
-	// regression guard for the send-retry in __fern_udp_send: wasmtime's
+	// regression guard for the send-retry in __fern_udp_sendto_bytes: wasmtime's
 	// `send` legitimately accepts 0 of the 1 datagram at a few-percent
 	// rate on loopback (the send permit is a snapshot), and before the
 	// runtime re-entered the permit wait and resent, that surfaced here
@@ -913,98 +926,6 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 		if got := string(buf[:n]); got != "ping-from-fern" {
 			t.Fatalf("datagram (iteration %d) = %q; want %q", i, got, "ping-from-fern")
 		}
-	}
-}
-
-// TestWasmPreview2UdpSendRejectsNonLiteralHost pins the host contract:
-// udp_send takes a dotted-quad IPv4 literal, and anything else is
-// -invalid-argument rather than a datagram to a fabricated address.
-// Before #7740 the parser treated every non-'.' byte as a digit, so
-// "localhost" accumulated its letters as (b - '0'), reported success,
-// and sent to whatever address that produced; a fifth group also wrote
-// past the 4-byte octet scratch.
-//
-// One program covers every rejected shape and then does one legitimate
-// send. The malformed calls all carry the payload "x", so the listener
-// asserting that every datagram it sees is the legitimate one is what
-// proves none of them reached the wire.
-func TestWasmPreview2UdpSendRejectsNonLiteralHost(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("preview-2 toolchain not exercised on windows")
-	}
-	if _, err := exec.LookPath("wasm-tools"); err != nil {
-		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
-	}
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
-	}
-
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen udp: %v", err)
-	}
-	defer pc.Close()
-	port := itoa(pc.LocalAddr().(*net.UDPAddr).Port)
-
-	// Each rejected shape gets its own exit code, so a regression names
-	// which one came back non-negative.
-	rejected := []string{
-		"localhost", // a hostname: no dots at all
-		"1.2.3.x",   // a non-digit inside a group
-		"1.2.3.4.5", // five groups — the out-of-bounds octet store
-		"1.2.3.999", // an octet past 255
-		"1..2.3",    // an empty group
-		"1.2.3.",    // a trailing dot
-		".1.2.3",    // a leading dot
-		"",          // empty host
-	}
-	const goodPayload = "only-the-literal"
-	src := "function main(): i32 {\n"
-	for i, host := range rejected {
-		src += "    if (udp_send(\"" + host + "\", " + port + ", \"x\") >= 0) { return " + itoa(i+1) + "; }\n"
-	}
-	src += "    if (udp_send(\"127.0.0.1\", " + port + ", \"" + goodPayload + "\") <= 0) { return 99; }\n"
-	src += "    return 0;\n}\n"
-
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "hosts.fern")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	bin := filepath.Join(dir, "fern")
-	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
-		t.Fatalf("go build lang: %v\n%s", err, out)
-	}
-	componentPath := filepath.Join(dir, "hosts.component.wasm")
-	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (host validation): %v\n%s", err, out)
-	}
-	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
-		t.Fatalf("validate: %v\n%s", err, out)
-	}
-
-	// A non-zero exit names the shape that was accepted; the run helper
-	// reports the code, so the mapping above is the diagnosis.
-	runWasmtimeUDPFlaky(t, "udp host validation", "run", "-S", "inherit-network", componentPath)
-
-	// Drain everything the listener saw. A retry inside the run helper
-	// can legitimately repeat the good datagram, so the assertion is on
-	// content rather than count: no rejected host may have sent.
-	seen := 0
-	for {
-		pc.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-		buf := make([]byte, 2048)
-		n, _, err := pc.ReadFrom(buf)
-		if err != nil {
-			break
-		}
-		if got := string(buf[:n]); got != goodPayload {
-			t.Fatalf("a rejected host reached the wire: datagram = %q", got)
-		}
-		seen++
-	}
-	if seen == 0 {
-		t.Fatal("the valid 127.0.0.1 send produced no datagram")
 	}
 }
 
@@ -1043,10 +964,10 @@ func TestWasmPreview2TcpUdpAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "both.fern")
-	src := `function main(): i32 {
+	src := fernUDPSend + `function main(): i32 {
     let s: i32 = tcp_listen(` + itoa(tcpPort) + `);
     if (s < 0) { return 1; }
-    if (udp_send("127.0.0.1", ` + itoa(udpPort) + `, "tcp-and-udp") <= 0) {
+    if (!send_datagram(net.ipv4_loopback(), ` + itoa(udpPort) + `, "tcp-and-udp")) {
         tcp_close(s);
         return 2;
     }
@@ -1124,10 +1045,10 @@ func TestWasmPreview2UdpFileAdapterFree(t *testing.T) {
 		t.Fatalf("write payload: %v", err)
 	}
 	srcPath := filepath.Join(dir, "ship.fern")
-	src := `function main(): i32 {
+	src := fernUDPSend + `function main(): i32 {
     match (read_file("payload.txt")) {
         Ok(content) => {
-            if (udp_send("127.0.0.1", ` + itoa(port) + `, content) <= 0) { return 2; }
+            if (!send_datagram(net.ipv4_loopback(), ` + itoa(port) + `, content)) { return 2; }
         },
         Err(e) => { return 3; }
     }
@@ -1213,9 +1134,9 @@ func TestWasmPreview2TcpFileServerAdapterFree(t *testing.T) {
     print("file server up");
     let c: i32 = tcp_accept(s);
     if (c < 0) { return 2; }
-    match (read_file("index.html")) {
-        Ok(content) => { tcp_send(c, content); },
-        Err(e) => { tcp_send(c, "ERR"); }
+    match (read_file_bytes("index.html")) {
+        Ok(content) => { tcp_send_bytes(c, content); },
+        Err(e) => { tcp_send_bytes(c, [69u8, 82u8, 82u8]); }
     }
     tcp_close(c);
     tcp_close(s);
@@ -1366,8 +1287,7 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 // TestWasmPreview2TcpStdinAdapterFree exercises TCP + stdin: a server
 // that reads a line from stdin (e.g. config) then listens, composed
 // adapter-free. The composed request surfaces wasi:cli/stdin's
-// get-stdin (the stdin input-stream reuses the connection's blocking-read
-// lowering). Run with stdin piped; the echoed line confirms the read.
+// get-stdin. Run with stdin piped; the echoed line confirms the read.
 func TestWasmPreview2TcpStdinAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1384,11 +1304,12 @@ func TestWasmPreview2TcpStdinAdapterFree(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "stdin.fern")
-	src := `function main(): i32 {
-    let r = stdin();
-    match (r.read_line()) {
-        Some(line) => { print(line); },
-        None => { print("no-input"); }
+	src := `import "std/io";
+
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => { print(line); },
+        _ => { print("no-input"); }
     }
     let s: i32 = tcp_listen(` + itoa(port) + `);
     if (s < 0) { return 1; }
@@ -1487,11 +1408,14 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
 	}
 	defer pc.Close()
 	udpPort := pc.LocalAddr().(*net.UDPAddr).Port
-	udpComp := build("udpx", `function main(): i32 {
+	udpComp := build("udpx", fernUDPSend+`function main(): i32 {
     let host: string = "127.0.0.1";
     match (env("TARGET")) { Some(v) => { host = v; }, None => {} }
     let t: i64 = now_ns();
-    if (udp_send(host, `+itoa(udpPort)+`, "telemetry") > 0 && t > 0) { return 0; }
+    match (net.ipv4_parse(host)) {
+        Some(ip) => { if (send_datagram(ip, `+itoa(udpPort)+`, "telemetry") && t > 0) { return 0; } },
+        None => {},
+    }
     return 1;
 }`)
 	_ = runWasmtimeUDPFlaky(t, "udp+env+now", "run", "-S", "inherit-network", "--env", "TARGET=127.0.0.1", udpComp)
@@ -1505,6 +1429,27 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
 		t.Fatalf("datagram = %q; want %q", got, "telemetry")
 	}
 }
+
+// fernUDPSend opens a Fern program with send_datagram, which sends data from
+// an ephemeral port to ip:port and answers whether the host accepted it.
+const fernUDPSend = `import "std/net";
+import "std/string";
+
+function send_datagram(ip: net.IpAddr, port: i32, data: string): boolean {
+    let sock: i32 = match (net.udp_socket(net.socket_addr(net.ipv4_unspecified(), 0))) {
+        Ok(s) => s,
+        Err(_) => { return false; },
+    };
+    let sent: boolean = false;
+    match (net.send_to(sock, data.bytes(), net.socket_addr(ip, port))) {
+        Ok(n) => { sent = n > 0; },
+        Err(_) => {},
+    }
+    match (net.close(sock)) { _ => {} }
+    return sent;
+}
+
+`
 
 // itoa is a tiny strconv.Itoa shim — we don't import strconv
 // elsewhere in this file and the cost of pulling it in for one

@@ -70,22 +70,21 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (proc_waitpid(0 - 1) == 0) { return 16; }\n" +
 		"    if (timer_fd(1) < 0) { return 17; }\n" +
 		"    if (tcp_listen(0) < 0) { return 18; }\n" +
-		"    if (tcp_connect(2130706433, 1) == 0) { return 19; }\n" +
-		"    if (tcp_recv(999, 4).len() != 0) { return 20; }\n" +
+		"    if (tcp_connect_with([127u8, 0u8, 0u8, 1u8], 1, false) == 0) { return 19; }\n" +
+		"    if (tcp_recv_into(999, [0u8, 0u8, 0u8, 0u8]) >= 0) { return 20; }\n" +
 		"    let av: string[] = [];\n" +
 		"    if (proc_exec(\"/nonexistent\", av) == 0) { return 21; }\n" +
 		"    if (proc_fork() == 123456) { return 22; }\n" +
-		"    if (tcp_send(999, \"x\") >= 0) { return 23; }\n" +
+		"    if (tcp_send_bytes(999, [120u8]) >= 0) { return 23; }\n" +
 		// The three stdout/stderr leaves. Called for effect, not tested — the
 		// probe is emitted rather than run, and all this has to do is make the
 		// ops lower so the helpers are emitted.
 		"    write(\"x\");\n" +
 		"    putchar(65);\n" +
 		"    eprint(\"x\");\n" +
-		// The three boxed-return Reader leaves. read_line gates on
-		// `str_read_line`; read_chunk and close share the `reader` need, so the
-		// Reader has to be both read from and closed for both to be reachable.
-		"    match (read_line()) { Some(_) => {}, None => {} }\n" +
+		// The two boxed-return Reader leaves. read_chunk and close share the
+		// `reader` need, so the Reader has to be both read from and closed for
+		// both to be reachable.
 		"    let rd: Reader = stdin();\n" +
 		"    match (rd.read_chunk(64)) { Ok(_) => {}, Err(_) => {} }\n" +
 		"    rd.close();\n" +
@@ -137,13 +136,12 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// socket + bind + listen over a byte-built sockaddr_in. Its first two
 		// bytes are the one per-target difference (XNU has sin_len).
 		"tcp_listen",
-		// Same sockaddr_in as tcp_listen with the address filled in. Migrating
-		// this fixed arm64-darwin, which had been issuing Linux connect (203)
-		// through the Linux trap because darwin_sysno has no row for it.
-		"tcp_connect",
-		// read(2) into a fresh buffer, boxed as a u8[] — the floor goes
-		// this direction, which is why recv migrates and send cannot.
-		"tcp_recv_u8",
+		// socket + connect over a sockaddr built from the address bytes.
+		// darwin_sysno has no row for connect (203), so its number has to come
+		// from asmcore.sysno; the Darwin test below pins that.
+		"tcp_connect_with_u8",
+		// read(2) straight into the caller's packed u8[].
+		"tcp_recv_into_u8",
 		// execve over an argv built from the args array. The one leaf whose
 		// contract is that it does NOT return on success.
 		"proc_exec",
@@ -151,22 +149,17 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// fork(2). Fern on THIS target only; the Darwin test below pins the
 		// opposite, since XNU marks the child in x1 and no __syscall* sees it.
 		"proc_fork",
-		// write(2) straight out of the string's own buffer. The last leaf, and
-		// the one whose blocker turned out not to exist: __raw_data needed no
-		// op of its own, since a string value already IS its box pointer.
-		"tcp_send",
+		// sendto(2) straight out of the caller's packed u8[].
+		"tcp_send_bytes_u8",
 		// The stdout/stderr three (#2649): all plain write(2), so unlike the fs
 		// family they carry no per-target constant beyond the syscall number.
 		// putchar is the reason the group needed __raw_scratch: it staged its
 		// byte in a stack slot, which is the one thing a Fern helper cannot name.
 		"print_str", "putchar", "eprint_str",
-		// The three boxed-return Reader leaves (#2649). read_chunk and close
-		// were emitted UNCONDITIONALLY inside the arm64 heap block before the
-		// migration — `has_need("reader")` was never consulted on this backend —
-		// so every heap program carried two helpers it could not reach. They use
-		// the same need gate as x86-64's now, which is what makes them absent
-		// from a program that holds no Reader.
-		"read_line", "reader_read_chunk", "reader_close"} {
+		// The two boxed-return Reader leaves (#2649). They use the same need
+		// gate as x86-64's, which is what makes them absent from a program that
+		// holds no Reader.
+		"reader_read_chunk", "reader_close"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s not defined — the Fern helper did not lower", leaf)
 		}
@@ -261,7 +254,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	if !strings.Contains(nrAsm, "__fn___fern_str_concat:") {
 		t.Fatal("the no-reader probe did not pull in the heap runtime — it cannot show the gate")
 	}
-	for _, leaf := range []string{"read_line", "reader_read_chunk", "reader_close"} {
+	for _, leaf := range []string{"reader_read_chunk", "reader_close"} {
 		if strings.Contains(nrAsm, "__fn___fern_"+leaf+":") {
 			t.Errorf("__fn___fern_%s emitted for a program that holds no Reader — the need gate is not being consulted", leaf)
 		}
@@ -310,17 +303,16 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    sleep_ms(1);\n" +
 		// connect is the one socket number darwin_sysno cannot remap, so the
 		// Darwin emit has to carry it from asmcore.sysno — assert below.
-		"    if (tcp_connect(2130706433, 1) == 0) { return 15; }\n" +
-		"    if (tcp_recv(999, 4).len() != 0) { return 16; }\n" +
+		"    if (tcp_connect_with([127u8, 0u8, 0u8, 1u8], 1, false) == 0) { return 15; }\n" +
+		"    if (tcp_recv_into(999, [0u8, 0u8, 0u8, 0u8]) >= 0) { return 16; }\n" +
 		"    if (proc_fork() == 123456) { return 17; }\n" +
 		// The three stdout/stderr leaves, called for effect so the helpers are
 		// emitted and their write(2) number can be inspected below.
 		"    write(\"x\");\n" +
 		"    putchar(65);\n" +
 		"    eprint(\"x\");\n" +
-		// The three Reader leaves, called for effect so their read(2) / close(2)
+		// The two Reader leaves, called for effect so their read(2) / close(2)
 		// numbers can be inspected below.
-		"    match (read_line()) { Some(_) => {}, None => {} }\n" +
 		"    let rd: Reader = stdin();\n" +
 		"    match (rd.read_chunk(64)) { Ok(_) => {}, Err(_) => {} }\n" +
 		"    rd.close();\n" +
@@ -438,15 +430,11 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	// the `mov x8, #N` darwinize rewrites, so a wrong row is invisible everywhere
 	// else — Linux's 63 would simply be issued against the BSD vector.
 	//
-	// tcp_recv is in this loop rather than the constant table for the same reason,
-	// and it used to assert only that the helper was Fern at all: scoping to the
-	// body is what makes its number checkable.
-	//
-	// read_line and reader_read_chunk join them (#2649): the same read(2), one
-	// byte at a time from fd 0 for read_line and up to n from the Reader's own fd
-	// for read_chunk.
-	for _, sym := range []string{"__fn___fern_tcp_recv_u8",
-		"__fn___fern_read_line", "__fn___fern_reader_read_chunk"} {
+	// tcp_recv_into is in this loop rather than the constant table for the same
+	// reason: scoping to the body is what makes its number checkable.
+	// reader_read_chunk joins it (#2649): the same read(2), up to n from the
+	// Reader's own fd.
+	for _, sym := range []string{"__fn___fern_tcp_recv_into_u8", "__fn___fern_reader_read_chunk"} {
 		body := extractFuncBody(asm, sym)
 		if body == "" {
 			t.Errorf("%s not defined — the Fern helper did not lower for Darwin", sym)

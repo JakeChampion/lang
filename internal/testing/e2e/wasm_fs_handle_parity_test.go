@@ -15,17 +15,19 @@ import (
 // preopen an empty directory, run the same source.
 
 // closedHandleSource uses a Reader and a Writer after close(). Every method
-// answers an error (bad file descriptor), read_line its None, and a second
+// answers an error (bad file descriptor), io.read_line included, and a second
 // close reports the first. On a preview-2 component close drops the handle's
 // stream and descriptor, and a method that reached the host with one trapped
 // on the dropped handle instead.
-const closedHandleSource = `function main(): i32 {
+const closedHandleSource = `import "std/io";
+
+function main(): i32 {
     match (write_file("closed.txt", "hello\n")) { Ok(_) => {}, Err(_) => { return 1; } }
     match (open_reader("closed.txt")) {
         Err(_) => { return 2; },
         Ok(r) => {
             match (r.close()) { Err(_) => { return 3; }, Ok(_) => {} }
-            match (r.read_line()) { Some(_) => { return 4; }, None => {} }
+            match (io.read_line(r)) { Ok(_) => { return 4; }, Err(_) => {} }
             match (r.read_chunk(4)) { Ok(_) => { return 5; }, Err(_) => {} }
             match (r.read_chunk_bytes(4)) { Ok(_) => { return 6; }, Err(_) => {} }
             match (r.stat()) { Ok(_) => { return 7; }, Err(_) => {} }

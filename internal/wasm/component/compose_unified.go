@@ -45,7 +45,7 @@ type ComposeRequest struct {
 
 	// TcpConnect adds the outbound-client chain (start-connect /
 	// finish-connect) to the tcp instance type + lowerings. Implies
-	// Tcp. The wasm analog of the native tcp_connect; lets an edge
+	// Tcp. The wasm analog of the native tcp_connect_with; lets an edge
 	// handler reach upstreams.
 	TcpConnect bool
 

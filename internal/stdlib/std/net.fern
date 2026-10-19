@@ -20,12 +20,12 @@
 //
 // The socket controls (`listen_with`, `listen_at`, the options,
 // `shutdown`), the stream verbs on a connection (`read` into the caller's
-// buffer, `write`), the datagram sockets (`udp_socket`, `send_to`,
+// buffer, `read_deadline`, `write`), the datagram sockets (`udp_socket`, `send_to`,
 // `recv_from`, …), the connects and the Unix-domain sockets are typed
 // faces over the descriptor builtins, further down; every primitive that
 // takes an address takes either family as its bytes, so an IPv6
-// `SocketAddr` goes through unchanged. `packed_v4()` bridges an `IpAddr`
-// to the packed IPv4 argument `tcp_connect` and `fetch.ipv4` take.
+// `SocketAddr` goes through unchanged. `packed_v4()` packs an IPv4
+// address into one `i32`, the form `gethostid` and a per-peer key use.
 //
 // The predicates (`is_loopback`, `is_private`, `is_link_local`,
 // `is_multicast`, `is_unspecified`) and `to_canonical()` are the vocabulary
@@ -38,6 +38,8 @@
 
 import "std/i32";
 import "std/error";
+import "std/time";
+import "std/async";
 import "core/cmp";
 
 // IpAddr — an IPv4 or IPv6 address as its network-order bytes: exactly 4
@@ -437,8 +439,7 @@ function __carried_v4(b: u8[]): Option[u8[]] {
   return None;
 }
 
-// `packed_v4()` — a `V4` as the packed network-order `i32` the
-// `tcp_connect(host_be, port)` builtin and `fetch.ipv4` take
+// `packed_v4()` — a `V4` as one network-order `i32`
 // (`a | b << 8 | c << 16 | d << 24`); `None` for a `V6`.
 pub function (a: IpAddr) packed_v4(): Option[i32] {
   match (a) {
@@ -1277,9 +1278,9 @@ pub function (e: NetError) eq(other: NetError): boolean {
 //
 // Typed faces over the descriptor builtins `tcp_listen_with` and
 // `tcp_socket_ctl` (#9853): a negative errno becomes the `NetError` it
-// names. The descriptors are the same `i32` the `tcp_*` builtins and
-// `std/tcp` use, so a listener from `listen_with` goes to `tcp_accept` and
-// an accepted or dialled socket to any control here.
+// names. The descriptors are the same `i32` the `tcp_*` builtins use, so
+// a listener from `listen_with` goes to `accept` and an accepted or
+// dialled socket to any control here.
 //
 // wasi:sockets 0.2 has no Nagle switch and no blocking mode to turn off, so
 // on wasm `set_nodelay` and `set_nonblocking` answer `Other(58)`
@@ -1340,6 +1341,57 @@ pub function write(sock: i32, data: u8[]): Result[i32, NetError] {
   return __socket_count(tcp_send_bytes(sock, data));
 }
 
+// Recv — what a read with a deadline answers when the socket did not
+// fail: `Chunk`, the bytes read, none at the end of the stream;
+// `Elapsed`, the deadline passed with nothing; `Abandoned`, the task
+// waiting was cancelled (`async.cancelled()`) before either.
+pub enum Recv { Chunk(u8[]), Elapsed, Abandoned }
+
+// `read_deadline(sock, max, deadline)` — up to `max` bytes off a connected
+// stream socket, waiting at most `deadline` for it to become readable, or
+// the error the read reported. The wait is `async.wait_any`, so under a
+// scheduler the caller's task parks, and a cancelled task's read is
+// `Abandoned`.
+pub function read_deadline(sock: i32, max: i32, deadline: Duration): Result[Recv, NetError] {
+  return read_watched(sock, max, deadline.as_millis(), 1);
+}
+
+// `read_watched(sock, max, ms, interest)` — `read_deadline` with the wait
+// in milliseconds and its interest word given: readable (1), with
+// `async.KEEP` or `async.WATCHED` from a caller whose descriptor stays
+// watched across its waits. A wake that finds nothing to read (`WouldBlock`,
+// which wasi:sockets answers after a readiness it reported) waits again for
+// what is left of the deadline.
+pub function read_watched(sock: i32, max: i32, ms: i64, interest: i32): Result[Recv, NetError] {
+  let until: i64 = monotonic_ns() + ms * 1000000i64;
+  let set: i32[] = [sock, interest];
+  let buf: u8[] = __alloc_u8(max);
+  while (true) {
+    let wait_ms: i32 = ((until - monotonic_ns()) / 1000000i64) as i32;
+    if (wait_ms < 1) {
+      wait_ms = 1;
+    }
+    let woke: i32 = async.wait_any(set, wait_ms);
+    if (woke == async.cancelled()) {
+      return Ok(Abandoned);
+    }
+    if (woke != 0) {
+      return Ok(Elapsed);
+    }
+    match (read(sock, buf)) {
+      Ok(n) => {
+        return Ok(Chunk(buf.take(n)));
+      },
+      Err(e) => {
+        if (!e.eq(WouldBlock)) {
+          return Err(e);
+        }
+      }
+    }
+  }
+  return Ok(Elapsed);
+}
+
 // Shutdown — the half of a connection `shutdown` closes: `Read` stops
 // receiving, `Write` sends the end of stream the peer reads as EOF, `Both`
 // does both.
@@ -1363,8 +1415,8 @@ pub function set_keepalive(sock: i32, on: boolean): Result[void, NetError] {
   return __socket_ctl(sock, 2, on);
 }
 
-// `set_nonblocking(sock, on)` — make `tcp_recv` answer the empty array at
-// once when nothing is queued instead of waiting (`O_NONBLOCK`).
+// `set_nonblocking(sock, on)` — make `read` answer `WouldBlock` at once
+// when nothing is queued instead of waiting (`O_NONBLOCK`).
 pub function set_nonblocking(sock: i32, on: boolean): Result[void, NetError] {
   return __socket_ctl(sock, 3, on);
 }
@@ -1377,7 +1429,7 @@ pub function send_queue(sock: i32): Result[i32, NetError] {
 }
 
 // `peer_key(sock)` — the peer's address as one 32-bit key, or `None` for a
-// socket with no peer: an IPv4 address packed as `tcp_connect` takes it
+// socket with no peer: an IPv4 address packed as `packed_v4` packs it
 // (the first octet in the low byte), a v4-mapped IPv6 address its IPv4
 // one, any other IPv6 address the two words of its first eight bytes
 // XORed, so the peers of one /64 share a key. What a per-client
@@ -1554,8 +1606,8 @@ function __tcp_socket(r: i32): Result[i32, NetError] {
 // path with that accept queue, or the error the bind or listen reported:
 // `AddrInUse` while a socket file is there (remove it first when it is a
 // stale one), `Other(ENAMETOOLONG)` for a path longer than the address
-// holds (107 bytes on Linux, 103 on Darwin). `accept`, `tcp_recv`,
-// `tcp_send` and `close` take the sockets.
+// holds (107 bytes on Linux, 103 on Darwin). `accept`, `read`, `write`
+// and `close` take the sockets.
 pub function listen_unix(path: string, backlog: i32): Result[i32, NetError] {
   return __socket_count(unix_listen(path, backlog));
 }

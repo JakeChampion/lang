@@ -102,7 +102,7 @@ function main(): i32 {
     // modification: asking it of a descriptor already in the set proves
     // the bit reached epoll_ctl rather than being masked off.
     if (target_os() == "linux" && reactor_ctl(r, 1, ln, 5) != 0 - einval()) { return fail(31); }
-    let c: i32 = tcp_connect(16777343, port);
+    let c: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
     if (c < 0) { return fail(8); }
     if (expect_ready(r, ln, 1, 2000, 9) != 0) { return 9; }
     let a: i32 = tcp_accept(ln);
@@ -110,7 +110,7 @@ function main(): i32 {
     if (reactor_ctl(r, 1, a, 1) != 0) { return fail(11); }
     if (reactor_ctl(r, 2, ln, 0) != 0) { return fail(12); }
     if (wait_until(r, events, 20) != 0) { return fail(13); }
-    if (tcp_send(c, "hi") != 2) { return fail(14); }
+    if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(14); }
     if (expect_ready(r, a, 1, 2000, 15) != 0) { return 15; }
     let buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
     if (tcp_recv_into(a, buf) != 2) { return fail(16); }
@@ -130,10 +130,10 @@ function main(): i32 {
     // cabi_realloc (#10608).
     if (tcp_recv_into(a, buf) != 0 - eagain()) { return fail(22); }
     if (wait_until(r, events, 20) != 0) { return fail(23); }
-    if (tcp_send(a, "yo") != 2) { return fail(29); }
+    if (tcp_send_bytes(a, [121u8, 111u8]) != 2) { return fail(29); }
     if (expect_ready(r, c, 1, 2000, 24) != 0) { return 24; }
-    let got: u8[] = tcp_recv(c, 8);
-    if (got.len() != 2 || got[0] != 121u8) { return fail(25); }
+    let got: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    if (tcp_recv_into(c, got) != 2 || got[0] != 121u8) { return fail(25); }
     // A socket is unwatched before it is closed: on wasm the pollables a
     // watch holds are children of the socket's streams.
     if (reactor_ctl(r, 2, c, 0) != 0) { return fail(26); }
@@ -147,7 +147,7 @@ function main(): i32 {
     // alone, with a unwatched, before both are watched for the one wait.
     if (reactor_ctl(r, 2, a, 0) != 0) { return fail(36); }
     if (reactor_ctl(r, 1, ln, 1) != 0) { return fail(32); }
-    let c2: i32 = tcp_connect(16777343, port);
+    let c2: i32 = tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
     if (c2 < 0) { return fail(33); }
     if (expect_ready(r, ln, 1, 2000, 37) != 0) { return 37; }
     if (reactor_ctl(r, 1, a, 1) != 0) { return fail(38); }

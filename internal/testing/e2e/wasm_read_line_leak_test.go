@@ -6,28 +6,16 @@ import (
 	"testing"
 )
 
-// read_line on wasm used to strand its working memory: the preview-2
-// byte reader allocated a result buffer and received a host list per BYTE
-// and freed neither, the accumulator's previous generation was dropped on
-// every grow, and the reader-handle spelling copied the line out and
-// dropped the accumulator too. A 126-byte line read allocs=255 frees=2
-// (#8868). What a program keeps live after reading a line must not depend
-// on how long the line was, and the natives read these programs clean.
-//
-// Both spellings, since they are different helpers: the bare `read_line()`
-// goes through __fern_read_byte, `stdin().read_line()` through the
-// reader-handle body.
+// Reading a line on wasm must not strand working memory per byte (#8868):
+// what a program keeps live after io.read_line must not depend on how long
+// the line was, and the natives read these programs clean.
 var wasmReadLineSrcs = []struct{ name, src string }{
-	{"read_line", `function main(): i32 {
-    match (read_line()) {
-        Some(line) => { return line.len() % 7; },
-        None => { return 100; }
-    }
-}`},
-	{"stdin_read_line", `function main(): i32 {
-    match (stdin().read_line()) {
-        Some(line) => { return line.len() % 7; },
-        None => { return 100; }
+	{"io_read_line", `import "std/io";
+
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(line)) => { return line.len() % 7; },
+        _ => { return 100; }
     }
 }`},
 }

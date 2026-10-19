@@ -71,10 +71,6 @@
 import "std/string";
 import "std/async";
 import "std/time";
-// std/tcp — tcp_recv_deadline, the recv-with-deadline primitive behind
-// the inactivity and total timeouts, and `Recv`, what a transport's `read`
-// answers.
-import "std/tcp";
 import "std/http";
 import "std/headers";
 import "std/http/cookie";
@@ -96,13 +92,6 @@ import "std/crypto";
 import "std/envflag";
 import "std/http/h2";
 import "core/int";
-
-// ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
-// i32 that tcp_connect wants in sin_addr. ipv4(127,0,0,1) addresses
-// loopback.
-pub function ipv4(a: i32, b: i32, c: i32, d: i32): i32 {
-  return a & 255 | (b & 255) << 8 | (c & 255) << 16 | (d & 255) << 24;
-}
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -653,10 +642,11 @@ function __asks_codings(req: Request): boolean {
 // `connect` races `addrs` as `dns.connect_race` does: a bound that has
 // already passed is `TimedOut` before any attempt, every address refusing
 // is the last refusal, and none connected within the bound is `TimedOut`.
-// `read` answers within `wait_ms` as `tcp_recv_deadline` does: a chunk, an
+// `read` answers within `wait_ms` as `net.read_deadline` does: a chunk, an
 // empty chunk at the end of the stream, `Elapsed` when the wait passed with
-// nothing, or `Abandoned` when the task reading was cancelled first, which
-// the client reports as `Cancelled`. `write` answers
+// nothing, `Abandoned` when the task reading was cancelled first, which
+// the client reports as `Cancelled`, or the error the read failed with,
+// which it reports as `Io`. `write` answers
 // the bytes taken, or a negated errno. `idle` is the transport's pool of
 // connections kept for reuse; the client decides what goes in and comes
 // out of it. `socket` is the descriptor under a connection, or -1 for a
@@ -668,7 +658,7 @@ pub trait Transport {
   function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
   function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError];
   function write(self: Self, conn: i32, data: u8[]): i32;
-  function read(self: Self, conn: i32, max: i32, wait_ms: i64): tcp.Recv;
+  function read(self: Self, conn: i32, max: i32, wait_ms: i64): Result[net.Recv, net.NetError];
   function close(self: Self, conn: i32): i32;
   function idle(self: Self): Idle;
   function socket(self: Self, conn: i32): i32;
@@ -1152,8 +1142,17 @@ pub function (sh: Shared) event(fd: i32, readable: boolean): Option[i32] {
   if (at < 0) {
     return None;
   }
-  let bytes: u8[] = tcp_recv(fd, 65536);
   let d: Driven = rows[at];
+  let buf: u8[] = __alloc_u8(65536);
+  let bytes: u8[] = [];
+  match (net.read(fd, buf)) {
+    Ok(n) => {
+      bytes = buf.take(n);
+    },
+    Err(e) => {
+      return __driven_read_failed(sh, at, d, e);
+    }
+  }
   if (d.tls.offloaded()) {
     return __driven_kernel(sh, at, d, bytes);
   }
@@ -1161,6 +1160,28 @@ pub function (sh: Shared) event(fd: i32, readable: boolean): Option[i32] {
     __driven_failed(sh, fd, __closed_early(0));
     return Some(fd);
   }
+  return __driven_feed(sh, at, d, bytes);
+}
+
+// `__driven_read_failed(sh, at, d, e)` — a driven connection's read that
+// failed with `e`: nothing yet on a non-blocking socket, the kernel's
+// answer for an offloaded TLS session, and otherwise every slot failed.
+function __driven_read_failed(sh: Shared, at: i32, d: Driven, e: net.NetError): Option[i32] {
+  if (d.tls.offloaded()) {
+    let none: u8[] = [];
+    return __driven_kernel(sh, at, d, none);
+  }
+  if (e.eq(net.WouldBlock)) {
+    return None;
+  }
+  __driven_failed(sh, d.fd, Io(e));
+  return Some(d.fd);
+}
+
+// `__driven_feed(sh, at, d, bytes)` — what a driven connection read
+// unsealed and fed to its HTTP/2 state machine.
+function __driven_feed(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32] {
+  let fd: i32 = d.fd;
   match (d.tls.read(bytes, now_unix_ms())) {
     Ok(step) => {
       let fed: h2.Step = d.h2.read(step.data);
@@ -1514,8 +1535,8 @@ impl Transport for Sockets {
   function write(self: Sockets, conn: i32, data: u8[]): i32 {
     return tcp_send_bytes(conn, data);
   }
-  function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): tcp.Recv {
-    return tcp.tcp_recv_watched(conn, max, wait_ms, self.pool.read_interest(conn));
+  function read(self: Sockets, conn: i32, max: i32, wait_ms: i64): Result[net.Recv, net.NetError] {
+    return net.read_watched(conn, max, wait_ms, self.pool.read_interest(conn));
   }
   function close(self: Sockets, conn: i32): i32 {
     match (self.pool.armed) {
@@ -2469,25 +2490,44 @@ function __tunnel[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64): Res
     if (wait_ms <= 0) {
       return Err(Timeout(Connecting));
     }
-    match (tr.read(fd, 16384, wait_ms)) {
-      Chunk(b) => {
-        if (b.len() == 0) {
-          return Err(Protocol("the proxy closed the connection instead of opening a tunnel"));
-        }
-        got = __append_bytes(got, b);
-      },
-      Elapsed => {
-        return Err(Timeout(Connecting));
-      },
-      Abandoned => {
-        return Err(FetchError.Cancelled);
-      }
-    }
+    got = __append_bytes(got, __tunnel_read(__io(tr.read(fd, 16384, wait_ms))?)?);
   }
   if (__head_end(got) != got.len()) {
     return Err(Protocol("the proxy sent bytes after its answer to CONNECT"));
   }
   return __tunnel_status(string_from_bytes_unchecked(got));
+}
+
+// `__io(r)` — a transport read with the socket's failure as the fetch error.
+function __io(r: Result[net.Recv, net.NetError]): Result[net.Recv, FetchError] {
+  match (r) {
+    Ok(got) => {
+      return Ok(got);
+    },
+    Err(e) => {
+      return Err(Io(e));
+    }
+  }
+}
+
+// `__tunnel_read(got)` — bytes of the proxy's answer to CONNECT, or why
+// none came.
+function __tunnel_read(got: net.Recv): Result[u8[], FetchError] {
+  match (got) {
+    Chunk(b) => {
+      if (b.len() == 0) {
+        return Err(Protocol("the proxy closed the connection instead of opening a tunnel"));
+      }
+      return Ok(b);
+    },
+    Elapsed => {
+      return Err(Timeout(Connecting));
+    },
+    Abandoned => {
+      return Err(FetchError.Cancelled);
+    }
+  }
+  return Err(FetchError.Cancelled);
 }
 
 // `__head_end(b)` — where the header block in `b` ends, past its blank
@@ -2540,8 +2580,8 @@ function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i
 
 // `__handshake_read(got)` — bytes a handshake read off the wire, or why
 // none came.
-function __handshake_read(got: tcp.Recv): Result[u8[], FetchError] {
-  match (got) {
+function __handshake_read(got: Result[net.Recv, net.NetError]): Result[u8[], FetchError] {
+  match (__io(got)?) {
     Chunk(b) => {
       if (b.len() == 0) {
         return Err(Tls("the server closed the connection during the handshake"));
@@ -3195,7 +3235,7 @@ function __recv_raw[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started:
     wait_ms = left_ms;
     bound = Total;
   }
-  match (tr.read(conn, 65536, wait_ms)) {
+  match (__io(tr.read(conn, 65536, wait_ms))?) {
     Chunk(chunk) => {
       return Ok(chunk);
     },
@@ -3750,7 +3790,7 @@ function __join_bytes(chunks: u8[][]): u8[] {
   return out;
 }
 
-// fetch_future(host_be, port, path) — the AWAITABLE fetch: open a
+// fetch_future(addr, path) — the AWAITABLE fetch: open a
 // connection and send the request NON-blocking, then return a
 // `Future[u8[]]` that resolves to the response body once the socket
 // is readable. This is the combinator-surface fetch
@@ -3759,14 +3799,15 @@ function __join_bytes(chunks: u8[][]): u8[] {
 //
 //   let none: u8[] = [];
 //   let bodies = async.gather([
-//       fetch.fetch_future(cache, 80, "/k"),
-//       fetch.fetch_future(primary, 80, "/k"),
+//       fetch.fetch_future(cache, "/k"),
+//       fetch.fetch_future(primary, "/k"),
 //   ], none);
 //
 // On a connect/send failure it resolves immediately to the empty body (a
 // `Ready` future), so a failed upstream doesn't stall the fan-out, and so
-// does a response the parser refuses or a `path` that cannot stand on a
-// request line (`http_target_ok`), which is refused before connecting. The
+// does a read that fails, a response the parser refuses or a `path` that
+// cannot stand on a request line (`http_target_ok`), which is refused
+// before connecting. The
 // read is STREAMING — `__fetch_drain` re-suspends per chunk and accumulates, so
 // the whole response comes back (not just one `recv` buffer) while
 // staying overlapped with the other futures. PORTABLE native + wasm: the
@@ -3775,28 +3816,34 @@ function __join_bytes(chunks: u8[][]): u8[] {
 // ppoll(2) native, wasi:io/poll.poll on wasm) drives it either way. The
 // continuation captures the connection `c` (it reads the socket, not the
 // woken token, which differs by backend).
-pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u8[]] {
+pub function fetch_future(addr: net.SocketAddr, path: string): async.Future[u8[]] {
   let empty: u8[] = [];
   if (!http.http_target_ok(path)) {
     return Ready(empty);
   }
   let request: string = "GET " + path + " HTTP/1.1\r\nHost: fern\r\nConnection: close\r\n\r\n";
-  let c: i32 = tcp_connect(host_be, port);
-  if (c < 0) {
-    return Ready(empty);
+  match (net.connect(addr)) {
+    Ok(c) => {
+      match (net.write(c, request.bytes())) {
+        Ok(_) => {
+          let no_chunks: u8[][] = [];
+          return __fetch_drain(c, no_chunks);
+        },
+        Err(_) => {
+          tcp_close(c);
+        }
+      }
+    },
+    Err(_) => {}
   }
-  if (tcp_send(c, request) < 0) {
-    tcp_close(c);
-    return Ready(empty);
-  }
-  let no_chunks: u8[][] = [];
-  return __fetch_drain(c, no_chunks);
+  return Ready(empty);
 }
 
 // __fetch_drain(c, chunks) — one step of the streaming response read: a `Future`
 // that, once `c` is readable, drops the woken pollable, `recv`s a chunk, and
 // either FINISHES (empty recv = EOF, since we send `Connection: close`) by
-// returning the parsed body, or RE-SUSPENDS to read more. `chunks` carries the
+// returning the parsed body, or RE-SUSPENDS to read more. A failed read
+// finishes with the empty body. `chunks` carries the
 // buffers read so far across re-suspends, so a response spanning multiple recv
 // buffers / TCP segments is read in FULL. Re-suspending (rather than looping
 // `recv` synchronously) keeps the read overlapped with the other futures in a
@@ -3818,12 +3865,24 @@ function __fetch_drain(c: i32, chunks: u8[][]): async.Future[u8[]] {
       return Ready(none);
     }
     let dropped: i32 = wasm_pollable_drop(woken);
-    let chunk: u8[] = tcp_recv(c, 4096);
-    if (chunk.len() == 0) {
-      tcp_close(c);
-      return Ready(__body_of(__join_bytes(chunks)));
+    let buf: u8[] = __alloc_u8(4096);
+    match (net.read(c, buf)) {
+      Ok(n) => {
+        if (n == 0) {
+          tcp_close(c);
+          return Ready(__body_of(__join_bytes(chunks)));
+        }
+        return __fetch_drain(c, chunks.append(buf.take(n)));
+      },
+      Err(e) => {
+        if (e.eq(net.WouldBlock)) {
+          return __fetch_drain(c, chunks);
+        }
+      }
     }
-    return __fetch_drain(c, chunks.append(chunk));
+    tcp_close(c);
+    let none: u8[] = [];
+    return Ready(none);
   }
   return Pending(tcp_pollable(c), resume);
 }

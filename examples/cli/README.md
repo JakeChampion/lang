@@ -77,7 +77,7 @@ $ wasmtime run --dir=. wc.wasm file.txt
   Line-oriented tools call `.lines()` on that text. Binary `tr` and `tee`
   use raw Reader/Writer methods or `io.read_all_stdin_bytes()`.
   (`examples/wasm/wc.fern` shows the alternative streaming
-  `Reader.read_line()` loop.)
+  `io_buffered.LineReader` loop.)
 - **Number flags.** Integer operands (`head -n N`, `seq STEP`,
   `fold -w N`, …) parse with `s.parse_int_or(fallback)` from
   `std/string` — `parse_int` with a default baked in.

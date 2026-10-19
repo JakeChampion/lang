@@ -10,7 +10,7 @@ import (
 
 // An unannotated `let x = E?` binding takes the type of the unwrapped payload,
 // which the binding owns and must release, for every spelling:
-// `r.read_chunk(n)?` and `r.read_line()?` (#8803), a user Option producer, and
+// `r.read_chunk(n)?` (#8803), a user Option producer, and
 // a `@try` enum, generic or not.
 //
 // Each program runs its shape in a loop and exits with a value derived from
@@ -35,20 +35,6 @@ function main(): i32 {
     match (drain(stdin())) { Ok(n) => { return n % 101; }, Err(e) => { return 9; } }
 }
 `, bytes.Repeat([]byte{'x'}, 24*1024), 24 * 1024 % 101},
-	{"read_line", `function lines(r: Reader): Option[i32] {
-    let acc: i32 = 0;
-    let i: i32 = 0;
-    while (i < 3) {
-        let l = r.read_line()?;
-        acc = acc + l.len();
-        i = i + 1;
-    }
-    return Some(acc);
-}
-function main(): i32 {
-    match (lines(stdin())) { Some(n) => { return n; }, None => { return 9; } }
-}
-`, []byte("aaaa\nbbbbbbbb\ncc\n"), 17},
 	{"user_option", `import "std/i32";
 function mk(i: i32): Option[string] { if (i < 0) { return None; } return Some("v" + i.to_string()); }
 function pick(i: i32): Option[i32] { let s = mk(i)?; return Some(s.len()); }

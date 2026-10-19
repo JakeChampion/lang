@@ -79,8 +79,7 @@ func TestSelfHostTCPSendBytes(t *testing.T) {
 				if target.target != "wasm32-wasi" {
 					for _, shut := range []bool{false, true} {
 						program := e2eharness.NativeSocketSendProbe("abc", shut)
-						program = strings.ReplaceAll(program, "tcp_send(", "tcp_send_bytes(")
-						program = strings.ReplaceAll(program, `let data: string = "abc";`, "let data: u8[] = [255u8, 0u8, 128u8];")
+						program = strings.ReplaceAll(program, `let data: u8[] = bytes_of("abc");`, "let data: u8[] = [255u8, 0u8, 128u8];")
 						dir := t.TempDir()
 						src, bin := filepath.Join(dir, "errors.fern"), filepath.Join(dir, "errors")
 						if err := os.WriteFile(src, []byte(program), 0o644); err != nil {

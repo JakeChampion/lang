@@ -58,14 +58,16 @@ function main(): i32 {
 		},
 		{
 			name: "read-line",
-			src: `function main(): i32 {
-    match (read_line()) {
-        Some(l) => { print("got " + l); },
-        None => { return 4; }
+			src: `import "std/io";
+
+function main(): i32 {
+    match (io.read_line(stdin())) {
+        Ok(Some(l)) => { print("got " + l); },
+        _ => { return 4; }
     }
-    match (read_line()) {
-        Some(l) => { print("got " + l); return 0; },
-        None => { return 5; }
+    match (io.read_line(stdin())) {
+        Ok(Some(l)) => { print("got " + l); return 0; },
+        _ => { return 5; }
     }
 }
 `,

@@ -29,6 +29,21 @@ func TestSelfHostPerModuleFileBytes(t *testing.T) {
 	})
 }
 
+// std/io's read_file_bytes call is typed, so it reaches the packed helper
+// the entry unit has to export.
+func TestSelfHostPerModuleReadFileBytes(t *testing.T) {
+	checkSelfHostPerModuleByteSink(t, `import "std/io";
+
+pub function save(): i32 {
+  match (write_file("raw.txt", "abc")) { Err(_) => { return 1; }, Ok(_) => {} }
+  match (io.read_input_bytes("raw.txt")) {
+    Ok(bs) => { if (bs.len() != 3 || bs[2] != 99) { return 2; } return 0; },
+    Err(_) => { return 3; }
+  }
+}
+`, nil)
+}
+
 func TestSelfHostPerModuleTCPSendBytes(t *testing.T) {
 	checkSelfHostPerModuleByteSink(t, `pub function save(): i32 {
   let data: u8[] = [255 as u8, 0 as u8, 128 as u8];
@@ -42,7 +57,6 @@ func TestSelfHostPerModuleTCPSendBytes(t *testing.T) {
 func TestSelfHostPerModuleUDPSendBytes(t *testing.T) {
 	checkSelfHostPerModuleByteSink(t, `pub function save(): i32 {
   let data: u8[] = [255u8, 0u8, 128u8];
-  if (udp_send_bytes("invalid", 1, data) >= 0) { return 1; }
   if (udp_sendto_bytes(-1, [127u8, 0u8, 0u8, 1u8], 1, data) != -9) { return 2; }
   if (data.len() != 3 || data[0] != 255 || data[1] != 0 || data[2] != 128) { return 3; }
   return 0;
