@@ -9084,11 +9084,12 @@ function infer_ownership(all: Produced[], names: string[], table: ssasem.Contrac
 // -size build's inlining (`size`, seminline.inline_leaves), and whether the
 // module is the whole program, shaken to what its roots reach (`whole`), so
 // that what no reachable call runs can go (semreach). A library, a unit of a
-// per-module build, or a body a tool lowers to inspect is not.
-pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean }
+// per-module build, or a body a tool lowers to inspect is not. `array_report`
+// is the semarrayreport sink the array decisions are written to.
+pub struct BuildOpts { debug_lines: boolean, size: boolean, whole: boolean, array_report: i32 }
 
 pub function plain_build(): BuildOpts {
-  return BuildOpts { debug_lines: false, size: false, whole: false };
+  return BuildOpts { debug_lines: false, size: false, whole: false, array_report: semarrayreport.off() };
 }
 
 pub function build_module(mod: parser.Module): Built {
@@ -9157,10 +9158,10 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   if (verify) {
     // Fusion first: it recognises a pipeline by its calls to std/array's
     // combinators, which a function called once would otherwise absorb.
-    let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs), names, mod, opts.size);
+    let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs, opts.array_report), names, mod, opts.size);
     // Reachability follows the last pass that adds a call: the ndarray
     // kernels call helpers nothing named before.
-    all = prune_dead_constructions(reached_only(scale_ndarray_maps(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod)), names, mod), names, mod, opts.whole));
+    all = prune_dead_constructions(reached_only(scale_ndarray_maps(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod)), names, mod, opts.array_report), names, mod, opts.whole));
   }
   decls = [];
   instances = [];
@@ -9538,9 +9539,9 @@ function inline_on(): boolean {
 // std/array combinator chains, and core/iter adapter chains over an array,
 // fused into one loop (semfuse).
 // `FERN_NO_ARRAY_FUSION=1` turns the pass off, as it does native's.
-function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl[]): Produced[] {
+function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl[], sink: i32): Produced[] {
   let enabled: boolean = fusion_on();
-  let report: boolean = semarrayreport.enabled();
+  let report: boolean = sink != semarrayreport.off();
   if (!enabled && !report) {
     return all;
   }
@@ -9563,7 +9564,7 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
     out = semfuse.Fused { ...out, funcs: seminline.inline_closures(out.funcs, names, modes, inlinable, out.rewritten) };
   }
   if (report) {
-    eprint(semarrayreport.render(out.sites));
+    semarrayreport.write(sink, semarrayreport.render(out.sites));
   }
   let result: Produced[] = [];
   let i: i32 = 0;
@@ -9625,8 +9626,8 @@ function ndarray_kernels_needed(names: string[], enabled: boolean, products: boo
   return semndarray.has_kernel(names) || report && semndarray.any_operation(names);
 }
 
-function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module): Produced[] {
-  let report: boolean = semarrayreport.enabled();
+function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module, sink: i32): Produced[] {
+  let report: boolean = sink != semarrayreport.off();
   let enabled: boolean = kernel_switch_on("FERN_NO_SCALE_KERNEL");
   let products: boolean = kernel_switch_on("FERN_NO_PRODUCT_KERNEL");
   if (!ndarray_kernels_needed(names, enabled, products, report)) {
@@ -9644,7 +9645,7 @@ function scale_ndarray_maps(all: Produced[], names: string[], mod: parser.Module
   let open: boolean[] = ndarray_open(all, names, mod, funcs);
   let out: semndarray.Scaled = semndarray.scale_maps(funcs, names, usable, open, stdlib_names(all, names, mod.funcs, "std/ndarray"), enabled, products, report);
   if (report) {
-    eprint(semarrayreport.render_kind("ndarray kernels", semarrayreport.kernel_reasons(), out.sites));
+    semarrayreport.write(sink, semarrayreport.render_kind("ndarray kernels", semarrayreport.kernel_reasons(), out.sites));
   }
   let result: Produced[] = [];
   let i: i32 = 0;

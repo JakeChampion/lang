@@ -134,7 +134,7 @@ func depSourceDir(m *manifest.Manifest, name string, d manifest.Dep) (string, er
 			return "", fmt.Errorf("dependency %q: %w", name, err)
 		}
 		if !present {
-			return "", fmt.Errorf("dependency %q (%s) is not in the package store — run `fern -fetch %s` before vendoring", name, d.Hash, filepath.Join(m.Dir, manifest.FileName))
+			return "", fmt.Errorf("dependency %q (%s) is not in the package store — run `fern-oracle -fetch %s` before vendoring", name, d.Hash, filepath.Join(m.Dir, manifest.FileName))
 		}
 		return store, nil
 	}

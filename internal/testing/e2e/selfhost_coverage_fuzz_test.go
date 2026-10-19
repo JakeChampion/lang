@@ -381,8 +381,8 @@ func judgeDiscovery(t *testing.T, fernBin, stdlibRoot string, n int, input []byt
 		}
 		r, gap := runSelfHostSeed(t, fernBin, stdlibRoot, src, nil, nil, failf)
 		if gap != "" {
-			if semRefused(gap) {
-				failf("the typed lowering refused this program:\n%s", gap)
+			if compilerRefused(gap) {
+				failf("the compiler refused this program:\n%s", gap)
 				return
 			}
 			t.Skipf("self-host coverage gap: %s", gap)

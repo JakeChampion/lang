@@ -403,8 +403,9 @@ of that planner's static requirements and the switch prevents its rewrite.
 An unsupported operation, unknown layout or unresolved element function
 therefore keeps the same reason with the pass enabled or disabled.
 
-`fern -array-report FILE.fern` prints the same report: it compiles the file
-with `FERN_ARRAY_REPORT=1` and discards the compiled output.
+`fern -array-report FILE.fern` prints the same report on stdout: it compiles
+the file for the target (`-target`, default `arm64-linux`) through the typed
+lowering and writes no output, so it takes neither `-o` nor `-run`.
 
 Every verdict comes from the planner that performs the rewrite, not from a
 constant: a report that claimed a fusion the compiler did not perform would

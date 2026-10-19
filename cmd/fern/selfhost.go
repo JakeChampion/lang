@@ -179,7 +179,7 @@ func runSelfHostTool(args []string, w io.Writer) int {
 		if errors.As(err, &ee) {
 			return ee.ExitCode()
 		}
-		io.WriteString(os.Stderr, "fern: "+err.Error()+"\n")
+		io.WriteString(os.Stderr, "fern-oracle: "+err.Error()+"\n")
 		return 2
 	}
 	return 0

@@ -22,7 +22,7 @@ import (
 // questions anyone triaging a miscompile asks.
 func versionString() string {
 	var b strings.Builder
-	b.WriteString("fern ")
+	b.WriteString("fern-oracle ")
 	b.WriteString(buildVersion())
 	fmt.Fprintf(&b, "\nbuilt with %s for %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH)
 	return b.String()

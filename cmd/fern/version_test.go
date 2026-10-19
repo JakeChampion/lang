@@ -6,13 +6,13 @@ import (
 	"testing"
 )
 
-// `fern -version` exists because the release channel is a ROLLING tag:
-// without it a user cannot say which build they have, and neither can a
+// `fern-oracle -version` exists because the release channel is a ROLLING
+// tag: without it a user cannot say which build they have, and neither can a
 // bug report.
 func TestVersionStringNamesBinaryGoAndPlatform(t *testing.T) {
 	out := versionString()
 
-	if !strings.HasPrefix(out, "fern ") {
+	if !strings.HasPrefix(out, "fern-oracle ") {
 		t.Errorf("version output does not name the binary:\n%s", out)
 	}
 	// The Go version and platform are the next two questions anyone
