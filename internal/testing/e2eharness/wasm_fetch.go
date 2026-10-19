@@ -41,6 +41,7 @@ func StartDelayedUpstream(t *testing.T, body string, delay time.Duration) int {
 // a body, for the two programs below.
 const wasmFetchPrelude = `import "std/async";
 import "std/fetch";
+import "std/net";
 import "std/string";
 import "std/utf8";
 
@@ -50,6 +51,7 @@ function parse(s: string): i32 {
     return n;
 }
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
+function loopback(p: i32): net.SocketAddr { return net.socket_addr(net.ipv4_loopback(), p); }
 function text(b: u8[]): string { match (utf8.from_bytes(b)) { Some(t) => { return t; }, None => { return "?"; } } }
 `
 
@@ -59,9 +61,8 @@ function text(b: u8[]): string { match (utf8.from_bytes(b)) { Some(t) => { retur
 const WasmFetchFanoutSource = wasmFetchPrelude + `
 function main(): i32 {
     let none: u8[] = [];
-    let host: i32 = 127 | (1 << 24);   // 127.0.0.1
-    let f1: async.Future[u8[]] = fetch.fetch_future(host, port("PSLOW"), "/a");
-    let f2: async.Future[u8[]] = fetch.fetch_future(host, port("PFAST"), "/b");
+    let f1: async.Future[u8[]] = fetch.fetch_future(loopback(port("PSLOW")), "/a");
+    let f2: async.Future[u8[]] = fetch.fetch_future(loopback(port("PFAST")), "/b");
     let fs: async.Future[u8[]][] = [f1, f2];
     let bodies: u8[][] = async.gather(fs, none);
     if (bodies.len() != 2) { return 90; }
@@ -75,10 +76,9 @@ function main(): i32 {
 const WasmRaceFetchSource = wasmFetchPrelude + `
 function main(): i32 {
     let none: u8[] = [];
-    let host: i32 = 127 | (1 << 24);
     let fs: async.Future[u8[]][] = [
-        fetch.fetch_future(host, port("PA"), "/a"),
-        fetch.fetch_future(host, port("PB"), "/b")
+        fetch.fetch_future(loopback(port("PA")), "/a"),
+        fetch.fetch_future(loopback(port("PB")), "/b")
     ];
     let (winner, body) = async.race(fs, none);
     if (winner < 0) { print("nowinner\n"); return 1; }

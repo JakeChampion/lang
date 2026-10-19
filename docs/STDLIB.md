@@ -3252,7 +3252,9 @@ The socket controls are typed faces over the descriptor builtins
 - `read(sock, buf)` — one read from a connected stream into `buf`, up to
   its length: the byte count, `Ok(0)` at the end of the stream, or the
   `NetError`. On wasi:sockets every read is non-blocking, so a reader
-  waits for readability first (`async.wait_any`).
+  waits for readability first (`async.wait_any`). `read_up_to(sock, max)`
+  is the same read into a fresh buffer of `max` bytes, answering the bytes
+  it took (none at the end of the stream) in the one array.
 - `read_deadline(sock, max, deadline)` — up to `max` bytes, waiting at most
   `deadline` for the socket to become readable: `Ok(Chunk(bytes))`, empty
   at the end of the stream; `Ok(Elapsed)` at the deadline; `Ok(Abandoned)`

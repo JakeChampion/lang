@@ -1381,13 +1381,12 @@ function read_framed(sock: i32, deadline: i64): Result[u8[], DnsError] {
 // the wake found nothing yet, `Malformed` at the end of the stream, `Socket`
 // when the read fails.
 function read_some(sock: i32): Result[u8[], DnsError] {
-  let room: u8[] = __alloc_u8(4096);
-  match (net.read(sock, room)) {
-    Ok(n) => {
-      if (n == 0) {
+  match (net.read_up_to(sock, 4096)) {
+    Ok(got) => {
+      if (got.len() == 0) {
         return Err(Malformed);
       }
-      return Ok(room.take(n));
+      return Ok(got);
     },
     Err(e) => {
       if (e.eq(net.WouldBlock)) {

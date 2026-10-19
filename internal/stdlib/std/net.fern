@@ -1332,6 +1332,17 @@ pub function read(sock: i32, buf: u8[]): Result[i32, NetError] {
   return __socket_count(tcp_recv_into(sock, buf));
 }
 
+// `read_up_to(sock, max)` — `read` into a fresh buffer of `max` bytes, the
+// bytes it took: none at the end of the stream, or the error the read
+// reported. The buffer is shortened in place, so the read costs the one
+// array it answers.
+pub function read_up_to(sock: i32, max: i32): Result[u8[], NetError] {
+  let buf: u8[] = __alloc_u8(max);
+  let n: i32 = read(sock, buf)?;
+  __arr_set_len(buf, n);
+  return Ok(buf);
+}
+
 // `write(sock, data)` — `data` written to a connected stream socket: the
 // bytes the socket accepted, which on a non-blocking socket may be fewer
 // than `data` holds, or the error the write reported. A peer that has
@@ -1365,7 +1376,6 @@ pub function read_deadline(sock: i32, max: i32, deadline: Duration): Result[Recv
 pub function read_watched(sock: i32, max: i32, ms: i64, interest: i32): Result[Recv, NetError] {
   let until: i64 = monotonic_ns() + ms * 1000000i64;
   let set: i32[] = [sock, interest];
-  let buf: u8[] = __alloc_u8(max);
   while (true) {
     let wait_ms: i32 = ((until - monotonic_ns()) / 1000000i64) as i32;
     if (wait_ms < 1) {
@@ -1378,9 +1388,9 @@ pub function read_watched(sock: i32, max: i32, ms: i64, interest: i32): Result[R
     if (woke != 0) {
       return Ok(Elapsed);
     }
-    match (read(sock, buf)) {
-      Ok(n) => {
-        return Ok(Chunk(buf.take(n)));
+    match (read_up_to(sock, max)) {
+      Ok(got) => {
+        return Ok(Chunk(got));
       },
       Err(e) => {
         if (!e.eq(WouldBlock)) {

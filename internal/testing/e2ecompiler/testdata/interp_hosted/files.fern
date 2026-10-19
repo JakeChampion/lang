@@ -1,5 +1,6 @@
 import "std/i32";
 import "std/i64";
+import "std/io";
 import "std/u32";
 
 function kind(e: IoError): string {
@@ -174,9 +175,10 @@ function main(): i32 {
   }
   match (open_reader(d + "/w.txt")) {
     Ok(r) => {
-      match (r.read_line()) {
-        Some(l) => { print("read_line: " + l); },
-        None => { print("read_line: none"); }
+      match (io.read_line(r)) {
+        Ok(Some(l)) => { print("read_line: " + l); },
+        Ok(None()) => { print("read_line: none"); },
+        Err(e) => { print("read_line: " + kind(e)); }
       }
       match (r.read_chunk(4)) {
         Ok(s) => { print("read_chunk: [" + s + "]"); },

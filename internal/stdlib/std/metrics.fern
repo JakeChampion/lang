@@ -591,11 +591,10 @@ pub function (e: Exporter) wake[D: async.Driver](drv: D, fd: i32, answer: (strin
   if (at < 0) {
     return e;
   }
-  let room: u8[] = __alloc_u8(4096);
   let got: u8[] = [];
-  match (net.read(fd, room)) {
-    Ok(n) => {
-      got = room.take(n);
+  match (net.read_up_to(fd, 4096)) {
+    Ok(bytes) => {
+      got = bytes;
     },
     Err(err) => {
       if (err.eq(net.WouldBlock)) {
