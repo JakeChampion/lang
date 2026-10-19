@@ -1,0 +1,65 @@
+// A struct and an enum variant sharing a bare name are different types at
+// run time: a `dyn` value of either dispatches to its own impl, a downcast
+// tells them apart, and so do two enums that declare one variant name.
+import "std/i32";
+
+trait Named {
+  function name(self: Self): string;
+}
+
+struct Square { side: i32 }
+
+enum Shape { Square(i32), Empty }
+
+enum Tile { Square(i32), Blank }
+
+impl Named for Square {
+  function name(self: Self): string {
+    return "struct";
+  }
+}
+
+impl Named for Shape {
+  function name(self: Self): string {
+    return "shape";
+  }
+}
+
+impl Named for Tile {
+  function name(self: Self): string {
+    return "tile";
+  }
+}
+
+function show(n: dyn Named): void {
+  print(n.name());
+}
+
+function which(n: dyn Named): string {
+  match (n as? Square) {
+    Some(q) => {
+      return "struct side " + q.side.to_string();
+    },
+    None => {}
+  }
+  match (n as? Tile) {
+    Some(_) => {
+      return "a tile";
+    },
+    None => {}
+  }
+  return "neither";
+}
+
+function main(): i32 {
+  print(which(Square { side: 2 }));
+  print(which(Shape.Square(5)));
+  print(which(Tile.Square(6)));
+  show(Square { side: 1 });
+  let s: Shape = Shape.Square(3);
+  show(s);
+  let t: Tile = Tile.Square(4);
+  show(t);
+  show(Shape.Empty);
+  return 0;
+}

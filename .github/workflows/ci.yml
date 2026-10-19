@@ -34,7 +34,7 @@ concurrency:
 jobs:
   # Which lanes this change reaches. One API listing, no checkout; ~10 s.
   changes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Ten seconds of work on a pull request. On a main push it may wait up to
     # CI_CHANGES_WAIT_MINUTES for the merged pull request's in-flight run.
     timeout-minutes: 40

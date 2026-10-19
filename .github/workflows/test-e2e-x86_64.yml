@@ -3,7 +3,7 @@ name: Test e2e x86_64
 # `TestX86_64*` — the x86-64 Linux ELF backend's end-to-end suite.
 # Mirror of test-e2e-arm64.yml on the x86 lane.
 #
-# Only scheduled on `ubuntu-latest` (x86_64). On the arm64 runner
+# Only scheduled on `ubuntu-24.04` (x86_64). On the arm64 runner
 # every test here would SKIP because `qemu-x86_64` isn't installed
 # and we don't ship an x86 cross-gcc. Pinning to the native host
 # keeps this lane exercising native execution. The main suite uses two
@@ -31,7 +31,7 @@ jobs:
   # corpus is not a seed sweep, so it runs once, on the first shard.
   test:
     name: test-e2e-x86_64-shard${{ matrix.shard }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -111,7 +111,7 @@ jobs:
     # path nobody exercised. Own lane because it builds every runnable fixture
     # twice — sandboxed and not — and compares behaviour.
     name: seccomp-corpus-x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern

@@ -46,8 +46,8 @@ jobs:
           # of serial tests that cannot t.Parallel; `rest` is the other
           # packages. One job was 10 minutes on x86 with the heavy packages
           # sharing four cores with everything else.
-          - { runner: ubuntu-latest,    host: x86_64,  group: heavy }
-          - { runner: ubuntu-latest,    host: x86_64,  group: rest }
+          - { runner: ubuntu-24.04,     host: x86_64,  group: heavy }
+          - { runner: ubuntu-24.04,     host: x86_64,  group: rest }
           - { runner: ubuntu-24.04-arm, host: aarch64, group: heavy }
           - { runner: ubuntu-24.04-arm, host: aarch64, group: rest }
     name: test-units-${{ matrix.host }}-${{ matrix.group }}

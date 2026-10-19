@@ -302,10 +302,11 @@ func TestSelfHostCheckerModloadTraitSigMangledX86_64(t *testing.T) {
 	main := "import \"./lib\";\nimport \"./other\";\n" +
 		"function main(): i32 { let i: lib.Impl = lib.Impl {}; return i.a(other.Item { n: 0 }); }\n"
 	for _, tc := range []struct {
-		name, impl, want string
+		name, impl string
+		want       []string
 	}{
-		{"matching", matching, ""},
-		{"mismatched", mismatched, "E021"},
+		{"matching", matching, nil},
+		{"mismatched", mismatched, []string{"E021"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			progDir := t.TempDir()
@@ -326,8 +327,8 @@ func TestSelfHostCheckerModloadTraitSigMangledX86_64(t *testing.T) {
 				cmd = exec.Command(runner[0], append(runner[1:], driverBin, filepath.Join(progDir, "main.fern"))...)
 			}
 			out, _ := cmd.Output()
-			if got := strings.TrimSpace(string(out)); got != tc.want {
-				t.Errorf("checker driver codes = %q, want %q", got, tc.want)
+			if got := driverCodes(string(out)); !equalStrings(got, tc.want) {
+				t.Errorf("checker driver codes = %q, want %q\noutput:\n%s", got, tc.want, out)
 			}
 		})
 	}

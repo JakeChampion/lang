@@ -35,8 +35,8 @@ jobs:
         # nshard rides the matrix so FERNSMITH_SHRINK_SHARD's denominator
         # cannot drift from the jobs scheduled (TestShardDenominatorMatchesMatrix).
         include:
-          - { runner: ubuntu-latest,    host: x86_64,  shard: 0, nshard: 2 }
-          - { runner: ubuntu-latest,    host: x86_64,  shard: 1, nshard: 2 }
+          - { runner: ubuntu-24.04,     host: x86_64,  shard: 0, nshard: 2 }
+          - { runner: ubuntu-24.04,     host: x86_64,  shard: 1, nshard: 2 }
           - { runner: ubuntu-24.04-arm, host: aarch64, shard: 0, nshard: 1 }
     name: test-fernsmith-${{ matrix.host }}${{ matrix.shard != 0 && format('-shard{0}', matrix.shard) || '' }}
     runs-on: ${{ matrix.runner }}

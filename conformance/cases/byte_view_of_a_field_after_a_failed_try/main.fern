@@ -1,0 +1,50 @@
+// A record field read as a borrowed byte view after a `?` that inlines the
+// call it guards. On the error path the field holds the null placeholder,
+// which the view's decoded data and length must not read through.
+import "std/i32";
+
+enum E { Short, Bad(string) }
+
+struct Got { out: u8[], used: i32 }
+
+@noinline function bytes(n: i32): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(i as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function produce(n: i32): Result[Got, E] {
+  if (n > 3) {
+    return Err(Short);
+  }
+  return Ok(Got { out: bytes(n), used: n });
+}
+
+@noinline function sum(bytes: [u8]): i32 {
+  let t: i32 = 0;
+  for b in bytes {
+    t = t + b as i32;
+  }
+  return t;
+}
+
+@noinline function checked(n: i32): Result[i32, E] {
+  let got: Got = produce(n)?;
+  return Ok(sum(got.out[:]) + got.used);
+}
+
+function main(): i32 {
+  match (checked(3)) {
+    Ok(v) => { print("ok " + v.to_string()); },
+    Err(_) => { print("err"); }
+  }
+  match (checked(5)) {
+    Ok(v) => { print("ok " + v.to_string()); },
+    Err(_) => { print("err"); }
+  }
+  return 0;
+}
