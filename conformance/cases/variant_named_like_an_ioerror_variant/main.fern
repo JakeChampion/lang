@@ -1,0 +1,24 @@
+// A program's own variant may share a name with one of IoError's. std/error's
+// match on IoError's three-payload `Other` checks against IoError's variant,
+// not this one-payload `Other`.
+import "std/error";
+import "std/i32";
+
+enum Mine { Other(i32), Plain }
+
+function value(m: Mine): i32 {
+  match (m) {
+    Mine.Other(n) => {
+      return n;
+    },
+    Mine.Plain => {
+      return 0;
+    }
+  }
+}
+
+function main(): i32 {
+  let e: IoError = Unsupported;
+  print(value(Mine.Other(4)).to_string() + " " + value(Mine.Plain).to_string() + " " + e.message());
+  return 0;
+}

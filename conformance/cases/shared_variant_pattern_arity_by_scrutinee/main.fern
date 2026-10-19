@@ -1,0 +1,16 @@
+// Two enums declare `Other` with different payload counts. A bare pattern is
+// checked against the variant of the enum being matched.
+enum Mine { Other(i32), Plain }
+enum Yours { Other(i32, i32) }
+
+function g(y: Yours): i32 {
+  match (y) {
+    Other(a) => {
+      return a;
+    }
+  }
+}
+
+function main(): i32 {
+  return g(Yours.Other(2, 3));
+}
