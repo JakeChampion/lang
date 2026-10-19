@@ -353,9 +353,9 @@ function main(): i32 { return 0; }`,
 		// Result: the message names the declared return with its arguments.
 		name: "E042 Option operand in a Result function names the return",
 		src: `function a(): Result[i32, IoError] {
-  let w: Writer = stdout();
-  w.write("hi\n")?;
-  return Ok(1);
+  let x: Option[i32] = Some(1);
+  let n: i32 = x?;
+  return Ok(n);
 }
 function main(): i32 { return 0; }`,
 		code:     "E042",

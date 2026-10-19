@@ -75,7 +75,7 @@ function main(): i32 {
     Ok(bytes) => { if (bytes.len() != 0) { return 3; } },
     Err(_) => { return 4; },
   }
-  match (reader.close()) { Some(_) => { return 5; }, None => {} }
+  match (reader.close()) { Err(_) => { return 5; }, Ok(_) => {} }
   return 0;
 }`);
     const r = await runCoreWasm(bin, { stdin: "once" });

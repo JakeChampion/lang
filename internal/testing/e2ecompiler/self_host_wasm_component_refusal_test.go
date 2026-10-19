@@ -22,7 +22,7 @@ function handle_var(): (Writer, boolean) {
 function main(): i32 {
     let a: (Writer, boolean) = handle_lit();
     let b: (Writer, boolean) = handle_var();
-    match (a.0.write("ok\n")) { Some(_) => { return 1; }, None => {} }
+    match (a.0.write("ok\n")) { Err(_) => { return 1; }, Ok(_) => {} }
     if (a.1 && b.1) { return 7; }
     return 0;
 }
