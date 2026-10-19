@@ -261,6 +261,8 @@ func TestSelfHostVendorDifferentialX86_64(t *testing.T) {
 			}
 			if c.compareOutput {
 				want := strings.ReplaceAll(nativeOut, nativePkg, "<ROOT>")
+				// Each tool names itself in the command it advises.
+				want = strings.ReplaceAll(want, "`fern-oracle ", "`fern ")
 				got := strings.ReplaceAll(shOut, selfPkg, "<ROOT>")
 				if want != got {
 					t.Errorf("vendor output differs:\n--- native ---\n%s\n--- self-host ---\n%s", want, got)
