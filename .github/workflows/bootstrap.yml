@@ -73,7 +73,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest,    host: x86-64-linux }
+          - { runner: ubuntu-24.04,     host: x86-64-linux }
           - { runner: ubuntu-24.04-arm, host: arm64-linux }
           # arm64-darwin ran without the fixed point until 2026-09-29: its
           # stage2 exhausted the 16 GiB arena compiling the compiler (#8479).
@@ -162,7 +162,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest,    host: x86-64-linux }
+          - { runner: ubuntu-24.04,     host: x86-64-linux }
           - { runner: ubuntu-24.04-arm, host: arm64-linux }
           - { runner: macos-15,         host: arm64-darwin }
     name: publish-${{ matrix.host }}
@@ -212,7 +212,7 @@ jobs:
     concurrency:
       group: ${{ inputs.publish && 'bootstrap-dispatch-release' || format('bootstrap-called-release-{0}', github.run_id) }}
       cancel-in-progress: true
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:

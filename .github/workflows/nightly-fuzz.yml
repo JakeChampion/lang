@@ -83,7 +83,7 @@ jobs:
   # Forks inherit the schedule but not the runners anyone wants to spend.
   window:
     if: github.repository == 'JakeChampion/lang'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       base: ${{ steps.pick.outputs.base }}
     steps:
@@ -105,7 +105,7 @@ jobs:
         # Same per-arch split as test-e2e-differential.yml: each runner
         # natively exercises its own target plus wasm and skips the other.
         host:
-          - { runner: ubuntu-latest,    name: x86_64  }
+          - { runner: ubuntu-24.04,     name: x86_64  }
           - { runner: ubuntu-24.04-arm, name: aarch64 }
         shard: [0, 1]
     name: nightly-differential-${{ matrix.host.name }}-shard${{ matrix.shard }}
@@ -146,7 +146,7 @@ jobs:
   differential-selfhost:
     needs: window
     name: nightly-differential-selfhost-shard${{ matrix.shard }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 512 seeds cost 12.4 min of work in the per-PR lane, so SEED_WINDOW's
     # 2048 is ~50 min — over one shard's budget, hence four rather than the
     # per-PR lane's two. That puts a shard at ~12 min plus the driver build,
@@ -194,7 +194,7 @@ jobs:
   differential-selfhost-sanitize:
     needs: window
     name: nightly-differential-selfhost-sanitize-shard${{ matrix.shard }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -232,13 +232,13 @@ jobs:
   # assembles and links the artifact itself, so this is the only nightly lane
   # covering arm64_native + elf.fern against generated programs.
   #
-  # ubuntu-latest, not an arm64 runner, for the reason the x86-64 leg gives:
+  # ubuntu-24.04, not an arm64 runner, for the reason the x86-64 leg gives:
   # the driver is x86-64 asm whatever it targets, so only its OUTPUT is arm64
   # and only that runs under qemu.
   differential-selfhost-arm64:
     needs: window
     name: nightly-differential-selfhost-arm64-shard${{ matrix.shard }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -275,7 +275,7 @@ jobs:
   differential-selfhost-wasm:
     needs: window
     name: nightly-differential-selfhost-wasm
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -309,7 +309,7 @@ jobs:
   differential-selfhost-sanitize-arm64:
     needs: window
     name: nightly-differential-selfhost-sanitize-arm64-shard${{ matrix.shard }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -344,7 +344,7 @@ jobs:
   differential-selfhost-sanitize-wasm:
     needs: window
     name: nightly-differential-selfhost-sanitize-wasm
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -381,18 +381,18 @@ jobs:
         # free targets are not worth a second arch, and only the e2e
         # ones need wasmtime.
         include:
-          - { runner: ubuntu-latest,    host: x86_64,  slug: exec,    pkg: ./internal/testing/e2e,        target: FuzzGenerate_ExecutionAgrees, wasmtime: "true"  }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: exec,    pkg: ./internal/testing/e2e,        target: FuzzGenerate_ExecutionAgrees, wasmtime: "true"  }
           - { runner: ubuntu-24.04-arm, host: aarch64, slug: exec,    pkg: ./internal/testing/e2e,        target: FuzzGenerate_ExecutionAgrees, wasmtime: "true"  }
-          - { runner: ubuntu-latest,    host: x86_64,  slug: stdout,  pkg: ./internal/testing/e2e,        target: FuzzGenerate_StdoutAgrees,    wasmtime: "true"  }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: stdout,  pkg: ./internal/testing/e2e,        target: FuzzGenerate_StdoutAgrees,    wasmtime: "true"  }
           - { runner: ubuntu-24.04-arm, host: aarch64, slug: stdout,  pkg: ./internal/testing/e2e,        target: FuzzGenerate_StdoutAgrees,    wasmtime: "true"  }
-          - { runner: ubuntu-latest,    host: x86_64,  slug: gen,     pkg: ./internal/testing/fernsmith,  target: FuzzGenerate_ParseRoundTrips, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: gen,     pkg: ./internal/testing/fernsmith,  target: FuzzGenerate_ParseRoundTrips, wasmtime: "false" }
           - { runner: ubuntu-24.04-arm, host: aarch64, slug: gen,     pkg: ./internal/testing/fernsmith,  target: FuzzGenerate_ParseRoundTrips, wasmtime: "false" }
-          - { runner: ubuntu-latest,    host: x86_64,  slug: parse,   pkg: ./internal/syntax/parser,     target: FuzzParse,                    wasmtime: "false" }
-          - { runner: ubuntu-latest,    host: x86_64,  slug: check,   pkg: ./internal/check/checker,    target: FuzzCheck,                    wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: parse,   pkg: ./internal/syntax/parser,     target: FuzzParse,                    wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: check,   pkg: ./internal/check/checker,    target: FuzzCheck,                    wasmtime: "false" }
           # The self-host answer to parse/check above (#7967). Its own gate
           # env because the target skips without it, and x86-64 only: the
           # driver is emitted as x86-64 asm and takes host paths as argv.
-          - { runner: ubuntu-latest,    host: x86_64,  slug: selfhost, pkg: ./internal/testing/e2e,       target: FuzzSelfHostFrontEnd,         wasmtime: "false", selfhost: "1" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: selfhost, pkg: ./internal/testing/e2e,       target: FuzzSelfHostFrontEnd,         wasmtime: "false", selfhost: "1" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -472,7 +472,7 @@ jobs:
   fuzz-selfhost-coverage:
     if: github.repository == 'JakeChampion/lang'
     name: nightly-fuzz-selfhost-coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -538,7 +538,7 @@ jobs:
   # outgrows its bound.
   fernsmith-mutant:
     if: github.repository == 'JakeChampion/lang'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -553,7 +553,7 @@ jobs:
   # artifact.
   mutation-score:
     if: github.repository == 'JakeChampion/lang'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
@@ -588,7 +588,7 @@ jobs:
   report:
     needs: [window, differential, differential-selfhost, differential-selfhost-sanitize, differential-selfhost-arm64, differential-selfhost-wasm, differential-selfhost-sanitize-arm64, differential-selfhost-sanitize-wasm, fuzz, fuzz-selfhost-coverage, fernsmith-mutant]
     if: failure() && github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       # Each differential leg's failed seeds, one JSON line apiece, grouped by
