@@ -1017,6 +1017,7 @@ value_block_generic_call_arm                         0
 value_block_shadows_module_fn                        0
 value_block_width_call_arm                           0
 var_inference                                        0
+variant_named_like_an_ioerror_variant                0
 variant_pattern_nested                               0
 variant_pattern_rename                               0
 variant_pattern_rename_rest                          0

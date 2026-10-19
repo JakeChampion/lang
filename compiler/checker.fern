@@ -12869,6 +12869,37 @@ function variant_payload_count(name: string, structs: StructTable): i32 {
   return c;
 }
 
+// payload_arity_diags is E015 for a variant pattern binding a different number
+// of payloads than `variant` (a bare or `Enum.Variant` spelling) carries.
+function payload_arity_diags(pv: ast.PatVariant, variant: string, structs: StructTable, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  let pc: i32 = variant_payload_count(variant, structs);
+  if (pc >= 0) {
+    let nb: i32 = pv.extra_bindings.len();
+    if (pv.binding.len() > 0) {
+      nb = nb + 1;
+    }
+    if (nb != pc) {
+      out = out.append(dg_at("E015", payload_count_message(pv.type_name, pc, nb), line, col));
+    }
+  }
+  return out;
+}
+
+// variant_owner_count is how many enums declare a variant named `name`.
+function variant_owner_count(name: string, structs: StructTable): i32 {
+  let owners: string[] = [];
+  let k: i32 = structs.index.chain(name);
+  while (k >= 0) {
+    let sd: StructSig = structs.structs[k];
+    if (sd.name == name && sd.enum_owner.len() > 0 && !util.has_str(owners, sd.enum_owner)) {
+      owners = owners.append(sd.enum_owner);
+    }
+    k = structs.index.next[k];
+  }
+  return owners.len();
+}
+
 // record_pattern_diags explains a record-form pattern (`Rect { h, x }`) that
 // resolve_variant_fields_module left unresolved: it named a field the variant
 // does not declare, named one twice, or missed one without `..` — or the
@@ -13121,19 +13152,11 @@ function match_diags(stmts: ast.Stmt[], structs: StructTable, unions: UnionTable
                   // A record-form pattern that resolve_variant_fields_module
                   // could not settle against the variant's declared fields.
                   out = util.append_diags(out, record_pattern_diags(pv, structs, m.arms[a].line, m.arms[a].col));
-                } else {
-                  // E015: payload-binding arity. A known variant's
-                  // binding count must equal its payload count.
-                  let pc: i32 = variant_payload_count(pv.type_name, structs);
-                  if (pc >= 0) {
-                    let nb: i32 = pv.extra_bindings.len();
-                    if (pv.binding.len() > 0) {
-                      nb = nb + 1;
-                    }
-                    if (nb != pc) {
-                      out = out.append(dg_at("E015", payload_count_message(pv.type_name, pc, nb), m.arms[a].line, m.arms[a].col));
-                    }
-                  }
+                } else if (dot_index(pv.type_name) >= 0 || variant_owner_count(pv.type_name, structs) < 2) {
+                  // E015: payload-binding arity. A bare name several enums
+                  // declare is checked against the scrutinee's enum, in
+                  // stmts_call_diags, which knows it.
+                  out = util.append_diags(out, payload_arity_diags(pv, pv.type_name, structs, m.arms[a].line, m.arms[a].col));
                 }
               }
             }
@@ -17976,6 +17999,8 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                         // enum/union, reported at the arm.
                         if (!util.has_str(usig.variants, cpv.type_name)) {
                           out = out.append(dg_at("E014", "variant \"" + cpv.type_name + "\" is not part of enum " + mun.name, elem.line, elem.col));
+                        } else if (!parser.is_record_pattern(cpv) && variant_owner_count(cpv.type_name, cur.structs) >= 2) {
+                          out = util.append_diags(out, payload_arity_diags(cpv, mun.name + "." + cpv.type_name, cur.structs, elem.line, elem.col));
                         }
                       }
                     }
