@@ -134,7 +134,9 @@ func TestSelfHostEmbedBytesEveryTarget(t *testing.T) {
 // asset is one block of that many instructions, and a lookup that scanned a
 // block's whole step list per instruction made it quadratic: 100 KB took 61 s.
 // The gate is a ratio of compile CPU times on the same machine — 8x the bytes
-// may cost at most 8x the time, where the quadratic form cost about 25x.
+// may cost at most 8x the time, where the quadratic form cost about 25x. Each
+// time is the least of five compiles: the small one takes under a tenth of a
+// second, where one slow sample moved the ratio past 8.
 func TestSelfHostEmbedBytesCompileLinear(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compiles two large assets; skipped under -short")
@@ -158,11 +160,18 @@ func TestSelfHostEmbedBytesCompileLinear(t *testing.T) {
 		if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		cmd := cli.compileCmd("x86-64-linux", filepath.Join(t.TempDir(), "out.s"), src, "-emit", "asm")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("compile %s: %v\n%s", name, err, out)
+		least := 0.0
+		for i := 0; i < 5; i++ {
+			cmd := cli.compileCmd("x86-64-linux", filepath.Join(t.TempDir(), "out.s"), src, "-emit", "asm")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("compile %s: %v\n%s", name, err, out)
+			}
+			sec := (cmd.ProcessState.UserTime() + cmd.ProcessState.SystemTime()).Seconds()
+			if i == 0 || sec < least {
+				least = sec
+			}
 		}
-		return (cmd.ProcessState.UserTime() + cmd.ProcessState.SystemTime()).Seconds()
+		return least
 	}
 	s, l := cpu("small.bin"), cpu("large.bin")
 	t.Logf("compile CPU: %d bytes %.2fs, %d bytes %.2fs", small, s, large, l)
