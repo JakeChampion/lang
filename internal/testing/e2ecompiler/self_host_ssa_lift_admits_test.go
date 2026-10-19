@@ -58,11 +58,13 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// raw_vdso (443) adds one admitted nullary operation returning a word.
 	// aes_gcm_seal (444) and aes_gcm_open (445) add two with five inputs,
 	// and mismatch_bytes_str (446) one more with five inputs. opt_set_payload
-	// (124) adds one with two inputs, popped as struct_set's.
+	// (124) adds one with two inputs, popped as struct_set's. tcp_recv,
+	// tcp_send, tcp_connect, udp_send, udp_send_bytes and read_line are
+	// retired: std/net and io.read_line report the failure they could not.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=392 declined=3\n"
+		"registered=386 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

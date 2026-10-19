@@ -17,6 +17,7 @@ import (
 // before: each loser's socket used to stay open, one per race.
 const raceLoserSource = `import "std/async";
 import "std/fetch";
+import "std/net";
 
 function parse(s: string): i32 {
     let n: i32 = 0; let i: i32 = 0;
@@ -24,17 +25,17 @@ function parse(s: string): i32 {
     return n;
 }
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
+function loopback(p: i32): net.SocketAddr { return net.socket_addr(net.ipv4_loopback(), p); }
 function open_fds(): i32 {
     match (read_dir("/proc/self/fd")) { Ok(names) => { return names.len(); }, Err(_) => { return 0; } }
 }
 
 function main(): i32 {
-    let host: i32 = 127 | (1 << 24);
     let none: u8[] = [];
     let before: i32 = open_fds();
     let k: i32 = 0;
     while (k < 5) {
-        let fs: async.Future[u8[]][] = [fetch.fetch_future(host, port("PA"), "/a"), fetch.fetch_future(host, port("PB"), "/b")];
+        let fs: async.Future[u8[]][] = [fetch.fetch_future(loopback(port("PA")), "/a"), fetch.fetch_future(loopback(port("PB")), "/b")];
         let (winner, body) = async.race(fs, none);
         if (winner != 0 || body.len() != 3) { return 90; }
         k = k + 1;

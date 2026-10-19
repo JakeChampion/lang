@@ -9261,6 +9261,8 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
   let inlinable: boolean[] = [];
   let rewrite: boolean[] = [];
   let unnamed: boolean[] = [];
+  let uncalled: boolean[] = [];
+  let arms: util.NameIndex = util.name_index(dispatched_arms(all));
   let i: i32 = 0;
   while (i < all.len()) {
     let p: Produced = all[i];
@@ -9270,9 +9272,10 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     rewrite = rewrite.append(usable);
     inlinable = inlinable.append(usable && i < mod.funcs.len() && !mod.funcs[i].no_inline && !mod.funcs[i].fip && !mod.funcs[i].fbip && optbisect.allowed("inline", names[i]));
     unnamed = unnamed.append(outside_unnamed(p, names[i], i, mod));
+    uncalled = uncalled.append(outside_uncalled(p, names[i], i, mod, arms));
     i = i + 1;
   }
-  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, size);
+  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, size);
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {
@@ -9509,13 +9512,32 @@ function outside_unnamed(p: Produced, name: string, i: i32, mod: parser.Module):
   return i >= mod.funcs.len() || decl_unnamed(mod.funcs[i], mod);
 }
 
-function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
+// Whether nothing outside the bodies calls the function, which is what
+// pairing its result needs: outside_unnamed's, and a method too unless a
+// `dyn` call's arm or the glue rooted_method describes calls it. A method is
+// not spliced away, so splicing reads outside_unnamed.
+function outside_uncalled(p: Produced, name: string, i: i32, mod: parser.Module, arms: util.NameIndex): boolean {
+  if (outside_unnamed(p, name, i, mod)) {
+    return true;
+  }
+  if (p.template || p.bodyless || !p.ok || i >= mod.funcs.len() || arms.has(name)) {
+    return false;
+  }
+  let fd: parser.FuncDecl = mod.funcs[i];
+  return fd.receiver_type.len() > 0 && fd.import_iface == "" && !exported(fd, mod) && !rooted_method(fd, mod);
+}
+
+function exported(fd: parser.FuncDecl, mod: parser.Module): boolean {
   for x in mod.exports {
     if (x.func_name == fd.name) {
-      return false;
+      return true;
     }
   }
-  return fd.receiver_type.len() == 0 && fd.import_iface == "";
+  return false;
+}
+
+function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
+  return fd.receiver_type.len() == 0 && fd.import_iface == "" && !exported(fd, mod);
 }
 
 function inline_on(): boolean {

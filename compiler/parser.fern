@@ -3791,7 +3791,8 @@ pub struct IfChain { par: Par, stmt: ast.Stmt, rt: string, needs_default_return:
 // same rule iife_rewrite_arm_body applies to the StmtMatch form. A body whose
 // last statement is not a return is left alone, and so is a diverging block's
 // unreachable tail (branch_dead_tail): a store of it would type the value local
-// from the enclosing function's return value.
+// from the enclosing function's return value. A tail `if` whose every branch
+// leaves stays as the statement it is (#12828), for the same reason.
 function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
   if (body.len() == 0) {
     return body;
@@ -3806,6 +3807,9 @@ function value_arm_body(body: ast.Stmt[], val: string): ast.Stmt[] {
       }
       if (stmts_exit(out, false)) {
         return out;
+      }
+      if let Some(st) = exiting_if_tail(r.value) {
+        return out.append(st);
       }
       return out.append(s_assign(val, r.value));
     },
@@ -5216,14 +5220,6 @@ function parse_branch_body_written(p: Par): (ast.Stmt[], string, boolean, Par) {
   let have_tail: boolean = bi_have_tail;
   let tail: ast.Expr = bi_tail;
   p = bi_p;
-  // A trailing `if` whose every branch leaves is the statement it reads as,
-  // not a value: its branches' tails are unreachable filler.
-  if (have_tail) {
-    if let Some(st) = exiting_if_tail(tail) {
-      leading = leading.append(st);
-      have_tail = false;
-    }
-  }
   if (have_tail) {
     rt = if_expr_rt(tail);
   }

@@ -117,13 +117,15 @@ func TestSelfHostServeAllocsPerRequestH2(t *testing.T) {
 // here with the decrypted application data moved into the step and then
 // into the read buffer rather than copied at each layer; 49.0 with a byte
 // slice's view descriptor in the frame (#12780) and the session taken out of
-// its enum slot rather than retained (#12781). The count's small
+// its enum slot rather than retained (#12781); 43.0 on arm64-darwin with
+// the methods nothing outside the bodies calls returning their variants
+// paired (sempair), where 49.0 was measured before. The count's small
 // variation between runs (how the client's records coalesce into reads) is
 // why it is a ceiling on the mean; a mean serveAllocsH2Drift or more under
 // it fails, to lower it. Most of the remaining count is the per-record
 // rebuild of the session and handshake state (docs/benchmarks/
 // net-h2-tls-2026-10-18.md, "Left").
-const ServeAllocsTLSCeiling = 49
+const ServeAllocsTLSCeiling = 43
 
 func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 	cli := buildSelfHostCLI(t)
@@ -153,8 +155,10 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 // on x86-64 with the request target handed back when already normal and
 // the handler started from its request rather than a framed record built
 // around it; 247.2 here with a byte slice's view descriptor in the frame
-// (#12780) and payloads taken out of enum slots (#12781).
-const ServeAllocsH3Ceiling = 249
+// (#12780) and payloads taken out of enum slots (#12781); 230.33 on
+// arm64-darwin and 231.19 on the x86-64 runner with methods' variant returns
+// paired, where 247.33 was measured before.
+const ServeAllocsH3Ceiling = 232
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)
@@ -181,8 +185,10 @@ func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 // through `plat.http` allocates per request, the serve loop's share
 // included (e2eharness.ServeFetchAllocsServerSource, the nightly two-fetch
 // profile; docs/benchmarks/net-twofetch-2026-10-17.md and
-// docs/benchmarks/net-fetch-client-2026-10-18.md).
-const ServeFetchAllocsCeiling = 98
+// docs/benchmarks/net-fetch-client-2026-10-18.md). 91.00 on arm64-darwin
+// with methods' variant returns paired, the transport read's Ok among them,
+// where 99.00 was measured before, as on the x86-64 runner.
+const ServeFetchAllocsCeiling = 91
 
 func TestSelfHostServeAllocsPerRequestTwoFetch(t *testing.T) {
 	cli := buildSelfHostCLI(t)
