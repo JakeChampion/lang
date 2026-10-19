@@ -6169,14 +6169,18 @@ function str_bytes(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerR
   return emit(r, ir.op_str_data());
 }
 
-// __arr_set_len(a, n): the length is slot 0 of the box.
+// __arr_set_len(a, n): the length is slot 0 of the box. `a` is stored back to
+// its own local after, so a decoded read of it (ssabytes.lower_reads, which
+// decodes at every store) takes the new length.
 function arr_set_len(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_load_local(ins.args[1]));
-  return emit(r, ir.op_raw_store_ptr());
+  r = emit(r, ir.op_raw_store_ptr());
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  return emit(r, ir.op_store_local(ins.args[0]));
 }
 
 function word_bytes(name: string): i32 {
