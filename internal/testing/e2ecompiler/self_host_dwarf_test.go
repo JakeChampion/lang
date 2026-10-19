@@ -804,8 +804,9 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 				if v.Name != names[i] {
 					t.Errorf("enumerator %d is %s, want %s", i, v.Name, names[i])
 				}
-				if got := imageBytes(f, uint64(v.Val), len(v.Name)); string(got) != v.Name {
-					t.Errorf("%s = %#x, where the image holds %q, not its shape", v.Name, v.Val, got)
+				shape := et.EnumName + "$" + v.Name
+				if got := imageBytes(f, uint64(v.Val), len(shape)); string(got) != shape {
+					t.Errorf("%s = %#x, where the image holds %q, not its shape %q", v.Name, v.Val, got, shape)
 				}
 			}
 			heading, ok := dwarfVarType(t, d, "pace", "h").(*dwarf.PtrType)

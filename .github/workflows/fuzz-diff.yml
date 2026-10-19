@@ -55,7 +55,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest,    host: x86_64  }
+          - { runner: ubuntu-24.04,     host: x86_64  }
           - { runner: ubuntu-24.04-arm, host: aarch64 }
     name: fuzz-diff-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}

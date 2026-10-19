@@ -70,10 +70,10 @@ jobs:
           # worker budget. With three, run 39034198170's shard2 reached
           # 25m while its other worker finished at 16m22s; the tests still
           # active at the alarm had run for only 0-4s.
-          - { runner: ubuntu-latest,    host: x86_64,  nshard: 4, shard: 0 }
-          - { runner: ubuntu-latest,    host: x86_64,  nshard: 4, shard: 1 }
-          - { runner: ubuntu-latest,    host: x86_64,  nshard: 4, shard: 2 }
-          - { runner: ubuntu-latest,    host: x86_64,  nshard: 4, shard: 3 }
+          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 0 }
+          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 1 }
+          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 2 }
+          - { runner: ubuntu-24.04,     host: x86_64,  nshard: 4, shard: 3 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
     name: test-e2e-other-${{ matrix.host }}-shard${{ matrix.shard }}

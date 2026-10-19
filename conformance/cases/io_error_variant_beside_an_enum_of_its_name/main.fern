@@ -1,0 +1,42 @@
+// A program's own enum may share a bare name with a builtin IoError variant.
+// Naming the type resolves to the enum, not to IoError's variant of that name,
+// and std/error's `message()` still matches IoError's `Other` and `Unsupported`.
+import "std/error";
+import "std/i32";
+
+enum Other { Thing(i32[]), Nothing }
+enum Unsupported { Op(string), Mode }
+
+function size(o: Other): i32 {
+  match (o) {
+    Thing(xs) => {
+      return xs.len();
+    },
+    Nothing => {
+      return 0;
+    }
+  }
+}
+
+function name(u: Unsupported): string {
+  match (u) {
+    Op(s) => {
+      return "op " + s;
+    },
+    Mode => {
+      return "mode";
+    }
+  }
+}
+
+function describe(e: IoError): string {
+  return e.message();
+}
+
+function main(): i32 {
+  let xs: Other[] = [Thing([1, 2, 3]), Nothing];
+  print(size(xs[0]).to_string() + " " + size(xs[1]).to_string());
+  print(name(Op("seek")) + ", " + name(Mode));
+  print(describe(Unsupported));
+  return 0;
+}

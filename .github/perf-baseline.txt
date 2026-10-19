@@ -244,8 +244,9 @@ x86_64/utf8_ingest_validated.ir	5916089
 # pmap_insert.ir (-2.72%) and pvec_with.ir (-3.50%), with their `.text` rows
 # and http_hello.text (#12780, +0.22%): a payload read out of an enum held in
 # an array slot or a local is taken rather than retained, so the node the
-# update rebuilds is unique. The figures are the dev container's perf-bench
-# run; the aarch64 rows are not re-measured.
+# update rebuilds is unique. The x86_64 figures are the dev container's
+# perf-bench run; the aarch64 rows (ordmap_insert.ir -2.48%, pmap_insert.ir
+# -2.81%, pvec_with.text -3.26%, pvec_with.ir -3.80%) are the perf lane's.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
@@ -284,11 +285,11 @@ aarch64/map_probe_chain.ir	353848242
 aarch64/map_string.text	7063
 aarch64/map_string.ir	63502584	2
 aarch64/ordmap_insert.text	3123
-aarch64/ordmap_insert.ir	118541839
+aarch64/ordmap_insert.ir	115601873
 aarch64/pmap_insert.text	2850
-aarch64/pmap_insert.ir	71272111
-aarch64/pvec_with.text	2978
-aarch64/pvec_with.ir	63238555
+aarch64/pmap_insert.ir	69269531
+aarch64/pvec_with.text	2881
+aarch64/pvec_with.ir	60838467
 aarch64/record_update.text	1532
 aarch64/record_update.ir	104947544
 aarch64/sort_inplace.text	1336

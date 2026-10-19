@@ -118,6 +118,7 @@ boolean_logic                                        0
 boolean_scalar_dispatch                              0
 both_arms_read_p                                     0
 break_continue                                       0
+byte_view_of_a_field_after_a_failed_try              0
 bytes_writer                                         0
 c2_consuming_reuse                                   0
 call_of_a_call_through_a_function_value              0
@@ -195,6 +196,7 @@ destructure_tuple_and_struct_forms                   0
 div_modulo                                           0
 divmod_inline                                        0
 dyn_bound_satisfied                                  0
+dyn_dispatch_tells_a_struct_from_its_namesake_variant 0
 dyn_no_implementer                                   0
 dyn_trait_dispatch                                   0
 dyn_two_word_dispatch                                0
@@ -338,10 +340,12 @@ int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
 io_and_fetch_errors_box_into_dyn_error               0
-io_error_other_closed_stdout                        0
+io_error_other_closed_stdout                         0
 io_error_other_is_a_directory                        0
 io_error_other_not_a_directory                       0
 io_void_results_compose                              0
+io_error_variant_beside_a_struct_of_its_name         0
+io_error_variant_beside_an_enum_of_its_name          0
 iter_build_consume                                   0
 json_array_field                                     0
 json_error_location                                  0

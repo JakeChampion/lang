@@ -10,7 +10,7 @@ name: Build & release
 # pinned stage0 (docs/BOOTSTRAP.md) on each host, with no Go toolchain.
 #
 # Host coverage matches `README.md`:
-#   - linux-amd64  : ubuntu-latest
+#   - linux-amd64  : ubuntu-24.04
 #   - linux-arm64  : ubuntu-24.04-arm  (matches CI's arm64 lane)
 #   - darwin-arm64 : macos-15          (matches macos.yml's pin)
 #
@@ -52,7 +52,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest,    name: linux-x86_64, target: x86-64-linux }
+          - { runner: ubuntu-24.04,     name: linux-x86_64, target: x86-64-linux }
           - { runner: ubuntu-24.04-arm, name: linux-arm64,  target: arm64-linux }
           - { runner: macos-15,         name: darwin-arm64, target: arm64-darwin }
     name: build-${{ matrix.name }}
@@ -136,7 +136,7 @@ jobs:
     # HEAD, so the rolling `nightly` lands on the latest commit as intended.
     if: github.event_name == 'schedule'
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@v8

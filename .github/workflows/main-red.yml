@@ -69,7 +69,7 @@ jobs:
       (github.event.workflow_run.conclusion == 'failure' ||
        github.event.workflow_run.conclusion == 'success' ||
        github.event.workflow_run.conclusion == 'cancelled')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/github-script@v9
         with:

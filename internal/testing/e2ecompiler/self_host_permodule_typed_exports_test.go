@@ -28,7 +28,12 @@ function (s: string) tail(n: i32): str { return slice_unchecked(s, n, s.len()); 
 @noinline pub function score(words: string[]): i32 {
     let bytes: u8[] = [];
     for w in words { bytes = bytes.append((w.len() + 96) as u8); }
+    // Two slices joined at a phi outlive an instruction, so they take the
+    // heap descriptor (__sem_byte_view_slice) rather than a frame one.
     let head: [u8] = bytes[0:2];
+    if (words.len() > 2) {
+        head = bytes[1:3];
+    }
     let text: string = string_from_bytes_unchecked(bytes);
     let seen: Map[string, i32] = map_new(4);
     let t: i32 = 0;
