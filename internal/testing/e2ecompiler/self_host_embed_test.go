@@ -133,10 +133,11 @@ func TestSelfHostEmbedBytesEveryTarget(t *testing.T) {
 // linear in its size. Each byte is one element of one u8[] literal, so a big
 // asset is one block of that many instructions, and a lookup that scanned a
 // block's whole step list per instruction made it quadratic: 100 KB took 61 s.
-// The gate is a ratio of compile CPU times on the same machine — 8x the bytes
-// may cost at most 8x the time, where the quadratic form cost about 25x. Each
-// time is the least of five compiles: the small one takes under a tenth of a
-// second, where one slow sample moved the ratio past 8.
+// The gate is a ratio of compile CPU times on the same machine, each the least
+// of five compiles. For 8x the bytes the linear compile measures 6.9-7.1x on an
+// idle x86-64 runner and up to 9.7x beside the shard's other tests, which
+// inflate the larger, memory-bound compile more; the quadratic form cost about
+// 25x. The limit sits between the two.
 func TestSelfHostEmbedBytesCompileLinear(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compiles two large assets; skipped under -short")
@@ -175,7 +176,7 @@ func TestSelfHostEmbedBytesCompileLinear(t *testing.T) {
 	}
 	s, l := cpu("small.bin"), cpu("large.bin")
 	t.Logf("compile CPU: %d bytes %.2fs, %d bytes %.2fs", small, s, large, l)
-	if l > 8*s {
+	if l > 12*s {
 		t.Errorf("8x the asset took %.1fx the compile time (%.2fs vs %.2fs) — compiling one long block is superlinear again", l/s, l, s)
 	}
 }
