@@ -1585,6 +1585,51 @@ function main(): i32 {
 	}
 }
 
+// A union-member struct literal given to a variant constructor widens to the
+// union the destination's payload slot names, as it does assigned to the union
+// directly: `return Some(A { … })` from a function returning `Option[U]`
+// (#12875). A struct outside the union still does not fit.
+func TestUnionWidenInVariantPayload(t *testing.T) {
+	src := `struct A { n: i32 }
+struct B { s: string }
+type U = A | B;
+function pick(flag: boolean): Option[U] {
+    if (flag) {
+        return Some(A { n: 4 });
+    }
+    return None;
+}
+function ok(): Result[U, string] {
+    return Ok(B { s: "b" });
+}
+function main(): i32 {
+    let held: Option[U] = Some(B { s: "x" });
+    match (pick(true)) {
+        Some(u) => {
+            match (u) {
+                A(a) => { return a.n; },
+                B(b) => { return 0; }
+            }
+        },
+        None => { return 1; }
+    }
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	outside := `struct A { n: i32 }
+struct B { s: string }
+struct C { f: f64 }
+type U = A | B;
+function pick(): Option[U] {
+    return Some(C { f: 1.0 });
+}
+function main(): i32 { return 0; }`
+	if err := checkSource(t, outside); err == nil || !strings.Contains(err.Error(), "return value: expected Option[U]") {
+		t.Errorf("a struct outside the union: got %v, want the return-value E002", err)
+	}
+}
+
 func TestTypeErrors(t *testing.T) {
 	cases := []struct {
 		src  string

@@ -1,0 +1,46 @@
+// A union-member struct given to a variant constructor widens to the union
+// the expected payload names: `Some(A { … })` where `Option[U]` is wanted.
+import "std/i32";
+
+struct A { n: i32 }
+struct B { s: string }
+type U = A | B;
+
+function pick(flag: boolean): Option[U] {
+  if (flag) {
+    return Some(A { n: 4 });
+  }
+  return Some(B { s: "bee" });
+}
+
+function name(o: Option[U]): string {
+  match (o) {
+    Some(u) => {
+      match (u) {
+        A(a) => {
+          return "A " + a.n.to_string();
+        },
+        B(b) => {
+          return "B " + b.s;
+        }
+      }
+    },
+    None => {
+      return "none";
+    }
+  }
+}
+
+function main(): i32 {
+  let r: Result[U, string] = Ok(A { n: 7 });
+  print(name(pick(true)) + ", " + name(pick(false)));
+  match (r) {
+    Ok(u) => {
+      print(name(Some(u)));
+    },
+    Err(e) => {
+      print(e);
+    }
+  }
+  return 0;
+}

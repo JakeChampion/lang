@@ -1002,6 +1002,7 @@ u8_method_module                                     0
 underscore_discard                                   0
 union_eval                                           0
 union_lambda_param                                   0
+union_member_widens_in_variant_payload               0
 url_codec                                            0
 url_roundtrip                                        0
 use_callback_bind                                    0

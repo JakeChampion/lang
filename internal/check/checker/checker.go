@@ -11476,6 +11476,36 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 			}
 		}
 	}
+	// A variant constructor whose payload slot, under dst's type args, is a
+	// union that the payload's struct is a member of: the payload widens as
+	// it would assigned to that union directly — `return Some(A { … })` from
+	// a function returning `Option[U]` with `type U = A | B`.
+	if call, ok := (*holder).(*ast.Call); ok {
+		if id, idOk := call.Callee.(*ast.Ident); idOk {
+			slots, found := c.variantDynPayloadTypes(du, id.Name)
+			se, seOk := srcType.(ast.EnumType)
+			if found && seOk && len(slots) == len(call.Args) {
+				srcPayloads, _ := c.variantDynPayloadTypes(se, id.Name)
+				changed := false
+				for i := range call.Args {
+					if _, toUnion := slots[i].(ast.EnumType); !toUnion || i >= len(srcPayloads) {
+						continue
+					}
+					if _, fromStruct := srcPayloads[i].(ast.StructType); !fromStruct {
+						continue
+					}
+					arg := call.Args[i]
+					c.maybeWrapForUnion(slots[i], &call.Args[i], srcPayloads[i], s)
+					if call.Args[i] != arg {
+						changed = true
+					}
+				}
+				if changed {
+					return c.checkExpr(*holder, s)
+				}
+			}
+		}
+	}
 	ss, sok := srcType.(ast.StructType)
 	if !sok {
 		return srcType
