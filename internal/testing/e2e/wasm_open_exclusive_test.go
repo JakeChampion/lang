@@ -21,8 +21,8 @@ import (
 const openExclusiveProg = `function main(): i32 {
     match (open_exclusive("ex.txt")) {
         Ok(w) => {
-            match (w.write("new")) { Some(_) => { return 1; }, None => {} }
-            match (w.close()) { Some(_) => { return 2; }, None => {} }
+            match (w.write("new")) { Err(_) => { return 1; }, Ok(_) => {} }
+            match (w.close()) { Err(_) => { return 2; }, Ok(_) => {} }
         },
         Err(_) => { return 3; }
     }

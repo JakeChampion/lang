@@ -34,8 +34,8 @@ function main(): i32 {
             f = f.write_string("abcdef");
             f = f.write_string("gh");
             match (f.close()) {
-                Some(_) => { return 4; },
-                None => {}
+                Err(_) => { return 4; },
+                Ok(_) => {}
             }
         },
         Err(_) => { return 5; }

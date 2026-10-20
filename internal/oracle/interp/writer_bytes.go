@@ -30,11 +30,7 @@ func writerBytes(i *Interp, args []Value, all bool) (Value, error) {
 		b[n] = byte(v.(Number))
 	}
 	failure := func(e error) Value {
-		v := classifyIoError("", e)
-		if all {
-			return optionSome(v)
-		}
-		return resultErr(v)
+		return resultErr(classifyIoError("", e))
 	}
 	f, err := streamFile(i, args[0])
 	if errors.Is(err, errClosedHandle) {
@@ -65,7 +61,7 @@ func writerBytes(i *Interp, args []Value, all bool) (Value, error) {
 			return resultOk(Number(n)), nil
 		}
 		if n == len(b) {
-			return optionNone(), nil
+			return resultOk(unitValue()), nil
 		}
 		if n == 0 {
 			return failure(syscall.EIO), nil

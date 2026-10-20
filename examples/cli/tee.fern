@@ -22,42 +22,26 @@ function open_output(path: string, append: boolean): Result[Writer, IoError] {
   return open_writer(path);
 }
 
-function write_output(path: string, append: boolean, bytes: u8[]): Option[IoError] {
-  match (open_output(path, append)) {
-    Err(e) => {
-      return Some(e);
-    },
-    Ok(w) => {
-      let written: Option[IoError] = w.write_bytes(bytes);
-      let closed: Option[IoError] = w.close();
-      match (written) {
-        Some(e) => {
-          return Some(e);
-        },
-        None => {
-          return closed;
-        }
-      }
-    }
+function write_output(path: string, append: boolean, bytes: u8[]): Result[void, IoError] {
+  let w: Writer = open_output(path, append)?;
+  let written: Result[void, IoError] = w.write_bytes(bytes);
+  let closed: Result[void, IoError] = w.close();
+  if let Err(e) = written {
+    return Err(e);
   }
+  return closed;
 }
 
 function copy_outputs(data: u8[], files: string[], append: boolean): i32 {
   let status: i32 = 0;
-  match (stdout().write_bytes(data)) {
-    Some(_) => {
-      eprint("tee: cannot write stdout");
-      status = 1;
-    },
-    None => {}
+  if let Err(_) = stdout().write_bytes(data) {
+    eprint("tee: cannot write stdout");
+    status = 1;
   }
   for path in files {
-    match (write_output(path, append, data)) {
-      Some(_) => {
-        eprint("tee: " + path + ": cannot write");
-        status = 1;
-      },
-      None => {}
+    if let Err(_) = write_output(path, append, data) {
+      eprint("tee: " + path + ": cannot write");
+      status = 1;
     }
   }
   return status;

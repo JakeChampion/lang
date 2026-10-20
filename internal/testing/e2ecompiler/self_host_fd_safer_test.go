@@ -18,12 +18,12 @@ const selfHostFdSaferSrc = `function main(): i32 {
         Ok(w) => {
             let refused: boolean = false;
             match (stdout().write("TO-STDOUT\n")) {
-                Some(e) => { refused = true; },
-                None => { }
+                Err(e) => { refused = true; },
+                Ok(_) => { }
             }
             match (w.write("TO-FILE\n")) {
-                Some(e) => { return 4; },
-                None => { }
+                Err(e) => { return 4; },
+                Ok(_) => { }
             }
             w.close();
             if (!refused) { return 2; }

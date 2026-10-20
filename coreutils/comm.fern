@@ -585,18 +585,12 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
   // reported — except with `comm - -`, where the two are one stream and
   // it closes only once. GNU <= 9.4 closed twice and reported the
   // second one's EBADF.
-  match (r1.close()) {
-    Some(e) => {
-      gnu.die(out, gnu.quotef(name1) + ": " + gnu.io_error_text(e), 1);
-    },
-    None => {}
+  if let Err(e) = r1.close() {
+    gnu.die(out, gnu.quotef(name1) + ": " + gnu.io_error_text(e), 1);
   }
   if (!shared) {
-    match (r2.close()) {
-      Some(e) => {
-        gnu.die(out, gnu.quotef(name2) + ": " + gnu.io_error_text(e), 1);
-      },
-      None => {}
+    if let Err(e) = r2.close() {
+      gnu.die(out, gnu.quotef(name2) + ": " + gnu.io_error_text(e), 1);
     }
   }
   if (cfg.total) {

@@ -231,7 +231,7 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 			[]string{"\n__fern_read_dir:", ".Lrd_g", ".Lrd_p2"},
 		},
 		{
-			// remove_dir_all — Option[IoError] leaf (#2649), the last fs syscall leaf.
+			// remove_dir_all — Result[void, IoError] leaf (#2649), the last fs syscall leaf.
 			// Best-effort recursive rm -rf: probe openat to classify, delegate
 			// enumeration to the (Fern) read_dir, recurse, rmdir. Old hand-asm IR body
 			// (__fern_remove_dir_all:) gone; op_remove_dir_all calls the stack-ABI

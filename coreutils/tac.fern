@@ -80,12 +80,9 @@ function write_out(o: Out, data: u8[]): void {
   if (data.len() == 0) {
     return;
   }
-  match (o.w.write_bytes(data)) {
-    Some(e) => {
-      gnu.error("write error: " + gnu.io_error_text(e));
-      exit(1);
-    },
-    None => {}
+  if let Err(e) = o.w.write_bytes(data) {
+    gnu.error("write error: " + gnu.io_error_text(e));
+    exit(1);
   }
 }
 
@@ -415,11 +412,8 @@ function tac_file(path: string, o: Out, s: Settings): Out {
   }
   out = tac_backward(src, name, size, out, s);
   if (!is_stdin) {
-    match (r.close()) {
-      Some(e) => {
-        out = fail(out, gnu.quotef(path) + ": read error: " + gnu.io_error_text(e));
-      },
-      None => {}
+    if let Err(e) = r.close() {
+      out = fail(out, gnu.quotef(path) + ": read error: " + gnu.io_error_text(e));
     }
   }
   return out;
@@ -492,24 +486,18 @@ pub function main(): i32 {
   }
   buf_free(out.buf);
   if (read_stdin) {
-    match (stdin().close()) {
-      Some(e) => {
-        out = fail(out, "-: " + gnu.io_error_text(e));
-      },
-      None => {}
+    if let Err(e) = stdin().close() {
+      out = fail(out, "-: " + gnu.io_error_text(e));
     }
   }
   // gnulib's close_stdout over a stream tac no longer writes through:
   // with nothing pending and no earlier failure, only a close that fails
   // for something other than a closed descriptor is reported.
-  match (out.w.close()) {
-    Some(e) => {
-      if (errno.of(e) != errno.EBADF) {
-        gnu.error("write error: " + gnu.io_error_text(e));
-        exit(1);
-      }
-    },
-    None => {}
+  if let Err(e) = out.w.close() {
+    if (errno.of(e) != errno.EBADF) {
+      gnu.error("write error: " + gnu.io_error_text(e));
+      exit(1);
+    }
   }
   if (!out.ok) {
     return 1;

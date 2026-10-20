@@ -3,7 +3,7 @@ package e2e
 import "testing"
 
 // A fresh string passed straight to Writer.write is released after the call
-// (#8413), and so is the write's own Option[IoError] result box, which is one
+// (#8413), and so is the write's own Result[void, IoError] result box, which is one
 // counted rc=1 block per call since #8405. A Writer is a handle with no box,
 // so nothing is left unpaired, whatever the round count — before #8413 the
 // build() results alone left two per round.
@@ -17,7 +17,7 @@ function main(): i32 {
     let w: Writer = stdout();
     let k: i32 = 0;
     while (k < 40) {
-        match (w.write(build(k))) { Some(_) => { return 1; }, None => {} }
+        match (w.write(build(k))) { Err(_) => { return 1; }, Ok(_) => {} }
         k = k + 1;
     }
     return 0;

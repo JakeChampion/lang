@@ -61,19 +61,19 @@ func dupOntoSource(dir string, wasm bool) string {
 
 	// 7 is above the three standard descriptors and above the pty the `tty`
 	// harness hands out, so nothing in any of these runners has it open.
-	readerArm := `match (r.dup_onto(7))    { None => {}, Some(_) => { return 11; } }
-            match (r.dup_onto(0 - 1)) { None => { return 12; }, Some(_) => {} }`
-	closedArm := `match (r.dup_onto(7))    { None => { return 13; }, Some(_) => {} }`
-	writerArm := `match (w.dup_onto(1))    { None => {}, Some(_) => { return 21; } }
+	readerArm := `match (r.dup_onto(7))    { Ok(_) => {}, Err(_) => { return 11; } }
+            match (r.dup_onto(0 - 1)) { Ok(_) => { return 12; }, Err(_) => {} }`
+	closedArm := `match (r.dup_onto(7))    { Ok(_) => { return 13; }, Err(_) => {} }`
+	writerArm := `match (w.dup_onto(1))    { Ok(_) => {}, Err(_) => { return 21; } }
             print("redirected");`
 	if wasm {
 		// Refused on both previews, so every arm flips: the success cases
 		// become failures and the closed-handle case cannot be reached at
 		// all (a dropped preview-2 descriptor traps rather than answering).
-		readerArm = `match (r.dup_onto(7))    { None => { return 11; }, Some(_) => {} }
-            match (r.dup_onto(0 - 1)) { None => { return 12; }, Some(_) => {} }`
+		readerArm = `match (r.dup_onto(7))    { Ok(_) => { return 11; }, Err(_) => {} }
+            match (r.dup_onto(0 - 1)) { Ok(_) => { return 12; }, Err(_) => {} }`
 		closedArm = "// a dropped preview-2 descriptor traps rather than answering EBADF"
-		writerArm = `match (w.dup_onto(1))    { None => { return 21; }, Some(_) => {} }`
+		writerArm = `match (w.dup_onto(1))    { Ok(_) => { return 21; }, Err(_) => {} }`
 	}
 
 	return fmt.Sprintf(`function main(): i32 {
@@ -179,7 +179,7 @@ func TestWASMDupOntoUnsupported(t *testing.T) {
 func TestWASMDupOntoNotCapabilityGated(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 {
     match (open_writer("x")) {
-        Ok(w) => { match (w.dup_onto(1)) { None => {}, Some(_) => {} } },
+        Ok(w) => { match (w.dup_onto(1)) { Ok(_) => {}, Err(_) => {} } },
         Err(_) => {}
     }
     return 0;

@@ -13,7 +13,7 @@ import (
 const IOTextReadErrorProgram = `import "std/io";
 function main(): i32 {
     let r: Reader = stdin();
-    match (r.close()) { Some(_) => { return 1; }, None => {} }
+    match (r.close()) { Err(_) => { return 1; }, Ok(_) => {} }
     match (io.read_all_stdin()) {
         Ok(_) => { return 2; },
         Err(e) => { match (e) { InvalidUtf8(_) => { return 3; }, _ => { return 0; } } },

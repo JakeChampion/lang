@@ -34,7 +34,7 @@ function stream_write(stream: i32, data: u8[]): Result[i32, i32] {
         return Err(1);
     }
     let w: Writer = stdout();
-    match (w.write_bytes(data)) { Some(_) => { assert(false); }, None => {} }
+    match (w.write_bytes(data)) { Err(_) => { assert(false); }, Ok(_) => {} }
     return Ok(0);
 }
 function main(): i32 {

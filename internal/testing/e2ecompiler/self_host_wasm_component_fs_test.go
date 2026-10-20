@@ -21,9 +21,9 @@ import (
 // remove_dir_all on a plain file leaves the file in place; x86-64 and the
 // interpreter answer as these cases do.
 
-// fsComponentPrelude names each IoError variant, prints a Result[(), _] or
-// Option[IoError] as `label ok` / `label <variant>`, and a line read as
-// `label [line]`, `label <at-eof>` or `label <variant>`.
+// fsComponentPrelude names each IoError variant, prints a Result[(), _] as
+// `label ok` / `label <variant>`, and a line read as `label [line]`,
+// `label <at-eof>` or `label <variant>`.
 const fsComponentPrelude = `import "std/i64";
 import "std/i32";
 import "std/io";
@@ -44,10 +44,6 @@ function unit(label: string, r: Result[(), IoError]): void {
     match (r) { Ok(_) => { print(label + " ok"); }, Err(e) => { print(label + " " + kind(e)); } }
 }
 
-function opt(label: string, r: Option[IoError]): void {
-    match (r) { None => { print(label + " ok"); }, Some(e) => { print(label + " " + kind(e)); } }
-}
-
 function line(label: string, at_eof: string, r: Result[Option[string], IoError]): void {
     match (r) {
         Ok(Some(l)) => { print(label + " [" + l + "]"); },
@@ -66,24 +62,24 @@ var fsComponentCases = []struct {
     match (open_writer("f.txt")) {
         Err(e) => { print("open_writer " + kind(e)); },
         Ok(w) => {
-            opt("write", w.write("one\ntwo\n"));
+            unit("write", w.write("one\ntwo\n"));
             match (w.write_some("three\n")) { Ok(n) => { print(f"write_some {n}"); }, Err(e) => { print("write_some " + kind(e)); } }
-            opt("write_bytes", w.write_bytes([52 as u8, 10 as u8]));
+            unit("write_bytes", w.write_bytes([52 as u8, 10 as u8]));
             match (w.flags()) { Ok(b) => { print(f"writer flags {b}"); }, Err(e) => { print("flags " + kind(e)); } }
             match (w.stat()) { Ok(s) => { print(f"writer stat size {s.size}"); }, Err(e) => { print("stat " + kind(e)); } }
-            opt("fsync", w.fsync());
-            opt("fdatasync", w.fdatasync());
-            opt("close", w.close());
-            opt("close again", w.close());
-            opt("write after close", w.write("x"));
+            unit("fsync", w.fsync());
+            unit("fdatasync", w.fdatasync());
+            unit("close", w.close());
+            unit("close again", w.close());
+            unit("write after close", w.write("x"));
         }
     }
     match (open_appender("f.txt")) {
         Err(e) => { print("open_appender " + kind(e)); },
         Ok(a) => {
             match (a.flags()) { Ok(b) => { print(f"appender flags {b}"); }, Err(e) => { print("flags " + kind(e)); } }
-            opt("append", a.write("five\n"));
-            opt("close", a.close());
+            unit("append", a.write("five\n"));
+            unit("close", a.close());
         }
     }
     match (open_exclusive("f.txt")) { Ok(_) => { print("open_exclusive ok"); }, Err(e) => { print("open_exclusive " + kind(e)); } }
@@ -101,16 +97,16 @@ var fsComponentCases = []struct {
             match (r.read_chunk(10)) { Ok(c) => { print("eof [" + c + "]"); }, Err(e) => { print("eof " + kind(e)); } }
             match (r.seek(-100 as i64, 1)) { Ok(p) => { print(f"seek negative {p}"); }, Err(e) => { print("seek negative " + kind(e)); } }
             match (r.stat()) { Ok(s) => { print(f"reader stat size {s.size} file {s.is_file}"); }, Err(e) => { print("stat " + kind(e)); } }
-            opt("close", r.close());
+            unit("close", r.close());
             match (r.read_chunk(10)) { Ok(c) => { print("read after close [" + c + "]"); }, Err(e) => { print("read after close " + kind(e)); } }
         }
     }
     match (open_writer_with("g.txt", 1)) {
         Err(e) => { print("open_writer_with " + kind(e)); },
         Ok(w) => {
-            opt("write g", w.write("abcdef"));
-            opt("truncate g", w.truncate(3 as i64));
-            opt("close g", w.close());
+            unit("write g", w.write("abcdef"));
+            unit("truncate g", w.truncate(3 as i64));
+            unit("close g", w.close());
         }
     }
     match (open_reader_with("g.txt", 0)) {
@@ -162,8 +158,8 @@ missing NotFound
     let so = stdout();
     match (so.stat()) { Ok(s) => { print(f"stdout stat size {s.size} file {s.is_file}"); }, Err(e) => { print("stdout stat " + kind(e)); } }
     match (so.seek(0 as i64, 0)) { Ok(_) => { print("stdout seek ok"); }, Err(e) => { print("stdout seek " + kind(e)); } }
-    opt("stdout fsync", so.fsync());
-    opt("stdout truncate", so.truncate(0 as i64));
+    unit("stdout fsync", so.fsync());
+    unit("stdout truncate", so.truncate(0 as i64));
     match (so.flags()) { Ok(b) => { print(f"stdout flags {b}"); }, Err(e) => { print("stdout flags " + kind(e)); } }
     match (so.write_some_bytes([65 as u8, 10 as u8])) { Ok(n) => { print(f"write_some_bytes {n}"); }, Err(e) => { print("write_some_bytes " + kind(e)); } }
     let si = stdin();
@@ -171,11 +167,11 @@ missing NotFound
     match (si.read_chunk(100)) { Ok(c) => { print("stdin rest [" + c + "]"); }, Err(e) => { print("stdin " + kind(e)); } }
     line("stdin", "eof", io.read_line(si));
     match (si.flags()) { Ok(b) => { print(f"stdin flags {b}"); }, Err(e) => { print("stdin flags " + kind(e)); } }
-    opt("stdin close", si.close());
+    unit("stdin close", si.close());
     let se = stderr();
-    opt("stderr close", se.close());
-    opt("stderr write", se.write("lost"));
-    opt("stderr close again", se.close());
+    unit("stderr close", se.close());
+    unit("stderr write", se.write("lost"));
+    unit("stderr close again", se.close());
     return 0;
 }`, want: `stdout stat size 0 file false
 stdout seek Other(Illegal seek)
@@ -385,12 +381,12 @@ temp_dir slash Other(Invalid argument)
     }
     i = 0;
     while (i < 20) {
-        match (ws[i].write(f"file {i}\n")) { Some(e) => { print(f"write {i} " + kind(e)); return 1; }, None => {} }
+        match (ws[i].write(f"file {i}\n")) { Err(e) => { print(f"write {i} " + kind(e)); return 1; }, Ok(_) => {} }
         i = i + 1;
     }
     i = 0;
     while (i < 20) {
-        match (ws[i].close()) { Some(e) => { print(f"close {i} " + kind(e)); return 1; }, None => {} }
+        match (ws[i].close()) { Err(e) => { print(f"close {i} " + kind(e)); return 1; }, Ok(_) => {} }
         i = i + 1;
     }
     let intact: i32 = 0;

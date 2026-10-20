@@ -456,12 +456,9 @@ function emit(s: Settings, name: string): i32 {
     None => {}
   }
   if (!failed) {
-    match (o.close()) {
-      Some(e) => {
-        failed = true;
-        text = gnu.io_error_text(e);
-      },
-      None => {}
+    if let Err(e) = o.close() {
+      failed = true;
+      text = gnu.io_error_text(e);
     }
   }
   if (!failed) {

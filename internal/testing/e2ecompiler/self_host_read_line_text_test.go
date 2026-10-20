@@ -105,7 +105,7 @@ pub function save(): i32 {
       match (io.read_line(r)) { Ok(Some(s)) => { if (s != second) { return 5; } }, _ => { return 4; } }
       if (held != first) { return 6; }
       match (io.read_line(r)) { Ok(None()) => {}, _ => { return 7; } }
-      match (r.close()) { None => {}, Some(_) => { return 8; } }
+      match (r.close()) { Ok(_) => {}, Err(_) => { return 8; } }
     }
   }
   return 0;

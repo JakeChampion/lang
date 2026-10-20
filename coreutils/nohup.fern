@@ -94,8 +94,8 @@ function open_nohup_out(path: string): Result[Writer, IoError] {
 // 125. docs/COREUTILS.md records that the line is ours.
 function redirect(w: Writer, fd: i32, what: string): void {
   match (w.dup_onto(fd)) {
-    None => {},
-    Some(e) => {
+    Ok(_) => {},
+    Err(e) => {
       gnu.error("failed to redirect standard " + what + ": " + gnu.io_error_text(e));
       exit(status_canceled());
     }
@@ -186,12 +186,9 @@ function append_output(): Appended {
 // there was one) has already replaced — so this is the same dup either way,
 // and stderr follows stdout into nohup.out without knowing that it did.
 function redirect_error(): void {
-  match (stdout().dup_onto(2)) {
-    None => {},
-    Some(e) => {
-      gnu.error("failed to redirect standard error: " + gnu.io_error_text(e));
-      exit(status_canceled());
-    }
+  if let Err(e) = stdout().dup_onto(2) {
+    gnu.error("failed to redirect standard error: " + gnu.io_error_text(e));
+    exit(status_canceled());
   }
 }
 

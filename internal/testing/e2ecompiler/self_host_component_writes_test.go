@@ -23,7 +23,7 @@ func testComponentLongWrites(t *testing.T, compiler string, runner []string, std
   let s = ""; let i = 0;
   while (i < 8193) { s = s + "x"; i = i + 1; }
   let w = ` + stream + `();
-  match (w.write(s)) { Some(_) => { return 1; }, None => {} }
+  match (w.write(s)) { Err(_) => { return 1; }, Ok(_) => {} }
   match (w.write_some(s)) { Err(_) => { return 2; }, Ok(n) => { if (n != 4096) { return 3; } } }
   return 0;
 }`

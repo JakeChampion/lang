@@ -2,24 +2,24 @@ package interp
 
 import "testing"
 
-// A close the kernel would refuse answers EBADF, not None (#8569).
+// A close the kernel would refuse answers EBADF, not Ok (#8569).
 //
 // The interpreter never closes the host's own stdio — the streams outlive the
 // program it is running — but it still has to answer a SECOND close the way
 // every compiled backend does, because that is the whole of gnulib's
-// close_stream contract and so of `prog >&-`'s exit status. Answering None
+// close_stream contract and so of `prog >&-`'s exit status. Answering Ok
 // twice also made the interpreter useless as the oracle for the compiled
 // backends' close reporting, which is how this was found.
 func TestCloseReportsBadFdOnTheSecondClose(t *testing.T) {
-	src := `function code_of(o: Option[IoError]): i32 {
+	src := `function code_of(o: Result[void, IoError]): i32 {
     match (o) {
-        Some(e) => {
+        Err(e) => {
             match (e) {
                 Other(c, msg, _) => { if (msg == "Bad file descriptor") { return 7; } return 5; },
                 _ => { return 4; }
             }
         },
-        None => { return 1; }
+        Ok(_) => { return 1; }
     }
 }
 function main(): i32 {
@@ -30,7 +30,7 @@ function main(): i32 {
 }`
 	val, _ := runCapture(t, src)
 	if val != "17" {
-		t.Errorf("close reporting = %s, want 17 (first None, then Other with glibc's text); 11 = the failing close answered None", val)
+		t.Errorf("close reporting = %s, want 17 (first Ok, then Other with glibc's text); 11 = the failing close answered Ok", val)
 	}
 }
 
@@ -40,15 +40,15 @@ function main(): i32 {
 // the descriptor is not open.
 func TestCloseFileTwiceReportsBadFd(t *testing.T) {
 	dir := t.TempDir()
-	src := `function code_of(o: Option[IoError]): i32 {
+	src := `function code_of(o: Result[void, IoError]): i32 {
     match (o) {
-        Some(e) => {
+        Err(e) => {
             match (e) {
                 Other(c, msg, _) => { if (msg == "Bad file descriptor") { return 7; } return 5; },
                 _ => { return 4; }
             }
         },
-        None => { return 1; }
+        Ok(_) => { return 1; }
     }
 }
 function main(): i32 {

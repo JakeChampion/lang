@@ -72,20 +72,17 @@ pub function main(): i32 {
 
   let w: Writer = stdout();
   match (w.splice_forever(block)) {
-    Some(Unsupported()) => {},
-    Some(e) => {
+    Err(Unsupported()) => {},
+    Err(e) => {
       gnu.error("standard output: " + gnu.io_error_text(e));
       exit(1);
     },
-    None => {}
+    Ok(_) => {}
   }
   while (true) {
-    match (w.write(block)) {
-      Some(e) => {
-        gnu.error("standard output: " + gnu.io_error_text(e));
-        exit(1);
-      },
-      None => {}
+    if let Err(e) = w.write(block) {
+      gnu.error("standard output: " + gnu.io_error_text(e));
+      exit(1);
     }
   }
   return 0;

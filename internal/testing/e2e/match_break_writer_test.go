@@ -113,8 +113,8 @@ func TestWASMMatchBreakContinue(t *testing.T) {
 const writerSSOSrc = `function main(): i32 {
     let w: Writer = stdout();
     let rc: i32 = 0;
-    match (w.write("hi\n")) { Some(_) => { rc = 1; }, None => {}, }
-    match (w.write("longer than seven\n")) { Some(_) => { rc = rc + 2; }, None => {}, }
+    match (w.write("hi\n")) { Err(_) => { rc = 1; }, Ok(_) => {}, }
+    match (w.write("longer than seven\n")) { Err(_) => { rc = rc + 2; }, Ok(_) => {}, }
     return rc;
 }`
 

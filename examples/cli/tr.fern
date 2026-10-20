@@ -102,13 +102,10 @@ function transform(set1: u8[], set2: u8[], del: boolean, squeeze: boolean): i32 
           i = i + 1;
         }
         let bytes = buf_take_bytes(out);
-        match (writer.write_bytes(bytes)) {
-          Some(_) => {
-            buf_free(out);
-            eprint("tr: output write failed");
-            return 1;
-          },
-          None => {}
+        if let Err(_) = writer.write_bytes(bytes) {
+          buf_free(out);
+          eprint("tr: output write failed");
+          return 1;
         }
       }
     }

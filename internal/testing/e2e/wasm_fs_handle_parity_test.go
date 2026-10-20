@@ -26,34 +26,34 @@ function main(): i32 {
     match (open_reader("closed.txt")) {
         Err(_) => { return 2; },
         Ok(r) => {
-            match (r.close()) { Some(_) => { return 3; }, None => {} }
+            match (r.close()) { Err(_) => { return 3; }, Ok(_) => {} }
             match (io.read_line(r)) { Ok(_) => { return 4; }, Err(_) => {} }
             match (r.read_chunk(4)) { Ok(_) => { return 5; }, Err(_) => {} }
             match (r.read_chunk_bytes(4)) { Ok(_) => { return 6; }, Err(_) => {} }
             match (r.stat()) { Ok(_) => { return 7; }, Err(_) => {} }
             match (r.seek(0 as i64, 0)) { Ok(_) => { return 8; }, Err(_) => {} }
             match (r.flags()) { Ok(_) => { return 9; }, Err(_) => {} }
-            match (r.fsync()) { None => { return 10; }, Some(_) => {} }
-            match (r.fdatasync()) { None => { return 11; }, Some(_) => {} }
-            match (r.close()) { None => { return 12; }, Some(_) => {} }
+            match (r.fsync()) { Ok(_) => { return 10; }, Err(_) => {} }
+            match (r.fdatasync()) { Ok(_) => { return 11; }, Err(_) => {} }
+            match (r.close()) { Ok(_) => { return 12; }, Err(_) => {} }
         }
     }
     let bs: u8[] = [120 as u8];
     match (open_writer("closed.txt")) {
         Err(_) => { return 20; },
         Ok(w) => {
-            match (w.close()) { Some(_) => { return 21; }, None => {} }
-            match (w.write("x")) { None => { return 22; }, Some(_) => {} }
+            match (w.close()) { Err(_) => { return 21; }, Ok(_) => {} }
+            match (w.write("x")) { Ok(_) => { return 22; }, Err(_) => {} }
             match (w.write_some("x")) { Ok(_) => { return 23; }, Err(_) => {} }
-            match (w.write_bytes(bs)) { None => { return 24; }, Some(_) => {} }
+            match (w.write_bytes(bs)) { Ok(_) => { return 24; }, Err(_) => {} }
             match (w.write_some_bytes(bs)) { Ok(_) => { return 25; }, Err(_) => {} }
-            match (w.truncate(0 as i64)) { None => { return 26; }, Some(_) => {} }
+            match (w.truncate(0 as i64)) { Ok(_) => { return 26; }, Err(_) => {} }
             match (w.stat()) { Ok(_) => { return 27; }, Err(_) => {} }
             match (w.seek(0 as i64, 0)) { Ok(_) => { return 28; }, Err(_) => {} }
             match (w.flags()) { Ok(_) => { return 29; }, Err(_) => {} }
-            match (w.fsync()) { None => { return 30; }, Some(_) => {} }
-            match (w.fdatasync()) { None => { return 31; }, Some(_) => {} }
-            match (w.close()) { None => { return 32; }, Some(_) => {} }
+            match (w.fsync()) { Ok(_) => { return 30; }, Err(_) => {} }
+            match (w.fdatasync()) { Ok(_) => { return 31; }, Err(_) => {} }
+            match (w.close()) { Ok(_) => { return 32; }, Err(_) => {} }
         }
     }
     // open_writer truncated the file, and nothing written after close landed.

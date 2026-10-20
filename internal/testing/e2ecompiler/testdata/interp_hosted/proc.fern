@@ -74,9 +74,9 @@ function main(): i32 {
   return 0;
 }
 
-function opt_print(r: Option[IoError]): void {
+function opt_print(r: Result[void, IoError]): void {
   match (r) {
-    None => { print("write: ok"); },
-    Some(e) => { print("write: " + kind(e)); }
+    Ok(_) => { print("write: ok"); },
+    Err(e) => { print("write: " + kind(e)); }
   }
 }

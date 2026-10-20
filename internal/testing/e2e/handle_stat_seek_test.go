@@ -80,7 +80,7 @@ func handleStatSeekSource(path, out, app string) string {
     match (open_writer(%[2]q)) {
         Err(_) => { return 40; },
         Ok(w) => {
-            match (w.write("0123456789")) { Some(_) => { return 41; }, None => {} }
+            match (w.write("0123456789")) { Err(_) => { return 41; }, Ok(_) => {} }
             match (w.seek(0 as i64, 1)) {
                 Err(_) => { return 42; },
                 Ok(pos) => { if (pos != 10 as i64) { return 43; } }
@@ -89,7 +89,7 @@ func handleStatSeekSource(path, out, app string) string {
                 Err(_) => { return 44; },
                 Ok(pos) => { if (pos != 4 as i64) { return 45; } }
             }
-            match (w.write("ab")) { Some(_) => { return 46; }, None => {} }
+            match (w.write("ab")) { Err(_) => { return 46; }, Ok(_) => {} }
             match (w.seek(0 as i64, 1)) {
                 Err(_) => { return 47; },
                 Ok(pos) => { if (pos != 6 as i64) { return 48; } }
@@ -119,7 +119,7 @@ func handleStatSeekSource(path, out, app string) string {
                 Err(_) => { return 61; },
                 Ok(pos) => { if (pos != 0 as i64) { return 62; } }
             }
-            match (a.write("XY")) { Some(_) => { return 63; }, None => {} }
+            match (a.write("XY")) { Err(_) => { return 63; }, Ok(_) => {} }
             match (a.seek(0 as i64, 1)) {
                 Err(_) => { return 64; },
                 Ok(pos) => { if (pos != 7 as i64) { return 65; } }
@@ -132,7 +132,7 @@ func handleStatSeekSource(path, out, app string) string {
                 Err(_) => { return 68; },
                 Ok(pos) => { if (pos != 1 as i64) { return 69; } }
             }
-            match (a.write("Z")) { Some(_) => { return 70; }, None => {} }
+            match (a.write("Z")) { Err(_) => { return 70; }, Ok(_) => {} }
             a.close();
         }
     }
@@ -376,7 +376,7 @@ func handleStatSeekWasmSource() string {
     match (open_writer("out.txt")) {
         Err(_) => { return 40; },
         Ok(w) => {
-            match (w.write("0123456789")) { Some(_) => { return 41; }, None => {} }
+            match (w.write("0123456789")) { Err(_) => { return 41; }, Ok(_) => {} }
             match (w.seek(0 as i64, 1)) {
                 Err(_) => { return 42; },
                 Ok(pos) => { if (pos != 10 as i64) { return 43; } }
@@ -385,7 +385,7 @@ func handleStatSeekWasmSource() string {
                 Err(_) => { return 44; },
                 Ok(pos) => { if (pos != 4 as i64) { return 45; } }
             }
-            match (w.write("ab")) { Some(_) => { return 46; }, None => {} }
+            match (w.write("ab")) { Err(_) => { return 46; }, Ok(_) => {} }
             match (w.seek(0 as i64, 1)) {
                 Err(_) => { return 47; },
                 Ok(pos) => { if (pos != 6 as i64) { return 48; } }
@@ -412,7 +412,7 @@ func handleStatSeekWasmSource() string {
                 Err(_) => { return 61; },
                 Ok(pos) => { if (pos != 0 as i64) { return 62; } }
             }
-            match (a.write("XY")) { Some(_) => { return 63; }, None => {} }
+            match (a.write("XY")) { Err(_) => { return 63; }, Ok(_) => {} }
             match (a.seek(0 as i64, 1)) {
                 Err(_) => { return 64; },
                 Ok(pos) => { if (pos != 7 as i64) { return 65; } }
@@ -425,7 +425,7 @@ func handleStatSeekWasmSource() string {
                 Err(_) => { return 68; },
                 Ok(pos) => { if (pos != 1 as i64) { return 69; } }
             }
-            match (a.write("Z")) { Some(_) => { return 70; }, None => {} }
+            match (a.write("Z")) { Err(_) => { return 70; }, Ok(_) => {} }
             a.close();
         }
     }

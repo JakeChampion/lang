@@ -858,12 +858,9 @@ function settle_holes(k: Sink): boolean {
         },
         Ok(at) => {
           if (st.size < at) {
-            match (k.w.truncate(at)) {
-              Some(e) => {
-                gnu.error("failed to truncate to " + at.to_string() + " bytes in output file " + gnu.quote(k.name) + ": " + gnu.io_error_text(e));
-                return false;
-              },
-              None => {}
+            if let Err(e) = k.w.truncate(at) {
+              gnu.error("failed to truncate to " + at.to_string() + " bytes in output file " + gnu.quote(k.name) + ": " + gnu.io_error_text(e));
+              return false;
             }
           }
         }
@@ -1047,10 +1044,7 @@ function whole_seconds(ns: i64): i64 {
 
 function progress_line(bytes: i64, sec: i64): void {
   let w: Writer = stderr();
-  match (w.write("\r" + transfer_line(bytes, sec as f64))) {
-    Some(_) => {},
-    None => {}
-  }
+  w.write("\r" + transfer_line(bytes, sec as f64));
 }
 
 // ---- nocache ----------------------------------------------------------------
@@ -1922,12 +1916,7 @@ function seek_output(w: Writer, s: Settings, name: string): boolean {
   if (!s.have_out) {
     return true;
   }
-  match (w.truncate(want)) {
-    Some(_) => {
-      return true;
-    },
-    None => {}
-  }
+  w.truncate(want);
   return true;
 }
 
@@ -1943,9 +1932,9 @@ function refuse_combined(conv: i32, group: i32, what: string): void {
 
 // discard_all reports a failed whole-file drop under the side's name, or
 // what GNU calls it when it has none, and answers whether it succeeded.
-function discard_all(res: Option[IoError], name: string, unnamed: string): boolean {
+function discard_all(res: Result[void, IoError], name: string, unnamed: string): boolean {
   match (res) {
-    Some(e) => {
+    Err(e) => {
       let shown: string = name;
       if (shown.len() == 0) {
         shown = unnamed;
@@ -1953,7 +1942,7 @@ function discard_all(res: Option[IoError], name: string, unnamed: string): boole
       gnu.error("failed to discard cache for: " + gnu.quotef(shown) + ": " + gnu.io_error_text(e));
       return false;
     },
-    None => {
+    Ok(_) => {
       return true;
     }
   }
@@ -2028,25 +2017,19 @@ pub function main(): i32 {
   // other errno is the fdatasync's own.
   let want_fsync: boolean = (s.conv & conv_fsync()) != 0;
   if ((s.conv & conv_fdatasync()) != 0) {
-    match (w.fdatasync()) {
-      Some(e) => {
-        if (errno.of(e) == errno.EINVAL) {
-          want_fsync = true;
-        } else {
-          gnu.error("fdatasync failed for " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
-          status = 1;
-        }
-      },
-      None => {}
+    if let Err(e) = w.fdatasync() {
+      if (errno.of(e) == errno.EINVAL) {
+        want_fsync = true;
+      } else {
+        gnu.error("fdatasync failed for " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
+        status = 1;
+      }
     }
   }
   if (want_fsync) {
-    match (w.fsync()) {
-      Some(e) => {
-        gnu.error("fsync failed for " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
-        status = 1;
-      },
-      None => {}
+    if let Err(e) = w.fsync() {
+      gnu.error("fsync failed for " + gnu.quote(s.out_name) + ": " + gnu.io_error_text(e));
+      status = 1;
     }
   }
   if (interrupt_taken(intr)) {

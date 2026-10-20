@@ -18,7 +18,7 @@ import (
 //     it writes the payload and then the newline byte and so allocates nothing;
 //     print now does the same with a second print_str of a "\n" literal, which
 //     is also native's __fern_puts shape.
-//   - Writer.write's Option[IoError] answer is a fresh rc=1 box __fern_writer_write
+//   - Writer.write's Result[void, IoError] answer is a fresh rc=1 box __fern_writer_write
 //     built for this caller, and a match over the call consumed it without
 //     releasing it: 40 bytes a write, so a cat-shaped loop leaked 40 bytes a
 //     chunk. The match now gives the box back.
@@ -40,14 +40,14 @@ func printLoopSrc(payload string, rounds int) string {
 }`, rounds, payload)
 }
 
-// writeLoopSrc is the same loop through `w.write(...)`, whose Option[IoError]
-// answer the match consumes.
+// writeLoopSrc is the same loop through `w.write(...)`, whose
+// Result[void, IoError] answer the match consumes.
 func writeLoopSrc(payload string, rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let w: Writer = stdout();
     let i: i32 = 0;
     while (i < %d) {
-        match (w.write("%s")) { Some(_) => { return 9; }, None => {} }
+        match (w.write("%s")) { Err(_) => { return 9; }, Ok(_) => {} }
         i = i + 1;
     }
     return 0;
@@ -62,7 +62,7 @@ func writeGuardedArmSrc(payload string, rounds int) string {
     let w: Writer = stdout();
     let i: i32 = 0;
     while (i < %d) {
-        match (w.write("%s")) { Some(_) when i < 0 => { return 9; }, _ => {} }
+        match (w.write("%s")) { Err(_) when i < 0 => { return 9; }, _ => {} }
         i = i + 1;
     }
     return 0;
@@ -79,8 +79,8 @@ func writeReturningArmSrc(payload string, rounds int) string {
     let i: i32 = 0;
     while (i < 1000000) {
         match (w.write("%s")) {
-            Some(_) => { return 9; },
-            None => { i = i + 1; if (i >= %d) { return 0; } }
+            Err(_) => { return 9; },
+            Ok(_) => { i = i + 1; if (i >= %d) { return 0; } }
         }
     }
     return 0;

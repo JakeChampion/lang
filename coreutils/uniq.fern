@@ -594,11 +594,8 @@ function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
       buf_push_bytes_range(h, prev, pat, pat + plen);
     }
   }
-  match (r.close()) {
-    Some(e) => {
-      gnu.die(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e), 1);
-    },
-    None => {}
+  if let Err(e) = r.close() {
+    gnu.die(out, "error reading " + gnu.quotea(name) + ": " + gnu.io_error_text(e), 1);
   }
   gnu.close_stdout(out, false);
   return 0;

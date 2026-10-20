@@ -472,10 +472,10 @@ function resize(w: Writer, cfg: Cfg, info: Info, name: string): boolean {
     nsize = t.size;
   }
   match (w.truncate(nsize)) {
-    None => {
+    Ok(_) => {
       return true;
     },
-    Some(e) => {
+    Err(e) => {
       gnu.error("failed to truncate " + gnu.quotea(name) + " at " + nsize.to_string() + " bytes: " + gnu.io_error_text(e));
       return false;
     }

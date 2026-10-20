@@ -1,6 +1,6 @@
 # Raw Writer output
 
-`Writer.write_bytes(u8[]): Option[IoError]` completes short writes or
+`Writer.write_bytes(u8[]): Result[void, IoError]` completes short writes or
 returns an error. Zero progress is an error for a nonempty remainder.
 `Writer.write_some_bytes(u8[]): Result[i64, IoError]` returns the count
 from one backend write, which may be zero. Both methods borrow their

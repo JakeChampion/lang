@@ -562,11 +562,8 @@ function write_all(w: Writer, data: u8[], from: i32, to: i32): string {
     buf_free(h);
   }
   // The writer retries short writes while borrowing the same byte array.
-  match (w.write_bytes(piece)) {
-    Some(e) => {
-      return gnu.io_error_text(e);
-    },
-    None => {}
+  if let Err(e) = w.write_bytes(piece) {
+    return gnu.io_error_text(e);
   }
   return "";
 }
@@ -828,11 +825,8 @@ function write_data(r: Reader, w: Writer, scan: boolean, fill: boolean, punch: b
   // hole would leave the copy short. The length is what makes the last
   // hole real.
   if (f.ended_in_hole) {
-    match (w.truncate(total)) {
-      Some(e) => {
-        return Bytes { ok: false, err: gnu.io_error_text(e), how: how, offloaded: f.offloaded };
-      },
-      None => {}
+    if let Err(e) = w.truncate(total) {
+      return Bytes { ok: false, err: gnu.io_error_text(e), how: how, offloaded: f.offloaded };
     }
   }
   return Bytes { ok: true, err: "", how: how, offloaded: f.offloaded };
@@ -926,10 +920,7 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
           return fail(st, "cannot create regular file " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
         },
         Ok(w) => {
-          match (w.close()) {
-            Some(_) => {},
-            None => {}
-          }
+          w.close();
         }
       }
       return apply_attrs(cfg, st, src, dest, create_mode(cfg, src));
@@ -960,35 +951,23 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
       let opened: DestOpen = open_dest(cfg, dest, existed);
       match (opened.err) {
         Some(e3) => {
-          match (r.close()) {
-            Some(_) => {},
-            None => {}
-          }
+          r.close();
           return fail(st, e3);
         },
         None => {}
       }
       match (opened.w) {
         None => {
-          match (r.close()) {
-            Some(_) => {},
-            None => {}
-          }
+          r.close();
           return fail(st, "cannot create regular file " + gnu.quotea(dest));
         },
         Some(w) => {
           let b: Bytes = write_data(r, w, scans_extents(cfg, src), cfg.sparse == sparse_never(), cfg.sparse == sparse_always(), src.size, hole_block(src));
-          match (r.close()) {
-            Some(_) => {},
-            None => {}
-          }
-          match (w.close()) {
-            Some(ce) => {
-              if (b.ok) {
-                b = Bytes { ...b, ok: false, err: gnu.io_error_text(ce) };
-              }
-            },
-            None => {}
+          r.close();
+          if let Err(ce) = w.close() {
+            if (b.ok) {
+              b = Bytes { ...b, ok: false, err: gnu.io_error_text(ce) };
+            }
           }
           st = debug_line(cfg, st, b);
           if (!b.ok) {

@@ -9,11 +9,11 @@ import (
 )
 
 // TestSelfHostReaderWasmIR closes the streaming-reader wasm IR gap: the Reader
-// intrinsics `r.read_chunk(n)` (-> Result[string, IoError]) and `r.close()` (-> the
-// always-None Option[IoError]) now lower on the wasm IR path. A Reader is just
+// intrinsics `r.read_chunk(n)` (-> Result[string, IoError]) and `r.close()` (-> a
+// Result[void, IoError]) now lower on the wasm IR path. A Reader is just
 // its fd (stdin() = fd 0), so read_chunk reads stdin via preview1 fd_read into a
 // fresh string block and boxes Some(chunk) / None-at-EOF, and close calls
-// fd_close and boxes None — the same Option[string] / Option[IoError] ABIs the
+// fd_close and boxes the outcome — the same Option[string] / Result[void, IoError] ABIs the
 // register backends' __fn___fern_reader_read_chunk / __fn___fern_reader_close
 // produce, and the same string+Option layout env_func builds. Backs the std/io
 // read_all_stdin loop on wasm.
@@ -47,7 +47,7 @@ func TestSelfHostReaderWasmIR(t *testing.T) {
     let r: Reader = stdin();
     match (r.read_chunk(5)) { Ok(s) => { write(s); write(":"); }, Err(e) => { return 4; } }
     match (r.read_chunk(20)) { Ok(s) => { write(s); }, Err(e) => { return 5; } }
-    match (r.close()) { Some(_) => { return 6; }, None => {} }
+    match (r.close()) { Err(_) => { return 6; }, Ok(_) => {} }
     return 0;
 }`, "hello world", "hello: world", 0},
 		// Drain to EOF: loop read_chunk until it comes back empty, summing

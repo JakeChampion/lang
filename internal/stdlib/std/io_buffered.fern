@@ -4,7 +4,7 @@
 //
 // BytesWriter accumulates bytes in memory. Its write_string and write_bytes
 // methods return an updated BytesWriter. The fd-backed Writer instead has
-// write(string) and write_bytes([u8]), which return Option[IoError].
+// write(string) and write_bytes([u8]), which return Result[void, IoError].
 //
 // Build a byte buffer without a host write for each piece:
 //
@@ -19,6 +19,7 @@
 // the whole input. Both are below.
 //
 import "core/mem";
+import "std/io_outcome";
 import "std/string";
 import "std/utf8" as utf8;
 
@@ -319,22 +320,20 @@ pub function (b: BufWriter) flush(): BufWriter {
 // `(b).close()` — flush, then close the Writer: fclose. The error is the
 // close's when that fails, else the flush's; pending bytes behind a
 // sticky error count as a failed write, as the fd already refused them.
-pub function (b: BufWriter) close(): Option[IoError] {
+pub function (b: BufWriter) close(): Result[void, IoError] {
   // Read the pending count BEFORE the flush: the builder is shared between
   // `b` and `flushed`, so afterwards both report zero.
   let pending: i32 = buf_len(b.buf.h);
   let flushed: BufWriter = b.flush();
-  let closed: Option[IoError] = b.w.close();
-  match (closed) {
-    Some(e) => {
-      return Some(e);
-    },
-    None => {}
+  if let Some(e) = b.w.close().failure() {
+    return Err(e);
   }
   if (pending > 0) {
-    return flushed.error();
+    if let Some(e) = flushed.error() {
+      return Err(e);
+    }
   }
-  return None;
+  return Ok(());
 }
 
 // `(b).error()` — the first write failure, if any.
@@ -377,14 +376,10 @@ function __buf_writer_put(b: BufWriter, s: string): BufWriter {
     },
     None => {}
   }
-  match (b.w.write(s)) {
-    Some(e) => {
-      return BufWriter { ...b, err: Some(e) };
-    },
-    None => {
-      return b;
-    }
+  if let Some(e) = b.w.write(s).failure() {
+    return BufWriter { ...b, err: Some(e) };
   }
+  return b;
 }
 
 // Buffered content can end inside a scalar or contain arbitrary mapped bytes.
@@ -396,14 +391,10 @@ function __buf_writer_put_bytes(b: BufWriter, bytes: u8[]): BufWriter {
     },
     None => {}
   }
-  match (b.w.write_bytes(bytes)) {
-    Some(e) => {
-      return BufWriter { ...b, err: Some(e) };
-    },
-    None => {
-      return b;
-    }
+  if let Some(e) = b.w.write_bytes(bytes).failure() {
+    return BufWriter { ...b, err: Some(e) };
   }
+  return b;
 }
 
 // ---- ByteLineReader --------------------------------------------------------

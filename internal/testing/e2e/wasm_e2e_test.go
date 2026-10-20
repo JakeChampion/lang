@@ -788,7 +788,7 @@ func TestWASMWriterWriteStdoutNoCorruption(t *testing.T) {
 import "std/string";
 function emit(s: string): i32 {
     let w: Writer = stdout();
-    match (w.write(s)) { Some(_) => { return 1; }, None => {}, }
+    match (w.write(s)) { Err(_) => { return 1; }, Ok(_) => {}, }
     return 0;
 }
 function main(): i32 {
@@ -6174,8 +6174,8 @@ func TestWASMReadWriteFileRoundtrip(t *testing.T) {
 // each can be verified.
 func TestWASMStdStreams(t *testing.T) {
 	src := `function main(): i32 {
-		match (stdout().write("out\n")) { Some(_) => { return 1; }, None => {} }
-		match (stderr().write("err\n")) { Some(_) => { return 2; }, None => {} }
+		match (stdout().write("out\n")) { Err(_) => { return 1; }, Ok(_) => {} }
+		match (stderr().write("err\n")) { Err(_) => { return 2; }, Ok(_) => {} }
 		return 0;
 	}`
 	stdout, stderr := invokeWasmtime(t, src)
@@ -6200,9 +6200,9 @@ func TestWASMStreamingRoundtrip(t *testing.T) {
 function main(): i32 {
 		match (open_writer("out.txt")) {
 			Ok(w) => {
-				match (w.write("line 1\n")) { Some(_) => { return 1; }, None => {} }
-				match (w.write("line 2\n")) { Some(_) => { return 2; }, None => {} }
-				match (w.close()) { Some(_) => { return 3; }, None => {} }
+				match (w.write("line 1\n")) { Err(_) => { return 1; }, Ok(_) => {} }
+				match (w.write("line 2\n")) { Err(_) => { return 2; }, Ok(_) => {} }
+				match (w.close()) { Err(_) => { return 3; }, Ok(_) => {} }
 			},
 			Err(_) => { return 4; }
 		}
@@ -6211,7 +6211,7 @@ function main(): i32 {
 				match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 5; } }
 				match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 6; } }
 				match (io.read_line(r)) { Ok(None()) => {}, _ => { return 7; } }
-				match (r.close()) { Some(_) => { return 8; }, None => {} }
+				match (r.close()) { Err(_) => { return 8; }, Ok(_) => {} }
 				return 0;
 			},
 			Err(_) => { return 9; }
@@ -6231,8 +6231,8 @@ func TestWASMReaderReadChunk(t *testing.T) {
 	src := `function main(): i32 {
 		match (open_writer("rc.txt")) {
 			Ok(w) => {
-				match (w.write("hello world")) { Some(_) => { return 1; }, None => {} }
-				match (w.close()) { Some(_) => { return 2; }, None => {} }
+				match (w.write("hello world")) { Err(_) => { return 1; }, Ok(_) => {} }
+				match (w.close()) { Err(_) => { return 2; }, Ok(_) => {} }
 			},
 			Err(_) => { return 3; }
 		}
@@ -6268,15 +6268,15 @@ func TestWASMOpenAppender(t *testing.T) {
 	src := `function main(): i32 {
 		match (open_writer("ap.txt")) {
 			Ok(w) => {
-				match (w.write("first")) { Some(_) => { return 1; }, None => {} }
-				match (w.close()) { Some(_) => { return 2; }, None => {} }
+				match (w.write("first")) { Err(_) => { return 1; }, Ok(_) => {} }
+				match (w.close()) { Err(_) => { return 2; }, Ok(_) => {} }
 			},
 			Err(_) => { return 3; }
 		}
 		match (open_appender("ap.txt")) {
 			Ok(w) => {
-				match (w.write("-second")) { Some(_) => { return 4; }, None => {} }
-				match (w.close()) { Some(_) => { return 5; }, None => {} }
+				match (w.write("-second")) { Err(_) => { return 4; }, Ok(_) => {} }
+				match (w.close()) { Err(_) => { return 5; }, Ok(_) => {} }
 			},
 			Err(_) => { return 6; }
 		}
@@ -10882,8 +10882,8 @@ func TestCmdLangComponentWrapCliWithOpenWriter(t *testing.T) {
     match (open_writer("out.txt")) {
         Ok(w) => {
             match (w.write("hello world\n")) {
-                Some(e) => { return 2; },
-                None => { return 0; }
+                Err(e) => { return 2; },
+                Ok(_) => { return 0; }
             }
             return 4;
         },
@@ -10992,8 +10992,8 @@ func TestCmdLangComponentWrapCliWithOpenAppender(t *testing.T) {
     match (open_appender("log.txt")) {
         Ok(w) => {
             match (w.write("line2\n")) {
-                Some(e) => { return 2; },
-                None => { return 0; }
+                Err(e) => { return 2; },
+                Ok(_) => { return 0; }
             }
             return 4;
         },

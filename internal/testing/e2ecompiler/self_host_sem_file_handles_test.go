@@ -18,22 +18,22 @@ func selfHostSemFileHandleSource(base string) string {
     match (open_writer(%[1]q + "/w.txt")) {
         Err(_) => { return 10; },
         Ok(w) => {
-            match (w.write("first\n")) { Some(_) => { return 11; }, None => {} }
-            match (w.close()) { Some(_) => { return 12; }, None => {} }
+            match (w.write("first\n")) { Err(_) => { return 11; }, Ok(_) => {} }
+            match (w.close()) { Err(_) => { return 12; }, Ok(_) => {} }
         }
     }
     match (open_appender(%[1]q + "/w.txt")) {
         Err(_) => { return 20; },
         Ok(w) => {
-            match (w.write("second\n")) { Some(_) => { return 21; }, None => {} }
-            match (w.close()) { Some(_) => { return 22; }, None => {} }
+            match (w.write("second\n")) { Err(_) => { return 21; }, Ok(_) => {} }
+            match (w.close()) { Err(_) => { return 22; }, Ok(_) => {} }
         }
     }
     match (open_exclusive(%[1]q + "/x.txt")) {
         Err(_) => { return 30; },
         Ok(w) => {
-            match (w.write("only\n")) { Some(_) => { return 31; }, None => {} }
-            match (w.close()) { Some(_) => { return 32; }, None => {} }
+            match (w.write("only\n")) { Err(_) => { return 31; }, Ok(_) => {} }
+            match (w.close()) { Err(_) => { return 32; }, Ok(_) => {} }
         }
     }
     match (open_exclusive(%[1]q + "/x.txt")) {
@@ -43,8 +43,8 @@ func selfHostSemFileHandleSource(base string) string {
     match (open_writer_with(%[1]q + "/f.txt", 1)) {
         Err(_) => { return 40; },
         Ok(w) => {
-            match (w.write("flagged\n")) { Some(_) => { return 41; }, None => {} }
-            match (w.close()) { Some(_) => { return 42; }, None => {} }
+            match (w.write("flagged\n")) { Err(_) => { return 41; }, Ok(_) => {} }
+            match (w.close()) { Err(_) => { return 42; }, Ok(_) => {} }
         }
     }
     match (open_reader(%[1]q + "/w.txt")) {
@@ -54,7 +54,7 @@ func selfHostSemFileHandleSource(base string) string {
                 Err(_) => { return 51; },
                 Ok(s) => { if (s != "first\nsecond\n") { return 52; } }
             }
-            match (r.close()) { Some(_) => { return 53; }, None => {} }
+            match (r.close()) { Err(_) => { return 53; }, Ok(_) => {} }
         }
     }
     match (open_reader_with(%[1]q + "/f.txt", 0)) {
@@ -64,7 +64,7 @@ func selfHostSemFileHandleSource(base string) string {
                 Err(_) => { return 61; },
                 Ok(line) => { if (line != "flagged\n") { return 62; } }
             }
-            match (r.close()) { Some(_) => { return 63; }, None => {} }
+            match (r.close()) { Err(_) => { return 63; }, Ok(_) => {} }
         }
     }
     match (open_reader(%[1]q + "/nope.txt")) {

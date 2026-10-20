@@ -520,7 +520,7 @@ function probe_handle(path: string): i32 {
             match (r.stat()) { Ok(st) => { n = n + 100; }, Err(e) => { n = n + 1000; } }
             match (r.flags()) { Ok(f) => { n = n + 200; }, Err(e) => { n = n + 2000; } }
             if (!r.isatty()) { n = n + 400; }
-            match (r.close()) { Some(e) => { n = n + 4000; }, None => { n = n + 800; } }
+            match (r.close()) { Err(e) => { n = n + 4000; }, Ok(_) => { n = n + 800; } }
         },
         Err(e) => { n = n + 8000; },
     }

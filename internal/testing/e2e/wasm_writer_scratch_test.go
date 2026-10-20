@@ -22,8 +22,8 @@ func wasmWriterWriteSrc(writes int) string {
     let i: i32 = 0;
     while (i < %d) {
         match (w.write(s)) {
-            Some(e) => { return 1; },
-            None => { }
+            Err(e) => { return 1; },
+            Ok(_) => { }
         }
         i = i + 1;
     }

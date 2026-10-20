@@ -23,8 +23,8 @@ const BytePipelineProgram = `function main(): i32 {
   buf_free(h);
   let w = stdout();
   match (w.write_bytes(result)) {
-    Some(_) => { return 2; },
-    None => {},
+    Err(_) => { return 2; },
+    Ok(_) => {},
   }
   return 0;
 }

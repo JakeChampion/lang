@@ -29,7 +29,7 @@ function main(): i32 {
         Ok(r) => {
             match (r.read_chunk(16)) { Ok(_) => { print("read_chunk ok"); }, Err(e) => { print("read_chunk " + msg(e)); } }
             match (r.read_chunk_bytes(16)) { Ok(_) => { print("read_chunk_bytes ok"); }, Err(e) => { print("read_chunk_bytes " + msg(e)); } }
-            match (r.close()) { Some(e) => { print("close " + msg(e)); }, None => {} }
+            match (r.close()) { Err(e) => { print("close " + msg(e)); }, Ok(_) => {} }
         },
         Err(e) => { print("open_reader " + msg(e)); }
     }

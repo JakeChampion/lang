@@ -19,6 +19,7 @@
 // declares `import "std/io";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
 
+import "std/io_outcome";
 import "std/utf8" as utf8;
 
 // The successful caller owns this packed buffer and must free it. Keeping
@@ -61,7 +62,7 @@ pub function read_all_bytes(r: Reader): Result[u8[], IoError] {
 function read_stdin_buffer(): Result[usize, IoError] {
   let r: Reader = stdin();
   let result: Result[usize, IoError] = read_all_buffer(r);
-  let closed: Option[IoError] = r.close();
+  let closed: Option[IoError] = r.close().failure();
   match (result) {
     Err(e) => {
       return Err(e);

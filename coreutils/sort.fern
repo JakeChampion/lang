@@ -1709,12 +1709,9 @@ function out_name(o: Out): string {
 function out_die(o: Out, stage: string, e: IoError): void {
   gnu.error(stage + ": " + out_name(o) + ": " + gnu.io_error_text(e));
   if (target_os() == "darwin" && o.to_stdout) {
-    match (o.w.w.close()) {
-      Some(close_error) => {
-        gnu.error("write error: " + gnu.io_error_text(close_error));
-        exit(sort_failure());
-      },
-      None => {}
+    if let Err(close_error) = o.w.w.close() {
+      gnu.error("write error: " + gnu.io_error_text(close_error));
+      exit(sort_failure());
     }
   }
   gnu.error("write error");

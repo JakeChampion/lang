@@ -210,11 +210,8 @@ function test_buf_writer_close_writes(): test.TestOutcome {
       let b: io.BufWriter = io.buf_writer_new(w, 64);
       b = b.write_string("held");
       let held: i32 = b.buffered();
-      match (b.close()) {
-        Some(_) => {
-          return test.fail("close failed");
-        },
-        None => {}
+      if let Err(_) = b.close() {
+        return test.fail("close failed");
       }
       let got: string = "";
       match (read_file(path)) {
@@ -248,13 +245,13 @@ function test_buf_writer_close_refused(): test.TestOutcome {
       }
       b = b.write_string("x");
       match (b.close()) {
-        Some(Other(_, msg, _)) => {
+        Err(Other(_, msg, _)) => {
           return test.assert_eq(sticky && msg == "No space left on device", true);
         },
-        Some(_) => {
+        Err(_) => {
           return test.fail("close error is not Other");
         },
-        None => {
+        Ok(_) => {
           return test.fail("close did not report the refused write");
         }
       }
@@ -270,10 +267,10 @@ function test_buf_writer_close_empty(): test.TestOutcome {
     Ok(w) => {
       let b: io.BufWriter = io.buf_writer_new(w, 4);
       match (b.close()) {
-        Some(_) => {
+        Err(_) => {
           return test.fail("close with nothing held failed");
         },
-        None => {
+        Ok(_) => {
           return test.assert_eq(true, true);
         }
       }

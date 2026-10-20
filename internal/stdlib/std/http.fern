@@ -3102,7 +3102,7 @@ function __file_ranges_read(path: string, ranges: i64[], seams: u8[][]): Option[
   match (open_reader(path)) {
     Ok(r) => {
       let got: Option[u8[]] = file_ranges_bytes(ranges, seams, (offset: i64, len: i64): Option[u8[]] => __read_span(r, offset, len));
-      let closed: Option[IoError] = r.close();
+      r.close();
       return got;
     },
     Err(e) => {

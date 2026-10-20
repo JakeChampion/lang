@@ -187,15 +187,15 @@ func TestSelfHostWasmComponentDropCache(t *testing.T) {
 	comp, printed := buildFsMutateComponent(t, cli, dir, `function main(): i32 {
     match (open_writer("cached.txt")) {
         Ok(w) => {
-            match (w.write("cached\n")) { None => {}, Some(_) => { return 1; } }
-            match (w.drop_cache(0i64, 0i64)) { None => {}, Some(_) => { return 1; } }
+            match (w.write("cached\n")) { Ok(_) => {}, Err(_) => { return 1; } }
+            match (w.drop_cache(0i64, 0i64)) { Ok(_) => {}, Err(_) => { return 1; } }
             w.close();
         },
         Err(_) => { return 1; }
     }
     match (open_reader("cached.txt")) {
         Ok(r) => {
-            match (r.drop_cache(2i64, 0i64)) { None => {}, Some(_) => { return 1; } }
+            match (r.drop_cache(2i64, 0i64)) { Ok(_) => {}, Err(_) => { return 1; } }
             match (r.read_chunk(6)) { Ok(c) => { if (c != "cached") { return 1; } }, Err(_) => { return 1; } }
         },
         Err(_) => { return 1; }

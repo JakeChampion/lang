@@ -5401,7 +5401,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    bl __fn___fern_writer_write_some\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 431) {  // writer_splice_forever
     // [fd, str box], marshalled as write_some's are, into
-    // __fn___fern_writer_splice_forever(fd, s) -> a fresh Option[IoError].
+    // __fn___fern_writer_splice_forever(fd, s) -> a fresh Result[void, IoError].
     s = s.need("heap");
     s = s.need("splice_forever");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
@@ -5589,7 +5589,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    bl __fn___fern_sysctl\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 299) {  // fd_fsync
     // [fd] IS param[0]; __fn___fern_fd_fsync pushes a fresh
-    // Option[IoError], None once the write-back is scheduled.
+    // Result[void, IoError], Ok once the write-back is scheduled.
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("fd_fsync");
@@ -5626,7 +5626,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("fd_stat");
     s = s.write("    bl __fn___fern_fd_stat\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 311) {  // fd_dup_onto
-    // [fd][newfd] -> Option[IoError]. newfd is on top but param[0] is
+    // [fd][newfd] -> Result[void, IoError]. newfd is on top but param[0] is
     // fd, so swap before the call, as writer_truncate does.
     s = s.need("heap");
     s = s.need("reader");
@@ -5665,7 +5665,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_reader_copy_range\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 281) {  // writer_truncate
-    // [fd][length] -> Option[IoError]. The length is on top but
+    // [fd][length] -> Result[void, IoError]. The length is on top but
     // param[0] is fd, so swap before the call, as writer_write does.
     s = s.need("heap");
     s = s.need("reader");
@@ -10690,7 +10690,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // started returning a Result (#7758) — it calls io_error like every other
   // leaf, so it has to share the bundle's call graph rather than sit alone.
   // writer_write joined for the same reason once its own result became an
-  // Option[IoError] (#7926), and reader_close once it started reporting a
+  // Result[void, IoError] (#7926), and reader_close once it started reporting a
   // failing close instead of discarding it.
   if (needs_fs_runtime(s)) {
     let fs_src: string = asmcore.rt_src_io_error(tgt);

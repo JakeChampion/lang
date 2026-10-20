@@ -4038,6 +4038,17 @@ borrowed reader after use.
   A valid partial line preceding an I/O failure is returned once. `None`
   without an error means EOF. Use `ByteLineReader` for arbitrary bytes.
 
+### `std/io_outcome`
+
+`.failure()`, the `IoError` a handle operation with no value reports, read
+off either `Option[IoError]` (what the pinned stage0 types such an
+operation as) or `Result[void, IoError]` (what it returns today). It
+imports nothing; std/io, std/io_buffered and the compiler's interpreter
+read their outcomes through it so stage0 builds them. It goes when the pin
+is refreshed (#12844).
+
+- `failure(): Option[IoError]` — on either shape, the error or `None`.
+
 ### `std/time`
 
 Date/time module shaped after jiff / NodaTime, backing the
@@ -4996,7 +5007,11 @@ The following types are synthesised by the checker (declared in
   `InvalidUtf8`, `Interrupted`, `Unsupported` (the target does not offer
   the operation), `Other(path, message, errno)` (`std/errno` names the
   errno)
-- `Reader`, `Writer` — stdin / stdout / stderr / file
+- `Reader`, `Writer` — stdin / stdout / stderr / file. A handle operation
+  with no value to return (`write`, `write_bytes`, `close`, `fsync`,
+  `fdatasync`, `syncfs`, `truncate`, `dup_onto`, `drop_cache`,
+  `splice_forever`) answers `Result[void, IoError]`, so `?` composes it with
+  the rest of the filesystem surface
 - `HttpRequest`, `HttpResponse` — request / response shape
 - `Url` — host / port / path / query / fragment parts
 - `Map[K, V]`, `MapIter[K, V]` — generic associative container

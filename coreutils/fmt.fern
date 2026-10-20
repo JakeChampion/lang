@@ -1364,11 +1364,8 @@ function run(files: string[], st: Settings): i32 {
   // descriptor that was closed before the program started reports the
   // read error first and then this, and `fmt FILE <&-` reports neither.
   if (used_stdin) {
-    match (stdin().close()) {
-      Some(e) => {
-        s = State { ...s, o: report(s.o, "closing standard input: " + gnu.io_error_text(e)), ok: false };
-      },
-      None => {}
+    if let Err(e) = stdin().close() {
+      s = State { ...s, o: report(s.o, "closing standard input: " + gnu.io_error_text(e)), ok: false };
     }
   }
 

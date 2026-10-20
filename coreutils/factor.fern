@@ -1069,12 +1069,9 @@ function line_done(o: Out, start: i32): void {
 // One write of `piece`. gnulib's write_error(): the errno named once,
 // nothing retried, and out.
 function out_write(o: Out, piece: string): void {
-  match (o.w.write(piece)) {
-    Some(e) => {
-      gnu.error("write error: " + gnu.io_error_text(e));
-      exit(1);
-    },
-    None => {}
+  if let Err(e) = o.w.write(piece) {
+    gnu.error("write error: " + gnu.io_error_text(e));
+    exit(1);
   }
 }
 
@@ -1088,14 +1085,11 @@ function out_finish(o: Out, status: i32): i32 {
   if (s.len() > 0) {
     out_write(o, s);
   }
-  match (o.w.close()) {
-    Some(e) => {
-      if (errno.of(e) != errno.EBADF) {
-        gnu.error("write error: " + gnu.io_error_text(e));
-        return 1;
-      }
-    },
-    None => {}
+  if let Err(e) = o.w.close() {
+    if (errno.of(e) != errno.EBADF) {
+      gnu.error("write error: " + gnu.io_error_text(e));
+      return 1;
+    }
   }
   return status;
 }

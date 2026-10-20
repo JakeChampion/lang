@@ -197,12 +197,12 @@ function main(): i32 { let c: boolean = true; let b = if (c) { Full(1) } else { 
 		want   string
 	}{
 		{"try-option-in-result-fn", `function a(): Result[i32, IoError] {
-  let w: Writer = stdout();
-  w.write("hi\n")?;
-  return Ok(1);
+  let x: Option[i32] = Some(1);
+  let n: i32 = x?;
+  return Ok(n);
 }
 function main(): i32 { return 0; }
-`, "3:18: error[E042]: `?` on Option requires the surrounding function to return Option, got Result[i32, IoError]"},
+`, "3:17: error[E042]: `?` on Option requires the surrounding function to return Option, got Result[i32, IoError]"},
 		{"try-option-in-generic-fn", `function h[T](o: Option[i32]): T { let v: i32 = o?; return h[T](o); }
 function main(): i32 { return 0; }
 `, "1:50: error[E042]: `?` on Option requires the surrounding function to return Option, got T"},

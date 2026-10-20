@@ -26,7 +26,7 @@ func TestSelfHostWasmComponentWriter(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"stdout", `function main(): i32 {
     let w: Writer = stdout();
-    match (w.write("ok\n")) { Some(_) => { return 3; }, None => {} }
+    match (w.write("ok\n")) { Err(_) => { return 3; }, Ok(_) => {} }
     return 0;
 }
 `},

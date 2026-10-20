@@ -12,7 +12,7 @@ import (
 // readerStdinIRCases exercise the built-in Reader resource intrinsics — stdin(),
 // r.read_chunk(n), r.close() — through the self-host IR path (#2691). A Reader
 // is just its fd (an i32); stdin() is fd 0; read_chunk(n) reads up to n bytes;
-// close() yields Option[IoError]. Every stdin-reading tool funnels through this
+// close() yields Result[void, IoError]. Every stdin-reading tool funnels through this
 // Reader path, std/io's read_all_stdin loop included. Each case is a
 // single-module program (Reader/stdin/read_chunk are builtins) fed a stdin
 // string and oracle-checked against the interpreter with the same stdin.
@@ -35,7 +35,7 @@ var readerStdinIRCases = []struct {
 	{"longer", `function main(): i32 { let r: Reader = stdin(); let n: i32 = 0; while (true) { match (r.read_chunk(4096)) { Ok(c) => { if (c.len() == 0) { r.close(); return n; } n = n + c.len(); }, Err(e) => { r.close(); return n; } } } return n; }`, "hello world test", []string{"call __fn___fern_reader_read_chunk", "call __fn___fern_reader_close"}},
 	// A single read_chunk, matched directly (not in a loop): Ok -> len, Err -> 0.
 	{"single-chunk", `function main(): i32 { let r: Reader = stdin(); return match (r.read_chunk(4096)) { Ok(c) => c.len(), Err(e) => 0 }; }`, "abcd", []string{"call __fn___fern_reader_read_chunk"}},
-	// close()'s result (Option[IoError]) discarded; just exercise stdin+close. 7.
+	// close()'s result (Result[void, IoError]) discarded; just exercise stdin+close. 7.
 	{"close-only", `function main(): i32 { let r: Reader = stdin(); r.close(); return 7; }`, "ignored", []string{"call __fn___fern_reader_close"}},
 }
 

@@ -21,7 +21,7 @@ func TestSelfHostWasmFdFlagsReleasesScratch(t *testing.T) {
       while (i < 100) {
         match (r.flags()) { Ok(n) => { if (n != 1 as i64) { return 1; } }, Err(_) => { return 2; } }
         // Unsupported variants must release the fresh empty error path.
-        match (r.syncfs()) { None => { return 5; }, Some(e) => { match (e) { Unsupported => {}, _ => { return 6; } } } }
+        match (r.syncfs()) { Ok(_) => { return 5; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 6; } } } }
         match (r.splice_to(stdout(), 1)) { Ok(_) => { return 7; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 8; } } } }
         i = i + 1;
       }

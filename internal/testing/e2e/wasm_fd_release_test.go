@@ -24,22 +24,22 @@ function round(i: i32): i32 {
     if (gotb != s.len()) { return 3; }
     match (open_writer("w.txt")) {
         Ok(w) => {
-            match (w.write("x")) { Some(_) => { return 4; }, None => {} }
-            match (w.close()) { Some(_) => { return 4; }, None => {} }
+            match (w.write("x")) { Err(_) => { return 4; }, Ok(_) => {} }
+            match (w.close()) { Err(_) => { return 4; }, Ok(_) => {} }
         },
         Err(_) => { return 4; }
     }
     match (open_appender("w.txt")) {
         Ok(w) => {
-            match (w.write("y")) { Some(_) => { return 5; }, None => {} }
-            match (w.close()) { Some(_) => { return 5; }, None => {} }
+            match (w.write("y")) { Err(_) => { return 5; }, Ok(_) => {} }
+            match (w.close()) { Err(_) => { return 5; }, Ok(_) => {} }
         },
         Err(_) => { return 5; }
     }
     match (open_reader("w.txt")) {
         Ok(r) => {
             match (io.read_line(r)) { Ok(Some(l)) => { if (l != "xy") { return 6; } }, _ => { return 6; } }
-            match (r.close()) { Some(_) => { return 6; }, None => {} }
+            match (r.close()) { Err(_) => { return 6; }, Ok(_) => {} }
         },
         Err(_) => { return 6; }
     }

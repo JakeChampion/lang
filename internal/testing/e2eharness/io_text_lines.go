@@ -47,7 +47,7 @@ function main(): i32 {
     let (chunk, after_chunk) = after_line.next_chunk();
     match (chunk) { Some(_) => { return 6; }, None => {} }
     if (error_kind(after_chunk) != status) { return 7; }
-    match (r.close()) { Some(_) => { return 8; }, None => {} }
+    match (r.close()) { Err(_) => { return 8; }, Ok(_) => {} }
     write(status.to_string() + ":");
     let pass: i32 = 0;
     while (pass < 2) {

@@ -2663,8 +2663,9 @@ pub function rt_src_open_with(t: string): string {
 }
 
 // rt_src_writer_write backs `w.write(s)` (#4372, #2649 syscall-leaf) →
-// `Option[IoError]`: write(2) the string's own bytes to the Writer fd, looping
-// until every byte is out — None once it is, Some(io_error) on a failing write.
+// `Result[void, IoError]`: write(2) the string's own bytes to the Writer fd,
+// looping until every byte is out — Ok once it is, Err(io_error) on a failing
+// write.
 // It joins the fs bundle because it calls the shared classifier (#7926).
 //
 // A write has no PATH to report, and __fern_io_error CONSUMES the one it is
@@ -2684,7 +2685,7 @@ pub function rt_src_open_with(t: string): string {
 // native's wasm body make. The count IS lost either way; native's signature has
 // nowhere to put it.
 pub function rt_src_writer_write(t: string): string {
-  return "function __fern_writer_write(fd: i32, s: string): Option[IoError] { let n: i32 = s.len(); let data: usize = __raw_data(s); let off: i32 = 0; while (off < n) { let w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, (data + off) as i64, (n - off) as i64) as i32; if (w < 0) { return Some(__fern_io_error(0 - w, \"\")); } if (w == 0) { off = n; } else { off = off + w; } } return None; }";
+  return "function __fern_writer_write(fd: i32, s: string): Result[void, IoError] { let n: i32 = s.len(); let data: usize = __raw_data(s); let off: i32 = 0; while (off < n) { let w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, (data + off) as i64, (n - off) as i64) as i32; if (w < 0) { return Err(__fern_io_error(0 - w, \"\")); } if (w == 0) { off = n; } else { off = off + w; } } return Ok(()); }";
 }
 
 // rt_src_tcp_close / rt_src_tcp_accept / rt_src_tcp_local_port are the three
@@ -4131,18 +4132,18 @@ pub function rt_src_reader_read_chunk_bytes(t: string, packed: boolean): string 
   return copy + "function __fern_reader_read_chunk_bytes" + packed_suffix(packed) + "(fd: i32, n: i32): Result[i32[], IoError] { if (n < 0) { return Err(__fern_io_error(22, \"\")); } let raw: usize = __raw_arr_box(n / 8 + 1); let scratch: i32[] = __raw_array(raw); let p: usize = raw + 8; let got: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, n as i64) as i32; if (got < 0) { return Err(__fern_io_error(0 - got, \"\")); } " + finish + " }";
 }
 
-// rt_src_reader_close backs `r.close()` and `w.close()` → close(fd), Some on a
+// rt_src_reader_close backs `r.close()` and `w.close()` → close(fd), Err on a
 // failing close. A close carries no PATH to report, so the errno is classified
 // against an empty one, exactly as rt_src_writer_write does for a failed write.
 //
 // It therefore calls __fern_io_error and belongs INSIDE the fs bundle, sharing
 // its call graph — the same reason open_res and writer_write are there. Left
-// outside, discarding the result, it made `w.close()` answer None on a closed
-// fd where every native backend answers `Some(Other("", "Bad file descriptor", 9))`,
+// outside, discarding the result, it made `w.close()` answer Ok on a closed
+// fd where every native backend answers `Err(Other("", "Bad file descriptor", 9))`,
 // which is the whole of gnulib's close_stream contract and so of every
 // coreutils utility's exit status on `prog >&-` (#8569).
 pub function rt_src_reader_close(t: string): string {
-  return "function __fern_reader_close(fd: i32): Option[IoError] { let r: i32 = __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0) as i32; if (r < 0) { return Some(__fern_io_error(0 - r, \"\")); } return None; }";
+  return "function __fern_reader_close(fd: i32): Result[void, IoError] { let r: i32 = __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0) as i32; if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } return Ok(()); }";
 }
 
 // The strerror table (#8265): glibc's text per errno and the errno's number on
@@ -5561,14 +5562,14 @@ pub function rt_src_fd_stat(t: string): string {
 }
 
 // rt_src_fd_sync backs `r.fsync()` / `w.fsync()` and the fdatasync twin ->
-// Option[IoError]: one write-back call on the handle's fd, None once it is
+// Result[void, IoError]: one write-back call on the handle's fd, Ok once it is
 // scheduled. A handle carries no path, so the errno is classified against an
 // empty one, as fd_stat's is.
 pub function rt_src_fd_sync(t: string, name: string, call: string): string {
-  return "function __fern_fd_" + name + "(fd: i32): Option[IoError] { let rc: i32 = __syscall3(" + sysno(t, call) + ", fd as i64, 0, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+  return "function __fern_fd_" + name + "(fd: i32): Result[void, IoError] { let rc: i32 = __syscall3(" + sysno(t, call) + ", fd as i64, 0, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
-// rt_src_fd_syncfs backs `r.syncfs()` / `w.syncfs()` -> Option[IoError]:
+// rt_src_fd_syncfs backs `r.syncfs()` / `w.syncfs()` -> Result[void, IoError]:
 // syncfs(2), the whole filesystem the handle lives on.
 //
 // XNU has no syncfs at all, so on Darwin the descriptor is checked with
@@ -5578,33 +5579,33 @@ pub function rt_src_fd_sync(t: string, name: string, call: string): string {
 // flushes more than was asked.
 pub function rt_src_fd_syncfs(t: string): string {
   if (t == "arm64-darwin") {
-    return "function __fern_fd_syncfs(fd: i32): Option[IoError] { let ck: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd as i64, 1, 0) as i32; if (ck < 0) { return Some(__fern_io_error(0 - ck, \"\")); } __syscall3(" + sysno(t, "sync") + ", 0, 0, 0); return None; }";
+    return "function __fern_fd_syncfs(fd: i32): Result[void, IoError] { let ck: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd as i64, 1, 0) as i32; if (ck < 0) { return Err(__fern_io_error(0 - ck, \"\")); } __syscall3(" + sysno(t, "sync") + ", 0, 0, 0); return Ok(()); }";
   }
-  return "function __fern_fd_syncfs(fd: i32): Option[IoError] { let rc: i32 = __syscall3(" + sysno(t, "syncfs") + ", fd as i64, 0, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+  return "function __fern_fd_syncfs(fd: i32): Result[void, IoError] { let rc: i32 = __syscall3(" + sysno(t, "syncfs") + ", fd as i64, 0, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_fd_drop_cache backs `r.drop_cache(offset, len)` /
-// `w.drop_cache(offset, len)` -> Option[IoError]: fadvise64(2) with
+// `w.drop_cache(offset, len)` -> Result[void, IoError]: fadvise64(2) with
 // POSIX_FADV_DONTNEED (4) over that range. XNU has no fadvise, and
 // F_NOCACHE is a different request, so Darwin answers Unsupported once lseek
 // has shown the descriptor is seekable (a pipe is ESPIPE, as on Linux).
 pub function rt_src_fd_drop_cache(t: string): string {
-  let head: string = "function __fern_fd_drop_cache(fd: i32, off: i64, n: i64): Option[IoError] { ";
+  let head: string = "function __fern_fd_drop_cache(fd: i32, off: i64, n: i64): Result[void, IoError] { ";
   if (t == "arm64-darwin") {
-    return head + "let at: i64 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, 0, 1); if (at < (0 as i64)) { return Some(__fern_io_error(((0 as i64) - at) as i32, \"\")); } return Some(Unsupported); }";
+    return head + "let at: i64 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, 0, 1); if (at < (0 as i64)) { return Err(__fern_io_error(((0 as i64) - at) as i32, \"\")); } return Err(Unsupported); }";
   }
-  return head + "let rc: i32 = __syscall5(" + sysno(t, "fadvise64") + ", fd as i64, off, n, 4, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+  return head + "let rc: i32 = __syscall5(" + sysno(t, "fadvise64") + ", fd as i64, off, n, 4, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_fd_dup_onto backs `r.dup_onto(fd)` / `w.dup_onto(fd)` ->
-// Option[IoError]: dup3(2) of the handle's descriptor onto `newfd`, so the
+// Result[void, IoError]: dup3(2) of the handle's descriptor onto `newfd`, so the
 // handle is reachable as that number too and whatever it named is closed.
 //
 // One body for every target: the Darwin row is dup2, which is this call
 // without the flags argument it ignores. A handle carries no path, so the
 // errno is classified against an empty one, as fd_stat's is.
 pub function rt_src_fd_dup_onto(t: string): string {
-  return "function __fern_fd_dup_onto(fd: i32, newfd: i32): Option[IoError] { let rc: i32 = __syscall3(" + sysno(t, "dup3") + ", fd as i64, newfd as i64, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+  return "function __fern_fd_dup_onto(fd: i32, newfd: i32): Result[void, IoError] { let rc: i32 = __syscall3(" + sysno(t, "dup3") + ", fd as i64, newfd as i64, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_sync backs `sync()` -> void: sync(2) over every mounted filesystem.
@@ -5680,33 +5681,33 @@ pub function rt_src_reader_splice(t: string): string {
 }
 
 // rt_src_writer_splice_forever backs `w.splice_forever(block)` ->
-// Option[IoError], the codegens' __fern_writer_splice_forever: the block
+// Result[void, IoError], the codegens' __fern_writer_splice_forever: the block
 // repeated into a 128 KiB mapping of its own, then vmsplice(2)d for as long
 // as the writer takes it, with SPLICE_F_GIFT when the span is whole pages. A writer that is not a
 // pipe is fed through a pipe of the runtime's own, drained with splice(2).
 // The mapping is outside the allocator, and its data pages are never written
 // once spliced (the iovec lives on a page of its own), so the pages the pipe
 // still references are never reused. It returns only on a failure:
-// Some(Unsupported) when the kernel refused before a byte reached the writer,
+// Err(Unsupported) when the kernel refused before a byte reached the writer,
 // so the caller writes instead, else the writer's own error.
 // XNU has no vmsplice, so Darwin answers Unsupported.
 pub function rt_src_writer_splice_forever(t: string): string {
-  let head: string = "function __fern_writer_splice_forever(fd: i32, s: string): Option[IoError] { ";
+  let head: string = "function __fern_writer_splice_forever(fd: i32, s: string): Result[void, IoError] { ";
   if (t == "arm64-darwin") {
-    return head + "return Some(Unsupported); }";
+    return head + "return Err(Unsupported); }";
   }
   let vs: string = sysno(t, "vmsplice");
   let sp: string = sysno(t, "splice");
   let fc: string = sysno(t, "fcntl");
   let cl: string = sysno(t, "close");
-  let o: string = head + "let n: i32 = s.len(); if (n == 0) { return Some(Unsupported); } let copies: i32 = 131072 / n; if (copies < 1) { copies = 1; } let len: i32 = copies * n; let pages: i32 = (len + 4095) / 4096 * 4096; let span: i32 = pages + 4096; ";
-  o = o + "let m: i64 = __syscall6(" + sysno(t, "mmap") + ", 0, span as i64, 3, 34, (0 - 1) as i64, 0); if (m < (0 as i64)) { return Some(Unsupported); } let buf: usize = m as usize; let c: i32 = 0; while (c < copies) { __memcpy(buf + c * n, __raw_data(s), n); c = c + 1; } let iov: usize = buf + pages; ";
+  let o: string = head + "let n: i32 = s.len(); if (n == 0) { return Err(Unsupported); } let copies: i32 = 131072 / n; if (copies < 1) { copies = 1; } let len: i32 = copies * n; let pages: i32 = (len + 4095) / 4096 * 4096; let span: i32 = pages + 4096; ";
+  o = o + "let m: i64 = __syscall6(" + sysno(t, "mmap") + ", 0, span as i64, 3, 34, (0 - 1) as i64, 0); if (m < (0 as i64)) { return Err(Unsupported); } let buf: usize = m as usize; let c: i32 = 0; while (c < copies) { __memcpy(buf + c * n, __raw_data(s), n); c = c + 1; } let iov: usize = buf + pages; ";
   o = o + "let out: i32 = fd; let pr: i32 = 0 - 1; __syscall3(" + fc + ", fd as i64, 1031, 524288); let off: i32 = 0; let moved: i64 = 0 as i64; let err: i32 = 0; ";
   o = o + "while (err == 0) { __store_i64(iov, (buf + off) as i64); __store_i64(iov + 8, (len - off) as i64); let gift: i32 = 0; if (off % 4096 == 0 && (len - off) % 4096 == 0) { gift = 8; } let w: i32 = __syscall4(" + vs + ", out as i64, iov as i64, 1, gift as i64) as i32; ";
   o = o + "if ((w == 0 - 9 || w == 0 - 22) && pr < 0 && moved == (0 as i64)) { let fds: usize = iov + 16; if (__syscall3(" + sysno(t, "pipe2") + ", fds as i64, 524288, 0) != 0) { err = 0 - 1; } else { pr = __load_i32(fds); out = __load_i32(fds + 4); __syscall3(" + fc + ", pr as i64, 1031, 524288); } } ";
   o = o + "else if (w < 0) { if (w != 0 - 4) { err = 0 - w; } } else { let left: i32 = w; while (pr >= 0 && left > 0 && err == 0) { let d: i32 = __syscall6(" + sp + ", pr as i64, 0, fd as i64, 0, left as i64, 1) as i32; if (d > 0) { left = left - d; moved = moved + (d as i64); } else if (d == 0 - 22 && moved == (0 as i64)) { err = 0 - 1; } else if (d != 0 - 4) { err = 0 - d; if (d == 0) { err = 5; } } } if (pr < 0) { moved = moved + (w as i64); } off = off + w; if (off >= len) { off = 0; } } } ";
   o = o + "if (pr >= 0) { __syscall3(" + cl + ", pr as i64, 0, 0); __syscall3(" + cl + ", out as i64, 0, 0); } __syscall3(" + sysno(t, "munmap") + ", m, span as i64, 0); ";
-  return o + "if (err < 0) { return Some(Unsupported); } return Some(__fern_io_error(err, \"\")); }";
+  return o + "if (err < 0) { return Err(Unsupported); } return Err(__fern_io_error(err, \"\")); }";
 }
 
 // rt_src_reader_seek backs `r.seek(offset, whence)` -> Result[i64, IoError]:
@@ -5733,7 +5734,7 @@ pub function rt_src_reader_seek(t: string): string {
 // table like every other open flag here.
 // rt_src_writer_write_some backs `w.write_some(s)` -> Result[i64, IoError]:
 // ONE write(2) and the count it returned. rt_src_writer_write above is the
-// same call in a loop, which is why its Option cannot carry the count — by
+// same call in a loop, which is why its Result cannot carry the count — by
 // the time a write fails there, what landed before it is forgotten. Zero is
 // a real answer rather than an error.
 pub function rt_src_writer_write_some(t: string): string {
@@ -5746,13 +5747,11 @@ pub function rt_src_writer_write_some(t: string): string {
 pub function rt_src_writer_bytes(t: string, packed: boolean, all: boolean): string {
   let name: string = "write_some_bytes";
   let result: string = "Result[i64, IoError]";
-  let failure: string = "Err";
   let done: string = "return Ok(w as i64);";
   if (all) {
     name = "write_bytes";
-    result = "Option[IoError]";
-    failure = "Some";
-    done = "at = at + w; if (at == n) { return None; } if (w == 0) { return Some(__fern_io_error(5, \"\")); }";
+    result = "Result[void, IoError]";
+    done = "at = at + w; if (at == n) { return Ok(()); } if (w == 0) { return Err(__fern_io_error(5, \"\")); }";
   }
   let param: string = "usize";
   let prep: string = "let n: i32 = 0; let p: usize = 0; if (((bytes as i32) & 2) != 0) { let base: usize = bytes - 2; n = __load_i32(base + 8); p = __raw_load_ptr(base, 0); } else { n = __load_i32(bytes); p = bytes + 8; }";
@@ -5760,19 +5759,19 @@ pub function rt_src_writer_bytes(t: string, packed: boolean, all: boolean): stri
     param = "i32[]";
     prep = "let n: i32 = bytes.len(); let raw: usize = __raw_arr_box(n / 8 + 1); let scratch: i32[] = __raw_array(raw); let p: usize = (__raw_arr_ptr(scratch) + 8); let j: i32 = 0; while (j < n) { __raw_store8(p, j, bytes[j]); j = j + 1; }";
   }
-  return "function __fern_writer_" + name + packed_suffix(packed) + "(fd: i32, bytes: " + param + "): " + result + " { " + prep + " let at: i32 = 0; while (true) { let w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, (p + at) as i64, (n - at) as i64) as i32; if (w < 0) { return " + failure + "(__fern_io_error(0 - w, \"\")); } " + done + " } }";
+  return "function __fern_writer_" + name + packed_suffix(packed) + "(fd: i32, bytes: " + param + "): " + result + " { " + prep + " let at: i32 = 0; while (true) { let w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, (p + at) as i64, (n - at) as i64) as i32; if (w < 0) { return Err(__fern_io_error(0 - w, \"\")); } " + done + " } }";
 }
 
 pub function rt_src_fd_flags(t: string): string {
   return "function __fern_fd_flags(fd: i32): Result[i64, IoError] { let r: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd as i64, 3, 0) as i32; if (r < 0) { return Err(__fern_io_error(0 - r, \"\")); } let acc: i32 = r & 3; let bits: i32 = 0; if (acc != 1) { bits = bits | 1; } if (acc != 0) { bits = bits | 2; } if ((r & " + oflag(t, "append") + ") != 0) { bits = bits | 4; } return Ok(bits as i64); }";
 }
 
-// rt_src_writer_truncate backs `w.truncate(length)` -> Option[IoError]:
+// rt_src_writer_truncate backs `w.truncate(length)` -> Result[void, IoError]:
 // ftruncate(2) on the handle's fd. The length goes out as an i64 argument, the
 // way __fern_reader_seek passes lseek's offset, so a size past 2 GiB is not
 // folded by a sign-extended i32.
 pub function rt_src_writer_truncate(t: string): string {
-  return "function __fern_writer_truncate(fd: i32, length: i64): Option[IoError] { let rc: i32 = __syscall3(" + sysno(t, "ftruncate") + ", fd as i64, length as i64, 0) as i32; if (rc < 0) { return Some(__fern_io_error(0 - rc, \"\")); } return None; }";
+  return "function __fern_writer_truncate(fd: i32, length: i64): Result[void, IoError] { let rc: i32 = __syscall3(" + sysno(t, "ftruncate") + ", fd as i64, length as i64, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // stat_fields_src is the tail of the FileStat literal: everything past the
@@ -6583,8 +6582,8 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
           // `read_chunk` / `write` are ordinary method
           // names a user struct may declare, and a name-keyed answer
           // hands a user method the resource signature (#8462).
-          // Writer.write and Writer.truncate are Option[IoError], a
-          // payload this Ty union cannot name, so they fall through
+          // Writer.write and Writer.truncate are Result[void, IoError],
+          // a payload this Ty union cannot name, so they fall through
           // to unknown.
           if (ty_struct_name(rcv) == "Reader" && fa.field == "read_chunk_bytes") {
             return ty_array_i32();
@@ -7761,7 +7760,7 @@ pub function ty_friendly(t: Ty): string {
 function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: EmitState): Ty {
   let rt: Ty = infer_expr_type(fa.obj, s);
   // Reader.read_chunk -> Option[string]; Writer.write(s) ->
-  // Option[IoError] (#4372, #7926 — native's signatures). Keyed on the
+  // Result[void, IoError] (#4372, #7926). Keyed on the
   // RECEIVER'S TYPE: `write` and `read_chunk` are ordinary method
   // names, and answering on the name alone gave every user struct declaring one
   // the resource signature, rejecting the program before codegen (#8462). The
@@ -7796,12 +7795,12 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     return ty_result(ty_i32());
   }
   if (ty_struct_name(rt) == "Writer" && (fa.field == "write" || fa.field == "write_bytes" || fa.field == "truncate")) {
-    return ty_option(ty_unknown());
+    return ty_result(ty_unknown());
   }
-  // Reader.dup_onto / Writer.dup_onto -> Option[IoError]: the descriptor
-  // either took the handle or reports why not.
+  // Reader.dup_onto / Writer.dup_onto -> Result[void, IoError]: the
+  // descriptor either took the handle or reports why not.
   if ((ty_struct_name(rt) == "Reader" || ty_struct_name(rt) == "Writer") && fa.field == "dup_onto") {
-    return ty_option(ty_unknown());
+    return ty_result(ty_unknown());
   }
   // The four terminal questions asked of a handle, Reader-only (#9363).
   // termios_get's payload is an i64[]; the two writes answer Ok(()).

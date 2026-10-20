@@ -26,16 +26,16 @@ func selfHostDupOntoSource(data string, out string) string {
     match (open_reader(%[1]q)) {
         Err(_) => { return 14; },
         Ok(r) => {
-            match (r.dup_onto(7))    { None => {}, Some(_) => { return 11; } }
-            match (r.dup_onto(0 - 1)) { None => { return 12; }, Some(_) => {} }
+            match (r.dup_onto(7))    { Ok(_) => {}, Err(_) => { return 11; } }
+            match (r.dup_onto(0 - 1)) { Ok(_) => { return 12; }, Err(_) => {} }
             r.close();
-            match (r.dup_onto(7))    { None => { return 13; }, Some(_) => {} }
+            match (r.dup_onto(7))    { Ok(_) => { return 13; }, Err(_) => {} }
         }
     }
     match (open_writer(%[2]q)) {
         Err(_) => { return 22; },
         Ok(w) => {
-            match (w.dup_onto(1))    { None => {}, Some(_) => { return 21; } }
+            match (w.dup_onto(1))    { Ok(_) => {}, Err(_) => { return 21; } }
             print("redirected");
             w.close();
         }
@@ -138,15 +138,15 @@ func TestSelfHostDupOntoWasmIRUnsupported(t *testing.T) {
     match (open_reader("data.txt")) {
         Err(_) => { return 14; },
         Ok(r) => {
-            match (r.dup_onto(7))    { None => { return 11; }, Some(_) => {} }
-            match (r.dup_onto(0 - 1)) { None => { return 12; }, Some(_) => {} }
+            match (r.dup_onto(7))    { Ok(_) => { return 11; }, Err(_) => {} }
+            match (r.dup_onto(0 - 1)) { Ok(_) => { return 12; }, Err(_) => {} }
             r.close();
         }
     }
     match (open_writer("out.txt")) {
         Err(_) => { return 22; },
         Ok(w) => {
-            match (w.dup_onto(1))    { None => { return 21; }, Some(_) => {} }
+            match (w.dup_onto(1))    { Ok(_) => { return 21; }, Err(_) => {} }
             w.close();
         }
     }

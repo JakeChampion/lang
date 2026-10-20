@@ -196,9 +196,9 @@ func TestWasmPreview2FileRoundtrip(t *testing.T) {
 function main(): i32 {
     match (open_writer("out.txt")) {
         Ok(w) => {
-            match (w.write("line 1\n")) { Some(_) => { return 1; }, None => {} }
-            match (w.write("line 2\n")) { Some(_) => { return 2; }, None => {} }
-            match (w.close()) { Some(_) => { return 3; }, None => {} }
+            match (w.write("line 1\n")) { Err(_) => { return 1; }, Ok(_) => {} }
+            match (w.write("line 2\n")) { Err(_) => { return 2; }, Ok(_) => {} }
+            match (w.close()) { Err(_) => { return 3; }, Ok(_) => {} }
         },
         Err(_) => { return 4; }
     }
@@ -207,7 +207,7 @@ function main(): i32 {
             match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 5; } }
             match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 6; } }
             match (io.read_line(r)) { Ok(None()) => {}, _ => { return 7; } }
-            match (r.close()) { Some(_) => { return 8; }, None => {} }
+            match (r.close()) { Err(_) => { return 8; }, Ok(_) => {} }
         },
         Err(_) => { return 9; }
     }
@@ -378,8 +378,8 @@ func TestWasmPreview2FileCloseAdapterFree(t *testing.T) {
 	writer := build("writer", `function main(): i32 {
     match (open_writer("f.txt")) {
         Ok(w) => {
-            match (w.write("close-via-drop\n")) { Some(_) => { return 1; }, None => {} }
-            match (w.close()) { Some(_) => { return 2; }, None => {} }
+            match (w.write("close-via-drop\n")) { Err(_) => { return 1; }, Ok(_) => {} }
+            match (w.close()) { Err(_) => { return 2; }, Ok(_) => {} }
             return 0;
         },
         Err(_) => { return 3; }
@@ -403,7 +403,7 @@ function main(): i32 {
     match (open_reader("f.txt")) {
         Ok(r) => {
             match (io.read_line(r)) { Ok(Some(line)) => { write(line); }, _ => { return 1; } }
-            match (r.close()) { Some(_) => { return 2; }, None => {} }
+            match (r.close()) { Err(_) => { return 2; }, Ok(_) => {} }
             return 0;
         },
         Err(_) => { return 3; }

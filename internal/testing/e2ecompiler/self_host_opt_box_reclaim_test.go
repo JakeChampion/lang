@@ -174,7 +174,7 @@ func ioOpenCloseSrc(rounds int) string {
     let i: i32 = 0;
     while (i < %d) {
         match (open_reader("/dev/null")) {
-            Ok(r) => { match (r.close()) { Some(e) => { return 9; }, None => {} } },
+            Ok(r) => { match (r.close()) { Err(e) => { return 9; }, Ok(_) => {} } },
             Err(e) => { return 8; }
         }
         i = i + 1;
@@ -193,7 +193,7 @@ func ioOpenCloseBoundSrc(rounds int) string {
     while (i < %d) {
         let r: Result[Reader, IoError] = open_reader("/dev/null");
         match (r) {
-            Ok(rd) => { match (rd.close()) { Some(e) => { return 9; }, None => {} } },
+            Ok(rd) => { match (rd.close()) { Err(e) => { return 9; }, Ok(_) => {} } },
             Err(e) => { return 8; }
         }
         i = i + 1;

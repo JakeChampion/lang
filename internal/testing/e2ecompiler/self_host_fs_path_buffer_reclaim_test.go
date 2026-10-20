@@ -56,7 +56,7 @@ func fsLoop(rounds int, body string) string {
 
 func fsOpenCloseSrc(rounds int, p string) string {
 	return fsLoop(rounds, fmt.Sprintf(`        match (open_reader("%s")) {
-            Ok(r) => { match (r.close()) { Some(e) => { return 9; }, None => {} } },
+            Ok(r) => { match (r.close()) { Err(e) => { return 9; }, Ok(_) => {} } },
             Err(e) => { return 8; }
         }`, p))
 }

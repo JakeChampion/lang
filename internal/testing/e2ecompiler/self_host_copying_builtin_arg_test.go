@@ -21,7 +21,7 @@ import (
 // free `out` under position 0 and lose it under position 2.
 //
 // Every row is balanced: print writes the payload and a "\n" literal without
-// joining them, and a match over `w.write(...)` releases the Option[IoError]
+// joining them, and a match over `w.write(...)` releases the Result[void, IoError]
 // box it consumed (#8410), so each case allocates only the accumulator per
 // round, two blocks once its later appends grow into headroom (#8770), and
 // frees all of them.
@@ -65,7 +65,7 @@ func copyingBuiltinCases() []copyingBuiltinCase {
     let q: i32 = __scan_set(out, 0, st);`, pinCounts: true},
 		{name: "mismatch", use: `let q: i32 = __mismatch(out, 0, out, 0, 24);`, pinCounts: true},
 		{name: "writer_write", use: `let w: Writer = stdout();
-    match (w.write(out)) { Some(_) => { return -1; }, None => {} }`, pinCounts: true},
+    match (w.write(out)) { Err(_) => { return -1; }, Ok(_) => {} }`, pinCounts: true},
 		{
 			name: "user_write_method_retains",
 			decls: `struct Sink { last: string }

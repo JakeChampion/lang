@@ -3540,7 +3540,7 @@ function handles(path: string): i32 {
             match (r.stat()) { Ok(st) => { n = n + 1; }, Err(e) => { n = n + 1000; } }
             match (r.flags()) { Ok(f) => { n = n + 2; }, Err(e) => { n = n + 2000; } }
             match (r.seek(0, 0)) { Ok(off) => { n = n + 4; }, Err(e) => { n = n + 4000; } }
-            match (r.close()) { Some(e) => { n = n + 8000; }, None => { n = n + 8; } }
+            match (r.close()) { Err(e) => { n = n + 8000; }, Ok(_) => { n = n + 8; } }
         },
         Err(e) => { n = n + 16000; },
     }
@@ -3809,8 +3809,8 @@ function terminal(): i32 {
     match (open_reader("/dev/null")) {
         Ok(h) => {
             match (h.dup_onto(19)) {
-                Some(_) => {},
-                None => { n = n + 1; }
+                Err(_) => {},
+                Ok(_) => { n = n + 1; }
             }
         },
         Err(_) => {}

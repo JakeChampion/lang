@@ -24,6 +24,7 @@ import "./util";
 import "./astwalk";
 import "./aesref";
 import "./platforms";
+import "std/io_outcome";
 import "std/utf8";
 
 // =================== VALUES ====================
@@ -2131,13 +2132,15 @@ function call_xattr(name: string, args: Value[]): Value {
   }
 }
 
-function option_io_error_value(error: Option[IoError]): Value {
+// The interpreted program's Result[void, IoError] for a host handle call,
+// from the host outcome's `.failure()`.
+function io_failure_value(error: Option[IoError]): Value {
   match (error) {
     Some(e) => {
-      return v_variant("Some", [io_error_value(e)]);
+      return io_err_value(e);
     },
     None => {
-      return v_variant("None", []);
+      return ok_value(v_tuple([]));
     }
   }
 }
@@ -3235,7 +3238,7 @@ function reader_method(r: Reader, name: string, args: Value[]): Value {
     return read_chunk_value(r, arg_i32(args, 0));
   }
   if (name == "close") {
-    return option_io_error_value(r.close());
+    return io_failure_value(r.close().failure());
   }
   // Nothing moves inside the kernel here: the caller copies the bytes itself.
   if (name == "splice_to" || name == "copy_range_to") {
@@ -3292,42 +3295,42 @@ function reader_fd_method(r: Reader, name: string, args: Value[]): Value {
     return v_bool(r.isatty());
   }
   if (name == "fsync") {
-    return option_io_error_value(r.fsync());
+    return io_failure_value(r.fsync().failure());
   }
   if (name == "fdatasync") {
-    return option_io_error_value(r.fdatasync());
+    return io_failure_value(r.fdatasync().failure());
   }
   if (name == "syncfs") {
-    return option_io_error_value(r.syncfs());
+    return io_failure_value(r.syncfs().failure());
   }
   if (name == "drop_cache") {
-    return option_io_error_value(r.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
+    return io_failure_value(r.drop_cache(arg_i64(args, 0), arg_i64(args, 1)).failure());
   }
-  return option_io_error_value(r.dup_onto(arg_i32(args, 0)));
+  return io_failure_value(r.dup_onto(arg_i32(args, 0)).failure());
 }
 
 function writer_method(w: Writer, name: string, args: Value[]): Value {
   if (name == "write") {
-    return option_io_error_value(w.write(arg_str(args, 0)));
+    return io_failure_value(w.write(arg_str(args, 0)).failure());
   }
   if (name == "write_some") {
     return i64_result_value(w.write_some(arg_str(args, 0)));
   }
   if (name == "write_bytes") {
-    return option_io_error_value(w.write_bytes(arg_bytes(args, 0)));
+    return io_failure_value(w.write_bytes(arg_bytes(args, 0)).failure());
   }
   if (name == "write_some_bytes") {
     return i64_result_value(w.write_some_bytes(arg_bytes(args, 0)));
   }
   // Nothing reaches the writer, so the caller writes the block itself.
   if (name == "splice_forever") {
-    return option_io_error_value(Some(Unsupported));
+    return io_err_value(Unsupported);
   }
   if (name == "close") {
-    return option_io_error_value(w.close());
+    return io_failure_value(w.close().failure());
   }
   if (name == "truncate") {
-    return option_io_error_value(w.truncate(arg_i64(args, 0)));
+    return io_failure_value(w.truncate(arg_i64(args, 0)).failure());
   }
   return writer_fd_method(w, name, args);
 }
@@ -3346,18 +3349,18 @@ function writer_fd_method(w: Writer, name: string, args: Value[]): Value {
     return v_bool(w.isatty());
   }
   if (name == "fsync") {
-    return option_io_error_value(w.fsync());
+    return io_failure_value(w.fsync().failure());
   }
   if (name == "fdatasync") {
-    return option_io_error_value(w.fdatasync());
+    return io_failure_value(w.fdatasync().failure());
   }
   if (name == "syncfs") {
-    return option_io_error_value(w.syncfs());
+    return io_failure_value(w.syncfs().failure());
   }
   if (name == "drop_cache") {
-    return option_io_error_value(w.drop_cache(arg_i64(args, 0), arg_i64(args, 1)));
+    return io_failure_value(w.drop_cache(arg_i64(args, 0), arg_i64(args, 1)).failure());
   }
-  return option_io_error_value(w.dup_onto(arg_i32(args, 0)));
+  return io_failure_value(w.dup_onto(arg_i32(args, 0)).failure());
 }
 
 // A Dir comes only from open_dir, which wasm32-wasi does not grant, so its
@@ -3385,7 +3388,7 @@ function dir_method(d: Dir, name: string, args: Value[]): Value {
     return stat_result_value(d.lstat(entry));
   }
   if (name == "close") {
-    return option_io_error_value(d.close());
+    return io_failure_value(d.close().failure());
   }
   return dir_change_method(d, name, entry, args);
 }
