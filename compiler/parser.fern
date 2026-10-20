@@ -5025,8 +5025,7 @@ function exiting_if_tail(e: ast.Expr): Option[ast.Stmt] {
       }
       if let ast.StmtIf(f) = lam.body[0] {
         if (branch_exits_early(f.then_body) && branch_exits_early(f.else_body)) {
-          let st: ast.Stmt = ast.StmtIf { ...f, then_body: without_last(f.then_body), else_body: without_last(f.else_body) };
-          return Some(st);
+          return Some(ast.StmtIf { ...f, then_body: without_last(f.then_body), else_body: without_last(f.else_body) });
         }
       }
     }
