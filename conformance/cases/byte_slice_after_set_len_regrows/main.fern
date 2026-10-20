@@ -1,0 +1,33 @@
+import "std/i32";
+
+@noinline function total(bytes: [u8]): i32 {
+  let t: i32 = 0;
+  for b in bytes {
+    t = t + b as i32;
+  }
+  return t;
+}
+
+// A scratch buffer shortened to what one read brought, then grown back to its
+// room before the next: the slice after the regrow reads its new length.
+@noinline function rounds(scratch: u8[], sizes: i32[]): i32 {
+  let t: i32 = 0;
+  for n in sizes {
+    __arr_set_len(scratch, 64);
+    t = t + total(scratch[0:n]);
+    __arr_set_len(scratch, n);
+  }
+  return t;
+}
+
+function main(): i32 {
+  let scratch: u8[] = [];
+  let i: i32 = 0;
+  while (i < 64) {
+    scratch = scratch.append(1 as u8);
+    i = i + 1;
+  }
+  __arr_set_len(scratch, 3);
+  print(rounds(scratch, [3, 10, 64, 5]).to_string());
+  return 0;
+}
