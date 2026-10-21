@@ -31,7 +31,6 @@ import "./sempair";
 import "./semthread";
 import "./typeinfo";
 import "./util";
-import "std/envflag";
 
 // `live[i]` says whether anything reached `funcs[i]` and `rewritten[i]`
 // whether a branch in it was decided. `ok` is false when a reached function
@@ -44,9 +43,8 @@ pub struct Reached { funcs: ssasem.Func[], live: boolean[], rewritten: boolean[]
 pub function reach(funcs: ssasem.Func[], names: string[], usable: boolean[], blocked: boolean[], roots: boolean[]): Reached {
   let ix: util.NameIndex = util.name_index(names);
   let u: Universe = universe(funcs, usable);
-  let trace: boolean = envflag.on("FERN_SEM_REACH_TRACE");
-  let op: util.NameIndex = opaque_types(funcs, ix, usable, roots, u, trace);
-  let ctx: Ctx = Ctx { funcs: funcs, ix: ix, usable: usable, u: u, callers: callers_of(funcs, ix, usable), freaders: readers_of(funcs, usable, u), vtesters: testers_of(funcs, usable, u), keys: keys_of(funcs, usable, u), counters: counters_of(funcs, usable, u), trace: trace };
+  let op: util.NameIndex = opaque_types(funcs, ix, usable, roots, u);
+  let ctx: Ctx = Ctx { funcs: funcs, ix: ix, usable: usable, u: u, callers: callers_of(funcs, ix, usable), freaders: readers_of(funcs, usable, u), vtesters: testers_of(funcs, usable, u), keys: keys_of(funcs, usable, u), counters: counters_of(funcs, usable, u) };
   let w: World = start(ctx, roots, op, zeroed(funcs, usable));
   // A function's last walk is under the final facts: a fact it read that
   // widened after would have queued it again.
@@ -62,9 +60,6 @@ pub function reach(funcs: ssasem.Func[], names: string[], usable: boolean[], blo
       walks = walks.with(i, wk);
       w = absorb(ctx, w, i, wk);
     }
-  }
-  if (trace) {
-    trace_reach(ctx, names, w, usable);
   }
   let i: i32 = 0;
   while (i < funcs.len()) {
@@ -200,7 +195,7 @@ function with_enum(u: Universe, e: semrecords.Enum): Universe {
 
 // ---- opaque types ----------------------------------------------------------
 
-function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], roots: boolean[], u: Universe, trace: boolean): util.NameIndex {
+function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], roots: boolean[], u: Universe): util.NameIndex {
   let op: util.NameIndex = util.name_index([]);
   let i: i32 = 0;
   while (i < funcs.len()) {
@@ -209,18 +204,12 @@ function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[
       for b in f.graph.blocks {
         for ins in b.insts {
           if (ins.result >= 0 && ins.result < f.values.len() && arrives(ins, f.values[ins.result], ix, usable)) {
-            if (trace && !op.has(ssasem.type_key(f.values[ins.result]))) {
-              eprint("semreach: opaque " + ssasem.type_key(f.values[ins.result]) + " arrives in " + ix.names[i] + " (kind " + util.i32_to_string(ins.kind_tag) + " " + ins.str + ")");
-            }
             op = opaque_add(f.values[ins.result], op, u);
           }
         }
       }
       if (roots[i]) {
         for t in f.params {
-          if (trace && !op.has(ssasem.type_key(t))) {
-            eprint("semreach: opaque " + ssasem.type_key(t) + " is a parameter of the root " + ix.names[i]);
-          }
           op = opaque_add(t, op, u);
         }
       }
@@ -232,10 +221,12 @@ function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[
 
 // Whether `ins` makes its `result` other than from the values a body built:
 // a call to what has no body here, or a function value naming one, a dyn
-// narrowing, an enum's widening from its member, a zero that is neither a
-// record's (a zero record is its fields' zeros, `zeroed`) nor an enum's (the
-// null word, which is no variant), or any physical operation. A closure's result is what its body built, unless the
-// function value itself arrived, which makes its result type opaque.
+// narrowing, an enum's widening from its member, a zero that is not a
+// record's (a zero record is its fields' zeros, `zeroed`), or any physical
+// operation. A closure's result is what its body built, unless the
+// function value itself arrived, which makes its result type opaque. An
+// enum's zero is the null word, which is no variant, so like a record's it
+// does not make its type opaque.
 function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usable: boolean[]): boolean {
   let k: i32 = ins.kind_tag;
   if (k == ssasem.call() || k == ssasem.closure_new() || k == 13) {
@@ -366,9 +357,7 @@ function zeroed(funcs: ssasem.Func[], usable: boolean[]): typeinfo.Type[] {
 // `u.recs`); -1 for any other.
 // `counters[r]` are the functions taking the length of an array of the
 // record `u.recs[r]`.
-// `trace` is `FERN_SEM_REACH_TRACE`: what arrives, what each walk builds and
-// widens, and what reached each function, on stderr.
-struct Ctx { funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u: Universe, callers: i32[][], freaders: i32[][], vtesters: i32[][], keys: i32[][], counters: i32[][], trace: boolean }
+struct Ctx { funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[], u: Universe, callers: i32[][], freaders: i32[][], vtesters: i32[][], keys: i32[][], counters: i32[][] }
 
 function lists(n: i32): i32[][] {
   let out: i32[][] = [];
@@ -536,9 +525,7 @@ function key_of(u: Universe, f: ssasem.Func, ins: ssa.SInst): i32 {
 
 // `inhabited[r]` says whether some value of the record `u.recs[r]` exists:
 // a reached body built one, or one can arrive (opaque) or be a zero.
-// `by[i]` is the function whose walk first reached `funcs[i]`, -1 for a
-// root, and `cur` the function being absorbed, for `FERN_SEM_REACH_TRACE`.
-struct World { reach: boolean[], fields: i64[], built: boolean[], rets: i64[], inhabited: boolean[], queue: i32[], next: i32, queued: boolean[], by: i32[], cur: i32 }
+struct World { reach: boolean[], fields: i64[], built: boolean[], rets: i64[], inhabited: boolean[], queue: i32[], next: i32, queued: boolean[] }
 
 function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.Type[]): World {
   let built: boolean[] = [];
@@ -549,11 +536,7 @@ function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.T
   while (rets.len() < ctx.funcs.len()) {
     rets = rets.append(none());
   }
-  let by: i32[] = [];
-  while (by.len() < ctx.funcs.len()) {
-    by = by.append(0 - 1);
-  }
-  let w: World = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, inhabited: inhabited_at_start(ctx.u, op, zeros), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()), by: by, cur: 0 - 1 };
+  let w: World = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, inhabited: inhabited_at_start(ctx.u, op, zeros), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
   let i: i32 = 0;
   while (i < roots.len()) {
     if (roots[i]) {
@@ -629,7 +612,7 @@ function reached(w: World, i: i32): World {
   if (w.reach[i]) {
     return w;
   }
-  return queued(World { ...w, reach: w.reach.with(i, true), by: w.by.with(i, w.cur) }, i);
+  return queued(World { ...w, reach: w.reach.with(i, true) }, i);
 }
 
 function reached_name(ctx: Ctx, w: World, name: string): World {
@@ -638,49 +621,6 @@ function reached_name(ctx: Ctx, w: World, name: string): World {
     return w;
   }
   return reached(w, g);
-}
-
-// trace_reach prints, for `FERN_SEM_REACH_TRACE`, every reached function
-// and the one whose walk first reached it, then every tracked field's
-// lattice and every variant built.
-function trace_reach(ctx: Ctx, names: string[], w: World, usable: boolean[]): void {
-  let k: i32 = 0;
-  while (k < w.fields.len()) {
-    eprint("semreach: field " + ctx.u.fields.names[k] + " = " + lattice_text(w.fields[k]));
-    k = k + 1;
-  }
-  k = 0;
-  while (k < w.built.len()) {
-    if (w.built[k]) {
-      eprint("semreach: built " + ctx.u.variants.names[k]);
-    }
-    k = k + 1;
-  }
-  let i: i32 = 0;
-  while (i < names.len()) {
-    if (w.reach[i]) {
-      let by: string = "a root";
-      if (w.by[i] >= 0) {
-        by = names[w.by[i]];
-      }
-      let how: string = "";
-      if (!usable[i]) {
-        how = " (no body)";
-      }
-      eprint("semreach: " + names[i] + " <- " + by + how);
-    }
-    i = i + 1;
-  }
-}
-
-function lattice_text(l: i64): string {
-  if (l == top()) {
-    return "none";
-  }
-  if (l == bottom()) {
-    return "any";
-  }
-  return util.i32_to_string(l as i32);
 }
 
 // ---- one function's walk ---------------------------------------------------
@@ -987,7 +927,6 @@ function truth(b: boolean): i64 {
 
 function absorb(ctx: Ctx, w: World, i: i32, wk: Walk): World {
   let f: ssasem.Func = ctx.funcs[i];
-  w = World { ...w, cur: i };
   let pos: i32 = 0;
   while (pos < f.graph.blocks.len()) {
     if (wk.exec[pos]) {
@@ -1034,9 +973,6 @@ function absorb_inst(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SIns
   if (ins.kind_tag == ssasem.variant_new()) {
     let vk: i32 = wk.keys[ins.result];
     if (vk >= 0 && !w.built[vk]) {
-      if (ctx.trace) {
-        eprint("semreach: built " + ctx.u.variants.names[vk] + " in " + ctx.ix.names[w.cur]);
-      }
       return queued_all(World { ...w, built: w.built.with(vk, true) }, ctx.vtesters[vk]);
     }
   }
@@ -1072,9 +1008,6 @@ function built_record(ctx: Ctx, w: World, r: i32, wk: Walk, args: i32[], first: 
     if (fk >= 0) {
       let next: i64 = join(w.fields[fk], wk.vals[args[k]]);
       if (next != w.fields[fk]) {
-        if (next == any() && ctx.trace) {
-          eprint("semreach: field " + ctx.u.fields.names[fk] + " widened to any in " + ctx.ix.names[w.cur] + " by value " + util.i32_to_string(args[k]) + " = " + lattice_text(wk.vals[args[k]]) + " of " + ssasem.type_key(ctx.funcs[w.cur].values[args[k]]));
-        }
         w = queued_all(World { ...w, fields: w.fields.with(fk, next) }, ctx.freaders[fk]);
       }
     }
