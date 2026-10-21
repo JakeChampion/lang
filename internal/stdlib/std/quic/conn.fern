@@ -86,7 +86,7 @@ pub struct Config {
 // QUIC raises the stream limits it needs with `with_streams`.
 pub function config(alpn: string[]): Config {
   let p: params.Params = params.Params { ...params.defaults(), max_idle_timeout: 30000 as i64, max_udp_payload_size: 1472 as i64, disable_active_migration: true };
-  return Config { alpn: alpn, params: p, cid_len: 8, max_datagram: 1200, server_name: "", roots: verify.roots([]), identity: None };
+  return Config { alpn: alpn, params: p, cid_len: 8, max_datagram: 1200, server_name: "", roots: verify.no_roots(), identity: None };
 }
 
 // client_side names the server a client connects to and the roots its

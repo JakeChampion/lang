@@ -302,6 +302,59 @@ func TestSelfHostSemReachServeWithoutH2(t *testing.T) {
 	}
 }
 
+// serveWithoutH3Prog is serveWithoutH2Prog with HTTP/3 never asked for.
+const serveWithoutH3Prog = `import "std/http";
+import "std/serve";
+import "std/platform";
+import "std/tls/identity";
+import "std/tls/server";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  return http.ok("hello");
+}
+
+function main(): i32 {
+  let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384 };
+  match (env("TLS_PEM")) {
+    Some(pem) => {
+      match (identity.from_pem(pem, pem)) {
+        Ok(id) => {
+          opts = opts.with_tls(server.config(id));
+        },
+        Err(e) => {
+          eprint(e.message());
+          return 2;
+        }
+      }
+    },
+    None => {}
+  }
+  return serve.supervise(8080, opts, handle);
+}
+`
+
+// A server that never calls `with_h3` links no HTTP/3 and no QUIC: with no
+// reachable construction setting `Config.h3`, the worker opens no QUIC
+// socket, and the loop asks whether a ready descriptor is that socket only
+// once there is one (`__quic_owns`), so the datagram path is never reached.
+// With the pass off, the HTTP/3 code is there.
+func TestSelfHostSemReachServeWithoutH3(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	path := filepath.Join(t.TempDir(), "server.fern")
+	if err := os.WriteFile(path, []byte(serveWithoutH3Prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h3 := regexp.MustCompile(`(?m)^__fn_(h3q|h3|qpack|packet|recovery)__\w+:`)
+	asm := readFile(t, cli.emit(t, path, "x86-64-linux", "FERN_SIZE=1"))
+	if fns := h3.FindAllString(asm, 4); len(fns) > 0 {
+		t.Errorf("the server links HTTP/3: %v", fns)
+	}
+	off := readFile(t, cli.emit(t, path, "x86-64-linux", "FERN_SIZE=1", "FERN_NO_SEM_REACH=1"))
+	if !h3.MatchString(off) {
+		t.Errorf("FERN_NO_SEM_REACH=1: the server links no HTTP/3 either, so this test shows nothing")
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)

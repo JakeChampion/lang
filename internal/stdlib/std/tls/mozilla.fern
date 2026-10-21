@@ -160,10 +160,10 @@ pub function roots(): verify.Roots {
       return verify.Roots { ...r, distrust_after: __distrust() };
     },
     Err(_) => {
-      return verify.roots([]);
+      return verify.no_roots();
     }
   }
-  return verify.roots([]);
+  return verify.no_roots();
 }
 
 // __pem is the list as one PEM bundle.

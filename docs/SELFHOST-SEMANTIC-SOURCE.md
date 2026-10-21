@@ -76,7 +76,16 @@ Unsupported constructs refuse the whole function with a reason.
   - A reached refusal leaves the module as it was.
   - A paired call's position stays a test, because the certifier settles
     its word on that branch.
-  - `FERN_NO_SEM_REACH=1` turns the pass off.
+  - A zero (`ssasem.zero`, the placeholder a lifted declaration starts
+    at) is no value: a record's zero is its fields' zeros, and an enum's
+    is the null word, which is no variant. Neither makes its type opaque.
+  - `FERN_NO_SEM_REACH=1` turns the pass off. `FERN_SEM_REACH_TRACE=1`
+    prints the pass's reasons on stderr: every type that arrives and
+    where, every variant as it is first built and every field as it
+    widens to any value (with the function doing it), the final lattice
+    of every tracked field, and every reached function with the one
+    whose walk reached it. It is how to find out why a server links code
+    its configuration never enables.
 - Record literals as `record_new` and named-field projections as
   `record_get`. A record is a declared struct with no type parameters and no
   enum owner; its schema (`semrecords.Record`) is the declaration's field

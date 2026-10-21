@@ -407,7 +407,7 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: 
 // __client_trusted judges a client's chain against the config's roots at
 // `now`, in Unix milliseconds, and its CertificateVerify under the leaf's key.
 function __client_trusted(config: Config, v: handshake.Verification, now: i64): Result[void, TlsError] {
-  let roots: verify.Roots = verify.roots([]);
+  let roots: verify.Roots = verify.no_roots();
   match (config.client_roots) {
     Some(r) => {
       roots = r;
