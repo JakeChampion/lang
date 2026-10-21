@@ -1,0 +1,1 @@
+S.mk has the wrong signature for trait Mk: expected (Option[i32]) => S, got (i32) => S
