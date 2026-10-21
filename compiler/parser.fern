@@ -681,6 +681,12 @@ pub function e_unknown(kind: string): ast.Expr {
   return ast.ExprUnknown { kind: kind, line: 0, col: 0 };
 }
 
+// path_sep_message is the P001 for `::` in expression position; `::` is only
+// an associated-type projection (`Self::Item`).
+pub function path_sep_message(): string {
+  return "`::` is not a path separator; write `.`";
+}
+
 pub function e_unknown_at(kind: string, line: i32, col: i32): ast.Expr {
   return ast.ExprUnknown { kind: kind, line: line, col: col };
 }
@@ -2010,16 +2016,6 @@ function consume_pub_package(p: Par): (boolean, Par) {
   return (true, q.advance());
 }
 
-// at_path_sep reports whether the cursor is on a path separator. `.` and `::`
-// are interchangeable in EXPRESSION position (`mod.f` / `mod::f`), so every
-// site that walks a dotted name accepts either. Type position is the
-// exception and does NOT use this: there `::` means an associated-type
-// projection and `.` a module-qualified name (docs/ASSOCIATED-TYPES.md).
-function (p: Par) at_path_sep(): boolean {
-  let pk: string = p.peek_punct();
-  return pk == "." || pk == "::";
-}
-
 function (p: Par) peek_keyword(): string {
   let t: lexer.Token = p.peek();
   match (t) {
@@ -2928,6 +2924,10 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
   // for. Attached to the callee's written name rather than to a new ExprCall
   // field, the way parse_type_name carries a bound's args on the type name.
   let pending_type_args: string = "";
+  // The first `::` written as a path: the chain parses as if it were `.`, so
+  // the P001 is the only diagnostic it draws.
+  let path_sep_line: i32 = 0;
+  let path_sep_col: i32 = 0;
   while (true) {
     let pk: string = p.peek_punct();
     if (pk == "(") {
@@ -3149,6 +3149,10 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         base = e_index(base, idx_expr, bline, bcol);
       }
     } else if (pk == "." || pk == "::") {
+      if (pk == "::" && path_sep_line == 0) {
+        path_sep_line = p.peek_line();
+        path_sep_col = p.peek_col();
+      }
       // Field access `obj.field`. Field is either an
       // ident (struct field) or a numeric literal
       // (tuple index — `.0`, `.1`, …). Both shapes
@@ -3278,6 +3282,9 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
     } else {
       break;
     }
+  }
+  if (path_sep_line > 0) {
+    return (e_unknown_at(path_sep_message(), path_sep_line, path_sep_col), p);
   }
   return (base, p);
 }
@@ -3455,7 +3462,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let kwline: i32 = p.peek_line();
         let kwcol: i32 = p.peek_col();
         let look: Par = p.advance();
-        if (look.at_path_sep()) {
+        if (look.peek_punct() == ".") {
           return parse_postfix(look, e_ident_at(x.name, kwline, kwcol));
         }
       }
@@ -4304,7 +4311,7 @@ function parse_tuple_arm_pattern_nested(p: Par): (i32[], string[], ast.Expr[], a
       binds = binds.append("");
       lits = lits.append(e_bool(true));
       pats = pats.append(p_tuple_carrier(ne_kinds, ne_binds, ne_lits, ne_pats));
-    } else if (n.len() > 0 && (p.peek_punct_at(1) == "(" || p.peek_punct_at(1) == "." || p.peek_punct_at(1) == "::")) {
+    } else if (n.len() > 0 && (p.peek_punct_at(1) == "(" || p.peek_punct_at(1) == ".")) {
       // Variant sub-pattern: a binder is followed by `,` or `)`, so `(`
       // (payload list, empty for a payload-less variant) and `.` (a
       // `mod.` qualifier) both say variant unambiguously. The payload
@@ -4671,7 +4678,7 @@ function struct_field_variant_start(p: Par): boolean {
   let n: string = p.peek_ident();
   if (n.len() > 0 && n != "_") {
     let nx: string = p.peek_punct_at(1);
-    if (nx == "(" || nx == "." || nx == "::") {
+    if (nx == "(" || nx == ".") {
       return true;
     }
   }
@@ -6087,7 +6094,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
   // matches use `lexer.TokX(...)` throughout, so this is required
   // for the self-host parser to parse its own source. Same gap as
   // parse_type_name's qualified-name handling.
-  while (p.at_path_sep()) {
+  while (p.peek_punct() == ".") {
     p = p.advance();  // consume `.`
     let seg: string = p.peek_ident();
     if (seg.len() == 0) {
@@ -6120,7 +6127,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
     let bn: i32 = 0;
     while (p.peek_punct() != ")" && !p.at_end()) {
       if (p.peek_ident().len() > 0
-        && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == "." || p.peek2_punct() == "::")) {
+        && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == ".")) {
         // The slot binds a synthetic temp and `nested` records the
         // pattern the temp is matched against — the same shape the
         // literal slot below uses, so a sub-pattern works at ANY
@@ -7860,7 +7867,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     // or-patterns, the same forms `if let` and the match arms accept. A head
     // spelled `NAME(`, `NAME@`, `NAME|` or `NAME.` (a qualified variant,
     // `Color.Red(n)`) is never a plain binding, so it requires the `= E else`.
-    if (p.peek_punct() == "(" || p.peek_punct() == "@" || p.peek_punct() == "|" || p.at_path_sep()) {
+    if (p.peek_punct() == "(" || p.peek_punct() == "@" || p.peek_punct() == "|" || p.peek_punct() == ".") {
       let (lsp_pat, lsp_p) = parse_pattern(le_pat_start);
       let lsp_pats: ast.Pattern[] = [lsp_pat];
       while (lsp_p.peek_punct() == "|") {
@@ -8805,7 +8812,7 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
   // process is OOM-killed. parser.fern itself is full of
   // `lexer.Token` field / param types, so this is required for the
   // self-host parser to parse its own source.
-  while (p.at_path_sep()) {
+  while (p.peek_punct() == "." || p.peek_punct() == "::") {
     // The separator is KEPT: in type position `.` and `::` are not
     // interchangeable. `mod.Type` is a module qualifier, stripped to the
     // bare name downstream; `Base::Name` is an associated-type projection
@@ -9372,7 +9379,7 @@ function parse_type_param_list(p: Par): (TpList, Par) {
           tname = p.peek_ident();
           p = p.advance();
         }
-        if (p.at_path_sep()) {
+        if (p.peek_punct() == ".") {
           p = p.advance();
           if (p.peek_ident().len() > 0) {
             tname = tname + "." + p.peek_ident();
@@ -27955,7 +27962,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
   // for everything downstream and wrong for anyone reporting what the source
   // said. Read the qualifier off the tokens BEFORE it is consumed.
   let first_spelling: string = "";
-  if (p.peek_ident().len() > 0 && (p.peek_punct_at(1) == "." || p.peek_punct_at(1) == "::") && p.peek_ident_at(2).len() > 0) {
+  if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "." && p.peek_ident_at(2).len() > 0) {
     first_spelling = p.peek_ident() + p.peek_punct_at(1) + p.peek_ident_at(2);
   }
   // parse_type_name admits a keyword, which a built-in type name is; a trait
@@ -28920,7 +28927,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         sup_written = sup_name;
         p = p.advance();
       }
-      if (p.at_path_sep()) {
+      if (p.peek_punct() == ".") {
         p = p.advance();
         if (p.peek_ident().len() > 0) {
           sup_name = p.peek_ident();

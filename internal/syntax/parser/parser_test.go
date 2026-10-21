@@ -1429,7 +1429,6 @@ func TestStructLitTypeArgsParse(t *testing.T) {
 		{"nested arg", `Box[i32[]] { val: [1] }`, "Box", []string{"i32[]"}, false},
 		{"trailing comma", `Box[i32,] { val: 1 }`, "Box", []string{"i32"}, false},
 		{"qualified", `m.Box[i32] { val: 1 }`, "m.Box", []string{"i32"}, false},
-		{"path qualified", `m::Box[i32] { val: 1 }`, "m.Box", []string{"i32"}, false},
 		{"spread", `Box[i32] { ...b, val: 1 }`, "Box", []string{"i32"}, true},
 		{"no args", `Box { val: 1 }`, "Box", nil, false},
 		{"named arg", `Box[Loc] { val: l }`, "Box", []string{"Loc"}, false},
@@ -2816,44 +2815,23 @@ func TestTraitDefaultMethodParses(t *testing.T) {
 	}
 }
 
-// The path separator `::` in expression position parses to the same
-// FieldAccess node as `.`, with PathSep set so the printer round-trips it.
-// `Type::method(args)`, `mod::func()`, and `mod::CONST` all work. See #2700.
-func TestPathSepParse(t *testing.T) {
-	prog, err := Parse(`function main(): i32 {
-    let a: i32 = Point::origin().x;
-    let b: i32 = helpers::add5(10);
-    let c: i32 = helpers::BONUS;
-    return a + b + c;
-}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := prog.Funcs[0].Body.Stmts
-	fieldOf := func(e ast.Expr) *ast.FieldAccess {
-		switch x := e.(type) {
-		case *ast.FieldAccess:
-			return x
-		case *ast.Call:
-			if fa, ok := x.Callee.(*ast.FieldAccess); ok {
-				return fa
-			}
+// `::` is only an associated-type projection; as a path separator it is a
+// P001 at the `::` naming `.` (#12698).
+func TestPathSepRejected(t *testing.T) {
+	for _, src := range []string{
+		"function main(): i32 { return Point::origin().x; }",
+		"function main(): i32 { return helpers::add5(10); }",
+		"function main(): i32 { return helpers::BONUS; }",
+		"function main(): i32 { let b = m::Box[i32] { val: 1 }; return 0; }",
+	} {
+		_, err := Parse(src)
+		var pe *Error
+		if errs, ok := err.(diag.Errors); ok && len(errs) > 0 {
+			pe, _ = errs[0].(*Error)
 		}
-		return nil
-	}
-	// a = Point::origin().x → outer `.x` (dot) on Call(Point::origin()).
-	ax := body[0].(*ast.Var).Init.(*ast.FieldAccess)
-	if ax.PathSep {
-		t.Errorf("`.x` should not be a path separator")
-	}
-	if origin := fieldOf(ax.Target); origin == nil || origin.Field != "origin" || !origin.PathSep {
-		t.Errorf("Point::origin should be FieldAccess{Field:origin, PathSep:true}, got %#v", ax.Target)
-	}
-	if fa := fieldOf(body[1].(*ast.Var).Init); fa == nil || !fa.PathSep || fa.Field != "add5" {
-		t.Errorf("helpers::add5 should be a PathSep FieldAccess, got %#v", body[1].(*ast.Var).Init)
-	}
-	if fa := fieldOf(body[2].(*ast.Var).Init); fa == nil || !fa.PathSep || fa.Field != "BONUS" {
-		t.Errorf("helpers::BONUS should be a PathSep FieldAccess, got %#v", body[2].(*ast.Var).Init)
+		if pe == nil || pe.ErrCode != "P001" || pe.Pos.Col != strings.Index(src, "::")+1 || !strings.Contains(pe.Msg, "write `.`") {
+			t.Errorf("%s: got %v, want a P001 at the `::` naming `.`", src, err)
+		}
 	}
 }
 
@@ -4262,7 +4240,6 @@ func TestIntegerLiteralPastU64ParsesFlagged(t *testing.T) {
 func TestQualifiedStructLitTakesPostfix(t *testing.T) {
 	for _, src := range []string{
 		`function main(): i32 { return lib.Thing { v: 1 }.v; }`,
-		`function main(): i32 { return lib::Thing { v: 1 }.v; }`,
 		`function main(): i32 { return Box[i32] { v: 1 }.v; }`,
 	} {
 		prog, err := Parse(src)

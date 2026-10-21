@@ -115,6 +115,11 @@ var parseErrPosCases = []struct {
 	// A missing closer after a well-formed element is still its own error.
 	{"struct-lit-missing-brace", "struct Foo { x: i32 }\nfunction main(): i32 {\n  let x = Foo { x: 1 ;\n  return 0;\n}\n"},
 	{"array-missing-bracket", "function main(): i32 {\n  let x = [1 2];\n  return 0;\n}\n"},
+	// `::` is only an associated-type projection; as a path it is a P001 (#12698).
+	{"path-sep-call", "function main(): i32 {\n  return helpers::add5(10);\n}\n"},
+	{"path-sep-const", "function main(): i32 {\n  let c = helpers::BONUS;\n  return c;\n}\n"},
+	{"path-sep-type-keyword", "function main(): i32 {\n  let m = i32::MAX;\n  return 0;\n}\n"},
+	{"path-sep-struct-literal", "function main(): i32 {\n  let b = m::Box { v: 1 };\n  return 0;\n}\n"},
 }
 
 // TestSelfHostParseErrorPositions pins SH-041 (tracking #2849): a
@@ -246,6 +251,11 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"pub-use-empty-list-without-semicolon",
 			"pub use \"./m\".{}",
 			"error[P001]: at top level: expected \";\", got the end of the file (1:17)"},
+		// A `::` path parses through as a `.` chain, so its P001 is the only
+		// diagnostic it draws (#12698).
+		{"path-sep-chain",
+			"function main(): i32 {\n  return helpers::add5(10).x;\n}\n",
+			"error[P001]: in fn 'main': `::` is not a path separator; write `.` (2:17)"},
 		// A sentinel inside a defer's action: the walk descends StmtDefer.
 		{"defer-action-sentinel",
 			"function main(): i32 {\n  defer print(;);\n  return 0;\n}\n",

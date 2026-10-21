@@ -302,7 +302,6 @@ PostfixOp   = '(' [ CallArgs ] ')'
             | '[' Expr ']'
             | '[' TypeArgList ']'
             | '.' MemberName [ TypeArgs ]
-            | '::' MemberName
             | '?'
             ;
 MemberName  = IDENT | NUMBER | 'default' ;

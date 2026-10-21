@@ -1572,14 +1572,8 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
         l = l.advance();
         i = i + 1;
       }
-      // `::` is kept as its own token. In EXPRESSION position it is a
-      // path separator equivalent to `.` (`Type::f` / `mod::g` /
-      // `Type::CONST`), and every `.`-handling parser site accepts both
-      // via `at_path_sep`. In TYPE position the two are NOT
-      // interchangeable: `mod.Type` is a module-qualified name and
-      // `Base::Name` an associated-type projection (`Self::Item`), so
-      // normalising `::` away here left the type parser unable to tell
-      // them apart. See docs/ASSOCIATED-TYPES.md, #2700.
+      // `::` is its own token: in type position it is an associated-type
+      // projection (`Self::Item`), and the parser refuses it anywhere else.
       out = out.append(TokPunct { text: mp, line: start_line, col: start_col });
       after_dot = false;
       continue;

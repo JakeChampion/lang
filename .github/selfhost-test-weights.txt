@@ -1038,7 +1038,6 @@ TestSelfHostParserX86_64 3
 TestSelfHostPartialEnumInference 9
 TestSelfHostPartialEnumSubstitution 3
 TestSelfHostPasteBytes 3
-TestSelfHostPathSepIR 2
 TestSelfHostPayloadTakeIR 2
 TestSelfHostPegExample 6
 TestSelfHostPegText 3

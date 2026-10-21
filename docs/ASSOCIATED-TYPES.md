@@ -111,11 +111,9 @@ unify it against the concrete base.
 The self-host implements the feature too, in a different shape because its
 declared types are SPELLINGS rather than a tree:
 
-- `::` is its own token. In expression position it is a path separator
-  equivalent to `.` (`at_path_sep` accepts either); in TYPE position the two
-  are not interchangeable — `mod.Type` is a module qualifier and `Base::Name`
-  a projection — so the lexer's old fold of `::` into `.` left them
-  indistinguishable.
+- `::` is its own token and means a projection only: in type position
+  `mod.Type` is a module qualifier and `Base::Name` a projection, and in
+  expression position `::` is a P001.
 - A projection is the string `Base::Name`, and
   `parser.resolve_assoc_projections` rewrites every one to the impl's binding
   as a module pass. The base carries its type arguments (`Box[i32]::Ok`), so
