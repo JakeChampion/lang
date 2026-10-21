@@ -5300,7 +5300,7 @@ pub function rotr_count(what: string): i32 {
 // loses an instruction on, and a block's `ninsts` from its first dead
 // instruction on.
 pub function prune_dead(f: SFunc): SFunc {
-  let live: i32[] = prune_mark(f, prune_roots(f));
+  let live: i32[] = prune_live(f);
   let nblocks: SBlock[] = [];
   let copying: boolean = false;
   let bi: i32 = 0;
@@ -5372,30 +5372,10 @@ function inst_has_effect(k: i32): boolean {
   return k != 36 && k != 40 && k != 45 && k != 46 && k != 47 && k != 52 && k != 54 && k != 57 && k != 58;
 }
 
-// prune_roots is every value an effectful instruction or a terminator reads.
-function prune_roots(f: SFunc): i32[] {
-  let work: i32[] = [];
-  for blk in f.blocks {
-    for ins in blk.insts {
-      if (inst_has_effect(ins.kind_tag)) {
-        for a in ins.args {
-          work = work.append(a);
-        }
-      }
-    }
-    if (blk.term.kind_tag == 1) {
-      work = work.append(blk.term.value);
-    }
-    if (blk.term.kind_tag == 3) {
-      work = work.append(blk.term.cond);
-    }
-  }
-  return work;
-}
-
-// prune_mark marks the roots and, through the pure instructions that define
-// them, everything they read.
-function prune_mark(f: SFunc, work: i32[]): i32[] {
+// prune_live marks every value an effectful instruction or a terminator
+// reads and, through the pure instructions that define them, everything
+// those read: 1 for live, 0 otherwise, by value.
+function prune_live(f: SFunc): i32[] {
   let live: i32[] = __alloc_i32(f.nvals);
   let def_b: i32[] = __alloc_i32(f.nvals);
   let def_k: i32[] = __alloc_i32(f.nvals);
@@ -5410,19 +5390,49 @@ function prune_mark(f: SFunc, work: i32[]): i32[] {
     }
     bi = bi + 1;
   }
+  // `work` holds the live values whose definition's reads are still to be
+  // marked; a value is marked when first met, so it is pushed once.
+  let work: i32[] = [];
+  bi = 0;
+  while (bi < f.blocks.len()) {
+    let blk: SBlock = f.blocks[bi];
+    for ins in blk.insts {
+      if (inst_has_effect(ins.kind_tag)) {
+        for a in ins.args {
+          if (a >= 0 && a < f.nvals && live[a] == 0) {
+            live = live.with(a, 1);
+            if (def_b[a] != 0) {
+              work = work.append(a);
+            }
+          }
+        }
+      }
+    }
+    let root: i32 = 0 - 1;
+    if (blk.term.kind_tag == 1) {
+      root = blk.term.value;
+    } else if (blk.term.kind_tag == 3) {
+      root = blk.term.cond;
+    }
+    if (root >= 0 && root < f.nvals && live[root] == 0) {
+      live = live.with(root, 1);
+      if (def_b[root] != 0) {
+        work = work.append(root);
+      }
+    }
+    bi = bi + 1;
+  }
   let at: i32 = 0;
   while (at < work.len()) {
     let v: i32 = work[at];
     at = at + 1;
-    if (v < 0 || v >= f.nvals || live[v] == 1) {
-      continue;
-    }
-    live = live.with(v, 1);
-    if (def_b[v] == 0) {
-      continue;
-    }
     for a in f.blocks[def_b[v] - 1].insts[def_k[v]].args {
-      work = work.append(a);
+      if (a >= 0 && a < f.nvals && live[a] == 0) {
+        live = live.with(a, 1);
+        if (def_b[a] != 0) {
+          work = work.append(a);
+        }
+      }
     }
   }
   return live;
