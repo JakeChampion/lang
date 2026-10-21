@@ -1,6 +1,6 @@
 # A tuple-array local bound from a call loses its element tags
 
-**Status:** open, sites identified and measured. No fix in this note.
+Status: [record] fixed; `TestSelfHostArrtupCallBindWasm` pins it. The sites below were in the deleted AST lowering (`irlower.fern`).
 **Severity:** silent wrong values on wasm — compiler exits 0, no diagnostic.
 
 ## Reproducer

@@ -1,5 +1,8 @@
 # Codegen quality audit, 2026-09
 
+Status: [record] measurement snapshot of the machine code Fern emitted in
+September 2026 and its gap to other languages; Tier A of §6 has landed.
+
 What machine code Fern actually emits, how it ranks against other languages,
 and what it would take to close the gap.
 
@@ -22,7 +25,7 @@ On the tightest possible kernel Fern spent 22 instructions per iteration where
 nothing** — they shuffled values between the machine stack and two scratch
 registers, or padded `rsp` for a call.
 
-> **Status, 2026-09-01.** Tier A of §6 has since landed for both native
+> **Update, 2026-09-01.** Tier A of §6 has since landed for both native
 > backends. The same kernel is now 11 instructions per iteration, the x86-64
 > emit of the compiler is **963,165 instructions against 1,601,565 (−39.9%)**
 > and its overhead **12.5% against 42.6%**, and on call-heavy code Fern is now

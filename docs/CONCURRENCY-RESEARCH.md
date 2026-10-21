@@ -1,6 +1,6 @@
 # Concurrency model research
 
-> Correction (2026-07-19): the "no concurrency surface today" framing below predates `std/async` — the colorless `gather`/`race`/`with_deadline` combinators have since shipped (`docs/ASYNC.md`); for the parallelism (multicore) story see `docs/MULTICORE-RESEARCH.md`.
+Status: [research] concurrency-model survey. Correction (2026-07-19): the "no concurrency surface today" framing below predates `std/async` — the colorless `gather`/`race`/`with_deadline` combinators have since shipped (`docs/ASYNC.md`); for the parallelism (multicore) story see `docs/MULTICORE-RESEARCH.md`.
 
 The codebase has *no concurrency surface today* — handlers run
 single-shot, one invocation per arena, no `spawn`, no `await`,

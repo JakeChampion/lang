@@ -1,7 +1,8 @@
 # Array.build / Map.build — the scoped linear builder
 
 Date: 2026-06-08.
-Status: design. Picks the implementation approach for the builder that
+Status: [record] shipped as a parse-time desugar in both parsers (`Array.build`,
+then `Map.build`). Picks the implementation approach for the builder that
 `docs/PURE-COLLECTION-API-PLAN.md` §4 specifies. No compiler code changed
 by this doc.
 

@@ -1,5 +1,7 @@
 # Performance research — what makes other languages fast
 
+Status: [research] survey of performance techniques; its recommendations name `internal/codegen`, which has since been deleted.
+
 Survey of performance techniques across both well-known systems
 languages (Zig, Rust, OCaml) and less-mined sources (BQN/APL,
 Forth, Factor, LuaJIT, SBCL, Vale, WUFFS). The framing is

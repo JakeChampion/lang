@@ -1,5 +1,7 @@
 # Stdlib roadmap
 
+Status: [record] seven-language survey and prioritised additions; its tracking issues (#4416, #4385) are closed and the checkboxes below are not maintained.
+
 Captures a survey of seven reference languages — Roc, Rust,
 MoonBit, Gleam, Elixir, Go, Zig — and proposes a prioritised
 list of stdlib additions for Fern. Companion to

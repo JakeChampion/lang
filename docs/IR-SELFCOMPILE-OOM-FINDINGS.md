@@ -1,7 +1,7 @@
 # Self-host IR self-compile OOM — root-cause findings
 
 Date: 2026-06-20.
-Status: investigation complete; fixes scoped, not yet implemented.
+Status: [record] investigation complete; the fixes it scoped were tracked in #4394.
 
 > **CORRECTION (2026-06-21) — see "Finding 2 RE-MEASURED" below.** Direct
 > measurement with `cmd/fern`-compiled microbenchmarks contradicts this

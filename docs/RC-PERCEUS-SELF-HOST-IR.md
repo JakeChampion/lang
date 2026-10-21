@@ -1,6 +1,6 @@
 # Would a native-shaped IR help the self-host Perceus port?
 
-Status: **superseded** — this early feasibility note answered "yes"; the
+Status: [record] superseded — this early feasibility note answered "yes"; the
 actual rebuild + port are tracked in `RC-PERCEUS-SELF-HOST-IR-REBUILD.md`
 (design + rollout) and `RC-PERCEUS-SELF-HOST-PORT.md` (the active goal-2
 tracker). Kept as the original assessment (2026-06-09).

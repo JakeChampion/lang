@@ -1,5 +1,7 @@
 # Stdlib design research — HTTP, JSON, date/time, I/O
 
+Status: [research] depth survey of HTTP, JSON, date/time and I/O design.
+
 Companion to `STDLIB-ROADMAP.md`. That doc surveys *breadth*
 across 7 reference languages and prioritises missing functions
 ("add `string.pad_start`", "add `Set` type"). This one surveys

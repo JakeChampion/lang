@@ -1,5 +1,7 @@
 # The sanitizer build (`-sanitize` / `FERN_SANITIZE=1`)
 
+Status: [reference] the `-sanitize` / `FERN_SANITIZE=1` build as it works today.
+
 Fern's heap memory-safety detectors used to be three separately-named
 environment variables. Each was sound; together they were unusable, because
 using one meant already knowing which bug you had. `-sanitize` is the single

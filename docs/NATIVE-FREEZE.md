@@ -1,5 +1,7 @@
 # Native freeze — 2026-09-28
 
+Status: [record] the native compiler froze on 2026-09-28; its backends were deleted by 2026-10-05 (`NATIVE-RETIREMENT.md`).
+
 The native compiler (`internal/`) stopped being where language features land
 on 2026-09-28, when the last of `NATIVE-CONVERGENCE.md`'s four preconditions
 went green. That doc holds the policy and the definitions; this one records the

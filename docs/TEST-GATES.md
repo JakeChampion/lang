@@ -1,5 +1,7 @@
 # Which gates prove what
 
+Status: [reference] which CI lanes and suites prove what, and which do not.
+
 A guide to picking the suites a change actually has to pass, written after two
 compiler bugs shipped past three heavyweight green gates in a row.
 
@@ -18,7 +20,7 @@ Pull requests take two queues (`pr-ci-even` / `pr-ci-odd`, `queue: max`, first
 in first out, chosen by the parity of the PR number): at most two PRs' suites
 run at a time and each one's lanes run in parallel inside its run. Two rather
 than one because the runner ceiling fits two and one leaves half of it idle;
-`docs/CI-PERFORMANCE.md` has the measurements. Main runs take their own
+`docs/ci-log/2026-09-15-performance.md` has the measurements. Main runs take their own
 (`ci-main`), keyed on the ref and never
 cancelled, so every merge gets a full, attributable run and a burst queues
 rather than losing one. Keying main on `github.sha` would give each merge its

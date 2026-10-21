@@ -1,5 +1,7 @@
 # The raw-memory intrinsic floor (issue #2649, Tier 2)
 
+Status: [reference] the raw-memory intrinsic floor the Fern-written runtime helpers are built on, as shipped; the dated updates below record each extension.
+
 This is the **implementation design** for the primitive floor sketched in
 `RUNTIME-IN-FERN.md` (§"The hard part: circularity and the primitive floor").
 The Tier-0/1 helpers — `str_cmp`, `str_eq`,

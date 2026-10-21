@@ -1,15 +1,12 @@
 # Async on the self-hosted compiler's IR path (plan)
 
-> Status: **plan, not started.** Async is complete and shipped on the
-> **native (x86-64/arm64) and wasm** backends *via the Go compiler*
-> (`std/async`: `Future[T]` + `gather`/`race`/`with_deadline` +
-> `fetch_future`, real overlapping I/O — see `docs/ASYNC-REDESIGN.md` /
-> `ASYNC-FUTURE-UNIFICATION.md`). This doc is about the remaining gap:
-> the **self-hosted** compiler (`compiler/`) can't yet compile
-> `std/async` through its IR path (`irlower.fern` → `asm_ir.fern` /
-> `asm_arm64_ir.fern` / `wasm.fern`) — it falls back to, and in fact
-> can't even AST-compile it. This is **goal-1 work** (widen the
-> self-host IR subset until the AST fallback retires).
+Status: [record] done. The self-hosted compiler compiles `std/async` through
+its IR path: `tests/stdlib/async_combinators_test.fern` runs 6/6. Async first
+shipped on the native and wasm backends via the Go compiler (`std/async`:
+`Future[T]` + `gather`/`race`/`with_deadline` + `fetch_future` — see
+`docs/ASYNC-REDESIGN.md` / `ASYNC-FUTURE-UNIFICATION.md`); this doc planned
+the self-host half as goal-1 work. The IR-vs-AST routing it describes below
+was deleted with the AST emitters (`docs/SELFHOST-AST-RETIREMENT.md`).
 
 ## How the self-host routes IR vs AST
 

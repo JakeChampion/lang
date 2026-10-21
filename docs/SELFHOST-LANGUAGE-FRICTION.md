@@ -1,5 +1,7 @@
 # What the language does to the self-hosted compiler
 
+Status: [research] analysis of which language features make the self-hosted compiler harder to write, with a ranked list of fixes; not a commitment.
+
 An analysis of `compiler/` (94 files, 175,194 lines) asking one
 question: **which parts of Fern make writing the self-hosted compiler harder
 than it needs to be?** Not "which parts of the self-host are badly written" —

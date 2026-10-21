@@ -1,6 +1,6 @@
 # Networking and HTTP research, 2026-09
 
-Status: research survey (2026-09-20). Tracking issue: the networking plan issue
+Status: [research] survey (2026-09-20). Tracking issue: the networking plan issue
 this document was written for (linked from the PR that adds it). Nothing here
 is a build item; the plan in the issue is. This document records what the
 field looks like, with sources, so the plan's choices can be checked against

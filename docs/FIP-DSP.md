@@ -1,5 +1,7 @@
 # Bounded offline DSP
 
+Status: [record] measured experiment for #9588; the latest numbers are in FIP-MAINF939.md.
+
 Latest compiler measurements: [merged main11a validation](FIP-MAIN11A.md).
 The measurements below retain their original compiler and date.
 

@@ -1,6 +1,6 @@
 # The self-host SSA backend: `-backend ssa`
 
-Status: landed 2026-09-16 for arm64 (`arm64-linux`, `arm64-darwin`,
+Status: [reference] landed 2026-09-16 for arm64 (`arm64-linux`, `arm64-darwin`,
 `arm64-android`) and x86-64 (`x86-64-linux`), opt-in; since 2026-09-17 every
 function of the compiler compiling itself goes through it; the default on
 both native ISAs since 2026-09-18; **the only emitter on them since

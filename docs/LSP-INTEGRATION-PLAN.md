@@ -1,5 +1,7 @@
 # The language server: `fern -lsp`
 
+Status: [reference] shipped as `fern -lsp`.
+
 `fern -lsp [-target T] [-embed DIR] [stdlib-root]` runs the compiler as a
 language server on stdin and stdout (#6641): diagnostics, formatting, hover,
 go-to-definition, completion, signature help, document symbols, inlay hints,

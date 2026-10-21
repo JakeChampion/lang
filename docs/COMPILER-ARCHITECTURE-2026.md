@@ -1,6 +1,7 @@
 # Compiler architecture 2026 — scorecard against the modern-design checklist
 
-**Status:** assessment + recommendation. Not a plan; the plans it points at
+Status: [record] assessment + recommendation, written while the Go and Fern
+compilers were both maintained. Not a plan; the plans it points at
 are `TYPED-IR-REWRITE.md`, `SELFHOST-SYMBOL-INTERNING.md`, `SSA-DECISION.md`
 and `NATIVE-CONVERGENCE.md`.
 

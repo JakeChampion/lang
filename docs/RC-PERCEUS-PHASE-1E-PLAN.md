@@ -5,7 +5,7 @@ Implementation plan for widening refcount tracking from arrays
 closures (Phase 1e).
 
 Date: 2026-05-21.
-Status: design, draft executing.
+Status: [record] Phase 1e of the Go native compiler's RC, since deleted with the native backends.
 
 ## Why this plan exists
 

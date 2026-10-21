@@ -1,5 +1,7 @@
 # Checked source to typed semantic values
 
+Status: [reference] the typed lowering from checked source to semantic values, the lowering that produces every function body today.
+
 Part of #8920's self-hosted typed-IR ownership migration, the "typed frontend
 import" step of the [cutover plan](SELFHOST-TYPED-OWNERSHIP-CUTOVER.md).
 `compiler/semsource.fern` produces an `ssasem.Func` from a checked

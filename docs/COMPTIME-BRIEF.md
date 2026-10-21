@@ -1,5 +1,8 @@
 # Comptime design brief
 
+Status: [research] rules and architecture a future comptime must follow;
+comptime itself stays deferred.
+
 Plan item **B2** of `docs/NICHE-BORROWS-PLAN.md`. Fern's standing
 posture (`LANGUAGE-DIRECTION.md`) is that comptime is **deferred**
 "until we feel the pain of separate generic + const systems." This

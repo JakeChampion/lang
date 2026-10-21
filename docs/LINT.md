@@ -1,5 +1,7 @@
 # The Fern linter
 
+Status: [reference] shipped.
+
 `fern -lint` reports code that compiles and still costs the next reader more
 than it should. It is not the checker: the checker rejects programs that
 cannot run, a lint names a program that runs badly. That split decides

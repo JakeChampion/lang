@@ -1,5 +1,7 @@
 # Exact self-hosted declaration contracts
 
+Status: [record] landed; the note for the change that gave declarations exact type contracts (#8968).
+
 This is a production type-boundary prerequisite for the Fern-written typed-IR
 migration, not completion of AST ownership retirement. It integrates the
 declaration adapter and semantic type spelling from the preserved typed-match

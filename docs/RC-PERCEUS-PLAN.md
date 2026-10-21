@@ -1,18 +1,17 @@
 # RC + Perceus implementation plan
 
-> **Open follow-ups tracked in GitHub:**
-> [#2704](https://github.com/JakeChampion/lang/issues/2704) (safe-leak
-> classes), [#2705](https://github.com/JakeChampion/lang/issues/2705)
-> (`Drop` trait), [#4113](https://github.com/JakeChampion/lang/issues/4113)
-> (wide-struct in-place reuse). The old coarse tracker #2857 is closed.
-> This doc is a living progress log — verify the latest slice before picking up
-> an item.
+Status: [record] the Go native compiler's Perceus implementation, deleted with the native backends (`NATIVE-RETIREMENT.md`).
+Follow-ups were tracked in
+[#2704](https://github.com/JakeChampion/lang/issues/2704) (safe-leak
+classes), [#2705](https://github.com/JakeChampion/lang/issues/2705)
+(`Drop` trait) and [#4113](https://github.com/JakeChampion/lang/issues/4113)
+(wide-struct in-place reuse); the old coarse tracker #2857 is closed.
 
 Implementation plan for refcounted heap values with compile-time
 Perceus optimisation.
 
 Date: 2026-05-20 (design); implementation tracked inline below.
-Status: IMPLEMENTED. Phases 0–3 + the Phase-6 reclamation work have
+Outcome: IMPLEMENTED. Phases 0–3 + the Phase-6 reclamation work have
 shipped (RC with compile-time drop placement, the real freelist allocator,
 and per-type reclamation for arrays / structs / enums / maps / tuples /
 closures / strings, including nested/generic shapes and statement

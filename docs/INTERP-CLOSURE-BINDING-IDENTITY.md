@@ -1,5 +1,7 @@
 # Closure binding identity in the migration oracle
 
+Status: [record] fixed in the interpreter (#8970).
+
 Issue #8970, supporting #4451, #8920, #5531 and #5986.
 
 The Go interpreter retained mutable environment maps. A nested closure reading

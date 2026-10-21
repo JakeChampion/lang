@@ -1,6 +1,8 @@
 # SSA cutover: the shared lowering, and why Perceus needs it
 
-> **Status (2026-09-15): still PROPOSED, and the case for it has grown.** The
+Status: [record] never adopted; the Go `internal/ssa` layer and native backends it targeted were deleted in 2026-10.
+
+> **2026-09-15: still PROPOSED, and the case for it has grown.** The
 > re-evaluation date passed without a call; see `docs/SSA-DECISION.md` →
 > "Where this stands (2026-09-15)".
 >

@@ -1,5 +1,7 @@
 # Native register pools and fixed clobbers
 
+Status: [reference] the register homes, emitter temporaries and fixed clobbers of the self-host compiler's SSA register allocator on arm64 and x86-64.
+
 The register allocator assigns SSA values to homes. A home is distinct from a
 parameter's incoming ABI location and from a temporary the emitter uses while
 implementing one instruction. Expanding a home pool must account for all three.

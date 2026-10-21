@@ -1,5 +1,7 @@
 # Per-package capability grants — design brief
 
+Status: [reference] the design of per-package capability grants, implemented in `internal/pkg/caps` and mirrored in `compiler/caps.fern`.
+
 From the 2026-07 PLT landscape survey (`PLT-LANDSCAPE-2026.md` §2.5).
 Prior art: Deno's permission flags (per *process*), WASI's capability
 handles (per *component*), the object-capability tradition (E,

@@ -1,5 +1,7 @@
 # Test runner migration audit
 
+Status: [record] audit snapshot of 72 Go test files; the counts and several paths (such as `internal/codegen`) are out of date.
+
 The pure-Fern test runner (`internal/stdlib/std/test.fern`,
 TAP-13) was built so the project's regression suite can
 eventually run without a Go dependency — landing point

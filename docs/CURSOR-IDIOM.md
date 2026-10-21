@@ -1,7 +1,8 @@
 # The cursor idiom — immutable read-and-advance
 
-Date: 2026-06-01. Status: decided; stream.fern uses it. std/json's parser used
-it too until #12262 moved it to one shared position cell (below).
+Status: [policy] decided; stream.fern uses it. std/json's parser used it too
+until #12262 moved it to one shared position cell (below).
+Date: 2026-06-01.
 
 ## Problem
 

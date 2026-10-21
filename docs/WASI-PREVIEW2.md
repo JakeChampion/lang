@@ -1,6 +1,8 @@
 # WASI Preview 2 migration plan
 
-> **Status (complete).** The migration is done: `fern -target wasm32-wasi` and
+Status: [record] complete.
+
+> The migration is done: `fern -target wasm32-wasi` and
 > `-target wasm32-wasi-http` compose Component Model components **natively** in
 > Go (`internal/wasm/component`), with no `wasm-tools` shell-out and no
 > preview-1 adapter. The `-wasi-adapter` flag and the

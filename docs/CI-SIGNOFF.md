@@ -1,5 +1,7 @@
 # Local signoff of CI lanes
 
+Status: [reference] how to sign off a CI lane locally with `scripts/signoff`.
+
 Run a lane on your machine, record it against the pushed commit, and let CI skip
 that lane. `scripts/signoff` posts the record; `.github/actions/signoff-gate`
 reads it.

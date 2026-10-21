@@ -1,5 +1,7 @@
 # Closures on the self-host IR path — implementation plan
 
+Status: [record] shipped; closures lower through the IR, and the AST backends it routed around are deleted.
+
 ## Why this doc exists
 
 Goal 1 of the project roadmap is "a full IR implementation for the
