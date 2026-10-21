@@ -81,8 +81,12 @@ show() {
   local metric="$1" n="${2:-50}" rev="${3:-$(default_rev)}" sha date v
   fetch_notes
   git log --format='%H %cs' -n "$n" "$rev" | while read -r sha date; do
-    v="$(git notes --ref="$ref" show "$sha" 2>/dev/null | awk -v m="$metric" '$1 == m { print $2; exit }')"
-    [ -n "$v" ] && printf '%s  %s  %s\n' "$date" "${sha:0:12}" "$v"
+    # `git notes show` exits non-zero for a commit with no note, which under
+    # pipefail would, as a bare assignment, trip set -e and end the scan at
+    # the first noteless commit — and the newest main commits carry no note
+    # until the nightly records one. A missing note is expected, not an error.
+    v="$(git notes --ref="$ref" show "$sha" 2>/dev/null | awk -v m="$metric" '$1 == m { print $2; exit }' || true)"
+    if [ -n "$v" ]; then printf '%s  %s  %s\n' "$date" "${sha:0:12}" "$v"; fi
   done
 }
 
