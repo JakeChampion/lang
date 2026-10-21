@@ -1396,18 +1396,9 @@ function x86_label_buckets(): i32 {
   return 4093;
 }
 
-// x86_name_bucket hashes a label name to a bucket. The accumulator is masked
-// to 23 bits each step and reduced once at the end: `h * 131` then stays under
-// 2^31, so the hash still needs no wrapping arithmetic, without paying an
-// integer division per character.
+// x86_name_bucket hashes a label name to a bucket.
 function x86_name_bucket(name: string): i32 {
-  let h: i32 = 0;
-  let i: i32 = 0;
-  while (i < name.len()) {
-    h = h * 131 + name[i] as i32 & 8388607;
-    i = i + 1;
-  }
-  return h % 4093;
+  return (__str_hash(name, 0) & 1073741823) % 4093;
 }
 
 // x86_empty_buckets is a bucket array of `x86_label_buckets()` empty slots.
@@ -7605,7 +7596,8 @@ function x86_mnem_added(ix: MnemIndex, mnem: string): MnemIndex {
 // without the line being parsed again.
 struct LineMemo { keys: string[], head: i32[], next: i32[], at: i32[] }
 
-// x86_line_bucket is x86_name_bucket over a view of the text.
+// x86_line_bucket is the bucket of a view of the text; the memo it keys is
+// built and read through this one function only.
 function x86_line_bucket(s: str): i32 {
   let h: i32 = 0;
   let i: i32 = 0;
