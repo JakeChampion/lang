@@ -80,6 +80,15 @@
 #   net/<server>/c<N>.failed    responses that were not 200, plus errors
 #                               other than the requests cut off by the end
 #                               of the run
+#   net/<server>/c<N>.server_user_us_per_req,
+#   net/<server>/c<N>.server_sys_us_per_req   the server process group's
+#                               user / system CPU over the load divided by
+#                               the requests it handled, microseconds. The
+#                               source counters are whole 10 ms clock
+#                               ticks, so the figure carries up to one tick
+#                               per process of rounding — coarsest on the
+#                               low-request shapes — despite its 0.01 µs
+#                               print
 #   net/<server>/p<N>.rps       the pipelined profile: N connections each
 #                               sending 16 requests in one write and
 #                               reading the answers before the next batch
@@ -90,7 +99,8 @@
 #   net/<server>/c<N>m<M>.rps   HTTP/3: N connections with M requests in
 #                               flight on each, responses per second;
 #                               <server> is fern-h3 or h2o-h3
-#   net/<server>/c<N>m<M>.p50_us, .p99_us, .failed   as above
+#   net/<server>/c<N>m<M>.p50_us, .p99_us, .failed,
+#   .server_user_us_per_req, .server_sys_us_per_req   as above
 #   net/fern/held.bytes_per_connection          (x86-64 only)
 #   net/fern/held.bytes_per_suspended_handler   (x86-64 only)
 #   net/fern/held.bytes_per_stream              (x86-64 only)
@@ -194,62 +204,18 @@ EOF
   await_port "$1" "$2" "$work/server.log"
 }
 
-# h3_rows NAME N M OUT LOG U0 S0 U1 S1 — the report rows for one HTTP/3
-# load, from h2load's output and its per-request log, with the server
-# group's user/system jiffies before (U0 S0) and after (U1 S1) for the
-# server CPU per request.
-h3_rows() {
-  python3 - "$@" <<'PY'
-import os, re, sys
-name, n, m, out, log = sys.argv[1:6]
-u0, s0, u1, s1 = (int(x) for x in sys.argv[6:10])
-text = open(out).read()
-rps = re.search(r"finished in [^,]*, ([0-9.]+) req/s", text)
-req = re.search(r"requests: (\d+) total, \d+ started, (\d+) done, (\d+) succeeded, (\d+) failed, (\d+) errored, (\d+) timeout", text)
-if not rps or not req:
-    sys.exit("net-bench: no h2load summary for %s c%sm%s:\n%s" % (name, n, m, text))
-times = sorted(int(line.split()[2]) for line in open(log) if len(line.split()) == 3)
-def pct(p):
-    return times[min(len(times) - 1, int(len(times) * p))] if times else 0
-failed = int(req.group(4)) + int(req.group(5)) + int(req.group(6))
-done = int(req.group(2))
-row = f"net/{name}/c{n}m{m}"
-print(f"{row}.rps\t{int(float(rps.group(1)))}")
-print(f"{row}.p50_us\t{pct(0.50)}")
-print(f"{row}.p99_us\t{pct(0.99)}")
-print(f"{row}.failed\t{failed}")
-jiffy_us = 1e6 / os.sysconf("SC_CLK_TCK")
-if done > 0:
-    print(f"{row}.server_user_us_per_req\t{(u1 - u0) * jiffy_us / done:.2f}")
-    print(f"{row}.server_sys_us_per_req\t{(s1 - s0) * jiffy_us / done:.2f}")
-PY
+# rows NAME N JSON U0 S0 U1 S1 — the report rows for one HTTP/1.1 or
+# two-fetch load, from oha's JSON and the server group's user/system
+# clock ticks before (U0 S0) and after (U1 S1) it.
+rows() {
+  python3 scripts/net-bench.d/net_bench_rows.py oha "$@"
 }
 
-# rows NAME N JSON U0 S0 U1 S1 — the report rows for one load, from oha's
-# JSON and the server group's user/system jiffies before (U0 S0) and after
-# (U1 S1) it, which give the server CPU per request each row carries.
-rows() {
-  python3 - "$1" "$2" "$3" "$4" "$5" "$6" "$7" <<'PY'
-import json, os, sys
-name, n, path = sys.argv[1], sys.argv[2], sys.argv[3]
-u0, s0, u1, s1 = (int(x) for x in sys.argv[4:8])
-j = json.load(open(path))
-s = j["summary"]
-p = j["latencyPercentiles"]
-codes = j.get("statusCodeDistribution", {})
-errs = j.get("errorDistribution", {})
-failed = sum(v for k, v in codes.items() if k != "200")
-failed += sum(v for k, v in errs.items() if "deadline" not in k)
-done = sum(codes.values()) + sum(errs.values())
-print(f"net/{name}/c{n}.rps\t{int(s['requestsPerSec'])}")
-print(f"net/{name}/c{n}.p50_us\t{int(p['p50'] * 1e6)}")
-print(f"net/{name}/c{n}.p99_us\t{int(p['p99'] * 1e6)}")
-print(f"net/{name}/c{n}.failed\t{failed}")
-jiffy_us = 1e6 / os.sysconf("SC_CLK_TCK")
-if done > 0:
-    print(f"net/{name}/c{n}.server_user_us_per_req\t{(u1 - u0) * jiffy_us / done:.2f}")
-    print(f"net/{name}/c{n}.server_sys_us_per_req\t{(s1 - s0) * jiffy_us / done:.2f}")
-PY
+# h3_rows NAME N M OUT LOG U0 S0 U1 S1 — the report rows for one HTTP/3
+# load, from h2load's output and its per-request log, with the server
+# group's clock ticks before (U0 S0) and after (U1 S1) it.
+h3_rows() {
+  python3 scripts/net-bench.d/net_bench_rows.py h2load "$@"
 }
 
 {
