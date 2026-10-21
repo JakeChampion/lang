@@ -8744,12 +8744,12 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
         return ty_option(ty_unknown());
       }
       // A bare ident may name a zero-arg function (a `const`).
-      let cfi: i32 = 0;
-      while (cfi < s.funcs.len()) {
+      let cfi: i32 = s.funcs_ix.chain(id.name);
+      while (cfi >= 0) {
         if (s.funcs[cfi].name == id.name && s.funcs[cfi].receiver_type.len() == 0 && s.funcs[cfi].params.len() == 0) {
           return ty_from_name(s.funcs[cfi].ret_type);
         }
-        cfi = cfi + 1;
+        cfi = s.funcs_ix.next[cfi];
       }
       return s.local_type_of(id.name);
     },
