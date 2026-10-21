@@ -15103,12 +15103,12 @@ function bound_supplies(reqs: TraitReq[], bound: string, method: string): boolea
   return false;
 }
 
-// The integers' and string's `cmp` are their native order.
+// A primitive compares with its own operators, never through its `cmp` or `eq`:
+// a float's `cmp` is a total order where `<` is IEEE (#12697).
 function native_order_agrees(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "u8" || t == "string";
+  return util.has_str(["i32", "i64", "u32", "u64", "u8", "usize", "char", "f32", "f64", "string"], t);
 }
 
-// So are those types' `eq` and boolean's.
 function native_eq_agrees(t: string): boolean {
   return native_order_agrees(t) || t == "boolean";
 }

@@ -12,9 +12,10 @@ import (
 // keeps the plain symbol; a generic bounded by the other trait must reach the
 // renamed provider (`P.B.scale`, `i32.__entry.add`). Each line reaches both
 // providers, through a free generic, a supertrait, a lambda, a generic
-// struct's and a generic enum's bounded impl. The last line is the bound's
-// comparison, `>` meaning cmp's order with NaN above every number, through a
-// bounded impl and through a match payload of the variable's type.
+// struct's and a generic enum's bounded impl. The last line compares two
+// values of a bounded variable at f64 through a bounded impl and through a
+// match payload of the variable's type: `>` is IEEE, false against NaN, as it
+// is on a concrete f64 (#12697).
 const boundTraitProviderSrc = `import "core/cmp" as cmp;
 import "std/float";
 import "std/num";
@@ -102,7 +103,7 @@ function main(): i32 {
 const boundTraitProviderWant = `5 100 1100 200
 34 7
 100 100
-1 1
+0 0
 `
 
 func TestInterpBoundTraitProvider(t *testing.T) {

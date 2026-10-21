@@ -1,0 +1,36 @@
+import "core/cmp";
+
+// A comparison operator on a float is IEEE whether the code is generic or
+// concrete; the total order stays reachable through `eq` and `cmp` (#12697).
+@derive(cmp.Eq, cmp.Ord)
+struct P { x: i32 }
+
+function same_op[T: cmp.Eq](a: T, b: T): boolean { return a == b; }
+function differ_op[T: cmp.Eq](a: T, b: T): boolean { return a != b; }
+function lt_op[T: cmp.Ord](a: T, b: T): boolean { return a < b; }
+function ge_op[T: cmp.Ord](a: T, b: T): boolean { return a >= b; }
+
+function show(label: string, v: boolean): void {
+    if (v) {
+        print(label + " true");
+    } else {
+        print(label + " false");
+    }
+}
+
+function main(): i32 {
+    let nan: f64 = 0.0 / 0.0;
+    show("generic nan == nan", same_op(nan, nan));
+    show("generic nan != nan", differ_op(nan, nan));
+    show("generic 1 < nan", lt_op(1.0, nan));
+    show("generic nan >= 1", ge_op(nan, 1.0));
+    show("concrete nan == nan", nan == nan);
+    show("concrete 1 < nan", 1.0 < nan);
+    show("eq nan nan", nan.eq(nan));
+    show("cmp 1 nan < 0", 1.0.cmp(nan) < 0);
+    let n32: f32 = 0.0f32 / 0.0f32;
+    show("generic f32 nan == nan", same_op(n32, n32));
+    show("generic struct ==", same_op(P { x: 1 }, P { x: 1 }));
+    show("generic struct <", lt_op(P { x: 1 }, P { x: 2 }));
+    return 0;
+}

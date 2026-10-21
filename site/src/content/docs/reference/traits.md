@@ -401,7 +401,9 @@ primitives included — that is how `std/i32` gives `i32` its
 ## Operators on your own types
 
 The operators are spelled as methods, matched by name, so a type that
-declares the method gets the operator. No trait is involved.
+declares the method gets the operator. No trait is involved. A primitive
+keeps its own operators even in generic code: on a float, `<` and `==` are
+IEEE comparisons, while its `cmp` and `eq` methods are a total order.
 
 | Operator | Method |
 | -------- | ------ |

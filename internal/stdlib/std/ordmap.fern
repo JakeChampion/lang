@@ -772,7 +772,7 @@ function __om_ordered[K: cmp.Ord, V](l: OrdNode[K, V], k: K, r: OrdNode[K, V]): 
   match (__om_max_node(l)) {
     Tip => {},
     Bin(ml, mk, mv, mr, ms) => {
-      if (mk >= k) {
+      if (mk.cmp(k) >= 0) {
         return false;
       }
     }
@@ -780,7 +780,7 @@ function __om_ordered[K: cmp.Ord, V](l: OrdNode[K, V], k: K, r: OrdNode[K, V]): 
   match (__om_min_node(r)) {
     Tip => {},
     Bin(ml, mk, mv, mr, ms) => {
-      if (mk <= k) {
+      if (mk.cmp(k) <= 0) {
         return false;
       }
     }
