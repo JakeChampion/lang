@@ -89,8 +89,8 @@ Measured 2026-08-26 and pinned in `internal/testing/e2e/arm64_ssa_differential_t
 
 And `internal/testing/e2e/testdata/arm64-ssa-diff-known-divergences.txt` was **all
 header and no rows** — "the whole corpus either agrees or is refused". It
-outlived the differential that read it, deleted with the native backends, and
-went in #12692. The four
+outlived the differential that read it — that differential went with the native
+backends (`docs/NATIVE-RETIREMENT.md`) — and was deleted under #12692. The four
 wrong answers and 56 SIGSEGVs were fixed.
 
 **arm64 SSA is corpus-complete and behaviourally identical to the shipping

@@ -10361,9 +10361,10 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_types: str
 // list means a new builtin is registered once instead of being remembered in
 // two places — the drift that made a whitelist look unassemblable (#5644).
 // Runtime intrinsics are all `__`-prefixed and handled by the callers' prefix
-// test; this is the user-facing / lowered-helper set, and it names exactly the
-// Go checker's FuncSigs builtins: TestSelfHostKnowsEveryNativeBuiltin and
-// TestNativeKnowsEverySelfHostBuiltin hold the two lists equal.
+// test; this is the user-facing / lowered-helper set. Its names without a `__`
+// prefix are exactly the Go checker's FuncSigs builtins without one:
+// TestSelfHostKnowsEveryNativeBuiltin and TestNativeKnowsEverySelfHostBuiltin
+// hold those equal and look at no `__` name on either side.
 pub function builtin_function_names(): string[] {
   return [
     // I/O + process + environment
