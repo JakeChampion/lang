@@ -1158,7 +1158,6 @@ TestSelfHostRedundantWrapFlowsThrough 18
 TestSelfHostRegexConformance 13
 TestSelfHostRegexModuleIR 6
 TestSelfHostRegexUTF8 2
-TestSelfHostRejectsConformanceErrorCasesX86_64 3
 TestSelfHostReleaseEntry 3
 TestSelfHostResolveDifferentialX86_64 2
 TestSelfHostResultErrStringArm64 5

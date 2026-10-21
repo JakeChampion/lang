@@ -13,10 +13,13 @@ import (
 	"github.com/jakechampion/lang/internal/envflag"
 )
 
-// Three legs run the fixture corpus through the SELF-HOST compiler:
+// These legs run the fixture corpus through the SELF-HOST compiler:
 // TestFernFixturesSelfHostWasm, TestFernFixturesSelfHostX86_64 and
 // TestFernFixturesSelfHostArm64, plus TestFernFixturesSelfHostX86_64Quarantine,
-// the x86-64 leg under the use-after-free quarantine. Nothing else does.
+// the x86-64 leg under the use-after-free quarantine. Two more hold the rest
+// of what ships to the corpus: TestFernFixturesSelfHostInterp runs the
+// interpreter, and TestFernFixturesSelfHostCheck the compile-error cases
+// through `fern -check`.
 //
 // # Why these exist
 //
@@ -88,13 +91,9 @@ import (
 //
 // # What they skip, and why each skip is principled
 //
-//   - compile-error fixtures (expected.error): front-end only and
-//     backend-agnostic, so running them once per backend leg buys nothing. Note
-//     what that does NOT mean: TestFernFixtures covers the NATIVE front end, and
-//     the self-host has its own checker, so for years this skip left the
-//     self-host's rejections untested rather than tested elsewhere — eleven of
-//     them are missing. TestSelfHostRejectsConformanceErrorCasesX86_64 is where
-//     they are gated now, once rather than per leg.
+//   - compile-error fixtures (expected.error), on every leg but the check
+//     leg: front-end only and backend-agnostic, so running them once per
+//     backend buys nothing. TestFernFixturesSelfHostCheck runs them once.
 //   - fixtures whose `backends` file omits this leg's target: if a program cannot
 //     run on the native backend for a target it will not run on the self-host one
 //     either, and a shared opt-out beats inventing a second exclusion mechanism.
@@ -323,6 +322,49 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 	})
 }
 
+// TestFernFixturesSelfHostInterp runs the corpus through `fern -interp`, the
+// shipped interpreter (compiler/interp.fern). The `interp` backend token
+// selects the cases the Go interpreter runs in TestFernFixtures, so the two
+// interpreters are held to the same corpus.
+func TestFernFixturesSelfHostInterp(t *testing.T) {
+	requireSelfHostFixtureLeg(t)
+	gcc, runner := x86_64Tooling(t)
+	runSelfHostFixtureLeg(t, selfHostLeg{
+		backend:   "interp",
+		gcc:       gcc,
+		runner:    runner,
+		knownFile: "selfhost-interp-known-divergences.txt",
+		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
+			cmd := exec.Command(fernBin, "-interp", f.mainPath, stdlibRoot)
+			checkSelfHostNativeRun(t, f, runSelfHostBin(cmd, f.stdin), failf)
+		},
+	})
+}
+
+// TestFernFixturesSelfHostCheck runs the compile-error cases through
+// `fern -check` and holds the shipped front end to each case's whole
+// expected.error, as TestFernFixtures holds the Go one: every line reported,
+// and no diagnostic code the sidecar does not name.
+func TestFernFixturesSelfHostCheck(t *testing.T) {
+	requireSelfHostFixtureLeg(t)
+	gcc, runner := x86_64Tooling(t)
+	runSelfHostFixtureLeg(t, selfHostLeg{
+		backend:    "check",
+		gcc:        gcc,
+		runner:     runner,
+		knownFile:  "selfhost-check-known-divergences.txt",
+		errorCases: true,
+		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
+			out, err := exec.Command(fernBin, "-check", f.mainPath, stdlibRoot).CombinedOutput()
+			if err == nil {
+				failf("the self-host front end accepted it; expected an error containing %q\n%s", f.wantErrors[0], out)
+				return
+			}
+			reportDiagnosticMismatches("self-host -check", f.wantErrors, string(out), failf)
+		},
+	})
+}
+
 // failFunc reports a divergence. It is t.Errorf for an unlisted fixture and a
 // t.Logf for a listed one, so the same assertions describe both directions and
 // cannot drift apart.
@@ -338,7 +380,9 @@ type selfHostLeg struct {
 	runner    []string // non-empty when the host cannot exec x86-64 binaries directly
 	knownFile string   // testdata/<file> listing this leg's known divergences
 	skipStdin bool
-	check     func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc)
+	// errorCases selects the compile-error cases instead of the runnable ones.
+	errorCases bool
+	check      func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc)
 }
 
 func requireSelfHostFixtureLeg(t *testing.T) {
@@ -389,7 +433,11 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 			continue
 		}
 		f := loadFixture(t, abs)
-		if f.rejectionCase() || !f.backends[leg.backend] || (leg.skipStdin && f.stdin != "") {
+		selected := !f.rejectionCase() && f.backends[leg.backend] && !(leg.skipStdin && f.stdin != "")
+		if leg.errorCases {
+			selected = f.compileError
+		}
+		if !selected {
 			skipped++
 			continue
 		}

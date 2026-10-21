@@ -19,7 +19,7 @@ import (
 // sharder can place the parts apart; together they are more than half a
 // shard's budget, and tests/stdlib is two thirds of it.
 //
-// The expected.error cases are TestSelfHostRejectsConformanceErrorCasesX86_64's.
+// The expected.error cases are internal/testing/e2e's TestFernFixturesSelfHostCheck's.
 func TestSelfHostCheckAgreesWithGoOnConformance(t *testing.T) {
 	checkAgreesWithGo(t, conformanceCorpus(t), 500)
 }

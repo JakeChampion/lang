@@ -460,6 +460,13 @@ func splitDiagnostics(errText string) (codes []string, blocks []string) {
 // a judgement per case rather than something a matcher can do.
 func checkExpectedDiagnostics(t *testing.T, stage string, want []string, errText string) {
 	t.Helper()
+	reportDiagnosticMismatches(stage, want, errText, t.Errorf)
+}
+
+// reportDiagnosticMismatches is checkExpectedDiagnostics with the report
+// routed through failf, so a leg with a known-divergence list can log
+// instead of failing.
+func reportDiagnosticMismatches(stage string, want []string, errText string, failf func(format string, args ...any)) {
 	codes, blocks := splitDiagnostics(errText)
 	matched := map[string]bool{}
 	for _, w := range want {
@@ -476,7 +483,7 @@ func checkExpectedDiagnostics(t *testing.T, stage string, want []string, errText
 			hit = true
 		}
 		if !hit {
-			t.Errorf("%s error does not contain %q\nfull error:\n%s", stage, w, errText)
+			failf("%s error does not contain %q\nfull error:\n%s", stage, w, errText)
 		}
 	}
 	var unexpected []string
@@ -489,7 +496,7 @@ func checkExpectedDiagnostics(t *testing.T, stage string, want []string, errText
 		unexpected = append(unexpected, c)
 	}
 	if len(unexpected) > 0 {
-		t.Errorf("%s reported %s that no line of the sidecar expects — either the case is "+
+		failf("%s reported %s that no line of the sidecar expects — either the case is "+
 			"documenting something that does not work (which is what #9601 found in diag_e053), "+
 			"or the cascade is legitimate and belongs in the sidecar, one line per diagnostic"+
 			"\nfull error:\n%s",

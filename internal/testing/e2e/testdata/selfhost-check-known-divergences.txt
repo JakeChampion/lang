@@ -1,0 +1,23 @@
+# Compile-error cases where `fern -check` rejects the program with different
+# text or codes from its expected.error. Read by TestFernFixturesSelfHostCheck.
+#
+# Format: <fixture-name> <#issue> <reason>
+#
+# Same contract as the other legs' lists: a listed case must still diverge,
+# and a case not listed must pass, so the list can only shrink.
+
+destructure_rejects_literal_tuple_elem #12889 a cascade of generic P001s, not "a literal tuple element can fail to match"
+diag_e019 #12889 "struct Pair takes 2 type arguments but was given 1", twice
+diag_e031 #12889 E002 beside E031, which reads "match/if-expression arms have incompatible types"
+diag_e049 #12889 drops "string" and the reference-cycle clause
+diag_e055 #12889 drops the `let _ = …` advice
+diag_e058 #12889 drops the label name
+diag_e059 #12889 quotes `as?` and `dyn Trait` with backticks
+diag_e061 #12889 the short message, and no E003 for the void initialiser
+diag_e074 #12889 names the traits in the other order, and their positions without the file
+diag_p005 #12889 "input nests too deeply" rather than "deeper than N levels"
+err_operator_type #12889 "requires matching numeric or string operands" rather than "requires an integer type"
+param_pattern_rejects_enum_variant #12889 a cascade of generic P001s, not "an enum variant pattern can fail to match"
+param_pattern_rejects_literal_tuple_elem #12889 a malformed-declaration P001, not "a literal tuple element can fail to match"
+param_pattern_rejects_qualified_variant #12889 a cascade of generic P001s, not "an enum variant pattern can fail to match"
+tuple_match_err_arity #12889 E024 and E026 rather than the tuple-pattern arity message
