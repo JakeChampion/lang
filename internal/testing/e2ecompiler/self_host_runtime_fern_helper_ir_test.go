@@ -184,7 +184,7 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 			[]string{"\n__fern_read_file:"},
 		},
 		{
-			// remove_file — Result[(), IoError] leaf (#2649): unlinkat via __syscall3.
+			// remove_file — Result[void, IoError] leaf (#2649): unlinkat via __syscall3.
 			// The old hand-asm IR body (__fern_remove_file:) is gone; op_remove_file
 			// calls __fn___fern_remove_file.
 			"remove_file",
@@ -193,7 +193,7 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 			[]string{"\n__fern_remove_file:"},
 		},
 		{
-			// write_file — Result[(), IoError] leaf (#2649), first __syscall4 user
+			// write_file — Result[void, IoError] leaf (#2649), first __syscall4 user
 			// (openat with O_CREAT mode). Old hand-asm IR body (__fern_write_file:)
 			// gone; op_write_file calls __fn___fern_write_file.
 			"write_file",

@@ -17,10 +17,10 @@
 //   degenerate input → area: zero or negative side
 //   cuboid 2x3x5 → volume 30
 // f-string interpolation in show_area dispatches
-// (f32).to_string / (f64).to_string from std/float (which
+// (f32).to_string / (f64).to_string from std/f64 (which
 // transitively pulls in std/i64 for the (intPart : i64)
 // formatter inside __float_to_string).
-import "std/float";
+import "std/f64";
 
 enum Shape { Circle(f32), Square(f32), Triangle(f32, f32), Cuboid(f64, f64, f64) }
 

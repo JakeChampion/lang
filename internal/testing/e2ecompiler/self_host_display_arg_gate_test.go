@@ -27,7 +27,7 @@ import (
 // check (asmcore.display_arg_errs) refuses what the checker left unrewritten
 // in the same words, so the rejects below read as native's do. A scalar
 // resolves it through the stdlib method the import closure brings in —
-// `core/cmp` pulls std/i32, std/i64, std/u32, std/u64 and std/float and
+// `core/cmp` pulls std/i32, std/i64, std/u32, std/u64 and std/f64 and
 // carries the u8 impl — so `print(7)` compiles with the import and is refused
 // without it, as it is on native (#9945); a boolean's to_string is a builtin
 // (#12657), so `print(b)` needs none. A program's own

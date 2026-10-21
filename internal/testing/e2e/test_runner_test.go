@@ -2679,7 +2679,7 @@ func TestRunnerBatch8Example(t *testing.T) {
 
 // `tests/stdlib/float_math_test.fern` exercises the f64
 // math primitives (sqrt / pow / abs / floor / ceil / round /
-// trunc / log / exp / sin / cos) added to std/float, plus
+// trunc / log / exp / sin / cos) added to std/f64, plus
 // the IEEE-754 classification helpers (is_nan / is_finite /
 // is_inf) and min / max / clamp. The f32 receiver path also
 // gets a single round-trip case to confirm the
@@ -2712,7 +2712,7 @@ func TestRunnerFloatMathExample(t *testing.T) {
 	}
 }
 
-// `tests/stdlib/float_convert_test.fern` exercises std/float's convenience
+// `tests/stdlib/float_convert_test.fern` exercises std/f64's convenience
 // methods layered on the math primitives: signum (sign as a float, zero at
 // zero), lerp (precise a+(b-a)*t interpolation, incl. endpoints and
 // extrapolation), and to_radians / to_degrees (degree↔radian conversion with
@@ -2726,14 +2726,14 @@ func TestRunnerFloatConvertExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/float convert", "# pass 11", "# fail 0", "1..11"} {
+	for _, w := range []string{"# Suite: std/f64 convert", "# pass 11", "# fail 0", "1..11"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
 	}
 }
 
-// `tests/stdlib/float_round_to_test.fern` covers std/float's round_to(digits)
+// `tests/stdlib/float_round_to_test.fern` covers std/f64's round_to(digits)
 // — round to N decimal places, half away from zero (positive digits round the
 // fraction, negative digits round to tens/hundreds), f64 and f32. On the interp
 // gate and the self-host x86-64 + arm64 gates (uses assert_eq_f64_near); the
@@ -2746,14 +2746,14 @@ func TestRunnerFloatRoundToExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/float round_to", "# pass 8", "# fail 0", "1..8"} {
+	for _, w := range []string{"# Suite: std/f64 round_to", "# pass 8", "# fail 0", "1..8"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
 	}
 }
 
-// `tests/stdlib/float_log2_log10_test.fern` covers std/float's log2 / log10 —
+// `tests/stdlib/float_log2_log10_test.fern` covers std/f64's log2 / log10 —
 // base-2 and base-10 logarithms via change-of-base (natural log ÷ ln2 / ÷ ln10),
 // f64 and f32. On the interp gate and the self-host x86-64 + arm64 gates (uses
 // assert_eq_f64_near); the Go-side TestFloatLog2Log10 pins native compilation on
@@ -2766,14 +2766,14 @@ func TestRunnerFloatLog2Log10Example(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/float log2/log10", "# pass 8", "# fail 0", "1..8"} {
+	for _, w := range []string{"# Suite: std/f64 log2/log10", "# pass 8", "# fail 0", "1..8"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
 	}
 }
 
-// `tests/stdlib/float_exp2_exp10_test.fern` covers std/float's exp2 / exp10 —
+// `tests/stdlib/float_exp2_exp10_test.fern` covers std/f64's exp2 / exp10 —
 // base-2 and base-10 exponentials (inverses of log2 / log10), built on the
 // natural exp via 2^x = e^(x·ln2) / 10^x = e^(x·ln10), f64 and f32. On the
 // interp gate and the self-host x86-64 + arm64 gates (uses assert_eq_f64_near);
@@ -2787,14 +2787,14 @@ func TestRunnerFloatExp2Exp10Example(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/float exp2/exp10", "# pass 8", "# fail 0", "1..8"} {
+	for _, w := range []string{"# Suite: std/f64 exp2/exp10", "# pass 8", "# fail 0", "1..8"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
 	}
 }
 
-// `tests/stdlib/float_recip_copysign_midpoint_test.fern` covers std/float's
+// `tests/stdlib/float_recip_copysign_midpoint_test.fern` covers std/f64's
 // recip (1/x), copysign (magnitude of receiver, sign of argument), and midpoint
 // (overflow-safe halfway point), f64 and f32. Purely arithmetic, so unlike the
 // transcendentals these lower on all four backends. On the interp gate and both
@@ -2808,7 +2808,7 @@ func TestRunnerFloatRecipCopysignMidpointExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/float recip/copysign/midpoint", "# pass 8", "# fail 0", "1..8"} {
+	for _, w := range []string{"# Suite: std/f64 recip/copysign/midpoint", "# pass 8", "# fail 0", "1..8"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -2873,7 +2873,7 @@ func TestRunnerU64RootsExample(t *testing.T) {
 	}
 }
 
-// `tests/stdlib/float_clamp01_absdiff_muladd_test.fern` covers std/float's
+// `tests/stdlib/float_clamp01_absdiff_muladd_test.fern` covers std/f64's
 // clamp01 (restrict to [0,1]), abs_diff (|a-b|), and mul_add (a*b+c, not a
 // fused FMA), f64 and f32. Purely arithmetic, so unlike the transcendentals
 // these lower on all four backends. On the interp gate and both self-host
@@ -2886,7 +2886,7 @@ func TestRunnerFloatClamp01AbsDiffMulAddExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/float clamp01/abs_diff/mul_add", "# pass 4", "# fail 0", "1..4"} {
+	for _, w := range []string{"# Suite: std/f64 clamp01/abs_diff/mul_add", "# pass 4", "# fail 0", "1..4"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -2936,7 +2936,7 @@ func TestRunnerI32RootsPrimeExample(t *testing.T) {
 	}
 }
 
-// `tests/stdlib/float_cbrt_hypot3_test.fern` covers std/float's cbrt (real
+// `tests/stdlib/float_cbrt_hypot3_test.fern` covers std/f64's cbrt (real
 // cube root, defined for negatives) and hypot3 (overflow-safe 3-D Euclidean
 // length), f64 and f32. On the interp gate and both self-host gates; the Go-side
 // TestFloatCbrt / TestFloatHypot3 pin native compilation (cbrt's wasmbin leg
@@ -2948,14 +2948,14 @@ func TestRunnerFloatCbrtHypot3Example(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/float cbrt/hypot3", "# pass 6", "# fail 0", "1..6"} {
+	for _, w := range []string{"# Suite: std/f64 cbrt/hypot3", "# pass 6", "# fail 0", "1..6"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
 	}
 }
 
-// `tests/stdlib/float_hyperbolic_test.fern` covers std/float's sinh / cosh /
+// `tests/stdlib/float_hyperbolic_test.fern` covers std/f64's sinh / cosh /
 // tanh — the hyperbolic trig functions built on the natural exp, f64 and f32.
 // On the interp gate and both self-host gates; the Go-side TestFloatHyperbolic
 // pins native compilation on interp/x86-64/arm64 (wasmbin skips libm exp, the
@@ -2967,7 +2967,7 @@ func TestRunnerFloatHyperbolicExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/float sinh/cosh/tanh", "# pass 6", "# fail 0", "1..6"} {
+	for _, w := range []string{"# Suite: std/f64 sinh/cosh/tanh", "# pass 6", "# fail 0", "1..6"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -3169,7 +3169,7 @@ func TestRunnerUintMidpointExample(t *testing.T) {
 	}
 }
 
-// `tests/stdlib/float_hypot_test.fern` covers std/float's hypot (Euclidean
+// `tests/stdlib/float_hypot_test.fern` covers std/f64's hypot (Euclidean
 // length, overflow-safe scaled form), fract (signed fractional part), and tan
 // (sin/cos), f64 and f32. On the interp gate and the self-host x86-64 + arm64
 // gates (scalar, no closures; uses assert_eq_f64_near); the Go-side
@@ -3182,7 +3182,7 @@ func TestRunnerFloatHypotExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/float hypot", "# pass 12", "# fail 0", "1..12"} {
+	for _, w := range []string{"# Suite: std/f64 hypot", "# pass 12", "# fail 0", "1..12"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

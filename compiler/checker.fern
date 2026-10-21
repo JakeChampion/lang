@@ -642,7 +642,7 @@ function cell_method_type(recv: typeinfo.Type, name: string, argc: i32): typeinf
   return t_unknown("not a cell method");
 }
 
-// The six f64 primitives `std/float`'s methods dispatch to. Every backend
+// The six f64 primitives `std/f64`'s methods dispatch to. Every backend
 // implements all of them.
 function is_f64_primitive(name: string): boolean {
   let names: string[] = [
@@ -4326,7 +4326,7 @@ function scalar_module_for(t: typeinfo.Type): string {
       return "std/i32";
     },
     typeinfo.TypeFloat(_) => {
-      return "std/float";
+      return "std/f64";
     },
     typeinfo.TypeString(_) => {
       return "std/string";
@@ -8776,7 +8776,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (name == "f32") {
     return t_f32();
   }
-  if (name == "f64" || name == "float") {
+  if (name == "f64") {
     return t_float();
   }
   if (name == "void") {
@@ -18651,7 +18651,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   // methods; `u8` when std/i32's 21 ascii classifiers moved onto the
   // byte type (both #5629). That is the same bug twice, so the whole
   // integer family is listed now rather than one width at a time.
-  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "float" || rt == "char") {
+  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char") {
     return true;
   }
   for ch in rt {

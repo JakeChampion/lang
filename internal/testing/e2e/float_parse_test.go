@@ -179,7 +179,7 @@ func TestFloatStringRoundTripIsExactIdentity(t *testing.T) {
 	}
 
 	var b strings.Builder
-	b.WriteString("import \"std/float\";\nimport \"std/string\";\nimport \"std/i64\";\n")
+	b.WriteString("import \"std/f64\";\nimport \"std/string\";\nimport \"std/i64\";\n")
 	b.WriteString("function main(): i32 {\n    let bad: i32 = 0;\n")
 	for _, v := range vals {
 		bits := int64(math.Float64bits(v))

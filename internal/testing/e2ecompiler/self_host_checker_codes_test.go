@@ -305,6 +305,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// it spells, compared against the bound's.
 		{"dyn-generic-trait-bound-args", "trait Container[T] { function first(self: Self): T; }\nstruct Ints { v: i32 }\nimpl Container[i32] for Ints { function first(self: Ints): i32 { return self.v; } }\nfunction head_len[C: Container[string]](c: C): i32 { return c.first().len(); }\nfunction main(): i32 { let d: dyn Container[i32] = Ints { v: 3 }; return head_len(d); }\n", []string{"E021"}},
 		{"dyn-generic-trait-bound-args-match", "trait Container[T] { function first(self: Self): T; }\nstruct Strs { v: string }\nimpl Container[string] for Strs { function first(self: Strs): string { return self.v; } }\nfunction head_len[C: Container[string]](c: C): i32 { return c.first().len(); }\nfunction main(): i32 { let d: dyn Container[string] = Strs { v: \"abcd\" }; return head_len(d); }\n", nil},
+		// `float` after `own` names a resource, so it is an unknown name (E021),
+		// not the refused type spelling (P001).
+		{"own-float-is-a-resource-name", "function g(x: own float): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"dyn-undefined-method", "trait Speak { function say(self: Self): i32; }\nimpl Speak for i32 { function say(self: Self): i32 { return self + 100; } }\nfunction f(s: dyn Speak): i32 { return s.nope(); }\nfunction main(): i32 { return f(1); }\n", []string{"E021"}},
 		{"dyn-supertrait-method-not-named", "trait Base { function tag(self: Self): i32; }\ntrait Derived : Base { function base(self: Self): i32; }\nimpl Base for i32 { function tag(self: Self): i32 { return 9; } }\nimpl Derived for i32 { function base(self: Self): i32 { return self; } }\nfunction f(d: dyn Derived): i32 { return d.tag(); }\nfunction main(): i32 { return f(1); }\n", []string{"E021"}},
 		{"dyn-supertrait-method-named", "trait Base { function tag(self: Self): i32; }\ntrait Derived : Base { function base(self: Self): i32 { return 4; } }\nimpl Base for i32 { function tag(self: Self): i32 { return 9; } }\nimpl Derived for i32 { }\nfunction f(d: dyn Derived + Base): i32 { return d.tag() + d.base(); }\nfunction main(): i32 { return f(1); }\n", nil},
@@ -673,7 +676,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E072 with the code written out. The differential below derives its
 		// expectation from the Go checker, so it cannot tell "both sides emit
 		// E072" from "neither side emits anything"; this row can.
-		{"e072-void-variant-payload", "function nothing(): void { }\nfunction f(): Option[()] { return Some(nothing()); }\nfunction main(): i32 { return 0; }\n", []string{"E072"}},
+		{"e072-void-variant-payload", "function nothing(): void { }\nfunction f(): Option[void] { return Some(nothing()); }\nfunction main(): i32 { return 0; }\n", []string{"E072"}},
 		// Bare no-payload enum variant used as a value (#4346 piece 2). A unit
 		// variant (`Red`) types to its enum's union, so a matching declared
 		// type is clean and a MISMATCHED one draws E003 (Color not assignable
@@ -856,15 +859,6 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// checkers must now flag E064 here, the mirror image of the
 		// subword-int-vars-clean case above.
 		{"unknown-retired-subword-var-type", "function main(): i32 { let x: i8 = q(); return 0; }\n", []string{"E001", "E064"}},
-		// `float` is the width-unqualified f64 alias (#5363). The self-host
-		// checker always resolved it; the Go checker used to reject it with
-		// E064 (+ a "did you mean f64?" hint) — this fixture pins the
-		// reconciled behavior: clean on BOTH checkers, including flowing
-		// into an f64 destination.
-		{"float-alias-ok", "function main(): i32 { let x: float = 1.5; let y: f64 = x; if (y > 1.0) { return 0; } return 1; }\n", nil},
-		// ... and a `float` value in a mismatched destination draws the
-		// same E003 both sides (it is a real float type, not unknown).
-		{"float-alias-mismatch", "function main(): i32 { let x: float = 1.5; let s: string = x; return 0; }\n", []string{"E003"}},
 		// E064 widening (#4363 item 3): an unknown nominal reached through an
 		// array-element (`Nope[]`) or generic-argument (`Map[string, Nope]`)
 		// spelling draws E064 just like a bare `Nope` — the check used to bail on
@@ -3016,8 +3010,6 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cell-annot-array-ok", "function f(c: Cell[i32[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-char-array-ok", "function f(c: Cell[char[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-inferred-char-array-ok", "function main(): i32 { let a: char[] = [65 as char]; let c = cell_new(a); return 0; }\n", nil},
-		{"cell-annot-float-alias-array-ok", "function main(): i32 { let a: float[] = []; let c: Cell[float[]] = cell_new(a); return c.get().len(); }\n", nil},
-		{"cell-inferred-float-alias-array-ok", "function main(): i32 { let a: float[] = []; let c = cell_new(a); return c.get().len(); }\n", nil},
 		{"cell-annot-reference-array-ok", "function f(c: Cell[string[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-scalar-arrays-ok", "function f(a: Cell[u32[]], b: Cell[i64[]], c: Cell[u64[]], d: Cell[usize[]], e: Cell[f32[]], f: Cell[f64[]], g: Cell[boolean[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-tuple-elem-bad", "struct P { x: () => i32 }\nfunction f(t: (i32, Cell[P])): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
@@ -3382,10 +3374,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// void takes it: a local, a variant payload, a tuple element, a
 		// parameter (#8759). The self-host records it as the constant 0 it
 		// lowers to, which is why it typed i32 and drew E003 at each of them.
-		{"unit-value-destinations-ok", "function sink(u: ()): i32 { return 0; }\nfunction main(): i32 { let u: () = (); let v = (); let r: Result[(), i32] = Ok(()); let t: ((), i32) = ((), 1); return sink(u) + sink(v) + sink(t.0) + t.1; }\n", nil},
+		{"unit-value-destinations-ok", "function sink(u: void): i32 { return 0; }\nfunction main(): i32 { let u: void = (); let v = (); let r: Result[void, i32] = Ok(()); let t: (void, i32) = ((), 1); return sink(u) + sink(v) + sink(t.0) + t.1; }\n", nil},
 		// And a void-returning CALL is still not a value: it produced nothing
 		// to store, which is the whole reason the unit has a spelling.
-		{"e072-void-call-payload", "function nothing(): void { return; }\nfunction main(): i32 { let r: Result[(), i32] = Ok(nothing()); return 0; }\n", []string{"E072"}},
+		{"e072-void-call-payload", "function nothing(): void { return; }\nfunction main(): i32 { let r: Result[void, i32] = Ok(nothing()); return 0; }\n", []string{"E072"}},
 		// The unit is not a numeral: it settles at no destination width.
 		{"unit-not-a-number", "function main(): i32 { let f: f64 = (); return 0; }\n", []string{"E003"}},
 		// #8461: five rules that fired on programs native accepts, which is
@@ -4065,8 +4057,8 @@ function main(): i32 { return 0; }`},
 		// native's ONLY requireValue site — the two rows above prove the same
 		// argument draws E038 to a plain function, which is why the self-host
 		// check is keyed on the callee being a variant constructor.
-		{"e072-void-in-builtin-variant", "function nothing(): void { }\nfunction f(): Option[()] { return Some(nothing()); }\nfunction main(): i32 { return 0; }\n"},
-		{"e072-unit-payload-ok", "function f(): Option[()] { return Some(()); }\nfunction main(): i32 { return 0; }\n"},
+		{"e072-void-in-builtin-variant", "function nothing(): void { }\nfunction f(): Option[void] { return Some(nothing()); }\nfunction main(): i32 { return 0; }\n"},
+		{"e072-unit-payload-ok", "function f(): Option[void] { return Some(()); }\nfunction main(): i32 { return 0; }\n"},
 		{"e072-normal-payload-ok", "enum W { Wrap(i32), Empty }\nfunction f(): W { return Wrap(3); }\nfunction main(): i32 { return 0; }\n"},
 		// `Wrap(nothing())` for a USER enum draws BOTH rules: E072 for the void
 		// argument and E036 for the payload type it is not (#6650). The two are

@@ -44,7 +44,7 @@ The sidebar groups every module the same way.
 | Data and encoding | [`json`](json/), [`csv`](csv/), [`protobuf`](protobuf/), [`base64`](base64/), [`base32`](base32/), [`hex`](hex/), [`url`](url/), [`uuid`](uuid/), [`semver`](semver/), [`hash`](hash/), [`deflate`](deflate/) (gzip and zlib), [`zstd`](zstd/), [`brotli`](brotli/) (decoding), [`crypto`](crypto/) (digests, HMAC, key derivation) and its `crypto/*` submodules |
 | Collections | [`array`](array/), [`map`](map/), [`set`](set/), [`iter`](iter/), [`sort`](sort/), [`ndarray`](ndarray/) (n-dimensional arrays), and the persistent [`pvec`](pvec/), [`pmap`](pmap/), [`pset`](pset/), [`ordmap`](ordmap/), [`ordset`](ordset/) |
 | Errors | [`option`](option/), [`result`](result/), [`error`](error/) |
-| Numbers | [`math`](math/), [`rand`](rand/), [`bigint`](bigint/), [`i32`](i32/), [`i64`](i64/), [`float`](float/) |
+| Numbers | [`math`](math/), [`rand`](rand/), [`bigint`](bigint/), [`i32`](i32/), [`i64`](i64/), [`f64`](f64/) |
 | Files, I/O and time | [`io`](io/), [`io_buffered`](io_buffered/), [`stream`](stream/), [`path`](path/), [`cli`](cli/), [`dotenv`](dotenv/), [`log`](log/), [`time`](time/), [`tz`](tz/), [`signal`](signal/), [`errno`](errno/), [`async`](async/) |
 | Networking | [`http`](http/) and its `http/*` submodules, [`serve`](serve/), [`fetch`](fetch/), [`metrics`](metrics/), [`tcp`](tcp/), [`dns`](dns/), [`net`](net/), and TLS 1.3 in the `tls/*` submodules — the [HTTP guide](../http/) walks through them |
 | Testing | [`test`](test/), [`bench`](bench/), [`fuzz`](fuzz/), [`sim`](sim/) (deterministic simulation of async code), [`sim_fetch`](sim_fetch/) (a scripted network), [`sim_platform`](sim_platform/), [`mock_platform`](mock_platform/) |

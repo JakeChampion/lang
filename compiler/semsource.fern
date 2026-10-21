@@ -8191,7 +8191,7 @@ function rc_contracts(): ssasem.Contract[] {
   ];
 }
 
-// The six f64 primitives `std/float` dispatches to.
+// The six f64 primitives `std/f64` dispatches to.
 function float_primitive_contracts(): ssasem.Contract[] {
   let names: string[] = [
     "__sqrt_f64", "__floor_f64", "__ceil_f64", "__round_f64", "__trunc_f64",

@@ -118,7 +118,7 @@ Receiver methods on i32 / byte values.
   `None` on overflow/underflow)
 - **String:** `to_string`
 
-### `std/float`
+### `std/f64`
 
 - **String:** `(n: f32) to_string()`, `(n: f64) to_string()` —
   shortest round-trip decimal (Dragonbox): the fewest digits
@@ -3264,7 +3264,7 @@ The socket controls are typed faces over the descriptor builtins
   listener per port), or the `NetError` the bind or listen reported.
 - `set_nodelay(sock, on)`, `set_keepalive(sock, on)`,
   `set_nonblocking(sock, on)` — `TCP_NODELAY`, `SO_KEEPALIVE` and
-  `O_NONBLOCK`, each `Result[(), NetError]`. `TCP_NODELAY` is already on
+  `O_NONBLOCK`, each `Result[void, NetError]`. `TCP_NODELAY` is already on
   for every socket `connect`, `connect_start` and `accept` answer and every
   connection the serve loop accepts, as Go and Node have it; `false` turns
   Nagle's coalescing back on. A non-blocking `read` answers `WouldBlock`

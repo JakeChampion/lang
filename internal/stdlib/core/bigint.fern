@@ -2,9 +2,9 @@
 //
 // This module imports NOTHING, deliberately. `std/string` needs a bignum for
 // parse_float's exact fallback and cannot import anything that reaches back to
-// it (`std/float` -> `std/i32` -> `std/string` is the cycle that forced the
+// it (`std/f64` -> `std/i32` -> `std/string` is the cycle that forced the
 // private copy this module replaces). Sitting at the bottom of the graph with
-// no imports is what lets both `std/string` and `std/float` use it. That is
+// no imports is what lets both `std/string` and `std/f64` use it. That is
 // also why there are no `impl Display for BigInt` / `impl Ord for BigInt`
 // blocks here: those traits live in `core/cmp`, which imports `std/string`, so
 // implementing them here would reintroduce the cycle. They belong in a
@@ -29,7 +29,7 @@
 // Base 2^32 rather than full u64 limbs is the other half of the choice. A
 // 32x32 partial product is a single native multiply on every backend including
 // wasm32; u64 limbs would need a 64x64 -> 128 widening multiply per pair,
-// assembled from four 32x32 products (see `_db_mul64` in std/float.fern) —
+// assembled from four 32x32 products (see `_db_mul64` in std/f64.fern) —
 // roughly four times the work per pair for twice the bits per limb.
 //
 // The trade is stated rather than hidden: on 64-bit natives, u64 limbs with a

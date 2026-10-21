@@ -48,7 +48,7 @@ appends each scalar as UTF-8, so its value is always valid UTF-8.
 A quoted literal matches a token of any of the name-shaped kinds with
 that exact text. That is what lets the grammar spell **contextual
 keywords** — `own`, `borrow`, `fip`, `fbip`, `async`, `Self`, `str`,
-`char`, `float` are ordinary identifiers to the lexer and only mean
+`char` are ordinary identifiers to the lexer and only mean
 something in the positions where the grammar names them. `own` is the
 sharpest case: it is a parameter modifier in `f(own xs: string[])` and
 an ordinary parameter name in `f(rl: i32, own: string[])`, and both

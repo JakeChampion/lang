@@ -486,7 +486,7 @@ multi-trait sets (`dyn A + B`). `e as? T` downcasts back to a concrete
 type, giving `Option[T]`:
 
 ```fern
-import "std/float";
+import "std/f64";
 
 trait Shape { function area(self: Self): f64; }
 

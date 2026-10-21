@@ -115,6 +115,9 @@ var parseErrPosCases = []struct {
 	// A missing closer after a well-formed element is still its own error.
 	{"struct-lit-missing-brace", "struct Foo { x: i32 }\nfunction main(): i32 {\n  let x = Foo { x: 1 ;\n  return 0;\n}\n"},
 	{"array-missing-bracket", "function main(): i32 {\n  let x = [1 2];\n  return 0;\n}\n"},
+	// A lambda's return annotation is followed by the lambda's own arrow, so
+	// `() =>` there is the refused unit type, not a function type.
+	{"lambda-return-unit-p001", "function main(): i32 {\n  let f = (x: i32): () => x;\n  return 0;\n}\n"},
 }
 
 // TestSelfHostParseErrorPositions pins SH-041 (tracking #2849): a

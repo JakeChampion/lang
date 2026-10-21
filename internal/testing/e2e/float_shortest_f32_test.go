@@ -35,7 +35,7 @@ func TestFloatShortestF32RoundTrip(t *testing.T) {
 	}
 
 	var b strings.Builder
-	b.WriteString("import \"std/float\";\nfunction main(): i32 {\n")
+	b.WriteString("import \"std/f64\";\nfunction main(): i32 {\n")
 	for _, v := range vals {
 		bi := int32(math.Float32bits(v))
 		b.WriteString(fmt.Sprintf("    write(f32_from_bits(%d).to_string()); write(\"\\n\");\n", bi))

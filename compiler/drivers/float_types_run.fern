@@ -48,7 +48,7 @@ function float_list(ts: typeinfo.Type[]): string {
 }
 
 function main(): i32 {
-  for name in ["f32", "f64", "float", "f32[][]", "(f32, (f64, f32))", "(f32) => f64[]"] {
+  for name in ["f32", "f64", "f32[][]", "(f32, (f64, f32))", "(f32) => f64[]"] {
     print(float_shape(checker.type_from_name_with_names_and_unions(name, [], [])));
   }
   for body in ["let x = 0.5;", "let x: f32 = 0.5;", "let x: f64 = 0.5;", "let x = 0.5 as f32;", "let x = a + 0.5;", "let x = 0.5 + a;", "let x = 0.5 + 1.5;", "let x = (a, 0.5);", "let x = if (a > 0.0) { let y = a; y } else { let y = a; y };", "let x = match (o) { Some(y) => y, None => 0.5 };"] {

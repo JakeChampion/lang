@@ -142,15 +142,13 @@ type NeverType struct{}
 // FloatType represents an IEEE-754 binary float. Width is 32 or
 // 64; the non-polymorphic zero value is f32 (the parser spells
 // `f32` as `FloatType{Width:0, Spelling:"f32"}`, so Width=0 must
-// keep meaning f32 there). `float` is the width-unqualified
-// alias for f64 (#5363) — the parser spells it
-// `FloatType{Width:64, Spelling:"float"}`. Both widths are wired
-// through every backend. An unsettled float literal carries
+// keep meaning f32 there). Both widths are wired through every
+// backend. An unsettled float literal carries
 // Polymorphic=true, for which NormalWidth defaults to f64 — see
 // NormalWidth.
 //
 // Spelling matches NumberType.Spelling — captures the type name
-// the parser saw (`"float"`, `"f32"`, ...) so the formatter can
+// the parser saw (`"f64"`, `"f32"`) so the formatter can
 // preserve it on round-trip.
 type FloatType struct {
 	Width    int
@@ -1558,7 +1556,7 @@ type BoolLit struct {
 
 // UnitLit is `()` — the sole value of type void, and the only way to
 // write one. It exists so a type that has to name "no interesting
-// payload" can do so: `Result[(), IoError]` is the shape every fallible
+// payload" can do so: `Result[void, IoError]` is the shape every fallible
 // operation with nothing to hand back returns, and `Ok(())` builds it.
 //
 // A void-returning *call* is not a value (`Ok(f())` is E072) — the

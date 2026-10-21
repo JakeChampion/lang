@@ -176,18 +176,18 @@ function main(): i32 {
 	// A user enum through the CLI's module loader, which merges every imported
 	// module's decls before the interpreter sees them.
 	{"user-enum-with-stdlib", "import \"std/string\";\nenum Tok { Word(string), Num(i32) }\nfunction render(t: Tok): string {\n  match (t) { Word(w) => { return w.to_ascii_upper(); }, Num(_) => { return \"#\"; } }\n}\nfunction main(): i32 {\n  if (render(Word(\"ok\")) == \"OK\" && render(Num(3)) == \"#\") { return 7; }\n  return 1;\n}\n"},
-	// std/float's shortest-round-trip formatter is written almost entirely in
+	// std/f64's shortest-round-trip formatter is written almost entirely in
 	// u64, so #6810's signed 64-bit carrier showed up here as a WRONG ANSWER:
 	// the significand went negative inside __db_shortest64 and `1.5` rendered
 	// starting with `-`. The far ends of the range are the interesting half:
 	// they only agree once both engines read the LITERAL to the same double
 	// (#6824), so what fails here first is the literal reader rather than the
 	// formatter — TestSelfHostInterpFloatLiteralBits separates the two.
-	// A hex literal wider than 32 bits keeps all 64 (std/float's tables are
+	// A hex literal wider than 32 bits keeps all 64 (std/f64's tables are
 	// u64 arrays of them), and __mulhi_u64's result is unsigned.
 	{"u64-hex-literals", "import \"std/u64\";\nconst T: u64[] = [0x8000000000000001u64, 0x7fffffffffffffffu64];\nfunction main(): i32 {\n  let a: u64 = 0x8000000000000001u64;\n  if (a.to_string() != \"9223372036854775809\") { return 1; }\n  if (T[1].to_string() != \"9223372036854775807\") { return 2; }\n  if (__mulhi_u64(a, T[1]).to_string() != \"4611686018427387903\") { return 3; }\n  return 7;\n}\n"},
-	{"float-to-string-shortest", "import \"std/float\";\nfunction main(): i32 {\n  if ((1.5).to_string() != \"1.5\") { return 1; }\n  if ((0.1).to_string() != \"0.1\") { return 2; }\n  if ((1234.5678).to_string() != \"1234.5678\") { return 3; }\n  if ((0.0 - 2.5).to_string() != \"-2.5\") { return 4; }\n  if ((1e21).to_string() != \"1e+21\") { return 5; }\n  if ((100.0).to_string() != \"100\") { return 6; }\n  if ((0.5).to_string() != \"0.5\") { return 8; }\n  return 7;\n}\n"},
-	{"float-to-string-wide-range", "import \"std/float\";\nfunction main(): i32 {\n  if ((1e30).to_string() != \"1e+30\") { return 1; }\n  if ((1e100).to_string() != \"1e+100\") { return 2; }\n  if ((1e-100).to_string() != \"1e-100\") { return 3; }\n  if ((2.5e-10).to_string() != \"2.5e-10\") { return 4; }\n  if ((1e-7).to_string() != \"1e-7\") { return 5; }\n  if ((8.98846567431158e307).to_string() != \"8.98846567431158e+307\") { return 6; }\n  if ((1.7976931348623157e308).to_string() != \"1.7976931348623157e+308\") { return 8; }\n  if ((5e-324).to_string() != \"5e-324\") { return 9; }\n  if ((1.2345678901234567e-5).to_string() != \"1.2345678901234568e-5\") { return 10; }\n  return 7;\n}\n"},
+	{"float-to-string-shortest", "import \"std/f64\";\nfunction main(): i32 {\n  if ((1.5).to_string() != \"1.5\") { return 1; }\n  if ((0.1).to_string() != \"0.1\") { return 2; }\n  if ((1234.5678).to_string() != \"1234.5678\") { return 3; }\n  if ((0.0 - 2.5).to_string() != \"-2.5\") { return 4; }\n  if ((1e21).to_string() != \"1e+21\") { return 5; }\n  if ((100.0).to_string() != \"100\") { return 6; }\n  if ((0.5).to_string() != \"0.5\") { return 8; }\n  return 7;\n}\n"},
+	{"float-to-string-wide-range", "import \"std/f64\";\nfunction main(): i32 {\n  if ((1e30).to_string() != \"1e+30\") { return 1; }\n  if ((1e100).to_string() != \"1e+100\") { return 2; }\n  if ((1e-100).to_string() != \"1e-100\") { return 3; }\n  if ((2.5e-10).to_string() != \"2.5e-10\") { return 4; }\n  if ((1e-7).to_string() != \"1e-7\") { return 5; }\n  if ((8.98846567431158e307).to_string() != \"8.98846567431158e+307\") { return 6; }\n  if ((1.7976931348623157e308).to_string() != \"1.7976931348623157e+308\") { return 8; }\n  if ((5e-324).to_string() != \"5e-324\") { return 9; }\n  if ((1.2345678901234567e-5).to_string() != \"1.2345678901234568e-5\") { return 10; }\n  return 7;\n}\n"},
 	// core/int's u64 stringifier is the other u64-heavy stdlib body, and the
 	// two values here straddle the sign boundary the carrier was losing.
 	{"u64-to-string", "import \"std/u64\";\nfunction main(): i32 {\n  let big: u64 = 9223372036854775807;\n  big = big + (1 as u64);\n  if (big.to_string() != \"9223372036854775808\") { return 1; }\n  let maxv: u64 = (0 as u64) - (1 as u64);\n  if (maxv.to_string() != \"18446744073709551615\") { return 2; }\n  return 7;\n}\n"},

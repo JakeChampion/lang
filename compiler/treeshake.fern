@@ -102,9 +102,6 @@ function ts_canonical_tag(tag: string): string {
   if (tag == "bool") {
     return "boolean";
   }
-  if (tag == "float") {
-    return "f64";
-  }
   return tag;
 }
 

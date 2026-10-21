@@ -2,14 +2,14 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/float.clamp01 / abs_diff / mul_add — three
+// Differential coverage for std/f64.clamp01 / abs_diff / mul_add — three
 // purely-arithmetic helpers (no libm primitive), so they lower on all four
 // backends including wasmbin. clamp01 restricts to [0,1], abs_diff is |a-b|,
 // mul_add is a*b+c (not a fused FMA — the multiply rounds first). Both f64 and
 // f32. Returns 42 iff every check holds across interp / x86-64 / wasm / arm64;
 // each leg skips itself when its toolchain is absent.
 const floatClamp01AbsDiffMulAddProg = `
-import "std/float" as float;
+import "std/f64";
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
     if (!approx((0.5).clamp01(), 0.5)) { return 1; }

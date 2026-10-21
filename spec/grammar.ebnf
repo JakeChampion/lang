@@ -118,7 +118,7 @@ DynType     = 'dyn' Bound { '+' Bound }
 # `(A, B) => C` is a function type; `(A, B)` a tuple; `(A)` a grouping.
 FnOrTupleType
             = '(' [ FnParam { ',' FnParam } [ ',' ] ] ')' '=>' Type
-            | '(' [ Type { ',' Type } [ ',' ] ] ')' { TypeSuffix }
+            | '(' Type { ',' Type } [ ',' ] ')' { TypeSuffix }
             | SliceType
             ;
 # `own` opening a function type's parameter slot marks it consuming.
@@ -139,7 +139,7 @@ PrimitiveType
             = 'i32' | 'i64' | 'u8' | 'u32' | 'u64' | 'usize'
             | 'f32' | 'f64' | 'boolean' | 'void' | 'string'
             ;
-# `str`, `char`, `float`, `Self` are contextual type names, not keywords.
+# `str`, `char`, `Self` are contextual type names, not keywords.
 NamedType   = IDENT [ '.' IDENT ] [ TypeArgs ] ;
 TypeArgs    = '[' TypeArg { ',' TypeArg } [ ',' ] ']' ;
 TypeArg     = IDENT '=' Type | Type ;
@@ -418,7 +418,7 @@ LambdaParams
 # list needs no annotation because `()` is already unambiguous.
 LambdaParam = PatternParam | [ 'own' ] IDENT ':' Type ;
 
-# `()` is the unit value, the one inhabitant of the empty tuple type.
+# `()` is the unit value, the one value of `void`.
 ParenOrTuple
             = '(' [ Expr { ',' Expr } [ ',' ] ] ')' ;
 ArrayLit    = '[' [ Expr { ',' Expr } [ ',' ] ] ']' ;

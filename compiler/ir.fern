@@ -206,7 +206,7 @@ pub function op_fbin(kind: string): Op {
 }
 
 // f64 unary math intrinsic. `kind` is the float opcode ("fsqrt"/"ffloor"/
-// "fceil"/"ftrunc"/"fabs") for std/float's single-operand __*_f64 builtins.
+// "fceil"/"ftrunc"/"fabs") for std/f64's single-operand __*_f64 builtins.
 // Like op_fbin the operand + result are f64 (one value popped, one pushed); each
 // backend selects the single hardware instruction (sqrtsd / roundsd / and-mask
 // on x86, fsqrt / frint* / fabs on arm64, f64.sqrt / floor / ceil / trunc / abs
@@ -2082,7 +2082,7 @@ pub function op_read_file_bytes(): Op {
 }
 
 // `write_file` pops a content string value and a path string value and writes the
-// content to the named file, pushing a fresh Result[(), IoError]: Ok(()) on success,
+// content to the named file, pushing a fresh Result[void, IoError]: Ok(()) on success,
 // Some(_) on any I/O error (a VALUE op — two args consumed, the box left on the
 // stack). Lowers to each backend's __fern_write_file helper (the same one the AST
 // path calls). No wasm file I/O here, so a write_file module is wasm-ineligible
@@ -2103,7 +2103,7 @@ pub function op_write_file_exec(): Op {
 }
 
 // `remove_dir_all` pops a path string value and recursively removes the named
-// directory tree (rm -rf), pushing a fresh Result[(), IoError]: Ok(()) on success
+// directory tree (rm -rf), pushing a fresh Result[void, IoError]: Ok(()) on success
 // (including an already-missing path), Some(_) on an open error other than
 // ENOENT/ENOTDIR (a VALUE op — one arg consumed, the box left on the stack).
 // Lowers to each backend's __fern_remove_dir_all helper (the same one the AST
@@ -2114,7 +2114,7 @@ pub function op_remove_dir_all(): Op {
 }
 
 // `remove_file` pops a path string value and unlinks the named file, pushing a
-// fresh Result[(), IoError]: Ok(()) on success, Err(_) on error (a VALUE op — one arg
+// fresh Result[void, IoError]: Ok(()) on success, Err(_) on error (a VALUE op — one arg
 // consumed, the box left on the stack). Lowers to each backend's
 // __fern_remove_file helper (the same one the AST path calls). No wasm file I/O
 // here, so a remove_file module is wasm-ineligible and is refused.
@@ -2134,7 +2134,7 @@ pub function op_temp_dir(): Op {
 }
 
 // `create_dir_all` pops a path string value and creates that directory and
-// every missing parent (POSIX `mkdir -p`), pushing a fresh Result[(), IoError]:
+// every missing parent (POSIX `mkdir -p`), pushing a fresh Result[void, IoError]:
 // Ok(()) on success — including when the path was already there — and Err(_)
 // otherwise (a VALUE op — one arg consumed, the box left on the stack). Lowers
 // to each backend's __fern_create_dir_all helper.
@@ -9009,7 +9009,7 @@ pub function op_allocates(tag: i32): boolean {
     return true;
   }
   // read_file boxes the file contents + a Result wrapper; write_file boxes its
-  // Result[(), IoError] result — both via __fern_str_box, so they need the heap.
+  // Result[void, IoError] result — both via __fern_str_box, so they need the heap.
   if (tag == 169 || tag == 170) {
     return true;
   }
@@ -9029,12 +9029,12 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 233) {
     return true;
   }
-  // remove_dir_all boxes its Result[(), IoError] result and heap-builds child path
+  // remove_dir_all boxes its Result[void, IoError] result and heap-builds child path
   // strings while recursing, so it needs the heap runtime.
   if (tag == 172) {
     return true;
   }
-  // remove_file boxes its Result[(), IoError] result, so it needs the heap runtime.
+  // remove_file boxes its Result[void, IoError] result, so it needs the heap runtime.
   if (tag == 173) {
     return true;
   }
@@ -9042,7 +9042,7 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 174) {
     return true;
   }
-  // create_dir_all boxes its Result[(), IoError] result and heap-builds the
+  // create_dir_all boxes its Result[void, IoError] result and heap-builds the
   // NUL-terminated path it walks, so it needs the heap runtime.
   if (tag == 231) {
     return true;

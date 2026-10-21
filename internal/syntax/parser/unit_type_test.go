@@ -27,29 +27,8 @@ func TestParseUnitLiteral(t *testing.T) {
 	}
 }
 
-// `()` in TYPE position is void's other spelling, so the unit value's type
-// can be written where it reads best: `Result[(), IoError]` rather than
-// `Result[void, IoError]`. Both parse to the same VoidType.
-func TestParseUnitType(t *testing.T) {
-	prog, err := Parse(`function f(): Result[(), IoError] { return Ok(()); }
-	                    function main(): i32 { return 0; }`)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	res, ok := prog.Funcs[0].ReturnType.(ast.EnumType)
-	if !ok {
-		t.Fatalf("result type is %T, want ast.EnumType", prog.Funcs[0].ReturnType)
-	}
-	if len(res.Args) != 2 {
-		t.Fatalf("Result has %d args, want 2", len(res.Args))
-	}
-	if _, ok := res.Args[0].(ast.VoidType); !ok {
-		t.Errorf("first type argument is %T (%s), want ast.VoidType", res.Args[0], res.Args[0])
-	}
-}
-
-// The zero-argument FUNCTION type still wins the same token shape: `()` is
-// only the unit type when no `=>` follows it.
+// `()` followed by `=>` is the zero-argument function type; without the
+// arrow it is refused as a type (TestRefusedTypeSpellings).
 func TestParseEmptyParensStillFunctionTypeBeforeArrow(t *testing.T) {
 	prog, err := Parse(`function apply(f: () => i32): i32 { return f(); }
 	                    function main(): i32 { return 0; }`)
@@ -68,7 +47,7 @@ func TestParseEmptyParensStillFunctionTypeBeforeArrow(t *testing.T) {
 // determinism-test helper whose type printer predates generic enums and
 // renders `Result[…]` as empty, so it is not the one to assert on here.
 func TestFormatUnitLiteralRoundTrips(t *testing.T) {
-	src := `function f(): Result[(), IoError] { return Ok(()); }
+	src := `function f(): Result[void, IoError] { return Ok(()); }
 	        function main(): i32 { return 0; }`
 	prog, err := Parse(src)
 	if err != nil {

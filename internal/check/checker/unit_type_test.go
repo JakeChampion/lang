@@ -14,17 +14,17 @@ import (
 func TestUnitValueChecks(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"unit type argument, unit payload",
-			`function f(): Result[(), IoError] { return Ok(()); }
+			`function f(): Result[void, IoError] { return Ok(()); }
 			 function main(): i32 { return 0; }`},
 		{"void spelling of the same type",
 			`function f(): Result[void, IoError] { return Ok(()); }
 			 function main(): i32 { return 0; }`},
 		{"? propagates through a unit Result",
-			`function f(): Result[(), IoError] { return Ok(()); }
-			 function g(): Result[(), IoError] { f()?; return Ok(()); }
+			`function f(): Result[void, IoError] { return Ok(()); }
+			 function g(): Result[void, IoError] { f()?; return Ok(()); }
 			 function main(): i32 { return 0; }`},
 		{"unit in an Option payload",
-			`function f(): Option[()] { return Some(()); }
+			`function f(): Option[void] { return Some(()); }
 			 function main(): i32 { return 0; }`},
 		{"bound to a variable",
 			`function main(): i32 { let u = (); return 0; }`},
@@ -50,11 +50,11 @@ func TestVoidCallIsNotAValue(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"void call as Ok payload",
 			`function nothing(): void { return; }
-			 function f(): Result[(), IoError] { return Ok(nothing()); }
+			 function f(): Result[void, IoError] { return Ok(nothing()); }
 			 function main(): i32 { return 0; }`},
 		{"void call as Some payload",
 			`function nothing(): void { return; }
-			 function f(): Option[()] { return Some(nothing()); }
+			 function f(): Option[void] { return Some(nothing()); }
 			 function main(): i32 { return 0; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

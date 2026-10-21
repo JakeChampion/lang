@@ -9,7 +9,7 @@
 import "std/string";
 import "std/i64";
 import "std/i32";
-import "std/float";
+import "std/f64";
 import "std/fetch";
 import "std/headers";
 import "./runtime";

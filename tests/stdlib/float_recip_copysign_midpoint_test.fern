@@ -1,8 +1,8 @@
 import "std/test";
-import "std/float" as float;
+import "std/f64";
 
 // tests/stdlib/float_recip_copysign_midpoint_test.fern — pure-Fern coverage
-// of std/float.recip / copysign / midpoint: three purely-arithmetic helpers
+// of std/f64.recip / copysign / midpoint: three purely-arithmetic helpers
 // (reciprocal 1/x; magnitude-of-receiver with sign-of-argument; overflow-safe
 // halfway point a*0.5 + b*0.5). No libm primitive, so unlike the transcendentals
 // these lower on all four backends including wasmbin. Both f64 and f32. The
@@ -65,7 +65,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/float recip/copysign/midpoint");
+  let r: test.TestRunner = test.test_new("std/f64 recip/copysign/midpoint");
   r = r.it("recip", test_recip);
   r = r.it("recip negative", test_recip_negative);
   r = r.it("recip round-trip", test_recip_roundtrip);

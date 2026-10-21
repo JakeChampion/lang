@@ -543,7 +543,6 @@ TestSelfHostFipStorage 7
 TestSelfHostFixtureSourcesCheck 26
 TestSelfHostFlatOperandsInRegisters 20
 TestSelfHostFlattenX86_64 2
-TestSelfHostFloatAliasIsF64 2
 TestSelfHostFloatBitsIRWasm 2
 TestSelfHostFloatBitsIRX86_64 2
 TestSelfHostFloatMathIRArm64 2

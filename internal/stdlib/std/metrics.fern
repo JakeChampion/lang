@@ -33,7 +33,7 @@ import "std/http";
 import "std/i32";
 import "std/i64";
 import "std/net";
-import "std/float";
+import "std/f64";
 import "std/string";
 
 // `Counter` — a number that only grows. `labels` is the label set, as

@@ -1853,6 +1853,31 @@ function (p: Par) expected_type(): Par {
   return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected a type, got " + tok_desc(p.peek()))) };
 }
 
+// refused_type records native's P001 for a type spelling the language does
+// not have, naming the one it does; the caller parses on as that spelling.
+function (p: Par) refused_type(msg: string): Par {
+  return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:" + msg)) };
+}
+
+function unit_type_message(): string {
+  return "`()` is not a type; the unit type is written `void`";
+}
+
+// at_float_type reports `float` written as a type name, which the language
+// refuses in favour of `f64`: not the head of a module path (`float.x`), not a
+// segment of one (`m.float`), and not the trait or resource name after `dyn`,
+// `+`, `own` or `borrow`.
+function at_float_type(p: Par, seg: string): boolean {
+  if (seg != "float" || p.peek_punct_at(1) == ".") {
+    return false;
+  }
+  return p.pos == 0 || !util.has_str([".", "dyn", "+", "own", "borrow"], tok_spelling(p.toks[p.pos - 1]));
+}
+
+function float_type_message(): string {
+  return "`float` is not a type; the 64-bit float is written `f64`";
+}
+
 // handle_word_misuse records native's P001 for `own` / `borrow` at the cursor
 // with no resource name after it, such as `xs: own i32[]`.
 function (p: Par) handle_word_misuse(word: string): Par {
@@ -8252,11 +8277,10 @@ function fn_ret_admitted(rr_name: string): string {
   return "";
 }
 
-// at_unit_type reports whether the cursor sits on the unit type `()`. Native's
-// type parser resolves the empty parens to the void type and its printer writes
-// `void`, so the self-host records the same name rather than the written parens
-// (#8759). `() => R` is a function type with an empty parameter list, not the
-// unit, and is left for the collectors that build a fn-type spelling.
+// at_unit_type reports whether the cursor sits on `()` written as a type, which
+// the language refuses in favour of `void`. `() => R` is a function type with
+// an empty parameter list and is left for the collectors that build a fn-type
+// spelling.
 function at_unit_type(p: Par): boolean {
   return p.peek_punct() == "(" && p.peek_punct_at(1) == ")" && p.peek_punct_at(2) != "=>";
 }
@@ -8391,10 +8415,10 @@ function enclosing_opener(p: Par, from: i32): i32 {
 }
 
 function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Par) {
-  // The unit type `()`, folded to `void` before the collect loop can record
-  // its parens as a spelling.
-  if (at_unit_type(p)) {
-    let up: Par = p.advance();
+  // `()` as a type is refused; it parses on as `void`. With the arrow reserved
+  // for a lambda's own, `() =>` is a unit annotation, not a function type.
+  if (at_unit_type(p) || !top_arrow && p.peek_punct() == "(" && p.peek_punct_at(1) == ")") {
+    let up: Par = p.refused_type(unit_type_message()).advance();
     up = up.advance();
     return consume_array_suffix(up, "void");
   }
@@ -8439,11 +8463,10 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
   let telem_after_comma: boolean = false;
   while (!p.at_end()) {
     let tpk: string = p.peek_punct();
-    // A unit ELEMENT of a tuple type — `((), i32)`. The head `()` never
-    // reaches here (folded above), so this is always a nested one.
+    // `()` as an ELEMENT of a tuple type — `((), i32)`.
     if (at_unit_type(p)) {
       tbuf = tbuf + "void";
-      p = p.advance();
+      p = p.refused_type(unit_type_message()).advance();
       p = p.advance();
       tprev_word = false;
       tprev_prefix = false;
@@ -8544,6 +8567,10 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
     }
     // Word prefixes must stay separate from their type: dyn Speak, own T,
     // and borrow Socket. The formatter preserves every word boundary.
+    if (at_float_type(p, tseg)) {
+      p = p.refused_type(float_type_message());
+      tseg = "f64";
+    }
     if (tprev_word && (p.verbatim || tprev_prefix)) {
       tbuf = tbuf + " ";
     }
@@ -8880,12 +8907,12 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
       prev_ident = false;
       continue;
     }
-    // The unit type as a generic ARGUMENT — `Result[(), E]`, `Option[()]`.
-    // Folded to `void` here too: this collector reads the brackets a token
-    // at a time and never calls back into the type parser.
+    // `()` written as a generic ARGUMENT — `Result[(), E]` — is refused here
+    // too: this collector reads the brackets a token at a time and never
+    // calls back into the type parser.
     if (at_unit_type(p)) {
       inner = inner + "void";
-      p = p.advance();
+      p = p.refused_type(unit_type_message()).advance();
       p = p.advance();
       prev_ident = false;
       continue;
@@ -8946,6 +8973,10 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
     }
     if (misused_handle_word(p, seg)) {
       p = p.handle_word_misuse(seg);
+    }
+    if (at_float_type(p, seg)) {
+      p = p.refused_type(float_type_message());
+      seg = "f64";
     }
     if (prev_ident) {
       inner = inner + " ";
@@ -9070,6 +9101,9 @@ function parse_type_name_nested(p: Par): (string, string, Par) {
   }
   if (base.len() == 0) {
     return parse_type_punct_led(p);
+  }
+  if (at_float_type(p, base)) {
+    return parse_type_ident_led(p.refused_type(float_type_message()), "f64");
   }
   return parse_type_ident_led(p, base);
 }
@@ -29040,9 +29074,9 @@ function skip_decl_modifier(p: Par, name: string, before: string): Par {
 // that shape still behaves as it did before this pass existed.
 
 // is_float_type_name reports whether a declared type name denotes a float
-// scalar. `float` is the unsuffixed spelling; f32 is f64-shaped downstream.
+// scalar; f32 is f64-shaped downstream.
 function is_float_type_name(t: string): boolean {
-  return t == "f64" || t == "f32" || t == "float";
+  return t == "f64" || t == "f32";
 }
 
 // is_unsettled_int_literal reports whether `e` is an integer literal whose type

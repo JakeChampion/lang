@@ -36,9 +36,9 @@ func TestScalarMethodImportHint(t *testing.T) {
 			want: []string{`no method "to_string" on i32`, `import "std/i32"`},
 		},
 		{
-			name: "f64 names std/float, not std/i32",
+			name: "f64 names std/f64, not std/i32",
 			src:  `function main(): i32 { let f: f64 = 1.5; write(f.to_string()); return 0; }`,
-			want: []string{`no method "to_string" on f64`, `import "std/float"`},
+			want: []string{`no method "to_string" on f64`, `import "std/f64"`},
 			deny: []string{"std/i32"},
 		},
 		{
