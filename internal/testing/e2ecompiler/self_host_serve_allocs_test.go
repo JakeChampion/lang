@@ -160,6 +160,24 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 // paired, where 247.33 was measured before.
 const ServeAllocsH3Ceiling = 232
 
+// ServeAllocsH3MuxCeiling bounds allocations per hello request with
+// ServeAllocsH3MuxConcurrency requests in flight on one connection, the
+// multiplexed path the 1x256 nightly row exercises. It sits well under the
+// serial ServeAllocsH3Ceiling: a burst's flush and its acknowledgements are
+// shared across the requests answered in one pass, so the per-request share
+// falls as the concurrency rises. Measured 133.7 on the x86-64 runner
+// (docs/benchmarks/net-h3-2026-10-21.md); bounded like the H2 and serial H3
+// means, a ceiling that a gain lowers.
+const ServeAllocsH3MuxCeiling = 134
+
+// ServeAllocsH3MuxConcurrency is how many requests the multiplexed client
+// keeps in flight: enough to measure the multiplexed path, below the
+// server's grant of 100 request streams so the connection never waits on
+// stream credit (the client does not send STREAMS_BLOCKED, so it would not
+// learn the credit returned). The nightly's 1x256 row offers more with
+// h2load, which does.
+const ServeAllocsH3MuxConcurrency = 64
+
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
@@ -179,6 +197,32 @@ func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 		t.Fatal(err)
 	}
 	e2eharness.CheckServeAllocsH3(t, addr, runX86_64Bin(cli.runner, client, port, strconv.Itoa(e2eharness.ServeAllocsRounds)), ServeAllocsH3Ceiling, e2eharness.ServeAllocsRounds)
+}
+
+// TestSelfHostServeAllocsPerRequestH3Mux is TestSelfHostServeAllocsPerRequestH3
+// with ServeAllocsH3MuxConcurrency requests in flight on the one connection,
+// the multiplexed path the 1x256 nightly row exercises. The client reports
+// the peak it held so the ratchet is not quietly measuring the serial path.
+func TestSelfHostServeAllocsPerRequestH3Mux(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsH3ServerSource(0, e2eharness.ServeAllocsRounds)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clientSrc := filepath.Join(dir, "client.fern")
+	if err := os.WriteFile(clientSrc, []byte(e2eharness.ServeAllocsH3MuxClientSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1")
+	client := cli.x86Binary(t, clientSrc, "FERN_STRICT_IR=1")
+	addr, _ := e2eharness.StartInheritedServer(t, runX86_64Bin(cli.runner, bin))
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := runX86_64Bin(cli.runner, client, port, strconv.Itoa(e2eharness.ServeAllocsRounds), strconv.Itoa(ServeAllocsH3MuxConcurrency))
+	e2eharness.CheckServeAllocsH3Mux(t, addr, run, ServeAllocsH3MuxCeiling, e2eharness.ServeAllocsRounds, 48)
 }
 
 // ServeFetchAllocsCeiling bounds what a handler making two requests
