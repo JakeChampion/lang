@@ -6106,7 +6106,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     while (mi < c.args.len()) {
       let want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
       let mat: typeinfo.Type = check_expr(c.args[mi], s);
-      if (!is_unknown(want) && !bound_arg_accepts(c.args[mi], mat, want, parser.parse_type_ref(param_type_name_at(msig, mi)), rmb.names, s)) {
+      if (!is_unknown(want) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
         return t_unknown("arg-type mismatch calling method `" + name + "`");
       }
       mi = mi + 1;
@@ -6210,7 +6210,7 @@ function sig_call_type(sig: FuncSig, name: string, c: ast.ExprCall, s: Scope): t
     if (type_contains_unknown(want) && bn.len() > 0) {
       want = type_from_ref_subst(sig_param_ref(sig, i), bn, bt, s.type_names());
     }
-    if (!is_unknown(want) && !bound_arg_accepts(c.args[i], at, want, sig_param_ref(sig, i), bn, s)) {
+    if (!is_unknown(want) && !bound_arg_accepts(c.args[i], at, want, s) && !(bn.len() > 0 && generic_scalar_own_callback(at, want, sig_param_ref(sig, i), bn, s))) {
       return t_unknown("arg-type mismatch calling `" + name + "`");
     }
     i = i + 1;
@@ -6355,7 +6355,7 @@ function bound_type_arg_diags(sig: FuncSig, c: ast.ExprCall, ai: i32, at: typein
     return none;
   }
   let out: util.Diag[] = int_dest_range_diags(c.args[ai], want);
-  if (out.len() == 0 && !bound_arg_accepts(c.args[ai], at, want, pref, wn, s)) {
+  if (out.len() == 0 && !bound_arg_accepts(c.args[ai], at, want, s) && !generic_scalar_own_callback(at, want, pref, wn, s)) {
     out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(want) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
   }
   return out;
@@ -6365,8 +6365,19 @@ function param_has_bindings(sig: FuncSig, ai: i32, names: string[]): boolean {
   return names.len() > 0 && type_contains_unknown(sig.param_types[ai]) && type_ref_names_any(sig_param_ref(sig, ai), names);
 }
 
-function bound_arg_accepts(e: ast.Expr, actual: typeinfo.Type, want: typeinfo.Type, ref: parser.TypeRef, names: string[], s: Scope): boolean {
-  return is_unknown(actual) || settles_to(e, want, s) || generic_scalar_own_callback(actual, want, ref, names, s) || view_arg_borrow(actual, want) || coercible(actual, want, s);
+// bound_arg_accepts reports whether an argument of type `actual` serves a
+// parameter of type `want`: unknown, a literal that settles to it, a view
+// borrow or a coercion. A generic call's own-callback reading is
+// generic_own_callback_accepts, asked after this declines.
+function bound_arg_accepts(e: ast.Expr, actual: typeinfo.Type, want: typeinfo.Type, s: Scope): boolean {
+  return is_unknown(actual) || settles_to(e, want, s) || view_arg_borrow(actual, want) || coercible(actual, want, s);
+}
+
+// generic_own_callback_accepts is generic_scalar_own_callback for a method
+// parameter spelled `spelling`, parsed only by a call that bound a type
+// variable; a function signature carries its refs parsed (sig_param_ref).
+function generic_own_callback_accepts(actual: typeinfo.Type, want: typeinfo.Type, names: string[], spelling: string, s: Scope): boolean {
+  return names.len() > 0 && generic_scalar_own_callback(actual, want, parser.parse_type_ref(spelling), names, s);
 }
 
 // An own T callback slot bound to a scalar transfers no RC unit. Native
@@ -8390,7 +8401,7 @@ function method_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv
     let mat: typeinfo.Type = check_expr(c.args[mi], s);
     let want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
     out = util.append_diags(out, int_dest_range_diags(c.args[mi], want));
-    if (!is_unknown(want) && !bound_arg_accepts(c.args[mi], mat, want, parser.parse_type_ref(param_type_name_at(msig, mi)), rmb.names, s)) {
+    if (!is_unknown(want) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
       out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + method + "\": expected " + type_label(want) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
     }
     out = util.append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
