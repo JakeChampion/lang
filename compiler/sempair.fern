@@ -148,13 +148,13 @@ function paired_callee(ins: ssa.SInst, ix: util.NameIndex, ok: boolean[]): i32 {
 // joins anything split cannot read through: only constructions, calls to
 // candidates and other such phis can be read apart.
 pub function whole_values(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
-  return through_joins(f.graph, seeded(f, ix, ok, paired));
+  let defs: ssa.SInst[] = defs_of(f.graph);
+  return through_joins(defs, seeded(f, defs, ix, ok, paired));
 }
 
-function seeded(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
+function seeded(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], paired: boolean): boolean[] {
   let g: ssa.SFunc = f.graph;
   let whole: boolean[] = __alloc_bool(g.nvals);
-  let defs: ssa.SInst[] = defs_of(g);
   for b in g.blocks {
     for ins in b.insts {
       if (!reads_apart(ins.kind_tag) && ins.kind_tag != 7 && ins.kind_tag != 8) {
@@ -178,18 +178,34 @@ function seeded(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], paired: boole
   return whole;
 }
 
-// `whole` with what each copy or phi needed whole copies marked too.
-function through_joins(g: ssa.SFunc, whole0: boolean[]): boolean[] {
+// `whole` with what each copy or phi needed whole copies marked too: a
+// worklist of the marked values, each spreading once to the operands of the
+// copy or phi defining it.
+function through_joins(defs: ssa.SInst[], whole0: boolean[]): boolean[] {
   let whole: boolean[] = whole0;
-  let moved: boolean = true;
-  while (moved) {
-    moved = false;
-    for b in g.blocks {
-      for ins in b.insts {
-        if ((ins.kind_tag == 7 || ins.kind_tag == 8) && ins.result >= 0 && whole[ins.result] && !all_marked(whole, ins.args)) {
-          whole = marked_all(whole, ins.args);
-          moved = true;
-        }
+  let work: i32[] = [];
+  let v: i32 = 0;
+  while (v < whole.len()) {
+    if (whole[v]) {
+      work = work.append(v);
+    }
+    v = v + 1;
+  }
+  let k: i32 = 0;
+  while (k < work.len()) {
+    let w: i32 = work[k];
+    k = k + 1;
+    if (w >= defs.len()) {
+      continue;
+    }
+    let ins: ssa.SInst = defs[w];
+    if (ins.kind_tag != 7 && ins.kind_tag != 8) {
+      continue;
+    }
+    for a in ins.args {
+      if (a >= 0 && a < whole.len() && !whole[a]) {
+        whole = whole.with(a, true);
+        work = work.append(a);
       }
     }
   }
