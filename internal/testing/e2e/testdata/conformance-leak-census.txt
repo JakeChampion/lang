@@ -368,6 +368,7 @@ let_else_qualified_variant                           0
 let_else_variant_binding_outlives_stmt               0
 literal_local_takes_its_use_width                    0
 literal_payload_pattern                              0
+literal_tree_takes_its_destination_width             0
 log_leveled                                          0
 loop_form                                            0
 loop_rotation_shapes                                 0

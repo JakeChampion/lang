@@ -16,7 +16,7 @@
 # THE HAZARD union introduces, and what covers it: when the same row's VALUE
 # differs on both sides, union keeps both rows rather than picking one. Every
 # reader of these files builds a map keyed on the row name
-# (censusRowNames, readRejectionGaps), so a duplicated key collapses SILENTLY
+# (censusRowNames), so a duplicated key collapses SILENTLY
 # to whichever row was read last. TestUnionMergedRegistriesHaveNoDuplicateKeys
 # is what makes that loud, and it derives its file list from THIS file, so a
 # path added below is covered without anyone remembering to.
@@ -29,10 +29,9 @@
 # that moved it, which union would interleave into two PRs' notes at once.
 #
 # No test enforces that exclusion, and a shape check cannot: this file and the
-# rejection gaps are both a comment header followed by data rows, so nothing
+# leak census are both a comment header followed by data rows, so nothing
 # syntactic separates them. What distinguishes a union-safe registry is how it
 # CHANGES, which is a property of its history. Adding a path above is therefore
 # a judgement — "is a colliding row here two appends, or one disagreement?" —
 # and the duplicate-key test is what catches getting it wrong.
 internal/testing/e2e/testdata/conformance-leak-census.txt merge=union
-internal/testing/e2ecompiler/testdata/selfhost-rejection-gaps.txt merge=union

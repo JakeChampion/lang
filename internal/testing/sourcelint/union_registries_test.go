@@ -74,8 +74,8 @@ func registryKeys(t *testing.T, path string) (keys []string) {
 // row different values — that yields a duplicated key.
 //
 // Nothing else would notice. Every reader of these files builds a map keyed on
-// the row name (censusRowNames in this package, readRejectionGaps in
-// internal/testing/e2ecompiler), so a duplicate collapses to whichever row was read
+// the row name (censusRowNames in this package), so a duplicate collapses to
+// whichever row was read
 // last, silently, and the census gates keep passing while pinning a verdict
 // nobody chose. That is the whole cost of the union attribute, so it is paid
 // here rather than left to be discovered.
