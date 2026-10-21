@@ -56,8 +56,8 @@ pub struct Finding {
 
 // Config is a run's resolved configuration: each rule's severity and
 // threshold. `risk_configured` is set when a [lint] table or a flag names the
-// change-risk rule, so a run given no coverage refuses rather than passing
-// the rule vacuously.
+// change-risk rule, so a run that would score it and was given no coverage
+// refuses rather than passing the rule vacuously.
 pub struct Config {
   complexity: i32,
   max: i32,
