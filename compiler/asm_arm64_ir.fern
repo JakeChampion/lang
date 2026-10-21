@@ -6313,7 +6313,7 @@ function emit_arm64_op_dyn_box(o: ir.Op, own s: asmcore.EmitState): asmcore.Emit
 // Caller must have judged the module eligible (ircore.gate) and seeded `s`
 // (struct_decls / funcs).
 // emit_ir_start writes the program entry: capture argc / argv / envp, push a
-// frame, call __fn_main, exit with its result. Both IR emitters use it — the
+// frame, call __fn_main, exit with its result (0 when there is no `main`). Both IR emitters use it — the
 // whole-program emit_body and the per-module emit_module_ir_unit_arm64_flat, which
 // carried a verbatim copy.
 //
@@ -6534,13 +6534,22 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   }
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
-  s = s.write("    bl __fn_main\n");
-  if (s.leak_check) {
-    // Census (#5362): the exit() builtin bypasses this epilogue and
-    // reports at its own site; a returning main reports here.
-    s = s.write("    mov x19, x0\n");
-    s = s.write("    bl __fern_lc_report\n");
-    s = s.write("    mov x0, x19\n");
+  // A module with no `main` is a library compiled on its own, and its
+  // `_start` exits 0, as x86-64's does.
+  if (asmcore.declares_main(s.funcs)) {
+    s = s.write("    bl __fn_main\n");
+    if (s.leak_check) {
+      // Census (#5362): the exit() builtin bypasses this epilogue and
+      // reports at its own site; a returning main reports here.
+      s = s.write("    mov x19, x0\n");
+      s = s.write("    bl __fern_lc_report\n");
+      s = s.write("    mov x0, x19\n");
+    }
+  } else {
+    if (s.leak_check) {
+      s = s.write("    bl __fern_lc_report\n");
+    }
+    s = s.write("    mov x0, #0\n");
   }
   s = s.write(profile_exit_asm(s.profile));
   s = s.write("    mov x8, #94\n");  // exit_group (Linux arm64); darwinize remaps the number + svc
