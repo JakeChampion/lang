@@ -2310,8 +2310,9 @@ pub function mfuncs_table(decls: parser.FuncDecl[], local: irtables.SigReg): MFu
 //
 // The appended entries land at the FRONT of their buckets, so an extended chain
 // is not globally ascending. The two indexed predicates answer a BOOLEAN over
-// "any same-named decl", so visit order cannot change their verdict; nothing
-// else reads the chains.
+// "any same-named decl", so visit order cannot change their verdict;
+// lift_names_fn_value, which wants the first declaration in order, keeps the
+// lowest index it meets rather than stopping at the first match.
 pub function mfuncs_extend(base: MFuncs, extra: parser.FuncDecl[]): MFuncs {
   let decls: parser.FuncDecl[] = base.decls;
   let head: i32[] = base.head;
