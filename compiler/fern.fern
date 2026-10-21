@@ -364,6 +364,39 @@ function chunk_keeps_content(before: string, after: string): boolean {
   return content_print(fmt_wrap(before)) == content_print(fmt_wrap(after));
 }
 
+function comma_joined(xs: string[]): string {
+  let joined: string = "";
+  for x in xs {
+    if (joined.len() > 0) {
+      joined = joined + ", ";
+    }
+    joined = joined + x;
+  }
+  return joined;
+}
+
+// read_source reads a source a tool takes as a path, stdin for `-`.
+function read_source(path: string): Result[string, string] {
+  if (path == "-") {
+    match (io.read_all_stdin()) {
+      Ok(s) => {
+        return Ok(s);
+      },
+      Err(e) => {
+        return Err(e.message());
+      }
+    }
+  }
+  match (read_file(path)) {
+    Ok(s) => {
+      return Ok(s);
+    },
+    Err(e) => {
+      return Err(e.message());
+    }
+  }
+}
+
 // read_failure is the one-line report for a file that could not be read:
 // `fern: cannot read entry file /abs/x.fern: invalid UTF-8`.
 function read_failure(what: string, path: string, reason: string): string {
@@ -377,23 +410,28 @@ function read_failure(what: string, path: string, reason: string): string {
 // exit 1 in every mode, and nothing is written. Returns the exit code for this
 // file.
 function fmt_file(st: DiagStyle, path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
+  if (path == "-" && fmt_write) {
+    eprint("fern: -fmt -w cannot write back stdin; drop -w to print the result");
+    return 2;
+  }
   let esrc: string = "";
-  match (read_file(path)) {
+  match (read_source(path)) {
     Ok(s) => {
       esrc = s;
     },
     Err(e) => {
-      eprint(read_failure("entry file", path, e.message()));
+      eprint(read_failure("file", path, e));
       return 1;
     }
   }
-  let (formatted, errs) = format_text(path, esrc);
+  let name: string = entry_display(path);
+  let (formatted, errs) = format_text(name, esrc);
   let no_files: string[] = [];
-  if (eprint_findings(st, errs, path, no_files, [util.no_line_map()])) {
+  if (eprint_findings(st, errs, name, no_files, [util.no_line_map()])) {
     return 1;
   }
   if (fmt_diff) {
-    let d: string = printer.unified_diff(esrc, formatted, path, path);
+    let d: string = printer.unified_diff(esrc, formatted, name, name);
     if (d.len() == 0) {
       return 0;
     }
@@ -711,8 +749,8 @@ function related_text(st: DiagStyle, related: util.Related[], entry: string, fil
   return out;
 }
 
-// entry_display is the entry path as a diagnostic names it: the path the
-// command line gave, or `<stdin>` for a program read from stdin, as native
+// entry_display is a source path as a diagnostic names it: the path the
+// command line gave, or `<stdin>` for a source read from stdin, as native
 // spells it.
 function entry_display(entry_path: string): string {
   if (entry_path == "-") {
@@ -1542,12 +1580,12 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-targets", "", "list the supported targets and what each provides"),
     ] },
     FlagGroup { title: "fmt", flags: [
-      cli_flag("-fmt", "", "print each FILE formatted (-o OUT takes one FILE)"),
+      cli_flag("-fmt", "", "print each FILE formatted: - for stdin, a DIR for every source beneath it (-o OUT takes one FILE)"),
       cli_flag("-w", "", "with -fmt: overwrite each file"),
       cli_flag("-d", "", "with -fmt: print unified diffs, exiting 1 when any file differs"),
     ] },
     FlagGroup { title: "lint", flags: [
-      cli_flag("-lint", "", "lint each PATH, a .fern file or a directory of them"),
+      cli_flag("-lint", "", "lint each PATH, a .fern file, a directory of them, or - for stdin"),
       cli_flag("-lint-rules", "", "list the lint rules with their severities and options"),
       cli_flag("-lint-set", "RULE=LEVEL", "with -lint: set a rule to allow, warn or deny (repeatable)"),
       cli_flag("-lint-opt", "RULE.OPT=VALUE", "with -lint: set a rule option (repeatable)"),
@@ -1677,7 +1715,7 @@ function usage_lines(embedded: boolean): string[] {
     "usage: fern [FLAG...] FILE.fern" + unless_embedded(embedded, " [STDLIB") + " [--] [ARG...]" + unless_embedded(embedded, "]"),
     "       fern -check [FLAG...] DIR" + root,
     "       fern -check | -interp [FLAG...] -             (the program on stdin)",
-    "       fern -fmt [-w | -d | -o OUT] FILE...",
+    "       fern -fmt [-w | -d | -o OUT] FILE | DIR | -...",
     "       fern -lint [-lint-set RULE=LEVEL] PATH...",
     "       fern -doc [-o OUT] MODULE.fern | -doc -o OUTDIR DIR",
     "       fern -tangle | -weave | -doctest DOC.fern.md",
@@ -5064,10 +5102,11 @@ function run_and_clean(target: string, out: string, dir: string, prog_args: stri
   return status;
 }
 
-// lint_targets is every .fern file the -lint paths name, a directory
-// contributing each .fern beneath it, sorted; the error is set for a path that
-// is neither.
-function lint_targets(paths: string[]): (string[], string) {
+// source_files is every source the paths of a per-file tool name, sorted: a
+// directory contributes each .fern beneath it, and each .fern.md as well when
+// `literate`; `-` names stdin. The error is set for a path that is none of
+// these.
+function source_files(paths: string[], literate: boolean): (string[], string) {
   let out: string[] = [];
   let todo: string[] = paths;
   while (todo.len() > 0) {
@@ -5083,10 +5122,16 @@ function lint_targets(paths: string[]): (string[], string) {
       if let Ok(names) = read_dir(p) {
         for n in names {
           let child: string = p + "/" + n;
-          if (util.is_dir(child) || util.str_has_suffix(n, ".fern")) {
+          if (util.is_dir(child) || util.str_has_suffix(n, ".fern") || literate && util.str_has_suffix(n, ".fern.md")) {
             todo = todo.append(child);
           }
         }
+      }
+      continue;
+    }
+    if (p == "-" || literate && util.str_has_suffix(p, ".fern.md")) {
+      if (!util.has_str(out, p)) {
+        out = out.append(p);
       }
       continue;
     }
@@ -5250,20 +5295,13 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
     eprint("usage: fern -lint PATH... (a .fern file or a directory of them)");
     return 2;
   }
-  let (files, terr) = lint_targets(paths);
+  let (files, terr) = source_files(paths, false);
   if (terr.len() > 0) {
     eprint("fern: " + terr);
     return 2;
   }
   if (files.len() == 0) {
-    let joined: string = "";
-    for p in paths {
-      if (joined.len() > 0) {
-        joined = joined + ", ";
-      }
-      joined = joined + p;
-    }
-    eprint("fern: no .fern files under " + joined);
+    eprint("fern: no .fern files under " + comma_joined(paths));
     return 2;
   }
   let (cfg, cerr) = lint_config(files[0], sets, opts);
@@ -5276,12 +5314,12 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
   let out: string = "";
   for f in files {
     let src: string = "";
-    match (read_file(f)) {
+    match (read_source(f)) {
       Ok(t) => {
         src = t;
       },
       Err(e) => {
-        eprint("fern: " + f + ": " + e.message());
+        eprint("fern: " + f + ": " + e);
         return 2;
       }
     }
@@ -5296,10 +5334,10 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
       }
     }
     let no_files: string[] = [];
-    if (eprint_findings(st, perrs, f, no_files, [util.no_line_map()])) {
+    if (eprint_findings(st, perrs, entry_display(f), no_files, [util.no_line_map()])) {
       continue;
     }
-    for fd in lint.lint_file(cfg, f, src, m, lx.comments) {
+    for fd in lint.lint_file(cfg, entry_display(f), src, m, lx.comments) {
       if (all.len() > 0) {
         out = out + "\n";
       }
@@ -5772,14 +5810,23 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // rest, and the exit code is the worst one seen — so `-d` over a list exits
   // 1 when any file needs formatting.
   if (mode_fmt) {
-    if (out_path.len() > 0 && pos.len() > 1) {
-      eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(pos.len()) + " given)");
+    let (files, ferr) = source_files(pos, true);
+    if (ferr.len() > 0) {
+      eprint("fern: " + ferr);
+      return 2;
+    }
+    if (files.len() == 0) {
+      eprint("fern: -fmt: no .fern or .fern.md files under " + comma_joined(pos));
+      return 2;
+    }
+    if (out_path.len() > 0 && files.len() > 1) {
+      eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(files.len()) + " given)");
       return 2;
     }
     let code: i32 = 0;
     let fi: i32 = 0;
-    while (fi < pos.len()) {
-      let fc: i32 = fmt_file(st, pos[fi], fmt_write, fmt_diff, out_path);
+    while (fi < files.len()) {
+      let fc: i32 = fmt_file(st, files[fi], fmt_write, fmt_diff, out_path);
       if (fc > code) {
         code = fc;
       }
@@ -5796,10 +5843,10 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   let esrc: string = "";
   let eok: boolean = false;
   let eerr: string = "";
-  // `-` names stdin for the two modes native reads it in, and only those:
-  // `-fmt -` and a compile from `-` are file errors under native, and the
-  // self-host accepting them would be a divergence in the permissive
-  // direction — the one that lets a program build under one compiler only.
+  // `-` names stdin for the two modes native reads it in, and only those: a
+  // compile from `-` is a file error under native, and the self-host
+  // accepting it would be a divergence in the permissive direction — the one
+  // that lets a program build under one compiler only.
   // A program on stdin is how a pipeline stage, an editor buffer, or a host
   // with no filesystem to open names one with no file behind it (#6643).
   if (entry_path == "-" && (mode_check || mode_interp)) {
