@@ -72,7 +72,34 @@ func TestGrammarHighlightsExactlyTheKeywords(t *testing.T) {
 	}
 }
 
-var fernKeywordsBody = regexp.MustCompile(`pub function keywords\(\): string\[\] \{\s*return \[([^\]]*)\];`)
+// TestFernLexerKeywordTableMatchesItsList holds compiler/lexer.fern's
+// is_keyword, the byte-dispatched comparison chain the lexer tokenises with,
+// to the keywords() list it is documented to mirror, which the compiler uses
+// to reject a keyword as a name and the language server to complete names.
+func TestFernLexerKeywordTableMatchesItsList(t *testing.T) {
+	src, err := os.ReadFile("../../../compiler/lexer.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := fernIsKeywordBody.FindSubmatch(src)
+	if m == nil {
+		t.Fatal("compiler/lexer.fern: no `function is_keyword(name: string): boolean { ... }`")
+	}
+	var got []string
+	for _, lit := range fernNameCompare.FindAllSubmatch(m[1], -1) {
+		got = append(got, string(lit[1]))
+	}
+	sort.Strings(got)
+	if want := fernLexerKeywords(t); !reflect.DeepEqual(got, want) {
+		t.Errorf("is_keyword compares against:\n  %v\nwant keywords():\n  %v", got, want)
+	}
+}
+
+var (
+	fernKeywordsBody  = regexp.MustCompile(`pub function keywords\(\): string\[\] \{\s*return \[([^\]]*)\];`)
+	fernIsKeywordBody = regexp.MustCompile(`(?s)\nfunction is_keyword\(name: string\): boolean \{\n(.*?)\n\}\n`)
+	fernNameCompare   = regexp.MustCompile(`name == "([a-z0-9]+)"`)
+)
 
 func fernLexerKeywords(t *testing.T) []string {
 	t.Helper()

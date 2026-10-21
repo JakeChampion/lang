@@ -84,6 +84,21 @@ Rows without the `fern-cover: ` prefix are the program's own stderr and are
 ignored, so piping the whole stream is fine. Rows repeat-and-sum, so several
 runs' output can be concatenated into one measurement.
 
+## Scoring functions by change risk
+
+```sh
+fern -target x86-64-linux -cover -o prog src/main.fern
+./prog 2> cov.txt
+fern -lint -lint-cover cov.txt src/
+```
+
+The lint reads the same saved run and scores every function by
+`complexity^2 * (1 - coverage)^3 + complexity`, the change-risk lint rule:
+the complex functions the run never exercised. The run names each file as
+the compile was given it, and the lint matches those names to the files it
+walks, so compile and lint from the same directory. `docs/LINT.md` has the
+rule; the stream here is its input unchanged.
+
 ## What a `-cover` build costs
 
 - **One increment per executable line reached, and two per conditional

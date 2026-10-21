@@ -278,6 +278,7 @@ which ones.
 | `COMPLEXITY-CAMPAIGN.md` | [tracker] | The campaign to cut cyclomatic complexity in first-party Fern sources, slice by slice, against the lint ratchet. |
 | `DIAGNOSTIC-UX-RESEARCH.md` | [research] | Survey of compiler diagnostics (Elm, Rust, ReasonML, TypeScript) and what Fern's would need to match them (#4413). |
 | `IDE-COMPILATION-RESEARCH.md` | [research] | Survey of rust-analyzer-style incremental compilation for `fern -lsp`: what to port and in what order (#4415). |
+| `READING-NOTES-2026-10-21.md` | [research] | Seven outside sources (CRAP, Highlights, packslip, STE, MultiTable, constmap, usage) read against the code on 2026-10-21, with the decision each led to. |
 | `PLAYGROUND-SELFHOST-WASM.md` | [record] | Whether the self-host compiler can power the browser playground; it can, and has since 2026-09-28. |
 | `TEST-RUNNER-MIGRATION.md` | [record] | An early audit of moving 72 Go test files to the pure-Fern TAP runner; its counts are out of date. |
 | `TOOLCHAIN-SELF-HOSTING.md` | [record] | Building every target with no external toolchain on `$PATH`; complete. |

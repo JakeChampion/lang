@@ -5,9 +5,9 @@
 // `--output=F`, `-o F`), boolean flags (`--verbose` / `-v`),
 // positional operands, the `--` end-of-options terminator, and
 // subcommands, each a spec of its own. One spec also yields the
-// usage text, a roff man page, and shell completions for bash, zsh and
-// fish, so a tool describes its interface once. Pure library — no
-// compiler changes.
+// usage text, a roff man page, shell completions for bash, zsh and
+// fish, and a KDL usage spec (usage.jdx.dev), so a tool describes its
+// interface once. Pure library — no compiler changes.
 //
 // Build a spec, parse argv, query the result:
 //
@@ -768,4 +768,71 @@ pub function cli_bold(s: string): string {
 
 pub function cli_dim(s: string): string {
   return __cli_sgr("2", s);
+}
+
+// ============================================================
+// Usage spec (KDL) output.
+//
+// The same spec, as a `usage` document (https://usage.jdx.dev): one KDL
+// node per flag, argument and command, which `usage generate` turns into
+// completions, man pages and Markdown for any shell, and which a packslip
+// can ship as the tool's CLI spec. A tool writes `spec.usage_spec()` to
+// `name.usage.kdl`.
+// ============================================================
+// Quote a user string as a KDL string: backslash and double quote escaped,
+// a newline written as its escape so one node stays on one line.
+function __cli_kdl(s: string): string {
+  return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\"";
+}
+
+// One `flag` node: the dash spellings, a `<long>` placeholder for a valued
+// option, and the help.
+function __cli_kdl_flag(f: CliFlag): string {
+  let names: string = "";
+  if (f.short.len() > 0) {
+    names = "-" + f.short + " ";
+  }
+  names = names + "--" + f.long;
+  if (f.takes_value) {
+    names = names + " <" + f.long + ">";
+  }
+  let out: string = "flag " + __cli_kdl(names);
+  if (f.help.len() > 0) {
+    out = out + " help=" + __cli_kdl(f.help);
+  }
+  return out;
+}
+
+// The nodes inside a spec: its flags, then its operands or its commands,
+// each command a `cmd` block holding its own.
+function __cli_kdl_body(s: CliSpec, indent: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < s.flags.len()) {
+    out = out + indent + __cli_kdl_flag(s.flags[i]) + "\n";
+    i = i + 1;
+  }
+  if (s.commands.len() == 0) {
+    return out + indent + "arg \"[args]...\" var=#true\n";
+  }
+  i = 0;
+  while (i < s.commands.len()) {
+    let c: CliSpec = s.commands[i];
+    out = out + indent + "cmd " + __cli_kdl(c.name);
+    if (c.about.len() > 0) {
+      out = out + " help=" + __cli_kdl(c.about);
+    }
+    out = out + " {\n" + __cli_kdl_body(c, indent + "  ") + indent + "}\n";
+    i = i + 1;
+  }
+  return out;
+}
+
+// `.usage_spec()` — the spec as a KDL `usage` document.
+pub function (s: CliSpec) usage_spec(): string {
+  let out: string = "bin " + __cli_kdl(s.name) + "\n";
+  if (s.about.len() > 0) {
+    out = out + "about " + __cli_kdl(s.about) + "\n";
+  }
+  return out + __cli_kdl_body(s, "");
 }

@@ -8,6 +8,8 @@
 // so several runs' output can be concatenated into one report. Lines without
 // a prefix are the program's own stderr and are skipped; a prefixed row that
 // does not parse is an error, because dropping it would move a percentage.
+// `fold` is also how `fern -lint -lint-cover` reads a run for the change-risk
+// rule (lint.fern).
 
 import "./util";
 
@@ -19,7 +21,7 @@ const BRANCH_PREFIX: string = "fern-branch: ";
 // `bline` / `bcol` / `beval` / `btaken` hold one conditional each, keyed by
 // (line, col) so two conditionals on one line stay apart; both are sorted
 // before reporting.
-struct File {
+pub struct File {
   name: string,
   lines: i32[],
   hits: i64[],
@@ -29,7 +31,7 @@ struct File {
   btaken: i64[],
 }
 
-struct Folded {
+pub struct Folded {
   files: File[],
   err: string,
 }
@@ -79,7 +81,7 @@ function new_file(name: string): File {
 }
 
 // fold reads the stream and folds every prefixed row.
-function fold(text: string): Folded {
+pub function fold(text: string): Folded {
   let files: File[] = [];
   let none: string[] = [];
   // The file names, in File order; the `file:line` and `file:line:col` keys
@@ -298,7 +300,7 @@ function covered_edges(f: File): i32 {
 // pct renders n/total as a percentage to one decimal, rounding half to even,
 // or "n/a" for an empty denominator: 0.0% for a program with nothing
 // instrumented would read as a result rather than the absence of one.
-function pct(n: i32, total: i32): string {
+pub function pct(n: i32, total: i32): string {
   if (total == 0) {
     return "n/a";
   }

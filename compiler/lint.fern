@@ -7,8 +7,12 @@
 // in the governing fern.toml, and `-lint-set NAME=SEVERITY`; options are
 // `<rule>.<key>`, in [lint.options] or `-lint-opt`. A `// fern-lint: allow
 // RULE` comment silences one site and `// fern-lint: allow-file RULE` a file.
+// The change-risk rule also reads a saved `-cover` run, given with
+// `-lint-cover FILE`; without one it does not run.
 
 import "./ast";
+import "./astwalk";
+import "./coverreport";
 import "./lexer";
 import "./parser";
 import "./printer";
@@ -16,10 +20,19 @@ import "./util";
 
 pub const COMPLEXITY: string = "cyclomatic-complexity";
 
+// RISK is CRAP1 (Savoia and Evans, 2007): complexity^2 * (1 - coverage)^3 +
+// complexity, where coverage is the share of a function's instrumented lines
+// a -cover run hit. Complex code nobody tests scores high; complex code under
+// test and simple untested code both score near the complexity alone.
+pub const RISK: string = "change-risk";
+
 // DIRECTIVE names the findings about `fern-lint:` comments themselves.
 pub const DIRECTIVE: string = "lint-directive";
 
 const DEFAULT_MAX: i32 = 10;
+
+// Savoia's own threshold: a method over 30 is the anti-pattern.
+const DEFAULT_RISK_MAX: i32 = 30;
 
 // Severity: 0 allow (the rule does not run), 1 warn (printed, exit status
 // unchanged), 2 deny (printed, the run fails).
@@ -41,19 +54,24 @@ pub struct Finding {
   value: i32,
 }
 
-// Config is a run's resolved configuration: the complexity rule's severity
-// and threshold, the only rule there is.
+// Config is a run's resolved configuration: each rule's severity and
+// threshold. `risk_configured` is set when a [lint] table or a flag names the
+// change-risk rule, so a run that would score it and was given no coverage
+// refuses rather than passing the rule vacuously.
 pub struct Config {
   complexity: i32,
   max: i32,
+  risk: i32,
+  risk_max: i32,
+  risk_configured: boolean,
 }
 
 pub function default_config(): Config {
-  return Config { complexity: WARN, max: DEFAULT_MAX };
+  return Config { complexity: WARN, max: DEFAULT_MAX, risk: WARN, risk_max: DEFAULT_RISK_MAX, risk_configured: false };
 }
 
 pub function known_rules(): string {
-  return "known rules: " + COMPLEXITY;
+  return "known rules: " + COMPLEXITY + ", " + RISK;
 }
 
 function parse_severity(v: string): i32 {
@@ -87,7 +105,7 @@ pub function set_option(c: Config, dotted: string, value: string): (Config, stri
   }
   let rule: string = slice_unchecked(dotted, 0, dot) + "";
   let key: string = slice_unchecked(dotted, dot + 1, dotted.len()) + "";
-  if (rule != COMPLEXITY) {
+  if (rule != COMPLEXITY && rule != RISK) {
     return (c, "unknown lint rule \"" + rule + "\" (" + known_rules() + ")");
   }
   if (key != "max") {
@@ -99,6 +117,9 @@ pub function set_option(c: Config, dotted: string, value: string): (Config, stri
   let n: i32 = util.digits_to_i32(value);
   if (n < 1) {
     return (c, "lint option " + dotted + ": max: must be at least 1, got " + value);
+  }
+  if (rule == RISK) {
+    return (Config { ...c, risk_max: n, risk_configured: true }, "");
   }
   return (Config { ...c, max: n }, "");
 }
@@ -113,6 +134,9 @@ pub function set_pair(c: Config, key: string, value: string): (Config, string) {
   if (sev < 0) {
     return (c, "lint rule " + key + ": unknown severity \"" + value + "\" (want allow, warn, or deny)");
   }
+  if (key == RISK) {
+    return (Config { ...c, risk: sev, risk_configured: true }, "");
+  }
   if (key != COMPLEXITY) {
     return (c, "unknown lint rule \"" + key + "\" (" + known_rules() + ")");
   }
@@ -123,7 +147,10 @@ pub function set_pair(c: Config, key: string, value: string): (Config, string) {
 pub function rules_listing(): string {
   return COMPLEXITY + "  [warn]\n"
     + "    function has more independent control-flow paths than the configured limit\n"
-    + "    option " + COMPLEXITY + ".max = " + util.i32_to_string(DEFAULT_MAX) + " (default)\n";
+    + "    option " + COMPLEXITY + ".max = " + util.i32_to_string(DEFAULT_MAX) + " (default)\n"
+    + RISK + "  [warn]\n"
+    + "    function is complex and mostly untested: complexity^2 * (1 - coverage)^3 + complexity, scored from the -cover run -lint-cover names\n"
+    + "    option " + RISK + ".max = " + util.i32_to_string(DEFAULT_RISK_MAX) + " (default)\n";
 }
 
 // score is a function's cyclomatic complexity: 1 for the entry path plus one
@@ -454,7 +481,7 @@ function collect_suppressions(src: string, comments: lexer.Comment[]): Suppressi
       continue;
     }
     for r in names {
-      if (r != COMPLEXITY) {
+      if (r != COMPLEXITY && r != RISK) {
         sup = Suppressions { ...sup, bad: sup.bad.append(directive_finding(c, "`allow` names no such lint rule: \"" + r + "\"", known_rules())) };
         continue;
       }
@@ -508,31 +535,123 @@ pub function scored(m: parser.Module, fd: parser.FuncDecl): boolean {
   return fd.impl_trait.len() == 0 || !parser.is_inherited_default(m.impls, m.trait_reqs, fd);
 }
 
+// span_end is the last line a function's body reaches: the highest line any
+// statement or expression in it starts on. The closing brace may sit lower,
+// but no instrumented line can, so [fd.line, span_end] holds every cover row
+// of the function and of the lambdas it spells.
+function span_end(fd: parser.FuncDecl): i32 {
+  let end: i32 = fd.line;
+  for st in fd.body {
+    end = astwalk.fold_stmt_nodes(st, end, max_stmt_line, max_expr_line, astwalk.descend_all);
+  }
+  return end;
+}
+
+function max_stmt_line(st: ast.Stmt, own acc: i32): i32 {
+  let l: i32 = ast.stmt_line(st);
+  if (l > acc) {
+    return l;
+  }
+  return acc;
+}
+
+function max_expr_line(e: ast.Expr, own acc: i32): i32 {
+  let l: i32 = ast.expr_line(e);
+  if (l > acc) {
+    return l;
+  }
+  return acc;
+}
+
+// cover_of is the slot in `cover` of the run's file that is `file`: the one
+// spelled identically, else the longest name that is `file` with leading
+// directories added or removed, since the run names a file as the compile
+// was told it and the lint as it was walked. -1 when none. A run that names
+// a file bare matches every linted file of that name, so `src/a.fern` and
+// `tests/a.fern` are both scored from a run naming `a.fern`.
+pub function cover_of(cover: coverreport.File[], file: string): i32 {
+  let best: i32 = 0 - 1;
+  let i: i32 = 0;
+  while (i < cover.len()) {
+    let n: string = cover[i].name;
+    if (n == file) {
+      return i;
+    }
+    if ((util.str_has_suffix(n, "/" + file) || util.str_has_suffix(file, "/" + n)) && (best < 0 || n.len() > cover[best].name.len())) {
+      best = i;
+    }
+    i = i + 1;
+  }
+  return best;
+}
+
+// cover_names lists the files a run names, for the error that none matched.
+pub function cover_names(cover: coverreport.File[]): string {
+  let out: string = "";
+  for f in cover {
+    if (out.len() > 0) {
+      out = out + ", ";
+    }
+    out = out + f.name;
+  }
+  return out;
+}
+
+// lines_hit counts the run's rows on lines `lo` through `hi` of `f` and how
+// many of them ran; the rows are sorted, so the scan starts at the first row
+// at or past `lo`.
+function lines_hit(f: coverreport.File, lo: i32, hi: i32): (i32, i32) {
+  let a: i32 = 0;
+  let b: i32 = f.lines.len();
+  while (a < b) {
+    let mid: i32 = a + (b - a) / 2;
+    if (f.lines[mid] < lo) {
+      a = mid + 1;
+    } else {
+      b = mid;
+    }
+  }
+  let total: i32 = 0;
+  let hit: i32 = 0;
+  while (a < f.lines.len() && f.lines[a] <= hi) {
+    total = total + 1;
+    if (f.hits[a] > 0) {
+      hit = hit + 1;
+    }
+    a = a + 1;
+  }
+  return (total, hit);
+}
+
+// risk_score is CRAP1 in integers: complexity^2 * missed^3 / total^3,
+// rounded, plus the complexity. A function wholly covered scores its
+// complexity; one wholly uncovered scores complexity^2 + complexity.
+function risk_score(complexity: i32, total: i32, hit: i32): i32 {
+  let c: i64 = complexity as i64;
+  let t: i64 = total as i64;
+  let missed: i64 = (total - hit) as i64;
+  let num: i64 = c * c * missed * missed * missed;
+  let den: i64 = t * t * t;
+  return complexity + ((num + den / 2) / den) as i32;
+}
+
 // lint_file runs every enabled rule over one parsed file and returns the
-// findings in source order, the directive findings among them.
-pub function lint_file(c: Config, file: string, src: string, m: parser.Module, comments: lexer.Comment[]): Finding[] {
+// findings in source order, the directive findings among them. `cover` is the
+// -cover run the change-risk rule scores from; with none, or none naming this
+// file, that rule says nothing, and a function the run holds no row for is
+// code it never instrumented, not code it never ran.
+pub function lint_file(c: Config, file: string, src: string, m: parser.Module, comments: lexer.Comment[], cover: coverreport.File[]): Finding[] {
   let sup: Suppressions = collect_suppressions(src, comments);
   let out: Finding[] = [];
   for b in sup.bad {
     out = out.append(Finding { ...b, file: file });
   }
   if (c.complexity != ALLOW) {
-    for fd in m.funcs {
-      if (!scored(m, fd)) {
-        continue;
-      }
-      let sc: i32 = score(fd);
-      if (sc <= c.max || allows(sup, COMPLEXITY, fd.line)) {
-        continue;
-      }
-      out = out.append(Finding {
-        rule: COMPLEXITY, severity: c.complexity, file: file, line: fd.line, col: fd.col,
-        msg: "function `" + display_name(fd) + "` has a cyclomatic complexity of " + util.i32_to_string(sc)
-          + ", over the limit of " + util.i32_to_string(c.max),
-        help: "split out the branch-heavy part, or raise the limit for this site with `// fern-lint: allow cyclomatic-complexity`",
-        value: sc,
-      });
-    }
+    out = complexity_findings(c, file, m, sup, out);
+  }
+  let cf: i32 = cover_of(cover, file);
+  if (c.risk != ALLOW && cf >= 0) {
+    out = risk_findings(c, file, m, sup, cover[cf], out);
   }
   // Insertion sort, stable: findings arrive nearly in order.
   let i: i32 = 1;
@@ -545,6 +664,52 @@ pub function lint_file(c: Config, file: string, src: string, m: parser.Module, c
     }
     out = out.with(j + 1, f);
     i = i + 1;
+  }
+  return out;
+}
+
+function complexity_findings(c: Config, file: string, m: parser.Module, sup: Suppressions, own out: Finding[]): Finding[] {
+  for fd in m.funcs {
+    if (!scored(m, fd)) {
+      continue;
+    }
+    let sc: i32 = score(fd);
+    if (sc <= c.max || allows(sup, COMPLEXITY, fd.line)) {
+      continue;
+    }
+    out = out.append(Finding {
+      rule: COMPLEXITY, severity: c.complexity, file: file, line: fd.line, col: fd.col,
+      msg: "function `" + display_name(fd) + "` has a cyclomatic complexity of " + util.i32_to_string(sc)
+        + ", over the limit of " + util.i32_to_string(c.max),
+      help: "split out the branch-heavy part, or raise the limit for this site with `// fern-lint: allow cyclomatic-complexity`",
+      value: sc,
+    });
+  }
+  return out;
+}
+
+function risk_findings(c: Config, file: string, m: parser.Module, sup: Suppressions, cf: coverreport.File, own out: Finding[]): Finding[] {
+  for fd in m.funcs {
+    if (!scored(m, fd) || allows(sup, RISK, fd.line)) {
+      continue;
+    }
+    let (total, hit) = lines_hit(cf, fd.line, span_end(fd));
+    if (total == 0) {
+      continue;
+    }
+    let sc: i32 = score(fd);
+    let risk: i32 = risk_score(sc, total, hit);
+    if (risk <= c.risk_max) {
+      continue;
+    }
+    out = out.append(Finding {
+      rule: RISK, severity: c.risk, file: file, line: fd.line, col: fd.col,
+      msg: "function `" + display_name(fd) + "` has a change risk of " + util.i32_to_string(risk)
+        + ": complexity " + util.i32_to_string(sc) + " with " + coverreport.pct(hit, total) + " of its "
+        + util.i32_to_string(total) + " lines covered, over the limit of " + util.i32_to_string(c.risk_max),
+      help: "test it, or split out the branch-heavy part; `// fern-lint: allow change-risk` exempts this site",
+      value: risk,
+    });
   }
   return out;
 }

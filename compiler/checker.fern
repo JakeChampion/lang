@@ -7926,12 +7926,12 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
     },
     ast.StmtReturn(r) => {
       // A bare `return;` yields no value. The parser leaves an
-      // ExprUnknown("punct:;") sentinel in r.value, which types as
+      // ExprUnknown(BARE_RETURN) sentinel in r.value, which types as
       // unknown and would mark the enclosing body ill-typed (#6649).
       let bare_ret: boolean = false;
       match (r.value) {
         ast.ExprUnknown(bu) => {
-          if (bu.kind == "punct:;") {
+          if (bu.kind == parser.BARE_RETURN) {
             bare_ret = true;
           }
         },
@@ -9702,13 +9702,12 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
     out = util.append_diags(out, ret_diags_in_exprs(st, cur, ret_ty, unions, false));
     match (st) {
       ast.StmtReturn(r) => {
-        // A bare `return;` parses to a `punct:;` placeholder value.
-        // In a function with a (non-void) declared return type —
-        // the only context ret_diags runs in — that's E012.
+        // A bare `return;` in a function with a (non-void) declared
+        // return type — the only context ret_diags runs in — is E012.
         let bare: boolean = false;
         match (r.value) {
           ast.ExprUnknown(u) => {
-            if (u.kind == "punct:;") {
+            if (u.kind == parser.BARE_RETURN) {
               bare = true;
             }
           },
@@ -9889,7 +9888,7 @@ function void_return_diag(r: ast.StmtReturn, cur: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   match (r.value) {
     ast.ExprUnknown(u) => {
-      if (u.kind == "punct:;") {
+      if (u.kind == parser.BARE_RETURN) {
         return out;
       }
     },
@@ -26603,11 +26602,12 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
 }
 
 // The first `return` carrying a value, looked for through the branches, arms
-// and loops of a body, with the scope at that statement; the `;` sentinel when
-// there is none. It is what an unannotated lambda's result is read from, and
-// what the semantic phase reads a synthesised declaration's result from.
+// and loops of a body, with the scope at that statement; the bare-return
+// sentinel when there is none. It is what an unannotated lambda's result is
+// read from, and what the semantic phase reads a synthesised declaration's
+// result from.
 pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
-  let none: ast.Expr = ast.ExprUnknown { kind: "punct:;", line: 0, col: 0 };
+  let none: ast.Expr = ast.ExprUnknown { kind: parser.BARE_RETURN, line: 0, col: 0 };
   for st in body {
     match (st) {
       ast.StmtReturn(r) => {

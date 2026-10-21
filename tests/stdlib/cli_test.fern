@@ -8,7 +8,8 @@ import "std/option";
 // positional operands, the `--` end-of-options terminator, the
 // value_or default, the error paths (unknown option, missing
 // value, value on a bool), the auto-usage string, subcommands, and
-// shell completions generated from the same spec.
+// shell completions, the man page and the KDL usage spec generated from
+// the same spec.
 // Shared spec: a valued option (--name/-n) and two bools
 // (--shout/-s, --verbose/-v). Two bools let the short-cluster
 // tests exercise bundling.
@@ -298,6 +299,35 @@ function test_manpage_roff_escapes_leading_dot(): test.TestOutcome {
     && !m.contains("\n./build first"));
 }
 
+// ---- usage spec (KDL) ----
+function test_usage_spec_leaf(): test.TestOutcome {
+  let k: string = spec().usage_spec();
+  return test.assert_eq(k, "bin \"greet\"\n"
+    + "about \"print a greeting\"\n"
+    + "flag \"-n --name <name>\" help=\"who to greet\"\n"
+    + "flag \"-s --shout\" help=\"upper-case the greeting\"\n"
+    + "flag \"-v --verbose\" help=\"explain what is happening\"\n"
+    + "arg \"[args]...\" var=#true\n");
+}
+
+// A spec with commands nests each one as a `cmd` block, which holds that
+// command's flags and operands; the parent has no operand of its own.
+function test_usage_spec_commands(): test.TestOutcome {
+  let k: string = spec_cmds().usage_spec();
+  return test.assert_true(k.contains("bin \"tool\"\n")
+    && k.contains("cmd \"deploy\" help=\"push the build\" {\n  flag ")
+    && k.contains("\n  arg \"[args]...\" var=#true\n}\n")
+    && !k.contains("\narg "));
+}
+
+// Help text is a KDL string: quotes and backslashes are escaped, a flag
+// with no short alias has only its long spelling.
+function test_usage_spec_quotes(): test.TestOutcome {
+  let s: cli.CliSpec = cli.cli_new("q", "");
+  s = s.flag("raw", "", "keep \"as is\", C:\\path");
+  return test.assert_eq(s.usage_spec(), "bin \"q\"\nflag \"--raw\" help=\"keep \\\"as is\\\", C:\\\\path\"\narg \"[args]...\" var=#true\n");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/cli");
   r = r.it("option --long V", test_option_long);
@@ -334,5 +364,8 @@ function main(): i32 {
   r = r.it("manpage commands", test_manpage_commands);
   r = r.it("manpage escapes backslash", test_manpage_roff_escapes_backslash);
   r = r.it("manpage escapes leading dot", test_manpage_roff_escapes_leading_dot);
+  r = r.it("usage spec leaf", test_usage_spec_leaf);
+  r = r.it("usage spec commands", test_usage_spec_commands);
+  r = r.it("usage spec quotes", test_usage_spec_quotes);
   return r.finish();
 }

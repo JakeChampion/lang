@@ -1,0 +1,17 @@
+[package]
+name = "fern-maps-comparison"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The Rust half of bench/maps: hashbrown, MultiTable and constmap on the workloads bench/maps/fern runs"
+
+[dependencies]
+hashbrown = "0.16"
+rustc-hash = "2.1"
+constmap = "0.3"
+multitable = { git = "https://github.com/maksympetkus/multitable", rev = "66f620f9c0d1ed21060f4a808e1e68d144fbe53d" }
+
+[profile.release]
+debug = false
+lto = true
+codegen-units = 1
