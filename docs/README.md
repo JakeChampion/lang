@@ -28,6 +28,7 @@ roadmap-shaped items that live only in these docs.
 | `FLOAT-SEMANTICS.md` | [policy] | Float edge-case semantics. |
 | `BLOCK-EXPRESSIONS.md` | [reference] | Block-expression syntax + value rules. |
 | `ASSOCIATED-TYPES.md` | [reference] | Trait associated types (`Self::Item`). |
+| `SIMD-GENERIC-KERNELS.md` | [plan] | One numeric kernel over a `Lanes` trait: scalar, `f64x2` / `f32x4`, `Dual` autodiff, `DoubleDouble`; associated constants now, const generics after the lane type. Revises `ATLAS-PLATFORM-PLAN.md` §1.2. |
 | `NAMED-FIELD-VARIANTS.md` | [reference] | Named-field enum variants. |
 | `CLOSURE-CAPTURE.md` | [reference] | Capture-by-reference contract + E049 enforcement on both sides of the shared cell (shipped). |
 | `TRAITS.md` | [reference] | Trait system; phases 1–3 shipped. |
