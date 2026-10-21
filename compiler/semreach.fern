@@ -227,7 +227,7 @@ function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[
 // function value itself arrived, which makes its result type opaque. A
 // variant-layout enum's zero is the null word, which is no variant, so like
 // a record's it does not make its type opaque; an option- or member-layout
-// enum's zero is a real variant (None, or the member) and still does.
+// enum's zero is a real variant (Some, or the member) and still does.
 function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usable: boolean[], u: Universe): boolean {
   let k: i32 = ins.kind_tag;
   if (k == ssasem.call() || k == ssasem.closure_new() || k == 13) {

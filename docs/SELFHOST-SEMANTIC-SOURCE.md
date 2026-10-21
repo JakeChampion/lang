@@ -77,8 +77,10 @@ Unsupported constructs refuse the whole function with a reason.
   - A paired call's position stays a test, because the certifier settles
     its word on that branch.
   - A zero (`ssasem.zero`, the placeholder a lifted declaration starts
-    at) is no value: a record's zero is its fields' zeros, and an enum's
-    is the null word, which is no variant. Neither makes its type opaque.
+    at) is no value: a record's zero is its fields' zeros, and a
+    variant-layout enum's is the null word, which is no variant.
+    Neither makes its type opaque. An option- or member-layout enum's
+    zero is a real variant, so it still does.
   - `FERN_NO_SEM_REACH=1` turns the pass off.
 - Record literals as `record_new` and named-field projections as
   `record_get`. A record is a declared struct with no type parameters and no
