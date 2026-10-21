@@ -27,13 +27,16 @@ def run(*args):
 
 
 class H2loadRowsTest(unittest.TestCase):
-    # h2load's counters nest: done = succeeded + failed, and timeout (20) is
-    # within errored (30) within failed (50). done (850) differs from
-    # succeeded (800), so it tells the two denominators apart.
+    # A summary h2load can print: `done` counts only the streams that closed
+    # (850 of the 1,000 started; the 150 still in flight at the end are
+    # dropped from `done` but added to `failed` and `errored`), and the
+    # failure counters nest — timeout (20) within errored (180) within
+    # failed (200). done (850) differs from succeeded (800), so it tells
+    # the two denominators apart.
     SUMMARY = (
         "finished in 10.00s, 90.00 req/s, 1.00MB/s\n"
         "requests: 1000 total, 1000 started, 850 done, "
-        "800 succeeded, 50 failed, 30 errored, 20 timeout\n"
+        "800 succeeded, 200 failed, 180 errored, 20 timeout\n"
     )
 
     def rows(self, u1, s1):
@@ -55,8 +58,8 @@ class H2loadRowsTest(unittest.TestCase):
             34 * TICK_US / 850, places=2)
 
     def test_failed_is_the_failed_counter_not_the_nested_sum(self):
-        # failed alone (50), not failed + errored + timeout (100).
-        self.assertEqual(self.rows(0, 0)["net/fern-h3/c1m32.failed"], "50")
+        # failed alone (200), not failed + errored + timeout (400).
+        self.assertEqual(self.rows(0, 0)["net/fern-h3/c1m32.failed"], "200")
 
     def test_rps_and_percentiles(self):
         r = self.rows(0, 0)
@@ -70,7 +73,7 @@ class OhaRowsTest(unittest.TestCase):
         "summary": {"requestsPerSec": 123.9},
         "latencyPercentiles": {"p50": 0.0012, "p99": 0.0099},
         "statusCodeDistribution": {"200": 900, "500": 50},
-        "errorDistribution": {"connection error": 30, "deadline has elapsed": 20},
+        "errorDistribution": {"connection error": 30, "aborted due to deadline": 20},
     }
 
     def rows(self, u1, s1):
@@ -79,11 +82,12 @@ class OhaRowsTest(unittest.TestCase):
             pathlib.Path(path).write_text(json.dumps(self.SAMPLE))
             return run("oha", "fern", "64", path, "0", "0", str(u1), str(s1))
 
-    def test_cpu_divides_by_codes_plus_errors(self):
-        # handled = 900 + 50 codes + 30 + 20 errors = 1000.
+    def test_cpu_divides_by_responses_not_errors(self):
+        # answered = 900 + 50 status codes = 950; the 30 connection errors
+        # and 20 deadline cut-offs got no response and are not counted.
         self.assertAlmostEqual(
             float(self.rows(100, 0)["net/fern/c64.server_user_us_per_req"]),
-            100 * TICK_US / 1000, places=2)
+            100 * TICK_US / 950, places=2)
 
     def test_failed_counts_non_200_and_non_deadline_errors(self):
         # 50 non-200 + 30 connection errors; the 20 deadline cutoffs do not count.
