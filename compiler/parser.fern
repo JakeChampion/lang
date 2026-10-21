@@ -10945,6 +10945,11 @@ pub struct MFns {
   gnext: i32[],
   gname: string[],
   gat: i32[],
+  // The plain free functions (no receiver) by name, in decl order, so a
+  // chain walk's last hit is the decl a scan from the front reached last.
+  // pat[e] is entry e's position in `decls`.
+  pix: util.NameIndex,
+  pat: i32[],
   // The `__smm_<Base>_<field>` fold names. A handful per module, and the test
   // is a SUFFIX match rather than equality, so this one stays a scan.
   smm: string[],
@@ -11011,11 +11016,17 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
   let gat: i32[] = [];
   let smm: string[] = [];
   let array_concrete: i32[] = [];
+  let pnames: string[] = [];
+  let pat: i32[] = [];
   let i: i32 = 0;
   while (i < decls.len()) {
     if (is_free_bg_template(decls[i])) {
       gname = gname.append(decls[i].name);
       gat = gat.append(i);
+    }
+    if (decls[i].receiver_name.len() == 0 && decls[i].receiver_type.len() == 0) {
+      pnames = pnames.append(decls[i].name);
+      pat = pat.append(i);
     }
     if (decls[i].name.len() > 6 && slice_unchecked(decls[i].name, 0, 6) == "__smm_") {
       smm = smm.append(decls[i].name);
@@ -11038,7 +11049,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, snames: util.name_index(struct_names(structs)), enums: enums, impls: impls, keep_vars: false, on_call: [], renamed: renamed_receivers(decls) };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, pix: util.name_index(pnames), pat: pat, smm: smm, array_concrete: array_concrete, structs: structs, snames: util.name_index(struct_names(structs)), enums: enums, impls: impls, keep_vars: false, on_call: [], renamed: renamed_receivers(decls) };
 }
 
 function renamed_receivers(decls: FuncDecl[]): string[] {
@@ -12894,13 +12905,15 @@ function me_receiver_subst(fd: FuncDecl, rty: string, ty: string, funcs: MFns): 
 }
 
 function call_ret_type(funcs: MFns, name: string, args: ast.Expr[], env: MEnv): string {
+  // The last plain free function named `name`: the chain ascends, so the
+  // last hit on it is the last in decl order.
   let fi: i32 = 0 - 1;
-  let i: i32 = 0;
-  while (i < funcs.decls.len()) {
-    if (funcs.decls[i].name == name && funcs.decls[i].receiver_name.len() == 0 && funcs.decls[i].receiver_type.len() == 0) {
-      fi = i;
+  let e: i32 = funcs.pix.chain(name);
+  while (e >= 0) {
+    if (funcs.pix.names[e] == name) {
+      fi = funcs.pat[e];
     }
-    i = i + 1;
+    e = funcs.pix.next[e];
   }
   if (fi < 0) {
     return "";
