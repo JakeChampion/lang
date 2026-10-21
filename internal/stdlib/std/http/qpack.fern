@@ -683,18 +683,28 @@ pub function (e: Encoder) on_decoder_stream(bytes: [u8]): Result[Encoder, QpackE
 // __find_static answers the static entry holding both name and value, and
 // one holding the name, each -1 when there is none.
 function __find_static(name: string, value: string): (i32, i32) {
+  let n: i32 = name.len();
+  if (n + 1 >= STATIC_LEN_AT.len()) {
+    return (0 - 1, 0 - 1);
+  }
   let named: i32 = 0 - 1;
-  let i: i32 = 0;
-  while (i < STATIC_NAMES.len()) {
+  let g: i32 = STATIC_LEN_AT[n];
+  let end: i32 = STATIC_LEN_AT[n + 1];
+  while (g < end) {
+    let i: i32 = STATIC_GROUP_FROM[g];
     if (STATIC_NAMES[i] == name) {
-      if (STATIC_VALUES[i] == value) {
-        return (i, i);
-      }
       if (named < 0) {
         named = i;
       }
+      let to: i32 = STATIC_GROUP_TO[g];
+      while (i < to) {
+        if (STATIC_VALUES[i] == value) {
+          return (i, i);
+        }
+        i = i + 1;
+      }
     }
-    i = i + 1;
+    g = g + 1;
   }
   return (0 - 1, named);
 }
@@ -763,6 +773,16 @@ function __copy(b: [u8]): u8[] {
 }
 
 // === RFC 9204 Appendix A: the static table, entry 0 first ==================
+
+// The static table's entries grouped by name: STATIC_LEN_AT[n] to
+// STATIC_LEN_AT[n + 1] are the groups whose name is n bytes long, each the
+// entries STATIC_GROUP_FROM[g] up to STATIC_GROUP_TO[g]. A lookup compares
+// a name only against the few of its length.
+const STATIC_LEN_AT: i32[] = [0, 0, 0, 0, 1, 5, 7, 11, 18, 20, 22, 26, 26, 27, 32, 33, 37, 39, 40, 40, 42, 42, 42, 43, 44, 44, 46, 46, 47, 50, 52, 53, 53, 54];
+
+const STATIC_GROUP_FROM: i32[] = [2, 6, 7, 11, 59, 1, 55, 5, 29, 90, 92, 13, 15, 22, 24, 63, 83, 91, 12, 89, 87, 88, 0, 14, 86, 95, 44, 9, 10, 32, 36, 84, 4, 31, 72, 96, 97, 42, 62, 8, 3, 93, 61, 85, 56, 94, 35, 33, 75, 76, 79, 81, 80, 73];
+
+const STATIC_GROUP_TO: i32[] = [3, 7, 8, 12, 61, 2, 56, 6, 31, 91, 93, 14, 22, 24, 29, 72, 84, 92, 13, 90, 88, 89, 1, 15, 87, 96, 55, 10, 11, 33, 42, 85, 5, 32, 73, 97, 99, 44, 63, 9, 4, 94, 62, 86, 59, 95, 36, 35, 76, 79, 80, 83, 81, 75];
 
 const STATIC_NAMES: string[] = [
   ":authority", ":path", "age", "content-disposition", "content-length", "cookie", "date", "etag",
