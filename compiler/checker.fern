@@ -2081,42 +2081,6 @@ pub struct SigTable {
   sigs: FuncSig[],
   head: i32[],
   next: i32[],
-  // A second index over the same array, keyed by the ARRAY-METHOD suffix
-  // (am_key) rather than the whole name — the key `has_array_method` and
-  // `array_method_ret_type` match on. Only signatures that carry such a
-  // suffix appear in it, which is a few dozen of the ~4,600.
-  am_head: i32[],
-  am_next: i32[],
-}
-
-// am_prefix is the convention name an array method is declared under: the
-// std/array helpers are free functions called `__method_Array_<field>`, and
-// the bundler's mangled form is `<mod>__method_Array_<field>`.
-function am_prefix(): string {
-  return "__method_Array_";
-}
-
-// am_key_at returns the offset of the LAST occurrence of am_prefix() in
-// `name`, or -1 when there is none. The substring from there to the end is the
-// key the two array-method lookups match on — taken as an offset rather than a
-// string so indexing the table allocates nothing per signature.
-//
-// A name matches `__method_Array_<field>` when it ENDS with it, which places an
-// am_prefix() occurrence at name.len() - target.len(); no method name contains
-// am_prefix() itself, so that occurrence is always the last one. Keying on the
-// last occurrence therefore selects exactly the candidates the suffix compare
-// would, and that compare still runs on each of them.
-function am_key_at(name: string): i32 {
-  let pre: string = am_prefix();
-  let pn: i32 = pre.len();
-  let i: i32 = name.len() - pn;
-  while (i >= 0) {
-    if (slice_unchecked(name, i, i + pn) == pre) {
-      return i;
-    }
-    i = i - 1;
-  }
-  return 0 - 1;
 }
 
 // sig_buckets is the bucket count of the signature index. Prime, so unrelated
@@ -2132,37 +2096,21 @@ function sig_name_bucket(name: string): i32 {
   return (__str_hash(name, 0) & 1073741823) % 4093;
 }
 
-// sig_bucket_from is sig_name_bucket over the SUFFIX of `name` starting at
-// `from`: the one hash body, over a copy of the suffix, so a suffix key and
-// the whole-string key it must match can never drift apart. It runs once per
-// signature when the table is built.
-function sig_bucket_from(name: string, from: i32): i32 {
-  return sig_name_bucket(slice_unchecked(name, from, name.len()) + "");
-}
-
 // sig_table indexes `sigs` by name. The chain is built by walking BACKWARD and
 // pushing each entry onto the front of its bucket, which leaves every chain in
 // ascending index order without needing a per-bucket tail.
 function sig_table(sigs: FuncSig[]): SigTable {
   let head: i32[] = util.minus_ones(sig_buckets());
-  let am_head: i32[] = util.minus_ones(sig_buckets());
   let next: i32[] = util.minus_ones(sigs.len());
-  let am_next: i32[] = util.minus_ones(sigs.len());
   let k: i32 = sigs.len() - 1;
   while (k >= 0) {
     let nm: string = sigs[k].name;
     let bk: i32 = sig_name_bucket(nm);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
-    let amat: i32 = am_key_at(nm);
-    if (amat >= 0) {
-      let ab: i32 = sig_bucket_from(nm, amat);
-      am_next = am_next.with(k, am_head[ab]);
-      am_head = am_head.with(ab, k);
-    }
     k = k - 1;
   }
-  return SigTable { sigs: sigs, head: head, next: next, am_head: am_head, am_next: am_next };
+  return SigTable { sigs: sigs, head: head, next: next };
 }
 
 // StructTable is `structs` with a name index over it, built once per module and
@@ -3668,14 +3616,12 @@ function bound_entry_decl_diags(entry: string, fd: parser.FuncDecl, tp: string, 
 }
 
 // array_recv_method resolves an ARRAY-RECEIVER method — one written
-// `function (xs: T[]) <field>(…)`, the element-polymorphic form std/array uses
-// for its Eq/Ord verbs (`.index_of` / `.contains` / `.index_of_last` /
-// `.dedup` / `.is_sorted` / …). These are ordinary MethodSigs whose
-// receiver_type spelling ends in `[]`, not `__method_Array_*` free functions,
-// so has_array_method's name scan cannot see them. The namespace is keyed on
-// the method NAME and cannot distinguish element types, so any array-receiver
-// method in scope applies to every array receiver — no element match to make,
-// whether the element is a type variable or a concrete `i32[]` / `string[]`.
+// `function (xs: T[]) <field>(…)`, element-polymorphic or pinned to one element
+// type (`function (arr: string[]) join(…)`): an ordinary MethodSig whose
+// receiver_type spelling ends in `[]`. The namespace is keyed on the method
+// NAME and cannot distinguish element types, so any array-receiver method in
+// scope applies to every array receiver — no element match to make, whether
+// the element is a type variable or a concrete `i32[]` / `string[]`.
 // A receiver whose element does not fit is caught against the method's own
 // signature. A view receiver (`[T]`) has a separate namespace; the caller
 // selects that namespace from the checked receiver type.
@@ -3703,44 +3649,10 @@ function (s: Scope) array_recv_method(field: string, view: boolean): MethodSig {
   return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "", impl_trait: "", line: 0, col: 0, file: "" };
 }
 
-// has_array_method reports whether an auto-discovered std/array method
-// `__method_Array_<field>` is in scope. The function is in scope only when
-// std/array is imported; the bundler (flatten.bundle) mangles it to
-// `<mod>__` + `__method_Array_<field>`, so the in-scope sig is either the bare
-// convention name (the native modload path, which keeps `__method_` bare) or a
-// mangled name ENDING in it. Match both so the array-method-existence check
-// resolves an imported method whichever loader built the table.
-//
-// An array-RECEIVER method (`(xs: T[]) <field>`) counts too — same surface,
-// declared the other way round.
-function (s: Scope) has_array_method(field: string, view: boolean): boolean {
-  if (view) {
-    return s.has_array_recv_method(field, true);
-  }
-  let target: string = "__method_Array_" + field;
-  let tn: i32 = target.len();
-  let i: i32 = s.sigs.am_head[sig_name_bucket(target)];
-  while (i >= 0) {
-    let nm: string = s.sigs.sigs[i].name;
-    if (nm == target) {
-      return true;
-    }
-    if (nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) {
-      return true;
-    }
-    i = s.sigs.am_next[i];
-  }
-  return s.has_array_recv_method(field, false);
-}
-
-// try_array_method_type resolves the result type of an array method call
-// `a.<field>(...)` where `a` is an array. The std/array helpers are free
-// functions named `__method_Array_<field>` (or the `<mod>__`-mangled form
-// the bundler emits, which still ends in that convention name), discovered
-// the same suffix-matching way has_array_method finds them, or array-receiver
-// methods found through array_recv_method. Returns the
-// helper's declared return type, or t_unknown when no such helper is in
-// scope — at which point check_call_expr falls through to its normal
+// array_method_ret_type resolves the result type of an array method call
+// `a.<field>(...)` where `a` is an array, through the array-receiver method
+// array_recv_method finds. Returns the method's declared return type, or
+// t_unknown when no such method is in scope — at which point check_call_expr falls through to its normal
 // "receiver isn't a typed value" handling so a genuine unknown array
 // method still surfaces as unknown rather than a wrong concrete type.
 // `append` / `with` are the built-in array growers and return the array
@@ -3751,19 +3663,12 @@ function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Typ
       if (!array.view && (field == "append" || field == "with")) {
         return recv_ty;
       }
-      // `xs.len()` — the method spelling of the `len(xs)` builtin. It
-      // resolves through `__method_Array_len` below, which is absent
-      // whenever the stdlib is not in scope; the receiver then falls to
-      // the "isn't a typed value" arm and the statement types unknown.
+      // `xs.len()` — the method spelling of the `len(xs)` builtin.
       if (field == "len") {
         return t_i32();
       }
       if (array.view) {
         return s.arr_recv_ret_type(c, recv_ty, s.array_recv_method(field, true));
-      }
-      let af: FuncSig = array_method_func(s, field);
-      if (af.name.len() > 0) {
-        return af.ret_type;
       }
       let arm: MethodSig = s.array_recv_method(field, false);
       if (arm.name.len() > 0) {
@@ -3775,23 +3680,6 @@ function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Typ
       return t_unknown("array_method_ret_type: receiver isn't an array");
     }
   }
-}
-
-// array_method_func is std/array's `__method_Array_<field>`, which `field`
-// called on an array runs, under the bare name or the one the bundle mangled;
-// the empty-named sentinel when it is not in scope.
-pub function array_method_func(s: Scope, field: string): FuncSig {
-  let target: string = "__method_Array_" + field;
-  let tn: i32 = target.len();
-  let i: i32 = s.sigs.am_head[sig_name_bucket(target)];
-  while (i >= 0) {
-    let nm: string = s.sigs.sigs[i].name;
-    if (nm == target || nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) {
-      return s.sigs.sigs[i];
-    }
-    i = s.sigs.am_next[i];
-  }
-  return s.lookup_sig("");
 }
 
 // array_method_sig is the method an array receiver (a view's, when `view`)
@@ -4252,8 +4140,6 @@ function (s: Scope) has_sig(name: string): boolean {
   return s.sig_at(name) >= 0;
 }
 
-// has_array_recv_method is array_recv_method's predicate form, same rules,
-// without the sentinel MethodSig its miss allocates.
 // is_map_iter_method reports whether `name` is one of the MapIter cursor's
 // builtin methods (native registerMapIterMethod).
 function is_map_iter_method(name: string): boolean {
@@ -4418,8 +4304,7 @@ function map_receiver_type(rt: string): boolean {
 
 // namespace_is_exact: every method on `ns` declares a concrete receiver, so
 // this checker's set is the one native would list. An array namespace with any
-// module-supplied method fails it — that is the element-polymorphic case, and
-// `__method_Array_<name>` free functions carry no receiver spelling to test.
+// module-supplied method fails it — that is the element-polymorphic case.
 function (s: Scope) namespace_is_exact(ns: string): boolean {
   if (ns != "Array") {
     return true;
@@ -4430,26 +4315,7 @@ function (s: Scope) namespace_is_exact(ns: string): boolean {
       return false;
     }
   }
-  return !s.has_any_array_module_method();
-}
-
-// has_any_array_module_method: some `__method_Array_<name>` free function is in
-// scope, i.e. std/array (or another array-method provider) was imported. The
-// bare and bundler-mangled spellings both count, as they do in has_array_method.
-function (s: Scope) has_any_array_module_method(): boolean {
-  let target: string = "__method_Array_";
-  let tn: i32 = target.len();
-  for sig in s.sigs.sigs {
-    let nm: string = sig.name;
-    let at: i32 = 0;
-    while (at + tn <= nm.len()) {
-      if (slice_unchecked(nm, at, at + tn) == target) {
-        return true;
-      }
-      at = at + 1;
-    }
-  }
-  return false;
+  return true;
 }
 
 // push_str_unique_sorted inserts `v` in sorted position, dropping a duplicate.
@@ -4603,6 +4469,8 @@ function method_namespace_of(t: typeinfo.Type): string {
   return "";
 }
 
+// has_array_recv_method is array_recv_method's predicate form, same rules,
+// without the sentinel MethodSig its miss allocates.
 function (s: Scope) has_array_recv_method(field: string, view: boolean): boolean {
   let i: i32 = s.methods.head[sig_name_bucket(field)];
   while (i >= 0) {
@@ -5878,8 +5746,8 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         is_method = true;
         recv_ty = check_expr(fa.obj, s);
         // Array method-syntax dispatch: `a.<field>(...)` on an
-        // array resolves to the std/array `__method_Array_<field>`
-        // helper's return type (or the built-in append/with growers).
+        // array resolves to its array-receiver method's return type
+        // (or the built-in append/with growers).
         // Done ahead of the recv_type_name match below because an
         // array receiver has no nominal type-name and would
         // otherwise fall into the `_` "isn't a typed value" arm.
@@ -15586,9 +15454,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           }
           // E043 (array method existence): only `append` / `with`
           // / `len` are unconditional array builtins. Every other
-          // method comes from an imported module, in one of two
-          // spellings has_array_method covers — an auto-discovered
-          // `__method_Array_<name>` free function, or an
+          // method comes from an imported module as a
           // `function (xs: T[]) <name>(…)` receiver method,
           // element-polymorphic or pinned to one element type.
           // When the call is none of those it names a
@@ -17112,7 +16978,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
     },
     typeinfo.TypeArray(array) => {
       let builtin: boolean = field == "len" || !array.view && (field == "append" || field == "with");
-      return !builtin && !s.has_array_method(field, array.view);
+      return !builtin && !s.has_array_recv_method(field, array.view);
     },
     typeinfo.TypeMap(_) => {
       return !util.has_str(s.methods_in_namespace("Map"), field);
@@ -19000,10 +18866,10 @@ function registered_intrinsics(): string[] {
 
 // redeclares reports whether funcs[di] redeclares an earlier function, method
 // or associated function, or a surface builtin.
-function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, helpers: string[], di: i32): boolean {
+function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): boolean {
   let f2: parser.FuncDecl = funcs[di];
-  let earlier: boolean = redeclares_preregistered(f2, helpers);
-  let ej: i32 = names.chain(f2.name);
+  let earlier: boolean = redeclares_preregistered(f2);
+  let ej: i32 = names.chain(decl_key(f2));
   while (ej >= 0 && ej < di) {
     let pe: parser.FuncDecl = funcs[ej];
     // Key redeclaration on the receiver TYPE, not the receiver NAME:
@@ -19030,41 +18896,31 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, helpers: st
   return earlier;
 }
 
-// same_method_decl: two declarations of one method by the same provider, the
-// type itself or one trait. An inherent method and a trait's are an ambiguity
-// (method_ambiguity_diags), not a redeclaration.
 // A method on a built-in namespace named like one the checker registers
-// there before any declaration (preregistered_methods), or an array method
-// named like a `__method_Array_<name>` helper the program imports, redeclares
-// it, as native's pre-registered table makes it.
-function redeclares_preregistered(f2: parser.FuncDecl, helpers: string[]): boolean {
+// there before any declaration (preregistered_methods) redeclares it, as
+// native's pre-registered table makes it.
+function redeclares_preregistered(f2: parser.FuncDecl): boolean {
   if (f2.receiver_type.len() == 0) {
     return false;
   }
-  let ns: string = parser.receiver_namespace(f2.receiver_type);
-  if (util.has_str(preregistered_methods(ns), f2.name)) {
-    return true;
-  }
-  return ns == "Array" && util.has_str(helpers, f2.name);
+  return util.has_str(preregistered_methods(parser.receiver_namespace(f2.receiver_type)), f2.name);
 }
 
-// array_helper_methods: the `<name>` of every free `__method_Array_<name>`
-// function in the program, bare or `<mod>__`-mangled.
-function array_helper_methods(funcs: parser.FuncDecl[]): string[] {
-  let out: string[] = [];
-  for fd in funcs {
-    if (fd.receiver_type.len() == 0) {
-      let m: string = util.array_method_helper_name(fd.name);
-      if (m.len() > 0 && m != "push") {
-        out = out.append(m);
-      }
-    }
+// decl_key is the name a redeclaration is keyed on: a free function's own, or
+// a method's simple name, which the bundler interposes with its module when an
+// earlier module claimed it (`Array.num.sum`).
+function decl_key(fd: parser.FuncDecl): string {
+  if (fd.receiver_type.len() == 0) {
+    return fd.name;
   }
-  return out;
+  return method_simple_name(fd.name);
 }
 
+// same_method_decl: two declarations of one method by the same provider, the
+// type itself or one trait. An inherent method and a trait's are an ambiguity
+// (method_ambiguity_diags), not a redeclaration.
 function same_method_decl(pe: parser.FuncDecl, f2: parser.FuncDecl): boolean {
-  if (f2.receiver_type.len() == 0 || pe.receiver_type.len() == 0 || pe.name != f2.name) {
+  if (f2.receiver_type.len() == 0 || pe.receiver_type.len() == 0 || decl_key(pe) != decl_key(f2)) {
     return false;
   }
   return pe.impl_trait == f2.impl_trait && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type);
@@ -19253,19 +19109,18 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   // checker.
   let decl_names: string[] = [];
   for fd in mod.funcs {
-    decl_names = decl_names.append(fd.name);
+    decl_names = decl_names.append(decl_key(fd));
   }
   out = util.append_diags(out, method_ambiguity_diags(mod));
   let decl_index: util.NameIndex = util.name_index(decl_names);
-  let helpers: string[] = array_helper_methods(mod.funcs);
   let di: i32 = 0;
   while (di < mod.funcs.len()) {
     let f2: parser.FuncDecl = mod.funcs[di];
-    if (redeclares(mod.funcs, decl_index, helpers, di)) {
+    if (redeclares(mod.funcs, decl_index, di)) {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
-        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + parser.receiver_namespace(f2.receiver_type) + " redeclared", f2.line, f2.col));
+        out = out.append(dg_at("E006", "method \"" + decl_key(f2) + "\" on " + parser.receiver_namespace(f2.receiver_type) + " redeclared", f2.line, f2.col));
       }
     }
     // E021: a method whose receiver type isn't a known struct / enum /
@@ -26670,18 +26525,13 @@ pub function builtin_method_names(recv: string): string[] {
   return out;
 }
 
-// array_method_names is the methods std/array gives an array
-// (array_method_func), each once.
-pub function array_method_names(s: Scope): string[] {
-  let key: string = "__method_Array_";
+// array_method_names is the methods an array (a view, when `view`) has from
+// its receiver declarations, each once, in declaration order.
+pub function array_method_names(s: Scope, view: boolean): string[] {
   let out: string[] = [];
-  for sig in s.sigs.sigs {
-    let at: i32 = util.index_of_sub(sig.name, key);
-    if (at >= 0) {
-      let name: string = slice_unchecked(sig.name, at + key.len(), sig.name.len()) + "";
-      if (!util.has_str(out, name)) {
-        out = out.append(name);
-      }
+  for method in s.methods.methods {
+    if (array_receiver_matches(method.receiver_type, view) && !util.has_str(out, method.name)) {
+      out = out.append(method.name);
     }
   }
   return out;

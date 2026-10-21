@@ -265,23 +265,13 @@ Grouped by family:
 Receiver methods on arrays. `Array.push` stays a built-in IR primitive
 (intercepted by codegen) and is registered by the checker.
 
-Two spellings reach the same `arr.<name>(…)` dispatch, and which one a verb
-uses is now a statement about the verb rather than about the compiler.
-Anything usable at more than one element type is written with a real
-element-polymorphic receiver, `pub function (xs: T[]) name(…)`. The older
-`__method_Array_<name>(arr: i32[], …)` form, auto-discovered from the naming
-convention, pins a concrete element type and is reserved for verbs that are
-genuinely specific to it. The namespace keys on the method NAME, so the two
-forms cannot both claim one name.
-
-A concrete element type is legal on a receiver as well — `pub function
-(arr: i32[]) gcd_all(…)`, the form that would retire the naming convention
-entirely — and any program can declare one. std/array cannot use it yet: the
-self-hosted compiler resolves such a method but does not lower it, and a single
-declaration costs an unrelated generic its type-parameter substitution, so the
-convention stays until that is fixed. A receiver whose element is itself an
-array or slice (`T[][]`) is rejected by E021 on both forms — dispatch binds the
-element in one step and would resolve a level too deep.
+Every array method is a receiver function. Anything usable at more than one
+element type is written with an element-polymorphic receiver, `pub function
+(xs: T[]) name(…)`; a verb genuinely specific to one element type pins it,
+`pub function (arr: i32[]) gcd_all(…)`. The namespace keys on the method NAME,
+so the two cannot both claim one name. A receiver whose element is itself an
+array or slice (`T[][]`) is rejected by E021 — dispatch binds the element in
+one step and would resolve a level too deep.
 
 - **Element-polymorphic reductions** (one bounded generic each, so the same
   call works for i32 / i64 / u32 / u64 / f32 / f64 / string and

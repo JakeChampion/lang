@@ -188,10 +188,10 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 			want: []string{"eprint@log"},
 		},
 		{
-			name: "an array-method helper reached on a typed receiver is followed",
+			name: "an array receiver method reached on a typed receiver is followed",
 			src: `import "std/http";
 import "std/platform";
-function __method_Array_noisy(arr: i32[]): void { eprint("hit"); }
+function (arr: i32[]) noisy(): void { eprint("hit"); }
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let xs: i32[] = [1];
     xs.noisy();` + handlerTail,

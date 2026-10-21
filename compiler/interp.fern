@@ -6109,28 +6109,6 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     }
     i = i + 1;
   }
-  // std/array's OTHER method convention: a concrete-element helper cannot be
-  // written as a `T[]` method, so it is a free `__method_Array_<name>(arr,
-  // …)` the front end dispatches `xs.<name>(…)` to. The bundler mangles the
-  // name with a `<mod>__` prefix, so an in-scope helper is the bare
-  // convention name or one ending in it — the suffix match
-  // checker.has_array_method makes.
-  if (recv_type == "Array") {
-    let conv: string = "__method_Array_" + name;
-    let ai: i32 = 0;
-    while (ai < funcs.len()) {
-      if (funcs[ai].receiver_name.len() == 0 && name_ends_with(funcs[ai].name, conv)) {
-        let conv_args: Value[] = [recv];
-        let aj: i32 = 0;
-        while (aj < args.len()) {
-          conv_args = conv_args.append(args[aj]);
-          aj = aj + 1;
-        }
-        return call_func(funcs[ai].name, conv_args, funcs, aliases, type_decls, outs);
-      }
-      ai = ai + 1;
-    }
-  }
   // No user method matched. Before erroring, try a FIELD holding a closure
   // (#6596): `h.f(3)` where `f: (i32) => i32` is a field, not a method. The
   // compiled path has always supported this — it is the shape #6461 is about,

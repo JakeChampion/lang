@@ -9,16 +9,13 @@ import (
 )
 
 // TestSelfHostArrayMethodTreeshakeIR pins that a stdlib-importing program using
-// an array-method call (`ss.join(sep)`, dispatched to std/array's
-// auto-discovered `__method_Array_join` helper) survives the treeshake and
-// lowers.
+// an array-method call (`ss.join(sep)`, std/array's pinned receiver
+// `(arr: string[]) join`) survives the treeshake and lowers.
 //
 // The treeshaker prunes the merged module to functions reachable from main,
-// by NAME. The method-call syntax `arr.<m>(...)` names only `<m>` — never the
-// `__method_Array_<m>` helper it dispatches to, nor that helper's
-// `<mod>__`-mangled name — so treeshake matches array-method helpers against
-// the bare `<m>` (ts_array_method_name). A pruned helper leaves the call
-// unresolved and the module refused.
+// by NAME; the method-call syntax `arr.<m>(...)` names only `<m>`, which keeps
+// the receiver method of that name. A pruned method leaves the call unresolved
+// and the module refused.
 //
 // Asserts both halves: `-decide` reports `ir` (routing), and the compiled
 // program runs to exit 0 (correctness — `["1","2","3"].join("-") == "1-2-3"`).
@@ -55,13 +52,13 @@ function main(): i32 {
 	}
 
 	// Routing: the merged module must decide `ir`, not `ast`. Before the
-	// treeshake fix this printed `ast` (helper pruned -> i32.join bail).
+	// treeshake fix this printed `ast` (method pruned -> i32.join bail).
 	decideOut, err := exec.Command(mmc, prog, stdlibRoot, "-decide").Output()
 	if err != nil {
 		t.Fatalf("-decide failed: %v", err)
 	}
 	if got := strings.TrimSpace(string(decideOut)); got != "ir" {
-		t.Fatalf("array-method program routed %q, want \"ir\" (treeshake pruned __method_Array_join)", got)
+		t.Fatalf("array-method program routed %q, want \"ir\" (treeshake pruned join)", got)
 	}
 
 	// Correctness: compile -> assemble -> link -> run, expect exit 0.

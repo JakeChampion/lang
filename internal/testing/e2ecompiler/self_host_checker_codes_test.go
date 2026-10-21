@@ -4455,9 +4455,8 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"assoc-arg-derived-local", "import \"std/json\";\n@derive(json.FromJson) struct S { v: i32 }\nfunction main(): i32 { function inner(): i32 { let r = S.from_json(true); return 0; } return inner(); }\n"},
 		{"assoc-arg-derived-ok", "import \"std/json\";\n@derive(json.FromJson) struct S { v: i32 }\nfunction main(): i32 { function inner(): i32 { let r = S.from_json(\"{}\"); return 0; } return inner(); }\n"},
 		{"e053-map-on-an-own-array", "import \"std/array\";\nfip function f(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},
-		// An array method named like a `__method_Array_<name>` helper the
-		// program imports redeclares it (E006), as a name the checker registers
-		// before any declaration does.
+		// An array method named like one an imported module declares on the
+		// same namespace redeclares it (E006).
 		{"std-array-method-redeclares-imported", "import \"std/array\";\nfunction (xs: i32[]) abs_each(): i32[] { return xs; }\nfunction main(): i32 { let xs: i32[] = [1, 2]; return xs.abs_each().len(); }\n"},
 		{"std-array-method-other-name-clean", "import \"std/array\";\nfunction (xs: i32[]) abs_first(): i32 { return xs[0]; }\nfunction main(): i32 { let xs: i32[] = [1, 2]; return xs.abs_first(); }\n"},
 		// A derive resolves against the traits of the module its qualifier
@@ -4598,8 +4597,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"str-trim-to-owned-clean", "import \"std/string\";\nfunction main(): i32 { let raw: string = \"  ab  \"; let s: string = raw.trim().to_owned(); return s.len(); }\n"},
 		{"str-trim-arg-borrow-clean", "import \"std/string\";\nfunction g(x: string): i32 { return x.len(); }\nfunction main(): i32 { let raw: string = \"  ab  \"; return g(raw.trim()); }\n"},
 		{"string-to-lower-ok", "import \"std/string\";\nfunction main(): i32 { let s = \"AB\"; let t = s.to_lower(); return 0; }\n"},
-		// Auto-discovered std/array methods (__method_Array_*) must resolve once
-		// std/array is imported — the import-side companion to the single-module
+		// std/array's methods must resolve once std/array is imported — the import-side companion to the single-module
 		// E043 corpus (a.sum() without import → E043). A codegen-intercepted
 		// method (sum) and a non-intercepted one (sum_squared) both stay clean;
 		// an unknown method (bogus) is still E043 even with std/array in scope.
@@ -4608,9 +4606,8 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"array-bogus-import-e043", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [1, 2, 3]; return a.bogus(); }\n"},
 		// std/array's ARRAY-RECEIVER methods — `function (xs: T[]) <name>[T: cmp.Eq](…)`,
 		// which is how the whole Eq/Ord method surface is written. They are
-		// MethodSigs with a `T[]` receiver, not `__method_Array_*` free
-		// functions, so the E043 array-method-existence rule scanned the wrong
-		// table and reported "no method" for every one of them while the Go
+		// MethodSigs with a `T[]` receiver, and the E043
+		// array-method-existence rule once scanned the wrong table and reported "no method" for every one of them while the Go
 		// checker was clean. `index_of` / `contains` reach this shape as of
 		// #6801; `index_of_last` always had it and was silently diverging.
 		{"array-index-of-import-ok", "import \"std/array\";\nfunction main(): i32 { let a: i32[] = [1, 2, 3]; return a.index_of(2); }\n"},

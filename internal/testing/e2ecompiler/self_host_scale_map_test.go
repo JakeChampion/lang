@@ -19,8 +19,8 @@ import (
 //
 //   - the rewrite FIRES. Three signals were tried and discarded before one
 //     discriminated. `vmulpd` present proves nothing (std/array's scale_f64
-//     wrapper is in the bundle either way), a missing `__method_Array_map`
-//     label proves nothing (that name is in neither build -- the call is
+//     wrapper is in the bundle either way), a missing `array__map` label
+//     proves nothing (that name is in neither build -- the call is
 //     `__arrm_map__<elem>`), and the exit code proves nothing (the scalar
 //     loop returns the same answer). What does discriminate is reading the
 //     emitted body of the rewritten function: it calls the map helper if the
@@ -125,9 +125,8 @@ function main(): i32 {
 
 // The call a declined map makes. After monomorphisation a receiver method is a
 // free call: `xs.m(ys)` folds to `__arrm_m[T]` and the worklist clones one
-// `__arrm_m__<elem>` per element type. Not `__method_Array_map`, which is the
-// auto-discovered helper form std/array's map is not, and not `array__map`,
-// which is the module mangling it would have had as a plain function.
+// `__arrm_m__<elem>` per element type, not `array__map`, which is the module
+// mangling it would have had as a plain function.
 const arrayMapCall = "call __fn___arrm_map__"
 
 // emittedBody returns the lines of one emitted function, label included.
