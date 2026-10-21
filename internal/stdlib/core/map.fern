@@ -5,7 +5,7 @@
 // open-addressing core. The wat shims `__memcpy`, `__memset`,
 // `__alloc`, `__load_i32`, `__store_i32`, plus the slice /
 // struct ↔ i32 escape-hatch casts let the runtime live in
-// lang without sacrificing the byte-level layout the
+// Fern without sacrificing the byte-level layout the
 // existing test suite already pins down.
 //
 // Lang-side: declarations use `i32` for K / V because the
@@ -210,7 +210,7 @@ function __map_seed(buf: usize): i32 {
 //                                         of the dereferenced i64.
 // All three produce a 32-bit hash that callers mask down to
 // `cap - 1` (cap is power-of-2). The unsigned shifts go
-// through `as u32` because the lang's `>>` defaults to
+// through `as u32` because Fern's `>>` defaults to
 // `i32.shr_s` on i32 operands.
 // __map_hash hashes a Map key. It is now SCALAR-ONLY: `k` is a
 // native i32 / u32 key value, hashed directly. The former
@@ -1251,7 +1251,7 @@ pub function __map_drop_values(m: usize): usize {
   // helper), not a void-call phantom. A static-sentinel handle needs no
   // guard of its own — its negative rc fails the rc==1 test below.
   //
-  // NOT an address floor: this is target-agnostic lang source, and the
+  // NOT an address floor: this is target-agnostic Fern source, and the
   // heap sits at ~1 KiB on the wasm preview-2 layout, so the 64 KiB floor
   // the backends' rc helpers once used (rcLowAddrGuard, #6423) skipped
   // every wasm map here and made the whole walk a no-op.

@@ -63,10 +63,6 @@ pub function base64_encode(bs: u8[]): string {
   let buf: u8[] = __alloc_u8(out_len);
   let i: i32 = 0;
   let j: i32 = 0;
-  // Single shared `b0` / `b1` / `b2` declarations so the
-  // wasm emitter (which names locals by lang identifier)
-  // doesn't trip on duplicate declarations across the
-  // sibling 3-byte / 1-byte / 2-byte branches.
   let b0: i32 = 0;
   let b1: i32 = 0;
   let b2: i32 = 0;

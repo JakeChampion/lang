@@ -732,7 +732,7 @@ pub function add_f64(a: f64[], b: f64[]): f64[] {
 // `enumerate` over a parametric `T[]` — STDLIB-ROADMAP item #1,
 // "the single biggest expressivity win; everything else builds
 // on these." Free generic functions (not `__method_Array_*`
-// receiver methods) because lang's Array-method dispatch keys on
+// receiver methods) because Fern's Array-method dispatch keys on
 // the method name only and can't fan out on element type, and
 // because the roadmap pins this exact free-function surface.
 //

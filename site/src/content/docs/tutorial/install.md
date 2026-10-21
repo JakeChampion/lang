@@ -58,16 +58,10 @@ fern -version    # the commit this binary was built from
 fern -targets    # every compile target and what its host provides
 ```
 
-### Companion binaries
-
-These are built from a source checkout. `ferndoc` is the generator this
-site's standard library reference comes from, and needs Go 1.26+; for your
-own modules, `fern -doc` does the same job:
-
-| Binary          | Build command              | Purpose                                                                  |
-| --------------- | -------------------------- | ------------------------------------------------------------------------ |
-| `fern`          | `make build`               | The compiler and every tool it carries: interpreter, checker, formatter, linter, language server, package tools. |
-| `ferndoc`       | `go build ./cmd/ferndoc`   | Generate the stdlib reference.                                           |
+`fern` is the compiler and every tool it carries: the interpreter, checker,
+formatter, linter, language server, package tools, and `fern -doc`, which
+generates this site's standard library reference as it does a reference for
+your own modules.
 
 ## Run hello, world
 

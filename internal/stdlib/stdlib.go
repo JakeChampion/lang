@@ -38,7 +38,7 @@ import (
 var src embed.FS
 
 // Resolve loads the source for a stdlib-namespaced import path. The
-// returned string is the lang source text; the boolean reports
+// returned string is the Fern source text; the boolean reports
 // whether the path matched a known stdlib module. Returns
 // `("", false)` for any path that doesn't start with `std/` or
 // `core/`, and also for paths under those prefixes that don't exist
@@ -91,7 +91,5 @@ func withFernExt(importPath string) string {
 }
 
 // FS returns the embedded filesystem so tooling can iterate the
-// stdlib tree (cmd/ferndoc uses this to enumerate std/*.fern for
-// reference-page generation). Read-only by virtue of embed.FS;
-// callers that mutate the result would get a runtime panic.
+// stdlib tree. Read-only by virtue of embed.FS.
 func FS() fs.FS { return src }

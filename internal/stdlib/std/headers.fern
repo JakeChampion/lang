@@ -27,9 +27,8 @@ import "std/string";
 import "core/map";
 
 // `header_map_new()` — empty HeaderMap. Use when constructing
-// HttpRequest / HttpResponse from lang code (the wasi-http
-// wrapper + http_parse_request will populate one for you on the
-// inbound path once the integration PR lands).
+// HttpRequest / HttpResponse by hand; a parsed request carries
+// its own.
 pub function header_map_new(): HeaderMap {
   let names: string[] = [];
   let values: string[] = [];

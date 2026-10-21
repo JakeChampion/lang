@@ -14,6 +14,7 @@
 import "./ast";
 import "./astwalk";
 import "./checker";
+import "./ferndoc";
 import "./flatten";
 import "./lexer";
 import "./lexical";
@@ -74,6 +75,37 @@ pub function hover(p: Program, line: i32, col: i32): Answer {
     return no_answer();
   }
   return Answer { found: true, text: util.show_type_vars(text), line: q.site.line, col: q.site.col, len: q.site.len };
+}
+
+// hover_doc is the doc comment above the declaration the name at `line`, `col`
+// names, the comment run a reference page shows for it, or "".
+pub function hover_doc(p: Program, line: i32, col: i32): string {
+  if (names_a_parameter(p, line, col)) {
+    return "";
+  }
+  let d: Answer = definition(p, line, col);
+  let m: i32 = util.pos_file_index(d.line);
+  if (!d.found || m < 0 || m >= p.srcs.len()) {
+    return "";
+  }
+  let comments: lexer.Comment[] = lexer.tokenize_full(p.srcs[m]).comments;
+  return ferndoc.take_doc(comments, 0, d.line - util.line_base(m - 1)).doc;
+}
+
+// names_a_parameter is whether the name at `line`, `col` is a parameter, whose
+// declaration line is its function's: the comment above it documents the
+// function.
+function names_a_parameter(p: Program, line: i32, col: i32): boolean {
+  let (q, ok) = query(p, line, col);
+  if (!ok || q.f.kind == K_NONE || q.f.kind == K_QUALIFIED) {
+    return false;
+  }
+  if let ast.ExprIdent(_) = q.f.expr {
+    let fd: parser.FuncDecl = q.v.mod.funcs[q.f.fd];
+    let (b, local) = binding_of(fd, q.site);
+    return local && is_param(b, fd);
+  }
+  return false;
 }
 
 // definition is where the name at `line`, `col` is declared: its name in that

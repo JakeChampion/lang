@@ -176,7 +176,7 @@ func playgroundLSPStdlibAnswers(t *testing.T, bin string) {
 	if err := json.Unmarshal(response(t, frames, "2").Result, &hover); err != nil {
 		t.Fatal(err)
 	}
-	if want := "```fern\n(method on i32) function to_string(): string\n```"; hover.Contents.Value != want || hover.Range != span(3, 12, 3, 21) {
+	if want := "```fern\n(method on i32) function to_string(): string\n```\n\nThe decimal text of `n`, with a leading `-` when it is negative."; hover.Contents.Value != want || hover.Range != span(3, 12, 3, 21) {
 		t.Errorf("hover = %+v, want %q at 3:12-3:21", hover, want)
 	}
 	var completion struct {

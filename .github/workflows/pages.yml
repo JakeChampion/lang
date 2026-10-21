@@ -5,14 +5,14 @@ name: Pages
 #
 #   /              — docs (Astro + Starlight, built from site/)
 #   /playground/   — interactive playground (web/, playground.wasm)
-#   /stdlib/...    — auto-generated reference (cmd/ferndoc → MDX)
+#   /stdlib/...    — auto-generated reference (`fern -doc` → MDX)
 #
 # Build order:
 #   1. Build the playground wasm via ./web/build.sh.
 #   2. Stage web/ under site/public/playground/ so Astro serves it
 #      at /playground/ in the final bundle.
-#   3. Run cmd/ferndoc to emit site/src/content/docs/stdlib/*.md
-#      from internal/stdlib/std/*.fern.
+#   3. Run `fern -doc` to emit site/src/content/docs/stdlib/*.md
+#      from internal/stdlib/std and internal/stdlib/core.
 #   4. `npm install && npm run build` under site/ → site/dist/.
 #   5. Upload site/dist/ as the Pages artefact.
 #
@@ -22,7 +22,7 @@ name: Pages
 #      no PAT or secrets needed.
 #
 # Gated on changes that affect the playground build, the docs
-# source, or the stdlib (since langdoc consumes it). Plus a
+# source, or the stdlib (since `fern -doc` reads it). Plus a
 # workflow_dispatch trigger for manual reruns.
 
 on:
@@ -33,7 +33,6 @@ on:
       # (cmd/fern) builds it.
       - "compiler/**"
       - "cmd/fern/**"
-      - "cmd/ferndoc/**"
       - "web/**"
       - "site/**"
       # Docs site loads this grammar for ```fern highlighting.
@@ -110,7 +109,9 @@ jobs:
           cp -L web/*.html web/*.js web/*.wasm site/public/playground/
 
       - name: Generate stdlib reference
-        run: go run ./cmd/ferndoc -out site/src/content/docs/stdlib/
+        run: |
+          bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/std
+          bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/core
 
       - name: Install site deps + build
         working-directory: site
