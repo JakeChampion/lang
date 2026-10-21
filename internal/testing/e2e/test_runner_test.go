@@ -1461,12 +1461,20 @@ func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 9)
 }
 
+// `tests/stdlib/constmap_test.fern` covers std/constmap, the immutable
+// string-keyed map built as a binary fuse structure: every key maps to its
+// value at several sizes, the verified map rejects absent keys, and a
+// duplicate key or a length mismatch is refused.
+func TestRunnerConstmapExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "constmap", "std/constmap", 6)
+}
+
 // `tests/stdlib/cli_test.fern` covers std/cli's spec-driven argument
 // parser (#4385 item 1): valued options in --long V / --long=V / -short V
 // forms, boolean flags, positional operands, the `--` terminator, the
 // value_or default, the error paths (unknown option / missing value /
 // value on a bool), auto-usage, subcommands, the completion generators,
-// and the roff man page. This is the interp oracle; std/cli also runs in the
+// the roff man page and the KDL usage spec. This is the interp oracle; std/cli also runs in the
 // self-host IR differential (selfHostStdTestCases).
 func TestRunnerCliExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -1475,7 +1483,7 @@ func TestRunnerCliExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/cli", "# pass 34", "# fail 0", "1..34"} {
+	for _, w := range []string{"# Suite: std/cli", "# pass 37", "# fail 0", "1..37"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

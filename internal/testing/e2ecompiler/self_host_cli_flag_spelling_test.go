@@ -43,6 +43,7 @@ func TestSelfHostShippedFernFlagSpellings(t *testing.T) {
 		{[]string{"-explain=E001"}, []string{"-explain", "E001"}},
 		{[]string{"--explain", "E001"}, []string{"-explain", "E001"}},
 		{[]string{"-lint", "-lint-set=cyclomatic-complexity=deny", ok}, []string{"-lint", "-lint-set", "cyclomatic-complexity=deny", ok}},
+		{[]string{"-lint", "--lint-cover=none.txt", ok}, []string{"-lint", "-lint-cover", "none.txt", ok}},
 		{[]string{"--version"}, []string{"-version"}},
 		{[]string{"--help"}, []string{"-h"}},
 		{[]string{"--h"}, []string{"-h"}},

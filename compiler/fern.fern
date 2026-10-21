@@ -1589,6 +1589,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-lint-rules", "", "list the lint rules with their severities and options"),
       cli_flag("-lint-set", "RULE=LEVEL", "with -lint: set a rule to allow, warn or deny (repeatable)"),
       cli_flag("-lint-opt", "RULE.OPT=VALUE", "with -lint: set a rule option (repeatable)"),
+      cli_flag("-lint-cover", "FILE", "with -lint: score change-risk from FILE, a saved -cover run's stderr"),
     ] },
     FlagGroup { title: "doc", flags: [
       cli_flag("-doc", "", "a module's Markdown reference page, or with -o OUTDIR one per module under DIR"),
@@ -1716,7 +1717,7 @@ function usage_lines(embedded: boolean): string[] {
     "       fern -check [FLAG...] DIR" + root,
     "       fern -check | -interp [FLAG...] -             (the program on stdin)",
     "       fern -fmt [-w | -d | -o OUT] FILE | DIR | -...",
-    "       fern -lint [-lint-set RULE=LEVEL] PATH...",
+    "       fern -lint [-lint-set RULE=LEVEL] [-lint-cover FILE] PATH...",
     "       fern -doc [-o OUT] MODULE.fern | -doc -o OUTDIR DIR",
     "       fern -tangle | -weave | -doctest DOC.fern.md",
     "       fern -add NAME SPEC [DIR]",
@@ -4943,6 +4944,7 @@ struct ToolFlags {
   lint_rules: boolean,
   lint_sets: string[],
   lint_opts: string[],
+  lint_cover: string,
   weave: boolean,
   html: boolean,
   doctest: boolean,
@@ -4952,7 +4954,8 @@ function tool_flag(f: CliArg): boolean {
   return f.name == "-run" || f.name == "-qemu" || f.name == "-version" || f.name == "-explain"
     || f.name == "-cover-report" || f.name == "-lcov" || f.name == "-color" || f.name == "-ascii"
     || f.name == "-q" || f.name == "-lint" || f.name == "-lint-rules" || f.name == "-lint-set"
-    || f.name == "-lint-opt" || f.name == "-weave" || f.name == "-html" || f.name == "-doctest";
+    || f.name == "-lint-opt" || f.name == "-lint-cover" || f.name == "-weave" || f.name == "-html"
+    || f.name == "-doctest";
 }
 
 // parse_tool_flag applies the tool flag `f`, returning the flags and a
@@ -4996,6 +4999,9 @@ function parse_tool_flag(tf: ToolFlags, f: CliArg): (ToolFlags, i32) {
   }
   if (f.name == "-lint-opt") {
     return (ToolFlags { ...tf, lint_opts: tf.lint_opts.append(f.value) }, 0);
+  }
+  if (f.name == "-lint-cover") {
+    return (ToolFlags { ...tf, lint_cover: f.value }, 0);
   }
   if (f.name == "-qemu") {
     return (ToolFlags { ...tf, qemu: f.value }, 0);
@@ -5336,7 +5342,7 @@ function lint_text(st: DiagStyle, f: lint.Finding, src: string): string {
 // positions `lm` moves them to. A parse error is reported instead, the module
 // skipped and the second result false; a rule the parser happens to report but
 // the checker owns (a coded E finding) does not count as one.
-function lint_module(st: DiagStyle, cfg: lint.Config, shown: string, code: string, lm: util.LineMap): (lint.Finding[], boolean) {
+function lint_module(st: DiagStyle, cfg: lint.Config, shown: string, code: string, lm: util.LineMap, cov_files: coverreport.File[]): (lint.Finding[], boolean) {
   let lx: lexer.LexResult = lexer.tokenize_full(code);
   let m: parser.Module = parser.parse_module(lx.tokens);
   let perrs: Finding[] = [];
@@ -5350,16 +5356,46 @@ function lint_module(st: DiagStyle, cfg: lint.Config, shown: string, code: strin
   if (eprint_findings(st, perrs, shown, no_files, [lm])) {
     return (out, false);
   }
-  for fd in lint.lint_file(cfg, shown, code, m, lx.comments) {
+  for fd in lint.lint_file(cfg, shown, code, m, lx.comments, cov_files) {
     let (line, col) = util.doc_pos([lm], fd.line, fd.col);
     out = out.append(lint.Finding { ...fd, line: line, col: col });
   }
   return (out, true);
 }
 
+// lint_cover reads the -cover run the change-risk rule scores from, `""`
+// for none. The error is a usage error: a run that cannot be read or holds
+// no rows, or a rule that would score with no run to score from.
+function lint_cover(cfg: lint.Config, cover_path: string): (coverreport.File[], string) {
+  let none: coverreport.File[] = [];
+  if (cover_path.len() == 0) {
+    if (cfg.risk_configured && cfg.risk != lint.ALLOW) {
+      return (none, lint.RISK + " is configured but no coverage was given: pass -lint-cover FILE, a saved -cover run's stderr");
+    }
+    return (none, "");
+  }
+  match (read_file(cover_path)) {
+    Ok(t) => {
+      let folded: coverreport.Folded = coverreport.fold(t);
+      if (folded.err.len() > 0) {
+        return (none, "-lint-cover " + cover_path + ": " + folded.err);
+      }
+      if (folded.files.len() == 0) {
+        return (none, "-lint-cover " + cover_path + ": no fern-cover rows (want a -cover run's stderr)");
+      }
+      return (folded.files, "");
+    },
+    Err(e) => {
+      return (none, "-lint-cover: cannot read " + cover_path + ": " + e.message());
+    }
+  }
+}
+
 // run_lint is `fern -lint PATH...`: exit 1 when a rule set to deny fires or a
 // file does not parse or tangle, 2 for a usage or configuration error.
-function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]): i32 {
+// `cover_path` is the saved -cover run the change-risk rule scores from, ""
+// for none.
+function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[], cover_path: string): i32 {
   if (paths.len() == 0) {
     eprint("usage: fern -lint PATH... (a .fern or .fern.md file, or a directory of them)");
     return 2;
@@ -5378,6 +5414,12 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
     eprint("fern: " + cerr);
     return 2;
   }
+  let (cov_files, cov_err) = lint_cover(cfg, cover_path);
+  if (cov_err.len() > 0) {
+    eprint("fern: " + cov_err);
+    return 2;
+  }
+  let covered_files: i32 = 0;
   let all: lint.Finding[] = [];
   let out: string = "";
   let broken: boolean = false;
@@ -5408,9 +5450,12 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
       broken = true;
       continue;
     }
+    if (lint.cover_of(cov_files, f) >= 0) {
+      covered_files = covered_files + 1;
+    }
     let mi: i32 = 0;
     while (mi < mods.srcs.len()) {
-      let (fds, parsed) = lint_module(st, cfg, entry_display(f), mods.srcs[mi], mods.maps[mi]);
+      let (fds, parsed) = lint_module(st, cfg, entry_display(f), mods.srcs[mi], mods.maps[mi], cov_files);
       broken = broken || !parsed;
       for fd in fds {
         if (all.len() > 0) {
@@ -5421,6 +5466,10 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
       }
       mi = mi + 1;
     }
+  }
+  if (cfg.risk != lint.ALLOW && cov_files.len() > 0 && covered_files == 0) {
+    eprint("fern: -lint-cover " + cover_path + " covers none of the linted files: it names " + lint.cover_names(cov_files));
+    return 2;
   }
   let sum: string = lint.summary(all);
   if (sum.len() > 0) {
@@ -5498,7 +5547,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // `-run`: build to a temporary binary (or -o) and execute it with the
   // program's arguments; `-qemu` names the emulator for a foreign ISA.
   let no_strs: string[] = [];
-  let tf: ToolFlags = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, terse: terse_from_env(), lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, weave: false, html: false, doctest: false };
+  let tf: ToolFlags = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, terse: terse_from_env(), lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, lint_cover: "", weave: false, html: false, doctest: false };
   let mode_fmt: boolean = false;
   // `-fmt` output destination, mirroring native: stdout by default, the input
   // file under `-w`, a unified diff (exit 1 when it is non-empty) under `-d`.
@@ -5720,7 +5769,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     return 0;
   }
   if (tf.lint) {
-    return run_lint(st, pos, tf.lint_sets, tf.lint_opts);
+    return run_lint(st, pos, tf.lint_sets, tf.lint_opts, tf.lint_cover);
   }
 
   // `-resolve` takes a directory (or any file inside the package), not an

@@ -1,0 +1,77 @@
+// std/constmap with the same keys and values as map_string_lookup: the Rust
+// half's `constmap::ConstMap` and `constmap::VerifiedConstMap` rows, with
+// the build time beside them.
+import "std/bench";
+import "std/constmap";
+import "std/i32";
+import "std/i64";
+import "std/u64";
+import "std/result";
+import "./shared";
+
+// The values 0..n as u64.
+function values_of(n: i32): u64[] {
+  let values: u64[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    values = values.append(i as u64);
+    i = i + 1;
+  }
+  return values;
+}
+
+function main(): i32 {
+  let p: shared.Params = shared.params(args());
+  let keys: string[] = shared.string_keys(p.n);
+  let values: u64[] = values_of(p.n);
+  let probe: i32[] = shared.order(p.n);
+  let builds: i32 = 0;
+  let built: bench.Report = bench.run("constmap_build", 0, 1, () => {
+    let b: Result[constmap.ConstMap, string] = constmap.constmap_new(keys, values);
+    if (b.is_ok()) {
+      builds = builds + 1;
+    }
+  });
+  let m0: constmap.ConstMap = constmap.ConstMap { len: 0, seed: 0, segment_length: 0, segment_length_mask: 0, segment_count_length: 0, data: [] };
+  match (constmap.constmap_new(keys, values)) {
+    Ok(built_map) => {
+      m0 = built_map;
+    },
+    Err(e) => {
+      print("build failed: " + e);
+      return 1;
+    }
+  }
+  let m: constmap.ConstMap = m0;
+  let sum: u64 = 0;
+  let r: bench.Report = bench.run("constmap", 1, p.rounds, () => {
+    let j: i32 = 0;
+    while (j < probe.len()) {
+      sum = sum + m.map(keys[probe[j]]);
+      j = j + 1;
+    }
+  });
+  shared.report("constmap.ConstMap", p.n, r.wall_ns, p.rounds, sum);
+  print("constmap.ConstMap\tn=" + p.n.to_string() + "\tbuild_ms=" + (built.wall_ns / 1000000i64).to_string() + "." + (built.wall_ns / 100000i64 % 10i64).to_string());
+  let v0: constmap.VerifiedConstMap = constmap.VerifiedConstMap { len: 0, seed: 0, segment_length: 0, segment_length_mask: 0, segment_count_length: 0, data: [], tags: [] };
+  match (constmap.verified_new(keys, values)) {
+    Ok(built_v) => {
+      v0 = built_v;
+    },
+    Err(e) => {
+      print("build failed: " + e);
+      return 1;
+    }
+  }
+  let v: constmap.VerifiedConstMap = v0;
+  sum = 0;
+  let rv: bench.Report = bench.run("verified", 1, p.rounds, () => {
+    let j: i32 = 0;
+    while (j < probe.len()) {
+      sum = sum + v.get_or(keys[probe[j]], 0);
+      j = j + 1;
+    }
+  });
+  shared.report("constmap.VerifiedConstMap", p.n, rv.wall_ns, p.rounds, sum);
+  return 0;
+}

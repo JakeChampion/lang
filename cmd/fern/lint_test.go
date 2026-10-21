@@ -33,8 +33,24 @@ func writeFile(t *testing.T, dir, name, src string) string {
 func runLintTest(t *testing.T, paths, sets, opts []string) (int, string) {
 	t.Helper()
 	var out bytes.Buffer
-	code := runLint(paths, sets, opts, "never", &out)
+	code := runLint(paths, sets, opts, "", "never", &out)
 	return code, out.String()
+}
+
+// -lint-cover reaches the self-host linter: a run leaving noisy's three
+// lines unexecuted scores it 3^2 + 3 = 12.
+func TestLintForwardsCoverage(t *testing.T) {
+	dir := t.TempDir()
+	f := writeFile(t, dir, "noisy.fern", noisySrc)
+	cov := writeFile(t, dir, "cov.txt", "fern-cover: "+f+":2 0\nfern-cover: "+f+":3 0\nfern-cover: "+f+":4 0\n")
+	var out bytes.Buffer
+	code := runLint([]string{f}, nil, []string{"change-risk.max=5"}, cov, "never", &out)
+	if code != 0 || !strings.Contains(out.String(), "warning[change-risk]: function `noisy` has a change risk of 12") {
+		t.Errorf("exit %d\n%s", code, out.String())
+	}
+	if code := runLint([]string{f}, nil, []string{"change-risk.max=5"}, "", "never", &out); code != 2 {
+		t.Errorf("configured without a run: exit %d, want 2", code)
+	}
 }
 
 func TestLintExitStatus(t *testing.T) {

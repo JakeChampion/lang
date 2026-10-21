@@ -10,6 +10,7 @@
 // unsuppressed functions above it; then one `directive FILE:LINE: MESSAGE`
 // line per malformed `fern-lint:` comment.
 
+import "../coverreport";
 import "../lexer";
 import "../lint";
 import "../parser";
@@ -35,6 +36,7 @@ function fern_files(dir: string): string[] {
 function main(): i32 {
   let av: string[] = args();
   let cfg: lint.Config = lint.default_config();
+  let no_cover: coverreport.File[] = [];
   let out: string = "";
   let i: i32 = 1;
   while (i < av.len()) {
@@ -46,7 +48,7 @@ function main(): i32 {
       if let Ok(src) = read_file(f) {
         let lx: lexer.LexResult = lexer.tokenize_full(src);
         let m: parser.Module = parser.parse_module(lx.tokens);
-        for fd in lint.lint_file(cfg, f, src, m, lx.comments) {
+        for fd in lint.lint_file(cfg, f, src, m, lx.comments, no_cover) {
           if (fd.rule == lint.COMPLEXITY) {
             excess = excess + fd.value - cfg.max;
           } else {

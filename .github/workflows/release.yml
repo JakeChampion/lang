@@ -137,6 +137,10 @@ jobs:
     if: github.event_name == 'schedule'
     needs: [build]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write      # the release and its assets
+      id-token: write      # the packslip is signed with the workflow's identity
+      attestations: write  # and each archive gets build provenance
     steps:
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
@@ -207,3 +211,19 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/*.tar.gz.sha256
+
+      - name: Publish the signed packslip
+        # One signed file beside the archives (packslip.dev): each archive's
+        # digest, platform and executable path, signed keylessly with this
+        # workflow's OIDC identity, so an installer such as mise selects and
+        # verifies the right `fern` archive without a layout rule for this
+        # repository. The .sha256 sidecars stay for checking by hand. The
+        # coreutils archives are not listed: they are a second tool, with its
+        # own executables, and a second packslip is the way to describe them.
+        uses: jdx/packslip@v1
+        with:
+          artifacts: artifacts/fern-linux-*.tar.gz artifacts/fern-darwin-*.tar.gz
+          bin: fern
+          tag: nightly
+          version: 0.0.0-nightly.${{ github.run_number }}
+          commit: ${{ github.sha }}

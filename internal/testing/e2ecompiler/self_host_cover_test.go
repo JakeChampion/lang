@@ -21,9 +21,17 @@ import (
 // replaced by ENTRY.
 func coverRun(t *testing.T, src string, args, env []string) string {
 	t.Helper()
+	report, srcPath := coverRunRaw(t, src, args, env)
+	return strings.ReplaceAll(report, srcPath, "ENTRY")
+}
+
+// coverRunRaw is coverRun with the entry path left as the compile was given
+// it, returned beside the report.
+func coverRunRaw(t *testing.T, src string, args, env []string) (report, srcPath string) {
+	t.Helper()
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "main.fern")
+	srcPath = filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +47,36 @@ func coverRun(t *testing.T, src string, args, env []string) string {
 	if err := run.Run(); err != nil {
 		t.Fatalf("run: %v\n%s", err, stderr.String())
 	}
-	return strings.ReplaceAll(stderr.String(), srcPath, "ENTRY")
+	return stderr.String(), srcPath
+}
+
+// TestSelfHostCoverFeedsChangeRisk: a -cover run's stderr, saved as is, is
+// what `-lint -lint-cover` scores the change-risk rule from — the file names
+// the run writes are the ones the lint matches.
+func TestSelfHostCoverFeedsChangeRisk(t *testing.T) {
+	const src = `function pick(n: i32): i32 {
+    if (n > 0) { return 1; }
+    if (n < 0) { return 2; }
+    return 0;
+}
+function main(): i32 {
+    return pick(1) - 1;
+}
+`
+	report, srcPath := coverRunRaw(t, src, []string{"-cover"}, nil)
+	cov := filepath.Join(t.TempDir(), "cov.txt")
+	if err := os.WriteFile(cov, []byte(report), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := selfHostCLIForHost(t)
+	cmd := exec.Command(h.cli, "-lint", "-color", "never", "-lint-cover", cov, "-lint-opt", "change-risk.max=1", srcPath)
+	out, _ := cmd.CombinedOutput()
+	// pick ran its first line (the test and the taken return share it) and
+	// neither of the other two: 3^2 * (2/3)^3 = 2.67 -> 3, plus 3.
+	want := srcPath + ":1:1: warning[change-risk]: function `pick` has a change risk of 6: complexity 3 with 33.3% of its 3 lines covered, over the limit of 1\n"
+	if cmd.ProcessState.ExitCode() != 0 || !strings.HasPrefix(string(out), want) || strings.Contains(string(out), "`main`") {
+		t.Errorf("exit %d\n--- got ---\n%s--- want a report starting ---\n%s--- run ---\n%s", cmd.ProcessState.ExitCode(), out, want, report)
+	}
 }
 
 // TestSelfHostCoverEdgesAndLambdas: `||`'s T counts the short-circuit, so a

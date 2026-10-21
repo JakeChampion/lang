@@ -440,6 +440,7 @@ func main() {
 	flag.Var(&lintSets, "lint-set", "with -lint: set one rule's severity, `RULE=allow|warn|deny`. Repeatable; wins over the manifest's [lint] table.")
 	var lintOpts repeatedString
 	flag.Var(&lintOpts, "lint-opt", "with -lint: set one rule option, `RULE.OPTION=VALUE` (e.g. cyclomatic-complexity.max=20). Repeatable; wins over the manifest's [lint.options] table.")
+	lintCover := flag.String("lint-cover", "", "with -lint: score the change-risk rule from `FILE`, a saved -cover run's stderr.")
 	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
 	doCapabilities := flag.Bool("capabilities", false, "print the per-package capability usage of FILE.fern and its transitive imports — one line per package (fern.toml package name, or `(root)` when no manifest governs the program): the v1 capabilities (net, fs, env, subprocess, time, random) its declared functions can reach by call-graph reachability, with an example call chain down to the tagged runtime builtin. Stdlib usage is attributed to the calling package. The report itself enforces nothing; manifests' `capabilities` grants are enforced (E070) on the compile/-check/-interp paths (docs/PACKAGE-CAPABILITIES-BRIEF.md). No codegen.")
 
@@ -616,7 +617,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "usage: fern-oracle -lint PATH... (a .fern file or a directory of them)")
 			os.Exit(2)
 		}
-		if code := runLint(flag.Args(), lintSets, lintOpts, *colorMode, os.Stdout); code != 0 {
+		if code := runLint(flag.Args(), lintSets, lintOpts, *lintCover, *colorMode, os.Stdout); code != 0 {
 			os.Exit(code)
 		}
 		return
