@@ -294,10 +294,13 @@ func listingCases(t *testing.T, util string) []invocation {
 	// either, so it reads /dev — whose entries both sides see the same
 	// way, and where the majors reach three digits, so the device field
 	// is wider than the file-size one and the two have to be reconciled.
-	add("long-dev-null", "-l", "/dev/null")
-	add("long-dev-pair", "-l", "/dev/null", "/dev/zero")
-	add("long-dev-and-file", "-l", "/dev/null", "plain")
-	add("long-dev-numeric", "-ln", "/dev/null")
+	// The time column is pinned to the year: on Darwin a write to /dev/null
+	// moves its mtime, so the two sides, run moments apart, printed
+	// different minutes.
+	add("long-dev-null", "-l", "--time-style=+%Y", "/dev/null")
+	add("long-dev-pair", "-l", "--time-style=+%Y", "/dev/null", "/dev/zero")
+	add("long-dev-and-file", "-l", "--time-style=+%Y", "/dev/null", "plain")
+	add("long-dev-numeric", "-ln", "--time-style=+%Y", "/dev/null")
 
 	// --- the block and size units ------------------------------------------
 	// `-k` moves the `total` and `-s` unit and NOT the size column, which

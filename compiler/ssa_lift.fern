@@ -264,8 +264,8 @@ function fbin_sym(k: string): string {
 
 // admits reports whether the production lift has an arm for `op`: one of
 // its own, or the stack machine's through flat_op.
-pub function admits(op: ir.Op): boolean {
-  return prod_kind(ir.kind_name(op.kind_tag)) || flat_arm_op(op);
+pub function admits(kt: KindTable, op: ir.Op): boolean {
+  return op.kind_tag >= 0 && op.kind_tag < kt.classes.len() && (kt.classes[op.kind_tag] & 1) != 0 || flat_arm_op(op);
 }
 
 // flat_arm_op reports whether `op` can run through the stack machine's own
@@ -301,14 +301,18 @@ function flat_arm_op(op: ir.Op): boolean {
 // carries its IR kind name and width (`str`, `imm`) rather than the symbol the
 // optimiser reads, and an integer cast carries the cast in `str`, so the
 // emitter selects instructions from the same table the stack machine does.
-// KindTable is every op kind's name and kind_class by id, built once per
+// KindTable is every op kind's name and class bits by id, built once per
 // module: lift_impl reads it per op instead of classifying each kind it
-// meets per function, which built and scanned the name lists each time.
-// argc is the helper call's operand count for a kind prod_call_argc names,
-// else 0; host marks the host-floor kinds; pops is ir.pops_by_kind.
+// meets per function. classes packs the bits lift_impl branches on: bit 0 an
+// op lift_from_ir_prod admits, bit 1 a memory op lift_prod_mem lowers onto
+// the flat backends' box layouts (ssa.fern's kinds 40..48), bit 2 an f64 op,
+// bit 3 a bin_sym. argc is the helper call's operand count for a kind the
+// stack machine emits as a call into the runtime, else 0; host marks the
+// host-floor kinds; pops is ir.pops_by_kind.
 pub struct KindTable { names: string[], classes: i32[], argc: i32[], host: boolean[], pops: i32[] }
 
 pub function kind_table(): KindTable {
+  let facts: KindFacts = kind_facts();
   let names: string[] = [];
   let classes: i32[] = [];
   let argc: i32[] = [];
@@ -318,77 +322,120 @@ pub function kind_table(): KindTable {
   let id: i32 = 0;
   while (id < 1024) {
     let k: string = ir.kind_name(id);
+    let at: i32 = facts.ix.find(k);
+    let listed: i32 = 0;
+    let n: i32 = 0;
+    let h: boolean = false;
+    if (at >= 0) {
+      listed = facts.bits[at];
+      n = facts.argc[at];
+      h = facts.host[at];
+    }
+    let bin: boolean = bin_sym(k) != "";
+    let mem: boolean = (listed & 2) != 0 || n > 0 || h;
+    let flt: boolean = (listed & 4) != 0 || fbin_sym(k) != "";
+    let c: i32 = 0;
+    if (bin || (listed & 1) != 0 || mem || flt) {
+      c = c + 1;
+    }
+    if (mem) {
+      c = c + 2;
+    }
+    if (flt) {
+      c = c + 4;
+    }
+    if (bin) {
+      c = c + 8;
+    }
     names = names.append(k);
-    classes = classes.append(kind_class(k));
-    argc = argc.append(prod_call_argc(k));
-    host = host.append(prod_host_kind(k));
+    classes = classes.append(c);
+    argc = argc.append(n);
+    host = host.append(h);
     id = id + 1;
   }
   return KindTable { names: names, classes: classes, argc: argc, host: host, pops: ir.pops_by_kind() };
 }
 
-pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): LResult {
-  return lift_impl(kt, name, nparams, nslots, ops, track_slots);
-}
+// KindFacts is what the name lists in kind_facts say of each kind they name,
+// found once per name through `ix`: bits 1 the spine, 2 a memory op, 4 an
+// f64 unary; argc and host as KindTable carries them.
+struct KindFacts { ix: util.NameIndex, bits: i32[], argc: i32[], host: boolean[] }
 
-// prod_kind is the op vocabulary lift_from_ir_prod admits.
-function prod_kind(k: string): boolean {
-  if (bin_sym(k) != "") {
-    return true;
-  }
+function kind_facts(): KindFacts {
+  // The spine lift_from_ir_prod admits as instructions of its own.
   let spine: string[] = [
     "const_i32", "const_i32_text", "const_i64",
     "int_extend", "int_wrap", "int_cast", "u32_wrap", "not",
     "load_local", "store_local", "tee_local", "drop", "return",
     "block", "loop", "if", "else", "end", "br", "brif", "call_direct", "dyn_dispatch",
   ];
-  for x in spine {
-    if (x == k) {
-      return true;
-    }
-  }
-  return prod_mem_kind(k) || prod_float_kind(k);
-}
-
-// kind_class packs the classifications lift_impl branches on: bit 0
-// prod_kind, bit 1 prod_mem_kind, bit 2 prod_float_kind, bit 3 a bin_sym.
-// kind_table works it out once per kind, since each builds and scans its
-// name lists.
-function kind_class(k: string): i32 {
-  let c: i32 = 0;
-  if (prod_kind(k)) {
-    c = c + 1;
-  }
-  if (prod_mem_kind(k)) {
-    c = c + 2;
-  }
-  if (prod_float_kind(k)) {
-    c = c + 4;
-  }
-  if (bin_sym(k) != "") {
-    c = c + 8;
-  }
-  return c;
-}
-
-// prod_float_kind is the f64 vocabulary: the literal, the arithmetic and
-// compares, the single-instruction math, and the conversions and
-// reinterprets. Which register class holds a value is the allocator's choice
-// (ssa.float_values).
-function prod_float_kind(k: string): boolean {
-  if (fbin_sym(k) != "") {
-    return true;
-  }
-  let un: string[] = [
+  // The memory ops lift_prod_mem lowers onto the box layouts.
+  let mem: string[] = [
+    "struct_get", "struct_set", "tuple_set", "arr_len", "str_len", "str_data", "tuple_get", "opt_tag", "opt_payload", "opt_set_payload",
+    "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is", "struct_set_shape",
+    "struct_make", "arr_make", "tuple_make", "opt_make", "str_slice",
+    "raw_load_ptr", "raw_store_ptr", "raw_load8", "raw_store8", "const_struct", "call_indirect",
+  ];
+  // The ops the stack machine emits as a call into the runtime, by operand
+  // count. str_call (49) reaches a Fern-compiled helper on the stack ABI with
+  // the arguments in order; rt_call (50) a routine on the register ABI.
+  let two: string[] = ["str_concat", "str_eq", "str_cmp", "arr_push", "arr_push_owned", "arr_push_i64", "arr_push_f64", "arr_push_owned_i64", "arr_push_owned_f64"];
+  let one: string[] = [
+    "str_from_bytes", "alloc", "alloc_u8", "raw_alloc", "print_str", "eprint_str",
+    "read_file", "read_file_bytes", "remove_dir_all", "remove_file", "create_dir_all",
+    "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "env", "stat", "lstat", "putchar", "temp_dir", "reader_close",
+  ];
+  let three: string[] = ["arr_slice", "subprocess", "str_from_bytes_range"];
+  let two_io: string[] = ["write_file", "write_file_bytes", "write_file_exec", "read_chunk", "read_chunk_bytes", "write_bytes", "write_some_bytes", "writer_write"];
+  // The host floor the stack machine reaches without a Fern helper on the
+  // stack ABI: the raw syscalls, exit, the string box stamp, the three static
+  // addresses and the full-width address add; with the zero-operand helper
+  // calls, which no operand count names; and the four bit counts.
+  let host: string[] = [
+    "syscall3", "syscall4", "syscall5", "syscall6", "exit", "raw_string",
+    "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "raw_vdso", "raw_addr", "monotonic_ns", "now_unix_ms",
+    "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
+    "map_new", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
+    "clz", "ctz", "popcount", "bswap",
+  ];
+  // The f64 unaries: the literal, the single-instruction math, and the
+  // conversions and reinterprets. The f64 binaries are fbin_sym's. Which
+  // register class holds a value is the allocator's choice (ssa.float_values).
+  let f64_un: string[] = [
     "const_f64", "fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg",
     "i32_to_f64", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",
   ];
-  for x in un {
-    if (x == k) {
-      return true;
+  let f: KindFacts = KindFacts { ix: util.name_index([]), bits: [], argc: [], host: [] };
+  f = listed(f, spine, 1, 0, false);
+  f = listed(f, mem, 2, 0, false);
+  f = listed(f, two, 0, 2, false);
+  f = listed(f, one, 0, 1, false);
+  f = listed(f, three, 0, 3, false);
+  f = listed(f, two_io, 0, 2, false);
+  f = listed(f, host, 0, 0, true);
+  return listed(f, f64_un, 4, 0, false);
+}
+
+// listed records `bit`, `argc` and `host` for each of `names`. A name listed
+// twice keeps the first operand count it was given.
+function listed(own f: KindFacts, names: string[], bit: i32, argc: i32, host: boolean): KindFacts {
+  for n in names {
+    let at: i32 = f.ix.find(n);
+    if (at < 0) {
+      f = KindFacts { ix: f.ix.added(n), bits: f.bits.append(bit), argc: f.argc.append(argc), host: f.host.append(host) };
+    } else {
+      let a: i32 = f.argc[at];
+      if (a == 0) {
+        a = argc;
+      }
+      f = KindFacts { ...f, bits: f.bits.with(at, f.bits[at] | bit), argc: f.argc.with(at, a), host: f.host.with(at, f.host[at] || host) };
     }
   }
-  return false;
+  return f;
+}
+
+pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): LResult {
+  return lift_impl(kt, name, nparams, nslots, ops, track_slots);
 }
 
 // lift_float_prod lifts one f64 op: a binary carries its kind name and width
@@ -435,42 +482,6 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
   }
   stack = stack.append(v);
   return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: true };
-}
-
-// prod_mem_kind is the op vocabulary lift_prod_mem lowers onto the flat
-// backends' box layouts (ssa.fern's kinds 40..48).
-function prod_mem_kind(k: string): boolean {
-  let mem: string[] = [
-    "struct_get", "struct_set", "tuple_set", "arr_len", "str_len", "str_data", "tuple_get", "opt_tag", "opt_payload", "opt_set_payload",
-    "arr_get", "arr_set", "str_index", "const_func", "const_str", "variant_is", "struct_set_shape",
-    "struct_make", "arr_make", "tuple_make", "opt_make", "str_slice",
-    "raw_load_ptr", "raw_store_ptr", "raw_load8", "raw_store8", "const_struct", "call_indirect",
-  ];
-  for x in mem {
-    if (x == k) {
-      return true;
-    }
-  }
-  return prod_call_argc(k) > 0 || prod_host_kind(k);
-}
-
-// prod_host_kind is the host floor the stack machine reaches without a Fern
-// helper on the stack ABI: the raw syscalls, exit, the string box stamp, the
-// three static addresses and the full-width address add;
-// with the zero-operand helper calls, which prod_call_argc cannot name.
-function prod_host_kind(k: string): boolean {
-  let host: string[] = [
-    "syscall3", "syscall4", "syscall5", "syscall6", "exit", "raw_string",
-    "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "raw_vdso", "raw_addr", "monotonic_ns", "now_unix_ms",
-    "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
-    "map_new", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
-  ];
-  for x in host {
-    if (x == k) {
-      return true;
-    }
-  }
-  return k == "clz" || k == "ctz" || k == "popcount" || k == "bswap";
 }
 
 // lift_prod_host lifts one host-floor op: a syscall is a register-ABI call
@@ -569,36 +580,6 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
 // unique-push bit) when its result is a counted reference (ir.counted).
 function counted_bit(op: ir.Op): i32 {
   if (ir.is_counted(op)) {
-    return 2;
-  }
-  return 0;
-}
-
-// prod_call_argc is the operand count of an op the stack machine emits as a
-// call into the runtime, 0 for any other op. str_call (49) reaches a
-// Fern-compiled helper on the stack ABI with the arguments in order;
-// rt_call (50) a routine on the register ABI.
-function prod_call_argc(k: string): i32 {
-  let two: string[] = ["str_concat", "str_eq", "str_cmp", "arr_push", "arr_push_owned", "arr_push_i64", "arr_push_f64", "arr_push_owned_i64", "arr_push_owned_f64"];
-  for x in two {
-    if (x == k) {
-      return 2;
-    }
-  }
-  let one: string[] = [
-    "str_from_bytes", "alloc", "alloc_u8", "raw_alloc", "print_str", "eprint_str",
-    "read_file", "read_file_bytes", "remove_dir_all", "remove_file", "create_dir_all",
-    "read_dir", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "env", "stat", "lstat", "putchar", "temp_dir", "reader_close",
-  ];
-  for y in one {
-    if (y == k) {
-      return 1;
-    }
-  }
-  if (k == "arr_slice" || k == "subprocess" || k == "str_from_bytes_range") {
-    return 3;
-  }
-  if (k == "write_file" || k == "write_file_bytes" || k == "write_file_exec" || k == "read_chunk" || k == "read_chunk_bytes" || k == "write_bytes" || k == "write_some_bytes" || k == "writer_write") {
     return 2;
   }
   return 0;

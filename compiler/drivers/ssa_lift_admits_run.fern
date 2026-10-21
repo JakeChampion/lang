@@ -21,12 +21,13 @@ function main(): i32 {
   let registered: i32 = 0;
   let declined: i32 = 0;
   let out: string = "";
+  let kt: ssa_lift.KindTable = ssa_lift.kind_table();
   while (id < 1024) {
     let k: string = ir.kind_name(id);
     if (k != "invalid") {
       registered = registered + 1;
       let o: ir.Op = ir.Op { source: 0, decl: 0 - 1, kind_tag: id, i32_imm: 0, i64_imm: 0i64, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
-      if (!ssa_lift.admits(o)) {
+      if (!ssa_lift.admits(kt, o)) {
         declined = declined + 1;
         out = out + k + " pops=" + util.i32_to_string(ir.op_pops(o)) + " pushes=" + util.i32_to_string(ir.op_pushes(o)) + "\n";
       } else if (ir.op_pops(o) < 0) {
