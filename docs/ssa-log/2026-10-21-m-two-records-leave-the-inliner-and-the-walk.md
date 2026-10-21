@@ -9,7 +9,7 @@ the compiler's own struct constructions, and two of its callers build a
 record once per step and drop it at once.
 
 `captured_leaf_word` compared each op's tag with the tag of a freshly
-constructed `ir.op_call_word()`: one ten-field `Op` box per op of every
+constructed `ir.op_call_word()`: one nine-field `Op` box per op of every
 function the leaf inliner walks, 2.9 M in the self-compile, 184 M Ir
 with the construction and the drop.
 
@@ -41,7 +41,9 @@ frozen copy of main at 2210347:
 The whole-compiler binary is byte-identical to the base compiler's after
 each commit. Compiling `compiler/checker.fern`, the compiler performs
 4.5% fewer allocations: 25,362,276 against main's 26,564,102 on the dev
-container, the pair the allocation lane's baseline re-banks.
+container. The allocation lane's baseline re-banks the runner's own
+figure, 25,361,399; the counts are exact per checkout path, so the two
+hosts differ by the spread the baseline file describes.
 
 ## What is left
 
