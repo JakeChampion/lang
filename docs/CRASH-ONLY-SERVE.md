@@ -161,7 +161,12 @@ the native supervised path and the interp fallback.
   through `LISTEN_FDS` stays shared even when `reuse_port` is true.
   A dead worker's unaccepted connections are lost unless the kernel
   migrates them (`net.ipv4.tcp_migrate_req`); the shared-listener default
-  preserves its backlog for the replacement worker.
+  preserves its backlog for the replacement worker. With `with_h3`, the
+  supervisor also binds one HTTP/3 UDP socket per worker before the first
+  fork and keeps every one open, handing a dead worker's to its
+  replacement: the kernel steers each datagram over the `SO_REUSEPORT`
+  group by its flow's hash, so a socket joining or leaving the group would
+  move a live QUIC connection to a worker holding no state for it.
 - Graceful drain exists (#9854): SIGTERM is a readiness event on the
   reactor, the supervisor forwards it to its workers and waits for them,
   and each worker keeps accepting for a grace, fails its readiness path,

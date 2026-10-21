@@ -246,6 +246,10 @@ pub struct Config {
   // Whether HTTP/3 is served on a UDP socket on the listener's port
   // (`with_h3`).
   h3: boolean,
+  // The HTTP/3 UDP socket a supervised worker serves, bound by the
+  // supervisor before the first fork so the `SO_REUSEPORT` group is whole
+  // before any client connects; -1 for the worker to bind its own.
+  h3_sock: i32,
 }
 
 // config() — the defaults: an accept queue as deep as the host allows
@@ -259,7 +263,7 @@ pub struct Config {
 // 30 s, no tracing, and
 // the parser's `http_limits()`, bodies read whole before the handler runs.
 pub function config(): Config {
-  return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false };
+  return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1 };
 }
 
 // (c).with_tls(cfg) — every connection speaks TLS 1.3 under `cfg`
@@ -286,7 +290,10 @@ pub function (c: Config) with_h2(): Config {
 }
 
 // (c).with_h3() — HTTP/3 served beside TCP (std/http/h3q): each worker
-// binds a UDP socket on its listener's port, QUIC's handshake uses the TLS
+// serves a UDP socket on its listener's port (under `supervise` the
+// supervisor binds one per worker before forking, so the `SO_REUSEPORT`
+// group a connection is hashed over never changes size; a lone `run`
+// binds its own), QUIC's handshake uses the TLS
 // identity `with_tls` gave (without one no HTTP/3 is served), and every
 // response over TCP names the port in Alt-Svc so a client that speaks
 // HTTP/3 moves to it. The handler is the same; a request's `:authority`
@@ -5816,7 +5823,7 @@ function __supervise(port: i32, opts: Config, worker: (i32, Config, Option[Write
     workers = 1;
   }
   let resolved: Config = Config { ...opts, workers: workers };
-  let sup: __Supervisor = __Supervisor { pids: [], spawned: [], pipes: [], partial: [], snaps: [], backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
+  let sup: __Supervisor = __Supervisor { pids: [], spawned: [], pipes: [], partial: [], snaps: [], quic: [], h3_free: __h3_pool(listener, resolved), backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
   let drv: async.RealDriver = async.real_driver();
   let chld: i32 = drv.watch_signal(17);
   if (chld < 0) {
@@ -5956,6 +5963,10 @@ function __index_of_i32(xs: i32[], x: i32): i32 {
 // would take the parent's signals out of the set the parent waits on.
 function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, worker: (i32, Config, Option[Writer]) => i32, opts: Config, sup: __Supervisor): (__Supervisor, i32) {
   let snap: Option[Pipe] = __snapshot_pipe(opts);
+  let h3_sock: i32 = 0 - 1;
+  if (sup.h3_free.len() > 0) {
+    h3_sock = sup.h3_free[0];
+  }
   let pid: i32 = proc_fork();
   if (pid == -38) {
     eprint("serve: supervision unavailable; serving single-process");
@@ -5968,7 +5979,8 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, work
     if (single.fd < 0) {
       return (sup, __listen_failed(single));
     }
-    return (sup, worker(single.fd, Config { ...opts, workers: 1 }, None));
+    __h3_pool_close(sup.h3_free, h3_sock);
+    return (sup, worker(single.fd, Config { ...opts, workers: 1, h3_sock: h3_sock }, None));
   }
   if (pid < 0) {
     __snapshot_pipe_close(snap);
@@ -5980,7 +5992,7 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, work
     if (own.fd < 0) {
       exit(__listen_failed(own));
     }
-    let loop_opts: Config = Config { ...opts, stop_with_parent: true };
+    let loop_opts: Config = Config { ...opts, stop_with_parent: true, h3_sock: h3_sock };
     if (listener < 0) {
       loop_opts = Config { ...loop_opts, workers: 1 };
     }
@@ -5996,7 +6008,7 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, work
     },
     None => {}
   }
-  return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()), pipes: sup.pipes.append(read_end), partial: sup.partial.append(""), snaps: sup.snaps.append("") }, 0 - 1);
+  return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()), pipes: sup.pipes.append(read_end), partial: sup.partial.append(""), snaps: sup.snaps.append(""), quic: sup.quic.append(h3_sock), h3_free: __without_index_i32(sup.h3_free, 0) }, 0 - 1);
 }
 
 // __snapshot_pipe(opts) — the pipe a worker ships its metrics snapshots
@@ -6187,8 +6199,11 @@ function __worker_listener(port: i32, listener: i32, opts: Config): __Listen {
 // forked again, its consecutive fast-death count, whether a stop signal
 // has been forwarded, the worst exit code a worker answered while stopping
 // (the clean shutdown's exit) and the last code a worker died with while
-// serving (a give-up's exit).
-struct __Supervisor { pids: i32[], spawned: i64[], pipes: i32[], partial: string[], snaps: string[], backoff_ms: i64, fork_after: i64, fast_deaths: i32, stopping: boolean, worst: i32, crashed: i32 }
+// serving (a give-up's exit). `quic` is the HTTP/3 socket each live
+// worker serves (-1 for none) and `h3_free` the pre-bound ones not handed
+// to a worker, which a replacement takes: the supervisor keeps every one
+// open so the `SO_REUSEPORT` group never shrinks or grows.
+struct __Supervisor { pids: i32[], spawned: i64[], pipes: i32[], partial: string[], snaps: string[], quic: i32[], h3_free: i32[], backoff_ms: i64, fork_after: i64, fast_deaths: i32, stopping: boolean, worst: i32, crashed: i32 }
 
 // `.gave_up()` — eight consecutive fast deaths: the supervisor exits with
 // the last one's code rather than spinning.
@@ -6260,7 +6275,11 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
     if (sup.pipes[i] >= 0) {
       tcp_close(sup.pipes[i]);
     }
-    sup = __Supervisor { ...sup, pids: __without_index_i32(sup.pids, i), spawned: __without_index_i64(sup.spawned, i), pipes: __without_index_i32(sup.pipes, i), partial: __without_index_str(sup.partial, i), snaps: __without_index_str(sup.snaps, i) };
+    let freed: i32[] = sup.h3_free;
+    if (sup.quic[i] >= 0) {
+      freed = freed.append(sup.quic[i]);
+    }
+    sup = __Supervisor { ...sup, pids: __without_index_i32(sup.pids, i), spawned: __without_index_i64(sup.spawned, i), pipes: __without_index_i32(sup.pipes, i), partial: __without_index_str(sup.partial, i), snaps: __without_index_str(sup.snaps, i), quic: __without_index_i32(sup.quic, i), h3_free: freed };
     if (sup.stopping) {
       if (code > sup.worst) {
         sup = __Supervisor { ...sup, worst: code };
@@ -6363,7 +6382,8 @@ function __port_from_env(name: string, fallback: i32): i32 {
 // ---- HTTP/3 (docs/NET-P8-HTTP3-PLAN.md) -------------------------------------
 //
 // With `Config.with_h3` and TLS, whose identity QUIC's handshake uses, each
-// worker binds a UDP socket on its listener's port and serves HTTP/3 on it
+// worker serves HTTP/3 on a UDP socket on its listener's port, one the
+// supervisor bound before forking (`__h3_pool`) or, serving alone, its own
 // (std/http/h3q): a datagram goes to the connection whose ID it carries, a
 // client's first Initial makes a new one, and each connection's timers are
 // in the loop's wait. A request runs the handler as an HTTP/2 stream's
@@ -6412,9 +6432,59 @@ function __quic_socket(port: i32): i32 {
   return udp_bind_with(__every_v4(), port, true);
 }
 
+// __h3_pool(listener, opts) — the supervisor's HTTP/3 sockets, one per
+// worker, bound on the listener's port before the first fork. The kernel
+// steers each datagram over the `SO_REUSEPORT` group by its flow's hash,
+// so a socket joining or leaving the group re-steers flows: a connection
+// that began while one worker had bound would, once the next bound, find
+// its later datagrams on a worker holding no state for it. With the whole
+// group bound here, and every socket kept open by the supervisor for a
+// replacement to take, the mapping never changes. Empty when there is no
+// HTTP/3 to serve, the listener is each worker's own (its port unknown
+// here), or a bind fails — then each worker binds its own as it starts.
+function __h3_pool(listener: i32, opts: Config): i32[] {
+  match (opts.tls) {
+    None => {
+      return [];
+    },
+    Some(_) => {}
+  }
+  if (!opts.h3 || listener < 0) {
+    return [];
+  }
+  let port: i32 = tcp_local_port(listener);
+  let pool: i32[] = [];
+  let i: i32 = 0;
+  while (i < opts.workers) {
+    let sock: i32 = __quic_socket(port);
+    if (sock < 0) {
+      __h3_pool_close(pool, 0 - 1);
+      return [];
+    }
+    pool = pool.append(sock);
+    i = i + 1;
+  }
+  return pool;
+}
+
+// __h3_pool_close(pool, keep) — every socket of the pool closed but `keep`:
+// what a single-process serve does with the pool once it holds the one it
+// serves, since a bound socket nobody reads would swallow the datagrams
+// hashed to it.
+function __h3_pool_close(pool: i32[], keep: i32): void {
+  let i: i32 = 0;
+  while (i < pool.len()) {
+    if (pool[i] != keep) {
+      let closed: Result[void, net.NetError] = net.close(pool[i]);
+    }
+    i = i + 1;
+  }
+}
+
 // __quic_open(drv, listener, opts) — the worker's HTTP/3 on its listener's
-// port, or none when `with_h3` was not asked, there is no TLS identity, or
-// the port cannot be bound.
+// port: the socket the supervisor handed it (`opts.h3_sock`) or, serving
+// alone, one it binds itself; none when `with_h3` was not asked, there is
+// no TLS identity, or the port cannot be bound.
 function __quic_open[D: async.Driver](drv: D, listener: i32, opts: Config): __Quic {
   let Some(t) = opts.tls else {
     return __quic_none();
@@ -6423,7 +6493,10 @@ function __quic_open[D: async.Driver](drv: D, listener: i32, opts: Config): __Qu
     return __quic_none();
   }
   let port: i32 = tcp_local_port(listener);
-  let sock: i32 = __quic_socket(port);
+  let sock: i32 = opts.h3_sock;
+  if (sock < 0) {
+    sock = __quic_socket(port);
+  }
   if (sock < 0) {
     return __quic_none();
   }
