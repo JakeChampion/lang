@@ -151,7 +151,13 @@ fern -lint src/                 # every .fern file under src/
 fern -lint-rules                # the rules, their default severity and options
 fern -lint -lint-set cyclomatic-complexity=deny \
            -lint-opt cyclomatic-complexity.max=15 src/
+fern -lint -lint-cover cov.txt src/   # change-risk: complexity against the lines a -cover run hit
 ```
+
+`change-risk` scores each function `complexity^2 * (1 - coverage)^3 +
+complexity` from a saved `-cover` run (see [Coverage](#coverage)) and
+reports those over 30: the complex code nothing tests. It runs only when
+`-lint-cover` names a run, and configuring it without one is an error.
 
 A finding at `warn` prints and exits 0; one at `deny` exits 1. Set
 severities and options for a whole package in its `fern.toml`:

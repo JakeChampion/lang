@@ -98,6 +98,14 @@ what you mean. When a literal phrase is available, use it.
 
 "Please remove all mannered prose" usually does the same job.
 
+ASD-STE100, Simplified Technical English, is the same rule set made
+mechanical for maintenance manuals: one instruction per sentence, about
+twenty words, active voice, each word in one approved meaning. Its
+procedural rules are a sharper statement of "write plainly" for help text and
+`docs/`; its 869-word dictionary is not adoptable here, since it has no word
+for most of what a compiler does. `docs/READING-NOTES-2026-10-21.md` has the
+pointer.
+
 **Less formatting in chat, not more.** Prompts written against older models
 often carry anti-bullet, anti-header rules. This generation already under-uses
 them; such a rule now makes replies worse. Delete it, or replace it with one
