@@ -7260,6 +7260,146 @@ function quarantine_rc(addr: string, w: string, on: boolean): string {
   return "    stur wzr, " + addr + "\n";
 }
 
+// arr_copy_elems copies a grown array's old elements (slots 1..len) from the
+// old buffer in x19 to the new one in x0, x21 holding len: four to the
+// iteration through post-indexed pairs, two instructions per element against
+// the six a one-element-per-branch loop costs, then a word-count tail. The
+// scratch is x2..x8; x0, x19, x20 and x21 are untouched. `l` prefixes the
+// labels.
+function arr_copy_elems(l: string): string {
+  return "    add x2, x19, #8\n    add x3, x0, #8\n    mov x4, x21\n"
+    + l + "_copy4:\n    cmp x4, #4\n    b.lt " + l + "_copy1\n"
+    + "    ldp x5, x6, [x2], #16\n    ldp x7, x8, [x2], #16\n    stp x5, x6, [x3], #16\n    stp x7, x8, [x3], #16\n"
+    + "    sub x4, x4, #4\n    b " + l + "_copy4\n"
+    + l + "_copy1:\n    cbz x4, " + l + "_copy_done\n"
+    + l + "_copy1_loop:\n    ldr x5, [x2], #8\n    str x5, [x3], #8\n    subs x4, x4, #1\n    b.ne " + l + "_copy1_loop\n"
+    + l + "_copy_done:\n";
+}
+
+// apo_grow is __fern_arr_push_owned past its fast path on the plain build: a
+// full sole-owned receiver grows in one frame, the new block popped from its
+// class as the box shim would, the elements copied, and the old block pushed
+// onto its class with nothing re-read. A static literal and a shared receiver
+// go to the shared slow path, which copies and frees nothing.
+function apo_grow(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    ldur w2, [x0, #-8]\n");
+  s = s.write("    cmp w2, #1\n");
+  s = s.write("    b.eq .Lapo_own\n");
+  s = s.write("    b .Larr_push_slow\n");
+  s = s.write(".Lapo_own:\n");
+  s = s.write("    stp x29, x30, [sp, #-16]!\n");
+  s = s.write("    mov x29, sp\n");
+  s = s.write("    stp x19, x20, [sp, #-16]!\n");
+  s = s.write("    stp x21, x22, [sp, #-16]!\n");
+  s = s.write("    mov x19, x0\n");  // old arr ptr
+  s = s.write("    mov x20, x1\n");  // value
+  s = s.write("    ldr x21, [x19]\n");  // len
+  s = s.write("    ldur x22, [x19, #-16]\n");  // old cap
+  s = s.write("    lsl x8, x22, #1\n");  // newcap: doubled, or 4 from 0
+  s = s.write("    cbnz x8, .Lapo_cap\n");
+  s = s.write("    mov x8, #4\n");
+  s = s.write(".Lapo_cap:\n");
+  // The box shim's pop, without the call: the block's byte count indexes
+  // the freelist as it is; a miss or a block over 256 words takes
+  // __fern_alloc, which clobbers only x0..x3.
+  s = s.write("    add x1, x8, #3\n");
+  s = s.write("    lsl x1, x1, #3\n");
+  s = s.write("    cmp x1, #2048\n");
+  s = s.write("    b.hi .Lapo_alloc\n");
+  s = s.write("    adrp x3, __fern_freelist\n");
+  s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+  s = s.write("    add x1, x3, x1\n");  // the class's slot
+  s = s.write("    ldr x3, [x1]\n");  // head
+  s = s.write("    cbz x3, .Lapo_miss\n");
+  s = s.write("    ldr x4, [x3]\n");  // next
+  s = s.write("    str x4, [x1]\n");
+  s = s.write(".Lapo_box:\n");
+  s = s.write("    str x8, [x3]\n");  // cap
+  s = s.write("    mov w4, #1\n");
+  s = s.write("    str w4, [x3, #8]\n");  // rc = 1
+  s = s.write("    add x0, x3, #16\n");  // data ptr
+  s = s.write("    add x1, x21, #1\n");
+  s = s.write("    str x1, [x0]\n");  // new len = old+1
+  s = s.write(arr_copy_elems(".Lapo"));
+  s = s.write("    add x1, x21, #1\n");
+  s = s.write("    str x20, [x0, x1, lsl #3]\n");  // the value, at slot len+1
+  s = s.write("    add x1, x22, #3\n");  // old block words = cap + 3 (header)
+  s = s.write("    mov x9, #0x10000\n");
+  s = s.write("    cmp x1, x9\n");
+  s = s.write("    b.hs .Lapo_large\n");  // large tier -> recycle via __fern_large_push
+  s = s.write(quarantine_rc("[x19, #-8]", "w10", false));
+  s = s.write("    sub x2, x19, #16\n");  // old box base
+  s = freelist_push(s, "x2", "x1", "x3", "x9");
+  s = s.write(".Lapo_ret:\n");
+  s = s.write("    ldp x21, x22, [sp], #16\n");
+  s = s.write("    ldp x19, x20, [sp], #16\n");
+  s = s.write("    ldp x29, x30, [sp], #16\n");
+  s = s.write("    ret\n");
+  s = s.write(".Lapo_miss:\n");
+  s = s.write("    add x1, x8, #3\n");
+  s = s.write("    lsl x1, x1, #3\n");
+  s = s.write(".Lapo_alloc:\n");
+  s = s.write("    mov x0, x1\n");
+  s = s.write("    bl __fern_alloc\n");  // base in x0
+  s = s.write("    mov x3, x0\n");
+  s = s.write("    b .Lapo_box\n");
+  return s;
+}
+
+// apo_wrapped is __fern_arr_push_owned past its fast path on the diagnostic
+// builds. x30 is saved in the frame (restored at .Lapo_ret), so the large
+// tier's bl is safe; __fern_large_push preserves x0 (= new).
+function apo_wrapped(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.rc_free_debug) {
+    // The first append to a static empty array leaves nothing to free, so
+    // it goes straight to the shared slow path and returns from there.
+    s = s.write("    ldr x2, [x0]\n");
+    s = s.write("    cbnz x2, .Lapo_grow\n");
+    s = s.write("    ldur x2, [x0, #-16]\n");
+    s = s.write("    cbnz x2, .Lapo_grow\n");
+    s = s.write("    ldur w2, [x0, #-8]\n");
+    s = s.write("    tbz w2, #31, .Lapo_grow\n");
+    s = s.write("    b .Larr_push_slow\n");
+    s = s.write(".Lapo_grow:\n");
+  }
+  s = s.write("    stp x29, x30, [sp, #-16]!\n");
+  s = s.write("    mov x29, sp\n");
+  s = s.write("    stp x19, x20, [sp, #-16]!\n");
+  s = s.write("    mov x19, x0\n");  // save old arr ptr
+  // x0 = new (grew) or old (in place); the fast path already declined.
+  if (s.rc_free_debug) {
+    s = s.write("    bl __fern_arr_push\n");
+  } else {
+    s = s.write("    bl .Larr_push_slow\n");
+  }
+  s = s.write("    cmp x0, x19\n");
+  s = s.write("    beq .Lapo_ret\n");  // in place — nothing freed
+  s = s.write("    mov x9, #0x10000\n");
+  s = s.write("    cmp x19, x9\n");  // grew: free the dead old box
+  s = s.write("    blo .Lapo_ret\n");  // low-addr / SSO sentinel
+  s = s.write("    ldur w1, [x19, #-8]\n");  // old rc
+  s = s.write(san_poison_check("w1", "w10", ".Lapo_live", s.rc_free_debug));
+  s = s.write("    tbnz w1, #31, .Lapo_ret\n");  // static sentinel (rc<0)
+  s = s.write("    cmp w1, #1\n");
+  s = s.write("    bne .Lapo_ret\n");  // not sole owner — leave (defensive)
+  s = s.write("    ldur x1, [x19, #-16]\n");  // old cap
+  s = s.write("    add x1, x1, #3\n");  // idx = cap + 3
+  s = s.write("    mov x9, #0x10000\n");  // freelist class cap (65536)
+  s = s.write("    cmp x1, x9\n");
+  s = s.write("    bhs .Lapo_large\n");  // large tier -> recycle via __fern_large_push
+  s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));  // release the rc word
+  s = s.write("    sub x2, x19, #16\n");  // old box base
+  s = lc_bump_free_words(s, "x1", "x3", "x9");
+  if (!s.rc_free_debug) {
+    s = freelist_push(s, "x2", "x1", "x3", "x9");
+  }
+  s = s.write(".Lapo_ret:\n");
+  s = s.write("    ldp x19, x20, [sp], #16\n");
+  s = s.write("    ldp x29, x30, [sp], #16\n");
+  s = s.write("    ret\n");  // x0 = new
+  return s;
+}
+
 // arr_push_fast is the append both __fern_arr_push and __fern_arr_push_owned
 // start with: a receiver with a free slot that this push may mutate (sole
 // owner, or the bit-31 immortal sentinel) takes the value in place, with no
@@ -10497,31 +10637,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("    bl __fern_arr_box\n");  // -> data ptr in x0 (cap + len=cap written)
     s = s.write("    add x1, x21, #1\n");
     s = s.write("    str x1, [x0]\n");  // new len = old+1 (overwrite box's len)
-    // Copy old elements (slots 1..len) from old arr to new, four to the
-    // iteration through post-indexed pairs: two instructions per element
-    // against the six a one-element-per-branch loop costs. The scratch is
-    // x2..x8 — x0 (the new buffer, the return value), x19, x20 and x21 all
-    // outlive this and are untouched. A word-count tail finishes the run.
-    s = s.write("    add x2, x19, #8\n");  // src cursor
-    s = s.write("    add x3, x0, #8\n");  // dst cursor
-    s = s.write("    mov x4, x21\n");  // elements remaining
-    s = s.write(".Larr_push_copy4:\n");
-    s = s.write("    cmp x4, #4\n");
-    s = s.write("    b.lt .Larr_push_copy1\n");
-    s = s.write("    ldp x5, x6, [x2], #16\n");
-    s = s.write("    ldp x7, x8, [x2], #16\n");
-    s = s.write("    stp x5, x6, [x3], #16\n");
-    s = s.write("    stp x7, x8, [x3], #16\n");
-    s = s.write("    sub x4, x4, #4\n");
-    s = s.write("    b .Larr_push_copy4\n");
-    s = s.write(".Larr_push_copy1:\n");
-    s = s.write("    cbz x4, .Larr_push_copy_done\n");
-    s = s.write(".Larr_push_copy1_loop:\n");
-    s = s.write("    ldr x5, [x2], #8\n");
-    s = s.write("    str x5, [x3], #8\n");
-    s = s.write("    subs x4, x4, #1\n");
-    s = s.write("    b.ne .Larr_push_copy1_loop\n");
-    s = s.write(".Larr_push_copy_done:\n");
+    s = s.write(arr_copy_elems(".Larr_push"));
     // Store the new value at slot (len+1).
     s = s.write("    add x1, x21, #1\n");
     s = s.write("    str x20, [x0, x1, lsl #3]\n");
@@ -10531,67 +10647,26 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
     // __fern_arr_push_owned — the sole-owner self-append (an !aliased
-    // `a = a.append(v)`). Wraps __fern_arr_push and, iff the push GREW
-    // (reallocated, result != old), frees the dead old buffer onto its size
-    // class (the __fern_arr_dec free path: rc-guarded, sole-owner, ≤512 KiB
-    // tier). Sound only because the emit site proved the slot unaliased, so
-    // the superseded old buffer has no surviving reference. Same heap layout
-    // as __fern_arr_dec (rc @ [old-8], cap @ [old-16], base = old-16, idx =
-    // cap+3, freelist word-indexed, class cap 65536). arm64 mirror of asm_ir's
-    // __fern_arr_push_owned; co-emitted with __fern_arr_push (its dependency).
+    // `a = a.append(v)`): __fern_arr_push that also frees the dead old
+    // buffer onto its size class when the push grew (the __fern_arr_dec
+    // free path: sole-owner, ≤512 KiB tier). Sound only because the emit
+    // site proved the slot unaliased, so the superseded old buffer has no
+    // surviving reference. Same heap layout as __fern_arr_dec (rc @ [old-8],
+    // cap @ [old-16], base = old-16, idx = cap+3, freelist word-indexed,
+    // class cap 65536). arm64 mirror of asm_ir's __fern_arr_push_owned;
+    // co-emitted with __fern_arr_push (its dependency). The plain build
+    // grows in one frame (apo_grow); the debug, census and counter builds
+    // keep the wrapper shape, whose hooks count and check: the old pointer
+    // saved, the shared slow path called, and the old block freed iff the
+    // result moved.
     s = s.write("__fern_arr_push_owned:\n");
     s = s.write(arr_push_fast(".Lapo_slow", s.rc_free_debug));
     s = s.write(".Lapo_slow:\n");
-    if (!s.rc_free_debug) {
-      // The first append to a static empty array leaves nothing to free, so
-      // it goes straight to the shared slow path and returns from there.
-      s = s.write("    ldr x2, [x0]\n");
-      s = s.write("    cbnz x2, .Lapo_grow\n");
-      s = s.write("    ldur x2, [x0, #-16]\n");
-      s = s.write("    cbnz x2, .Lapo_grow\n");
-      s = s.write("    ldur w2, [x0, #-8]\n");
-      s = s.write("    tbz w2, #31, .Lapo_grow\n");
-      s = s.write("    b .Larr_push_slow\n");
-      s = s.write(".Lapo_grow:\n");
-    }
-    s = s.write("    stp x29, x30, [sp, #-16]!\n");
-    s = s.write("    mov x29, sp\n");
-    s = s.write("    stp x19, x20, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");  // save old arr ptr
-    // x0 = new (grew) or old (in place); the fast path already declined.
-    if (s.rc_free_debug) {
-      s = s.write("    bl __fern_arr_push\n");
+    if (!s.rc_free_debug && profile_alloc_fast(s)) {
+      s = apo_grow(s);
     } else {
-      s = s.write("    bl .Larr_push_slow\n");
+      s = apo_wrapped(s);
     }
-    s = s.write("    cmp x0, x19\n");
-    s = s.write("    beq .Lapo_ret\n");  // in place — nothing freed
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x19, x9\n");  // grew: free the dead old box
-    s = s.write("    blo .Lapo_ret\n");  // low-addr / SSO sentinel
-    s = s.write("    ldur w1, [x19, #-8]\n");  // old rc
-    s = s.write(san_poison_check("w1", "w10", ".Lapo_live", s.rc_free_debug));
-    s = s.write("    tbnz w1, #31, .Lapo_ret\n");  // static sentinel (rc<0)
-    s = s.write("    cmp w1, #1\n");
-    s = s.write("    bne .Lapo_ret\n");  // not sole owner — leave (defensive)
-    s = s.write("    ldur x1, [x19, #-16]\n");  // old cap
-    s = s.write("    add x1, x1, #3\n");  // idx = cap + 3
-    s = s.write("    mov x9, #0x10000\n");  // freelist class cap (65536)
-    s = s.write("    cmp x1, x9\n");
-    s = s.write("    bhs .Lapo_large\n");  // large tier -> recycle via __fern_large_push
-    s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));  // release the rc word
-    s = s.write("    sub x2, x19, #16\n");  // old box base
-    s = lc_bump_free_words(s, "x1", "x3", "x9");
-    if (!s.rc_free_debug) {
-      s = freelist_push(s, "x2", "x1", "x3", "x9");
-    }
-    s = s.write(".Lapo_ret:\n");
-    s = s.write("    ldp x19, x20, [sp], #16\n");
-    s = s.write("    ldp x29, x30, [sp], #16\n");
-    s = s.write("    ret\n");  // x0 = new
-    // Large tier (#3425): recycle the >=512 KiB superseded old buffer (base =
-    // old-16, bytes = idx*8) instead of leaking. x30 is saved in the frame
-    // (restored at .Lapo_ret) so the bl is safe; large_push preserves x0 (= new).
     s = s.write(".Lapo_large:\n");
     s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));  // release the rc word
     s = s.write("    lsl x2, x1, #3\n");  // bytes = idx*8
