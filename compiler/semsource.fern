@@ -2271,6 +2271,9 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
   if (!s.ok) {
     return v;
   }
+  if (ssasem.is_integer(s.values[v.id])) {
+    return checked_int_cast(u, v, s);
+  }
   if (!ssasem.is_dyn(s.values[v.id])) {
     return refused(s, "downcast of a value that is not dyn");
   }
@@ -2301,6 +2304,64 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
   s = terminate(yes.s, t_br(join));
 
   let no: Value = define(open(s, miss, [pred]), ssasem.variant_new(), [], 0, names[1], whole);
+  let miss_end: i32 = no.s.cur.id;
+  s = terminate(no.s, t_br(join));
+  return define(open(s, join, [hit_end, miss_end]), 8, [yes.id, no.id], 0, "", whole);
+}
+
+// `x as? T` between integers is `Some(x as T)` when converting back gives x
+// again and, across a change of signedness, the value is not negative; `None`
+// otherwise (#12708).
+function checked_int_cast(u: ast.ExprUnary, v: Value, s: State): Value {
+  let source: typeinfo.Type = s.values[v.id];
+  let target: typeinfo.Type = resolved(s.scope.resolve_type(slice_unchecked(u.op, 4, u.op.len()) + ""), s.template, s.binding, s.scope);
+  if (!ssasem.is_integer(target)) {
+    return refused(s, "checked conversion to " + typeinfo.spelling(target));
+  }
+  let whole: typeinfo.Type = ssasem.option_of(target);
+  let names: string[] = variant_names(s, whole, semrecords.layout_option());
+  let t: Value = define(s, ssasem.cast(), [v.id], 0, "", target);
+  let back: Value = define(t.s, ssasem.cast(), [t.id], 0, "", source);
+  let fits: Value = define(back.s, 9, [back.id, v.id], 0, "==", t_bool());
+  s = fits.s;
+  // The value whose sign decides a change of signedness, or -1 for none.
+  let signed: i32 = 0 - 1;
+  if (!ssasem.is_unsigned_int(source) && ssasem.is_unsigned_int(target)) {
+    signed = v.id;
+  }
+  if (ssasem.is_unsigned_int(source) && !ssasem.is_unsigned_int(target)) {
+    signed = t.id;
+  }
+  let pred: i32 = s.cur.id;
+  let sign: i32 = s.next_block;
+  let hit: i32 = sign;
+  if (signed >= 0) {
+    hit = sign + 1;
+  }
+  let miss: i32 = hit + 1;
+  let join: i32 = hit + 2;
+  s = State { ...s, next_block: join + 1 };
+  let hit_pred: i32 = pred;
+  let miss_preds: i32[] = [pred];
+  if (signed < 0) {
+    s = terminate(s, t_brif(fits.id, hit, miss));
+  } else {
+    s = terminate(s, t_brif(fits.id, sign, miss));
+    let st: typeinfo.Type = s.values[signed];
+    let text: string = "";
+    if (ssasem.text_constant(st)) {
+      text = "0";
+    }
+    let zero: Value = define(open(s, sign, [pred]), 1, [], 0, text, st);
+    let nonneg: Value = define(zero.s, 9, [signed, zero.id], 0, ">=", t_bool());
+    hit_pred = nonneg.s.cur.id;
+    miss_preds = miss_preds.append(hit_pred);
+    s = terminate(nonneg.s, t_brif(nonneg.id, hit, miss));
+  }
+  let yes: Value = define(open(s, hit, [hit_pred]), ssasem.variant_new(), [t.id], 0, names[0], whole);
+  let hit_end: i32 = yes.s.cur.id;
+  s = terminate(yes.s, t_br(join));
+  let no: Value = define(open(s, miss, miss_preds), ssasem.variant_new(), [], 0, names[1], whole);
   let miss_end: i32 = no.s.cur.id;
   s = terminate(no.s, t_br(join));
   return define(open(s, join, [hit_end, miss_end]), 8, [yes.id, no.id], 0, "", whole);

@@ -1530,6 +1530,10 @@ type DowncastExpr struct {
 	// compare is exact for any trait set (docs/DYN-TRAITS.md §10). The
 	// interpreter handles any set by runtime concrete-type tag.
 	Traits []string
+	// Lowered is set by the checker when `Inner` is an integer and Target
+	// an integer type: the checked conversion's block-expr, which the
+	// post-check rewrite puts in the node's place (#12708).
+	Lowered Expr
 }
 
 // BlockExpr is a block used in value position: `{ stmt; stmt; …; tailExpr }`.

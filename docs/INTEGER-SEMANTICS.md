@@ -327,6 +327,18 @@ the destination's signedness; see `docs/FLOAT-SEMANTICS.md` for the
 saturating float↔integer conversion contract. All conversions are
 portable across backends.
 
+`x as? T` is the checked integer conversion, the `as` member of the
+`?` operator family: `Some(x as T)` when `T` holds the value exactly,
+`None` when it does not — out of range, or negative going to an
+unsigned type.
+
+```
+200 as? u8        == Some(200)
+300 as? u8        == None
+(0 - 1) as? u32   == None        // negative into an unsigned type
+3000000000u32 as? i32 == None
+```
+
 ## Testing
 
 The cross-backend differential harness
