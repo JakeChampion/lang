@@ -4996,7 +4996,8 @@ element), so calling either inside a loop — or re-evaluating
 `for k in m.keys()` per iteration — re-snapshots every time. For the
 common "visit every entry" case prefer **`for (k, v) in m`**, which
 desugars to the `MapIter` cursor (`m.iter()` / `has_next()` / `key()` /
-`value()` / `advance()`) and walks entries in insertion order **without
+`value()` / `advance()`) and walks entries in insertion order — except
+that removing a key moves the last entry into its place — **without
 per-iteration allocation**. Reach for `keys()` / `values()` only when
 you genuinely need a materialised `K[]` / `V[]` (to sort, index, or
 retain past the map's lifetime). A snapshot-free `entries()`-style
