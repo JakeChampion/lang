@@ -95,7 +95,6 @@ func TestLintDeduplicatesTargets(t *testing.T) {
 func TestLintUsageErrors(t *testing.T) {
 	dir := t.TempDir()
 	good := writeFile(t, dir, "a.fern", quietSrc)
-	md := writeFile(t, dir, "doc.fern.md", "# hi\n")
 	txt := writeFile(t, dir, "notes.txt", "hi\n")
 
 	cases := []struct {
@@ -105,7 +104,6 @@ func TestLintUsageErrors(t *testing.T) {
 		opts  []string
 	}{
 		{"missing path", []string{filepath.Join(dir, "nope.fern")}, nil, nil},
-		{"literate document", []string{md}, nil, nil},
 		{"not a fern source", []string{txt}, nil, nil},
 		{"empty directory", []string{t.TempDir()}, nil, nil},
 		{"malformed -lint-set", []string{good}, []string{"cyclomatic-complexity"}, nil},

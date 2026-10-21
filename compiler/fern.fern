@@ -1585,7 +1585,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-d", "", "with -fmt: print unified diffs, exiting 1 when any file differs"),
     ] },
     FlagGroup { title: "lint", flags: [
-      cli_flag("-lint", "", "lint each PATH, a .fern file, a directory of them, or - for stdin"),
+      cli_flag("-lint", "", "lint each PATH: a .fern or .fern.md file, a directory of them, or - for stdin"),
       cli_flag("-lint-rules", "", "list the lint rules with their severities and options"),
       cli_flag("-lint-set", "RULE=LEVEL", "with -lint: set a rule to allow, warn or deny (repeatable)"),
       cli_flag("-lint-opt", "RULE.OPT=VALUE", "with -lint: set a rule option (repeatable)"),
@@ -3667,7 +3667,12 @@ function run_doc(path: string, out_path: string): i32 {
     eprint("fern: -doc: cannot read " + path);
     return 1;
   }
-  let page: string = ferndoc.render_page(src, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))));
+  let (code, terr) = doc_source(path, src);
+  if (terr.len() > 0) {
+    eprint(terr);
+    return 1;
+  }
+  let page: string = ferndoc.render_page(code, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))));
   if (out_path.len() == 0) {
     write(page);
     return 0;
@@ -3759,7 +3764,12 @@ function doc_tree(dir: string, out_dir: string): i32 {
         return 1;
       }
       let stem: string = doc_stem(child_rel);
-      let page: string = ferndoc.render_page(src, doc_module_path(ns, stem));
+      let (code, terr) = doc_source(child, src);
+      if (terr.len() > 0) {
+        eprint(terr);
+        return 1;
+      }
+      let page: string = ferndoc.render_page(code, doc_module_path(ns, stem));
       // A module with nothing public gets no page at all rather than a
       // heading with no content under it.
       if (page.len() == 0) {
@@ -3779,18 +3789,32 @@ function doc_tree(dir: string, out_dir: string): i32 {
 }
 
 // is_doc_module selects the files a reference page is generated from: Fern
-// modules, minus the `_test_` stubs, which are fixtures rather than API.
-// `.fern.md` is excluded by the same suffix test that admits `.fern`.
+// modules and literate documents, minus the `_test_` stubs, which are
+// fixtures rather than API.
 function is_doc_module(name: string): boolean {
-  if (name.len() < 6 || slice_unchecked(name, name.len() - 5, name.len()) != ".fern") {
+  if (!util.str_has_suffix(name, ".fern") && !is_literate(name)) {
     return false;
   }
   return !(name.len() >= 6 && slice_unchecked(name, 0, 6) == "_test_");
 }
 
-// doc_stem drops a trailing `.fern`, leaving the module's path relative to its
-// namespace.
+// doc_source is the module a page documents: the file itself, or the entry
+// module a literate document tangles to. The second result is why it cannot
+// be tangled, empty when it can.
+function doc_source(path: string, src: string): (string, string) {
+  let (mods, terr) = entry_sources(path, src);
+  if (terr.len() > 0) {
+    return ("", terr);
+  }
+  return (mods.srcs[0], "");
+}
+
+// doc_stem drops a trailing `.fern` or `.fern.md`, leaving the module's path
+// relative to its namespace.
 function doc_stem(p: string): string {
+  if (is_literate(p)) {
+    return slice_unchecked(p, 0, p.len() - 8) + "";
+  }
   if (p.len() >= 5 && slice_unchecked(p, p.len() - 5, p.len()) == ".fern") {
     return slice_unchecked(p, 0, p.len() - 5) + "";
   }
@@ -5103,10 +5127,9 @@ function run_and_clean(target: string, out: string, dir: string, prog_args: stri
 }
 
 // source_files is every source the paths of a per-file tool name, sorted: a
-// directory contributes each .fern beneath it, and each .fern.md as well when
-// `literate`; `-` names stdin. The error is set for a path that is none of
-// these.
-function source_files(paths: string[], literate: boolean): (string[], string) {
+// directory contributes each .fern and .fern.md beneath it, and `-` names
+// stdin. The error is set for a path that is none of these.
+function source_files(paths: string[]): (string[], string) {
   let out: string[] = [];
   let todo: string[] = paths;
   while (todo.len() > 0) {
@@ -5122,22 +5145,18 @@ function source_files(paths: string[], literate: boolean): (string[], string) {
       if let Ok(names) = read_dir(p) {
         for n in names {
           let child: string = p + "/" + n;
-          if (util.is_dir(child) || util.str_has_suffix(n, ".fern") || literate && util.str_has_suffix(n, ".fern.md")) {
+          if (util.is_dir(child) || util.str_has_suffix(n, ".fern") || util.str_has_suffix(n, ".fern.md")) {
             todo = todo.append(child);
           }
         }
       }
       continue;
     }
-    if (p == "-" || literate && util.str_has_suffix(p, ".fern.md")) {
+    if (p == "-" || util.str_has_suffix(p, ".fern.md")) {
       if (!util.has_str(out, p)) {
         out = out.append(p);
       }
       continue;
-    }
-    if (util.str_has_suffix(p, ".fern.md")) {
-      let no: string[] = [];
-      return (no, p + ": linting a literate document is not supported yet — tangle it first (`fern -tangle " + p + "`)");
     }
     if (!util.str_has_suffix(p, ".fern")) {
       if let Err(e) = read_file(p) {
@@ -5288,20 +5307,45 @@ function lint_text(st: DiagStyle, f: lint.Finding, src: string): string {
   return out;
 }
 
+// lint_module lints one module's `code`, reporting its findings at the
+// positions `lm` moves them to. A parse error is reported instead, and the
+// module skipped; a rule the parser happens to report but the checker owns (a
+// coded E finding) does not count as one.
+function lint_module(st: DiagStyle, cfg: lint.Config, shown: string, code: string, lm: util.LineMap): lint.Finding[] {
+  let lx: lexer.LexResult = lexer.tokenize_full(code);
+  let m: parser.Module = parser.parse_module(lx.tokens);
+  let perrs: Finding[] = [];
+  for pf in parse_findings(m) {
+    if (pf.diag.code.len() == 0 || pf.diag.code[0] == b'P') {
+      perrs = perrs.append(pf);
+    }
+  }
+  let no_files: string[] = [];
+  let out: lint.Finding[] = [];
+  if (eprint_findings(st, perrs, shown, no_files, [lm])) {
+    return out;
+  }
+  for fd in lint.lint_file(cfg, shown, code, m, lx.comments) {
+    let (line, col) = util.doc_pos([lm], fd.line, fd.col);
+    out = out.append(lint.Finding { ...fd, line: line, col: col });
+  }
+  return out;
+}
+
 // run_lint is `fern -lint PATH...`: exit 1 when a rule set to deny fires, 2
 // for a usage or configuration error.
 function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]): i32 {
   if (paths.len() == 0) {
-    eprint("usage: fern -lint PATH... (a .fern file or a directory of them)");
+    eprint("usage: fern -lint PATH... (a .fern or .fern.md file, or a directory of them)");
     return 2;
   }
-  let (files, terr) = source_files(paths, false);
+  let (files, terr) = source_files(paths);
   if (terr.len() > 0) {
     eprint("fern: " + terr);
     return 2;
   }
   if (files.len() == 0) {
-    eprint("fern: no .fern files under " + comma_joined(paths));
+    eprint("fern: no .fern or .fern.md files under " + comma_joined(paths));
     return 2;
   }
   let (cfg, cerr) = lint_config(files[0], sets, opts);
@@ -5323,26 +5367,23 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
         return 2;
       }
     }
-    let lx: lexer.LexResult = lexer.tokenize_full(src);
-    let m: parser.Module = parser.parse_module(lx.tokens);
-    // A parse error skips the file; a rule the parser happens to report but
-    // the checker owns (a coded E finding) does not.
-    let perrs: Finding[] = [];
-    for pf in parse_findings(m) {
-      if (pf.diag.code.len() == 0 || pf.diag.code[0] == b'P') {
-        perrs = perrs.append(pf);
-      }
-    }
-    let no_files: string[] = [];
-    if (eprint_findings(st, perrs, entry_display(f), no_files, [util.no_line_map()])) {
+    // A literate document is linted as the modules it tangles to, its
+    // findings moved back onto the document.
+    let (mods, terr) = entry_sources(f, src);
+    if (terr.len() > 0) {
+      eprint(terr);
       continue;
     }
-    for fd in lint.lint_file(cfg, entry_display(f), src, m, lx.comments) {
-      if (all.len() > 0) {
-        out = out + "\n";
+    let mi: i32 = 0;
+    while (mi < mods.srcs.len()) {
+      for fd in lint_module(st, cfg, entry_display(f), mods.srcs[mi], mods.maps[mi]) {
+        if (all.len() > 0) {
+          out = out + "\n";
+        }
+        out = out + lint_text(st, fd, src) + "\n";
+        all = all.append(fd);
       }
-      out = out + lint_text(st, fd, src) + "\n";
-      all = all.append(fd);
+      mi = mi + 1;
     }
   }
   let sum: string = lint.summary(all);
@@ -5810,7 +5851,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // rest, and the exit code is the worst one seen — so `-d` over a list exits
   // 1 when any file needs formatting.
   if (mode_fmt) {
-    let (files, ferr) = source_files(pos, true);
+    let (files, ferr) = source_files(pos);
     if (ferr.len() > 0) {
       eprint("fern: " + ferr);
       return 2;
