@@ -151,7 +151,7 @@ pub struct EmitState {
   float_abi: irtables.SigReg,
   float_abi_masks: string[],
   // leaves are the unit's functions a call may take inline (ssa.Leaf).
-  leaves: ssa.Leaf[],
+  leaves: ssa.Leaves,
   // Opt-in evidence follows immutable state, including runtime trial rollback.
   retain_prepared: boolean,
   prepared: ssaprepare.Emitted[],
@@ -454,12 +454,13 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
     pre = pre.append(p);
     fi = fi + 1;
   }
-  return UnitLeaves { leaves: out, pre: unformed_callers(pre, out) };
+  let leaves: ssa.Leaves = ssa.leaves_of(out);
+  return UnitLeaves { leaves: leaves, pre: unformed_callers(pre, leaves) };
 }
 
 // unformed_callers drops the register form of each body that calls one of
 // `leaves`, since inlining them changes it.
-function unformed_callers(own pre: Prelift[], leaves: ssa.Leaf[]): Prelift[] {
+function unformed_callers(own pre: Prelift[], leaves: ssa.Leaves): Prelift[] {
   let i: i32 = 0;
   while (i < pre.len()) {
     if let Some(l) = pre[i].lifted {
@@ -474,7 +475,7 @@ function unformed_callers(own pre: Prelift[], leaves: ssa.Leaf[]): Prelift[] {
 
 // The unit's leaves, and what unit_leaves made of each cache position's body
 // (Prelift).
-pub struct UnitLeaves { leaves: ssa.Leaf[], pre: Prelift[] }
+pub struct UnitLeaves { leaves: ssa.Leaves, pre: Prelift[] }
 
 // A body's lift made before the emit, and its register form when it calls
 // none of the unit's leaves; None where there is none to reuse.
@@ -547,7 +548,7 @@ pub function new_state(): EmitState {
     reg_entries: irtables.sig_reg_of([]),
     float_abi: irtables.sig_reg_of([]),
     float_abi_masks: [],
-    leaves: [],
+    leaves: ssa.leaves_of([]),
     retain_prepared: false,
     prepared: [],
     memo: rcmemo.off(),

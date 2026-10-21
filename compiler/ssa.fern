@@ -2802,6 +2802,18 @@ function trivial_phi_repl(f: SFunc): i32[] {
 // `name` is the callee name a call to it carries.
 pub struct Leaf { name: string, func: SFunc }
 
+// Leaves is a unit's leaves with their names indexed, so a call finds its
+// leaf, if any, by one lookup.
+pub struct Leaves { list: Leaf[], ix: util.NameIndex }
+
+pub function leaves_of(list: Leaf[]): Leaves {
+  let names: string[] = [];
+  for l in list {
+    names = names.append(l.name);
+  }
+  return Leaves { list: list, ix: util.name_index(names) };
+}
+
 function leaf_limit(): i32 {
   return 12;
 }
@@ -2866,8 +2878,8 @@ function returning_leaf(name: string, f: SFunc, insts: SInst[], term: STerm): Le
 // instructions: its parameters read the call's
 // arguments, its other values are renumbered past the caller's, and the call's
 // result becomes a copy of the value the leaf returns.
-pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
-  if (leaves.len() == 0) {
+pub function inline_leaves(f: SFunc, leaves: Leaves): SFunc {
+  if (leaves.list.len() == 0) {
     return f;
   }
   let nvals: i32 = f.nvals;
@@ -2898,7 +2910,7 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
         insts = insts_before(b.insts, k);
         spliced = true;
       }
-      let leaf: SFunc = leaves[at].func;
+      let leaf: SFunc = leaves.list[at].func;
       let map: i32[] = util.minus_ones(leaf.nvals);
       for li in leaf.blocks[0].insts {
         if (li.kind_tag == 6) {
@@ -2937,7 +2949,7 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
 
 // calls_leaf reports a direct call in `f` to one of `leaves`: whether
 // inline_leaves has anything to splice.
-pub function calls_leaf(f: SFunc, leaves: Leaf[]): boolean {
+pub function calls_leaf(f: SFunc, leaves: Leaves): boolean {
   for b in f.blocks {
     for ins in b.insts {
       if (ins.kind_tag == 11 && leaf_index(leaves, ins.str, ins.args.len()) >= 0) {
@@ -2948,13 +2960,15 @@ pub function calls_leaf(f: SFunc, leaves: Leaf[]): boolean {
   return false;
 }
 
-function leaf_index(leaves: Leaf[], name: string, argc: i32): i32 {
-  let i: i32 = 0;
-  while (i < leaves.len()) {
-    if (leaves[i].func.nparams == argc && leaves[i].name == name) {
+// leaf_index is the first leaf named `name` taking `argc` arguments, -1 for
+// none; the chain ascends, so the first hit is the first in the list.
+function leaf_index(leaves: Leaves, name: string, argc: i32): i32 {
+  let i: i32 = leaves.ix.chain(name);
+  while (i >= 0) {
+    if (leaves.list[i].func.nparams == argc && leaves.ix.names[i] == name) {
       return i;
     }
-    i = i + 1;
+    i = leaves.ix.next[i];
   }
   return 0 - 1;
 }

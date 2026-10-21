@@ -21,7 +21,7 @@ pub struct Body {
 pub struct Context {
   architecture: string,
   reg_entries: irtables.SigReg,
-  leaves: ssa.Leaf[],
+  leaves: ssa.Leaves,
   records: boolean,
   rc_free_debug: boolean,
   sanitize: boolean,
@@ -96,7 +96,7 @@ pub struct Output {
 
 // Called after the backend's lift checks, with that actual lift and its
 // current unit leaves. Never relower or look up an old body by symbol here.
-pub function finish(lowered: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.LResult, leaves: ssa.Leaf[]): Body {
+pub function finish(lowered: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.LResult, leaves: ssa.Leaves): Body {
   return finish_formed(lowered, selected, lifted, ssa.register_form(ssa.inline_leaves(lifted.func, leaves)));
 }
 
