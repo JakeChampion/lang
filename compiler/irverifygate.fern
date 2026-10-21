@@ -80,7 +80,9 @@ import "std/envflag";
 // something to say, under FERN_RC_CERTIFY=report; 0 otherwise.
 // `memo` is the certifier's memo (rcmemo): off until a backend opens it with
 // `with_memo`, the drivers' gates never do.
-pub struct Gate { sigs: irverify.NameIndex, pops: i32[], seen: usize, modelled: usize, abis: rccertify.Abis, rc: rcsigs.Table, rcops: rcsigs.OpTable, kinds: ssa_lift.KindTable, census: usize, memo: rcmemo.Memo }
+// `verify` and `certify` are FERN_IR_VERIFY and util.certify_mode, read once
+// when the gate is built and asked per function.
+pub struct Gate { sigs: irverify.NameIndex, pops: i32[], seen: usize, modelled: usize, abis: rccertify.Abis, rc: rcsigs.Table, rcops: rcsigs.OpTable, kinds: ssa_lift.KindTable, census: usize, memo: rcmemo.Memo, verify: boolean, certify: i32 }
 
 // gate builds the Gate a program's emit loop hands to every
 // verify_or_refuse and reports at its end.
@@ -95,18 +97,19 @@ pub function gate(sigs: irverify.NameIndex, pops: i32[], abis: rccertify.Abis): 
 // gate_unreported is the Gate for the runtime helpers' bodies, which the
 // line does not count: native's counts the program's functions.
 pub function gate_unreported(sigs: irverify.NameIndex, pops: i32[], abis: rccertify.Abis): Gate {
+  let certify: i32 = util.certify_mode();
   let census: usize = 0 as usize;
-  if (util.certify_mode() == 1) {
+  if (certify == 1) {
     census = buf_new(256);
   }
-  return Gate { sigs: sigs, pops: pops, seen: 0 as usize, modelled: 0 as usize, abis: abis, rc: rcsigs.table(), rcops: rcsigs.op_table(), kinds: ssa_lift.kind_table(), census: census, memo: rcmemo.off() };
+  return Gate { sigs: sigs, pops: pops, seen: 0 as usize, modelled: 0 as usize, abis: abis, rc: rcsigs.table(), rcops: rcsigs.op_table(), kinds: ssa_lift.kind_table(), census: census, memo: rcmemo.off(), verify: util.verify_on(), certify: certify };
 }
 
 // with_memo hands a gate the compile's memo (rcmemo): a function the memo
 // knows is not certified again. Only a gate that refuses reads it; a report
 // compile reads no memo, so every function's census is in the report.
 pub function with_memo(g: Gate, m: rcmemo.Memo): Gate {
-  if (util.certify_mode() != 2) {
+  if (g.certify != 2) {
     return g;
   }
   return Gate { ...g, memo: m };
@@ -206,7 +209,7 @@ pub function verdict(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32
 // emitting the malformed stream anyway, which is exactly the behaviour the
 // flag exists to replace.
 pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, g: Gate): i32 {
-  if (!util.verify_on()) {
+  if (!g.verify) {
     return 0;
   }
   let v: Verdict = verdict(fn_name, ops, n_params, n_locals, g);
@@ -236,7 +239,7 @@ pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_lo
 // the certifier does not read (an async frame) are counted in the report
 // census, never refused, since neither is a shown imbalance.
 pub function certify_or_refuse(fn_name: string, f: ssa.SFunc, ops: ir.Op[], g: Gate): i32 {
-  let mode: i32 = util.certify_mode();
+  let mode: i32 = g.certify;
   if (mode == 0) {
     return 0;
   }
@@ -285,7 +288,7 @@ function report_one(fn_name: string, f: ssa.SFunc, r: rccertify.Report, g: Gate)
 // lift: the stack machine's. A stream the lift cannot take is not certified
 // and says so in the census; the backend's own refusal names the op.
 pub function certify_ops_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, g: Gate): i32 {
-  if (util.certify_mode() == 0) {
+  if (g.certify == 0) {
     return 0;
   }
   let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(g.kinds, fn_name, n_params, n_locals, ops, false);
