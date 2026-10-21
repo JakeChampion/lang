@@ -1,21 +1,9 @@
-// compiler/interp.fern — fourth concrete step of the
-// self-host port. Imports lexer + parser and evaluates the
-// Stmt[] tree directly, producing a runtime value rather than a
-// static type or compiled artifact. Completes the
-// lexer → parser → interpreter vertical slice in Fern —
-// the Fern-port pipeline can now actually run Fern code, end to
-// end, from a thin self-validating driver.
-//
-// Scope (matches the parser's): i32 / bool / string runtime
-// values, let binding through a flat scope, arithmetic /
-// comparison / logical / string-concat ops over the same op
-// set the checker (#619) handles. The return value of the first
-// `return` statement is what main() surfaces — anything past it
-// is dead code.
-//
-// Out of scope (next iteration): function decls + calls, control
-// flow (`if` / `while` / `for`), structs / unions, generics. The
-// parser stub doesn't emit those yet either.
+// compiler/interp.fern — the tree-walking interpreter behind `fern -interp`,
+// `fern -repl` and the playground. It evaluates the checker's annotated module
+// (prepared in `lowered`) directly, to a runtime Value: functions, closures
+// and methods, every statement form, structs, enums and pattern matching,
+// maps, and the host builtins (call_host). internal/oracle/interp is the Go
+// interpreter the differential tests hold it to.
 
 import "./ast";
 import "./lexer";
@@ -490,8 +478,8 @@ function vint_bits(v: Value): i32 {
 }
 
 // is_destructure_name / split_binding_names decode the comma-joined name the
-// parser gives a tuple-destructuring `let`. A binding name never contains a
-// comma itself, so a plain scan is enough.
+// parser gives a destructuring `let`: a nested tuple position is its own list
+// in parens (`a,(b,c)`), so only a top-level comma separates positions.
 function is_destructure_name(name: string): boolean {
   let i: i32 = 0;
   while (i < name.len()) {
@@ -506,15 +494,86 @@ function is_destructure_name(name: string): boolean {
 function split_binding_names(csv: string): string[] {
   let out: string[] = [];
   let start: i32 = 0;
+  let depth: i32 = 0;
   let i: i32 = 0;
   while (i <= csv.len()) {
-    if (i == csv.len() || csv[i] == b',') {
+    if (i == csv.len() || csv[i] == b',' && depth == 0) {
       out = out.append(slice_unchecked(csv, start, i) + "");
       start = i + 1;
+    } else if (csv[i] == b'(') {
+      depth = depth + 1;
+    } else if (csv[i] == b')') {
+      depth = depth - 1;
     }
     i = i + 1;
   }
   return out;
+}
+
+// destructure_step runs a destructuring `let` of `val`. Kept out of eval_stmt,
+// whose frame every interpreted call nests.
+@noinline
+function destructure_step(env: Env, v: ast.StmtVar, val: Value): StepResult {
+  let (denv, derr) = bind_destructure(env, v.name, v.type_name, val);
+  if (is_err(derr)) {
+    return step_stop(env, derr);
+  }
+  return step_none(denv);
+}
+
+// bind_destructure binds a destructuring `let`, parameter prelude or `for`
+// header to `val`: `names` is the parser's binding list and `marker` its
+// destructure channel (parser.destr_marker), which names an `@` binding of
+// the whole value and, for the struct form, the field each name reads. The
+// result is the extended env, or an error value saying why `val` does not fit.
+function bind_destructure(env: Env, names: string, marker: string, val: Value): (Env, Value) {
+  let dm: parser.DestrMarker = parser.destr_marker_split(marker);
+  let out: Env = env;
+  if (dm.at.len() > 0) {
+    out = out.bind(dm.at, val);
+  }
+  let binds: string[] = split_binding_names(names);
+  if (util.str_has_prefix(dm.tag, "@sd:")) {
+    let colon: i32 = util.index_of_sub(slice_unchecked(dm.tag, 4, dm.tag.len()) + "", ":");
+    let fields: string[] = split_binding_names(slice_unchecked(dm.tag, 4 + colon + 1, dm.tag.len()) + "");
+    if let VStruct(sv) = val {
+      let i: i32 = 0;
+      while (i < binds.len() && i < fields.len()) {
+        let fi: i32 = util.index_of_str(sv.field_names, fields[i]);
+        if (fi < 0) {
+          return (env, v_err("destructuring `" + names + "`: struct " + sv.type_name + " has no field `" + fields[i] + "`"));
+        }
+        out = out.bind(binds[i], sv.field_values[fi]);
+        i = i + 1;
+      }
+      return (out, v_void());
+    }
+    return (env, v_err("destructuring `" + names + "`: initialiser is not a struct"));
+  }
+  if (binds.len() == 1 && !util.str_has_prefix(names, "(")) {
+    return (out.bind(names, val), v_void());
+  }
+  if let VTuple(tv) = val {
+    if (tv.elements.len() != binds.len()) {
+      return (env, v_err("destructuring `" + names + "`: tuple has " + util.i32_to_string(tv.elements.len()) + " element(s)"));
+    }
+    let i: i32 = 0;
+    while (i < binds.len()) {
+      let b: string = binds[i];
+      if (util.str_has_prefix(b, "(")) {
+        let (inner, err) = bind_destructure(out, slice_unchecked(b, 1, b.len() - 1) + "", "", tv.elements[i]);
+        if (is_err(err)) {
+          return (env, err);
+        }
+        out = inner;
+      } else {
+        out = out.bind(b, tv.elements[i]);
+      }
+      i = i + 1;
+    }
+    return (out, v_void());
+  }
+  return (env, v_err("destructuring `" + names + "`: initialiser is not a tuple"));
 }
 
 // is_i32_arg guards a vint_bits read: the compact carriers are the only
@@ -2605,6 +2664,61 @@ function is_raw_floor(name: string): boolean {
     || util.has_str(["__raw_alloc", "__raw_string", "__raw_arr_box", "__raw_scratch", "__raw_environ", "__raw_splice_pipe", "__raw_cover", "__raw_task_state", "__raw_vdso", "__raw_vg_request"], name);
 }
 
+// call_runtime_intrinsic answers the compiled runtime's own intrinsics as
+// internal/oracle/interp does. There are no refcounts, arena or copy-on-append
+// cliff here, so each counter reads as a clean run's; no task is ever current,
+// so the task primitives give the blocking fallback's answers; and the f64
+// primitives and the map seed are this process's own.
+function call_runtime_intrinsic(name: string, args: Value[]): Value {
+  if (util.has_str(["__rc_underflow_count", "__arr_push_shared_count", "__arr_push_shared_bytes", "__heap_alloc_count", "__heap_bump_bytes"], name)) {
+    return v_int(0);
+  }
+  if (name == "__map_hash_seed") {
+    return v_int(__map_hash_seed());
+  }
+  if (util.has_str(["__sqrt_f64", "__floor_f64", "__ceil_f64", "__round_f64", "__trunc_f64", "__abs_f64"], name)) {
+    if (args.len() != 1 || !is_float_like(args[0])) {
+      return v_err(name + ": expected 1 float arg");
+    }
+    return v_float(f64_primitive(name, vfloat_as_f64(args[0])));
+  }
+  if (util.has_str(["__task_free", "__task_enter", "__task_set_ready", "__task_set_cancelled"], name)) {
+    return v_void();
+  }
+  if (util.has_str(["__task_cur", "__task_leave", "__task_cancelled"], name)) {
+    return v_int(0);
+  }
+  if (util.has_str(["__task_park", "__task_timeout"], name)) {
+    return v_int(0 - 1);
+  }
+  if (name == "__task_new") {
+    return v_int(1);
+  }
+  if (name == "__task_wait") {
+    return v_arr([]);
+  }
+  return v_err("not a runtime intrinsic");
+}
+
+function f64_primitive(name: string, x: f64): f64 {
+  if (name == "__sqrt_f64") {
+    return __sqrt_f64(x);
+  }
+  if (name == "__floor_f64") {
+    return __floor_f64(x);
+  }
+  if (name == "__ceil_f64") {
+    return __ceil_f64(x);
+  }
+  if (name == "__round_f64") {
+    return __round_f64(x);
+  }
+  if (name == "__trunc_f64") {
+    return __trunc_f64(x);
+  }
+  return __abs_f64(x);
+}
+
 // call_host_contract answers the builtins whose interpreter answer is fixed
 // rather than the host's, or an error for any other name. The interpreter is
 // the compiler's own process: a chroot or a dropped id would outlast the
@@ -3702,6 +3816,159 @@ function strings_ordered(op: string, a: string, b: string): boolean {
   return a >= b;
 }
 
+function is_checked_op(op: string): boolean {
+  return util.has_str(["+?", "-?", "*?", "/?", "%?", "<<?", ">>?"], op);
+}
+
+// checked_operand_type is the integer type a checked operator computes in:
+// the type the checker stamped on an operand (a literal operand is settled to
+// its sibling's), else the left operand's carrier.
+function checked_operand_type(b: ast.ExprBinary, lv: Value): string {
+  let ints: string[] = ["u8", "i32", "u32", "i64", "u64"];
+  for side in [b.left, b.right] {
+    let tag: string = ast.expr_ty(side);
+    if let ast.ExprNumber(n) = side {
+      tag = n.suffix;
+    }
+    if (util.has_str(ints, tag)) {
+      return tag;
+    }
+  }
+  return value_type_name(lv);
+}
+
+// eval_checked is a checked operator (#5542): Some(result) when the exact
+// result fits `ty`, None on overflow, a zero divisor, the signed MIN / -1, a
+// shift count outside [0, width) or a left shift that loses bits.
+function eval_checked(op: string, lv: Value, rv: Value, ty: string): Value {
+  if (!is_int_like(lv) || !is_int_like(rv)) {
+    return v_err("checked operator `" + op + "` on a non-integer");
+  }
+  let signed: boolean = ty == "i32" || ty == "i64";
+  let width: i64 = 32;
+  if (ty == "u8") {
+    width = 8;
+  } else if (ty == "i64" || ty == "u64") {
+    width = 64;
+  }
+  let a: i64 = vint_as_i64(coerce_int_width(lv, ty));
+  let b: i64 = vint_as_i64(coerce_int_width(rv, ty));
+  let none_args: Value[] = [];
+  if (op == "<<?" || op == ">>?") {
+    if (b < 0 || b >= width) {
+      return v_variant("None", none_args);
+    }
+  }
+  let r: Option[i64] = None;
+  if (width == 64) {
+    r = checked_64(op, a, b, signed);
+  } else {
+    r = checked_narrow(op, a, b, signed, width);
+  }
+  if let Some(v) = r {
+    return v_variant("Some", [coerce_int_width(v_int64(v), ty)]);
+  }
+  return v_variant("None", none_args);
+}
+
+// checked_narrow computes a checked operator on operands of at most 32 bits,
+// whose exact result always fits an i64.
+function checked_narrow(op: string, a: i64, b: i64, signed: boolean, width: i64): Option[i64] {
+  let minv: i64 = 0;
+  let maxv: i64 = (1 as i64 << width) - 1;
+  if (signed) {
+    minv = 0 - (1 as i64 << width - 1);
+    maxv = (1 as i64 << width - 1) - 1;
+  }
+  let exact: i64 = 0;
+  if (op == "+?") {
+    exact = a + b;
+  } else if (op == "-?") {
+    exact = a - b;
+  } else if (op == "*?") {
+    exact = a * b;
+  } else if (op == "/?" || op == "%?") {
+    if (b == 0) {
+      return None;
+    }
+    if (op == "/?") {
+      exact = a / b;
+    } else {
+      exact = a % b;
+    }
+    if (signed && a == minv && b == 0 - 1) {
+      return None;
+    }
+  } else if (op == "<<?") {
+    exact = a << b;
+  } else {
+    exact = a >> b;
+  }
+  if (exact < minv || exact > maxv) {
+    return None;
+  }
+  return Some(exact);
+}
+
+// checked_64 is checked_narrow at 64 bits, where the overflow is read off the
+// wrapped result rather than an exact one.
+function checked_64(op: string, a: i64, b: i64, signed: boolean): Option[i64] {
+  let minv: i64 = 0 - 9223372036854775807 - 1;
+  if (op == "+?") {
+    let r: i64 = a + b;
+    if (signed && ((a ^ r) & (b ^ r)) < 0 || !signed && r as u64 < a as u64) {
+      return None;
+    }
+    return Some(r);
+  }
+  if (op == "-?") {
+    let r: i64 = a - b;
+    if (signed && ((a ^ b) & (a ^ r)) < 0 || !signed && a as u64 < b as u64) {
+      return None;
+    }
+    return Some(r);
+  }
+  if (op == "*?") {
+    let r: i64 = a * b;
+    if (a == 0) {
+      return Some(r);
+    }
+    if (signed && (r / a != b || a == 0 - 1 && b == minv)) {
+      return None;
+    }
+    if (!signed && r as u64 / (a as u64) != b as u64) {
+      return None;
+    }
+    return Some(r);
+  }
+  if (op == "/?" || op == "%?") {
+    if (b == 0 || signed && a == minv && b == 0 - 1) {
+      return None;
+    }
+    if (!signed) {
+      if (op == "/?") {
+        return Some((a as u64 / (b as u64)) as i64);
+      }
+      return Some((a as u64 % (b as u64)) as i64);
+    }
+    if (op == "/?") {
+      return Some(a / b);
+    }
+    return Some(a % b);
+  }
+  if (op == "<<?") {
+    let r: i64 = a << b;
+    if (signed && r >> b != a || !signed && (r as u64 >> b as u64) as i64 != a) {
+      return None;
+    }
+    return Some(r);
+  }
+  if (signed) {
+    return Some(a >> b);
+  }
+  return Some((a as u64 >> b as u64) as i64);
+}
+
 // eval_typed_binary is eval_binary wrapped to the integer type the checker
 // stamped on the expression: the value plane has no u8, and an operand read
 // wide is narrowed back to i32.
@@ -4339,29 +4606,20 @@ function eval_unary(op: string, ov: Value): Value {
       }
     }
   }
-  // `as i64` / `as u64` keep 64-bit width and set the signedness tag: the
-  // bits are unchanged, only how div / rem / compares / `>>` read them. An
-  // `as u64` therefore has to widen a compact VInt as well — a 32-bit
-  // carrier has nowhere to put the tag, so `(0 as u64) - (1 as u64)` would
-  // wrap on the i32 path instead of reaching u64::MAX. `as i64` leaves a
-  // small VInt compact, where the signed reading is identical either way.
+  // `as i64` / `as u64` give a 64-bit carrier with the signedness tag: the
+  // bits are unchanged, only how div / rem / compares / `>>` read them, and
+  // the carrier is what an i64 or u64 method dispatches on.
   if (op == "as_i64" || op == "as_u64") {
     let uns: boolean = op == "as_u64";
     match (ov) {
       VInt(i) => {
-        if (uns) {
-          return v_uint64(i.v as i64);
-        }
-        return v_int(i.v);
+        return v_wide(i.v as i64, uns);
       },
       VInt64(i) => {
         return v_wide(unpack_i64(i), uns);
       },
       VUint(u) => {
-        if (uns) {
-          return v_uint64(uint_zext(u.v));
-        }
-        return box_i64(uint_zext(u.v));
+        return v_wide(uint_zext(u.v), uns);
       },
       VFloat(f) => {
         if (uns) {
@@ -4582,6 +4840,42 @@ function resolve_ident_value(name: string, env: Env): Value {
   return idv;
 }
 
+// eval_binary_expr evaluates a binary expression. Kept out of eval_expr, whose
+// frame every interpreted call nests.
+@noinline
+function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
+  let lv: Value = eval_expr(b.left, env);
+  if (is_err(lv)) {
+    return lv;
+  }
+  // Short-circuit `&&` / `||`: the RHS is NOT evaluated when the LHS
+  // already determines the result (#4348 item 5). Matches native and
+  // keeps a guarded side-effecting / out-of-bounds RHS from running
+  // (e.g. `i < len && a[i] == x`). The non-short-circuit path still
+  // flows through eval_binary with both operands.
+  if (b.op == "&&" || b.op == "||") {
+    match (lv) {
+      VBool(lb) => {
+        if (b.op == "&&" && !lb.v) {
+          return v_bool(false);
+        }
+        if (b.op == "||" && lb.v) {
+          return v_bool(true);
+        }
+      },
+      _ => {}
+    }
+  }
+  let rv: Value = eval_expr(b.right, env);
+  if (is_err(rv)) {
+    return rv;
+  }
+  if (is_checked_op(b.op)) {
+    return eval_checked(b.op, lv, rv, checked_operand_type(b, lv));
+  }
+  return eval_typed_binary(b.op, lv, rv, b.ty);
+}
+
 function eval_expr(e: ast.Expr, env: Env): Value {
   match (e) {
     ast.ExprNumber(n) => {
@@ -4597,33 +4891,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       return resolve_ident_value(id.name, env);
     },
     ast.ExprBinary(b) => {
-      let lv: Value = eval_expr(b.left, env);
-      if (is_err(lv)) {
-        return lv;
-      }
-      // Short-circuit `&&` / `||`: the RHS is NOT evaluated when the LHS
-      // already determines the result (#4348 item 5). Matches native and
-      // keeps a guarded side-effecting / out-of-bounds RHS from running
-      // (e.g. `i < len && a[i] == x`). The non-short-circuit path still
-      // flows through eval_binary with both operands.
-      if (b.op == "&&" || b.op == "||") {
-        match (lv) {
-          VBool(lb) => {
-            if (b.op == "&&" && !lb.v) {
-              return v_bool(false);
-            }
-            if (b.op == "||" && lb.v) {
-              return v_bool(true);
-            }
-          },
-          _ => {}
-        }
-      }
-      let rv: Value = eval_expr(b.right, env);
-      if (is_err(rv)) {
-        return rv;
-      }
-      return eval_typed_binary(b.op, lv, rv, b.ty);
+      return eval_binary_expr(b, env);
     },
     ast.ExprUnary(u) => {
       let ov: Value = eval_expr(u.operand, env);
@@ -5467,6 +5735,9 @@ function value_type_name(v: Value): string {
     VArr(_) => {
       return "Array";
     },
+    VMap(_) => {
+      return "Map";
+    },
     VHandle(hv) => {
       return handle_kind(hv);
     },
@@ -5533,6 +5804,41 @@ function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlia
   return false;
 }
 
+// map_iter_method is Map.iter()'s cursor: snapshots of the map's columns and a
+// position `advance` moves in place, as the compiled cursor does.
+function map_iter_method(it: VStruct, name: string): Value {
+  let pos: i32 = 0;
+  if let VCellI(pc) = it.field_values[2] {
+    pos = pc.c.get();
+    if (name == "advance") {
+      pc.c.set(pos + 1);
+      return v_void();
+    }
+  }
+  let col: Value[] = [];
+  if (name == "key" || name == "has_next") {
+    col = vals_of(it.field_values[0]);
+  } else if (name == "value") {
+    col = vals_of(it.field_values[1]);
+  } else {
+    return v_err("MapIter has no method `" + name + "`");
+  }
+  if (name == "has_next") {
+    return v_bool(pos < col.len());
+  }
+  if (pos >= col.len()) {
+    return index_abort("map iterator", pos, col.len());
+  }
+  return col[pos];
+}
+
+function vals_of(v: Value): Value[] {
+  if let VArr(a) = v {
+    return a.elements;
+  }
+  return [];
+}
+
 function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
   // `i32.zero()` / `T.zero()` — the receiver is a TYPE, not a value, so no
   // value-receiver method can match and only the associated table applies.
@@ -5546,6 +5852,11 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     VHandle(hv) => {
       if (is_handle_method(handle_kind(hv), name)) {
         return handle_method(hv, name, args);
+      }
+    },
+    VStruct(sv) => {
+      if (sv.type_name == "MapIter") {
+        return map_iter_method(sv, name);
       }
     },
     _ => {}
@@ -5688,12 +5999,18 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
         if (args.len() != 1) {
           return v_err("map.delete: need 1 arg");
         }
+        // core/map deletes by swap-with-last, so the last entry takes the
+        // deleted one's place in iteration order.
         let at: i32 = map_key_index(m, args[0], funcs, aliases, type_decls, outs);
+        let last: i32 = m.keys.len() - 1;
         let nk: Value[] = [];
         let nv: Value[] = [];
         let di: i32 = 0;
         while (di < m.keys.len()) {
-          if (di != at) {
+          if (di == at && at != last) {
+            nk = nk.append(m.keys[last]);
+            nv = nv.append(m.values[last]);
+          } else if (at < 0 || di != last) {
             nk = nk.append(m.keys[di]);
             nv = nv.append(m.values[di]);
           }
@@ -5710,7 +6027,12 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
       if (name == "values") {
         return v_arr(m.values);
       }
-      return v_err("unknown map method `" + name + "`");
+      if (name == "cleared") {
+        return v_map_new();
+      }
+      if (name == "iter") {
+        return VStruct { type_name: "MapIter", field_names: ["keys", "values", "pos"], field_values: [v_arr(m.keys), v_arr(m.values), VCellI { c: cell_new(0), is_char: false, is_bool: false }], owner: "" };
+      }
     },
     _ => {}
   }
@@ -6874,6 +7196,10 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   if (is_buf_builtin(name)) {
     return call_buf_builtin(name, args);
   }
+  let rt: Value = call_runtime_intrinsic(name, args);
+  if (!is_err(rt)) {
+    return rt;
+  }
   if (name == "__mulhi_u64") {
     if (args.len() != 2 || !is_int_like(args[0]) || !is_int_like(args[1])) {
       return v_err(name + ": expected 2 integer args");
@@ -7626,6 +7952,263 @@ function step_stop(env: Env, v: Value): StepResult {
   return StepResult { env: env, ret: v, sig: 1 };
 }
 
+// eval_while_stmt runs a `while` / `loop`. Kept out of eval_stmt, whose frame every
+// interpreted call nests.
+@noinline
+function eval_while_stmt(w: ast.StmtWhile, env: Env): StepResult {
+  // Loop until cond is false or the body returns.
+  // Assignments inside the body need to outlive each
+  // iteration — eval_block's "drop branch-local
+  // bindings" stance is wrong here, so we step the body
+  // ourselves and thread `cur` forward. `let` declared
+  // inside the body still doesn't leak past the loop:
+  // we snapshot the names-length at entry and trim back
+  // on each iteration boundary, simulating block scope.
+  //
+  // Concretely: the names array grows only by `let`
+  // inside the body; truncating to entry-length on each
+  // iteration discards those bindings before the next
+  // iteration starts, but keeps any updates to
+  // outer-scoped names (those slots sit at index < base
+  // and update() rewrites them in place). The trim also
+  // applies on loop exit so the outer scope sees the
+  // env it started with, plus assignment updates.
+  let cur: Env = env;
+  let base: i32 = env.names.len();
+  while (true) {
+    let cv: Value = eval_expr(w.cond, cur);
+    if (is_err(cv)) {
+      return step_stop(env, cv);
+    }
+    match (cv) {
+      VBool(b) => {
+        if (!b.v) {
+          return step_none(cur);
+        }
+      },
+      _ => {
+        return step_stop(env, v_err("while cond not bool"));
+      }
+    }
+    let step: StepResult = eval_block(w.body, cur);
+    // break inside the loop exits immediately —
+    // discard the body's env, return noreturn so
+    // the surrounding stmt list continues.
+    if (step.sig == 2) {
+      return step_none(trim_env(step.env, base));
+    }
+    // continue trims body-local bindings and loops.
+    if (step.sig == 3) {
+      cur = trim_env(step.env, base);
+      continue;
+    }
+    if (step.sig == 1) {
+      // A return (or error) inside the loop short-circuits
+      // all remaining iterations.
+      return step;
+    }
+    // A deeper labeled break/continue (#4348 item 2): this loop
+    // is one of the levels being unwound — peel one level and
+    // re-propagate to the enclosing loop.
+    if (step.sig > 3) {
+      return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig - 2 };
+    }
+    cur = trim_env(step.env, base);
+  }
+  return step_none(cur);
+}
+
+// eval_match_stmt runs a statement `match`. Kept out of eval_stmt, whose frame every
+// interpreted call nests.
+@noinline
+function eval_match_stmt(m: ast.StmtMatch, env: Env): StepResult {
+  // Evaluate the scrutinee. An error in the scrutinee
+  // propagates without running any arm.
+  let sv: Value = eval_expr(m.scrutinee, env);
+  if (is_err(sv)) {
+    return step_stop(env, sv);
+  }
+  // Walk arms top-to-bottom and run the first that
+  // matches. Variant patterns require a VStruct
+  // scrutinee whose type_name matches the pattern's
+  // type_name; PatWildcard always matches.
+  let i: i32 = 0;
+  while (i < m.arms.len()) {
+    let arm: ast.MatchArm = m.arms[i];
+    let matched: boolean = false;
+    let bind_names: string[] = [];
+    let bind_values: Value[] = [];
+    match (arm.pattern) {
+      ast.PatWildcard(_) => {
+        matched = true;
+      },
+      ast.PatVariant(pv) => {
+        // `match (b) { true => …, false => … }` over a bool.
+        if (pv.type_name == "true" || pv.type_name == "false") {
+          match (sv) {
+            VBool(bv) => {
+              if (pv.type_name == "true" && bv.v) {
+                matched = true;
+              }
+              if (pv.type_name == "false" && !bv.v) {
+                matched = true;
+              }
+            },
+            _ => {}
+          }
+        }
+        match (sv) {
+          VStruct(vs) => {
+            // A runtime enum/variant value carries the
+            // bare variant name as its type_name, so a
+            // qualified pattern `E.Red` matches by its
+            // final path segment as well as by exact
+            // name (a bare `Red` pattern still matches
+            // exactly).
+            if (vs.type_name == pv.type_name || vs.type_name == variant_simple_name(pv.type_name)) {
+              matched = true;
+              // A payload enum variant carries the
+              // parser's `__ev` marker as its first
+              // synthesised field; a `V(a, b, …)`
+              // pattern binds each payload field
+              // positionally. A plain tagged-struct /
+              // union variant `Circle(c)` has no `__ev`
+              // marker, so a single binding takes the
+              // whole struct (so `c.field` works).
+              // Bare `Foo` / `Foo(_)` bind nothing.
+              let is_payload: boolean = vs.field_names.len() > 0 && vs.field_names[0] == "__ev";
+              if (pv.at_binding.len() > 0) {
+                bind_names = bind_names.append(pv.at_binding);
+                bind_values = bind_values.append(sv);
+              }
+              if (is_payload) {
+                let pat_binds: string[] = [];
+                if (pv.binding.len() > 0) {
+                  pat_binds = pat_binds.append(pv.binding);
+                }
+                let xi: i32 = 0;
+                while (xi < pv.extra_bindings.len()) {
+                  pat_binds = pat_binds.append(pv.extra_bindings[xi]);
+                  xi = xi + 1;
+                }
+                let pbi: i32 = 0;
+                while (pbi < pat_binds.len() && pbi < vs.field_values.len()) {
+                  if (pat_binds[pbi] != "_") {
+                    bind_names = bind_names.append(pat_binds[pbi]);
+                    bind_values = bind_values.append(vs.field_values[pbi]);
+                  }
+                  pbi = pbi + 1;
+                }
+              } else {
+                if (pv.binding.len() > 0 && pv.binding != "_") {
+                  bind_names = bind_names.append(pv.binding);
+                  bind_values = bind_values.append(sv);
+                }
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+    }
+    if (matched) {
+      // Arm-local bindings die at the close of the
+      // arm body, same as branch-local `let`s in
+      // StmtIf. Trim env back to the entry length
+      // before returning so the surrounding scope
+      // doesn't see the binding (or any nested
+      // `let`s) leak out.
+      let base: i32 = env.names.len();
+      let bodyEnv: Env = env;
+      let bk: i32 = 0;
+      while (bk < bind_names.len()) {
+        bodyEnv = bodyEnv.bind(bind_names[bk], bind_values[bk]);
+        bk = bk + 1;
+      }
+      // A guard (`Pat if <expr> =>`) is evaluated with the
+      // binding in scope; a false guard falls through to the
+      // next arm instead of running this body.
+      let pass: boolean = true;
+      if (arm.has_guard) {
+        let gv: Value = eval_expr(arm.guard, bodyEnv);
+        if (is_err(gv)) {
+          return step_stop(trim_env(bodyEnv, base), gv);
+        }
+        match (gv) {
+          VBool(gb) => {
+            pass = gb.v;
+          },
+          _ => {
+            pass = false;
+          }
+        }
+      }
+      if (pass) {
+        let step: StepResult = eval_block(arm.body, bodyEnv);
+        return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
+      }
+    }
+    i = i + 1;
+  }
+  return step_stop(env, v_err("non-exhaustive match"));
+}
+
+// eval_for_stmt runs a `for`. Kept out of eval_stmt, whose frame every
+// interpreted call nests.
+@noinline
+function eval_for_stmt(f: ast.StmtFor, env: Env): StepResult {
+  let iv: Value = eval_expr(f.iter, env);
+  if (is_err(iv)) {
+    return step_stop(env, iv);
+  }
+  let elems: Value[] = [];
+  match (for_elements(iv)) {
+    Some(walked) => {
+      elems = walked;
+    },
+    None => {
+      return eval_iterator_for(f, iv, env);
+    }
+  }
+  // Each iteration binds f.var_name to the current
+  // element, walks the body, then trims back to the
+  // pre-loop env length. An in-body return short-
+  // circuits the rest of the iterations. The loop var is declared by
+  // the ELEMENT type of the iterable's annotation — `dyn Shape[]`
+  // makes each `x` a `dyn Shape`.
+  let elem_ty: string = "";
+  let iter_ty: string = env.static_type_of(f.iter);
+  if (name_ends_with(iter_ty, "[]")) {
+    elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2) + "";
+  }
+  let base: i32 = env.names.len();
+  let cur: Env = env;
+  let i: i32 = 0;
+  while (i < elems.len()) {
+    let iter_env: Env = bind_element(cur, f.var_name, elems[i], elem_ty);
+    let step: StepResult = eval_block(f.body, iter_env);
+    if (step.sig == 2) {
+      return step_none(trim_env(step.env, base));
+    }
+    if (step.sig == 3) {
+      cur = trim_env(step.env, base);
+      i = i + 1;
+      continue;
+    }
+    if (step.sig == 1) {
+      return step;
+    }
+    // A deeper labeled break/continue (#4348 item 2): peel one
+    // level and re-propagate to the enclosing loop.
+    if (step.sig > 3) {
+      return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig - 2 };
+    }
+    cur = trim_env(step.env, base);
+    i = i + 1;
+  }
+  return step_none(cur);
+}
+
 function eval_stmt(st: ast.Stmt, env: Env): StepResult {
   match (st) {
     ast.StmtDefer(d) => {
@@ -7645,25 +8228,8 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       // `let (a, b) = t` arrives as ONE StmtVar whose name is the
       // comma-joined binding list (see parser's tuple-destructure arm),
       // so a name carrying a comma binds per tuple slot, not whole.
-      if (is_destructure_name(v.name)) {
-        let names: string[] = split_binding_names(v.name);
-        match (val) {
-          VTuple(tv) => {
-            if (tv.elements.len() != names.len()) {
-              return step_stop(env, v_err("destructuring `" + v.name + "`: tuple has " + util.i32_to_string(tv.elements.len()) + " element(s)"));
-            }
-            let denv: Env = env;
-            let di: i32 = 0;
-            while (di < names.len()) {
-              denv = denv.bind(names[di], tv.elements[di]);
-              di = di + 1;
-            }
-            return step_none(denv);
-          },
-          _ => {
-            return step_stop(env, v_err("destructuring `" + v.name + "`: initialiser is not a tuple"));
-          }
-        }
+      if (is_destructure_name(v.name) || parser.is_destr_marker(v.type_name)) {
+        return destructure_step(env, v, val);
       }
       // An unannotated `let` carries its initialiser's declared type, so
       // a `dyn` value keeps the type its dispatch depends on across the
@@ -7729,66 +8295,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return step_stop(env, v_err("unreachable if-arm"));
     },
     ast.StmtWhile(w) => {
-      // Loop until cond is false or the body returns.
-      // Assignments inside the body need to outlive each
-      // iteration — eval_block's "drop branch-local
-      // bindings" stance is wrong here, so we step the body
-      // ourselves and thread `cur` forward. `let` declared
-      // inside the body still doesn't leak past the loop:
-      // we snapshot the names-length at entry and trim back
-      // on each iteration boundary, simulating block scope.
-      //
-      // Concretely: the names array grows only by `let`
-      // inside the body; truncating to entry-length on each
-      // iteration discards those bindings before the next
-      // iteration starts, but keeps any updates to
-      // outer-scoped names (those slots sit at index < base
-      // and update() rewrites them in place). The trim also
-      // applies on loop exit so the outer scope sees the
-      // env it started with, plus assignment updates.
-      let cur: Env = env;
-      let base: i32 = env.names.len();
-      while (true) {
-        let cv: Value = eval_expr(w.cond, cur);
-        if (is_err(cv)) {
-          return step_stop(env, cv);
-        }
-        match (cv) {
-          VBool(b) => {
-            if (!b.v) {
-              return step_none(cur);
-            }
-          },
-          _ => {
-            return step_stop(env, v_err("while cond not bool"));
-          }
-        }
-        let step: StepResult = eval_block(w.body, cur);
-        // break inside the loop exits immediately —
-        // discard the body's env, return noreturn so
-        // the surrounding stmt list continues.
-        if (step.sig == 2) {
-          return step_none(trim_env(step.env, base));
-        }
-        // continue trims body-local bindings and loops.
-        if (step.sig == 3) {
-          cur = trim_env(step.env, base);
-          continue;
-        }
-        if (step.sig == 1) {
-          // A return (or error) inside the loop short-circuits
-          // all remaining iterations.
-          return step;
-        }
-        // A deeper labeled break/continue (#4348 item 2): this loop
-        // is one of the levels being unwound — peel one level and
-        // re-propagate to the enclosing loop.
-        if (step.sig > 3) {
-          return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig - 2 };
-        }
-        cur = trim_env(step.env, base);
-      }
-      return step_none(cur);
+      return eval_while_stmt(w, env);
     },
     ast.StmtAssign(a) => {
       let av: Value = eval_expr(a.value, env);
@@ -7820,131 +8327,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return step_none(env.update(a.target, av));
     },
     ast.StmtMatch(m) => {
-      // Evaluate the scrutinee. An error in the scrutinee
-      // propagates without running any arm.
-      let sv: Value = eval_expr(m.scrutinee, env);
-      if (is_err(sv)) {
-        return step_stop(env, sv);
-      }
-      // Walk arms top-to-bottom and run the first that
-      // matches. Variant patterns require a VStruct
-      // scrutinee whose type_name matches the pattern's
-      // type_name; PatWildcard always matches.
-      let i: i32 = 0;
-      while (i < m.arms.len()) {
-        let arm: ast.MatchArm = m.arms[i];
-        let matched: boolean = false;
-        let bind_names: string[] = [];
-        let bind_values: Value[] = [];
-        match (arm.pattern) {
-          ast.PatWildcard(_) => {
-            matched = true;
-          },
-          ast.PatVariant(pv) => {
-            // `match (b) { true => …, false => … }` over a bool.
-            if (pv.type_name == "true" || pv.type_name == "false") {
-              match (sv) {
-                VBool(bv) => {
-                  if (pv.type_name == "true" && bv.v) {
-                    matched = true;
-                  }
-                  if (pv.type_name == "false" && !bv.v) {
-                    matched = true;
-                  }
-                },
-                _ => {}
-              }
-            }
-            match (sv) {
-              VStruct(vs) => {
-                // A runtime enum/variant value carries the
-                // bare variant name as its type_name, so a
-                // qualified pattern `E.Red` matches by its
-                // final path segment as well as by exact
-                // name (a bare `Red` pattern still matches
-                // exactly).
-                if (vs.type_name == pv.type_name || vs.type_name == variant_simple_name(pv.type_name)) {
-                  matched = true;
-                  // A payload enum variant carries the
-                  // parser's `__ev` marker as its first
-                  // synthesised field; a `V(a, b, …)`
-                  // pattern binds each payload field
-                  // positionally. A plain tagged-struct /
-                  // union variant `Circle(c)` has no `__ev`
-                  // marker, so a single binding takes the
-                  // whole struct (so `c.field` works).
-                  // Bare `Foo` / `Foo(_)` bind nothing.
-                  let is_payload: boolean = vs.field_names.len() > 0 && vs.field_names[0] == "__ev";
-                  if (is_payload) {
-                    let pat_binds: string[] = [];
-                    if (pv.binding.len() > 0) {
-                      pat_binds = pat_binds.append(pv.binding);
-                    }
-                    let xi: i32 = 0;
-                    while (xi < pv.extra_bindings.len()) {
-                      pat_binds = pat_binds.append(pv.extra_bindings[xi]);
-                      xi = xi + 1;
-                    }
-                    let pbi: i32 = 0;
-                    while (pbi < pat_binds.len() && pbi < vs.field_values.len()) {
-                      if (pat_binds[pbi] != "_") {
-                        bind_names = bind_names.append(pat_binds[pbi]);
-                        bind_values = bind_values.append(vs.field_values[pbi]);
-                      }
-                      pbi = pbi + 1;
-                    }
-                  } else {
-                    if (pv.binding.len() > 0 && pv.binding != "_") {
-                      bind_names = bind_names.append(pv.binding);
-                      bind_values = bind_values.append(sv);
-                    }
-                  }
-                }
-              },
-              _ => {}
-            }
-          }
-        }
-        if (matched) {
-          // Arm-local bindings die at the close of the
-          // arm body, same as branch-local `let`s in
-          // StmtIf. Trim env back to the entry length
-          // before returning so the surrounding scope
-          // doesn't see the binding (or any nested
-          // `let`s) leak out.
-          let base: i32 = env.names.len();
-          let bodyEnv: Env = env;
-          let bk: i32 = 0;
-          while (bk < bind_names.len()) {
-            bodyEnv = bodyEnv.bind(bind_names[bk], bind_values[bk]);
-            bk = bk + 1;
-          }
-          // A guard (`Pat if <expr> =>`) is evaluated with the
-          // binding in scope; a false guard falls through to the
-          // next arm instead of running this body.
-          let pass: boolean = true;
-          if (arm.has_guard) {
-            let gv: Value = eval_expr(arm.guard, bodyEnv);
-            if (is_err(gv)) {
-              return step_stop(trim_env(bodyEnv, base), gv);
-            }
-            match (gv) {
-              VBool(gb) => {
-                pass = gb.v;
-              },
-              _ => {
-                pass = false;
-              }
-            }
-          }
-          if (pass) {
-            let step: StepResult = eval_block(arm.body, bodyEnv);
-            return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
-          }
-        }
-        i = i + 1;
-      }
-      return step_stop(env, v_err("non-exhaustive match"));
+      return eval_match_stmt(m, env);
     },
     ast.StmtBreak(b) => {
       // A labeled break/continue carries its resolve_labels_module-baked
@@ -7960,56 +8343,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return StepResult { env: env, ret: VErr { msg: "", abort: false }, sig: 3 + c.tag * 2 };
     },
     ast.StmtFor(f) => {
-      let iv: Value = eval_expr(f.iter, env);
-      if (is_err(iv)) {
-        return step_stop(env, iv);
-      }
-      let elems: Value[] = [];
-      match (for_elements(iv)) {
-        Some(walked) => {
-          elems = walked;
-        },
-        None => {
-          return eval_iterator_for(f, iv, env);
-        }
-      }
-      // Each iteration binds f.var_name to the current
-      // element, walks the body, then trims back to the
-      // pre-loop env length. An in-body return short-
-      // circuits the rest of the iterations. The loop var is declared by
-      // the ELEMENT type of the iterable's annotation — `dyn Shape[]`
-      // makes each `x` a `dyn Shape`.
-      let elem_ty: string = "";
-      let iter_ty: string = env.static_type_of(f.iter);
-      if (name_ends_with(iter_ty, "[]")) {
-        elem_ty = slice_unchecked(iter_ty, 0, iter_ty.len() - 2) + "";
-      }
-      let base: i32 = env.names.len();
-      let cur: Env = env;
-      let i: i32 = 0;
-      while (i < elems.len()) {
-        let iter_env: Env = bind_element(cur, f.var_name, elems[i], elem_ty);
-        let step: StepResult = eval_block(f.body, iter_env);
-        if (step.sig == 2) {
-          return step_none(trim_env(step.env, base));
-        }
-        if (step.sig == 3) {
-          cur = trim_env(step.env, base);
-          i = i + 1;
-          continue;
-        }
-        if (step.sig == 1) {
-          return step;
-        }
-        // A deeper labeled break/continue (#4348 item 2): peel one
-        // level and re-propagate to the enclosing loop.
-        if (step.sig > 3) {
-          return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig - 2 };
-        }
-        cur = trim_env(step.env, base);
-        i = i + 1;
-      }
-      return step_none(cur);
+      return eval_for_stmt(f, env);
     },
     ast.StmtUnknown(u) => {
       return step_stop(env, v_err("parser-side unknown stmt: " + u.kind));
@@ -8051,17 +8385,9 @@ function for_elements(iv: Value): Option[Value[]] {
 // (`for (k, v) in m`) binds each name to its slot.
 function bind_element(env: Env, header: string, elem: Value, elem_ty: string): Env {
   if (is_destructure_name(header)) {
-    if let VTuple(tv) = elem {
-      let names: string[] = split_binding_names(header);
-      if (names.len() == tv.elements.len()) {
-        let out: Env = env;
-        let i: i32 = 0;
-        while (i < names.len()) {
-          out = out.bind(names[i], tv.elements[i]);
-          i = i + 1;
-        }
-        return out;
-      }
+    let (out, err) = bind_destructure(env, header, "", elem);
+    if (!is_err(err)) {
+      return out;
     }
   }
   return env.bind_decl(header, elem, elem_ty);
