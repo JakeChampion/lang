@@ -8,7 +8,7 @@ duplicated `IoStep`/`run_io` (i32) and `IoStepStr`/`run_io_str`
 self-hosted compiler has its own, separate variant-payload gap
 (docs/SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md, #3552).
 
-**Status: fixed.** `std/reactor` is now a single generic `IoStep[T]`
+Status: [record] fixed. `std/reactor` is now a single generic `IoStep[T]`
 with `run_io[T]` / `run_io_deadline[T]`; the `*Str` twins are gone.
 
 ## Symptom

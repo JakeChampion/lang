@@ -1,6 +1,6 @@
 # Atlas, reconciled against Fern
 
-**Status:** decision record + sequenced plan (2026-08-06). Supersedes nothing;
+Status: [plan] decision record + sequenced plan (2026-08-06), partly landed (§4). Supersedes nothing;
 it is the platform-layer companion to `docs/SOTA-STDLIB-BLUEPRINT.md`, which
 surveys the *algorithms*. This document is about the *substrate* they need.
 

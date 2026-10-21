@@ -1,5 +1,7 @@
 # Design: a generative WASM component builder for the self-host
 
+Status: [record] complete: the prefix and suffix blobs were replaced by generated sections, now in `compiler/watbin.fern`.
+
 ## Why
 
 The self-hosted wasm backend (`compiler/wasm.fern`) emits a

@@ -1,5 +1,7 @@
 # WASI Preview 3 (component-model async) — feasibility + phased plan
 
+Status: [record] async exports, async imports and `stream[T]` shipped in the self-host for scalar types; the plan below is historical.
+
 The wasm reactor shipped on **Preview 2 pollables** (timer/block/poll/
 drop + the `std/wasm_reactor` scheduler — see docs/WASM-REACTOR-PLAN.md),
 which runs on the stock wasmtime the rest of the suite uses. This doc

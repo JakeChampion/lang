@@ -1,5 +1,7 @@
 # Standard library
 
+Status: [reference] the standard library's module reference.
+
 The Fern stdlib lives in two namespaces:
 
 - **`std/…`** — high-level helpers user code reaches for directly.

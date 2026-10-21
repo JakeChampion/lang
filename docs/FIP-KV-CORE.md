@@ -1,5 +1,7 @@
 # Experiment: the bounded key/value core
 
+Status: [record] measured experiment for #9585; its e2e test still checks the claims.
+
 What #9585 asked, measured. The programs are `examples/fip/kv_*.fern` — three
 implementations of one bounded key/value service, differing in how the table
 is held — and `internal/testing/e2e/fip_kv_test.go` keeps their claims from rotting.

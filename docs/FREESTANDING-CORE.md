@@ -1,5 +1,7 @@
 # The freestanding core — where the OS boundary runs
 
+Status: [policy] the standing rule for classifying a builtin as core or host.
+
 Epic: #6506. This doc records **which builtins need a host and which do not**, why
 each judgement call went the way it did, and the standing rule for classifying a new
 one. The classification lives in `internal/pkg/platforms/enforce.go` as two tables —

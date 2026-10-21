@@ -1,5 +1,7 @@
 # Binary hardening (`-harden`)
 
+Status: [reference] shipped; `-harden` is opt-in on arm64-linux executables.
+
 `fern -harden -target arm64-linux -o OUT FILE.fern` builds an executable that
 turns on two arm64 protections:
 

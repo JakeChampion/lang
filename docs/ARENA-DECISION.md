@@ -1,6 +1,6 @@
 # Arena: keep-or-remove decision
 
-**Status:** arena REMOVED in full — the `arena { … }` block syntax, the
+Status: [record] arena REMOVED in full — the `arena { … }` block syntax, the
 `arena_save` / `arena_restore` builtins, and their arm64 / x86-64 / wasm runtime
 helpers (decided 2026-06-01). Per-request memory is now reclaimed by reference
 counting (RC) only.

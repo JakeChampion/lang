@@ -1,5 +1,7 @@
 # Net P4: TLS 1.3 — the plan
 
+Status: [record] done; every slice landed, with the QUIC hooks and kTLS after them, and #9858 is closed.
+
 How #9858 is built, in the order it lands. One PR per slice. Each slice
 names its gate, and every primitive runs its vectors through the
 interpreter and the self-host compiler on x86-64, arm64 and wasm.

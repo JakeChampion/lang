@@ -1,5 +1,7 @@
 # Bounded ring used by two application experiments
 
+Status: [record] measured experiment; the latest numbers are in FIP-MAINF939.md.
+
 The event loop and message broker both need bounded FIFO queues. This experiment
 extracts their shared operation into an example-local `Ring[T]`, then uses it in
 explicit successor modules. It adds no standard-library collection family.

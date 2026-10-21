@@ -1,6 +1,6 @@
 # Multicore research — share-nothing workers with per-worker heaps
 
-Status: research survey (2026-07). Tracking issue: #5366, filed from
+Status: [research] survey (2026-07). Tracking issue: #5366, filed from
 `PLT-LANDSCAPE-2026.md` §2.8 ("the one frontier with no Fern story at
 all"). Nothing in this doc is a build item. It exists so that stdlib
 and platform decisions stop accreting against an *implicit*

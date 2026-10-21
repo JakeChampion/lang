@@ -1,12 +1,12 @@
 # Self-host type-checker (Option/Result vs. concrete)
 
-> **Status: superseded.** This doc describes the original narrow
-> Option/Result guard. The self-host checker has since grown into a full
-> parity port of the Go checker — see `SELFHOST-CHECKER-PORT.md` (the living
-> log) and the open residue in
-> [#4363](https://github.com/JakeChampion/lang/issues/4363) /
-> [#4346](https://github.com/JakeChampion/lang/issues/4346). Kept as the
-> historical origin of that arc.
+Status: [record] superseded. This doc describes the original narrow
+Option/Result guard. The self-host checker has since grown into a full
+parity port of the Go checker — see `SELFHOST-CHECKER-PORT.md` (the living
+log); its residue issues
+[#4363](https://github.com/JakeChampion/lang/issues/4363) and
+[#4346](https://github.com/JakeChampion/lang/issues/4346) are closed. Kept as the
+historical origin of that arc.
 
 ## Why
 

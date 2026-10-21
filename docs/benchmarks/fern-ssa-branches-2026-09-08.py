@@ -2,7 +2,7 @@
 """Measure general Fern workloads and compiler costs for boolean branch threading.
 
 Run from the repository in the disposable native ARM64 Linux /bench environment
-described in ../COREUTILS-SSA-BRANCHES-2026-09-08.md. Output binaries and JSON
+described in ../coreutils-log/2026-09-08-ssa-branches.md. Output binaries and JSON
 are generated under /bench/ssa-branches-general, overwriting previous outputs.
 Baseline compiler: /bench/fern-ssa-index; candidate: /bench/fern-ssa-branches.
 """

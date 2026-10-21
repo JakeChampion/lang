@@ -1,5 +1,7 @@
 # Typed availability values
 
+Status: [record] slice of the Go typed-ownership pilot (`internal/semir`), deleted 2026-10-04.
+
 This executable slice supplies an internal representation prerequisite
 for [conditional cleanup availability](TYPED-CLEANUP-REGIONS.md). It does not
 enable source conditional registration,

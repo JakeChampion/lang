@@ -1,12 +1,14 @@
 # Typed cleanup regions
 
+Status: [record] design for the Go typed-ownership pilot (`internal/semir`), deleted 2026-10-04.
+
 Design prerequisite for the [typed ownership migration](TYPED-OWNERSHIP-IR-MIGRATION.md).
 This document specifies the full cleanup migration contract. The typed-SSA
 pilot now implements bounded function and iteration actions described below, not
 the complete registration/availability model. Native and self-host production
 still use their existing cleanup paths. Conditional function/iteration actions
 now execute through verified typed activation and late optional captures; see
-[conditional execution](TYPED-CONDITIONAL-CLEANUP-2026-09-09.md) for the current
+[conditional execution](typed-log/2026-09-09-conditional-cleanup.md) for the current
 pass contract, validation and measured costs. Dated sections below retain the
 measurements and restrictions of their original implementation slices.
 
@@ -289,7 +291,7 @@ Guarded expansion now materializes exact action activation, takes late immutable
 binding snapshots at each replay, guards extraction and publishes sequential
 outputs without inventing absent payloads or relaxing ordinary write preconditions.
 The original admission slice below did not enable source execution; the subsequent
-[executable integration](TYPED-CONDITIONAL-CLEANUP-2026-09-09.md) does. Neither
+[executable integration](typed-log/2026-09-09-conditional-cleanup.md) does. Neither
 slice retires production AST analyses.
 
 Validation includes branch-local and mutually exclusive actions, late replacements,

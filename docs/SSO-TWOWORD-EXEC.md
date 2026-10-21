@@ -1,5 +1,7 @@
 # SSO two-word ABI flip — execution plan (shipped)
 
+Status: [record] shipped on wasm32; kept as the record of what each phase touched.
+
 Companion to `docs/SSO-PLAN.md` and `docs/SSO-TWOWORD-FLIP-STATUS.md`.
 This file was the file-level checklist for the wasm two-word
 flip. The flip is now **shipped end-to-end on wasm32**; the

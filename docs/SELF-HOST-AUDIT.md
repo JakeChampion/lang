@@ -1,8 +1,8 @@
 # Self-Host Implementation — Code-Quality Audit
 
-> **Tracked in GitHub:** the open items below are mirrored as a checklist in
-> [#2849](https://github.com/JakeChampion/lang/issues/2849).
-> This doc stays the detailed reference (file:line, repro, fix sketch).
+Status: [tracker] the open items below are mirrored as a checklist in
+[#2849](https://github.com/JakeChampion/lang/issues/2849).
+This doc stays the detailed reference (file:line, repro, fix sketch).
 
 Audit of the self-hosted Fern compiler under `compiler/` (189,543 lines
 of Fern across 94 files), compared where useful against the Go reference in
@@ -992,7 +992,7 @@ appendix §6.)
   identical `build_func_scope` call. This does not merge scopes built for
   distinct analyses or promise that the entire compiler builds each scope
   only once. The cold-checker measurement and differential coverage are in
-  `SELFHOST-FUSION-COMPILE-COST-2026-10-17.md`.
+  `compiler-log/2026-10-17-fusion-compile-cost.md`.
 - [x] **SH-046 — builtin function / enum-variant membership as hand-kept `||`
   chains.** _Done:_ `is_builtin_variant` (`checker.fern:1048`) derives from the
   single variant→enum table in `mx_builtin_enum_of`, and `is_builtin_function`

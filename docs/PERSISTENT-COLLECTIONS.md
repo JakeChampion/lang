@@ -1,6 +1,6 @@
 # Persistent collections — design, measurements, and what the compiler owes them
 
-Issue #6794. Status: **shipped** — `std/ordmap`, `std/ordset`, `std/pmap`,
+Status: [reference] shipped (issue #6794): `std/ordmap`, `std/ordset`, `std/pmap`,
 `std/pset`, `std/pvec` (2026-09-02), with the compiler fixes they needed and a
 measured list of the ones they still want.
 

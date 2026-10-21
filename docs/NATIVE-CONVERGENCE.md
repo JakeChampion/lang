@@ -1,8 +1,8 @@
 # Native convergence: freeze native as the stage-0 bootstrap + oracle
 
-**Status:** FROZEN as of 2026-09-28 — every precondition below is green;
-`NATIVE-FREEZE.md` records the gate state on that day. (Policy adopted
-2026-07-03 with the freeze deferred behind the preconditions.)
+Status: [record] native froze on 2026-09-28 as planned, and its backends were deleted by
+2026-10-05 (`NATIVE-RETIREMENT.md`). `NATIVE-FREEZE.md` records the gate state on the
+freeze day. (Policy adopted 2026-07-03 with the freeze deferred behind the preconditions.)
 **Owner:** compiler / self-host.
 
 ## The question

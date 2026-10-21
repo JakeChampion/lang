@@ -1,5 +1,7 @@
 # Associated types
 
+Status: [reference] trait associated types and `Base::Name` projections, as shipped.
+
 A trait may declare **associated types** — a type member each implementer
 fixes — and refer to them in method signatures via a projection:
 
