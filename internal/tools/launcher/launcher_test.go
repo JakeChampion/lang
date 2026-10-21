@@ -122,3 +122,15 @@ func TestDownloadRetriesOnlyTransientFailures(t *testing.T) {
 		t.Errorf("404 was requested %d times, want 1", hits)
 	}
 }
+
+// The self-host compiler is built the same way whatever FERN_ switches the
+// caller's environment carries: they are for the program fern compiles, and
+// the cache is keyed by the sources alone.
+func TestStage0EnvDropsTheCompilerSwitches(t *testing.T) {
+	env := []string{"PATH=/usr/bin", "FERN_SANITIZE=1", "HOME=/home/x", "FERN_LEAKCHECK=1", "FERN_RC_CERTIFY_MEMO=/tmp/m", "GOFLAGS=-mod=mod"}
+	got := stage0Env(env)
+	want := []string{"PATH=/usr/bin", "HOME=/home/x", "GOFLAGS=-mod=mod"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("stage0Env(%q) = %q, want %q", env, got, want)
+	}
+}

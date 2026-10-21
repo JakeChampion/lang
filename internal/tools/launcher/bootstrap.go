@@ -90,6 +90,7 @@ func built() (string, error) {
 	tmp := out + fmt.Sprintf(".%d.tmp", os.Getpid())
 	fmt.Fprintln(os.Stderr, "fern: building the self-host compiler with the pinned stage0 (once per version; a minute or so)")
 	cmd := exec.Command(stage0, "-target", host, "-o", tmp, filepath.Join(src, "fern.fern"), stdlibDir)
+	cmd.Env = stage0Env(os.Environ())
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	if err := cmd.Run(); err != nil {
 		os.Remove(tmp)
@@ -102,6 +103,22 @@ func built() (string, error) {
 		return "", err
 	}
 	return out, nil
+}
+
+// stage0Env is env without the FERN_ variables. The compiler reads them as
+// build switches (FERN_SANITIZE, FERN_LEAKCHECK, FERN_BACKTRACE, ...), and
+// they are meant for the program this fern is asked to compile, not for the
+// compiler it builds once and caches by its sources alone: a self-host
+// compiler built under FERN_LEAKCHECK=1 frees nothing, and every later
+// compile from the cache would run it.
+func stage0Env(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "FERN_") {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // sourcesKey hashes what the built compiler depends on: its sources, the
