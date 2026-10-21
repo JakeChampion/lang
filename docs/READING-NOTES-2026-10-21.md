@@ -1,5 +1,7 @@
 # Reading notes, 2026-10-21
 
+Status: [research] seven outside sources read on 2026-10-21, with the decision each led to.
+
 Seven outside sources, read against the code as it stands, and what each one
 changes for Fern. One of them became a change in the same PR (the change-risk
 lint rule, `docs/LINT.md`); the rest are recorded here as a decision, with the
