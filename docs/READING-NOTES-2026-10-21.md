@@ -8,11 +8,12 @@ facts the decision rests on, so nobody has to re-derive them.
 | Source | Verdict |
 |---|---|
 | Savoia, "This code is CRAP" (Google Testing Blog, 2011) | **Done:** `change-risk` lint rule from a `-cover` run |
-| Pierre, "On highlighting code" (Highlights, a WAT lexer-highlighter) | Recommend a grammar-versus-lexer parity test; no new highlighter |
-| packslip.dev (signed release metadata, by the authors of mise and aqua) | Recommend publishing a packslip from `release.yml`; not landed blind |
-| ASD-STE100 Simplified Technical English (0xpili's skill) | Pointer added to `docs/AGENT-PROMPTING.md`; dictionary not adoptable |
-| MultiTable (Petkus, 2026) | No action; the open map lever is monomorphisation, not layout |
-| rsconstmap (Lemire; binary fuse static maps) | Recommend: `std/publicsuffix` lookup, then string `match` lowering |
+| Pierre, "On highlighting code" (Highlights, a WAT lexer-highlighter) | **Cannot adopt:** Highlights has no Fern lexer and no way to add one from outside the package |
+| packslip.dev (signed release metadata, by the authors of mise and aqua) | **Done:** the nightly release signs a packslip for the `fern` archives |
+| ASD-STE100 Simplified Technical English (0xpili's skill) | **Done:** the skill's MIT text is vendored and `CLAUDE.md` makes STE the rule for prose |
+| MultiTable (Petkus, 2026) | **Measured** (`bench/maps/`): not the lever; Fern's `Map` loses ten times to hashbrown on the same layout class, so the cost is the runtime path, not the table |
+| rsconstmap (Lemire; binary fuse static maps) | **Done:** `std/constmap`, measured against `Map` and the Rust crate in `bench/maps/` |
+| usage.jdx.dev (a portable CLI spec in KDL) | **Done:** `std/cli` emits a usage spec from the same `CliSpec` as its man page and completions |
 | "Principles for fast Tokio applications" (dial9) | No change without a measurement; two things worth measuring |
 
 ## CRAP: complexity against coverage
@@ -51,6 +52,15 @@ on a static site, so the article's speed argument does not apply. The
 playground (`web/index.html`) mounts CodeMirror 6. The language server emits
 semantic tokens from the real lexer and parser (`compiler/lsptokens.fern`).
 
+Asked to replace Shiki with Highlights, the answer is no, for a reason in the
+package rather than a preference: its lexers are hand-written WebAssembly text
+in `src/langs/*.wat`, registered in a table inside the package and compiled by
+its build, and a TextMate grammar cannot be loaded into it. Fern is not among
+its languages, so the site's Fern fences would render as plain text. Adopting
+it would mean contributing a Fern lexer upstream in WAT and maintaining it
+there, a second lexer beside `compiler/lexer.fern` in a language nobody here
+writes.
+
 What does apply is the article's premise: a grammar maintained beside a lexer
 drifts from it. Fern's keyword set is written three times — `is_keyword` in
 `compiler/lexer.fern`, the `keywords` map in `internal/syntax/lexer/lexer.go`
@@ -85,14 +95,19 @@ rewrite after the fact (the "hash-in-manifest closes TOFU" posture of
 verify the same way. The toolchain here is already managed by mise
 (`mise.toml`), whose author co-wrote packslip and whose installer consumes it.
 
-Recommendation: add a `packslip` step to the nightly `release.yml` signing
-keylessly through the workflow's GitHub OIDC identity, so `mise` and other
-packslip-aware installers can select and verify the right archive without a
-per-vendor layout rule, and keep the `.sha256` files for hand verification.
-Not landed here: a release workflow cannot be exercised from a development
-container, and `workflow_dispatch` builds without publishing, which is the
-safe way to try the step first. A signed release list is the follow-on once
-the nightly has more than one version worth distinguishing.
+Done: the nightly `release.yml` runs `jdx/packslip@v1` after the release is
+published, over the three `fern` archives, signing keylessly with the
+workflow's OIDC identity (`id-token: write`) and attesting each archive, and
+keeps the `.sha256` files for checking by hand. The version is
+`0.0.0-nightly.<run number>`, since the rolling tag names no semver. The
+step's CLI (`packslip create`, version 1.10.1) was run here against archives
+named as the release names them: it infers `linux/x86_64/gnu`,
+`linux/aarch64/gnu` and `darwin/aarch64`, finds `fern` in each, and writes
+`packslip.sigstore.json`. What a container cannot exercise is the keyless
+signing itself; the first scheduled run is the test of that. The coreutils
+archives are a second tool and want a second packslip
+(`github.com/JakeChampion/lang/fern-coreutils`); a signed release list is the
+follow-on once the nightly has more than one version worth distinguishing.
 
 ## Simplified Technical English
 
@@ -103,12 +118,14 @@ in which each word has one approved meaning. The repository packages it as an
 agent skill with a checker script.
 
 Where Fern stands: `CLAUDE.md` ("Write plainly") and `docs/AGENT-PROMPTING.md`
-("mannered prose") already ask for the same thing less mechanically. The
-procedural rules are a sharper statement of that ask for help text, `fern
--explain` pages and `docs/`. The dictionary is not adoptable: it has no
-approved word for most of what a compiler does, and the specification is
-ASD's, not something to vendor. A pointer went into `docs/AGENT-PROMPTING.md`;
-nothing else changes.
+("mannered prose") asked for the same thing less mechanically. STE is now the
+rule: the skill's MIT-licensed text (the 53 rules, the substitutions, the
+examples and the checker) is vendored at
+`.claude/skills/simplified-technical-english/`, and `CLAUDE.md` names it. The
+dictionary is not vendored, because it is ASD's property; STE permits
+technical names beside its approved words, and this project's identifiers are
+technical names, so the rules apply without it. The checker runs with
+`--no-vocab`.
 
 ## MultiTable
 
@@ -121,9 +138,15 @@ than hashbrown at any load factor.
 Where Fern stands: `internal/stdlib/core/map.fern` is a SwissTable-style open
 table: power-of-two bucket count, a 7-bit control byte per slot scanned eight
 at a time with the SWAR zero-byte finder, tombstones, a 75% load-factor grow,
-runtime key-kind tags. The documented perf lever left on maps is
-monomorphising the runtime dispatch (`docs/MAP-SPECIALIZATION.md`, two measured
-attempts, not yet landed), not the layout. No action.
+runtime key-kind tags.
+
+Measured (`bench/maps/README.md`): on the `bench/map_int` workload MultiTable
+looks up 1.2x to 1.7x slower than hashbrown at 4 000 to 1 000 000 keys, the
+trade its paper states, and Fern's `Map` is 7x to 15x slower than hashbrown
+on the same layout class. The lever is the runtime path of a lookup
+(`docs/MAP-SPECIALIZATION.md`), not the table; MultiTable is not adopted.
+Finding the numbers also found #12927, a quadratic copy of a value built in a
+loop and then captured by an escaping closure.
 
 ## rsconstmap: static string maps from binary fuse filters
 
@@ -143,6 +166,15 @@ Where Fern has static string sets:
   built-once structure. A sorted array with binary search is the smallest
   change; a binary fuse set is the fast one and would be a `std` module in its
   own right. Measure against the string scan before choosing.
+Done: `std/constmap` is the Fern version, a binary fuse structure with the
+values in place of the fingerprints, in `ConstMap` and `VerifiedConstMap`
+forms, tested in `tests/stdlib/constmap_test.fern`. Measured against `Map`
+and the Rust crate in `bench/maps/README.md`: in Rust the structure ties
+hashbrown with FxHash and halves the SipHash map's cost; in Fern it ties or
+beats `Map[string, u64]` by up to a third, and the hash is most of a lookup,
+which puts the next win in the `xxh64` kernel the compiler emits rather than
+in the structure. The two call sites below stand:
+
 - `match` on string literals lowers to an `str_eq` if-else-if chain
   (`docs/FEATURE-AUDIT.md`). For the arm counts programs write, a hash would
   lose to comparing lengths first; a length-then-bytes dispatch in the
