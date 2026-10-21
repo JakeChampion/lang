@@ -60,7 +60,7 @@ const STDLIB_GROUPS = [
   ["Collections & errors", ["array", "error", "iter", "map", "ndarray", "option",
     "result", "set", "sort", "ordmap", "ordset", "pmap", "pset", "pvec"]],
   ["Traits", ["cmp", "convert", "mem", "num"]],
-  ["Numbers", ["bigint", "float", "i32", "i64", "int", "math", "rand", "u32",
+  ["Numbers", ["bigint", "float", "i32", "i64", "int", "math", "rand", "simd", "u32",
     "u64"]],
   ["Files, I/O & time", ["async", "cli", "dotenv", "envflag", "errno", "io", "io_buffered", "io_outcome",
     "log", "path", "signal", "stream", "time", "tz"]],

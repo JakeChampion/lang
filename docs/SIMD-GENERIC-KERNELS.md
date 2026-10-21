@@ -1,6 +1,6 @@
 # SIMD generic kernels: `Lanes`, `Dual`, `DoubleDouble` and the lane types
 
-Status: **[plan]**, accepted 2026-10-21. Slices land in order; each one's
+Status: [plan] — accepted 2026-10-21. Slices land in order; each one's
 state is in §7. This document revises `ATLAS-PLATFORM-PLAN.md` §1.2 (the case
 against a portable vector type) in §4, and records two language decisions
 taken for it: associated constants ship now (§3.1); const generics follow the
