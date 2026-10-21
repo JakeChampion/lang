@@ -162,6 +162,11 @@ function test_reverse_digits_min(): test.TestOutcome {
   return test.assert_true(m.reverse_digits() != 0);
 }
 
+function test_to_string_min(): test.TestOutcome {
+  let m: i32 = 0 - 2147483647 - 1;
+  return test.assert_eq(m.to_string(), "-2147483648");
+}
+
 function test_digits_basic(): test.TestOutcome {
   return test.assert_true(0.digits() == 1 && 7.digits() == 1 && 1000.digits() == 4);
 }
@@ -241,5 +246,6 @@ function main(): i32 {
   r = r.it("sum_of_digits MIN", test_sum_of_digits_min);
   r = r.it("has_digit MIN", test_has_digit_min);
   r = r.it("reverse_digits MIN", test_reverse_digits_min);
+  r = r.it("to_string MIN", test_to_string_min);
   return r.finish();
 }
