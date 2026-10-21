@@ -38,3 +38,12 @@ frozen copy of main at 2210347:
 | `compiler/fern.fern`, the whole compiler | 74.406 G | 74.257 G (−0.20%) |
 
 The whole-compiler binary is byte-identical to the base compiler's.
+
+## What is left
+
+`prune_dead` is 557 M Ir of self time with `prune_live` inlined into it.
+The closure loop's header, `for a in f.blocks[def_b[v] - 1].insts[def_k[v]].args`,
+is 90 M of that. `inst_has_effect` is asked once per instruction by each of the
+two passes, 107 M in all, as a chain of comparisons rather than a table.
+The work list still grows by `append`, and the three per-value tables are
+three allocations per call, twice per function.

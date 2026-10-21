@@ -98,8 +98,9 @@ func TestSelfHostSSAMergePhiHintsADyingOperand(t *testing.T) {
 	}
 }
 
-// evictionProg is ssa.prune_mark, whose values sharing a register include one
-// still live after one whose interval ended: they are not ordered by where
+// evictionProg is the live-set walk of ssa.prune_live as it stood when this
+// fixture was taken, whose values sharing a register include one still live
+// after one whose interval ended: they are not ordered by where
 // their intervals end. An eviction spills every one still live, not only those
 // before the first that ended (ssa.still_holds).
 const evictionProg = `struct Inst { result: i32, args: i32[] }
