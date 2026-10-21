@@ -460,7 +460,7 @@ func TestSelfHostLintChangeRiskRefusals(t *testing.T) {
 	}{
 		{"severity set, no run", noisy, []string{"-lint-set", "change-risk=deny", "t.fern"}, "change-risk is configured but no coverage was given: pass -lint-cover FILE"},
 		{"option set, no run", noisy, []string{"-lint-opt", "change-risk.max=5", "t.fern"}, "change-risk is configured but no coverage was given"},
-		{"manifest sets it, no run", map[string]string{"t.fern": lintNoisyFn, "fern.toml": "[lint]\nchange-risk = \"deny\"\n"}, []string{"t.fern"}, "change-risk is configured but no coverage was given"},
+		{"manifest sets it, no run", map[string]string{"t.fern": lintNoisyFn, "fern.toml": "[package]\nname = \"p\"\n\n[lint]\nchange-risk = \"deny\"\n"}, []string{"t.fern"}, "change-risk is configured but no coverage was given"},
 		{"unreadable run", noisy, []string{"-lint-cover", "missing.txt", "t.fern"}, "-lint-cover: cannot read missing.txt"},
 		{"no rows", map[string]string{"t.fern": lintNoisyFn, "cov.txt": "program noise\n"}, []string{"-lint-cover", "cov.txt", "t.fern"}, "-lint-cover cov.txt: no fern-cover rows"},
 		{"malformed row", map[string]string{"t.fern": lintNoisyFn, "cov.txt": "fern-cover: t.fern:x 1\n"}, []string{"-lint-cover", "cov.txt", "t.fern"}, "-lint-cover cov.txt: line 1:"},
@@ -473,8 +473,13 @@ func TestSelfHostLintChangeRiskRefusals(t *testing.T) {
 			}
 		})
 	}
-	// Setting the rule to allow with no run is not a configuration that needs one.
-	if out, errOut, code := lintRun(t, noisy, "-lint-set", "change-risk=allow", "t.fern"); code != 0 || out != "" {
-		t.Errorf("allow without a run: exit %d, stdout %q, stderr %q", code, out, errOut)
+	// A rule set to allow runs nothing, so it needs no run, whatever else names it.
+	for _, args := range [][]string{
+		{"-lint-set", "change-risk=allow", "t.fern"},
+		{"-lint-set", "change-risk=allow", "-lint-opt", "change-risk.max=5", "t.fern"},
+	} {
+		if out, errOut, code := lintRun(t, noisy, args...); code != 0 || out != "" {
+			t.Errorf("%v without a run: exit %d, stdout %q, stderr %q", args, code, out, errOut)
+		}
 	}
 }
