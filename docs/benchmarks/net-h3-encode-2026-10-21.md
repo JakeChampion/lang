@@ -51,17 +51,22 @@ every HPACK (HTTP/2) and QPACK (HTTP/3) header value a request or a response
 carries, not the HTTP/3 server alone. Output is unchanged: the HPACK and QPACK
 RFC-vector suites (`http_hpack`, `http_qpack`) pass.
 
-The live table costs about 1 KB more for it: `HUFF_CODE` (about 1 KB) plus
-`HUFF_LEN` (257 B) become `HUFF` (about 2 KB), with `HUFF_CODE` now read only by
-the generator. `HUFF_DEC` is 16 KB and dominates the module's data either way,
-so the trade is a fair one. `gen-huffman-table.py --check`, which
-`make check-sources` runs, holds `HUFF` and `HUFF_DEC` to what the authored
+The swap is size-neutral on the native backends, where the measurements were
+taken: every array slot is 8 bytes there, so `HUFF_CODE` (an `i32[]`) was
+2,056 bytes and `HUFF` (an `i64[]`) is 2,056 bytes, and `HUFF_CODE` is no longer
+referenced at run time — only the generator reads it from the source — so the
+tree-shaker drops it. The module still ships three tables, since `HUFF_LEN`
+stays live: `encoded_len` reads it, and HPACK and QPACK call `encoded_len`
+before each `encode`. `HUFF_DEC` (32 KB on native) dominates the module's data
+regardless. `gen-huffman-table.py --check`, which `make huffman-table-check`
+runs in the lint lane, holds `HUFF` and `HUFF_DEC` to what the authored
 `HUFF_CODE` and `HUFF_LEN` generate.
 
 ## Ratchet
 
 `TestSelfHostServeAllocsPerRequestH3Mux` pins the multiplexed allocation count
-at m = 64 under a ceiling of 134 (133.33 measured on the x86-64 runner),
+at m = 64 under a ceiling of 134 (133.33 measured over 100,000 rounds on the
+x86-64 runner),
 alongside the serial `TestSelfHostServeAllocsPerRequestH3` (231). The client
 reports the peak it held in flight, and the check fails below 48, so a run that
 quietly fell back to the serial path cannot pass as a multiplexed one. The
