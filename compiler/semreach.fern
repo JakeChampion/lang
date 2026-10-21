@@ -203,7 +203,7 @@ function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[
       let f: ssasem.Func = funcs[i];
       for b in f.graph.blocks {
         for ins in b.insts {
-          if (ins.result >= 0 && ins.result < f.values.len() && arrives(ins, f.values[ins.result], ix, usable)) {
+          if (ins.result >= 0 && ins.result < f.values.len() && arrives(ins, f.values[ins.result], ix, usable, u)) {
             op = opaque_add(f.values[ins.result], op, u);
           }
         }
@@ -224,16 +224,17 @@ function opaque_types(funcs: ssasem.Func[], ix: util.NameIndex, usable: boolean[
 // narrowing, an enum's widening from its member, a zero that is not a
 // record's (a zero record is its fields' zeros, `zeroed`), or any physical
 // operation. A closure's result is what its body built, unless the
-// function value itself arrived, which makes its result type opaque. An
-// enum's zero is the null word, which is no variant, so like a record's it
-// does not make its type opaque.
-function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usable: boolean[]): boolean {
+// function value itself arrived, which makes its result type opaque. A
+// variant-layout enum's zero is the null word, which is no variant, so like
+// a record's it does not make its type opaque; an option- or member-layout
+// enum's zero is a real variant (None, or the member) and still does.
+function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usable: boolean[], u: Universe): boolean {
   let k: i32 = ins.kind_tag;
   if (k == ssasem.call() || k == ssasem.closure_new() || k == 13) {
     return call_arrives(ins, ix, usable);
   }
   if (k < 0) {
-    return semantic_arrives(k, result);
+    return semantic_arrives(k, result, u);
   }
   return !(k >= 1 && k <= 10 || k == 35 || k == 36);
 }
@@ -248,9 +249,9 @@ function call_arrives(ins: ssa.SInst, ix: util.NameIndex, usable: boolean[]): bo
   return g < 0 || !usable[g];
 }
 
-function semantic_arrives(k: i32, result: typeinfo.Type): boolean {
+function semantic_arrives(k: i32, result: typeinfo.Type, u: Universe): boolean {
   if (k == ssasem.zero()) {
-    return !is_record(result) && !is_enum(result);
+    return !is_record(result) && !is_variant_enum(result, u);
   }
   return k == ssasem.dyn_as() || k == ssasem.variant_up();
 }
@@ -262,9 +263,13 @@ function is_record(t: typeinfo.Type): boolean {
   return false;
 }
 
-function is_enum(t: typeinfo.Type): boolean {
+// is_variant_enum reports a declared enum laid out as tagged variants, whose
+// zero is the null word and names no variant. An option- or member-layout
+// enum's zero is a real variant, so it is not one of these.
+function is_variant_enum(t: typeinfo.Type, u: Universe): boolean {
   if let typeinfo.TypeUnion(_) = t {
-    return true;
+    let e: i32 = u.enum_ix.find(ssasem.type_key(t));
+    return e >= 0 && u.enums[e].layout == semrecords.layout_variant();
   }
   return false;
 }
