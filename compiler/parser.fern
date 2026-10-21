@@ -18883,16 +18883,18 @@ function me_field_type_of(structs: StructDecl[], sname: string, fname: string): 
 
 // me_field_spelling_of is me_field_type_of with a function-typed field's `fn`
 // tag expanded from its sidecars, the spelling an expected-type position reads.
-function me_field_spelling_of(structs: StructDecl[], sname: string, fname: string): string {
+function me_field_spelling_of(funcs: MFns, sname: string, fname: string): string {
   let base: string = strip_struct_base(sname);
-  for sd in structs {
-    if (sd.name == base) {
-      for f in sd.fields {
+  let i: i32 = funcs.snames.chain(base);
+  while (i >= 0) {
+    if (funcs.structs[i].name == base) {
+      for f in funcs.structs[i].fields {
         if (f.name == fname) {
           return fn_tag_spelling(f.type_name, f.fn_ret, f.fn_param_types);
         }
       }
     }
+    i = funcs.snames.next[i];
   }
   return "";
 }
@@ -18902,19 +18904,22 @@ function me_field_spelling_of(structs: StructDecl[], sname: string, fname: strin
 // from the instantiation the literal spells (`Keep[i32] { b: mk() }` wants
 // `b` at `Box[i32]`); "" when a type variable is left, which keys no clone.
 function lit_field_spelling(funcs: MFns, sname: string, written: string, fname: string): string {
-  let spelling: string = me_field_spelling_of(funcs.structs, sname, fname);
+  let spelling: string = me_field_spelling_of(funcs, sname, fname);
   if (spelling.len() == 0) {
     return spelling;
   }
   let base: string = strip_struct_base(sname);
   let args: string[] = type_args_of(written);
-  for sd in funcs.structs {
+  let i: i32 = funcs.snames.chain(base);
+  while (i >= 0) {
+    let sd: StructDecl = funcs.structs[i];
     if (sd.name == base) {
       if (sd.type_params.len() > 0 && args.len() == sd.type_params.len()) {
         spelling = subst_ty(spelling, sd.type_params, args);
       }
       break;
     }
+    i = funcs.snames.next[i];
   }
   if (type_str_vars(spelling, []).len() > 0) {
     return "";
