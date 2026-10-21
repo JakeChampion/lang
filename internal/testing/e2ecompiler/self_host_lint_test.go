@@ -268,10 +268,9 @@ func TestSelfHostLintConfiguration(t *testing.T) {
 		{[]string{"-lint-opt", "cyclomatic-complexity.min=3", "src"}, `unknown option "min"`},
 		{[]string{"-lint-opt", "cyclomatic-complexity.max=0", "src"}, "must be at least 1"},
 		{[]string{"-lint-set", "nonsense", "src"}, "must be spelled RULE=SEVERITY"},
-		{[]string{"src/doc.fern.md"}, "linting a literate document is not supported yet"},
 		{[]string{"fern.toml"}, "not a .fern source"},
 	} {
-		_, errOut, code := lintRun(t, map[string]string{"fern.toml": "[package]\nname = \"p\"\n", "src/a.fern": lintNoisyFn, "src/doc.fern.md": "# doc\n"}, tc.args...)
+		_, errOut, code := lintRun(t, map[string]string{"fern.toml": "[package]\nname = \"p\"\n", "src/a.fern": lintNoisyFn}, tc.args...)
 		if code != 2 || !strings.Contains(errOut, tc.want) {
 			t.Errorf("%v: exit %d, stderr %q; want 2 and %q", tc.args, code, errOut, tc.want)
 		}
@@ -283,6 +282,25 @@ func TestSelfHostLintConfiguration(t *testing.T) {
 	bad := map[string]string{"fern.toml": "[lint.options]\nmax = 3\n", "a.fern": lintNoisyFn}
 	if _, errOut, code := lintRun(t, bad, "a.fern"); code != 2 || !strings.Contains(errOut, "fern.toml: line 2: [lint.options] key \"max\" must be spelled <rule>.<option>") {
 		t.Errorf("bad [lint.options] key: exit %d, stderr %q", code, errOut)
+	}
+}
+
+// A file the linter cannot read as a module fails the run like a denied rule,
+// whether it does not parse or, as a literate document, does not tangle: the
+// error is printed and the exit status is 1, not the 0 of a clean lint.
+func TestSelfHostLintUnreadableModule(t *testing.T) {
+	for _, tc := range []struct {
+		name, file, src, want string
+	}{
+		{"parse error", "a.fern", "function f(: i32 {\n  return 1;\n}\n", "error[P001]"},
+		{"no root chunk", "doc.fern.md", "# doc\n", `no root chunk "<<*>>"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, errOut, code := lintRun(t, map[string]string{tc.file: tc.src, "ok.fern": "function f(): i32 {\n  return 1;\n}\n"}, tc.file, "ok.fern")
+			if code != 1 || !strings.Contains(errOut, tc.want) {
+				t.Errorf("exit %d, stderr %q; want 1 and %q", code, errOut, tc.want)
+			}
+		})
 	}
 }
 

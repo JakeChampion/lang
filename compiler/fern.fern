@@ -5308,10 +5308,10 @@ function lint_text(st: DiagStyle, f: lint.Finding, src: string): string {
 }
 
 // lint_module lints one module's `code`, reporting its findings at the
-// positions `lm` moves them to. A parse error is reported instead, and the
-// module skipped; a rule the parser happens to report but the checker owns (a
-// coded E finding) does not count as one.
-function lint_module(st: DiagStyle, cfg: lint.Config, shown: string, code: string, lm: util.LineMap): lint.Finding[] {
+// positions `lm` moves them to. A parse error is reported instead, the module
+// skipped and the second result false; a rule the parser happens to report but
+// the checker owns (a coded E finding) does not count as one.
+function lint_module(st: DiagStyle, cfg: lint.Config, shown: string, code: string, lm: util.LineMap): (lint.Finding[], boolean) {
   let lx: lexer.LexResult = lexer.tokenize_full(code);
   let m: parser.Module = parser.parse_module(lx.tokens);
   let perrs: Finding[] = [];
@@ -5323,17 +5323,17 @@ function lint_module(st: DiagStyle, cfg: lint.Config, shown: string, code: strin
   let no_files: string[] = [];
   let out: lint.Finding[] = [];
   if (eprint_findings(st, perrs, shown, no_files, [lm])) {
-    return out;
+    return (out, false);
   }
   for fd in lint.lint_file(cfg, shown, code, m, lx.comments) {
     let (line, col) = util.doc_pos([lm], fd.line, fd.col);
     out = out.append(lint.Finding { ...fd, line: line, col: col });
   }
-  return out;
+  return (out, true);
 }
 
-// run_lint is `fern -lint PATH...`: exit 1 when a rule set to deny fires, 2
-// for a usage or configuration error.
+// run_lint is `fern -lint PATH...`: exit 1 when a rule set to deny fires or a
+// file does not parse or tangle, 2 for a usage or configuration error.
 function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]): i32 {
   if (paths.len() == 0) {
     eprint("usage: fern -lint PATH... (a .fern or .fern.md file, or a directory of them)");
@@ -5354,8 +5354,8 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
     return 2;
   }
   let all: lint.Finding[] = [];
-  let srcs: string[] = [];
   let out: string = "";
+  let broken: boolean = false;
   for f in files {
     let src: string = "";
     match (read_source(f)) {
@@ -5372,11 +5372,14 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
     let (mods, terr) = entry_sources(f, src);
     if (terr.len() > 0) {
       eprint(terr);
+      broken = true;
       continue;
     }
     let mi: i32 = 0;
     while (mi < mods.srcs.len()) {
-      for fd in lint_module(st, cfg, entry_display(f), mods.srcs[mi], mods.maps[mi]) {
+      let (fds, parsed) = lint_module(st, cfg, entry_display(f), mods.srcs[mi], mods.maps[mi]);
+      broken = broken || !parsed;
+      for fd in fds {
         if (all.len() > 0) {
           out = out + "\n";
         }
@@ -5391,7 +5394,7 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
     out = out + sum + "\n";
   }
   write(out);
-  if (lint.failed(all)) {
+  if (broken || lint.failed(all)) {
     return 1;
   }
   return 0;

@@ -156,7 +156,8 @@ fern -lint -lint-set cyclomatic-complexity=deny \
            -lint-opt cyclomatic-complexity.max=15 src/
 ```
 
-A finding at `warn` prints and exits 0; one at `deny` exits 1. Set
+A finding at `warn` prints and exits 0; one at `deny` exits 1, as does a file
+that does not parse or, as a literate document, does not tangle. Set
 severities and options for a whole package in its `fern.toml`:
 
 ```toml
