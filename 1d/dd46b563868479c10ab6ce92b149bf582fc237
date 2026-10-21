@@ -1,0 +1,10 @@
+# lane: bootstrap-arm64-darwin
+bootstrap/arm64-darwin/stage1.wall_s	37
+bootstrap/arm64-darwin/stage1.peak_rss_mb	2221
+bootstrap/arm64-darwin/stage1.size_bytes	14459953
+bootstrap/arm64-darwin/stage2.wall_s	38
+bootstrap/arm64-darwin/stage2.peak_rss_mb	2060
+bootstrap/arm64-darwin/stage2.size_bytes	14509521
+bootstrap/arm64-darwin/stage3.wall_s	30
+bootstrap/arm64-darwin/stage3.peak_rss_mb	2217
+bootstrap/arm64-darwin/stage3.size_bytes	14509521
