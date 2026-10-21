@@ -35,3 +35,14 @@ frozen copy of main at 2210347:
 
 The whole-compiler binary is byte-identical to the base compiler's after
 each commit.
+
+## Measured and not landed: the reachability walk as a worklist
+
+`semreach.walk` was 832 M on the same compile, flat across its loop: each
+round walks every executable block until a round changes nothing, and the
+instruction loop ran 8.3 million times, about eight visits per instruction.
+A use-driven worklist (a block walked again when a value it reads moves or
+an edge into it is taken, with a per-walk table of each value's reading
+blocks) reaches the same fixed point and measured 74.351 G → 74.455 G
+(+0.14%), binary identical: the rounds converge in two or three, and the
+table and queue cost more than the visits they save. Dropped.
