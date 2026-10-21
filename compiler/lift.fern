@@ -2418,12 +2418,17 @@ function lift_ident_is_param(fd: parser.FuncDecl, name: string): boolean {
 // that a bare reference makes a function VALUE: any but a `const`, which reads as
 // its value.
 function lift_names_fn_value(mfuncs: MFuncs, name: string): boolean {
-  for d in mfuncs.decls {
-    if (d.name == name && d.receiver_type.len() == 0) {
-      return !d.is_const;
+  // The first receiver-less decl named `name` in decl order. A chain
+  // mfuncs_extend grew is not ascending, so the walk keeps the lowest index.
+  let first: i32 = 0 - 1;
+  let i: i32 = mfuncs.head[util.hash_bucket(name, mfuncs.head.len())];
+  while (i >= 0) {
+    if ((first < 0 || i < first) && mfuncs.decls[i].receiver_type.len() == 0 && mfuncs.decls[i].name == name) {
+      first = i;
     }
+    i = mfuncs.next[i];
   }
-  return false;
+  return first >= 0 && !mfuncs.decls[first].is_const;
 }
 
 // lift_arg_is_fn_value reports whether `arg` is a fn-VALUE worth env-boxing at a
