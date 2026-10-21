@@ -59,6 +59,7 @@ var stdModuleReach = map[string]string{
 	"std/bench":         "now",
 	"std/brotli":        "",
 	"std/cli":           "env",
+	"std/constmap":      "",
 	"std/convert":       "",
 	"std/crypto":        "",
 	"std/csv":           "",
