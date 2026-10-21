@@ -19,8 +19,6 @@
 # so it never reaches a checker and this gate has nothing to read. They are
 # pinned rather than skipped so that a case which starts parsing is reported.
 
-diag_e073
-
 parse:destructure_rejects_empty_struct_pattern
 parse:destructure_rejects_enum_variant
 parse:destructure_rejects_literal_tuple_elem

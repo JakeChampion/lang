@@ -9549,6 +9549,10 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
   if (util.str_has_prefix(lex, "lex:")) {
     return util.Diag { related: [], code: slice_unchecked(lex, 4, 8) + "", message: slice_unchecked(lex, 9, lex.len()) + "", line: line, col: col, fix: None };
   }
+  // A parse error with a code of its own (parser.coded_kind).
+  if (util.str_has_prefix(lex, "code:")) {
+    return util.Diag { related: [], code: slice_unchecked(lex, 5, 9) + "", message: where + ": " + slice_unchecked(lex, 10, lex.len()), line: line, col: col, fix: None };
+  }
   // An out-of-range float literal is P002, the numeric-literal code native's
   // parser reports for it, not the generic parser-side-unknown P001 (#6842).
   if (util.is_f64_range_kind(kind)) {
@@ -9602,9 +9606,6 @@ function sentinel_message(kind: string): string {
   }
   if (k == "bad tuple pattern") {
     return "expected a tuple pattern";
-  }
-  if (k == "lhs of assign must be ident, index, or field") {
-    return "only a variable, an index, or a field can be assigned to";
   }
   return k;
 }
