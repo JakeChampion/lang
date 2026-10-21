@@ -12769,21 +12769,13 @@ function func_ret_of(funcs: FuncDecl[], name: string): string {
 
 // func_param_type_at returns the declared type spelling of parameter `idx`
 // of the receiver-less function named `name`, or "" (name not found, or idx
-// out of range). The generic-enum monomorphiser uses it to pin a bare
-// unit-variant call argument (`get(Non)`) from the callee's parameter type —
-// the call-site analogue of the `let o: Opt[i32] = Non` annotation.
+// out of range).
 function func_param_type_at(funcs: FuncDecl[], name: string, idx: i32): string {
-  let i: i32 = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) {
-      if (idx >= 0 && idx < funcs[i].params.len()) {
-        return funcs[i].params[idx].type_name;
-      }
-      return "";
-    }
-    i = i + 1;
+  let at: i32 = free_decl_at(funcs, name);
+  if (at < 0 || idx < 0 || idx >= funcs[at].params.len()) {
+    return "";
   }
-  return "";
+  return funcs[at].params[idx].type_name;
 }
 
 // me_method_arg_types: the type spelling each argument of `recv.name(...)`
@@ -12793,8 +12785,8 @@ function func_param_type_at(funcs: FuncDecl[], name: string, idx: i32): string {
 // methods take its key and value; a declared method its parameters, with
 // the receiver's type arguments substituted. An entry is "" where nothing
 // pins it.
-function me_method_arg_types(fa: ast.ExprFieldAccess, argc: i32, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): string[] {
-  let rty: string = me_scrutinee_type(fa.obj, env, enums, structs, funcs);
+function me_method_arg_types(fa: ast.ExprFieldAccess, argc: i32, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): string[] {
+  let rty: string = me_scrutinee_type(fa.obj, env, enums, structs, funcs, ins);
   if (rty.len() == 0) {
     return [];
   }
@@ -17580,8 +17572,8 @@ pub function monomorphize_enum_structs(mod: Module): Module {
   return ms_module(mod);
 }
 
-// The generic enums whose variant payloads or method signatures name a
-// generic struct.
+// The generic enums whose variant payloads or methods name a generic struct:
+// a method's signature, a type its body spells, or a generic function it calls.
 function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
   let out: string[] = [];
   for sd in mod.structs {
@@ -17598,6 +17590,13 @@ function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
       }
     }
   }
+  // The generic free functions a method can reach as templates.
+  let generics: string[] = [];
+  for g in mod.funcs {
+    if (g.receiver_type.len() == 0 && g.type_params.len() > 0) {
+      generics = generics.append(g.name);
+    }
+  }
   for fd in mod.funcs {
     let owner: string = strip_struct_base(fd.receiver_type);
     if (fd.receiver_type.len() == 0 || genum_index(mod.enums, owner) < 0 || str_in(out, owner)) {
@@ -17606,17 +17605,109 @@ function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
     if (mod.enums[genum_index(mod.enums, owner)].type_params.len() == 0) {
       continue;
     }
-    let names: boolean = ms_names_gstruct(fd.ret_type, gstructs) || ms_names_gstruct(fd.ret_fn_ret, gstructs);
-    for p in fd.params {
-      if (ms_names_gstruct(p.type_name, gstructs) || ms_names_gstruct(p.fn_ret, gstructs)) {
-        names = true;
-      }
-    }
-    if (names) {
+    if (ms_fn_names_gstruct(fd, gstructs) || ms_callees_name_gstruct(fd, mod.funcs, generics, gstructs)) {
       out = out.append(owner);
     }
   }
   return out;
+}
+
+// ms_enum_clone_ty spells each generic-enum instantiation in `ty` as the clone
+// the enum pass made of it (`Tree[i32]` as `Tree__i32`), and leaves `ty` as it
+// is while any of them has no clone: a struct deferred past enum cloning is
+// instantiated after the pass that would otherwise respell its fields.
+function ms_enum_clone_ty(ty: string, enums: EnumDecl[]): string {
+  let insts: Insts = me_collect_anno(ty, enums, Insts { inames: [], itypes: [], iargs: [] });
+  if (insts.inames.len() == 0) {
+    return ty;
+  }
+  let k: i32 = 0;
+  while (k < insts.inames.len()) {
+    if (!enum_clone_exists(enums, insts.inames[k] + "__" + insts.itypes[k])) {
+      return ty;
+    }
+    k = k + 1;
+  }
+  return me_rewrite_ty(ty, enums);
+}
+
+function enum_clone_exists(enums: EnumDecl[], name: string): boolean {
+  for ed in enums {
+    if (ed.name == name && ed.type_params.len() == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ms_fn_names_gstruct reports whether `fd` names a generic struct in its
+// signature or in a type its body spells.
+function ms_fn_names_gstruct(fd: FuncDecl, gstructs: StructDecl[]): boolean {
+  let names: boolean = ms_names_gstruct(fd.ret_type, gstructs) || ms_names_gstruct(fd.ret_fn_ret, gstructs);
+  for p in fd.params {
+    if (ms_names_gstruct(p.type_name, gstructs) || ms_names_gstruct(p.fn_ret, gstructs)) {
+      names = true;
+    }
+  }
+  let u: MsNames = MsNames { gstructs: gstructs, hit: names };
+  for st in fd.body {
+    u = astwalk.fold_stmt_nodes(st, u, ms_names_stmt, ms_names_expr, astwalk.descend_all);
+  }
+  return u.hit;
+}
+
+// ms_callees_name_gstruct reports whether a generic free function `fd` calls,
+// directly or through another, names a generic struct: a generic enum's
+// method reaches it as a template, so a struct it builds is keyed only per
+// enum clone.
+function ms_callees_name_gstruct(fd: FuncDecl, funcs: FuncDecl[], generics: string[], gstructs: StructDecl[]): boolean {
+  let refs: BgRefs = bg_refs_body(fd.body, BgRefs { names: generics, hit: [] });
+  let i: i32 = 0;
+  while (i < refs.hit.len()) {
+    for g in funcs {
+      if (g.name == refs.hit[i] && g.receiver_type.len() == 0 && g.type_params.len() > 0) {
+        if (ms_fn_names_gstruct(g, gstructs)) {
+          return true;
+        }
+        refs = bg_refs_body(g.body, refs);
+      }
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+struct MsNames { gstructs: StructDecl[], hit: boolean }
+
+function ms_names_stmt(st: ast.Stmt, own u: MsNames): MsNames {
+  if let ast.StmtVar(v) = st {
+    if (ms_names_gstruct(v.type_name, u.gstructs) || ms_names_gstruct(v.fn_ret, u.gstructs)) {
+      return MsNames { ...u, hit: true };
+    }
+  }
+  return u;
+}
+
+function ms_names_expr(e: ast.Expr, own u: MsNames): MsNames {
+  match (e) {
+    ast.ExprStructLit(sl) => {
+      if (gstruct_index(u.gstructs, strip_struct_base(sl.type_name)) >= 0) {
+        return MsNames { ...u, hit: true };
+      }
+    },
+    ast.ExprLambda(lm) => {
+      for p in lm.params {
+        if (ms_names_gstruct(p.type_name, u.gstructs)) {
+          return MsNames { ...u, hit: true };
+        }
+      }
+      if (ms_names_gstruct(lm.ret_type, u.gstructs)) {
+        return MsNames { ...u, hit: true };
+      }
+    },
+    _ => {}
+  }
+  return u;
 }
 
 function ms_names_gstruct(ty: string, gstructs: StructDecl[]): boolean {
@@ -17820,10 +17911,10 @@ function ms_module(mod: Module): Module {
       let cf: StructFieldDecl[] = [];
       let cfi: i32 = 0;
       while (cfi < gd.fields.len()) {
-        let subbed: string = subst_ty(gd.fields[cfi].type_name, gd.type_params, cts);
+        let subbed: string = ms_enum_clone_ty(subst_ty(gd.fields[cfi].type_name, gd.type_params, cts), mod.enums);
         let ft2: TyIns = mg_ty(subbed, gstructs, ins);
-        let gfr: TyIns = mg_ty(subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts), gstructs, ft2.mins);
-        let gfl: TyIns = mg_ty_list(subst_ty_list(gd.fields[cfi].fn_param_types, gd.type_params, cts), gstructs, gfr.mins);
+        let gfr: TyIns = mg_ty(ms_enum_clone_ty(subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts), mod.enums), gstructs, ft2.mins);
+        let gfl: TyIns = mg_ty_list(ms_enum_clone_ty(subst_ty_list(gd.fields[cfi].fn_param_types, gd.type_params, cts), mod.enums), gstructs, gfr.mins);
         ins = gfl.mins;
         cf = cf.append(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty, fn_ret: gfr.ty, fn_param_types: gfl.ty });
         cfi = cfi + 1;
@@ -18333,7 +18424,9 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], exp
   let j: i32 = 0;
   while (j < ed.type_params.len()) {
     let b: string = binds.elook(ed.type_params[j]);
-    if (b.len() == 0) {
+    // A payload typed by a type variable inside a template, as in `Bin(k, 1)`
+    // in a method of `Tree[K]`, names no instantiation either.
+    if (b.len() == 0 || mono_ty_mentions_var(b)) {
       return "";
     }
     if (j > 0) {
@@ -18532,11 +18625,13 @@ function me_env_from_params(params: ast.ParamDecl[]): MEnv {
   return e;
 }
 
-// me_call_arg_type is the type argument i of a plain call to `fname` is
-// expected at: its declared parameter's, or for a built-in Option / Result
+// me_call_arg_types is the type each argument of a plain call to `fname` is
+// expected at: its declared parameter's, with the type variables the call's
+// arguments bind substituted in (`bin(Tip, k)` with `bin[K](l: Tree[K], k: K)`
+// and `k: i32` expects `Tree[i32]`), or for a built-in Option / Result
 // constructor, the payload the expected type gives it (`Ok(Nn)` under
 // `Result[Opt[i32], string]` is `Opt[i32]`).
-function me_call_arg_type(funcs: MFns, fname: string, i: i32, expected: string): string {
+function me_call_arg_types(funcs: MFns, fname: string, args: ast.Expr[], env: MEnv, expected: string, ins: Insts): string[] {
   let at: i32 = 0 - 1;
   if (fname == "Some" && strip_struct_base(expected) == "Option" || fname == "Ok" && strip_struct_base(expected) == "Result") {
     at = 0;
@@ -18544,10 +18639,57 @@ function me_call_arg_type(funcs: MFns, fname: string, i: i32, expected: string):
     at = 1;
   }
   let targs: string[] = type_args_of(expected);
-  if (i == 0 && at >= 0 && at < targs.len()) {
-    return targs[at];
+  if (at >= 0 && at < targs.len()) {
+    return [targs[at]];
   }
-  return func_param_type_at(funcs.decls, fname, i);
+  let d: i32 = me_call_decl_at(funcs, fname, ins);
+  if (d < 0) {
+    return [];
+  }
+  let fd: FuncDecl = funcs.decls[d];
+  let binds: MEnv = MEnv { mnames: [], mtypes: [] };
+  if (fd.type_params.len() > 0) {
+    binds = full_ret_binds(fd, args, env, funcs, fd.type_params);
+  }
+  let out: string[] = [];
+  for p in fd.params {
+    out = out.append(subst_ty(p.type_name, binds.mnames, binds.mtypes));
+  }
+  return out;
+}
+
+// me_call_decl_at is the free function a call to `fname` runs (me_called_name).
+function me_call_decl_at(funcs: MFns, fname: string, ins: Insts): i32 {
+  return free_decl_at(funcs.decls, me_called_name(funcs, fname, ins));
+}
+
+// me_called_name is the free function a call to `fname` names: `fname` when it
+// is declared, or, for an instance the function pass keyed inside an enum
+// method's clone (`find__i32`, recorded in `ins` and cloned only later), its
+// template, which the call's arguments bind as they bound the key.
+function me_called_name(funcs: MFns, fname: string, ins: Insts): string {
+  if (free_decl_at(funcs.decls, fname) >= 0 || util.index_of_sub(fname, "__") <= 0) {
+    return fname;
+  }
+  let k: i32 = 0;
+  while (k < ins.inames.len()) {
+    if (ins.inames[k] + "__" + sanitize_key(ins.itypes[k]) == fname) {
+      return ins.inames[k];
+    }
+    k = k + 1;
+  }
+  return fname;
+}
+
+function free_decl_at(funcs: FuncDecl[], name: string): i32 {
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // me_ident rewrites an identifier the enum pass can key. A type parameter
@@ -18649,16 +18791,15 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       // `Non` stayed un-rewritten, then monomorphize_enums dropped the
       // generic `Non` struct and the dangling reference bailed the module
       // (#5247).
-      let calleeFn: string = "";
       let mexps: string[] = [];
       if (owner < 0) {
         if let ast.ExprIdent(cid) = c.callee {
           if (!str_list_contains(env.mnames, cid.name)) {
-            calleeFn = cid.name;
+            mexps = me_call_arg_types(funcs, cid.name, c.args, env, expected, ins);
           }
         }
         if let ast.ExprFieldAccess(cfa) = c.callee {
-          mexps = me_method_arg_types(cfa, c.args.len(), env, enums, structs, funcs);
+          mexps = me_method_arg_types(cfa, c.args.len(), env, enums, structs, funcs, ins);
         }
       }
       let nargs: ast.Expr[] = [];
@@ -18668,8 +18809,6 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
         let ae: string = "";
         if (i < fexps.len()) {
           ae = fexps[i];
-        } else if (calleeFn.len() > 0) {
-          ae = me_call_arg_type(funcs, calleeFn, i, expected);
         } else if (i < mexps.len()) {
           ae = mexps[i];
         }
@@ -18859,6 +18998,11 @@ function me_field_type_of(structs: StructDecl[], sname: string, fname: string): 
       let j: i32 = 0;
       while (j < fs.len()) {
         if (fs[j].name == fname) {
+          // A generic struct's field reads at the instance's arguments.
+          let targs: string[] = type_args_of(sname);
+          if (structs[i].type_params.len() > 0 && targs.len() == structs[i].type_params.len()) {
+            return subst_ty(fs[j].type_name, structs[i].type_params, targs);
+          }
           return fs[j].type_name;
         }
         j = j + 1;
@@ -18994,7 +19138,7 @@ function me_tuple_elem_type(ty: string, field: string): string {
   return "";
 }
 
-function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): string {
+function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): string {
   match (e) {
     ast.ExprIdent(id) => {
       return env.elook(id.name);
@@ -19028,7 +19172,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
           if (fr.len() > 0) {
             return fr;
           }
-          let crt: string = call_ret_type(funcs, cid.name, c.args, env);
+          let crt: string = call_ret_type(funcs, me_called_name(funcs, cid.name, ins), c.args, env);
           if (crt.len() > 0) {
             return crt;
           }
@@ -19043,7 +19187,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
           // function's return was recovered), so the arms stayed
           // un-mangled against the concrete enum and the match read the
           // wrong variant.
-          let rt: string = me_scrutinee_type(cfa.obj, env, enums, structs, funcs);
+          let rt: string = me_scrutinee_type(cfa.obj, env, enums, structs, funcs, ins);
           if (rt.len() > 0) {
             return me_method_ret_type(rt, cfa.field, funcs);
           }
@@ -19061,14 +19205,14 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
       return "";
     },
     ast.ExprIndex(ix) => {
-      let at: string = me_scrutinee_type(ix.array, env, enums, structs, funcs);
+      let at: string = me_scrutinee_type(ix.array, env, enums, structs, funcs, ins);
       if (type_ends_arr(at)) {
         return slice_unchecked(at, 0, at.len() - 2) + "";
       }
       return "";
     },
     ast.ExprFieldAccess(fa) => {
-      let ot: string = me_scrutinee_type(fa.obj, env, enums, structs, funcs);
+      let ot: string = me_scrutinee_type(fa.obj, env, enums, structs, funcs, ins);
       if (ot.len() == 0) {
         return "";
       }
@@ -19199,10 +19343,10 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
         }
       }
       if (vty.len() == 0) {
-        vty = me_scrutinee_type(v.init, env, enums, structs, funcs);
+        vty = me_scrutinee_type(v.init, env, enums, structs, funcs, ins);
       }
       let ninit: ast.Expr = retype_enum_assoc(iv.rexpr, nslot.ty, enums, funcs);
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: ninit, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: me_bind_var(env, v, vty, enums, structs, funcs), rins2: cins };
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: ninit, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: me_bind_var(env, v, vty, enums, structs, funcs, ins), rins2: cins };
     },
     ast.StmtReturn(r) => {
       let rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
@@ -19236,7 +19380,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       // in the body recovers a generic-enum element's instantiation
       // (`for o in xs` over `Opt[i32][]` → o: `Opt[i32]`). Strip one `[]`
       // off the iterable's tracked type.
-      let itty: string = me_scrutinee_type(fr.iter, env, enums, structs, funcs);
+      let itty: string = me_scrutinee_type(fr.iter, env, enums, structs, funcs, ins);
       let elty: string = "";
       if (type_ends_arr(itty)) {
         elty = slice_unchecked(itty, 0, itty.len() - 2) + "";
@@ -19251,7 +19395,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       // Recover the scrutinee's generic-enum instantiation: an annotated
       // ident / param / for-loop var, a call result (the callee's return
       // type), or an index into a generic-enum array.
-      let sty: string = me_scrutinee_type(m.scrutinee, env, enums, structs, funcs);
+      let sty: string = me_scrutinee_type(m.scrutinee, env, enums, structs, funcs, ins);
       let gi: GEInst = ge_inst_of(sty, enums);
       let arms: ast.MatchArm[] = [];
       let i: i32 = 0;
@@ -19300,12 +19444,12 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
 // tuple destructure (`let (m2, had) = m.without(k)`, one StmtVar whose name
 // is the comma-joined list), each plain name to its element of the init's
 // tuple type.
-function me_bind_var(env: MEnv, v: ast.StmtVar, vty: string, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): MEnv {
+function me_bind_var(env: MEnv, v: ast.StmtVar, vty: string, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): MEnv {
   let names: string[] = split_top_commas(v.name);
   if (names.len() < 2) {
     return env.ebind(v.name, vty);
   }
-  let tty: string = me_scrutinee_type(v.init, env, enums, structs, funcs);
+  let tty: string = me_scrutinee_type(v.init, env, enums, structs, funcs, ins);
   let out: MEnv = env;
   let i: i32 = 0;
   while (i < names.len()) {
