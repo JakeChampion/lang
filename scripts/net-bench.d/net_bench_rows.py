@@ -5,13 +5,14 @@ scripts/net-bench calls this once per load — `oha` for the HTTP/1.1 and
 two-fetch rows (from oha's JSON), `h2load` for the HTTP/3 rows (from
 h2load's summary and per-request log) — passing the server process
 group's user and system clock ticks before (U0 S0) and after (U1 S1) the
-load. Each family divides those ticks by the requests it completed — oha's
-status codes plus errors, h2load's `done`. The two counts are comparable
-rather than identical: oha's also counts the end-of-run deadline cut-offs
-and any client-side errors (one per connection, since it is closed-loop),
-while h2load's drops the requests still in flight when its duration ends
-(up to `-m` per connection). Both differences are a per-connection handful
-against the run's millions, not an exact identity.
+load. Each family divides those ticks by the requests the server answered.
+oha's count is every response with a status code: its client-side errors
+and the requests the deadline cut off got none and are left out — on the
+slow two-fetch rows at 4,096 connections the cut-offs alone would otherwise
+be over half the count, since every connection holds one request when the
+run ends. h2load's count is `done`, the streams that closed within its
+duration, the ones still in flight when it ends dropped. So the
+server-CPU-per-request rows mean the same thing across protocols.
 scripts/net-bench.d/test_net_bench_rows.py covers the parsing and the
 denominators.
 """
@@ -43,7 +44,7 @@ def oha_rows(name, n, path, u0, s0, u1, s1):
     errs = j.get("errorDistribution", {})
     failed = sum(v for k, v in codes.items() if k != "200")
     failed += sum(v for k, v in errs.items() if "deadline" not in k)
-    done = sum(codes.values()) + sum(errs.values())
+    done = sum(codes.values())
     row = f"net/{name}/c{n}"
     return [
         f"{row}.rps\t{int(s['requestsPerSec'])}",
