@@ -157,10 +157,10 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 // around it; 247.2 here with a byte slice's view descriptor in the frame
 // (#12780) and payloads taken out of enum slots (#12781); 230.33 on
 // arm64-darwin and 231.19 on the x86-64 runner with methods' variant returns
-// paired, where 247.33 was measured before; 226.06 here with a scalar
-// concat growing a sole receiver's block in place
+// paired, where 247.33 was measured before; 226.06 and 226.92 on two runs
+// here with a scalar concat growing a sole receiver's block in place
 // (docs/benchmarks/net-h3-concat-2026-10-21.md).
-const ServeAllocsH3Ceiling = 227
+const ServeAllocsH3Ceiling = 228
 
 // ServeAllocsH3MuxCeiling bounds allocations per hello request with
 // ServeAllocsH3MuxConcurrency requests in flight on one connection, the

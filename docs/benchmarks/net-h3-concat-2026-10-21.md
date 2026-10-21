@@ -73,11 +73,12 @@ The allocation ratchets, 100,000 requests each on this box:
 
 | row | before | after |
 |---|--:|--:|
-| `TestSelfHostServeAllocsPerRequestH3` (serial) | 231.19 | 226.06 |
-| `TestSelfHostServeAllocsPerRequestH3Mux` (64 in flight) | 133.33 | 130.32 |
+| `TestSelfHostServeAllocsPerRequestH3` (serial) | 231.19 | 226.06, 226.92 |
+| `TestSelfHostServeAllocsPerRequestH3Mux` (64 in flight) | 133.33 | 130.32, 130.17 |
 
-Both ceilings are lowered to the measurement (227 and 131). The plain, H2,
-TLS and two-fetch rows are unchanged to the count.
+Both ceilings are lowered to the measurement (228 and 131; the serial row
+moved 0.9 between two runs, so its ceiling sits a count further up). The
+plain, H2, TLS and two-fetch rows are unchanged to the count.
 
 ## Next
 
