@@ -33,6 +33,7 @@ package printer
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -775,10 +776,7 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 
 // formatImplDecl emits `impl[T] Trait[Args] for Type { … }` (or an
 // inherent `impl Type { … }`), with associated-type bindings first
-// (sorted for a stable, idempotent order) then the methods. Methods are
-// the desugared forms stashed on the ImplDecl: `Self` already reads as
-// the concrete impl type, and an ordinary method's `self` receiver is
-// re-inserted as its first parameter (the shape an impl block requires).
+// (sorted for a stable, idempotent order) then the methods.
 func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 	f.b.WriteString("impl")
 	f.writeTypeParams(id.TypeParams, id.Bounds, id.BoundArgs)
@@ -831,11 +829,10 @@ func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 	f.b.WriteString("}\n")
 }
 
-// formatImplMethod emits one desugared impl method inside its block. An
-// ordinary method (Receiver set) gets `self: <type>` re-inserted as its
-// first parameter; an associated function (AssocType set, no receiver)
-// keeps its parameters as-is. Type params are respelled only for a
-// non-parametric impl.
+// formatImplMethod emits one impl method inside its block with the types
+// it was written with: an ordinary method's receiver is its first
+// parameter again. Type params are respelled only for a non-parametric
+// impl.
 func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 	f.indent(1)
 	f.b.WriteString("function ")
@@ -843,19 +840,21 @@ func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 	if !parametric {
 		f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs)
 	}
-	f.b.WriteByte('(')
-	wrote := false
+	params := fn.Params
 	if fn.Receiver != nil {
-		if fn.Receiver.Own {
-			f.b.WriteString("own ")
-		}
-		f.b.WriteString(fn.Receiver.Name)
-		f.b.WriteString(": ")
-		f.b.WriteString(formatType(fn.Receiver.Type))
-		wrote = true
+		params = append([]ast.Param{*fn.Receiver}, params...)
 	}
-	for _, p := range fn.Params {
-		if wrote {
+	result := fn.ReturnType
+	if fn.ImplWritten != nil {
+		params = slices.Clone(params)
+		for i := range params {
+			params[i].Type = fn.ImplWritten.Params[i]
+		}
+		result = fn.ImplWritten.Result
+	}
+	f.b.WriteByte('(')
+	for i, p := range params {
+		if i > 0 {
 			f.b.WriteString(", ")
 		}
 		if p.Own {
@@ -864,12 +863,11 @@ func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 		f.b.WriteString(writtenName(p.Name))
 		f.b.WriteString(": ")
 		f.b.WriteString(formatType(p.Type))
-		wrote = true
 	}
 	f.b.WriteByte(')')
-	if fn.ReturnType != nil && !fn.ReturnUnannotated {
+	if result != nil && !fn.ReturnUnannotated {
 		f.b.WriteString(": ")
-		f.b.WriteString(formatType(fn.ReturnType))
+		f.b.WriteString(formatType(result))
 	}
 	f.b.WriteByte(' ')
 	f.formatBlock(fn.Body, 1)

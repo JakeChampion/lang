@@ -1256,6 +1256,11 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 		// signature and stamp AssocType so the checker hoists it to
 		// `__assoc_<Type>_<name>` and resolves type-qualified call sites.
 		assoc := len(fn.Params) == 0 || fn.Params[0].Name != "self"
+		written := &ast.ImplSig{Result: fn.ReturnType}
+		for _, prm := range fn.Params {
+			written.Params = append(written.Params, prm.Type)
+		}
+		fn.ImplWritten = written
 		// Substitute Self -> the concrete impl type across the whole
 		// signature, then (for an ordinary method) peel `self` off as the
 		// receiver so the checker's receiver-hoist mangles it to

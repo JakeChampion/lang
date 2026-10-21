@@ -1492,6 +1492,30 @@ s = 0;
 return s;
 }
 `},
+	// An impl method keeps `Self` where it was written (#12891).
+	{"impl-keeps-self", `struct Box[T] {
+xs: T[],
+}
+trait Maker {
+function make(): Self;
+}
+impl Maker for Box[i32] {
+function make(): Self {
+return Box { xs: [] };
+}
+}
+impl[T] Box[T] {
+function size(self: Self): i32 {
+return self.xs.len();
+}
+function same(self: Box[T], o: Self): Box[T] {
+return o;
+}
+}
+function main(): i32 {
+return 0;
+}
+`},
 	{"lowering-chained-assign", `function main(): i32 {
 let a: i32 = 0;
 let b: i32 = 0;

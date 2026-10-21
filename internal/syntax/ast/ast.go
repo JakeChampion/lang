@@ -3172,6 +3172,12 @@ const (
 	InlineHintNever                    // @noinline — never a candidate
 )
 
+// ImplSig is an impl method's parameter and result types as written.
+type ImplSig struct {
+	Params []Type
+	Result Type
+}
+
 type FuncDecl struct {
 	P    Position
 	Name string
@@ -3284,6 +3290,10 @@ type FuncDecl struct {
 	// signature is substituted to the impl type at parse time, exactly
 	// like an ordinary impl method.
 	AssocType string
+	// ImplWritten is an impl method's signature as written, before `Self`
+	// became the impl type and `self` the receiver, for the formatter.
+	// Nil outside an impl block.
+	ImplWritten *ImplSig
 	// IsLocal is true for functions declared as a statement inside
 	// another function's body. Closure conversion at codegen time
 	// hoists these to top-level entries and rewrites captured-var

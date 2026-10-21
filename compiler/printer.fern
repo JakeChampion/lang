@@ -3545,44 +3545,8 @@ function print_enum_variant(ed: parser.EnumDecl, structs: parser.StructDecl[], v
   return out;
 }
 
-// print_type_params_except renders a decl's type parameters minus `skip`, or ""
-// when nothing is left.
-function print_type_params_except(fd: parser.FuncDecl, skip: string[]): string {
-  let names: string[] = [];
-  let bounds: string[] = [];
-  let i: i32 = 0;
-  while (i < fd.type_params.len()) {
-    if (!util.has_str(skip, fd.type_params[i])) {
-      names = names.append(fd.type_params[i]);
-      if (i < fd.bound_traits.len()) {
-        bounds = bounds.append(fd.bound_traits[i]);
-      } else {
-        bounds = bounds.append("");
-      }
-    }
-    i = i + 1;
-  }
-  if (names.len() == 0) {
-    return "";
-  }
-  let out: string = "[";
-  let j: i32 = 0;
-  while (j < names.len()) {
-    if (j > 0) {
-      out = out + ", ";
-    }
-    out = out + names[j];
-    if (bounds[j].len() > 0) {
-      out = out + ": " + join_plus(bounds[j]);
-    }
-    j = j + 1;
-  }
-  return out + "]";
-}
-
 // print_impl_decl reconstructs `impl[T: Bound] Trait for Type { … }` (or an
 // inherent `impl Type { … }`) from the written form parse_impl_decl retains.
-// The methods are the DESUGARED forms, which is what native prints too.
 function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
   let out: string = "impl";
   if (id.type_params.len() > 0) {
@@ -3626,7 +3590,7 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
       out = out + "\n";
     }
     let (lead, lg) = drain_leading(g, id.methods[mi].line, 1);
-    let (mtext, mg) = print_impl_method(id.methods[mi], id.type_params, lg);
+    let (mtext, mg) = print_impl_method(id.methods[mi], lg);
     out = out + lead + mtext;
     g = mg;
     mi = mi + 1;
@@ -3642,24 +3606,11 @@ function receiver_mode(fd: parser.FuncDecl): string {
   return "";
 }
 
-// print_impl_method emits one method at one indent level. An impl block states
-// its methods with `self` as an ordinary first PARAMETER, so a receiver — which
-// is what the decl was desugared into — is re-inserted there. A receiver-less
-// method is an associated function and its parameters stand as written.
-function print_impl_method(m: parser.FuncDecl, impl_tps: string[], f: Fmt): (string, Fmt) {
-  // finalize_impl_method merges the IMPL's type parameters into the method's,
-  // so printing them here would restate `[T]` on every method of an
-  // `impl[T] …` — which native rejects outright ("cannot declare its own type
-  // parameters inside a parametric impl block").
-  let out: string = indent_str(1) + "function " + m.name + print_type_params_except(m, impl_tps) + "(";
+// print_impl_method emits one method at one indent level, as written: an
+// impl block states `self` as an ordinary first parameter.
+function print_impl_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
+  let out: string = indent_str(1) + "function " + m.name + print_type_params(m) + "(";
   let first: boolean = true;
-  if (m.receiver_name.len() > 0) {
-    out = out + receiver_mode(m) + m.receiver_name;
-    if (m.receiver_type.len() > 0) {
-      out = out + ": " + m.receiver_type;
-    }
-    first = false;
-  }
   let i: i32 = 0;
   while (i < m.params.len()) {
     if (!first) {
@@ -5438,9 +5389,8 @@ function check_traits_and_impls(): i32 {
   if (!util.contains(outIm, "impl Display for i32 {}")) {
     return 321;
   }
-  // `Self` reads as the concrete type and the receiver goes back to being the
-  // first parameter — the shape an impl block requires, and what native emits.
-  if (!util.contains(outIm, "function to_string(self: boolean): string {")) {
+  // The method prints as written, `Self` included (#12891).
+  if (!util.contains(outIm, "function to_string(self: Self): string {")) {
     return 322;
   }
   let rtIm: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outIm));
@@ -5478,7 +5428,7 @@ function check_traits_and_impls(): i32 {
   if (!util.contains(outPa, "impl[T: cmp.Eq] cmp.Eq for Box[T] {")) {
     return 329;
   }
-  if (!util.contains(outPa, "function eq(self: Box[T], other: Box[T]): boolean {")) {
+  if (!util.contains(outPa, "function eq(self: Self, other: Self): boolean {")) {
     return 330;
   }
 

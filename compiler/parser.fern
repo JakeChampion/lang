@@ -28016,8 +28016,13 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     let m: FuncDecl = fr_func;
     // finalize_impl_method does the receiver-peel / associated-function
     // encoding, the `Self` -> impl_type rewrite, and the bounded-type-
-    // param merge (shared with trait default-method synthesis).
-    out = out.append(finalize_impl_method(m, impl_type, impl_tps, impl_tbs));
+    // param merge (shared with trait default-method synthesis). `-fmt`
+    // prints the method as written.
+    if (p.verbatim) {
+      out = out.append(m);
+    } else {
+      out = out.append(finalize_impl_method(m, impl_type, impl_tps, impl_tbs));
+    }
     method_names = method_names.append(m.name);
   }
   if (p.peek_punct() == "}") {
