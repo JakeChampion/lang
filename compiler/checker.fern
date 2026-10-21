@@ -18798,7 +18798,8 @@ function const_grammar_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   let earlier: string[] = [];
   for fd in mod.funcs {
-    if (fd.is_const) {
+    // An associated constant is a function body, free to read `T::LANES`.
+    if (fd.is_const && fd.receiver_type.len() == 0) {
       for stmt in fd.body {
         match (stmt) {
           ast.StmtReturn(r) => {

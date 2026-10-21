@@ -95,7 +95,10 @@ pub struct VMap { keys: Value[], values: Value[] }
 // diagnostics and (later) for struct-aware equality. A variant's `owner` is
 // the enum it was built as, which its bare name may not decide; "" for a
 // struct, or a variant whose enum the construction did not name.
-pub struct VStruct { type_name: string, field_names: string[], field_values: Value[], owner: string }
+// targs names the type arguments a generic struct's value was built at
+// (`Dual[f64]`), read when the value pins a type parameter (tyarg_of_value):
+// its field values alone cannot say what T a `Dual[T]` holds.
+pub struct VStruct { type_name: string, field_names: string[], field_values: Value[], owner: string, targs: string[] }
 
 pub struct VErr { msg: string, abort: boolean }
 
@@ -719,7 +722,11 @@ function v_map_new(): Value {
 }
 
 function v_struct(type_name: string, names: string[], values: Value[]): Value {
-  return VStruct { type_name: type_name, field_names: names, field_values: values, owner: "" };
+  return VStruct { type_name: type_name, field_names: names, field_values: values, owner: "", targs: [] };
+}
+
+function v_struct_at(type_name: string, names: string[], values: Value[], targs: string[]): Value {
+  return VStruct { type_name: type_name, field_names: names, field_values: values, owner: "", targs: targs };
 }
 
 function v_err(msg: string): Value {
@@ -931,7 +938,7 @@ function v_variant_of(owner: string, name: string, args: Value[]): Value {
     }
     vi = vi + 1;
   }
-  return VStruct { type_name: name, field_names: vnames, field_values: args, owner: owner };
+  return VStruct { type_name: name, field_names: vnames, field_values: args, owner: owner, targs: [] };
 }
 
 // variant_owner is the one enum declaring variant `name`, or "" when none or
@@ -4870,10 +4877,65 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   if (is_err(rv)) {
     return rv;
   }
+  // An operator on a struct is its impl's method (#2706: `+` is `add`),
+  // which the checker resolves by name; here the value's type dispatches it.
+  let overload: string = struct_op_method(b.op, lv);
+  if (overload.len() > 0) {
+    return call_method(lv, overload, [rv], env.funcs, env.aliases, env.type_decls, env.outs);
+  }
   if (is_checked_op(b.op)) {
     return eval_checked(b.op, lv, rv, checked_operand_type(b, lv));
   }
   return eval_typed_binary(b.op, lv, rv, b.ty);
+}
+
+// struct_op_method names the impl method a binary operator on a struct value
+// desugars to, or "" when the operand is not a struct or the operator has no
+// method.
+function struct_op_method(op: string, lv: Value): string {
+  match (lv) {
+    VStruct(_) => {
+      if (op == "+") {
+        return "add";
+      }
+      if (op == "-") {
+        return "sub";
+      }
+      if (op == "*") {
+        return "mul";
+      }
+      if (op == "/") {
+        return "div";
+      }
+      if (op == "%") {
+        return "rem";
+      }
+      return bit_op_method(op);
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
+function bit_op_method(op: string): string {
+  if (op == "&") {
+    return "bitand";
+  }
+  if (op == "|") {
+    return "bitor";
+  }
+  if (op == "^") {
+    return "bitxor";
+  }
+  if (op == "<<") {
+    return "shl";
+  }
+  if (op == ">>") {
+    return "shr";
+  }
+  return "";
 }
 
 function eval_expr(e: ast.Expr, env: Env): Value {
@@ -4897,6 +4959,12 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       let ov: Value = eval_expr(u.operand, env);
       if (is_err(ov)) {
         return ov;
+      }
+      // Unary minus on a struct is its impl's `neg` (#2706).
+      if (u.op == "-") {
+        if let VStruct(_) = ov {
+          return call_method(ov, "neg", [], env.funcs, env.aliases, env.type_decls, env.outs);
+        }
       }
       return eval_unary(u.op, ov);
     },
@@ -4984,6 +5052,12 @@ function eval_expr(e: ast.Expr, env: Env): Value {
 }
 
 function eval_expr_call(c: ast.ExprCall, env: Env): Value {
+  return eval_expr_call_expect(c, env, "");
+}
+
+// eval_expr_call_expect is eval_expr_call with the type the call's binding
+// declares, which pins a type parameter only the callee's result names.
+function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value {
   // Bare-ident callee → plain function call OR
   // closure call when the name is bound to a VFunc.
   // FieldAccess callee → method call.
@@ -5100,6 +5174,11 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
           name = fa.field;
           is_method = true;
           if (static_type.len() > 0) {
+            // The binding's annotation applies the type the call is made on
+            // (`let s: G[f64] = G.splat(2.5)` reads `T::LANES` at T = f64).
+            if (expect.len() > 0 && util.base_type_name(expect) == static_type) {
+              static_type = expect;
+            }
             recv = v_type(static_type);
           } else {
             recv = eval_expr(fa.obj, env);
@@ -5129,11 +5208,18 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
       }
     }
   }
-  // Evaluate args in order, propagating the first VErr.
+  // A written type argument may name the caller's own type parameter
+  // (`dd_splat[T](x)` inside a generic body), bound in this env.
+  let targs: string[] = bound_type_args(c.type_args, env);
+  // Evaluate args in order, propagating the first VErr. An argument that is
+  // itself a generic call only its result types (`x.pow(seed(3.0))`) is
+  // pinned by the parameter it fills, at the callee's parameters as the
+  // receiver and the earlier arguments bind them.
+  let (callee_fd, callee_known) = call_target(name, is_method, is_closure, recv, env);
   let arg_vals: Value[] = [];
   let i: i32 = 0;
   while (i < c.args.len()) {
-    let av: Value = eval_call_arg(c.args[i], name, i, env);
+    let av: Value = eval_pinned_arg(c, i, name, callee_fd, callee_known, is_method && !is_type_value(recv), recv, arg_vals, targs, env);
     if (is_err(av)) {
       return av;
     }
@@ -5144,12 +5230,116 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
     return v_variant_of(variant_enum, variant_name, arg_vals);
   }
   if (is_method) {
-    return call_method_targs(recv, name, arg_vals, c.type_args, env.funcs, env.aliases, env.type_decls, env.outs);
+    return call_method_targs(recv, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls, env.outs);
   }
   if (is_closure) {
     return call_closure(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, env.outs);
   }
-  return call_func_targs(name, arg_vals, c.type_args, env.funcs, env.aliases, env.type_decls, env.outs);
+  return call_func_targs(name, arg_vals, targs, expect, env.funcs, env.aliases, env.type_decls, env.outs);
+}
+
+// eval_pinned_arg evaluates argument i of a call to `fd`: a generic call in
+// that position is pinned by the parameter it fills, at `fd`'s type
+// parameters as the receiver and the earlier arguments bind them.
+function eval_pinned_arg(c: ast.ExprCall, i: i32, name: string, fd: parser.FuncDecl, known: boolean, has_recv: boolean, recv: Value, earlier: Value[], targs: string[], env: Env): Value {
+  if (known && i < fd.params.len() && fd.type_params.len() > 0) {
+    if let ast.ExprCall(ac) = c.args[i] {
+      let pinned: Env = bind_tyargs(env, fd, has_recv, recv, earlier, targs, "");
+      let arg_expect: string = bound_type_spelling(fd.params[i].type_name, pinned);
+      if (arg_expect.len() > 0) {
+        return eval_expr_call_expect(ac, env, arg_expect);
+      }
+    }
+  }
+  return eval_call_arg(c.args[i], name, i, env);
+}
+
+// call_target is the declaration a call names, for its parameter types: a
+// free function by name, a method by the receiver value's type, an
+// associated function by the type it is called on. A closure or a builtin
+// has none.
+function call_target(name: string, is_method: boolean, is_closure: boolean, recv: Value, env: Env): (parser.FuncDecl, boolean) {
+  let none: parser.FuncDecl = parser.FuncDecl { stdlib: "", no_inline: false, name: "", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
+  if (is_closure) {
+    return (none, false);
+  }
+  let idx: i32 = 0 - 1;
+  if (is_method) {
+    idx = method_target_index(name, recv, env);
+  } else {
+    idx = free_target_index(name, env);
+  }
+  if (idx < 0) {
+    return (none, false);
+  }
+  return (env.funcs[idx], true);
+}
+
+// method_target_index is the index in env.funcs of the method `name` the
+// receiver value dispatches to, or of the associated function when the
+// receiver is a type; -1 when there is none.
+function method_target_index(name: string, recv: Value, env: Env): i32 {
+  if let VType(tv) = recv {
+    return assoc_index(env.funcs, tv.name, name);
+  }
+  let rt: string = value_type_name(recv);
+  let i: i32 = 0;
+  while (i < env.funcs.len()) {
+    let fd: parser.FuncDecl = env.funcs[i];
+    if (fd.name == name && fd.receiver_name.len() > 0 && util.base_type_name(fd.receiver_type) == rt) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function free_target_index(name: string, env: Env): i32 {
+  let i: i32 = 0;
+  while (i < env.funcs.len()) {
+    let fd: parser.FuncDecl = env.funcs[i];
+    if (fd.name == name && fd.receiver_name.len() == 0 && fd.receiver_type.len() == 0) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+function is_type_value(v: Value): boolean {
+  if let VType(_) = v {
+    return true;
+  }
+  return false;
+}
+
+// bound_type_args reads each written type argument at the type parameters
+// the env binds: `T` becomes `f64`, `Dual[T]` becomes `Dual[f64]`.
+function bound_type_args(targs: string[], env: Env): string[] {
+  let out: string[] = [];
+  for ta in targs {
+    out = out.append(bound_type_spelling(ta, env));
+  }
+  return out;
+}
+
+function bound_type_spelling(spelling: string, env: Env): string {
+  if (spelling.len() == 0) {
+    return spelling;
+  }
+  let ref: parser.TypeRef = parser.parse_type_ref(spelling);
+  let base: string = ref.base;
+  match (resolve_ident_value(base, env)) {
+    VType(tv) => {
+      base = tv.name;
+    },
+    _ => {}
+  }
+  let args: parser.TypeRef[] = [];
+  for a in ref.args {
+    args = args.append(parser.parse_type_ref(bound_type_spelling(parser.render_type_ref(a), env)));
+  }
+  return parser.render_type_ref(parser.TypeRef { ...ref, base: base, args: args });
 }
 
 function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
@@ -5317,7 +5507,7 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
           }
           oi = oi + 1;
         }
-        return v_struct(sl.type_name, bnames, bvals);
+        return v_struct_at(sl.type_name, bnames, bvals, struct_targs(sl.type_name, env));
       },
       _ => {
         return v_err("struct update base is not a struct");
@@ -5338,7 +5528,50 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
     fvs = fvs.append(fv);
     i = i + 1;
   }
-  return v_struct(sl.type_name, sl.field_names, fvs);
+  return v_struct_at(sl.type_name, sl.field_names, fvs, struct_targs(sl.type_name, env));
+}
+
+// eval_var_init evaluates a binding's initialiser; a call sees the declared
+// type, so a generic only its result names (`let d: Dual[f64] = seed(2.0)`)
+// binds its parameter from it.
+function eval_var_init(v: ast.StmtVar, env: Env): Value {
+  if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
+    if let ast.ExprCall(c) = v.init {
+      return eval_expr_call_expect(c, env, v.type_name);
+    }
+  }
+  return eval_expr(v.init, env);
+}
+
+// struct_targs is the type arguments a struct literal is built at: the ones
+// written (`Box[i32] { … }`), else the bindings in scope for the struct's
+// type parameters, as a generic body has them. Empty when a parameter is
+// unbound.
+function struct_targs(type_name: string, env: Env): string[] {
+  let written: parser.TypeRef = parser.parse_type_ref(type_name);
+  let out: string[] = [];
+  if (written.args.len() > 0) {
+    for a in written.args {
+      out = out.append(parser.render_type_ref(a));
+    }
+    return out;
+  }
+  for sd in env.type_decls {
+    if (sd.name == type_name) {
+      for tp in sd.type_params {
+        match (resolve_ident_value(tp, env)) {
+          VType(tv) => {
+            out = out.append(tv.name);
+          },
+          _ => {
+            return [];
+          }
+        }
+      }
+      return out;
+    }
+  }
+  return [];
 }
 
 function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
@@ -5563,11 +5796,14 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
 // — what `impl Zero for i32 { function zero(): Self { … } }` desugars to: an
 // empty receiver_name with receiver_type naming the impl type. flatten leaves
 // such a function's name unmangled (it keys mangling off receiver_type), so
-// the pair is the whole key. -1 when there is none.
+// the pair is the whole key. A parametric impl's function is declared on
+// `Dual[T]` and called on `Dual[f64]`, so the match is on the base name. -1
+// when there is none.
 function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string): i32 {
+  let base: string = util.base_type_name(type_name);
   let i: i32 = 0;
   while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type == type_name) {
+    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && util.base_type_name(funcs[i].receiver_type) == base) {
       return i;
     }
     i = i + 1;
@@ -5589,6 +5825,14 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
   let env: Env = new_module_env(funcs, aliases, type_decls, outs);
+  // The applied type's arguments bind a parametric impl's type parameters
+  // (`Dual[f64].LANES()` reads `T::LANES` at T = f64).
+  let targs: parser.TypeRef[] = parser.parse_type_ref(type_name).args;
+  let t: i32 = 0;
+  while (t < fd.type_params.len() && t < targs.len()) {
+    env = env.bind(fd.type_params[t], v_type(parser.render_type_ref(targs[t])));
+    t = t + 1;
+  }
   let j: i32 = 0;
   while (j < fd.params.len()) {
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
@@ -5628,12 +5872,50 @@ function tyarg_of_value(v: Value): string {
       return "f32";
     },
     VStruct(sv) => {
-      return sv.type_name;
+      if (sv.targs.len() == 0) {
+        return sv.type_name;
+      }
+      let name: string = util.base_type_name(sv.type_name) + "[";
+      let i: i32 = 0;
+      while (i < sv.targs.len()) {
+        if (i > 0) {
+          name = name + ", ";
+        }
+        name = name + sv.targs[i];
+        i = i + 1;
+      }
+      return name + "]";
     },
     _ => {
       return "";
     }
   }
+}
+
+// tyarg_match_names is tyarg_match on two type spellings: the declared one
+// names `tp` outright, or applies the same base as the value's and names it
+// in a corresponding argument (`Dual[T]` against `Dual[f64]`).
+function tyarg_match_names(decl: string, tp: string, actual: string): string {
+  if (decl == tp) {
+    return actual;
+  }
+  if (actual.len() == 0 || util.index_of_sub(decl, "[") < 0) {
+    return "";
+  }
+  let dref: parser.TypeRef = parser.parse_type_ref(decl);
+  let aref: parser.TypeRef = parser.parse_type_ref(actual);
+  if (dref.base != aref.base || dref.args.len() != aref.args.len()) {
+    return "";
+  }
+  let i: i32 = 0;
+  while (i < dref.args.len()) {
+    let r: string = tyarg_match_names(parser.render_type_ref(dref.args[i]), tp, parser.render_type_ref(aref.args[i]));
+    if (r.len() > 0) {
+      return r;
+    }
+    i = i + 1;
+  }
+  return "";
 }
 
 // tyarg_match reads the concrete type a type parameter takes from ONE
@@ -5655,8 +5937,9 @@ function tyarg_match(decl: string, tp: string, v: Value): string {
       },
       _ => {}
     }
+    return "";
   }
-  return "";
+  return tyarg_match_names(decl, tp, tyarg_of_value(v));
 }
 
 // bind_tyargs binds each of a generic function's bounded type parameters to
@@ -5667,7 +5950,7 @@ function tyarg_match(decl: string, tp: string, v: Value): string {
 // parameter outright; a parameter nothing pins stays unbound and that call
 // still errors. Bound BEFORE the parameters so a value parameter of the same
 // name shadows it.
-function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Value, args: Value[], type_args: string[]): Env {
+function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Value, args: Value[], type_args: string[], expect: string): Env {
   let e: Env = env;
   let t: i32 = 0;
   while (t < fd.type_params.len()) {
@@ -5685,6 +5968,11 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
         concrete = tyarg_match(fd.params[j].type_name, tp, args[j]);
       }
       j = j + 1;
+    }
+    // A parameter no argument pins may be pinned by the binding's annotation
+    // (`let d: Dual[f64] = seed(2.0)`), through the declared result.
+    if (concrete.len() == 0 && expect.len() > 0) {
+      concrete = tyarg_match_names(fd.ret_type, tp, expect);
     }
     // A parameter cannot pin itself: an empty array reaching a generic
     // from another generic carries THAT one's abstract element spelling.
@@ -6041,7 +6329,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         return v_map_new();
       }
       if (name == "iter") {
-        return VStruct { type_name: "MapIter", field_names: ["keys", "values", "pos"], field_values: [v_arr(m.keys), v_arr(m.values), VCellI { c: cell_new(0), is_char: false, is_bool: false }], owner: "" };
+        return VStruct { type_name: "MapIter", field_names: ["keys", "values", "pos"], field_values: [v_arr(m.keys), v_arr(m.values), VCellI { c: cell_new(0), is_char: false, is_bool: false }], owner: "", targs: [] };
       }
     },
     _ => {}
@@ -6101,7 +6389,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         return v_err("arity mismatch calling method `" + name + "`");
       }
       let env: Env = new_module_env(funcs, aliases, type_decls, outs);
-      env = bind_tyargs(env, fd, true, recv, args, type_args);
+      env = bind_tyargs(env, fd, true, recv, args, type_args, "");
       // No declared type on the receiver: an array receiver is always the
       // abstract `T[]`, whose element spelling would self-pin an empty
       // VArr. `self` is never a trait object, so nothing asks for it.
@@ -7006,13 +7294,14 @@ function str_hash_low32(h: i64): i32 {
 }
 
 function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
-  return call_func_targs(name, args, [], funcs, aliases, type_decls, outs);
+  return call_func_targs(name, args, [], "", funcs, aliases, type_decls, outs);
 }
 
 // call_func_targs is call_func with the call's explicit type arguments
 // (`chunk[V2](8)`), which bind the callee's type parameters ahead of what the
-// argument values pin.
-function call_func_targs(name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
+// argument values pin, and the type the call's binding expects, which pins
+// a parameter only the result names.
+function call_func_targs(name: string, args: Value[], type_args: string[], expect: string, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
   // The Display-taking I/O trio, matching internal/oracle/interp's builtinPrint /
   // builtinWrite / builtinEprint: print and eprint append a newline, write
   // does not, and eprint goes to stderr. The interpreter is itself a Fern
@@ -7706,7 +7995,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], funcs
       }
       let env: Env = new_module_env(funcs, aliases, type_decls, outs);
       let no_recv: Value = v_absent();
-      env = bind_tyargs(env, fd, false, no_recv, args, type_args);
+      env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
       let j: i32 = 0;
       while (j < fd.params.len()) {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
@@ -8234,7 +8523,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return eval_stmt(d.action, env);
     },
     ast.StmtVar(v) => {
-      let val: Value = eval_expr(v.init, env);
+      let val: Value = eval_var_init(v, env);
       // A runtime error in the initializer aborts the function rather
       // than being bound and silently swallowed (#4348 item 4). eval_expr
       // only ever yields VALUES (control signals are statement-level,

@@ -179,10 +179,16 @@ pub trait Lanes: num.Num + num.Neg {
 }
 ```
 
-`Mask` and `Bits` are associated types too: on `f64` they are `boolean` and
-`i64`; on `f64x2` a lane mask and `i64x2`. A branch in a scalar kernel
-(`if (x > limit)`) becomes a `select` in the generic one, which is what makes
-the same body serve both.
+As built (slice 3): there is no `Elem`, `Mask` or `Bits` associated type. A
+constant enters a kernel as an f64 (`T.splat(2.0)`), which an `f32` or a
+narrower lane converts; a float literal cannot adapt to a projection the
+call site has not yet bound, so `splat(x: Self::Elem)` could not take `2.0`.
+A comparison yields a mask in the type itself (one lane 1.0 or 0.0) and
+`select` reads it, so a branch in a scalar kernel (`if (x > limit)`) becomes
+a `select` in the generic one, which is what makes the same body serve both.
+The bit-level primitives the vector kernels need (`to_bits`, lane-wise
+shifts) arrive with the lane type in slice 5, where there is a type to test
+them on; until then `ldexp` and `round` cover the argument reductions.
 
 - **Scalar impls**: `impl Lanes for f64` and `impl Lanes for f32`, one lane,
   delegating to `std/float`. Every generic kernel runs today through these.
@@ -193,18 +199,27 @@ the same body serve both.
 - **`DoubleDouble[T: Lanes]`** `{ hi: T, lo: T }`: Dekker's two-sum and
   two-product, with `fma` where the trait provides one. About 106 bits on
   `f64`.
-- **Kernels**: `exp`, `log`, `sin`, `cos`, `tan`, `expm1`, `log1p`, `atan2`,
-  `pow`, `tanh`, `erf` and `gamma` rewritten against `Lanes` from
-  `std/float`'s fdlibm and ARM optimized-routines bodies. `std/float`'s `f64`
-  methods stay as they are; they are the reference the differential gate
-  compares against, bit for bit on the scalar impl.
+- **`Math`**: `exp`, `log`, `sin`, `cos`, `tan`, `tanh`, `atan`, `expm1`,
+  `log1p` and `pow`, a trait each type implements for itself. The scalars
+  adopt `std/float`'s methods (an impl adopts a method the type already has,
+  so `impl Math for f64 {}` is the whole binding); `Dual` applies the chain
+  rule to the inner type's functions; `DoubleDouble` reduces the argument
+  and sums a series at its own precision, seeded by the inner type's own
+  result where a Newton step doubles it (log, atan, sqrt). The lane types
+  implement `Math` with the bit-level kernels ported from `std/float`
+  (slice 5); writing those against `Lanes` before a lane type exists would
+  leave them untested on the only type they are for.
 
-**Performance risk to measure, not assume.** A `Dual` or `DoubleDouble` op
-builds a record per operation. `seminline` splices records that are built and
-only read, so a chain inside one body should stay register-resident, but the
-benchmark (`std/bench`, a kernel over an `f64[]` as scalar, as dual, as
-double-double) is part of the slice, and a copy that survives it is a
-compiler bug to fix in the compiler, not at the call site.
+**Performance, measured.** A `Dual` or `DoubleDouble` op builds a record per
+operation. `docs/benchmarks/simd-evaluators-2026-10-21/` runs one kernel
+(fourteen `Lanes` operations and one `exp` per element) over 20,000 doubles
+on x86-64: the scalar takes 20 ns per element with no allocation, the dual
+324 ns with 21 allocations, the double-double 3,610 ns with 323. The answers
+are right; the records are materialised, because `seminline` splices a leaf
+built from literals and not one built from its parameters' fields, so
+nothing reads a `Dual { … }` construction apart. The fix is in the compiler
+(#12931), not at the call site, and takes both evaluators to the arithmetic's
+own cost (about 3x and 20x the scalar).
 
 Gates: `tests/stdlib/simd_*_test.fern` through `std/test`, each with a Go
 gate in `internal/testing/e2e/test_runner_test.go`; the differential against
@@ -229,7 +244,7 @@ is secondary, since it is blind to a stable miscompile (`TEST-GATES.md`).
 | --- | --- | --- |
 | 1 | This brief | this PR |
 | 2 | Associated constants, both compilers | this PR |
-| 3 | `std/simd`: `Lanes`, scalar impls, `Dual`, `DoubleDouble`, kernels, benchmark | this PR |
+| 3 | `std/simd`: `Lanes`, `Math`, scalar impls, `Dual`, `DoubleDouble`, benchmark | this PR |
 | 4 | Lane types `f64x2` / `f32x4`: type, interpreters, IR ops, wasm, x86-64, arm64, capability tables | this PR |
 | 5 | `impl Lanes for f64x2` / `f32x4`; array fusion picks the lane instance for a packed `f64[]` map | this PR |
 | 6 | Const generics; `Vec[N, T]` | follow-on project |

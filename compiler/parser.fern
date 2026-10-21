@@ -23978,10 +23978,11 @@ function retag_type_arg_indexes(mod: Module): Module {
     types = types.append(rd.name);
   }
   // A module const is a value in the bracket, as native's const folding
-  // makes it before the retag (#10427).
+  // makes it before the retag (#10427). An associated constant is read off a
+  // type and names nothing bare.
   let consts: string[] = [];
   for fd in mod.funcs {
-    if (fd.is_const) {
+    if (fd.is_const && fd.receiver_type.len() == 0) {
       consts = consts.append(fd.name);
     }
   }
@@ -23998,13 +23999,18 @@ function retag_type_arg_indexes(mod: Module): Module {
       shadow = shadow.append(pd.name);
     }
     // Unbounded type parameters are erased from the decl, but every name
-    // the signature's types mention is a type or one of them.
+    // the signature's types mention is a type or one of them. An impl
+    // method carries the impl's parameters in type_params and its receiver
+    // spells them (`impl[T] Zero for W[T]`), so `zero_of[T]()` in its body
+    // is an instantiation there too.
     let ftypes: string[] = types;
-    if (fd.all_type_params.len() > 0) {
+    if (fd.all_type_params.len() > 0 || fd.type_params.len() > 0) {
+      ftypes = util.append_all(util.append_all(ftypes, fd.all_type_params), fd.type_params);
       for pd in fd.params {
         ftypes = rta_type_names(pd.type_name, ftypes);
       }
       ftypes = rta_type_names(fd.ret_type, ftypes);
+      ftypes = rta_type_names(fd.receiver_type, ftypes);
     }
     function rw(x: ast.Expr): ast.Expr {
       return rta_call_of(x, generics, ftypes, shadow);

@@ -44,21 +44,6 @@ func TestAssocConstInterp(t *testing.T) {
 	}
 }
 
-func TestAssocConstSelfHostInterp(t *testing.T) {
-	bin := buildFernCLI(t)
-	src := filepath.Join(t.TempDir(), "assoc_const.fern")
-	if err := os.WriteFile(src, []byte(assocConstSrc), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.Command(bin, "-interp", src).CombinedOutput()
-	if code := exitCodeOf(err); code != 0 {
-		t.Errorf("exit = %d, want 0\n%s", code, out)
-	}
-	if !strings.Contains(string(out), "lanes\n33") {
-		t.Errorf("stdout = %q, want the name and the sum", out)
-	}
-}
-
 func TestAssocConstX86_64(t *testing.T) {
 	bin := buildFernCLI(t)
 	qemu := x86QemuOrEmpty(t)

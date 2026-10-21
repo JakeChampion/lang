@@ -83,3 +83,30 @@ function main(): i32 { let k: Kind = Kind::C; return 0; }`, `enum Kind has no va
 		}
 	}
 }
+
+// A parametric impl may bind an associated type to a projection of the same
+// name off its own type parameter (`type Elem = T::Elem;`); resolving the
+// binding by name alone recursed on it without bound.
+func TestAssocTypeBindingProjectsOwnParameter(t *testing.T) {
+	src := `trait Lanes {
+    type Elem;
+    function first(self: Self): Self::Elem;
+}
+impl Lanes for f64 {
+    type Elem = f64;
+    function first(self: Self): Self::Elem { return self; }
+}
+struct Dual[T] { v: T, d: T }
+impl[T: Lanes] Lanes for Dual[T] {
+    type Elem = T::Elem;
+    function first(self: Self): Self::Elem { return self.v.first(); }
+}
+function main(): i32 {
+    let x: Dual[f64] = Dual { v: 1.5, d: 1.0 };
+    let e: f64 = x.first();
+    return 0;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

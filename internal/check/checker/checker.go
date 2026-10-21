@@ -10550,7 +10550,16 @@ func (c *checker) resolveProjWith(t ast.Type, bindings map[string]ast.Type) ast.
 	switch x := t.(type) {
 	case ast.ProjType:
 		if b, ok := bindings[x.Name]; ok {
-			return c.resolveProjWith(b, bindings)
+			// A binding may itself project the same name off a type
+			// parameter (`type Elem = T::Elem;`); that projection is the
+			// answer, not another use of the binding.
+			rest := make(map[string]ast.Type, len(bindings))
+			for k, v := range bindings {
+				if k != x.Name {
+					rest[k] = v
+				}
+			}
+			return c.resolveProjWith(b, rest)
 		}
 		return ast.ProjType{Base: c.resolveProjWith(x.Base, bindings), Name: x.Name}
 	case ast.ArrayType:
