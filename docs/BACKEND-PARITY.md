@@ -465,7 +465,8 @@ hand-written frames) is listed in `docs/HARDENING.md`.
 ### Heap exhaustion exits 125 on the natives, traps on wasm
 
 The native targets exit 125 when the arena runs out (`.Lalloc_oom` in
-`asm_ir.fern` and `asm_arm64_ir.fern`). On wasm the equivalent event is
+`asm_ir.fern` and `asm_arm64_ir.fern`), and 123 with `fern: could not map the
+heap arena (errno N)` when its first mmap fails (`.Lalloc_map_fail`). On wasm the equivalent event is
 `memory.grow` returning -1, and `$__fern_alloc` raises `unreachable` there —
 so the failure is attributable to the allocator, with its caller chain, but
 the process dies as a trap rather than carrying a status
