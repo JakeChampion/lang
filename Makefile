@@ -64,6 +64,7 @@ log-table-check:
 # the authored HUFF_CODE and HUFF_LEN generate.
 huffman-table-check:
 	uv run --no-project scripts/gen-huffman-table.py --check
+	uv run --no-project python -B -m unittest discover -s scripts -p test_gen_huffman.py
 
 vet:
 	go vet ./...

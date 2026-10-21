@@ -53,7 +53,9 @@ RFC-vector suites (`http_hpack`, `http_qpack`) pass.
 
 The swap is size-neutral on the native backends, where the measurements were
 taken: every array slot is 8 bytes there, so `HUFF_CODE` (an `i32[]`) was
-2,056 bytes and `HUFF` (an `i64[]`) is 2,056 bytes, and `HUFF_CODE` is no longer
+2,056 bytes and `HUFF` (an `i64[]`) is 2,056 bytes — a const array of 64-bit
+elements is one static box, not a heap allocation (`compiler/ssarc.fern`'s
+`&arr64`, `compiler/ssaunits.fern`) — and `HUFF_CODE` is no longer
 referenced at run time — only the generator reads it from the source — so the
 tree-shaker drops it. The module still ships three tables, since `HUFF_LEN`
 stays live: `encoded_len` reads it, and HPACK and QPACK call `encoded_len`
