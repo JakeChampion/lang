@@ -38,10 +38,14 @@
 # pooled client on the multi-threaded runtime. The upstream is the Go
 # hello. The report's header names the versions. oha holds N connections
 # closed-loop for the duration and the report keeps its throughput and
-# its p50 / p99 latency per server and N, plus, on x86-64, the
-# bump-allocator growth one held idle connection, one suspended handler
-# and one stream parked on an HTTP/2 connection cost the Fern loop (the
-# numbers TestSelfHostHeldConnectionsHeapBoundX86_64 bounds). Closed-loop,
+# its p50 / p99 latency per server and N, and the server's own CPU per
+# request, user and system (`server_user_us_per_req` / `server_sys_us_per_req`,
+# the process group's utime / stime over the load divided by the requests
+# the server answered) — the deterministic figure a throughput gap on a shared runner
+# is attributed to, kernel or user time rather than guessed at. Plus, on
+# x86-64, the bump-allocator growth one held idle connection, one suspended
+# handler and one stream parked on an HTTP/2 connection cost the Fern loop
+# (the numbers TestSelfHostHeldConnectionsHeapBoundX86_64 bounds). Closed-loop,
 # without `-q`, because these are throughput ceilings: oha's latency
 # correction only applies under a fixed rate, and the p99 here says how
 # the server queues at saturation, not what a client at a given rate
@@ -76,6 +80,17 @@
 #   net/<server>/c<N>.failed    responses that were not 200, plus errors
 #                               other than the requests cut off by the end
 #                               of the run
+#   net/<server>/c<N>.server_user_us_per_req,
+#   net/<server>/c<N>.server_sys_us_per_req   the server process group's
+#                               user / system CPU over the load divided by
+#                               the requests the server answered (oha's
+#                               status codes, h2load's `done`),
+#                               microseconds. The
+#                               source counters are whole 10 ms clock
+#                               ticks, so the figure carries up to one tick
+#                               per process of rounding — coarsest on the
+#                               low-request shapes — despite its 0.01 µs
+#                               print
 #   net/<server>/p<N>.rps       the pipelined profile: N connections each
 #                               sending 16 requests in one write and
 #                               reading the answers before the next batch
@@ -86,7 +101,8 @@
 #   net/<server>/c<N>m<M>.rps   HTTP/3: N connections with M requests in
 #                               flight on each, responses per second;
 #                               <server> is fern-h3 or h2o-h3
-#   net/<server>/c<N>m<M>.p50_us, .p99_us, .failed   as above
+#   net/<server>/c<N>m<M>.p50_us, .p99_us, .failed,
+#   .server_user_us_per_req, .server_sys_us_per_req   as above
 #   net/fern/held.bytes_per_connection          (x86-64 only)
 #   net/fern/held.bytes_per_suspended_handler   (x86-64 only)
 #   net/fern/held.bytes_per_stream              (x86-64 only)
@@ -190,44 +206,18 @@ EOF
   await_port "$1" "$2" "$work/server.log"
 }
 
-# h3_rows NAME N M OUT LOG — the report rows for one HTTP/3 load, from
-# h2load's output and its per-request log.
-h3_rows() {
-  python3 - "$@" <<'PY'
-import re, sys
-name, n, m, out, log = sys.argv[1:6]
-text = open(out).read()
-rps = re.search(r"finished in [^,]*, ([0-9.]+) req/s", text)
-req = re.search(r"requests: (\d+) total, \d+ started, \d+ done, (\d+) succeeded, (\d+) failed, (\d+) errored, (\d+) timeout", text)
-if not rps or not req:
-    sys.exit("net-bench: no h2load summary for %s c%sm%s:\n%s" % (name, n, m, text))
-times = sorted(int(line.split()[2]) for line in open(log) if len(line.split()) == 3)
-def pct(p):
-    return times[min(len(times) - 1, int(len(times) * p))] if times else 0
-failed = int(req.group(3)) + int(req.group(4)) + int(req.group(5))
-row = f"net/{name}/c{n}m{m}"
-print(f"{row}.rps\t{int(float(rps.group(1)))}")
-print(f"{row}.p50_us\t{pct(0.50)}")
-print(f"{row}.p99_us\t{pct(0.99)}")
-print(f"{row}.failed\t{failed}")
-PY
+# rows NAME N JSON U0 S0 U1 S1 — the report rows for one HTTP/1.1 or
+# two-fetch load, from oha's JSON and the server group's user/system
+# clock ticks before (U0 S0) and after (U1 S1) it.
+rows() {
+  python3 scripts/net-bench.d/net_bench_rows.py oha "$@"
 }
 
-# rows NAME N JSON — the report rows for one load, from oha's JSON.
-rows() {
-  python3 - "$1" "$2" "$3" <<'PY'
-import json, sys
-name, n, path = sys.argv[1], sys.argv[2], sys.argv[3]
-j = json.load(open(path))
-s = j["summary"]
-p = j["latencyPercentiles"]
-failed = sum(v for k, v in j.get("statusCodeDistribution", {}).items() if k != "200")
-failed += sum(v for k, v in j.get("errorDistribution", {}).items() if "deadline" not in k)
-print(f"net/{name}/c{n}.rps\t{int(s['requestsPerSec'])}")
-print(f"net/{name}/c{n}.p50_us\t{int(p['p50'] * 1e6)}")
-print(f"net/{name}/c{n}.p99_us\t{int(p['p99'] * 1e6)}")
-print(f"net/{name}/c{n}.failed\t{failed}")
-PY
+# h3_rows NAME N M OUT LOG U0 S0 U1 S1 — the report rows for one HTTP/3
+# load, from h2load's output and its per-request log, with the server
+# group's clock ticks before (U0 S0) and after (U1 S1) it.
+h3_rows() {
+  python3 scripts/net-bench.d/net_bench_rows.py h2load "$@"
 }
 
 {
@@ -238,8 +228,10 @@ PY
     port="$(free_port)"
     start "$server" "$port"
     for n in $CONNECTIONS; do
+      read -r u0 s0 <<< "$(group_cpu "$server_pgid")"
       "$OHA" -z "${SECONDS_PER}s" -c "$n" --no-tui --output-format json "http://127.0.0.1:$port/" > "$work/$server-c$n.json"
-      rows "$server" "$n" "$work/$server-c$n.json"
+      read -r u1 s1 <<< "$(group_cpu "$server_pgid")"
+      rows "$server" "$n" "$work/$server-c$n.json" "$u0" "$s0" "$u1" "$s1"
       "$work/pipeload" -addr "127.0.0.1:$port" -c "$n" -depth 16 -d "${SECONDS_PER}s" |
         awk -v s="$server" -v n="$n" '{ printf "net/%s/p%s.rps\t%s\nnet/%s/p%s.failed\t%s\n", s, n, $2, s, n, $4 }'
     done
@@ -252,8 +244,10 @@ PY
     port="$(free_port)"
     start_twofetch "$server" "$port" "$upstream_port"
     for n in $CONNECTIONS; do
+      read -r u0 s0 <<< "$(group_cpu "$server_pgid")"
       "$OHA" -z "${SECONDS_PER}s" -c "$n" --no-tui --output-format json "http://127.0.0.1:$port/" > "$work/$server-c$n.json"
-      rows "$server" "$n" "$work/$server-c$n.json"
+      read -r u1 s1 <<< "$(group_cpu "$server_pgid")"
+      rows "$server" "$n" "$work/$server-c$n.json" "$u0" "$s0" "$u1" "$s1"
     done
     stop_server
   done
@@ -268,13 +262,18 @@ PY
       [ "$n" -lt "$threads" ] && threads="$n"
       # h2load appends to its log rather than starting it afresh.
       rm -f "$work/h3.log"
-      "$h3tools/bin/h2load" --alpn-list=h3 -c "$n" -m "$m" -t "$threads" -D "$SECONDS_PER" --warm-up-time=1 \
+      read -r u0 s0 <<< "$(group_cpu "$server_pgid")"
+      # No --warm-up-time: h2load excludes warm-up requests from its counts
+      # but not from the wall clock, so a warm-up would leave the CPU window
+      # (bracketed here) wider than the requests it is divided by.
+      "$h3tools/bin/h2load" --alpn-list=h3 -c "$n" -m "$m" -t "$threads" -D "$SECONDS_PER" \
         --log-file="$work/h3.log" "https://127.0.0.1:$port/" > "$work/h3.out" 2>&1 || {
         echo "net-bench: h2load failed against $server:" >&2
         cat "$work/h3.out" >&2
         exit 1
       }
-      h3_rows "$server" "$n" "$m" "$work/h3.out" "$work/h3.log"
+      read -r u1 s1 <<< "$(group_cpu "$server_pgid")"
+      h3_rows "$server" "$n" "$m" "$work/h3.out" "$work/h3.log" "$u0" "$s0" "$u1" "$s1"
     done
     stop_server
   done
