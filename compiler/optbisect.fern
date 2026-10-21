@@ -10,23 +10,35 @@ pub function key_hash(pass: string, name: string): i64 {
   return util.roll_text(util.roll_text(util.digest_start(), pass), name) & 4294967295i64;
 }
 
-pub function allowed(pass: string, name: string): boolean {
+// The two switches, read once: a loop that asks about every function reads
+// them before it starts rather than per function.
+pub struct Switches { trace: boolean, bisect: boolean, floor: i64 }
+
+pub function switches(): Switches {
   let trace: boolean = envflag.on("FERN_OPT_TRACE");
   match (env("FERN_OPT_BISECT")) {
     Some(v) => {
-      let h: i64 = key_hash(pass, name);
-      if (trace) {
-        eprint(line(h, pass, name));
-      }
-      return h >= util.digits_to_i64(v);
+      return Switches { trace: trace, bisect: true, floor: util.digits_to_i64(v) };
     },
     None => {
-      if (trace) {
-        eprint(line(key_hash(pass, name), pass, name));
-      }
-      return true;
+      return Switches { trace: trace, bisect: false, floor: 0i64 };
     }
   }
+}
+
+pub function allowed(pass: string, name: string): boolean {
+  return allowed_by(switches(), pass, name);
+}
+
+pub function allowed_by(sw: Switches, pass: string, name: string): boolean {
+  if (!sw.trace && !sw.bisect) {
+    return true;
+  }
+  let h: i64 = key_hash(pass, name);
+  if (sw.trace) {
+    eprint(line(h, pass, name));
+  }
+  return !sw.bisect || h >= sw.floor;
 }
 
 function line(h: i64, pass: string, name: string): string {
