@@ -5086,9 +5086,15 @@ function lint_targets(paths: string[]): (string[], string) {
     }
     todo = rest;
     if (util.is_dir(p)) {
+      // `src/` walks as `src/a.fern`, not `src//a.fern`: the spelling is what
+      // a finding prints and what a -cover run's file names are matched to.
+      let dir: string = p;
+      while (dir.len() > 1 && util.str_has_suffix(dir, "/")) {
+        dir = slice_unchecked(dir, 0, dir.len() - 1) + "";
+      }
       if let Ok(names) = read_dir(p) {
         for n in names {
-          let child: string = p + "/" + n;
+          let child: string = dir + "/" + n;
           if (util.is_dir(child) || util.str_has_suffix(n, ".fern")) {
             todo = todo.append(child);
           }
@@ -5249,6 +5255,34 @@ function lint_text(st: DiagStyle, f: lint.Finding, src: string): string {
   return out;
 }
 
+// lint_cover reads the -cover run the change-risk rule scores from, `""`
+// for none. The error is a usage error: a run that cannot be read or holds
+// no rows, or a rule that would score with no run to score from.
+function lint_cover(cfg: lint.Config, cover_path: string): (coverreport.File[], string) {
+  let none: coverreport.File[] = [];
+  if (cover_path.len() == 0) {
+    if (cfg.risk_configured && cfg.risk != lint.ALLOW) {
+      return (none, lint.RISK + " is configured but no coverage was given: pass -lint-cover FILE, a saved -cover run's stderr");
+    }
+    return (none, "");
+  }
+  match (read_file(cover_path)) {
+    Ok(t) => {
+      let folded: coverreport.Folded = coverreport.fold(t);
+      if (folded.err.len() > 0) {
+        return (none, "-lint-cover " + cover_path + ": " + folded.err);
+      }
+      if (folded.files.len() == 0) {
+        return (none, "-lint-cover " + cover_path + ": no fern-cover rows (want a -cover run's stderr)");
+      }
+      return (folded.files, "");
+    },
+    Err(e) => {
+      return (none, "-lint-cover: cannot read " + cover_path + ": " + e.message());
+    }
+  }
+}
+
 // run_lint is `fern -lint PATH...`: exit 1 when a rule set to deny fires, 2
 // for a usage or configuration error. `cover_path` is the saved -cover run
 // the change-risk rule scores from, "" for none.
@@ -5278,28 +5312,9 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
     eprint("fern: " + cerr);
     return 2;
   }
-  let cov_files: coverreport.File[] = [];
-  if (cover_path.len() > 0) {
-    match (read_file(cover_path)) {
-      Ok(t) => {
-        let folded: coverreport.Folded = coverreport.fold(t);
-        if (folded.err.len() > 0) {
-          eprint("fern: -lint-cover " + cover_path + ": " + folded.err);
-          return 2;
-        }
-        cov_files = folded.files;
-      },
-      Err(e) => {
-        eprint("fern: -lint-cover: cannot read " + cover_path + ": " + e.message());
-        return 2;
-      }
-    }
-    if (cov_files.len() == 0) {
-      eprint("fern: -lint-cover " + cover_path + ": no fern-cover rows (want a -cover run's stderr)");
-      return 2;
-    }
-  } else if (cfg.risk_configured && cfg.risk != lint.ALLOW) {
-    eprint("fern: " + lint.RISK + " is configured but no coverage was given: pass -lint-cover FILE, a saved -cover run's stderr");
+  let (cov_files, cov_err) = lint_cover(cfg, cover_path);
+  if (cov_err.len() > 0) {
+    eprint("fern: " + cov_err);
     return 2;
   }
   let covered_files: i32 = 0;
@@ -5342,7 +5357,7 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
       all = all.append(fd);
     }
   }
-  if (cov_files.len() > 0 && covered_files == 0) {
+  if (cfg.risk != lint.ALLOW && cov_files.len() > 0 && covered_files == 0) {
     eprint("fern: -lint-cover " + cover_path + " covers none of the linted files: it names " + lint.cover_names(cov_files));
     return 2;
   }

@@ -566,7 +566,9 @@ function max_expr_line(e: ast.Expr, own acc: i32): i32 {
 // cover_of is the slot in `cover` of the run's file that is `file`: the one
 // spelled identically, else the longest name that is `file` with leading
 // directories added or removed, since the run names a file as the compile
-// was told it and the lint as it was walked. -1 when none.
+// was told it and the lint as it was walked. -1 when none. A run that names
+// a file bare matches every linted file of that name, so `src/a.fern` and
+// `tests/a.fern` are both scored from a run naming `a.fern`.
 pub function cover_of(cover: coverreport.File[], file: string): i32 {
   let best: i32 = 0 - 1;
   let i: i32 = 0;

@@ -109,12 +109,13 @@ one is the other with leading directories added or removed; the longest such
 name wins. The score is computed in integers (`risk_score`), rounded half up,
 so it is the same on every backend.
 
-Three things are deliberately NOT a quiet pass. A function the run holds no
+Five things are deliberately NOT a quiet pass. A function the run holds no
 row for is skipped, because the run never instrumented it (a file outside the
-covered program, say), but a `-lint-cover` file with no rows, one that cannot
-be read, or one naming none of the linted files is a usage error (exit 2) —
-as is configuring the rule, by `[lint]`, `-lint-set` or `-lint-opt`, without
-giving a run. A gate that can pass with its measurement missing is the one
+covered program, say), but a `-lint-cover` file with no rows, one with a row
+that does not parse, one that cannot be read, or one naming none of the
+linted files is a usage error (exit 2) — as is configuring the rule, by
+`[lint]`, `-lint-set` or `-lint-opt`, without giving a run. A rule set to
+`allow` scores nothing, so none of the five applies to it. A gate that can pass with its measurement missing is the one
 the ratchet test guards against, and this rule holds itself to the same bar.
 The repository ratchet does not include this rule: it needs a run of every
 suite, which the gate's one-parse-per-file cost cannot afford.

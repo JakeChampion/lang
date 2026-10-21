@@ -436,6 +436,8 @@ func TestSelfHostLintChangeRiskPaths(t *testing.T) {
 		{"same spelling", "src/a.fern", "src/a.fern"},
 		{"run is absolute", "/work/pkg/src/a.fern", "src/a.fern"},
 		{"run is bare", "a.fern", "src"},
+		{"lint path has a trailing slash", "src/a.fern", "src/"},
+		{"lint path has two trailing slashes", "src/a.fern", "src//"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			files := map[string]string{"src/a.fern": big, "cov.txt": coverRows(tc.covered, hits)}
@@ -473,13 +475,19 @@ func TestSelfHostLintChangeRiskRefusals(t *testing.T) {
 			}
 		})
 	}
-	// A rule set to allow runs nothing, so it needs no run, whatever else names it.
-	for _, args := range [][]string{
-		{"-lint-set", "change-risk=allow", "t.fern"},
-		{"-lint-set", "change-risk=allow", "-lint-opt", "change-risk.max=5", "t.fern"},
+	// A rule set to allow scores nothing, so it needs no run, whatever else
+	// names it, and a run naming none of the linted files is not refused.
+	other := map[string]string{"t.fern": lintNoisyFn, "cov.txt": "fern-cover: other.fern:2 1\n"}
+	for _, tc := range []struct {
+		files map[string]string
+		args  []string
+	}{
+		{noisy, []string{"-lint-set", "change-risk=allow", "t.fern"}},
+		{noisy, []string{"-lint-set", "change-risk=allow", "-lint-opt", "change-risk.max=5", "t.fern"}},
+		{other, []string{"-lint-set", "change-risk=allow", "-lint-cover", "cov.txt", "t.fern"}},
 	} {
-		if out, errOut, code := lintRun(t, noisy, args...); code != 0 || out != "" {
-			t.Errorf("%v without a run: exit %d, stdout %q, stderr %q", args, code, out, errOut)
+		if out, errOut, code := lintRun(t, tc.files, tc.args...); code != 0 || out != "" {
+			t.Errorf("%v with the rule allowed: exit %d, stdout %q, stderr %q", tc.args, code, out, errOut)
 		}
 	}
 }
