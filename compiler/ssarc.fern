@@ -6708,23 +6708,29 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
 }
 
 // Blocks inside an inner loop get their labels when that loop is entered,
-// so a label never crosses the loop's own scope.
-function inner(l: ssalayout.Layout, first: i32, last: i32, looping: boolean, at: i32): boolean {
+// so a label never crosses the loop's own scope: nested marks, by offset from
+// `first`, each position of first..last a loop headed inside the region owns,
+// the region's own loop (when `looping`) aside.
+function nested(l: ssalayout.Layout, first: i32, last: i32, looping: boolean): boolean[] {
+  let owned: boolean[] = __alloc_bool(last - first + 1);
   let i: i32 = first + 1;
   if (!looping) {
     i = first;
   }
   while (i <= last) {
-    if (l.loop_end[i] >= 0 && at > i && at <= l.loop_end[i]) {
-      return true;
-    }
-    if (l.loop_end[i] >= 0) {
-      i = l.loop_end[i] + 1;
+    let end: i32 = l.loop_end[i];
+    if (end >= 0) {
+      let at: i32 = i + 1;
+      while (at <= end && at <= last) {
+        owned = owned.with(at - first, true);
+        at = at + 1;
+      }
+      i = end + 1;
     } else {
       i = i + 1;
     }
   }
-  return false;
+  return owned;
 }
 
 // Emit layout indices first..last. A looping region is one natural loop:
@@ -6734,9 +6740,10 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
   if (looping) {
     e = push(e, ir.op_loop(0), first);
   }
+  let owned: boolean[] = nested(l, first, last, looping);
   let target: i32 = last;
   while (target > first) {
-    if (!inner(l, first, last, looping, target)) {
+    if (!owned[target - first]) {
       e = push(e, ir.op_block(0), target);
     }
     target = target - 1;
