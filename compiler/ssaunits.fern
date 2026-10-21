@@ -2355,9 +2355,9 @@ function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[],
     return true;
   }
   let stores: i32 = 0;
-  let u: i32 = a.uses.start[root];
-  while (u < a.uses.start[root + 1]) {
-    if (a.uses.block[u] == bi && a.uses.at[u] > pos) {
+  let u: i32 = ssasem.first_use_in(a.uses, root, bi);
+  while (u < a.uses.start[root + 1] && a.uses.block[u] == bi) {
+    if (a.uses.at[u] > pos) {
       if (a.uses.kinds[u] == ssasem.term_use()) {
         return true;
       }
@@ -2485,9 +2485,9 @@ function block_defines(blk: ssa.SBlock, v: i32): boolean {
 // A phi of blk, the block at index `k`, takes v on the edge from block
 // `pred`.
 function phi_reads_on(u: ssasem.Uses, blk: ssa.SBlock, k: i32, pred: i32, v: i32): boolean {
-  let i: i32 = u.start[v];
-  while (i < u.start[v + 1]) {
-    if (u.block[i] == k && u.kinds[i] == 8 && u.slot[i] < blk.preds.len() && blk.preds[u.slot[i]] == pred) {
+  let i: i32 = ssasem.first_use_in(u, v, k);
+  while (i < u.start[v + 1] && u.block[i] == k) {
+    if (u.kinds[i] == 8 && u.slot[i] < blk.preds.len() && blk.preds[u.slot[i]] == pred) {
       return true;
     }
     i = i + 1;
@@ -2500,17 +2500,15 @@ function phi_reads_on(u: ssasem.Uses, blk: ssa.SBlock, k: i32, pred: i32, v: i32
 // stores back at the taken element; a phi's reads are `phi_reads_on`'s, edge
 // by edge.
 function block_reads(u: ssasem.Uses, defs: ssa.SInst[], blk: ssa.SBlock, k: i32, v: i32, take: ssa.SInst): boolean {
-  let i: i32 = u.start[v];
-  while (i < u.start[v + 1]) {
-    if (u.block[i] == k) {
-      if (u.kinds[i] == ssasem.term_use()) {
+  let i: i32 = ssasem.first_use_in(u, v, k);
+  while (i < u.start[v + 1] && u.block[i] == k) {
+    if (u.kinds[i] == ssasem.term_use()) {
+      return true;
+    }
+    if (u.kinds[i] != 8) {
+      let later: ssa.SInst = blk.insts[u.at[i]];
+      if (!other_slot_get(later, take) && !(u.slot[i] == 0 && same_slot_with(defs, later, take))) {
         return true;
-      }
-      if (u.kinds[i] != 8) {
-        let later: ssa.SInst = blk.insts[u.at[i]];
-        if (!other_slot_get(later, take) && !(u.slot[i] == 0 && same_slot_with(defs, later, take))) {
-          return true;
-        }
       }
     }
     i = i + 1;
