@@ -27,7 +27,8 @@ type lspLocation struct {
 }
 
 // lspAsk is one hover or definition request and its expected answer. For a
-// hover, `want` is the code shown and `at` the range of the name hovered; for
+// hover, `want` is the code shown, `prose` the doc comment shown under it, and
+// `at` the range of the name hovered; for
 // a definition, `file` is the file the location names — relative to the
 // tree, or absolute — and `at` its range. An empty `want` (hover) or `file`
 // (definition) expects null.
@@ -38,6 +39,7 @@ type lspAsk struct {
 	line   int
 	char   int
 	want   string
+	prose  string
 	file   string
 	at     lspRange
 }
@@ -113,7 +115,11 @@ func checkHover(t *testing.T, a lspAsk, result json.RawMessage) {
 	if err := json.Unmarshal(result, &h); err != nil || string(result) == "null" {
 		t.Fatalf("hover = %s, want %q (%v)", result, a.want, err)
 	}
-	if want := "```fern\n" + a.want + "\n```"; h.Contents.Kind != "markdown" || h.Contents.Value != want {
+	want := "```fern\n" + a.want + "\n```"
+	if a.prose != "" {
+		want += "\n\n" + a.prose
+	}
+	if h.Contents.Kind != "markdown" || h.Contents.Value != want {
 		t.Errorf("hover shows %s %q, want markdown %q", h.Contents.Kind, h.Contents.Value, want)
 	}
 	if h.Range != a.at {
@@ -181,6 +187,11 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 			"  let o: Option[i32] = Some(1);\n" +
 			"  return id(3) + LIMIT;\n" +
 			"}\n",
+		"doc.fern": "// Point is a spot on the plane.\nstruct Point { x: i32, y: i32 }\n\n" +
+			"// add sums two numbers.\n// It never overflows silently.\nfunction add(a: i32, b: i32): i32 { return a + b; }\n" +
+			"// A comment with a blank line under it documents nothing.\n\n" +
+			"function main(): i32 {\n  let n: i32 = add(1, 2);\n  let p: Point = Point { x: n, y: 0 };\n  return p.x + main2();\n}\n" +
+			"function main2(): i32 { return 0; }\n",
 		"scoped.fern": "enum Shape { Circle(f64), Square(i32) }\n" +
 			"function area(s: Shape): f64 {\n" +
 			"  match (s) {\n" +
@@ -240,6 +251,13 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 		hoverAsk("captured-local", "scoped.fern", 13, 32, "(var) total: i32", rng(13, 31, 36)),
 		hoverAsk("enum-qualified-variant", "scoped.fern", 14, 24, "(variant of Shape) Circle(f64)", rng(14, 23, 29)),
 		hoverAsk("closure-local", "scoped.fern", 15, 9, "(var) f: (i32) => i32", rng(15, 9, 10)),
+		// A declaration's doc comment shows under its signature.
+		{name: "documented-function", doc: "doc.fern", line: 9, char: 16, want: "function add(i32, i32): i32", prose: "add sums two numbers.\nIt never overflows silently.", at: rng(9, 15, 18)},
+		{name: "documented-struct", doc: "doc.fern", line: 10, char: 10, want: "struct Point { x: i32, y: i32 }", prose: "Point is a spot on the plane.", at: rng(10, 9, 14)},
+		hoverAsk("undocumented-function", "doc.fern", 11, 17, "function main2(): i32", rng(11, 15, 20)),
+		// A parameter is declared on its function's line; the comment above it
+		// documents the function, not the parameter.
+		hoverAsk("parameter-of-documented-function", "doc.fern", 5, 43, "(parameter) a: i32", rng(5, 43, 44)),
 
 		// A definition lands on the declared name, not on `let`.
 		defAsk("local", "local.fern", 2, 9, "local.fern", rng(1, 6, 7)),
@@ -267,7 +285,7 @@ func TestSelfHostLSPHoverX86_64(t *testing.T) {
 		defAsk("enum-qualified-variant", "scoped.fern", 14, 24, "scoped.fern", rng(0, 13, 19)),
 	}
 	open := []string{"local.fern", "param.fern", "call.fern", "literal.fern", "point.fern", "color.fern", "method.fern", "chain.fern",
-		"variant.fern", "number.fern", "blank.fern", "shadow.fern", "unknown.fern", "nonascii.fern", "builtin.fern", "scoped.fern"}
+		"variant.fern", "number.fern", "blank.fern", "shadow.fern", "unknown.fern", "nonascii.fern", "builtin.fern", "scoped.fern", "doc.fern"}
 	askLSP(t, s, dir, open, asks)
 
 	// A document the server does not have open, and a request without a
@@ -394,6 +412,30 @@ func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 		t.Fatalf("%s no longer declares %q", file, decl)
 		return lspRange{}
 	}
+	// docAbove is the comment run ending on the line above a declaration,
+	// each line's `//` and surrounding space trimmed: what a hover shows.
+	docAbove := func(file, decl string) string {
+		lines := strings.Split(string(mustRead(t, file)), "\n")
+		for i, l := range lines {
+			if !strings.HasPrefix(l, decl) {
+				continue
+			}
+			var run []string
+			for j := i - 1; j >= 0 && strings.HasPrefix(strings.TrimSpace(lines[j]), "//"); j-- {
+				run = append([]string{strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(lines[j]), "//"))}, run...)
+			}
+			return strings.Join(run, "\n")
+		}
+		t.Fatalf("%s no longer declares %q", file, decl)
+		return ""
+	}
+	documented := func(a lspAsk, file, decl string) lspAsk {
+		a.prose = docAbove(file, decl)
+		if a.prose == "" {
+			t.Fatalf("%s's %q lost its doc comment; hover the documented declaration another case names", file, decl)
+		}
+		return a
+	}
 	askLSP(t, s, dir, []string{"t.fern.md", "chunks.fern.md", "std.fern", "array.fern"}, []lspAsk{
 		defAsk("literate-definition", "t.fern.md", 3, 33, "t.fern.md", rng(2, 9, 17)),
 		hoverAsk("literate-hover", "t.fern.md", 3, 33, "function greeting(): i32", rng(3, 30, 38)),
@@ -402,13 +444,13 @@ func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 		hoverAsk("moved-chunk-local", "chunks.fern.md", 15, 7, "(var) v: i32", rng(15, 7, 8)),
 		defAsk("moved-chunk-local", "chunks.fern.md", 15, 7, "chunks.fern.md", rng(14, 4, 5)),
 		hoverAsk("prose", "chunks.fern.md", 10, 2, "", lspRange{}),
-		hoverAsk("stdlib-method", "std.fern", 4, 10, "(method on string) function starts_with(string): boolean", rng(4, 8, 19)),
+		documented(hoverAsk("stdlib-method", "std.fern", 4, 10, "(method on string) function starts_with(string): boolean", rng(4, 8, 19)), stringFern, "pub function (s: string) starts_with("),
 		defAsk("stdlib-method", "std.fern", 4, 10, stringFern, declAt(stringFern, "pub function (s: string) starts_with(", "starts_with")),
-		hoverAsk("stdlib-function", "std.fern", 3, 28, "(from string) function repeat_char(char, i32): string", rng(3, 18, 36)),
+		documented(hoverAsk("stdlib-function", "std.fern", 3, 28, "(from string) function repeat_char(char, i32): string", rng(3, 18, 36)), stringFern, "pub function repeat_char("),
 		defAsk("stdlib-function", "std.fern", 3, 28, stringFern, declAt(stringFern, "pub function repeat_char(", "repeat_char")),
 		// std/array's `__method_Array_avg`, and the built-in `len`, which has
 		// no declaration.
-		hoverAsk("array-method", "array.fern", 3, 27, "(method on Array) function avg(): Option[i32]", rng(3, 26, 29)),
+		documented(hoverAsk("array-method", "array.fern", 3, 27, "(method on Array) function avg(): Option[i32]", rng(3, 26, 29)), arrayFern, "pub function __method_Array_avg("),
 		defAsk("array-method", "array.fern", 3, 27, arrayFern, declAt(arrayFern, "pub function __method_Array_avg(", "__method_Array_avg")),
 		hoverAsk("array-len", "array.fern", 4, 13, "(method on Array) function len(): i32", rng(4, 12, 15)),
 		defAsk("array-len", "array.fern", 4, 13, "", lspRange{}),

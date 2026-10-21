@@ -88,7 +88,7 @@ function main(): i32 {
     }
 
     // The i32 bounds. INT_MIN is the one value whose magnitude does not fit
-    // in i32, so it takes the special-cased path in std/i32.
+    // in i32.
     if ((2147483647).to_string() != "2147483647") { return 8; }
     if ((0 - 2147483647 - 1).to_string() != "-2147483648") { return 9; }
     if ((0).to_string() != "0") { return 10; }

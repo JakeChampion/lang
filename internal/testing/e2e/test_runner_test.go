@@ -429,7 +429,7 @@ func TestRunnerI32ExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/i32", "# pass 32", "# fail 0", "1..32"} {
+	for _, w := range []string{"# Suite: std/i32", "# pass 33", "# fail 0", "1..33"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

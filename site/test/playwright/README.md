@@ -14,7 +14,8 @@ cd ../..            # back to site/
 ( cd .. && ./web/build.sh )
 mkdir -p public/playground
 cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
-go run ../cmd/ferndoc -out src/content/docs/stdlib/
+../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std
+../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/core
 npm install
 npm run build       # → site/dist/
 

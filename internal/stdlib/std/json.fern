@@ -298,11 +298,8 @@ function __json_put_escape(buf: u8[], pos: i32, b: i32): u8[] {
 }
 
 pub function json_encode(v: JsonValue): string {
-  // Single shared `buf` and `i` across match arms — the
-  // wasm emitter names locals by lang identifier, so
-  // re-declaring a `let` in nested scopes collides
-  // (same mistake parse_float hit). Only one composite arm
-  // runs per call, so the shared `buf` needs no reset.
+  // One `buf` and `i` shared across the match arms: only one
+  // composite arm runs per call, so `buf` needs no reset.
   let buf: u8[] = [];
   let i: i32 = 0;
   match (v) {
@@ -1926,7 +1923,7 @@ pub function json_get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
 //   let city = json_get_string(addr.unwrap_or(JNull), "city");
 //
 // (The unwrap_or pattern works around chained-Option
-// unwrapping until lang grows a `?.` operator.)
+// unwrapping until Fern grows a `?.` operator.)
 pub function json_get_object(obj: JsonValue, key: string): Option[JsonValue] {
   match (json_get(obj, key)) {
     Some(v) => {

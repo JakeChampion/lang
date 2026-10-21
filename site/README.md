@@ -89,7 +89,8 @@ mkdir -p public/playground
 cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
 
 # Generate the stdlib reference pages.
-go run ../cmd/ferndoc -out src/content/docs/stdlib/
+../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std
+../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/core
 
 # Run the dev server (live-reload on .md changes).
 npm run dev
@@ -161,7 +162,7 @@ target.
 
 ## Stdlib reference is auto-generated
 
-`cmd/ferndoc` parses `internal/stdlib/std/` and `internal/stdlib/core/`
+`fern -doc` parses `internal/stdlib/std/` and `internal/stdlib/core/`
 for every public declaration + the doc comment immediately above it,
 then emits one Markdown page per module. A nested module's page
 name joins its path with `_` (`std/crypto/x25519.fern` →

@@ -127,12 +127,9 @@ var filterCoverage = []struct {
 	// an ABI bug.
 	{"macos.yml", "./cmd/fern"},
 	// The docs site stages the playground wasm, built by the compiler the
-	// oracle builds, and regenerates the stdlib reference, so it is built
-	// from both binaries' closures.
+	// oracle builds, and that compiler generates the stdlib reference.
 	{"docs-build.yml", "./cmd/fern"},
-	{"docs-build.yml", "./cmd/ferndoc"},
 	{"pages.yml", "./cmd/fern"},
-	{"pages.yml", "./cmd/ferndoc"},
 	// The playground is the compiler the oracle builds plus the page that
 	// hosts it.
 	{"playground-e2e.yml", "./cmd/fern"},

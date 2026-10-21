@@ -692,7 +692,7 @@ pub function (r: TestRunner) finish(): i32 {
 // assertion so the failure log is grep-able, detail carries the
 // actual / expected values formatted for human reading.
 //
-// Helpers are split per-type because lang doesn't have a way to
+// Helpers are split per-type because Fern doesn't have a way to
 // express "any printable value" in a generic signature today.
 // As soon as a `Display`/`ToString` trait lands, these collapse
 // into one generic helper per family (eq, neq, contains, ...).
@@ -1086,7 +1086,7 @@ pub function assert_string_count(haystack: string, needle: string, n: i32): Test
 }
 
 // `assert_len_i32(arr, n)` / `assert_len_string(arr, n)` —
-// array length checks. Split per element type because lang
+// array length checks. Split per element type because Fern
 // doesn't have a `T[]` generic at the function-signature
 // level for the call sites we currently want.
 // Generic ordered / set array assertions over core/cmp. `assert_sorted_*`
@@ -1389,14 +1389,14 @@ pub function assert_at_f32(arr: f32[], idx: i32, expected: f32, epsilon: f32): T
 
 // `assert_eq_i64_array(actual, expected)` — element-wise
 // i64 array equality. The width-narrow `_i32_array` won't
-// implicitly accept i64 element types (lang has no
+// implicitly accept i64 element types (Fern has no
 // numeric-array covariance), so widening the test to i64
 // timestamps / sizes / process IDs needs this dedicated
 // helper rather than a cast at every call site.
 
 // `assert_eq_u32_array(actual, expected)` — element-wise
 // unsigned i32 array equality. Distinct from `_i32_array`
-// because lang treats u32 / i32 as different types under
+// because Fern treats u32 / i32 as different types under
 // `==` for the array element check (and the failure
 // message's `to_string` dispatches to the unsigned
 // formatter).
@@ -2204,7 +2204,7 @@ pub function must_temp_dir(r: TestRunner, prefix: string): (string, TestRunner) 
 
 // __bench_sort_us — Sort the elapsed-time samples ascending
 // so percentile lookups are straightforward. Selection sort
-// because lang's `+` doesn't concatenate non-string arrays
+// because Fern's `+` doesn't concatenate non-string arrays
 // (the insertion-sort version would have used array
 // concatenation to splice the key); selection sort builds
 // each step by `push`, which DOES work on every element
@@ -2214,7 +2214,7 @@ function __bench_sort_us(samples: i64[]): i64[] {
   let n: i32 = samples.len();
   // Track which indices have been consumed via a parallel
   // boolean array — easier than mutating `samples` in place
-  // (lang has no in-place array set today).
+  // (Fern has no in-place array set).
   let taken: boolean[] = [];
   let i: i32 = 0;
   while (i < n) {

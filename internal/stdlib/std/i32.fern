@@ -785,12 +785,8 @@ pub function (n: i32) checked_abs(): Option[i32] {
 // `(n: i32) unsigned_abs()` — `|n|` as a u32, where the one magnitude the signed
 // `abs` / `checked_abs` cannot represent — i32::MIN, whose |n| is 2^31 — fits
 // exactly (2147483648). For every other value it equals the signed magnitude.
-// The MIN case takes the u32 literal directly, since `0 - n` would overflow i32
-// before the widening cast.
 pub function (n: i32) unsigned_abs(): u32 {
-  if (n == 0 - 2147483647 - 1) {
-    return 2147483648 as u32;
-  }
+  // At MIN, `0 - n` wraps back to MIN, whose bits read as u32 are 2^31.
   if (n < 0) {
     return (0 - n) as u32;
   }
@@ -829,7 +825,7 @@ pub function (n: i32) is_odd(): boolean {
 }
 
 // `(n: i32) pow(exp)` — integer exponentiation by squaring.
-// Negative exponents return 0 (lang has no fractional i32).
+// Negative exponents return 0 (an i32 has no fraction).
 // Overflow wraps silently (matches Rust wrapping_pow); use
 // i64 power for ranges beyond ~2^31.
 pub function (n: i32) pow(exp: i32): i32 {
@@ -1281,22 +1277,8 @@ pub function (n: i32) ordinal(): string {
   return n.to_string() + suffix;
 }
 
-// `(i32).to_string()` / `(u32).to_string()` /
-// `(i64).to_string()` / `(u64).to_string()` — method-syntax
-// wrappers around the formatter. The receiver-method
-// dispatch in the checker maps `n.to_string()` to the
-// appropriate `__method_<type>_to_string` mangled name.
-//
-// Routes through the pure-i32 `int_to_string` so handler-shaped
-// programs (whose codegen pulls in the f-string `.to_string()`
-// desugar via `int_to_string`) compile for arm64, where the
-// backend hasn't lowered i64 ops yet. INT_MIN
-// (-2147483648) is special-cased before the negate-to-magnitude
-// step in int_to_string would overflow i32.
+// The decimal text of `n`, with a leading `-` when it is negative.
 pub function (n: i32) to_string(): string {
-  if (n == 0 - 2147483647 - 1) {
-    return "-2147483648";
-  }
   return int.int_to_string(n);
 }
 

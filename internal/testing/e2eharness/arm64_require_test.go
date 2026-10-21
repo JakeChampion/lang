@@ -21,7 +21,9 @@ import (
 //
 // Arm64Runner, the runner half alone, carries the same contract and is
 // checked the same way (FERN_ARM64_VERDICT_CHILD=runner); its native-arm64
-// early return is not taken on the x86-64 hosts this runs on.
+// early return is not taken on the x86-64 hosts this runs on. Arm64Assembler
+// (=assembler) carries it too, except that its default is to go on with ""
+// rather than skip.
 //
 // CI-DARK: FERN_ARM64_VERDICT_CHILD — this names the re-exec'd child of this
 // test, not a lane's coverage knob. The parent sets it when it spawns the
@@ -33,6 +35,9 @@ func TestArm64ToolingMissingVerdict(t *testing.T) {
 		return
 	case "runner":
 		Arm64Runner(t)
+		return
+	case "assembler":
+		Arm64Assembler(t)
 		return
 	}
 	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
@@ -49,6 +54,8 @@ func TestArm64ToolingMissingVerdict(t *testing.T) {
 		{name: "fails when required", child: "1", require: "1", wantFail: true, wantText: "covers nothing"},
 		{name: "runner skips by default", child: "runner", require: "", wantFail: false, wantText: "no qemu-aarch64"},
 		{name: "runner fails when required", child: "runner", require: "1", wantFail: true, wantText: "covers nothing"},
+		{name: "assembler goes on by default", child: "assembler", require: "", wantFail: false, wantText: "assembling nothing"},
+		{name: "assembler fails when required", child: "assembler", require: "1", wantFail: true, wantText: "covers nothing"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run", "^TestArm64ToolingMissingVerdict$", "-test.v")

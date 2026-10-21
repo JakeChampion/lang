@@ -1,0 +1,51 @@
+// std/shapes — every declaration shape a reference page renders.
+//
+// The intro's second paragraph.
+
+// A point on the plane.
+pub struct Point {
+  x: i32,
+  y: i32,
+}
+
+// Which way a turn goes.
+pub enum Turn {
+  Left,
+  Right(i32),
+}
+
+// Something that can be measured.
+pub trait Sized {
+  function size(self: Self): i32;
+}
+
+// Something with an area of type T.
+pub trait Area[T]: Sized {
+  function area(self: Self): T;
+}
+
+// The largest coordinate.
+pub const LIMIT: i32 = 100;
+
+// dist is the Manhattan distance between two points.
+pub function dist(a: Point, b: Point): i32 {
+  return a.x - b.x + a.y - b.y;
+}
+
+// first returns the first element, if there is one.
+pub function first[T](xs: T[]): Option[T] {
+  if (xs.len() == 0) {
+    return None;
+  }
+  return Some(xs[0]);
+}
+
+function hidden(): i32 {
+  return 0;
+}
+
+impl Sized for Point {
+  function size(self: Point): i32 {
+    return 2;
+  }
+}

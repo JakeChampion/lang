@@ -10,9 +10,9 @@
 //   - HTTP guide: serving and calling HTTP, basic to advanced, ordered.
 //   - Reference: syntax + types + tooling.
 //   - Stdlib: auto-generated from internal/stdlib/*.fern by
-//     `cmd/ferndoc`; pages exist under src/content/docs/stdlib/
+//     `fern -doc`; pages exist under src/content/docs/stdlib/
 //     after that build step, and `stdlibSidebar()` groups whatever
-//     it finds there by purpose. A clean checkout where ferndoc
+//     it finds there by purpose. A clean checkout where it
 //     hasn't run keeps the section, with just its overview link.
 //
 // `base` is set so the site works under GitHub Pages' project
@@ -49,7 +49,7 @@ const ogImage = `${siteUrl.replace(/\/$/, "")}${base.replace(/\/$/, "")}/og.png`
 // Standard-library sidebar, grouped by what a module is for.
 // `autogenerate` gives one flat alphabetical run of ~70 pages, which is
 // a list to scroll rather than a thing to browse. Membership is keyed by
-// module slug; anything ferndoc emits that isn't listed here still shows
+// module slug; anything `fern -doc` emits that isn't listed here still shows
 // up, under "Other", so a new stdlib module is never invisible — it just
 // wants a home.
 const STDLIB_GROUPS = [
@@ -73,7 +73,7 @@ const STDLIB_GROUPS = [
   ["Interop", ["jni"]],
 ];
 
-// Reads what ferndoc actually emitted rather than trusting the table
+// Reads what `fern -doc` actually emitted rather than trusting the table
 // above, so a clean checkout (pages gitignored, generator not yet run)
 // degrades to just the overview link instead of a sidebar full of 404s.
 function stdlibSidebar() {

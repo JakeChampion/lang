@@ -3603,18 +3603,15 @@ function tangle_write_files(files: literate.FileResult[], dir: string): i32 {
   return 0;
 }
 
-// run_doc implements `-doc`: cmd/ferndoc's Markdown reference pages, generated
-// from sources on disk rather than from a stdlib embedded at build time.
+// run_doc implements `-doc`: Markdown reference pages, generated from sources
+// on disk.
 //
 // A page is titled with a module PATH, not a file path, and the namespace half
 // of it is the containing directory's own name — `internal/stdlib/std/io.fern`
-// documents `std/io`. That is native's rule as well (its roots ARE the
-// directory names `std` and `core`), which is what makes
+// documents `std/io` — so the namespace needs no flag to carry it. The docs
+// site builds the stdlib reference with
 //
 //     fern -doc -o D internal/stdlib/std && fern -doc -o D internal/stdlib/core
-//
-// reproduce `ferndoc -out D` exactly, and it means the namespace needs no flag
-// to carry it.
 function run_doc(path: string, out_path: string): i32 {
   if (util.is_dir(path)) {
     return doc_tree(path, out_path);
@@ -3653,7 +3650,7 @@ function run_doc(path: string, out_path: string): i32 {
 // The page filename flattens a subdirectory with `_` — `wasm/convert` becomes
 // `wasm_convert.md` — so every page of a namespace is one flat directory and
 // two modules with the same basename in different subdirectories cannot
-// clobber each other. Native does the same, for the same reason.
+// clobber each other.
 function doc_tree(dir: string, out_dir: string): i32 {
   if (out_dir.len() == 0) {
     eprint("fern: -doc <DIR> needs -o OUTDIR — a directory of pages has nowhere else to go");
@@ -4205,7 +4202,7 @@ function lsp_answer_at(s: Server, q: Asked, m: lsp.Message, line: i32, col: i32)
     if (!h.found) {
       return "null";
     }
-    return lsp.hover_result(h.text, lsp_answer_range(q.d, q.text, h));
+    return lsp.hover_result(h.text, lspquery.hover_doc(q.d.prog, line, col), lsp_answer_range(q.d, q.text, h));
   }
   return lsp_definition(s, q, line, col);
 }

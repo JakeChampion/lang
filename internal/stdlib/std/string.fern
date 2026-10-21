@@ -659,11 +659,8 @@ pub function (s: string) trailing_count(b: i32): i32 {
 // Returns u32 because the multiply / xor mixing is defined
 // over unsigned arithmetic.
 pub function (s: string) hash_fnv32(): u32 {
-  // FNV offset basis (decimal: 2166136261); written as
-  // (-2128831035 as u32) since lang doesn't lex u32 literals
-  // above i32::MAX. The cast preserves the bit pattern.
-  let h: u32 = (0 - 2128831035) as u32;
-  let prime: u32 = 16777619 as u32;
+  let h: u32 = 2166136261u32;
+  let prime: u32 = 16777619u32;
   let n: i32 = s.len();
   let i: i32 = 0;
   while (i < n) {
@@ -911,7 +908,7 @@ pub function (s: string) slugify(): string {
   return string_from_bytes_unchecked(out);
 }
 
-// `s.is_valid_identifier()` — true if s matches lang's /
+// `s.is_valid_identifier()` — true if s matches Fern's /
 // C / JS identifier pattern: starts with a letter or
 // underscore, continues with letters / digits / underscores.
 // Empty string returns false.
@@ -2519,9 +2516,8 @@ pub function (s: string) eq_ignore_ascii_case(other: string): boolean {
 }
 
 // `s.strip_prefix(p)` — Some(rest) if s starts with p, None
-// otherwise. The Some payload is s[len(p):], which under lang's
-// arena model is a fresh independent slice (string slicing
-// allocates). Companion to starts_with that ALSO gives you
+// otherwise. The Some payload is s[len(p):], a fresh string
+// (string slicing allocates). Companion to starts_with that ALSO gives you
 // the trailing chunk in a single call.
 pub function (s: string) strip_prefix(prefix: string): Option[string] {
   if (!s.starts_with(prefix)) {
@@ -3670,10 +3666,6 @@ pub function (s: string) is_http_idempotent_method(): boolean {
 // (`-2^31..=2^31-1`). Internal accumulator is i64 so the
 // bound check is exact. Returns `None` on failure, `Some(v)`
 // on success.
-//
-// Replaced the ~190-line wat helper that previously lived in
-// `wasm.go`; the lang version compiles to roughly the same
-// code via the IR.
 pub function (s: string) parse_int(): Option[i32] {
   let n: i32 = s.len();
   if (n == 0) {

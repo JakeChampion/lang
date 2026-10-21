@@ -57,6 +57,21 @@ func Arm64Runner(t *testing.T) string {
 	return qemu
 }
 
+// Arm64Assembler is the aarch64 gcc for a test that only assembles and links,
+// or "" when there is none, so the caller can keep the checks that need no
+// toolchain. Under FERN_REQUIRE_ARM64_TOOLING=1 a missing gcc fails the test.
+func Arm64Assembler(t *testing.T) string {
+	t.Helper()
+	gcc, _, _ := LookupArm64Tooling()
+	if gcc == "" {
+		if envflag.On("FERN_REQUIRE_ARM64_TOOLING") {
+			t.Fatal("no aarch64 cross gcc on PATH and FERN_REQUIRE_ARM64_TOOLING=1: this lane installs it and is the only one running this test, so a skip here covers nothing")
+		}
+		t.Log("no aarch64 cross gcc on PATH: assembling nothing")
+	}
+	return gcc
+}
+
 // LookupArm64Tooling is Arm64Tooling's discovery half without the skip, for a
 // caller that has to decide for itself what a missing toolchain means — a test
 // needing BOTH register backends at once has no lane where a skip is the correct

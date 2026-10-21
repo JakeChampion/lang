@@ -242,6 +242,9 @@ function main(): i32 {
     const published = bodies.find((b) => b.method === "textDocument/publishDiagnostics");
     assert.deepEqual(published.params.diagnostics.map((d) => [d.code, d.range.start.line]), [["E003", 2]]);
     const hover = bodies.find((b) => b.id === 2);
-    assert.equal(hover.result.contents.value, "```fern\n(method on i32) function abs(): i32\n```");
+    // The signature, then the declaration's doc comment.
+    const value = hover.result.contents.value;
+    assert.ok(value.startsWith("```fern\n(method on i32) function abs(): i32\n```\n\n"), value);
+    assert.match(value, /absolute value/);
   });
 });
