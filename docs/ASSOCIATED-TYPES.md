@@ -146,6 +146,55 @@ the unresolved type and the self-host does not. It declines that E002 for any
 unknown nominal return (`function f(): Nope { return 1; }`) — its documented
 zero-false-positive conservatism, and a separate convergence item.
 
+## Associated constants
+
+A trait may also declare a **constant** each implementer fixes, read as a
+projection in expression position:
+
+```fern
+trait Lanes {
+    const LANES: i32;                  // every impl binds it
+    const NAME: string = "lanes";      // a default an impl may omit
+    function width(self: Self): i32;
+}
+impl Lanes for f64 {
+    const LANES: i32 = 1;
+    function width(self: Self): i32 { return Self::LANES; }
+}
+function chunk[T: Lanes](n: i32): i32 { return n / T::LANES; }
+```
+
+- `Self::LANES` inside an impl or a trait default, `T::LANES` through a bound
+  and `f64::LANES` on a concrete type all read the binding. The separator is
+  `::`; `.` reads the same, as it does for `T.zero()`.
+- An impl binds every abstract constant with `const NAME: T = expr;`, with the
+  trait's type (`Self` substituted). A `const` bound by a `function`, or a
+  function by a `const`, is E021, as is a missing one (`missing associated
+  constant "LANES"`) or a wrong type (the signature mismatch, as `() => T`).
+- `T::f` on an associated function and `T::NAME()` on a constant are both
+  E043, each naming the other spelling. A name neither declares is E043
+  `T has no associated constant "X"`.
+
+Implementation, both compilers: an associated constant is an associated
+function with no parameters marked `const` (`TraitMethod.Const` /
+`FuncDecl.AssocConst` natively; `FuncDecl.is_const` on the self-host, as a
+module `const` already is), so conformance, `T.f()` dispatch through a bound,
+monomorphisation and the interpreters need no new case. A read is a field
+access on a TYPE name, which has no value-level fields: a scope-aware pass
+(`checker.rewriteAssocConstReads` over `ast.ScopeWalker`;
+`parser.rewrite_assoc_const_reads` over `astwalk`'s const-substitution walker,
+on the parsed module and again on the flattened bundle) turns it into the
+argument-less call marked as a read (`Call.AssocConst`;
+`ExprFieldAccess.const_read`), which is how the checker tells `T::NAME` from
+`T::NAME()`. An enum's field is a variant unless an impl gives the enum an
+associated function of that name. The self-host interpreter binds a call's
+explicit type arguments (`chunk[V2](8)`) in `bind_tyargs`, which an argument
+value could not pin; `T.zero()` under an explicit instantiation reached the
+same gap.
+
+`TestSelfHostAssocConstsDifferential` holds the rules above to native's exact
+diagnostics.
+
 ## Scope / follow-ups
 
 - **Associated-type bounds** (`type Item: Display;`).

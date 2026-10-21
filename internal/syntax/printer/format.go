@@ -743,6 +743,20 @@ func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
 // (Assoc) has no `self` receiver — its params are emitted verbatim.
 func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 	f.indent(1)
+	if m.Const {
+		f.b.WriteString("const ")
+		f.b.WriteString(m.Name)
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(m.Result))
+		if v := constBodyValue(m.Body); v != nil {
+			f.b.WriteString(" = ")
+			f.formatExpr(v, precLowest)
+		}
+		f.b.WriteByte(';')
+		f.emitTrailing(m.P.Line)
+		f.b.WriteByte('\n')
+		return
+	}
 	f.b.WriteString("function ")
 	f.b.WriteString(m.Name)
 	f.writeTypeParams(m.TypeParams, m.Bounds, m.BoundArgs)
@@ -833,8 +847,36 @@ func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 // it was written with: an ordinary method's receiver is its first
 // parameter again. Type params are respelled only for a non-parametric
 // impl.
+// constBodyValue is the value an associated constant's one-return body
+// holds, or nil for an abstract declaration.
+func constBodyValue(b *ast.Block) ast.Expr {
+	if b == nil || len(b.Stmts) != 1 {
+		return nil
+	}
+	if r, ok := b.Stmts[0].(*ast.Return); ok {
+		return r.Value
+	}
+	return nil
+}
+
 func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 	f.indent(1)
+	if fn.AssocConst {
+		f.b.WriteString("const ")
+		f.b.WriteString(fn.Name)
+		f.b.WriteString(": ")
+		if fn.ImplWritten != nil {
+			f.b.WriteString(formatType(fn.ImplWritten.Result))
+		} else {
+			f.b.WriteString(formatType(fn.ReturnType))
+		}
+		if v := constBodyValue(fn.Body); v != nil {
+			f.b.WriteString(" = ")
+			f.formatExpr(v, precLowest)
+		}
+		f.b.WriteString(";\n")
+		return
+	}
 	f.b.WriteString("function ")
 	f.b.WriteString(fn.Name)
 	if !parametric {
