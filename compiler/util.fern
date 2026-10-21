@@ -746,17 +746,25 @@ pub function index_of_sub(haystack: string, needle: string): i32 {
   return 0 - 1;
 }
 
-// index_of_sub_from is index_of_sub starting the search at offset `from`:
-// the offset of the first occurrence of `needle` at or past it, or -1; an
-// empty needle is found at `from`.
+// index_of_sub_from is index_of_sub starting the search at offset `from`,
+// clamped into the haystack as std/string's find clamps it: the offset of
+// the first occurrence of `needle` at or past it, or -1; an empty needle is
+// found at the clamped `from`.
 pub function index_of_sub_from(haystack: string, needle: string, from: i32): i32 {
+  let start: i32 = from;
+  if (start < 0) {
+    start = 0;
+  }
+  if (start > haystack.len()) {
+    start = haystack.len();
+  }
   let n: i32 = needle.len();
   if (n == 0) {
-    return from;
+    return start;
   }
   let last: i32 = haystack.len() - n;
   let first: i32 = needle[0] as i32;
-  let i: i32 = __memchr(haystack, first, from);
+  let i: i32 = __memchr(haystack, first, start);
   while (i >= 0 && i <= last) {
     if (__mismatch(haystack, i, needle, 0, n) == n) {
       return i;

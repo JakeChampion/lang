@@ -9239,11 +9239,12 @@ struct Spliced { all: Produced[], spliced: boolean[] }
 function byte_copy_loops(all: Produced[]): Produced[] {
   let out: Produced[] = [];
   let contracts = byte_copy_contracts();
+  let sw: optbisect.Switches = optbisect.switches();
   for old in all {
     let p = old;
     if (p.ok && !p.template) {
       let r = sembytecopy.rewrite(p.func, contracts);
-      if (r.changed && optbisect.allowed("byte-copy", p.func.graph.name)) {
+      if (r.changed && optbisect.allowed_by(sw, "byte-copy", p.func.graph.name)) {
         p = Produced { ...p, func: r.func, analysis: None };
       }
     }

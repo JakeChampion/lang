@@ -4060,12 +4060,15 @@ pub function reuse_layer_disabled(name: string): boolean {
 // discards; a plan that has them keeps them, so a table a test plants is the
 // one the replay reads.
 pub function with_reuse(f: ssasem.Func, p: Plan): Plan {
-  if (!p.ok || p.reuse.pairs.len() == f.graph.blocks.len()) {
+  if (p.reuse.pairs.len() == f.graph.blocks.len()) {
     return p;
+  }
+  let off: boolean = reuse_layer_disabled(f.graph.name);
+  if (!p.ok) {
+    return Plan { ...p, reuse: Reuse { ...p.reuse, disabled: off } };
   }
   let idx: i32[][] = step_index(p);
   let links: i32[] = links_of(f, p, idx);
-  let off: boolean = reuse_layer_disabled(f.graph.name);
   let vr: VariantReads = variant_reads(f, p);
   let carry: Carry = carried_pairs(f, p, idx, links, off, vr);
   let uses: ssasem.Uses = p.analysis.uses;
