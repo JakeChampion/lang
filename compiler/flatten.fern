@@ -438,6 +438,41 @@ function enum_viewers(closures: i32[][], entry_closure: i32[], pfxs: string[]): 
   return out;
 }
 
+// module_sights is every bundled module's ModuleSight, the entry's last.
+function module_sights(entry: parser.Module, imports: LoadedModule[], g: ImportGraph, ids: string[], pfxs: string[]): parser.ModuleSight[] {
+  let std: string[] = [];
+  let k: i32 = 0;
+  while (k < imports.len()) {
+    if (is_stdlib_ident(imports[k].ident)) {
+      std = std.append(pfxs[k]);
+    }
+    k = k + 1;
+  }
+  let out: parser.ModuleSight[] = [];
+  let i: i32 = 0;
+  while (i < imports.len()) {
+    let reaches: string[] = prefixes_at(import_closure(imports[i].mod, g, ids, pfxs), pfxs);
+    if (is_stdlib_ident(imports[i].ident)) {
+      for p in std {
+        if (index_of_str(p, reaches) < 0) {
+          reaches = reaches.append(p);
+        }
+      }
+    }
+    out = out.append(parser.ModuleSight { module: pfxs[i], imports: import_path_list(imports[i].mod), reaches: reaches });
+    i = i + 1;
+  }
+  return out.append(parser.ModuleSight { module: "", imports: import_path_list(entry), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs) });
+}
+
+function import_path_list(mod: parser.Module): string[] {
+  let out: string[] = [];
+  for im in mod.imports {
+    out = out.append(im.path);
+  }
+  return out;
+}
+
 // with_enum_viewers stamps every enum `mod` declares with `viewers`.
 function with_enum_viewers(mod: parser.Module, viewers: string[]): parser.Module {
   let enums: parser.EnumDecl[] = [];
@@ -2275,6 +2310,7 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
     trait_decls: trait_decls,
     inferred_consts: inferred,
     todo_sites: e.todo_sites,
+    sights: module_sights(entry, imports, graph, ids, pfxs),
   };
   return parser.lower_stream_signatures(parser.route_inherited_defaults(parser.resolve_dyn_traits(parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred))))));
 }

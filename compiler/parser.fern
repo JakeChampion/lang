@@ -208,7 +208,14 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
 // TodoSite is where a `todo` stub was written; `-check` warns at each one.
 pub struct TodoSite { line: i32, col: i32 }
 
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[] }
+// ModuleSight is what one bundled module, by prefix ("" for the entry), can
+// reach: the paths it imports, and the prefix of every module its import
+// closure loads. A stdlib module reaches every other, since the stdlib's own
+// import graph has cycles the loader breaks rather than records.
+pub struct ModuleSight { module: string, imports: string[], reaches: string[] }
+
+// `sights` is set on a bundle, one per module; a module parsed alone has none.
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[], sights: ModuleSight[] }
 
 // Only a loading driver supplies this provenance after resolving a standard
 // library import. Parsing source, including mangled-looking names, never does.
@@ -30254,7 +30261,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     },
     None => {}
   }
-  let parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [], todo_sites: p.todos };
+  let parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [], todo_sites: p.todos, sights: [] };
   if (!verbatim) {
     let inferred: string[] = unannotated_const_names(funcs);
     let nothing: string[] = [];
@@ -30299,7 +30306,7 @@ function coded_kind(code: string, msg: string): string {
 
 // lex_error_module is a module holding nothing but the lex error `le`.
 function lex_error_module(le: lexer.TokError): (Module, TraitDecl[], ImplDecl[], FieldLines[], FunctionInlineHint[]) {
-  let m: Module = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [] };
+  let m: Module = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [], sights: [] };
   let traits: TraitDecl[] = [];
   let impls: ImplDecl[] = [];
   let flines: FieldLines[] = [];

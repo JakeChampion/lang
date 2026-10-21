@@ -1,0 +1,3 @@
+pub function has_x(s: string): boolean {
+    return s.contains("x");
+}

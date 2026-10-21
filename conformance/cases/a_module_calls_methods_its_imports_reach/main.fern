@@ -1,0 +1,10 @@
+// lib does not import std/string itself, but text does, and lib imports text:
+// a module's import closure is transitive, so std/string's `contains` resolves
+// in lib (#12901).
+import "lib";
+
+function main(): i32 {
+    if (!lib.has_x("xyz")) { return 1; }
+    if (lib.has_x("abc")) { return 2; }
+    return 42;
+}

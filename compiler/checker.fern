@@ -2020,11 +2020,9 @@ pub struct Scope {
   names_of_types: TypeNames,
   // The module's receiver-method table, name-indexed and shared the same way.
   methods: MethodTable,
-  // The module's own `import` paths, as written ("std/string"). Shared by
-  // every scope in the module exactly as `sigs` and `structs` are. The
-  // unresolved-method hint reads it: telling a reader to add an import they
-  // already have is unfollowable, and doing what it says changes nothing.
-  imports: string[],
+  // What the program imports, and what each of its modules can reach.
+  // Shared by every scope in the module exactly as `sigs` and `structs` are.
+  imports: Imports,
   // loop_depth tracks nesting depth for break / continue
   // validation. Incremented inside StmtWhile / StmtFor
   // bodies. break / continue at depth 0 surface t_unknown.
@@ -2583,13 +2581,13 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs: StructTable = struct_table(ss, [], [], no_spellings());
   let unions: UnionTable = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: [], loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: Imports { paths: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
 }
 
 // new_scope_full is a module's scope. The impl table rides on every one:
 // conformance reads it, and so does a generic call whose result is inferred
 // through a bound, so two passes over one body must see the same table.
-function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
+function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
   return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
@@ -3484,7 +3482,7 @@ function tp_bound_diags(tp: string, bound: string, module: string, site: string,
   let out: util.Diag[] = [];
   for entry in parser.split_plus_bounds(bound) {
     let base: string = util.base_type_name(entry);
-    if (!bound_import_unloaded(base, s.imports, s.trait_reqs) && !type_implements(s, at, base, module)) {
+    if (!bound_import_unloaded(base, s.imports.paths, s.trait_reqs) && !type_implements(s, at, base, module)) {
       out = out.append(dg_at("E021", "type argument " + tp + " = " + util.demangle(type_label(at)) + " does not implement trait " + bound_trait_display(base, module, s.trait_reqs) + " required by " + site, ln, cl));
     }
   }
@@ -3722,10 +3720,8 @@ function (s: Scope) has_array_method(field: string, view: boolean): boolean {
   let i: i32 = s.sigs.am_head[sig_name_bucket(target)];
   while (i >= 0) {
     let nm: string = s.sigs.sigs[i].name;
-    if (nm == target) {
-      return true;
-    }
-    if (nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) {
+    let named: boolean = nm == target || nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target;
+    if (named && s.imports.sees(s.fn_module, s.sigs.sigs[i].module)) {
       return true;
     }
     i = s.sigs.am_next[i];
@@ -4183,6 +4179,10 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
   if (at >= 0) {
     return s.methods.methods[at];
   }
+  return no_method_sig();
+}
+
+function no_method_sig(): MethodSig {
   let empty_pt: typeinfo.Type[] = [];
   return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "", impl_trait: "", line: 0, col: 0, file: "" };
 }
@@ -4355,11 +4355,36 @@ function scalar_method_module(t: typeinfo.Type, method: string): string {
 }
 
 // module_imported: `path` is in the program's import list. For a single module
-// that is its own imports; for a bundle it is the closure flatten.bundle keeps,
-// which is the only list that still exists once the modules are merged into one
-// namespace — a bundled program has no "direct" imports to distinguish.
+// that is its own imports; for a bundle it is the closure flatten.bundle keeps.
 function (s: Scope) module_imported(path: string): boolean {
-  return util.index_of_str(s.imports, path) >= 0;
+  return util.index_of_str(s.imports.paths, path) >= 0;
+}
+
+// imports_directly reports whether the enclosing function's own module
+// imports `path`. A module checked alone answers for the program.
+function (s: Scope) imports_directly(path: string): boolean {
+  for sg in s.imports.sights {
+    if (sg.module == s.fn_module) {
+      return util.has_str(sg.imports, path);
+    }
+  }
+  return s.module_imported(path);
+}
+
+// method_visible reports whether the enclosing function may call `m`: a
+// method of its own module or of one its import closure reaches, or a trait
+// impl's, which is callable wherever its type flows.
+function (s: Scope) method_visible(m: MethodSig): boolean {
+  return m.impl_trait.len() > 0 || s.imports.sees(s.fn_module, m.module);
+}
+
+// visible_method is lookup_method narrowed to what method_visible admits.
+function (s: Scope) visible_method(name: string, recv_type: string): MethodSig {
+  let m: MethodSig = s.lookup_method(name, recv_type);
+  if (m.name.len() > 0 && !s.method_visible(m)) {
+    return no_method_sig();
+  }
+  return m;
 }
 
 // methods_in_namespace: the method names registered on `ns`, sorted so a
@@ -4496,7 +4521,7 @@ function (s: Scope) unknown_method_message(ns: string, method: string, label: st
     return base + " — did you mean \"" + did + "\"?";
   }
   let mod: string = scalar_module_for(recv);
-  if (mod.len() > 0 && !s.module_imported(mod)) {
+  if (mod.len() > 0 && !s.imports_directly(mod)) {
     return base + " — if it comes from " + mod + ", add `import \"" + mod + "\"`";
   }
   if (names.len() > 0) {
@@ -4558,7 +4583,7 @@ function (s: Scope) unknown_method_advice(ns: string, method: string, recv: type
   // Option's and Result's methods live in std/option and std/result, which a
   // program sees only when it imports them.
   let umod: string = builtin_union_module(recv);
-  if (umod.len() > 0 && !s.module_imported(umod)) {
+  if (umod.len() > 0 && !s.imports_directly(umod)) {
     return "no method \"" + method + "\" on " + label + " — if it comes from " + umod + ", add `import \"" + umod + "\"`";
   }
   return "field access on non-struct value of type " + label;
@@ -4608,7 +4633,7 @@ function (s: Scope) has_array_recv_method(field: string, view: boolean): boolean
   while (i >= 0) {
     let method: MethodSig = s.methods.methods[i];
     let rt: string = method.receiver_type;
-    if (method.name == field && array_receiver_matches(rt, view)) {
+    if (method.name == field && array_receiver_matches(rt, view) && s.method_visible(method)) {
       return true;
     }
     i = s.methods.next[i];
@@ -9360,7 +9385,7 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // ret_type (so StmtReturn arms can compare against it), the receiver (for
 // methods), then the parameters. Shared by check_func_body and the
 // coded-diagnostic walks so they bind names identically.
-function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
+function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let s: Scope = Scope { ...new_scope_full(st, structs, unions.seen_from(fd), methods, imports, impls, trait_reqs), fn_module: fd.module };
   if (fd.impl_trait.len() > 0 && parser.is_inherited_default(impls, trait_reqs, fd)) {
     s = Scope { ...s, default_trait: fd.impl_trait, default_recv: util.base_type_name(fd.receiver_type) };
@@ -17099,26 +17124,26 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
 function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean {
   match (recv) {
     typeinfo.TypeI32(it) => {
-      return s.lookup_method(field, int_label(it)).name.len() == 0;
+      return s.visible_method(field, int_label(it)).name.len() == 0;
     },
     typeinfo.TypeFloat(f) => {
-      return s.lookup_method(field, float_label(f)).name.len() == 0;
+      return s.visible_method(field, float_label(f)).name.len() == 0;
     },
     typeinfo.TypeBool(_) => {
-      return s.lookup_method(field, "boolean").name.len() == 0 && is_unknown(builtin_method_sig("boolean", field));
+      return s.visible_method(field, "boolean").name.len() == 0 && is_unknown(builtin_method_sig("boolean", field));
     },
     typeinfo.TypeString(_) => {
-      return field != "len" && field != "as_bytes" && s.lookup_method(field, "string").name.len() == 0;
+      return field != "len" && field != "as_bytes" && s.visible_method(field, "string").name.len() == 0;
     },
     typeinfo.TypeArray(array) => {
       let builtin: boolean = field == "len" || !array.view && (field == "append" || field == "with");
       return !builtin && !s.has_array_method(field, array.view);
     },
     typeinfo.TypeMap(_) => {
-      return !util.has_str(s.methods_in_namespace("Map"), field);
+      return !util.has_str(preregistered_methods("Map"), field) && s.visible_method(field, "Map").name.len() == 0;
     },
     typeinfo.TypeStruct(sn) => {
-      if (is_cell_type(recv) || s.lookup_method(field, sn.name).name.len() > 0 || !is_unknown(builtin_method_sig(sn.name, field))) {
+      if (is_cell_type(recv) || s.visible_method(field, sn.name).name.len() > 0 || !is_unknown(builtin_method_sig(sn.name, field))) {
         return false;
       }
       let fsig: StructSig = s.lookup_struct(sn.name);
@@ -17139,7 +17164,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       // no module; any other union must be declared here for its method
       // table to be whole.
       let declared: boolean = un.name == "Option" || un.name == "Result" || un.name == "IoError" || un.name == "Body" || s.lookup_union(un.name).name.len() > 0;
-      return declared && s.lookup_method(field, un.name).name.len() == 0 && is_unknown(builtin_method_sig(un.name, field));
+      return declared && s.visible_method(field, un.name).name.len() == 0 && is_unknown(builtin_method_sig(un.name, field));
     },
     _ => {
       return false;
@@ -25900,7 +25925,7 @@ function prepared_module(filled: parser.Module): parser.Module {
 // reported first.
 function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.Diag[], focus_names: string[]): ModuleTypes {
   let focus: util.NameIndex = util.name_index(focus_names);
-  let import_paths: string[] = env.imports;
+  let imports: Imports = env.imports;
   let rnames: string[] = env.structs.resources.names;
   let st: SigTable = env.sigs;
   let stt: StructTable = env.structs;
@@ -25936,7 +25961,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   let slc_sums: ViewSum[] = [];
   for cfn in mod.funcs {
     slc_fns = slc_fns.append(cfn);
-    slc_scopes = slc_scopes.append(build_func_scope(cfn, st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs));
+    slc_scopes = slc_scopes.append(build_func_scope(cfn, st, stt, ut, methods, imports, call_impls, mod.trait_reqs));
     slc_sums = slc_sums.append(ViewSum { key: view_sum_key(cfn), flags: __alloc_bool(view_positions(cfn).len()), fresh: false });
   }
   let slc_ix: ViewIndex = view_index(slc_sums);
@@ -26086,7 +26111,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     let pdi: i32 = 0;
     while (pdi < mod.funcs[i].params.len()) {
       if (mod.funcs[i].params[pdi].has_default) {
-        body_diags = util.append_diags(body_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs), unions, mod.enums), "P002"));
+        body_diags = util.append_diags(body_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(st, stt, ut, methods, imports, call_impls, mod.trait_reqs), unions, mod.enums), "P002"));
       }
       pdi = pdi + 1;
     }
@@ -26107,7 +26132,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     }
     i = i + 1;
   }
-  let s: Scope = new_scope_full(st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs);
+  let s: Scope = new_scope_full(st, stt, ut, methods, imports, call_impls, mod.trait_reqs);
   let top_tys: typeinfo.Type[] = [];
   for top_stmt in mod.top_stmts {
     let r: CheckResult = check_stmt(top_stmt, s);
@@ -26120,7 +26145,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   let dtop: ast.Stmt[] = mod.top_stmts;
   // A BARE module scope, not the `s` above: each pass re-threads the top-level
   // bindings itself, and `s` has already accumulated all of them.
-  let tsc: Scope = new_scope_full(st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs);
+  let tsc: Scope = new_scope_full(st, stt, ut, methods, imports, call_impls, mod.trait_reqs);
   body_diags = util.append_diags(body_diags, lret_stmts(dtop, tsc, unions));
   body_diags = util.append_diags(body_diags, mx_stmts(dtop, tsc, unions, mod.enums));
   body_diags = util.append_diags(body_diags, stmts_slit_diags(dtop, stt));
@@ -26256,7 +26281,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     // mkstr's summary. Only `str` returns are REPORTED against.
     if (sfn.ret_type == "str" || sfn.ret_type == "string") {
       e065_fns = e065_fns.append(sfn);
-      e065_scopes = e065_scopes.append(build_func_scope(sfn, st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs));
+      e065_scopes = e065_scopes.append(build_func_scope(sfn, st, stt, ut, methods, imports, call_impls, mod.trait_reqs));
       e065_sums = e065_sums.append(ViewSum { key: view_sum_key(sfn), flags: __alloc_bool(view_positions(sfn).len()), fresh: false });
     }
   }
@@ -26291,7 +26316,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     if (!in_focus(focus, xfn)) {
       continue;
     }
-    let xsc: Scope = build_func_scope(xfn, st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs);
+    let xsc: Scope = build_func_scope(xfn, st, stt, ut, methods, imports, call_impls, mod.trait_reqs);
     for param in xfn.params {
       body_diags = util.append_diags(body_diags, e045_annot_diags(param.type_name, xfn.line, xfn.col, xsc));
     }
@@ -26311,7 +26336,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   // E045 on a struct FIELD's annotation. Unlike E064 / E057 this needs no
   // non-generic scoping: a type-parameter key resolves to unknown, which
   // map_key_type_error accepts.
-  let fld_scope: Scope = new_scope_full(st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs);
+  let fld_scope: Scope = new_scope_full(st, stt, ut, methods, imports, call_impls, mod.trait_reqs);
   for esd in mod.structs {
     for field in esd.fields {
       body_diags = util.append_diags(body_diags, e045_annot_diags(field.type_name, esd.line, esd.col, fld_scope));
@@ -26358,7 +26383,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
 // check_module would check it in. check_module builds it once per pass and
 // every walk of that pass reads it; the rewriting passes (settle, pretype,
 // annotate) build their own.
-pub struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[], impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[] }
+pub struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[] }
 
 function module_env(mod: parser.Module): ModuleEnv {
   // The struct sigs resolve against the union NAMES, so a struct field typed
@@ -26382,7 +26407,7 @@ function module_env(mod: parser.Module): ModuleEnv {
     structs: struct_table(structs, union_names, rnames, tn.spellings),
     unions: union_table(unions),
     methods: method_table(collect_method_sigs(mod.funcs, tn)),
-    imports: import_paths_of(mod),
+    imports: module_imports(mod),
     impls: assoc_func_impls(mod.impls, mod.funcs),
     trait_reqs: mod.trait_reqs,
   };
@@ -27648,6 +27673,29 @@ function type_to_arrtag(t: typeinfo.Type): string {
   return "";
 }
 
+// Imports is the program's import paths, and the sight of each module of a
+// bundle (parser.ModuleSight).
+pub struct Imports { paths: string[], sights: parser.ModuleSight[] }
+
+function module_imports(mod: parser.Module): Imports {
+  return Imports { paths: import_paths_of(mod), sights: mod.sights };
+}
+
+// sees reports whether a function in module `from` can reach a declaration in
+// module `decl`: its own module's, or one its import closure loads. Without
+// sights, a module checked alone, everything is in reach.
+function (im: Imports) sees(from: string, decl: string): boolean {
+  if (from == decl) {
+    return true;
+  }
+  for sg in im.sights {
+    if (sg.module == from) {
+      return util.has_str(sg.reaches, decl);
+    }
+  }
+  return true;
+}
+
 // import_paths_of: the module's `import` paths exactly as written in source
 // ("std/string"), which is the spelling a hint tells the reader to add.
 function import_paths_of(mod: parser.Module): string[] {
@@ -28500,7 +28548,7 @@ function annotate_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): p
   if (focus.top) {
     ntop = annotate_block(rmod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
-  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, inferred_consts: rmod.inferred_consts, todo_sites: rmod.todo_sites };
+  return parser.Module { funcs: nfuncs, structs: rmod.structs, aliases: rmod.aliases, imports: rmod.imports, top_stmts: ntop, enums: rmod.enums, resources: rmod.resources, exports: rmod.exports, impls: rmod.impls, trait_reqs: rmod.trait_reqs, trait_decls: rmod.trait_decls, inferred_consts: rmod.inferred_consts, todo_sites: rmod.todo_sites, sights: rmod.sights };
 }
 
 function unchecked_capture(e: ast.Expr, own found: boolean): boolean {
@@ -28628,7 +28676,7 @@ pub function ensure_annotated_parts(mods: parser.Module[]): parser.Module[] {
   let k: i32 = 0;
   while (k < mods.len()) {
     if (any_focus(focus[k])) {
-      out = out.append(annotate_module_in(mods[k], ModuleEnv { ...env, imports: import_paths_of(mods[k]) }, focus[k]));
+      out = out.append(annotate_module_in(mods[k], ModuleEnv { ...env, imports: module_imports(mods[k]) }, focus[k]));
     } else {
       out = out.append(mods[k]);
     }
