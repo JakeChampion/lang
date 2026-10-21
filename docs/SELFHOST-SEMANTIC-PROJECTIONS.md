@@ -1,5 +1,7 @@
 # Typed projection dependencies in the self-hosted compiler
 
+Status: [record] the first landing of `ssasem.fern`'s typed semantic values; its operation vocabulary has grown since (calls among others), and `RC-DESIGN.md` describes it as it stands.
+
 Part of #8920. `ssasem.fern` verifies semantic values before reference counting,
 then derives the dependencies consumed by `ssadeps` and `ssalive`. Its `Func`
 wrapper retains the existing SSA graph plus shared `typeinfo.Type` values and

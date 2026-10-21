@@ -1,5 +1,7 @@
 # WASI socket errors
 
+Status: [reference] how WASI socket error codes map to Preview 1 errnos.
+
 The existing integer TCP and UDP APIs return a negative Preview 1 errno for
 errors from `wasi:sockets/network@0.2.0`. The host returns an `error-code`
 discriminant, which must be converted before negation: `unknown` is zero.

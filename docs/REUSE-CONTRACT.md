@@ -1,5 +1,7 @@
 # Reuse contract — what Fern's RC/reuse promises
 
+Status: [policy] the reuse and move shapes Fern guarantees, their taints and guards, and the tests that lock each one.
+
 Plan item **B1** of `docs/NICHE-BORROWS-PLAN.md`, from the
 niche-language research (`NICHE-LANGUAGE-RESEARCH.md`): Koka's
 verified design stance is that reuse is a **specified,

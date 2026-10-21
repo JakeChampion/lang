@@ -1,6 +1,6 @@
 # Floating-point semantics
 
-Status: policy doc. Resolves IMPROVEMENTS.md #16.
+Status: [policy] decided float edge-case semantics. Resolves IMPROVEMENTS.md #16.
 
 ## Summary
 

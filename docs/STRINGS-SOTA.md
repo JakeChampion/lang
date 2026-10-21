@@ -1,5 +1,7 @@
 # Strings and related types — state of the art, and where Fern sits
 
+Status: [policy] string decisions D1–D11, all landed, with the survey behind them.
+
 Companion to `STDLIB-DESIGN-RESEARCH.md` (which surveys HTTP / JSON /
 date-time / I/O depth) and `LANGUAGE-DIRECTION.md`. This one surveys the
 **string layer**: representation, ownership, indexing, the "character"

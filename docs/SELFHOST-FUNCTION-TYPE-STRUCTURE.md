@@ -1,5 +1,7 @@
 # Self-hosted function type structure
 
+Status: [record] landed; the note for the parser fix that keeps a function type's array result as part of the function type.
+
 This integrates the TypeRef correction from the preserved self-hosted typed-match
 work. Exact function/result types are a prerequisite for typed captures, calls
 and ownership analysis in the Fern-written compiler.

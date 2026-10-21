@@ -1,12 +1,12 @@
 # Adversarial codebase review — 2026-06
 
-> **Status:** all 17 findings are fixed (each with a regression test). The last
-> one, **M1** (Map copy-on-write interp divergence,
-> [#2851](https://github.com/JakeChampion/lang/issues/2851)), is now implemented —
-> the interpreter does rc-based COW matching every backend (see
-> `INTERP-MAP-COW-PLAN.md` and the `map_cow_*` differential cases in
-> `internal/testing/e2e/feature_differential_test.go`). The fixed findings below are
-> retained as bug-fix history.
+Status: [record] all 17 findings are fixed, each with a regression test. The last
+one, **M1** (Map copy-on-write interp divergence,
+[#2851](https://github.com/JakeChampion/lang/issues/2851)), is implemented —
+the interpreter does rc-based COW matching every backend (see
+`INTERP-MAP-COW-PLAN.md` and the `map_cow_*` differential cases in
+`internal/testing/e2e/feature_differential_test.go`). The fixed findings below are
+retained as bug-fix history.
 
 A whole-codebase adversarial review of the Fern compiler. The goal was
 to **break the code**: find real correctness bugs, type-system

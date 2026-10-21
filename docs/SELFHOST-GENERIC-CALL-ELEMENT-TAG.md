@@ -1,6 +1,7 @@
 # A generic call's result reaches the call site with its type var unresolved
 
-**Status:** the two reproducers below are fixed — both answer 45 on x86-64 and
+Status: [record] closed: the AST lowering it describes is deleted and #9489 is
+closed. When written, the two reproducers below were fixed — both answer 45 on x86-64 and
 wasm, on either lowering. **The mechanism is not.** `type_to_irtag` still yields
 "" for an element type the checker left unresolved, and the backends still fall
 back to an untyped 4-byte read of it, so every shape the call-site binding does

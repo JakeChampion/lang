@@ -1,5 +1,7 @@
 # Experiment 1: the bounded event loop
 
+Status: [record] measured experiment for #9583; its e2e test still checks the claims.
+
 What #9583 asked, measured. The programs are `examples/fip/event_loop_*.fern`
 — three implementations of one bounded key/value event loop, differing only in
 how state is held — and `internal/testing/e2e/fip_event_loop_test.go` keeps their

@@ -1,6 +1,6 @@
 # Translation validation
 
-Status: first slice (#5543). One pass is validated: strength reduction
+Status: [reference] first slice (#5543). One pass is validated: strength reduction
 (`reduce_strength_ex` in `compiler/ir.fern`).
 
 The e2e corpus, the fixpoint and the differential oracles find a miscompile

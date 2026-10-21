@@ -5,7 +5,8 @@ reclamation system, the way arrays / structs / enums / closures /
 tuples / Map values already are.
 
 Date: 2026-05-26.
-Status: design, not implementation. **NOT blocked on SSO** (the active
+Status: [record] the string rc arc this plans has shipped; heap strings are
+rc-headered and reclaimed. Written as a design. **NOT blocked on SSO** (the active
 wasm backend already uses the two-word form; see "Prerequisite
 (revised)"). The real prerequisites are a uniform heap-string rc header
 + static-literal sentinel, per backend — self-contained and shippable

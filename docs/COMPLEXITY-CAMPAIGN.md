@@ -1,5 +1,7 @@
 # Reducing complexity in the first-party Fern sources
 
+Status: [tracker] active; the progress table below gains a row per slice.
+
 `fern -lint` measures cyclomatic complexity and
 `internal/testing/e2ecompiler/self_host_lint_ratchet_test.go` ratchets this
 repository's own Fern sources against it (`docs/LINT.md`). This file is the

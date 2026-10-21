@@ -1,5 +1,7 @@
 # Block-expressions
 
+Status: [reference] block-expression syntax and value rules, as shipped.
+
 A **block-expression** is a brace-delimited sequence of statements
 followed by an optional trailing value expression:
 

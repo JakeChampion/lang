@@ -1,5 +1,7 @@
 # Language direction
 
+Status: [reference] living record of the language's direction; most of its shipping plan has landed.
+
 Where the language is going, what shapes we've decided on, and what
 we've explicitly chosen NOT to copy. Living document — update as
 each phase lands.

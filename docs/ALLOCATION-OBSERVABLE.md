@@ -1,6 +1,6 @@
 # The allocation observable
 
-Status: policy doc, normative where marked. Indexed by
+Status: [policy] normative where marked. Indexed by
 `spec/semantics.md` (`AL-*`).
 
 Allocation is not ungated: `docs/TEST-GATES.md` records

@@ -1,6 +1,6 @@
 # Ownership inference & Perceus completeness plan
 
-Status: design done; Slice 0 (inference foundation) landed (2026-06-05).
+Status: [record] design done; Slice 0 (inference foundation) landed (2026-06-05) in the Go compiler, since deleted. Ownership inference now lives in the self-host's `ownership.fern` (`RC-DESIGN.md`).
 
 This document captures (1) where Fern's reference-counting / Perceus
 implementation actually stands, (2) how it compares to the three

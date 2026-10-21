@@ -1,5 +1,7 @@
 # The Fern Proposal Program
 
+Status: [reference] the current rules of the proposal program.
+
 You are an agent in the Fern Proposal program. One turn = one proposal: you USE
 Fern to build something, you SUFFER the language's real defects while doing it,
 you fix the worst one you hit, and you report it as a GitHub issue + PR.

@@ -1,6 +1,6 @@
 # Runtime helpers in Fern — migration design (issue #2649)
 
-Status (2026-07): **the Tier-0–2 helper migration is complete** — the
+Status: [tracker] (2026-07) **the Tier-0–2 helper migration is complete** — the
 byte-building Tier-2 set (`str_concat`, `i32_to_string`,
 `str_to_upper`/`_lower`, `str_repeat`, `str_replace`,
 `string_from_bytes`, `str_split`) now lowers as Fern functions via the

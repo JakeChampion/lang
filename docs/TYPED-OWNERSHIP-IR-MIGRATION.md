@@ -5,7 +5,7 @@ the Go compiler is a bootstrap/validation tool to retire after verified parity.
 Prioritize the self-hosted production cutover over further optional Go-pilot
 expansion. See [the self-hosted cutover plan](SELFHOST-TYPED-OWNERSHIP-CUTOVER.md).
 
-Status: executable opt-in ARM64 pilot, not a completed migration. Highest development
+Status: [record] the Go pilot (`internal/semir`) was deleted 2026-10-04 and the self-host typed lowering produces every body. Last state: executable opt-in ARM64 pilot, not a completed migration. Highest development
 priority by user direction. Related to #8920, #8278, #7989 and the existing
 SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 

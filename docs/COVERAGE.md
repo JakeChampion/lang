@@ -1,5 +1,7 @@
 # Coverage (`-cover` / `FERN_COVER=1`)
 
+Status: [reference] `-cover` and `-cover-report` as shipped.
+
 Fern's test culture is strong and its coverage story was nothing at all:
 nothing said which lines a suite exercised, so "is this tested?" was answered
 by reading. `-cover` answers it with a number.

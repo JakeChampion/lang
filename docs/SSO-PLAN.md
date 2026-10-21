@@ -1,6 +1,8 @@
 # Small-String-Optimisation (SSO) migration plan
 
-> **Status: inline SSO is live on every backend; the two-word ABI is not.**
+Status: [record] historical migration roadmap for the Go backends' string representation.
+
+> **Inline SSO is live on every backend; the two-word ABI is not.**
 > wasm32 (`SSO-TWOWORD-EXEC.md`) and arm64 (`SSO-NATIVE-FLIP-STATUS.md`,
 > 2026-06-03) carry the two-word ABI + top-bit-tagged inline encoding;
 > x86-64 has inline SSO on the single-word LSB-tagged ABI (7-byte cap) and

@@ -1,6 +1,6 @@
 # SSA: ship-or-shelve decision
 
-**Status:** OPEN for codegen; SHIPPED for analysis. The layer is **not**
+Status: [record] the Go SSA layer and native backends it decides about were deleted in 2026-10 (`NATIVE-RETIREMENT.md`). Last state: OPEN for codegen; SHIPPED for analysis. The layer is **not**
 shelved. On the codegen side, size and correctness are SETTLED in the SSA
 backend's favour — 45.3% of flat's `.text` over the corpus, 286/0 on the run
 differential — and speed is the single remaining blocker on an arm64 default

@@ -1,5 +1,7 @@
 # Typed cleanup regions
 
+Status: [record] design for the Go typed-ownership pilot (`internal/semir`), deleted 2026-10-04.
+
 Design prerequisite for the [typed ownership migration](TYPED-OWNERSHIP-IR-MIGRATION.md).
 This document specifies the full cleanup migration contract. The typed-SSA
 pilot now implements bounded function and iteration actions described below, not

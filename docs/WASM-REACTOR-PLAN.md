@@ -1,6 +1,8 @@
 # Wasm reactor — design + the component-composition blocker
 
-> **Status: shipped.** The wasm reactor runs on Preview-2 pollables
+Status: [record] shipped.
+
+> The wasm reactor runs on Preview-2 pollables
 > (timer/block/poll/drop + the `std/wasm_reactor` scheduler) on stock
 > wasmtime — see `WASI-PREVIEW3-ASYNC-PLAN.md` for what a Preview-3 native
 > async move would add. The remaining wasm-IR readiness/socket lowering

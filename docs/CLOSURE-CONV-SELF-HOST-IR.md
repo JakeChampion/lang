@@ -1,6 +1,6 @@
 # Closure conversion for the self-host IR path — design + rollout
 
-Status: **shipped** (design started 2026-06-16; the capturing-closure-arg
+Status: [record] shipped (design started 2026-06-16; the capturing-closure-arg
 lowering landed — see §6 phases 1–2). Goal-1 increment: widen the self-host
 IR subset to cover **capturing closures passed as function arguments** (the
 `map` / `filter` / `fold`-with-a-capturing-closure pattern), the last common

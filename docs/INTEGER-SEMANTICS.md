@@ -1,6 +1,6 @@
 # Integer semantics
 
-Status: policy doc.
+Status: [policy] decided integer semantics.
 
 Fern's integer types (`u8`, `i32`/`u32`, `i64`/`u64`, and the
 target-width `usize`) have **fully portable, never-trapping**

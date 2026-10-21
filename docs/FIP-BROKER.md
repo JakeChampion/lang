@@ -1,5 +1,7 @@
 # Bounded message ownership and recycling
 
+Status: [record] measured experiment for #9589; the latest numbers are in FIP-MAINF939.md.
+
 Latest compiler measurements: [merged main11a validation](FIP-MAIN11A.md).
 The measurements below retain their original compiler and date.
 

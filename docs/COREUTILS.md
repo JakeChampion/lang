@@ -1,5 +1,8 @@
 # Fern coreutils
 
+Status: [reference] the standing definition of the coreutils project (#8278)
+and its per-utility performance record.
+
 `coreutils/` reimplements GNU coreutils in Fern, one program per file, to two
 requirements that do not bend:
 
