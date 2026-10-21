@@ -61,15 +61,19 @@ Unscheduled; it constrains design choices today, it is not work in flight.
   `macos-15` CI runner; CI pins that label rather than floating `macos-latest`,
   so a runner-image roll cannot break the build without a visible commit. Only
   the latest macOS is supported.
-- **WASI / WebAssembly** — exercised via wasmtime.
+- **WASI / WebAssembly** — exercised via wasmtime. `wasm32-wasi` is a
+  component; `wasm32-wasi-http` is a `wasi:http` proxy component.
 - **x86-64 / amd64 Linux ELF** — System V AMD64 ABI. Baseline is
   **x86-64-v3 plus AES-NI**, Haswell-class 2013 (AMD: Excavator 2015, Zen
   2017), so `popcnt` / `lzcnt` / `tzcnt`, `pshufb`, `pclmulqdq`, AES-NI and
-  **AVX2** are all assumable — both backends' byte-scan kernels emit 32-byte
-  AVX2 loops with no cpuid check. Binaries are static with no runtime dispatch, so a
+  **AVX2** are all assumable — the byte-scan kernels emit 32-byte AVX2 loops
+  with no cpuid check. Binaries are static with no runtime dispatch, so a
   selected instruction is a hard requirement, not a fast path. Note LZCNT/TZCNT fail
   **silently** below the baseline (same opcodes as bsr/bsf plus an F3 the older
   CPU ignores) where POPCNT faults. No Darwin x86-64.
+- **Also shipped:** `arm64-android`, and `arm64-freestanding` /
+  `x86-64-freestanding` for code with no OS beneath it
+  (`docs/FREESTANDING-CORE.md`).
 
 Raising either CPU baseline is a project decision, not a codegen one, and the
 standing direction is to **target modern hardware and raise the baseline rather

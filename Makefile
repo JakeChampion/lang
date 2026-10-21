@@ -1,8 +1,4 @@
-AARCH64_GCC ?= aarch64-linux-gnu-gcc
-QEMU        ?= qemu-aarch64
-
 EXAMPLES := $(basename $(notdir $(wildcard examples/*.fern examples/tests/*.fern)))
-ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 # Every tracked .fern source but the conformance fixtures, whose expected
 # diagnostics pin line and column, and testdata inputs kept as written.
@@ -223,24 +219,21 @@ bootstrap:
 distcheck:
 	./bootstrap/bootstrap.sh distcheck
 
-# Compile every example to arm64 Linux assembly and (if the
-# cross-compiler is present) link to a static arm64 binary.
+# Compile every example and example test for this host; fern assembles and
+# links in-process.
 examples: $(BINS)
 
-build/%.s: examples/%.fern bin/fern
+build/%: examples/%.fern bin/fern
 	@mkdir -p build
-	./bin/fern -target arm64-linux $< > $@
+	./bin/fern -target $(HOST_TARGET) -o $@ $<
 
-build/%.s: examples/tests/%.fern bin/fern
+build/%: examples/tests/%.fern bin/fern
 	@mkdir -p build
-	./bin/fern -target arm64-linux $< > $@
-
-build/%: build/%.s
-	$(AARCH64_GCC) -static -nostdlib $< -o $@
+	./bin/fern -target $(HOST_TARGET) -o $@ $<
 
 # `make run-factorial`, `make run-fizzbuzz`, etc.
 run-%: build/%
-	$(QEMU) $<
+	./$<
 
 # Re-format every FERN_SRCS file in place. The formatter is idempotent,
 # so running it on already-formatted files is a no-op.

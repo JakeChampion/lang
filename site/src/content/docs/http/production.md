@@ -198,7 +198,10 @@ the readiness probe at your `readiness_path`.
 **As a WASI component.** `fern -target wasm32-wasi-http` gives a
 self-contained `wasi:http/incoming-handler` component, for `wasmtime
 serve` or an edge platform that runs components. Configuration comes
-through `plat.config`, which reads `wasi:config/store` there:
+through `plat.config`, which reads `wasi:config/store` there. That
+interface has no released version yet: the component imports
+`wasi:config/store@0.2.0-rc.1`, the release candidate `wasmtime serve
+-S config` provides, so a host must offer that version.
 
 ```bash
 fern -target wasm32-wasi-http -o shop.wasm shop.fern

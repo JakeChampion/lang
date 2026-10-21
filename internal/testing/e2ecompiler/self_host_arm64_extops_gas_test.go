@@ -921,8 +921,8 @@ func TestSelfHostArm64FP32UnscaledGas(t *testing.T) {
 	})
 }
 
-// TestSelfHostArm64ExclusivesBarriersGas: the ARMv8.0 exclusive /
-// acquire-release accesses (no LSE — the baseline is plain ARMv8-A) and
+// TestSelfHostArm64ExclusivesBarriersGas: the exclusive and acquire-release
+// accesses, the LSE add and compare-and-swap of the ARMv8.2-A baseline, and
 // the barriers, whose dmb/dsb option is REQUIRED as GNU as requires it.
 func TestSelfHostArm64ExclusivesBarriersGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -938,6 +938,12 @@ func TestSelfHostArm64ExclusivesBarriersGas(t *testing.T) {
 		{"stxr w11, w23, [x9]", 0x880b7d37},
 		{"stlxr w11, x23, [x9]", 0xc80bfd37},
 		{"stlxr w11, w23, [x9]", 0x880bfd37},
+		{"ldaddal x13, x13, [x15]", 0xf8ed01ed},
+		{"ldaddal x0, x1, [x2]", 0xf8e00041},
+		{"ldaddal w1, w2, [x3]", 0xb8e10062},
+		{"casal x13, x14, [x15]", 0xc8edfdee},
+		{"casal xzr, x9, [x10]", 0xc8fffd49},
+		{"casal w1, w2, [x3]", 0x88e1fc62},
 		{"ldar x0, [x1]", 0xc8dffc20},
 		{"ldar x23, [x9]", 0xc8dffd37},
 		{"ldar w23, [x9]", 0x88dffd37},

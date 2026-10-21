@@ -226,7 +226,7 @@ installs them.
 make build        # bin/fern, through make bootstrap: no Go needed
 make bin/fern-oracle  # go build -> the Go oracle
 make test         # go test ./...
-make examples     # compile every examples/*.fern
+make examples     # compile examples/*.fern and examples/tests/*.fern for this host
 ```
 
 The end-to-end suites in `internal/testing/e2e`, `internal/testing/e2ecompiler`, and the
