@@ -6,7 +6,7 @@ name: Test coreutils
 # It is one package, and it was the critical path of the whole suite: 14m40s
 # of a 15m07s units job, with every other package in that lane finishing
 # inside its shadow. Measurements
-# and the shard arithmetic are in docs/CI-PERFORMANCE.md.
+# and the shard arithmetic are in docs/ci-log/2026-09-15-performance.md.
 #
 # Its own lane rather than a matrix inside the units lane, because that is
 # what scripts/unit-test-packages already does with the three other slow
@@ -18,7 +18,7 @@ name: Test coreutils
 # ~3.5 minutes against a ~15s fixed cost per test process. Six shards were
 # measured too and reach only 3.85 against four's 4.38 in weight units — a
 # 12% gain for 50% more runner slots, on a pool the PR queue is already
-# sized against (docs/CI-PERFORMANCE.md). The floor is TestPrintfParity,
+# sized against (docs/ci-log/2026-09-15-performance.md). The floor is TestPrintfParity,
 # 2m48s in one top-level test with a 40.6s subtest inside it; going below
 # four shards' balance means splitting that test's own subtests, which is
 # not worth the selector complexity yet.

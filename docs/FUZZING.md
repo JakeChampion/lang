@@ -1,5 +1,7 @@
 # Fuzzing Fern
 
+Status: [reference] the fuzzing system as built, with its roadmap.
+
 How the fuzzing system is built, what each part can and cannot catch, how it
 is measured, and what comes next. The goal is the strongest fuzzing system any
 language implementation has, judged by a number rather than by assertion: the

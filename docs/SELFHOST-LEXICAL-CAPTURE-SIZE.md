@@ -1,5 +1,7 @@
 # Lexical capture contracts: binary-size attribution
 
+Status: [record] binary-size measurement snapshot taken on 2026-09-09.
+
 Measured on 2026-09-09, comparing callback-repair parent `8b0a485d6` with
 `81870b3af`. Part of #8982, #8930 and #4451.
 

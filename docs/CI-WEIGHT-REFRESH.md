@@ -1,5 +1,8 @@
 # Refreshing measured shard weights
 
+Status: [reference] how `scripts/ci-test-weights refresh` rebuilds the shard
+weight table.
+
 The live weight audit deliberately only raises weights from one run. That
 protects against a single unusually fast sample, but cannot account for
 compiler and test improvements. Stale high weights also unbalance shards.

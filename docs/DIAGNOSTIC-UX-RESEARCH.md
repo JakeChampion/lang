@@ -1,5 +1,8 @@
 # Diagnostic UX research — making errors a feature
 
+Status: [research] survey of best-in-class compiler diagnostics (Elm, Rust,
+ReasonML, TypeScript); tracked in #4413.
+
 `internal/syntax/diag/diag.go` already does the right things: composable
 error interfaces (`Positioned`, `Spanned`, `Hinted`, `Filed`),
 a single rendering point (`Format`), Levenshtein-based did-you-

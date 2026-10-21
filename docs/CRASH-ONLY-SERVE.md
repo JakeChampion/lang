@@ -1,5 +1,8 @@
 # Crash-only native serving — design
 
+Status: [reference] implemented in `std/serve`: the supervisor and its prefork
+worker pool.
+
 Plan item **D2** of `docs/NICHE-BORROWS-PLAN.md` (Erlang's
 crash-only philosophy from `NICHE-LANGUAGE-RESEARCH.md`): isolate
 handler failures at the request/worker boundary so *the service*

@@ -1,5 +1,7 @@
 # Literate programming in Fern
 
+Status: [reference] shipped.
+
 Fern supports **Knuth-style literate programming**: you write a program
 as a document for humans to read, with the code embedded in named
 *chunks* that can be presented in whatever order best explains the

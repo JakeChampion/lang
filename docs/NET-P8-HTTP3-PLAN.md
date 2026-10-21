@@ -1,5 +1,7 @@
 # Net P8: QUIC and HTTP/3 — the plan
 
+Status: [plan] in progress; slices 1 to 7 have landed, and 4b, 8 (interop nightly), 9 (the client), the rest of 10 (speed) and 0-RTT are open.
+
 How QUIC (RFC 9000, 9001, 9002) and HTTP/3 (RFC 9114, with QPACK, RFC 9204)
 are built into the standard library, in the order they land. One PR per
 slice. Each slice names its gate: a module's suite runs through the

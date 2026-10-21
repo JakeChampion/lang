@@ -1,6 +1,6 @@
 # The per-operator fusion proof
 
-Status: `compiler/semfuse.fern` (#11072) implements the `map`/`filter`
+Status: [reference] `compiler/semfuse.fern` (#11072) implements the `map`/`filter`
 stages and `fold`/`reduce` sinks below, `scan` as a materializing sink,
 `take` and `take_while` as stages that stop the loop, and `flat_map` as a
 stage that opens an inner loop. This document

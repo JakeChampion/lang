@@ -2,7 +2,7 @@
 """Measure general Fern workloads and compiler costs for checked index inlining.
 
 Run from the repository in the disposable native ARM64 Linux /bench environment
-described in ../COREUTILS-STRING-INDEX-2026-09-08.md. Output binaries and JSON
+described in ../coreutils-log/2026-09-08-string-index.md. Output binaries and JSON
 are generated under /bench/string-index-general, overwriting previous outputs.
 Baseline compiler: /bench/fern-ssa-fix; candidate: /bench/fern-ssa-index.
 """

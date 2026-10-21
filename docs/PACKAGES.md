@@ -1,5 +1,7 @@
 # Packages: the `fern.toml` manifest (slices 1–9)
 
+Status: [reference] the `fern.toml` manifest and package commands as shipped (slices 1 to 9).
+
 The implemented slices of the package-management design
 (`PACKAGE-MANAGEMENT-SOTA.md` trade-off table; `MODULE-PACKAGES-
 RESEARCH.md` Rec §1): local `path` dependencies, hash-addressed `url`

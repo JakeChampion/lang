@@ -1,7 +1,9 @@
 # Cycle-collection risk under the RC pivot
 
 Date: 2026-06-01.
-Status: design analysis. No compiler code changed by this doc.
+Status: [record] design analysis; its recommendation was adopted and the cycle
+is no longer constructible (2026-08-06 update below). No compiler code changed
+by this doc.
 
 > **UPDATE (2026-06-02): `state { }` and the persistent heap are
 > gone.** This analysis repeatedly frames process-lifetime cycles

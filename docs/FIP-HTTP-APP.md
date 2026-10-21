@@ -1,5 +1,7 @@
 # Experiment 4: an HTTP-like application pipeline in three memory disciplines
 
+Status: [record] measured experiment for #9586; its e2e test still checks the claims.
+
 What #9586 asked, measured: a request parse, a route, an update to the
 application's bounded state and a response, written three ways over one
 workload. The programs are `examples/fip/httpapp_baseline.fern`,

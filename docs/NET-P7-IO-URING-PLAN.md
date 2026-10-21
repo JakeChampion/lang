@@ -1,5 +1,7 @@
 # Net P7: io_uring — the plan
 
+Status: [record] done; #9861 is closed. Multishot accept was dropped, and the opt-in backend measured level with epoll and was kept.
+
 How #9861 was built, in the order it landed. One PR per slice. Each slice
 names its gate. The backend is opt-in and Linux-only. Slice 5 measured it
 level with epoll, and it is kept (slice 5 says why).

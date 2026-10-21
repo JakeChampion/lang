@@ -121,7 +121,7 @@ jobs:
             // dispatched on main, so the branch listing above never sees them;
             // they are found by the PR number in the run name. A review that
             // starts after the PR closed is read by nobody — 43 of 60 sampled
-            // reviews started after their PR had merged (docs/CI-PERFORMANCE.md).
+            // reviews started after their PR had merged (docs/ci-log/2026-09-15-performance.md).
             if (pr) {
               const names = new RegExp(`#${pr.number}(?!\\d)`);
               try {

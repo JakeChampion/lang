@@ -1,5 +1,7 @@
 # Startup-configured key/value experiment
 
+Status: [record] measured experiment; the latest numbers are in FIP-MAINF939.md.
+
 This successor completes the startup configuration missing from the original
 key/value experiment. Entry capacity, key width, value width and maximum batch
 size are runtime arguments. The historical `kv_*` programs remain unchanged.

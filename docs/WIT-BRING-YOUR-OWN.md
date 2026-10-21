@@ -1,5 +1,7 @@
 # Bring-your-own WIT — feasibility & phased plan
 
+Status: [record] phases P1–P6 shipped in both compilers, and the self-host's `wasm32-wasi-http` target uses this path; open follow-ups (such as `pub resource`) are listed near the end.
+
 **Goal (as asked):** let someone hand the compiler *their own* `.wit` world
 plus a Fern program and get a component that imports/exports exactly that
 world — instead of the curated, hard-coded WASI set the compiler ships

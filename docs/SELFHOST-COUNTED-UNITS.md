@@ -1,5 +1,7 @@
 # Counted units over typed semantic SSA
 
+Status: [record] the first landing of `ssaunits.fern`'s counted-unit plan; the plan has grown since (calls, reuse), and `RC-DESIGN.md` describes it as it stands.
+
 Part of #8920's self-hosted ownership migration. `ssaunits.fern` proposes and
 independently checks an abstract reference-unit plan over `ssasem.Func`.
 Explicit parameter modes distinguish scalar values, borrowed references and

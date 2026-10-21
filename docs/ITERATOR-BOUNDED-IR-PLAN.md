@@ -1,6 +1,6 @@
 # Iterator-bounded generics on the self-host IR path — LANDED
 
-Status: **DONE.** `core/iter.sum` / `count` / `to_array` / `product` over
+Status: [record] done. `core/iter.sum` / `count` / `to_array` / `product` over
 `iter.of(xs)` now route the self-host **IR path** (`decide = ir`) and match the
 interpreter. Gated by `TestSelfHostIterBoundedReducersIR`; see the 2026-06-23
 FEATURE-AUDIT entry for the shipped summary. The historical analysis below is

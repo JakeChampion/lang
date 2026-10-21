@@ -1,5 +1,7 @@
 # Experiment 3: the HTTP/1.1 codec as a `fip` data plane
 
+Status: [record] measured experiment for #9853; its e2e test still checks the claims.
+
 What #9853 asked, measured: an HTTP/1.1 request parse plus a response
 serialise written as a `fip` codec over owned buffers, against the
 `http_parse_request` and `http_serialize_response` a handler goes through

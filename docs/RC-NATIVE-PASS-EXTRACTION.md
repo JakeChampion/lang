@@ -1,6 +1,6 @@
 # Extracting native Perceus RC into a discrete pass — rollout tracker
 
-Status: **slices 1–4 landed** (2026-07-03). Tracking issue: **#4393**.
+Status: [record] slices 1–4 landed (2026-07-03); the Go native compiler it refactored was deleted (`NATIVE-RETIREMENT.md`). Tracking issue: **#4393**.
 Convergence-debt tracker: #4451 (this is a refactor of existing
 native surface, not new native-only surface, but it reshapes the
 exact layer goal 2 ports — keep it visible there).
