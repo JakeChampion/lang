@@ -1,5 +1,7 @@
 # Typed binding places
 
+Status: [record] slice of the Go typed-ownership pilot (`internal/semir`), deleted 2026-10-04.
+
 The opt-in typed pipeline now separates source name resolution from binding
 value-flow construction. This is a prerequisite for the conditional availability
 contract in [typed cleanup regions](TYPED-CLEANUP-REGIONS.md), not its activation

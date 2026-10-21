@@ -1,5 +1,8 @@
 # Native ARM64 test workers
 
+Status: [reference] how CI splits the native ARM64 e2e suite across two worker
+processes, with the measurement behind it.
+
 Run the existing native ARM64 test selection in two isolated processes on
 the existing runner. Compile the test binary once. Split its actual top-level
 test inventory into disjoint groups, then execute both groups concurrently.

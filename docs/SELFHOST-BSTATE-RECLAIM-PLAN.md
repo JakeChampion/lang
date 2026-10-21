@@ -1,5 +1,7 @@
 # Reclaiming the self-host's `BState` churn — design
 
+Status: [record] design-only and never implemented; the SSA builder and its `BState` no longer exist.
+
 The self-compile's >2 GiB working set is dominated by one allocation
 pattern: the SSA builder threads a whole-state struct, `BState`, through
 every lowering step by **functional replacement**, orphaning the old

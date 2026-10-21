@@ -1,5 +1,7 @@
 # Bootstrap — building the compiler without Go
 
+Status: [reference] how `make bootstrap` and `make distcheck` work today.
+
 `make bootstrap` builds the self-host compiler from a clean checkout with no Go
 toolchain and no native backend involved: a pinned earlier compiler (stage0)
 compiles `compiler/fern.fern`, the result compiles and runs a one-line

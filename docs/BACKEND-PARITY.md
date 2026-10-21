@@ -1,5 +1,8 @@
 # Targets and backends
 
+Status: [reference] the targets, CPU baselines, syscall floor and per-backend
+support as they stand today.
+
 The Go compiler generates no code: its emitters, the stack-machine
 `internal/codegen/{arm64,x86_64,wasmbin}` and the register-allocating
 `arm64ssa` / `x86_64ssa`, were deleted in step 5 of

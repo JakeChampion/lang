@@ -1,7 +1,7 @@
 # Improvements drawn from fernsmith work
 
-> **Status:** most items have landed (see the audit below). Still open: #5, #11,
-> #15, #16, and #14 (tracked as #2673).
+Status: [record] most items have landed (see the audit below). Still open: #5, #11,
+#15, #16, and #14 (tracked as #2673).
 
 This list collects the compiler-correctness gaps, design rough edges,
 and test-infrastructure improvements surfaced while building the

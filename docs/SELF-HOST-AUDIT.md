@@ -1,8 +1,8 @@
 # Self-Host Implementation — Code-Quality Audit
 
-> **Tracked in GitHub:** the open items below are mirrored as a checklist in
-> [#2849](https://github.com/JakeChampion/lang/issues/2849).
-> This doc stays the detailed reference (file:line, repro, fix sketch).
+Status: [tracker] the open items below are mirrored as a checklist in
+[#2849](https://github.com/JakeChampion/lang/issues/2849).
+This doc stays the detailed reference (file:line, repro, fix sketch).
 
 Audit of the self-hosted Fern compiler under `compiler/` (189,543 lines
 of Fern across 94 files), compared where useful against the Go reference in

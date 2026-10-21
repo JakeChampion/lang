@@ -1,6 +1,6 @@
 # Array bounds checking
 
-Status: policy doc.
+Status: [policy] an out-of-range index aborts the program on every backend.
 
 Indexing an array or slice out of range — `xs[i]` or `xs.with(i, v)`
 where `i < 0` or `i >= len` — **aborts the program** on every backend.

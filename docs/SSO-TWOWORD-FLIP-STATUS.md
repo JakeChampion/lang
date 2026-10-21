@@ -1,6 +1,8 @@
 # SSO Two-Word ABI Atomic Flip — historical mid-flip journal
 
-> **Status: SHIPPED.** The wasm two-word flip completed (see
+Status: [record] shipped; the mid-flip journal of the two-word string ABI change.
+
+> The wasm two-word flip completed (see
 > `SSO-TWOWORD-EXEC.md`) and the native mirror shipped too
 > (`SSO-NATIVE-FLIP-STATUS.md`). This journal recorded the in-progress
 > state mid-flip and is kept only as the implementation diary.

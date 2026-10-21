@@ -1,13 +1,10 @@
 # PR5 — unifying the futures (design)
 
-> Status: **design / not yet implemented.** The fifth and final slice of
-> the async redesign (`docs/ASYNC-REDESIGN.md`). PR1–PR4 are merged: the
-> colorless combinator surface (`std/async`: `Future[T]` + `gather` /
-> `race` / `with_deadline` + `fetch_future`) is live and does real
-> overlapping I/O on native. This doc decides *how* to finish the job —
-> make `Future[T]` resolve on wasm via the host scheduler, and collapse
-> the leftover runtime modules — and deliberately picks the **lighter**
-> of two architectures.
+Status: [record] done. The fifth and final slice of the async redesign
+(`docs/ASYNC-REDESIGN.md`): `Future[T]` resolves on wasm by polling
+pollables, and `std/task`, `std/reactor` and `std/wasm_reactor` are deleted,
+leaving `std/async` the single reactor. This doc decided *how* to finish the
+job and deliberately picked the **lighter** of two architectures.
 
 ## What's still split
 

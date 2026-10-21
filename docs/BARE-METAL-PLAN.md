@@ -1,7 +1,7 @@
 # Bare metal: hosts, guests, drivers, kernels
 
-**Status: [plan] — the scope is decided, the sequencing below is accepted, none
-of it is built.** Epic #6506 (the freestanding core) is the prerequisite and is
+Status: [plan] the scope is decided, the sequencing below is accepted, none
+of it is built. Epic #6506 (the freestanding core) is the prerequisite and is
 in flight; this doc is what comes after it and what it must not paint into a
 corner.
 

@@ -1,5 +1,7 @@
 # Generics at the semantic boundary
 
+Status: [reference] how the typed lowering compiles a generic body once per instantiation; passages on the AST lowering's erased bodies predate its deletion.
+
 A generic declaration is compiled two ways in this repository, and the two
 answer the reference-counting question differently.
 

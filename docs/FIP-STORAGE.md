@@ -1,5 +1,7 @@
 # Bounded storage and page-cache simulation
 
+Status: [record] measured experiment for #9590.
+
 The storage experiment for #9590 uses preallocated request and completion slots,
 cache frames and an in-memory fake disk. Its unique data plane makes no allocations
 from the first operation in the tested workloads. Retaining a whole-state snapshot

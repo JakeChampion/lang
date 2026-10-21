@@ -1,5 +1,7 @@
 # Fern — Comprehensive Language Review (July 2026)
 
+Status: [record] review snapshot at commit 577e2c8 (2026-07); the native compiler it reviews is since retired.
+
 A critical, evidence-based review of the Fern programming language, its
 standard library, its implementations, and its ecosystem. Written against
 the repository at commit `577e2c8` (2026-07). Every major claim cites the

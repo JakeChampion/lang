@@ -1,5 +1,7 @@
 # What enforces `str`'s contract — a design review, and the decision
 
+Status: [policy] decided 2026-09-05: O2 for `str`, a two-word `[u8]`, O3 refused; implemented under #8635.
+
 `STRINGS-SOTA.md` settled the *representation* questions (D1–D11): UTF-8, byte
 indices, SSO, the owned/borrowed split itself. This document is about the
 question that survey did not ask and 2026-08 answered empirically: **what

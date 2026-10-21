@@ -1,5 +1,7 @@
 # Net P5: the framework layer — the plan
 
+Status: [record] done; every slice landed, the exit programs included, and #9859 is closed.
+
 How #9859 is built, in the order it lands. One PR per slice. Each slice
 names its gate; a module runs its suite through the interpreter and the
 self-host compiler on x86-64, arm64 and wasm, and what touches the serve

@@ -1,14 +1,14 @@
 # Async / concurrency implementation plan
 
-> **⚠️ Superseded in part by [`ASYNC-REDESIGN.md`](ASYNC-REDESIGN.md).**
-> The `concurrent` / `await` / `race` *surface syntax* and its
-> parser-side CPS transform (Phase 3/3b/5 below) are being **removed**
-> in favour of `future<T>` + structured-concurrency combinators
-> (`gather` / `race` / `with_deadline`). The **runtime** described here
-> — the reactor, real `poll`, `register_fd`, the component-model-async
-> import path — is **kept** and becomes the implementation of
-> `future<T>`. Read the redesign doc first; treat the CPS-surface parts
-> of this plan as historical.
+Status: [record] superseded in part by [`ASYNC-REDESIGN.md`](ASYNC-REDESIGN.md).
+The `concurrent` / `await` / `race` *surface syntax* and its
+parser-side CPS transform (Phase 3/3b/5 below) were **removed**
+in favour of `Future[T]` + structured-concurrency combinators
+(`gather` / `race` / `with_deadline`). The **runtime** described here
+— the reactor, real `poll`, `register_fd`, the component-model-async
+import path — was **kept** and became the implementation of
+`Future[T]`. Read the redesign doc first; treat the CPS-surface parts
+of this plan as historical.
 
 Companion to the research docs `ASYNC-IMPLEMENTATION-RESEARCH.md`
 (Koka / Lean 4 / Roc / AOT+WASM mechanics) and

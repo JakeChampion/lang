@@ -1,6 +1,6 @@
 # The array algebra
 
-Status: policy doc, normative where marked. Indexed by
+Status: [policy] normative where marked. Indexed by
 `spec/semantics.md` (`AA-*`).
 
 The seven semantics questions of #9729, answered before a fusion pass

@@ -1,6 +1,8 @@
 # Design: porting Perceus constructor-reuse (FBIP) to the self-hosted compiler
 
-Status: **CORRECTED — constructor reuse is largely already implemented.** This
+Status: [record] the `irlower.fern` lowering it describes is deleted; reuse is
+now planned in `ssaunits.fern` (`RC-DESIGN.md`). When written: **CORRECTED —
+constructor reuse is largely already implemented.** This
 doc was written believing constructor reuse was the "one large remaining piece"
 of #2649 goal 2. On closer inspection of `irlower.fern` that premise was **wrong**:
 the self-host already implements self-overwrite, cross-local, enum-donor, and

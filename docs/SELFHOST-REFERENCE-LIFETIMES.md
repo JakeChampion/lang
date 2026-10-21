@@ -1,5 +1,7 @@
 # Dependency-aware lifetime dataflow in Fern
 
+Status: [record] the first landing of `ssalive.fern`'s dependency-aware liveness; the native solver it was compared against is deleted.
+
 Part of #8920's self-hosted typed-IR ownership migration. The remaining enum
 payload-return failures require independent child references and correctly
 timed parent releases. Historical freshness and escape markers cannot supply

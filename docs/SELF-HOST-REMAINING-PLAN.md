@@ -1,7 +1,8 @@
 # Self-hosting: remaining work plan
 
-> **Status: largely complete — kept as the goal-1 historical record.** The
-> per-function IR subset this plan set out to widen is now mature (closures
+Status: [record] complete — goal 1 is done; kept as the goal-1 historical record.
+
+> The per-function IR subset this plan set out to widen is now mature (closures
 > incl. nested, matches incl. guards, generics, `dyn` traits, `try`/`?`,
 > tuples, iterators all lower). The remaining AST fallbacks are the
 > merged-bundle budget ([#3425](https://github.com/JakeChampion/lang/issues/3425))

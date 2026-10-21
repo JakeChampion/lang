@@ -1,7 +1,9 @@
 # Self-host literal settling — scoping note
 
-**Status:** scoping only. No code. This note sizes the work and names the
-gates; it does not propose a schedule.
+Status: [record] scoping note; integer literal settling has since shipped in
+`compiler/checker.fern` (an unsuffixed integer literal types as a polymorphic
+`i32` that settles to its context). When written it was scoping only, with no
+code: it sized the work and named the gates, and proposed no schedule.
 **Motivation:** `docs/TYPED-IR-REWRITE.md` §"A carrier is only as good as the
 checker behind it" — the typed-IR migration's ceiling is the checker's
 precision, and this is the first place that ceiling is measurably binding.

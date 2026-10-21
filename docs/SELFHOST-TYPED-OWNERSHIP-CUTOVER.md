@@ -1,5 +1,7 @@
 # Self-hosted typed ownership cutover
 
+Status: [record] the cutover is done: the typed lowering produces every body and the AST lowering is deleted (`SELFHOST-SEMANTIC-SOURCE.md`).
+
 The destination is the Fern-written compiler. Retiring the Go bootstrap compiler
 is a primary project goal, distinct from retaining native-code generation.
 Go-side work must serve a concrete bootstrap, migration or validation need, not

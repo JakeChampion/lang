@@ -1,5 +1,7 @@
 # IDE-grade incremental compilation research
 
+Status: [research] survey for post-MVP language-server performance, tracked in #4415.
+
 This survey was written against the Go language server, deleted on
 2026-10-15. The mechanisms and their order carry over to `fern -lsp`
 (`docs/LSP-INTEGRATION-PLAN.md`), which re-loads and re-checks the whole

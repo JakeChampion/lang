@@ -1,5 +1,7 @@
 # Net P6: HTTP/2 — the plan
 
+Status: [record] done; every slice landed (slice 4's entry names what of serving did not) and #9860 is closed.
+
 How #9860 is built, in the order it lands. One PR per slice. Each slice
 names its gate; a module runs its suite through the interpreter and the
 self-host compiler on x86-64, arm64 and wasm, and what touches the serve

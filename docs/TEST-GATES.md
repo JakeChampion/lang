@@ -1,5 +1,7 @@
 # Which gates prove what
 
+Status: [reference] which CI lanes and suites prove what, and which do not.
+
 A guide to picking the suites a change actually has to pass, written after two
 compiler bugs shipped past three heavyweight green gates in a row.
 

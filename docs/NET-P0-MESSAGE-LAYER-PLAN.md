@@ -1,5 +1,7 @@
 # P0: the per-request framing path, measured and planned
 
+Status: [record] done; #9853 is closed, and the framing path and the serve loop allocate nothing per hello request.
+
 What is left of #9853's byte-based message layer and its exit criterion B
 (zero allocations per request in the framing path for the hello handler),
 planned from a measurement of what the path allocates today. It also records

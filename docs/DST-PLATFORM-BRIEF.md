@@ -1,5 +1,8 @@
 # Deterministic simulation testing (DST) — design brief
 
+Status: [reference] design of deterministic simulation testing (`std/sim`,
+`std/sim_platform`, `std/sim_fetch`); its slices have shipped.
+
 From the 2026-07 PLT landscape survey (`PLT-LANDSCAPE-2026.md` §2.4).
 Prior art: TigerBeetle's simulator, FoundationDB's deterministic
 runtime, Antithesis. The pitch: run concurrent programs under a

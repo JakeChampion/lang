@@ -1,5 +1,7 @@
 # Self-host variant payloads — wide slots + multi-payload (plan)
 
+Status: [record] slices S1–S5 shipped; S6 was re-scoped away when the backends it named were deleted.
+
 **Goal.** Give the self-hosted Fern compiler (`compiler/`) real
 **multi-payload variants** and **wide enum payload slots** (64-bit ints /
 floats), so the deferred `@import` extern variant ports (non-uniform,

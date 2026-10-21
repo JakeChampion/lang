@@ -1,5 +1,7 @@
 # `pub(package)` visibility
 
+Status: [reference] the `pub(package)` visibility level, as shipped.
+
 Fern decl visibility has three levels:
 
 | Form | Visible to |

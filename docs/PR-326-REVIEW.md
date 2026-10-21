@@ -1,8 +1,8 @@
 # PR #326 — six-lens code review findings
 
-> **Status: historical record** of the review of long-merged PR #326. The
-> [fix-now] items landed on that PR; treat any unactioned [follow-up] /
-> [deferred] items as expired unless re-validated against current code.
+Status: [record] the review of long-merged PR #326. The [fix-now] items
+landed on that PR; treat any unactioned [follow-up] / [deferred] items as
+expired unless re-validated against current code.
 
 PR #326 extends the pair-form (register-based) return arc from
 `Option[T]` to also cover `Result[T, E]` where both type arguments

@@ -1,5 +1,7 @@
 # `@must_consume` marker types — design
 
+Status: [reference] shipped as E067 in the checker.
+
 Plan item **E1** of `docs/NICHE-BORROWS-PLAN.md`, from the
 niche-language research: Vale's "Higher RAII" and Austral's linear
 types show that a type which **forbids implicit drop** can carry

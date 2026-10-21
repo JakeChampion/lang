@@ -1,5 +1,7 @@
 # FIP application measurements on main f93935112
 
+Status: [record] measurement snapshot on merged main f939351, the latest FIP refresh.
+
 This refresh records 3,130 native runs on merged main
 `f939351127f45c4007b2429f965094b29b029c5e`. The five application executables,
 five ring-comparison executables and configurable KV executable differ from
