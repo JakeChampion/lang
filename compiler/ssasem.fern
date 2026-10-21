@@ -264,14 +264,31 @@ pub function uses_only(u: Uses, v: i32, allowed: i32[]): boolean {
 // Whether an operand after position `pos` of block `bi` names `v`, the
 // block's terminator included.
 pub function read_after(u: Uses, bi: i32, pos: i32, v: i32): boolean {
-  let i: i32 = u.start[v];
-  while (i < u.start[v + 1]) {
-    if (u.block[i] == bi && u.at[i] > pos) {
+  let i: i32 = first_use_in(u, v, bi);
+  while (i < u.start[v + 1] && u.block[i] == bi) {
+    if (u.at[i] > pos) {
       return true;
     }
     i = i + 1;
   }
   return false;
+}
+
+// first_use_in is the first of v's entries in block `bi` or a later one,
+// `start[v + 1]` when there is none: the entries run in block order, so a
+// block's reads of v follow from it while `block[i] == bi`.
+pub function first_use_in(u: Uses, v: i32, bi: i32): i32 {
+  let lo: i32 = u.start[v];
+  let hi: i32 = u.start[v + 1];
+  while (lo < hi) {
+    let mid: i32 = lo + (hi - lo) / 2;
+    if (u.block[mid] < bi) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
 }
 
 function uses_of(f: Func): Uses {
