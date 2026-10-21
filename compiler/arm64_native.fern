@@ -1973,6 +1973,28 @@ function arm64_swap(buf: i32[], size: i32, acquire: boolean, release: boolean, r
   return arm64_le32(buf, base | (rs & 31) as i64 << 16 | (rn & 31) as i64 << 5 | (rt & 31) as i64);
 }
 
+// The LSE atomic add (ldadd, (size<<30)|0x38200000, acquire at bit 23 and
+// release at 22) and compare-and-swap (cas, (size<<30)|0x08A07C00, acquire
+// at bit 22 and release at 15): Rs at 16 is the addend or the expected value,
+// and Rt the old value loaded, or for cas the value stored.
+function arm64_lse(buf: i32[], cas: boolean, size: i32, acquire: boolean, release: boolean, rs: i32, rt: i32, rn: i32): i32[] {
+  let base: i64 = (size & 3) as i64 << 30 | 0x38200000;
+  let acq: i64 = 0x800000;
+  let rel: i64 = 0x400000;
+  if (cas) {
+    base = (size & 3) as i64 << 30 | 0x08a07c00;
+    acq = 0x400000;
+    rel = 0x8000;
+  }
+  if (acquire) {
+    base = base | acq;
+  }
+  if (release) {
+    base = base | rel;
+  }
+  return arm64_le32(buf, base | (rs & 31) as i64 << 16 | (rn & 31) as i64 << 5 | (rt & 31) as i64);
+}
+
 function arm64_acqrel(buf: i32[], size: i32, load: boolean, rt: i32, rn: i32): i32[] {
   let base: i64 = (size & 3) as i64 << 30 | 0x089ffc00;
   if (load) {
@@ -3669,7 +3691,7 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
 // assembler for every target a kernel is about to be emitted on needs checking
 // separately, and a self-host backend has one of its own.
 //
-// Advanced SIMD is mandatory in the declared ARMv8-A baseline, so these are
+// Advanced SIMD is mandatory in the declared ARMv8.2-A baseline, so these are
 // hard requirements rather than a fast path; there is nothing to detect.
 
 // ---- byte/halfword/sign-extending load/store (unsigned scaled imm) ----
@@ -5788,6 +5810,10 @@ function arm64_fam_landing(): i32 {
   return 48;
 }
 
+function arm64_fam_lse(): i32 {
+  return 49;
+}
+
 // arm64_gas_family is the index in the table of the family a mnemonic
 // belongs to, or -1: length first, then the leading bytes, then the
 // spellings left. The dispatch and arm64_gas_known read it.
@@ -6559,6 +6585,17 @@ function arm64_gas_family_len5(mnem: string): i32 {
 }
 
 function arm64_gas_family_len5_c(mnem: string): i32 {
+  let c: u8 = mnem[1];
+  if (c == b'a' && mnem == "casal") {
+    return arm64_fam_lse();
+  }
+  if (c == b's') {
+    return arm64_gas_family_len5_c_cs(mnem);
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len5_c_cs(mnem: string): i32 {
   if (mnem == "csinc") {
     return arm64_fam_condsel();
   }
@@ -7056,6 +7093,9 @@ function arm64_gas_family_len7(mnem: string): i32 {
   if (c == b'a' && mnem == "autiasp") {
     return arm64_fam_fixed();
   }
+  if (c == b'l' && mnem == "ldaddal") {
+    return arm64_fam_lse();
+  }
   if (c == b'p' && mnem == "paciasp") {
     return arm64_fam_fixed();
   }
@@ -7441,7 +7481,7 @@ function arm64_gas_bad_ext_mem(fam: i32, mnem: string, ops: string[], lm: Arm64M
   if (arm64_fam_is_excl(fam)) {
     return arm64_gas_bad_excl(mnem, ops, lm);
   }
-  if (fam == arm64_fam_swap()) {
+  if (fam == arm64_fam_swap() || fam == arm64_fam_lse()) {
     return arm64_gas_bad_swap(mnem, ops, lm);
   }
   if (fam == arm64_fam_barrier()) {
@@ -7814,6 +7854,24 @@ function arm64_gas_emit_swap(own a: Arm64Asm, mnem: string, ops: string[], lm: A
   let rest: string = slice_unchecked(mnem, 3, mnem.len()) + "";
   arm64_push_arr(a.code, arm64_swap(
     [], arm64_gas_excl_size(mnem, ops[1]), arm64_str_starts_with(rest, "a"), arm64_str_indexof(rest, "l") >= 0,
+    arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem_at(ops, 2, lm).base,
+  ));
+  return a;
+}
+
+// arm64_gas_emit_lse reads the ordering from the letters after `cas` or
+// `ldadd`, as arm64_gas_emit_swap does after `swp`.
+function arm64_gas_emit_lse(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
+  if (ops.len() < 3) {
+    return a;
+  }
+  let cas: boolean = arm64_str_starts_with(mnem, "cas");
+  let rest: string = slice_unchecked(mnem, 5, mnem.len()) + "";
+  if (cas) {
+    rest = slice_unchecked(mnem, 3, mnem.len()) + "";
+  }
+  arm64_push_arr(a.code, arm64_lse(
+    [], cas, arm64_gas_excl_size(mnem, ops[1]), arm64_str_starts_with(rest, "a"), arm64_str_indexof(rest, "l") >= 0,
     arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_mem_at(ops, 2, lm).base,
   ));
   return a;
@@ -8474,6 +8532,9 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
   }
   if (fam == arm64_fam_swap()) {
     return arm64_gas_emit_swap(a, mnem, ops, lm);
+  }
+  if (fam == arm64_fam_lse()) {
+    return arm64_gas_emit_lse(a, mnem, ops, lm);
   }
   if (fam == arm64_fam_barrier()) {
     return arm64_gas_emit_barrier(a, mnem, ops);

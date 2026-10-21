@@ -279,7 +279,7 @@ pub function main(): i32 {
   // After the option scan, so `--help` and `--version` answer on every
   // target and only a run that would have to produce the load averages
   // is refused.
-  if (target_os() != "linux" && target_os() != "darwin") {
+  if (target_os() != "linux" && target_os() != "android" && target_os() != "darwin") {
     gnu.error("the load averages are read from /proc/loadavg, which " + target_os() + " does not have");
     return 1;
   }
