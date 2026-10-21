@@ -1999,10 +1999,14 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             }
             qb1 = qb1 + 1;
           }
-          // ph_slot / ph_row are the rows that need a phi, kept ascending
-          // by slot as they are found.
-          let ph_slot: i32[] = [];
+          // A row whose edges disagree needs a phi; the phis are made in
+          // slot order. The rows are put in that order by a scan over the
+          // slot range they span, through slot_pos, which still maps each
+          // row's slot to its row, unless the range is wider than the square
+          // of their count, when sorting the few rows is cheaper.
           let ph_row: i32[] = [];
+          let ph_lo: i32 = nslots;
+          let ph_hi: i32 = 0 - 1;
           rb = 0;
           while (rb < nb) {
             let es: i32 = dl_slot[dfrom_b + rb];
@@ -2017,25 +2021,46 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             }
             if (alleq) {
               slots = slots.with(es, first);
+              slot_pos = slot_pos.with(es, 0 - 1);
             } else {
-              let at: i32 = ph_slot.len();
-              ph_slot = ph_slot.append(es);
               ph_row = ph_row.append(rb);
-              while (at > 0 && ph_slot[at - 1] > es) {
-                ph_slot = ph_slot.with(at, ph_slot[at - 1]);
+              if (es < ph_lo) {
+                ph_lo = es;
+              }
+              if (es > ph_hi) {
+                ph_hi = es;
+              }
+            }
+            rb = rb + 1;
+          }
+          let np: i32 = ph_row.len();
+          if (np > 1 && ph_hi - ph_lo + 1 <= np * np) {
+            ph_row = [];
+            let ps: i32 = ph_lo;
+            while (ps <= ph_hi) {
+              if (slot_pos[ps] >= 0) {
+                ph_row = ph_row.append(slot_pos[ps]);
+              }
+              ps = ps + 1;
+            }
+          } else {
+            let pi: i32 = 1;
+            while (pi < np) {
+              let moving: i32 = ph_row[pi];
+              let at: i32 = pi;
+              while (at > 0 && dl_slot[dfrom_b + ph_row[at - 1]] > dl_slot[dfrom_b + moving]) {
                 ph_row = ph_row.with(at, ph_row[at - 1]);
                 at = at - 1;
               }
-              ph_slot = ph_slot.with(at, es);
-              ph_row = ph_row.with(at, rb);
+              ph_row = ph_row.with(at, moving);
+              pi = pi + 1;
             }
-            slot_pos = slot_pos.with(es, 0 - 1);
-            rb = rb + 1;
           }
           let pk: i32 = 0;
-          while (pk < ph_slot.len()) {
-            let es: i32 = ph_slot[pk];
+          while (pk < ph_row.len()) {
             let row: i32 = ph_row[pk];
+            let es: i32 = dl_slot[dfrom_b + row];
+            slot_pos = slot_pos.with(es, 0 - 1);
             let vals: i32[] = [];
             let qe: i32 = 0;
             while (qe < ne) {
