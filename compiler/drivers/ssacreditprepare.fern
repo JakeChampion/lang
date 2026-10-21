@@ -48,7 +48,7 @@ function returned(p: ssaprepare.Body, value: i32): void {
   require(b.insts[1].kind_tag == 7 && b.insts[1].args.len() == 1 && b.insts[1].args[0] == b.insts[0].result && b.term.value == b.insts[1].result, 199);
 }
 
-function prepared(base: irtables.LowerResult, selected: physicalbody.Selected, leaves: ssa.Leaf[], value: i32, debug: boolean): void {
+function prepared(base: irtables.LowerResult, selected: physicalbody.Selected, leaves: ssa.Leaves, value: i32, debug: boolean): void {
   let r = irtables.LowerResult { ...base, n_params: 0, n_locals: 1, ops: [ir.op_const_i32(value), ir.op_store_local(0), ir.op_load_local(0), ir.op_call_direct("leaf", 1), ir.op_return()], dbg_slots: [0], dbg_names: ["actual"], dbg_types: ["i32"] };
   let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "actual", r.n_params, r.n_locals, r.ops, debug);
   require(lifted.ok && calls(lifted.func) == 1, 187);
@@ -58,7 +58,7 @@ function prepared(base: irtables.LowerResult, selected: physicalbody.Selected, l
   let has_seen = p.seen_vals.len() > 0;
   require(same(p.seen_vals, lifted.seen_vals) && same(p.seen_slots, lifted.seen_slots) && has_seen == debug, 190);
   returned(p, value);
-  let no_leaves = ssaprepare.finish(r, selected, lifted, []);
+  let no_leaves = ssaprepare.finish(r, selected, lifted, ssa.leaves_of([]));
   require(calls(no_leaves.formed.f) == 1, 193);
 }
 
@@ -75,8 +75,8 @@ pub function run(): void {
   require(ircore.lowered_digest([located]) != ircore.lowered_digest([shifted]), 201);
   let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "leaf", leaf.n_params, leaf.n_locals, leaf.ops, false);
   require(lifted.ok, 195);
-  let leaves = ssa.leaf_of("leaf", lifted.func);
-  require(leaves.len() == 1, 196);
+  let leaves = ssa.leaves_of(ssa.leaf_of("leaf", lifted.func));
+  require(leaves.list.len() == 1, 196);
   for debug in [false, true] {
     prepared(leaf, selected, leaves, 7, debug);
     prepared(leaf, selected, leaves, 13, debug);
