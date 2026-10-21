@@ -711,10 +711,11 @@ function arm_expr_value(body: ast.Stmt[], v: string, depth: i32): string {
   if (v.len() == 0) {
     tail = print_return_only([last], depth);
   } else {
-    if (assign_target(last) != v) {
+    let set: AssignParts = assign_parts(last);
+    if (!set.ok || print_expr(set.place, depth) != v) {
       return "";
     }
-    tail = print_expr(assign_value(last), depth);
+    tail = print_expr(set.value, depth);
   }
   if (tail.len() == 0) {
     return "";
@@ -724,7 +725,7 @@ function arm_expr_value(body: ast.Stmt[], v: string, depth: i32): string {
   }
   let value: ast.Expr = tail_expr(last);
   if (v.len() > 0) {
-    value = assign_value(last);
+    value = assign_parts(last).value;
   }
   return print_value_block(body, value, true, depth);
 }
@@ -2249,10 +2250,6 @@ function stmt_is_single_line(st: ast.Stmt): boolean {
   return false;
 }
 
-// print_chain_assign reprints `a = b = c = expr;` from its desugar, which
-// assigns the innermost target first and copies leftwards — so the written
-// targets are the assignment targets read back to front, and the written value
-// is the first assignment's right-hand side.
 // print_assert reprints an `assert` desugar, `if (!cond) { eprint(…); exit(1); }`,
 // as the `assert(cond[, msg]);` it was written as: the condition is the `!`'s
 // operand, and a message is the right side of the eprint's
@@ -2299,34 +2296,48 @@ function print_todo(w: ast.StmtWhile, depth: i32, f: Fmt): (string, Fmt) {
   return ("todo;", f);
 }
 
+// print_chain_assign reprints `a = b = c = expr;` from its desugar, which
+// assigns the innermost target first and copies leftwards — so the written
+// targets are the assignment targets read back to front, and the written value
+// is the first assignment's right-hand side.
 function print_chain_assign(stmts: ast.Stmt[], depth: i32): string {
   let out: string = "";
   let i: i32 = stmts.len() - 1;
   while (i >= 0) {
-    out = out + assign_target(stmts[i]) + " = ";
+    out = out + print_expr(assign_parts(stmts[i]).place, depth) + " = ";
     i = i - 1;
   }
-  return out + print_expr(assign_value(stmts[0]), depth) + ";";
+  return out + print_expr(assign_parts(stmts[0]).value, depth) + ";";
 }
 
-function assign_target(st: ast.Stmt): string {
-  match (st) {
-    ast.StmtAssign(a) => {
-      return a.target;
-    },
-    _ => {
-      return "";
-    }
-  }
-}
+struct AssignParts { place: ast.Expr, value: ast.Expr, ok: boolean }
 
-function assign_value(st: ast.Stmt): ast.Expr {
+// assign_parts reads an assignment statement back as its place and value: a
+// StmtAssign, or the __set_index / __set_field call `a[i] = v` and `o.f = v`
+// lower to.
+function assign_parts(st: ast.Stmt): AssignParts {
+  let none: AssignParts = AssignParts { place: parser.e_bool(true), value: parser.e_bool(true), ok: false };
   match (st) {
     ast.StmtAssign(a) => {
-      return a.value;
+      return AssignParts { place: ast.ExprIdent { name: a.target, line: 0, col: 0, ty: "" }, value: a.value, ok: true };
+    },
+    ast.StmtExpr(x) => {
+      if let ast.ExprCall(c) = x.value {
+        if let ast.ExprIdent(callee) = c.callee {
+          if (c.args.len() == 3 && callee.name == "__set_index") {
+            return AssignParts { place: ast.ExprIndex { array: c.args[0], index: c.args[1], unchecked: false, ty: "", line: 0, col: 0 }, value: c.args[2], ok: true };
+          }
+          if (c.args.len() == 3 && callee.name == "__set_field") {
+            if let ast.ExprString(field) = c.args[1] {
+              return AssignParts { place: ast.ExprFieldAccess { obj: c.args[0], field: field.value, line: 0, col: 0, ty: "" }, value: c.args[2], ok: true };
+            }
+          }
+        }
+      }
+      return none;
     },
     _ => {
-      return parser.e_bool(true);
+      return none;
     }
   }
 }
@@ -3019,6 +3030,12 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       return ("return " + rv + ";", rf);
     },
     ast.StmtExpr(x) => {
+      let set: AssignParts = assign_parts(st);
+      if (set.ok) {
+        let (pv, pf) = print_expr_c(set.place, prec_lowest(), depth, f);
+        let (sv, sf) = print_expr_c(set.value, prec_lowest(), depth, pf);
+        return (pv + " = " + sv + ";", sf);
+      }
       let (xv, xf) = print_expr_c(x.value, prec_lowest(), depth, f);
       return (xv + ";", xf);
     },

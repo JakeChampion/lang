@@ -15385,12 +15385,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // `__set_index(arr, idx, rhs)`. Array elements are
       // immutable after construction (the subscript counterpart
       // of E048), so any such call is E056, reported at the
-      // array. Same no-false-positives argument as E048:
+      // call, which carries the `[`. Same no-false-positives argument as E048:
       // __set_index is parser-internal and the self-host +
       // stdlib were migrated off subscript assignment to
       // `arr = arr.with(i, v)`.
       if (id.name == "__set_index" && c.args.len() == 3) {
-        out = out.append(dg_at("E056", "cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`", expr_line(c.args[0]), expr_col(c.args[0])));
+        out = out.append(dg_at("E056", "cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`", c.line, c.col));
       }
       // E057: cell_new(v) — a Cell's element type must be
       // cycle-free (cell_payload_risk). Reported at the argument,
