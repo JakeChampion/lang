@@ -27724,21 +27724,54 @@ function settle_at(e: ast.Expr, t: typeinfo.Type): ast.Expr {
   return e;
 }
 
-// settle_args_at_params is settle_at for each argument of a call whose callee
-// types as a function of known parameters.
-function settle_args_at_params(args: ast.Expr[], callee: typeinfo.Type): ast.Expr[] {
-  if let typeinfo.TypeFunc(ft) = callee {
-    if (ft.params_known && ft.param_types.len() == args.len()) {
-      let out: ast.Expr[] = [];
+// settle_args_at_params is settle_at for each argument against its parameter.
+function settle_args_at_params(args: ast.Expr[], params: typeinfo.Type[]): ast.Expr[] {
+  if (params.len() != args.len()) {
+    return args;
+  }
+  let out: ast.Expr[] = [];
+  let i: i32 = 0;
+  while (i < args.len()) {
+    out = out.append(settle_at(args[i], params[i]));
+    i = i + 1;
+  }
+  return out;
+}
+
+// call_param_types is what a call's arguments settle at: the callee's function
+// type, or a receiver method's parameters with the receiver's type variables
+// bound. Empty when neither is known.
+function call_param_types(c: ast.ExprCall, s: Scope): typeinfo.Type[] {
+  if let typeinfo.TypeFunc(ft) = check_expr(c.callee, s) {
+    if (ft.params_known) {
+      return ft.param_types;
+    }
+    return [];
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    let recv: typeinfo.Type = check_expr(fa.obj, s);
+    let key: string = receiver_key(recv);
+    let found: Option[MethodSig] = None;
+    if (key.len() > 0) {
+      let msig: MethodSig = s.lookup_method(fa.field, key);
+      if (msig.name.len() > 0) {
+        found = Some(msig);
+      }
+    } else {
+      found = bound_method(s, tp_receiver(recv, s), fa.field);
+    }
+    if let Some(msig) = found {
+      let rmb: MethodBinding = method_binding(c, msig, recv, s);
+      let out: typeinfo.Type[] = [];
       let i: i32 = 0;
-      while (i < args.len()) {
-        out = out.append(settle_at(args[i], ft.param_types[i]));
+      while (i < msig.param_types.len()) {
+        out = out.append(receiver_bound(msig.param_types[i], param_type_name_at(msig, i), rmb, s));
         i = i + 1;
       }
       return out;
     }
   }
-  return args;
+  return [];
 }
 
 // settle_array_literals gives the unsuffixed literals of an array literal no
@@ -27885,7 +27918,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       for arg in c.args {
         nargs = nargs.append(annotate_expr(arg, s));
       }
-      nargs = settle_args_at_params(nargs, check_expr(c.callee, s));
+      nargs = settle_args_at_params(nargs, call_param_types(c, s));
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
       let ct: typeinfo.Type = check_expr(e, s);

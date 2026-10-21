@@ -149,8 +149,8 @@ function main(): i32 { let x = big(); let y: i64 = x * 100000; if (y > 429496729
 		{"inferred-f32-from-call", `function narrow(): f32 { return 16777217.0; }
 function main(): i32 { let f = narrow(); let g: f64 = 16777216.0; if (f as f64 == g) { return 42; } return 1; }`},
 		// A local SHADOWING a top-level function holds a closure, whose return
-		// type is not the shadowed declaration's. Reading the declaration here
-		// widens this multiply to 64 bits and answers 42.
+		// type is not the shadowed declaration's. Reading the declaration would
+		// widen this multiply to 64 bits and answer 42.
 		{"call-shadowed-by-local", `function pick(): i64 { return 1; }
 function main(): i32 { let pick: () => i32 = (() => 100000); let x = pick(); let y = x * 100000; if (y == 1410065408) { return 1; } return 42; }`},
 		// A closure held in a FIELD is called through the same field-access
