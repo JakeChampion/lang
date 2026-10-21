@@ -3012,10 +3012,9 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       return ("let " + written_name(v.name) + ann + " = " + ti + ";", tf);
     },
     ast.StmtReturn(r) => {
-      // A void `return;` parses with no value expression, which reaches
-      // the printer as the unknown-token placeholder for the `;` that
-      // followed. Printing that placeholder emits a comment INTO the
-      // source; the statement is just `return;`.
+      // A void `return;` carries the `bare-return` sentinel in its value
+      // slot. Printing that placeholder emits a comment INTO the source;
+      // the statement is just `return;`.
       if (expr_is_missing(r.value)) {
         return ("return;", f);
       }
