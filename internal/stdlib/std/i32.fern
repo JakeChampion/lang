@@ -785,12 +785,8 @@ pub function (n: i32) checked_abs(): Option[i32] {
 // `(n: i32) unsigned_abs()` — `|n|` as a u32, where the one magnitude the signed
 // `abs` / `checked_abs` cannot represent — i32::MIN, whose |n| is 2^31 — fits
 // exactly (2147483648). For every other value it equals the signed magnitude.
-// The MIN case takes the u32 literal directly, since `0 - n` would overflow i32
-// before the widening cast.
 pub function (n: i32) unsigned_abs(): u32 {
-  if (n == 0 - 2147483647 - 1) {
-    return 2147483648 as u32;
-  }
+  // At MIN, `0 - n` wraps back to MIN, whose bits read as u32 are 2^31.
   if (n < 0) {
     return (0 - n) as u32;
   }
@@ -1283,10 +1279,6 @@ pub function (n: i32) ordinal(): string {
 
 // The decimal text of `n`, with a leading `-` when it is negative.
 pub function (n: i32) to_string(): string {
-  // int_to_string negates a negative `n`, which overflows at i32's minimum.
-  if (n == 0 - 2147483647 - 1) {
-    return "-2147483648";
-  }
   return int.int_to_string(n);
 }
 

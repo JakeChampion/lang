@@ -32,13 +32,9 @@ pub function (n: u32) clamp(lo: u32, hi: u32): u32 {
   return n;
 }
 
-// `(n: u32) to_string()` — decimal representation. Routes
-// through the i64-shaped formatter helper to avoid the
-// signed-truncation pitfall a direct `n as i32` cast would
-// hit for values >= 2^31. Qualified call into core/int via
-// the import above — modload's flat-load path (`LoadStdlibFlat`)
-// rewrites `int.__int_to_string_u64(...)` to the bare-name call site.
+// The decimal text of `n`.
 pub function (n: u32) to_string(): string {
+  // Widened through i64, not cast to i32, so values from 2^31 stay positive.
   return int.__int_to_string_u64(n as i64 & 4294967295 as i64, 0);
 }
 

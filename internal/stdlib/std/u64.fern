@@ -31,17 +31,15 @@ pub function (n: u64) clamp(lo: u64, hi: u64): u64 {
   return n;
 }
 
-// `(n: u64) to_string()` — decimal representation. Reinterprets
-// the underlying bits as i64 to share the i64 formatter helper;
-// `__int_to_string_u64` treats its argument as unsigned given
-// `neg == 0`.
+// The decimal text of `n`.
 pub function (n: u64) to_string(): string {
+  // __int_to_string_u64 reads its argument's bits as unsigned when `neg` is 0.
   return int.__int_to_string_u64(n as i64, 0);
 }
 
-// `(n: usize) to_string()` — decimal representation. The cast zero-extends
-// a 32-bit usize on wasm32 and moves nothing on a 64-bit target.
+// The decimal text of `n`.
 pub function (n: usize) to_string(): string {
+  // The cast zero-extends a 32-bit usize on wasm32.
   return int.__int_to_string_u64(n as i64, 0);
 }
 
