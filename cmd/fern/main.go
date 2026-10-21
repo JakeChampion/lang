@@ -427,7 +427,7 @@ func main() {
 	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component; `command-module` emits a WASI preview-1 COMMAND module — the same core bytes plus a `_start` that runs main and exits with its value, which is what a preview-1 host (`wasmtime run`, or a browser shim like web/wasi-shim.js) runs directly. Both are the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
 	embedDir := flag.String("embed", "", "embed a directory of assets into the binary at compile time. `__fern_asset(\"NAME\")` in the source is replaced with a string literal holding that file's text, which must be valid UTF-8, and `__fern_asset_bytes(\"NAME\")` with a u8[] literal holding its bytes, where NAME is the file's slash-separated path relative to DIR; `__fern_assets()` and `__fern_assets_bytes()` enumerate the bundle the same two ways. Assets are immortal constants: no refcount traffic, zero-copy to hand to user code.")
 	emitDebug := flag.Bool("g", false, "emit a symbol table and DWARF into the native binary so debuggers, nm, backtraces, and profilers can map code addresses to function names and source lines")
-	doFmt := flag.Bool("fmt", false, "format the source files and write them to stdout in order (use -w to write back in place, -d to print a diff, -o OUT with a single file)")
+	doFmt := flag.Bool("fmt", false, "format the source files (- for stdin) and write them to stdout in order (use -w to write back in place, -d to print a diff, -o OUT with a single file)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite each input file with its formatted output")
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between each file and its formatted form; exits 1 when any differs")
 	doResolve := flag.Bool("resolve", false, "run Minimum Version Selection over a fern.toml's versioned ([package] index) dependencies and write the chosen versions to fern.lock (pass the manifest, its directory, or any file inside the package; default `.`). url-sourced versions are fetched and verified into the content-addressed store. The build reads fern.lock; the compiler never reads the index.")
@@ -763,7 +763,7 @@ func formatFiles(paths []string, writeBack, diffMode bool, outPath string) int {
 		c, err := formatFile(p, writeBack, diffMode, outPath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			c = 1
+			c = max(c, 1)
 		}
 		if c > code {
 			code = c
@@ -772,13 +772,24 @@ func formatFiles(paths []string, writeBack, diffMode bool, outPath string) int {
 	return code
 }
 
-// formatFile parses the file at srcPath, formats it, and either
-// writes the result to stdout / back to the file / to outPath / prints a
-// unified diff against the on-disk version. Returns the exit code the CLI
+// formatFile parses the file at srcPath (stdin for "-"), formats it, and
+// either writes the result to stdout / back to the file / to outPath / prints
+// a unified diff against the on-disk version. Returns the exit code the CLI
 // should use: 0 for "no work needed" or successful write, 1 when
 // `-d` saw a difference, with errors returned separately.
 func formatFile(srcPath string, writeBack, diffMode bool, outPath string) (int, error) {
-	srcBytes, err := os.ReadFile(srcPath)
+	name := srcPath
+	var srcBytes []byte
+	var err error
+	if srcPath == "-" {
+		if writeBack {
+			return 2, fmt.Errorf("fern-oracle: -fmt -w cannot write back stdin; drop -w to print the result")
+		}
+		name = "<stdin>"
+		srcBytes, err = io.ReadAll(os.Stdin)
+	} else {
+		srcBytes, err = os.ReadFile(srcPath)
+	}
 	if err != nil {
 		return 1, err
 	}
@@ -789,11 +800,11 @@ func formatFile(srcPath string, writeBack, diffMode bool, outPath string) (int, 
 	} else {
 		formatted, err = fmtsource.Format(src)
 		if err != nil {
-			return 1, fmt.Errorf("%s", diag.Format(srcPath, src, err))
+			return 1, fmt.Errorf("%s", diag.Format(name, src, err))
 		}
 	}
 	if diffMode {
-		diff := printer.UnifiedDiff(src, formatted, srcPath, srcPath)
+		diff := printer.UnifiedDiff(src, formatted, name, name)
 		if diff == "" {
 			return 0, nil
 		}
