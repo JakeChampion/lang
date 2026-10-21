@@ -75,6 +75,35 @@ stop_upstream() {
     upstream_pgid=""
   fi
 }
+
+# group_cpu PGID — the user and system clock ticks every live process in
+# the group (the supervisor and the workers start_server places there) has
+# spent, as two space-separated numbers, utime then stime. Fields 14 and
+# 15 of /proc/PID/stat, read after the last ')' so a comm with spaces or
+# parens does not shift the split; field 5 is the process group.
+group_cpu() {
+  python3 - "$1" <<'PY'
+import os, sys
+pgid = int(sys.argv[1])
+u = v = 0
+for d in os.listdir("/proc"):
+    if not d.isdigit():
+        continue
+    try:
+        data = open("/proc/" + d + "/stat").read()
+    except OSError:
+        continue
+    r = data.rfind(")")
+    if r < 0:
+        continue
+    f = data[r + 2:].split()
+    if len(f) < 13 or int(f[2]) != pgid:
+        continue
+    u += int(f[11])
+    v += int(f[12])
+print(u, v)
+PY
+}
 trap 'stop_server; stop_upstream; rm -rf "$work"' EXIT
 
 # await_server NAME PORT LOG — once the server answers on PORT, or the

@@ -151,24 +151,11 @@ oha_args() {
 }
 
 # group_ticks PGID — the user plus system clock ticks of every process in
-# the group, from /proc.
+# the group, net-lib's group_cpu with its two counters summed.
 group_ticks() {
-  python3 - "$1" <<'PY'
-import os, sys
-pgid = sys.argv[1]
-total = 0
-for pid in os.listdir('/proc'):
-    if not pid.isdigit():
-        continue
-    try:
-        stat = open(f'/proc/{pid}/stat').read()
-    except OSError:
-        continue
-    fields = stat[stat.rindex(')') + 2:].split()
-    if fields[2] == pgid:
-        total += int(fields[11]) + int(fields[12])
-print(total)
-PY
+  local u s
+  read -r u s <<< "$(group_cpu "$1")"
+  echo $((u + s))
 }
 
 # load_row ROUND SHAPE SERVER PORT — one load run, appended to runs.tsv.
