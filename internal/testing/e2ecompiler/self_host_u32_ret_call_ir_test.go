@@ -69,7 +69,7 @@ func TestSelfHostU32RetCallWasmIR(t *testing.T) {
 		// METHOD u32 return chained in a shift: `p.get() >> 25`. ExprCall's
 		// ExprFieldAccess callee arm resolves the receiver's struct type and looks
 		// up "P.get" in the u32-return registry.
-		{"method-shr", `struct P { n: u32 } impl P { function get(self: Self): u32 { return self.n; } } function main(): i32 { let p: P = P { n: 2147483649 as u32 }; return (p.get() >> 25) as i32; }`, 64},
+		{"method-shr", `struct P { n: u32 } function (self: P) get(): u32 { return self.n; } function main(): i32 { let p: P = P { n: 2147483649 as u32 }; return (p.get() >> 25) as i32; }`, 64},
 		// FREE FUNCTION u32 return in a DIVISION / REMAINDER where the u32-ness comes
 		// ONLY from the call (the other operands are plain i32, so nothing else marks
 		// it): `id32(4e9) / 7 % 100` needs div_u/rem_u. 4000000000/7 == 571428571;
@@ -78,7 +78,7 @@ func TestSelfHostU32RetCallWasmIR(t *testing.T) {
 		// METHOD u32 return in an ordering compare with a plain-i32 bound:
 		// `p.get() > 2e9` is true unsigned, false signed (4e9 reads negative).
 		// Selects gt_u.
-		{"method-cmp", `struct P { n: u32 } impl P { function get(self: Self): u32 { return self.n; } } function main(): i32 { let p: P = P { n: 4000000000 as u32 }; if (p.get() > 2000000000) { return 12; } return 0; }`, 12},
+		{"method-cmp", `struct P { n: u32 } function (self: P) get(): u32 { return self.n; } function main(): i32 { let p: P = P { n: 4000000000 as u32 }; if (p.get() > 2000000000) { return 12; } return 0; }`, 12},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

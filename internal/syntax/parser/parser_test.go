@@ -2889,70 +2889,25 @@ impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg:
 	}
 }
 
-// An inherent impl block (`impl Type { … }`, no `for Trait`, #2700) records an
-// ImplDecl with an empty Trait and the named type as Type. A receiver-less
-// function becomes an associated function (AssocType set); a `self`-taking one
-// becomes a method (Receiver set).
-func TestInherentImplParse(t *testing.T) {
-	prog, err := Parse(`struct Pt { x: i32, y: i32 }
-impl Pt {
-	function make(a: i32, b: i32): Pt { return Pt { x: a, y: b }; }
-	function sum(self: Self): i32 { return self.x + self.y; }
-}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(prog.Impls) != 1 {
-		t.Fatalf("expected 1 impl decl; got %d", len(prog.Impls))
-	}
-	impl := prog.Impls[0]
-	if impl.Trait != "" {
-		t.Errorf("inherent impl Trait = %q, want empty", impl.Trait)
-	}
-	st, ok := impl.Type.(ast.StructType)
-	if !ok || st.Name != "Pt" {
-		t.Errorf("inherent impl Type = %#v, want StructType{Pt}", impl.Type)
-	}
-	// Find the desugared functions among prog.Funcs.
-	var assoc, method *ast.FuncDecl
-	for _, fn := range prog.Funcs {
-		if fn.AssocType == "Pt" && fn.Name == "make" {
-			assoc = fn
+// An impl names a trait; an inherent `impl Type { … }` is a P001 at the type
+// that spells the receiver form, and the parser skips its block rather than
+// reporting each member (#12699).
+func TestInherentImplRejected(t *testing.T) {
+	for _, tc := range []struct{ src, typ string }{
+		{"struct Pt { x: i32 }\nimpl Pt {\n\tfunction sum(self: Self): i32 { return self.x; }\n}\nfunction main(): i32 { return 0; }", "Pt"},
+		{"struct Box[T] { v: T }\nimpl[T] Box[T] {\n\tfunction of(v: T): Box[T] { return Box { v: v }; }\n}\nfunction main(): i32 { return 0; }", "Box[T]"},
+	} {
+		_, err := Parse(tc.src)
+		errs, _ := err.(diag.Errors)
+		if len(errs) != 1 {
+			t.Errorf("%q: got %v, want exactly one error", tc.src, err)
+			continue
 		}
-		if fn.Receiver != nil && fn.Name == "sum" {
-			method = fn
+		pe, _ := errs[0].(*Error)
+		want := "declare a method as `function (self: " + tc.typ + ") name(…)`"
+		if pe == nil || pe.ErrCode != "P001" || pe.Pos.Line != 2 || !strings.Contains(pe.Msg, want) {
+			t.Errorf("%q: got %v, want a P001 on line 2 containing %q", tc.src, err, want)
 		}
-	}
-	if assoc == nil {
-		t.Error("associated function `make` not desugared with AssocType=Pt")
-	}
-	if method == nil {
-		t.Error("method `sum` not desugared with a receiver")
-	} else if _, ok := method.Receiver.Type.(ast.StructType); !ok {
-		t.Errorf("method `sum` receiver type = %#v, want StructType{Pt}", method.Receiver.Type)
-	}
-}
-
-// A generic inherent impl (`impl[T] Box[T] { … }`) records the impl type's
-// generic args and carries the type params onto its functions.
-func TestGenericInherentImplParse(t *testing.T) {
-	prog, err := Parse(`struct Box[T] { v: T }
-impl[T] Box[T] {
-	function of(v: T): Box[T] { return Box { v: v }; }
-}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(prog.Impls) != 1 {
-		t.Fatalf("expected 1 impl decl; got %d", len(prog.Impls))
-	}
-	impl := prog.Impls[0]
-	if impl.Trait != "" {
-		t.Errorf("generic inherent impl Trait = %q, want empty", impl.Trait)
-	}
-	et, ok := impl.Type.(ast.EnumType)
-	if !ok || et.Name != "Box" || len(et.Args) != 1 {
-		t.Errorf("generic inherent impl Type = %#v, want Box[T]", impl.Type)
 	}
 }
 

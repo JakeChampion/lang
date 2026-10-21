@@ -16,10 +16,8 @@ import (
 // controls fail a fix that suppresses a second REAL error instead.
 func TestMethodReceiverCheckedOnce(t *testing.T) {
 	const decls = `struct P { n: i32 }
-impl P {
-  function get(self: Self): i32 { return self.n; }
-  function to_string(self: Self): string { return "p"; }
-}
+function (self: P) get(): i32 { return self.n; }
+function (self: P) to_string(): string { return "p"; }
 function mk(a: i32): P { return P { n: a }; }
 `
 	cases := []struct {

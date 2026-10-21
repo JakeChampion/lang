@@ -705,7 +705,6 @@ TestSelfHostImportedGenericDrop 2
 TestSelfHostImportedMethodCollisionWasm 12
 TestSelfHostIncomingCapacityBoundary 40
 TestSelfHostInferredReuseIsIdentical 13
-TestSelfHostInherentImplIR 2
 TestSelfHostInlineLeaf 16
 TestSelfHostInnerMulAddBits 3
 TestSelfHostInnerMulAddEmissionAndShadow 2

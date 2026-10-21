@@ -3544,8 +3544,43 @@ function print_enum_variant(ed: parser.EnumDecl, structs: parser.StructDecl[], v
   return out;
 }
 
-// print_impl_decl reconstructs `impl[T: Bound] Trait for Type { … }` (or an
-// inherent `impl Type { … }`) from the written form parse_impl_decl retains.
+// print_type_params_except renders a decl's type parameters minus `skip`, or ""
+// when nothing is left.
+function print_type_params_except(fd: parser.FuncDecl, skip: string[]): string {
+  let names: string[] = [];
+  let bounds: string[] = [];
+  let i: i32 = 0;
+  while (i < fd.type_params.len()) {
+    if (!util.has_str(skip, fd.type_params[i])) {
+      names = names.append(fd.type_params[i]);
+      if (i < fd.bound_traits.len()) {
+        bounds = bounds.append(fd.bound_traits[i]);
+      } else {
+        bounds = bounds.append("");
+      }
+    }
+    i = i + 1;
+  }
+  if (names.len() == 0) {
+    return "";
+  }
+  let out: string = "[";
+  let j: i32 = 0;
+  while (j < names.len()) {
+    if (j > 0) {
+      out = out + ", ";
+    }
+    out = out + names[j];
+    if (bounds[j].len() > 0) {
+      out = out + ": " + join_plus(bounds[j]);
+    }
+    j = j + 1;
+  }
+  return out + "]";
+}
+
+// print_impl_decl reconstructs `impl[T: Bound] Trait for Type { … }` from the
+// written form parse_impl_decl retains.
 function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
   let out: string = "impl";
   if (id.type_params.len() > 0) {
@@ -3563,11 +3598,7 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
     }
     out = out + "]";
   }
-  out = out + " ";
-  if (id.trait_ref.len() > 0) {
-    out = out + id.trait_ref + " for ";
-  }
-  out = out + id.type_ref;
+  out = out + " " + id.trait_ref + " for " + id.type_ref;
   // Same for an impl whose only members are associated-type bindings.
   if (id.methods.len() == 0 && id.assoc_names.len() == 0) {
     return (out + " {}\n", f);
@@ -5395,24 +5426,6 @@ function check_traits_and_impls(): i32 {
   let rtIm: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outIm));
   if (rtIm.pimpls.len() != 2) {
     return 323;
-  }
-
-  // An inherent `impl Type { … }` has no trait, and an associated function
-  // (no `self`) keeps its parameter list exactly as written.
-  let pfIn: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
-    "struct Box { item: i32 } impl Box { function zero(): Box { return Box { item: 0 }; } } function main(): i32 { return 0; }",
-  ));
-  if (pfIn.pimpls.len() != 1) {
-    return 324;
-  }
-  if (pfIn.pimpls[0].trait_ref.len() != 0) {
-    return 325;
-  }
-  if (!util.contains(format_module(pfIn.pmod, pfIn.ptraits, pfIn.pimpls, pfIn.pflines, [], []), "impl Box {")) {
-    return 326;
-  }
-  if (!util.contains(format_module(pfIn.pmod, pfIn.ptraits, pfIn.pimpls, pfIn.pflines, [], []), "function zero(): Box {")) {
-    return 327;
   }
 
   // A parametric impl states its bounds once, on the block: restating them on

@@ -120,6 +120,9 @@ var parseErrPosCases = []struct {
 	{"path-sep-const", "function main(): i32 {\n  let c = helpers::BONUS;\n  return c;\n}\n"},
 	{"path-sep-type-keyword", "function main(): i32 {\n  let m = i32::MAX;\n  return 0;\n}\n"},
 	{"path-sep-struct-literal", "function main(): i32 {\n  let b = m::Box { v: 1 };\n  return 0;\n}\n"},
+	// An impl names a trait; `impl Type { … }` is a P001 at the type (#12699).
+	{"inherent-impl", "struct P { x: i32 }\nimpl P {\n  function get(self: Self): i32 { return self.x; }\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"generic-inherent-impl", "struct B[T] { v: T }\nimpl[T] B[T] {\n  function get(self: Self): T { return self.v; }\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 }
 
 // TestSelfHostParseErrorPositions pins SH-041 (tracking #2849): a
@@ -256,6 +259,10 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"path-sep-chain",
 			"function main(): i32 {\n  return helpers::add5(10).x;\n}\n",
 			"error[P001]: in fn 'main': `::` is not a path separator; write `.` (2:17)"},
+		// The refused impl's members draw nothing of their own.
+		{"inherent-impl-alone",
+			"struct P { x: i32 }\nimpl P {\n  function get(self: Self): i32 { return self.x; }\n}\nfunction main(): i32 {\n  return 0;\n}\n",
+			"error[P001]: at top level: `impl P` needs a trait, as in `impl cmp.Eq for P`; declare a method as `function (self: P) name(…)` and a constructor as a plain function (2:6)"},
 		// A sentinel inside a defer's action: the walk descends StmtDefer.
 		{"defer-action-sentinel",
 			"function main(): i32 {\n  defer print(;);\n  return 0;\n}\n",

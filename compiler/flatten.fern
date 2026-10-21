@@ -1493,11 +1493,8 @@ function canon_derives(derives: string[], ctx: RewriteCtx): string[] {
 }
 
 // The module that declares the trait `im` implements, as canon_trait resolves
-// it: "" for the entry's own, and for an inherent impl.
+// it: "" for the entry's own.
 function trait_module_of(im: parser.ImplInfo, ctx: RewriteCtx): string {
-  if (im.trait_name.len() == 0) {
-    return "";
-  }
   let spelling: string = im.trait_spelling;
   if (spelling.len() == 0) {
     spelling = im.trait_name;

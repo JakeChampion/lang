@@ -2382,12 +2382,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"rigid-tparam-ok", "struct G[T] { v: T }\nfunction id[T](x: T): T { return x; }\nfunction mk[T](x: T): G[T] { let y: T = id(x); let g: G[T] = G { v: y }; return g; }\nfunction pick[T](c: boolean, a: T, b: T): T { return if (c) { a } else { b }; }\nfunction (g: G[T]) get(): T { return g.v; }\nfunction sw[A, B](p: (A, B)): (B, A) { return (p.1, p.0); }\nfunction main(): i32 { return mk(3).get() + pick(true, 1, 2) + sw((1, 2)).0; }\n", nil},
 		{"rigid-tparam-projection-ok", "trait P { type Item; function get(self: Self): Self::Item; }\nstruct B { v: i32 }\nimpl P for B { type Item = i32; function get(self: Self): Self::Item { return self.v; } }\nfunction g[H: P](h: H): H::Item { let x: H::Item = h.get(); return x; }\nfunction main(): i32 { return g(B { v: 1 }); }\n", nil},
 		// An associated call's arguments are checked against the trait
-		// requirement or the inherent declaration it reaches (#12693).
+		// requirement it reaches (#12693); a derived one's rows are in the
+		// bundle differential, which resolves the stdlib.
 		{"assoc-arg-through-bound", "trait Mk { function mk(x: i32): Self; }\nfunction g[T: Mk](x: boolean): T { return T.mk(x); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
 		{"assoc-arity-through-bound", "trait Mk { function mk(x: i32): Self; }\nfunction g[T: Mk](): T { return T.mk(); }\nfunction main(): i32 { return 0; }\n", []string{"E004"}},
 		{"assoc-arg-self-through-bound", "trait Mk { function mk(x: Self): i32; }\nfunction g[T: Mk](t: T): i32 { return T.mk(t); }\nfunction main(): i32 { return 0; }\n", nil},
-		{"assoc-arg-inherent-local", "struct S { v: i32 }\nimpl S { function mk(x: i32): S { return S { v: x }; } }\nfunction main(): i32 { function inner(): i32 { let s: S = S.mk(true); return s.v; } return inner(); }\n", []string{"E038"}},
-		{"assoc-arg-inherent-ok", "struct S { v: i32 }\nimpl S { function mk(x: i32): S { return S { v: x }; } }\nfunction main(): i32 { function inner(): i32 { let s: S = S.mk(4); return s.v; } return inner(); }\n", nil},
 		// An impl's associated function, and a requirement whose `self` is
 		// not `Self`, are held to the trait's signature (#12694).
 		{"impl-assoc-fn-signature", "trait Mk { function mk(x: Option[i32]): Self; }\nstruct S { v: i32 }\nimpl Mk for S { function mk(x: i32): Self { return S { v: x }; } }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
@@ -2919,7 +2918,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"result-conversion-nested-literal-overflow", `function f(): Result[Result[u8, string], string] { return Ok(Ok(300)); }`, []string{"E047"}},
 		{"result-conversion-option-literal-overflow", `function f(): Option[u8] { return Some(300); }`, []string{"E047"}},
 		{"result-conversion-qualified-option-narrow", `function f(n: i64): Option[i32] { return Option.Some(n); }`, []string{"E002"}},
-		{"result-conversion-same-name-method", `struct Factory {} impl Factory { function Ok(self: Self, n: i32): Result[u8, string] { return Result.Ok(1u8); } } function f(): Result[u8, string] { let x = Factory {}; return x.Ok(300); }`, nil},
+		{"result-conversion-same-name-method", `struct Factory {} function (self: Factory) Ok(n: i32): Result[u8, string] { return Result.Ok(1u8); } function f(): Result[u8, string] { let x = Factory {}; return x.Ok(300); }`, nil},
 		{"result-conversion-same-name-function", `function Ok(n: i32): Result[u8, string] { return Err("unused"); } function f(): Result[u8, string] { return Ok(300); }`, nil},
 		{"result-conversion-unsigned-small-widen", `function f(n: u8): Result[u32, string] { return Ok(n); }`, nil},
 		{"result-conversion-unsigned-small-narrow", `function f(n: u32): Result[string, u8] { return Err(n); }`, []string{"E002"}},
@@ -2960,7 +2959,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"partial-result-literal-width-join", "function main(): i32 { let o = if (true) { Ok(1) } else { Ok(4294967297i64) }; match (o) { Ok(v) => { assert(v == 1i64); }, Err(_) => { return 1; } } return 0; }\n", nil},
 		{"partial-result-foreign-constructor-widening", "enum Other[T] { Ok(T), No } function f(n: i32): Result[i64, string] { return Other.Ok(n); } function main(): i32 { return 0; }\n", []string{"E002"}},
 		{"partial-result-foreign-constructor-literal", "enum Other[T] { Ok(T), No } function f(): Result[i64, string] { return Other.Ok(3); } function main(): i32 { return 0; }\n", []string{"E002"}},
-		{"partial-result-method-widening", "struct Factory {} impl Factory { function Ok(self: Self, n: i32): Result[i32, string] { return Result.Ok(n); } } function f(n: i32): Result[i64, string] { let x = Factory {}; return x.Ok(n); } function main(): i32 { return 0; }\n", []string{"E002"}},
+		{"partial-result-method-widening", "struct Factory {} function (self: Factory) Ok(n: i32): Result[i32, string] { return Result.Ok(n); } function f(n: i32): Result[i64, string] { let x = Factory {}; return x.Ok(n); } function main(): i32 { return 0; }\n", []string{"E002"}},
 		{"partial-result-concrete-width-conflict", "function f(): Result[i64, string] { let n: i32 = 3; let o = Ok(n); return o; } function main(): i32 { return 0; }\n", []string{"E002"}},
 		{"partial-result-explicit-width-conflict", "function f(): Result[i64, string] { let o = Ok(3i32); return o; } function main(): i32 { return 0; }\n", []string{"E002"}},
 		{"partial-result-ok-local", "function main(): i32 { let o = Ok(3); match (o) { Ok(v) => { return v + 1; }, Err(e) => { return 0; } } }\n", nil},
@@ -3365,7 +3364,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// parameter has, a parameter given twice — and E004 for a required
 		// parameter nothing supplied. A call that does not resolve is left as
 		// written, so the arity check still sees its argument count, as native.
-		{"named-on-method", "struct S { v: i32 }\nimpl S { function m(self: Self, a: i32): i32 { return self.v + a; } }\nfunction main(): i32 { let s: S = S { v: 1 }; return s.m(a = 1); }\n", []string{"E077"}},
+		{"named-on-method", "struct S { v: i32 }\nfunction (self: S) m(a: i32): i32 { return self.v + a; }\nfunction main(): i32 { let s: S = S { v: 1 }; return s.m(a = 1); }\n", []string{"E077"}},
 		{"named-on-fn-value", "function main(): i32 { let g: (i32) => i32 = (x: i32) => x + 1; return g(x = 1); }\n", []string{"E077"}},
 		// A local binding named like a top-level function is not that
 		// function: no defaults, no parameter names (#11850).
@@ -3500,7 +3499,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"callable-nested-mismatch", "function f(x: i32): i32 { return x; }\nfunction main(): i32 { let t: ((i32) => string, i32) = (f, 1); let o: Option[(i32) => string] = Some(f); return 0; }\n", []string{"E003"}},
 		{"callable-higher-order-mismatch", "function q(f: (i32) => i32): i32 { return 0; }\nfunction main(): i32 { let g: ((i32) => string) => i32 = q; return 0; }\n", []string{"E003"}},
 		{"callable-method-arg-mismatch", "struct B { v: i32 }\nfunction (b: B) ap(f: (i32) => i32): i32 { return f(b.v); }\nfunction inc(x: i32): string { return \"\"; }\nfunction main(): i32 { let b: B = B { v: 1 }; return b.ap(inc); }\n", []string{"E038"}},
-		{"callable-method-written-type-arg-mismatch", "struct B { v: i32 }\nimpl B { function ap[U](self: B, f: (i32) => U): U { return f(self.v); } }\nfunction inc(x: i32): string { return \"\"; }\nfunction main(): i32 { let b: B = B { v: 1 }; let r: i32 = b.ap[i32](inc); return 0; }\n", []string{"E038"}},
+		{"callable-method-written-type-arg-mismatch", "struct B { v: i32 }\nfunction (self: B) ap[U](f: (i32) => U): U { return f(self.v); }\nfunction inc(x: i32): string { return \"\"; }\nfunction main(): i32 { let b: B = B { v: 1 }; let r: i32 = b.ap[i32](inc); return 0; }\n", []string{"E038"}},
 		{"callable-enum-method-arg-mismatch", "enum E { A, B }\nfunction (e: E) ap(f: (i32) => i32): i32 { return f(1); }\nfunction inc(x: i32): string { return \"\"; }\nfunction main(): i32 { let e: E = E.A; return e.ap(inc); }\n", []string{"E038"}},
 		// What the rule still accepts: the same signature, a lambda whose
 		// parameters or result are inferred, a capturing closure, a generic
@@ -3748,7 +3747,7 @@ function main(): i32 { return 0; }`},
 		{"result-conversion-nested-literal-overflow", `function f(): Result[Result[u8, string], string] { return Ok(Ok(300)); }`},
 		{"result-conversion-option-literal-overflow", `function f(): Option[u8] { return Some(300); }`},
 		{"result-conversion-qualified-option-narrow", `function f(n: i64): Option[i32] { return Option.Some(n); }`},
-		{"result-conversion-same-name-method", `struct Factory {} impl Factory { function Ok(self: Self, n: i32): Result[u8, string] { return Result.Ok(1u8); } } function f(): Result[u8, string] { let x = Factory {}; return x.Ok(300); }`},
+		{"result-conversion-same-name-method", `struct Factory {} function (self: Factory) Ok(n: i32): Result[u8, string] { return Result.Ok(1u8); } function f(): Result[u8, string] { let x = Factory {}; return x.Ok(300); }`},
 		{"result-conversion-same-name-function", `function Ok(n: i32): Result[u8, string] { return Err("unused"); } function f(): Result[u8, string] { return Ok(300); }`},
 		{"result-conversion-unsigned-small-widen", `function f(n: u8): Result[u32, string] { return Ok(n); }`},
 		{"result-conversion-unsigned-small-narrow", `function f(n: u32): Result[string, u8] { return Err(n); }`},
@@ -3775,7 +3774,7 @@ function main(): i32 { return 0; }`},
 		{"qualified-constructor-function-value-mismatch", `enum A { Value(i32) } enum B { Value(string) } function Value(n: i32): B { return B.Value("value"); } function f(): B { let call = Value; return call("wrong"); }`},
 		{"partial-result-foreign-constructor-widening", `enum Other[T] { Ok(T), No } function f(n: i32): Result[i64, string] { return Other.Ok(n); } function main(): i32 { return 0; }`},
 		{"partial-result-foreign-constructor-literal", `enum Other[T] { Ok(T), No } function f(): Result[i64, string] { return Other.Ok(3); } function main(): i32 { return 0; }`},
-		{"partial-result-method-widening", `struct Factory {} impl Factory { function Ok(self: Self, n: i32): Result[i32, string] { return Result.Ok(n); } } function f(n: i32): Result[i64, string] { let x = Factory {}; return x.Ok(n); } function main(): i32 { return 0; }`},
+		{"partial-result-method-widening", `struct Factory {} function (self: Factory) Ok(n: i32): Result[i32, string] { return Result.Ok(n); } function f(n: i32): Result[i64, string] { let x = Factory {}; return x.Ok(n); } function main(): i32 { return 0; }`},
 		{"partial-result-array-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return [Ok(1)]; } return; }; return 0; }`},
 		{"partial-result-tuple-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return (Ok(1), 2); } return; }; return 0; }`},
 		{"partial-result-nested-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return [(Ok(1), 2)]; } return; }; return 0; }`},
@@ -4451,6 +4450,10 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"map-literal-arms-settle-wide", "import \"core/map\";\nfunction main(): i32 { let c: boolean = true; let m: Map[string, i64] = if (c) { Map { \"a\": 1234567890123 } } else { Map { \"a\": 0 } }; return 0; }\n"},
 		{"map-literal-arms-settle-float", "import \"core/map\";\nfunction main(): i32 { let c: boolean = true; let m = if (c) { Map { \"a\": 1 } } else { Map { \"a\": 2.5 } }; return 0; }\n"},
 		{"map-literal-arms-typed-values-differ", "import \"core/map\";\nfunction main(): i32 { let c: boolean = true; let n: i32 = 1; let w: i64 = 2; let m = if (c) { Map { \"a\": n } } else { Map { \"a\": w } }; return 0; }\n"},
+		// A derived associated call's arguments are checked against the
+		// declaration the derive synthesised, in a local function too (#12693).
+		{"assoc-arg-derived-local", "import \"std/json\";\n@derive(json.FromJson) struct S { v: i32 }\nfunction main(): i32 { function inner(): i32 { let r = S.from_json(true); return 0; } return inner(); }\n"},
+		{"assoc-arg-derived-ok", "import \"std/json\";\n@derive(json.FromJson) struct S { v: i32 }\nfunction main(): i32 { function inner(): i32 { let r = S.from_json(\"{}\"); return 0; } return inner(); }\n"},
 		{"e053-map-on-an-own-array", "import \"std/array\";\nfip function f(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},
 		// An array method named like a `__method_Array_<name>` helper the
 		// program imports redeclares it (E006), as a name the checker registers
@@ -4532,8 +4535,6 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"derived-display-multi-payload", "import \"core/cmp\";\n@derive(cmp.Display)\nenum Shape { Rect(i32, i32), Unit }\nfunction main(): i32 { return Rect(2, 3).to_string().len(); }\n"},
 		{"owned-array-lent-to-a-generic-view", "function count[T](xs: [T]): i32 { return xs.len(); }\nfunction main(): i32 { let bytes: u8[] = [1, 2, 3]; let ints: i32[] = [10, 20]; return count(bytes) + count(ints); }\n"},
 		{"function-shadows-builtin-none", "function None(v: i32): Option[i32] { return Some(v); }\nfunction mk(v: i32): Option[i32] { return None(v); }\nfunction main(): i32 { match (mk(5)) { Some(v) => { return v; }, None => { return 99; } } }\n"},
-		{"generic-inherent-impl-assoc", "struct Box[T] { v: T }\nimpl[T] Box[T] {\n    function of(v: T): Box[T] { return Box { v: v }; }\n    function get(self: Self): T { return self.v; }\n}\nfunction main(): i32 { let b: Box[i32] = Box.of(42); return b.get(); }\n"},
-		{"generic-inherent-impl-assoc-result-mismatch", "struct Box[T] { v: T }\nimpl[T] Box[T] {\n    function of(v: T): Box[T] { return Box { v: v }; }\n}\nfunction main(): i32 { let b = Box.of(42); let s: string = b; return 0; }\n"},
 		{"try-inside-a-match-value", "function pick(p: Result[i32, i32]): Option[i32] {\n    return (match (p) { Ok(v) => Some(v + 1), Err(e) => Some(((Some(e))?) + 1) });\n}\nfunction main(): i32 { match (pick(Err(2))) { Some(v) => { return v; }, None => { return 1; } } }\n"},
 		{"try-inside-a-match-value-in-an-i32-function", "function pick(p: Result[i32, i32]): i32 {\n    return (match (p) { Ok(v) => v, Err(e) => ((Some(e))?) });\n}\nfunction main(): i32 { return pick(Ok(3)); }\n"},
 		{"e053-map-on-a-borrowed-array", "import \"std/array\";\nfip function f(xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},

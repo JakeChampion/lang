@@ -1286,7 +1286,7 @@ function main(): i32 {
     return s.shout().len();
 }`},
 	{name: "an-inherent-method-on-str", atLeast: 2, want: "4|bcbc xyxy\n\n", src: `
-impl str { function twice(self: str): string { return self + self; } }
+function (self: str) twice(): string { return self + self; }
 function main(): i32 {
     let owned: string = "ab" + "cd";
     let s: str = slice_unchecked(owned, 1, 3);
@@ -7257,14 +7257,10 @@ function main(): i32 {
 	// second struct pass clones the `Box__string` it names (#10762).
 	{name: "a-generic-enum-with-a-generic-struct-payload", atLeast: 8, want: "40|xyz\n", src: `
 struct Box[T] { v: T, n: i32 }
-impl[T] Box[T] {
-  function size(self: Self): i32 { return self.n * 2; }
-}
+function (self: Box[T]) size(): i32 { return self.n * 2; }
 enum E[U] { A(Box[U]), B(i32) }
-impl[U] E[U] {
-  function boxed(self: Self, d: Box[U]): Box[U] { match (self) { A(b) => { return b; }, B(k) => { return d; } } }
-  function weight(self: Self): i32 { match (self) { A(b) => { return b.size(); }, B(k) => { return k; } } }
-}
+function (self: E[U]) boxed(d: Box[U]): Box[U] { match (self) { A(b) => { return b; }, B(k) => { return d; } } }
+function (self: E[U]) weight(): i32 { match (self) { A(b) => { return b.size(); }, B(k) => { return k; } } }
 enum Holder[T] { Has(T), Empty }
 function first(h: Holder[string[]]): string { match (h) { Has(xs) => { return xs[0]; }, Empty => { return ""; } } }
 function main(): i32 {

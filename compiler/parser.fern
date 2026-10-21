@@ -272,8 +272,7 @@ pub struct TraitDecl { name: string, type_params: string[], supertraits: string[
 //
 // `methods` holds the DESUGARED forms, which is what native prints too: `Self`
 // already reads as the concrete impl type there, and a method's `self` receiver
-// is re-inserted as its first parameter at print time. `trait_ref` is "" for an
-// inherent `impl Type { … }`.
+// is re-inserted as its first parameter at print time.
 pub struct ImplDecl { trait_ref: string, type_ref: string, type_params: string[], bounds: string[], methods: FuncDecl[], line: i32, col: i32, assoc_names: string[], assoc_values: string[] }
 
 // FieldLines records the source line of each FIELD of one struct, or of each
@@ -26335,7 +26334,7 @@ pub struct TraitDefault { trait_name: string, trait_params: string[], method: Fu
 // (`async.Driver`). `trait_name` is the resolved simple name, which is what
 // parse_module matches against the trait's default methods and what the
 // emitter needs — so the spelling is kept beside it rather than replacing it.
-// Empty for an inherent impl, which has no trait.
+// Empty in the entries checker.assoc_func_impls adds for derived functions.
 // bounds runs PARALLEL to type_params: both halves reach the synthesised
 // default through finalize_impl_method, so the bound cannot be left behind
 // as a local of the parse (#7224).
@@ -27741,6 +27740,11 @@ function no_decl_attr(): DeclAttr {
   return DeclAttr { name: "", derives: [], iface: "", wit: "" };
 }
 
+// inherent_impl_message is native's P001 for an `impl Type { … }` with no trait.
+pub function inherent_impl_message(typ: string): string {
+  return "`impl " + typ + "` needs a trait, as in `impl cmp.Eq for " + typ + "`; declare a method as `function (self: " + typ + ") name(…)` and a constructor as a plain function";
+}
+
 // expected_here is native's P001 "expected WHAT, got X" at the cursor.
 function expected_here(p: Par, what: string): ast.Stmt[] {
   return [decl_sentinel(p, "expected " + what + ", got " + tok_desc(p.peek()))];
@@ -27954,10 +27958,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     }
     itpi = itpi + 1;
   }
-  // First name after `impl` (possibly `mod.Name`). For a trait impl
-  // (`impl Trait for Type`) it's the trait; for an inherent impl
-  // (`impl Type { … }`, #2700) there is no `for` and this name IS the
-  // impl type, with no trait.
+  // First name after `impl` (possibly `mod.Name`): the trait.
   // parse_type_name resolves `mod.Name` to the bare `Name`, which is right
   // for everything downstream and wrong for anyone reporting what the source
   // said. Read the qualifier off the tokens BEFORE it is consumed.
@@ -27988,9 +27989,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     p = ity_p;
     impl_type = ity_name;
   } else {
-    // Inherent impl: the first name is the type; receiver-less methods
-    // are associated functions (`Type.f(args)`), `self`-taking ones are
-    // ordinary methods.
+    impl_bad = impl_bad.append(decl_sentinel(first_at, inherent_impl_message(first_name)));
     impl_type = first_name;
   }
   if (p.peek_punct() == "{") {

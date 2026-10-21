@@ -1082,15 +1082,6 @@ return self.item == other.item;
 }
 }
 
-impl Box[i32] {
-function zero(): Box[i32] {
-return Box { item: 0 };
-}
-function get(self: Self): i32 {
-return self.item;
-}
-}
-
 function main(): i32 {
 return 0;
 }
