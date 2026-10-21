@@ -1500,6 +1500,20 @@ a = b = c = 7;
 return a + b + c;
 }
 `},
+	// `a[i] = v` and `o.f = v` lower to __set_index / __set_field calls, which
+	// the checker refuses; -fmt still reprints them as written.
+	{"lowering-place-assign", `struct P { f: i32 }
+function main(): i32 {
+let a: i32[] = [0, 0];
+let p: P = P { f: 0 };
+let x: i32 = 0;
+a[0] = 1;
+a[1] += 2;
+p.f = 3;
+x = a[0] = p.f = 4;
+return x;
+}
+`},
 	{"lowering-literal-match", `function grade(n: i32): string {
 match (n) {
 0 => { return "zero"; },

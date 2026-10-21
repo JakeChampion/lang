@@ -186,6 +186,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E073: a `core/mem.Drop` finalizer called by hand runs twice; a
 		// method named `drop` on a type with no Drop impl is an ordinary one.
 		{"drop-finalizer-called-e073", "import \"core/mem\";\nstruct Sink { n: i32 }\nimpl mem.Drop for Sink { function drop(self: Self): void { print(\"closed\"); } }\nfunction main(): i32 { let w: Sink = Sink { n: 1 }; w.drop(); return 0; }\n", []string{"E073"}},
+		{"drop-finalizer-called-on-enum-e073", "import \"core/mem\";\nenum Color { Red, Blue }\nimpl mem.Drop for Color { function drop(self: Self): void { print(\"closed\"); } }\nfunction main(): i32 { let c: Color = Red; c.drop(); return 0; }\n", []string{"E073"}},
 		{"drop-method-without-drop-impl", "struct Sink { n: i32 }\nfunction (s: Sink) drop(): void { print(\"closed\"); }\nfunction main(): i32 { let w: Sink = Sink { n: 1 }; w.drop(); return 0; }\n", nil},
 		{"view-receiver-method", "function (xs: [T]) head(): T { return xs[0]; } function main(): i32 { let a = [3]; let v: [i32] = a[:]; return v.head(); }", nil},
 		{"view-method-on-owned-array", "function (xs: [T]) head(): T { return xs[0]; } function main(): i32 { let a = [3]; return a.head(); }", []string{"E043"}},

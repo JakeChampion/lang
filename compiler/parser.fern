@@ -7995,10 +7995,6 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
   // bitwise / shift compound set (`&= |= ^= <<= >>=`) mirrors
   // the native parser's compoundOps map exactly, so both
   // front-ends desugar the same operators to the same binary op.
-  //
-  // Only bare-ident targets are supported in this cut — full
-  // lvalue syntax (field / index / tuple) is a later
-  // milestone.
   let (e_expr, e_p) = parse_expr(p);
   p = e_p;
   // Capture the assign-op position — the Go checker reports an
@@ -8012,116 +8008,95 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     p = p.advance();  // consume the assign-op token
     let (av_expr, av_p) = parse_expr(p);
     p = av_p;
-    // Chained assignment `x = y = e` (plain `=`, bare-ident targets):
-    // native assignment is a right-recursive expression, so the value
-    // flows to every target. parse_expr stopped at the inner `=`, so
-    // av_expr is the next target. Collect the ident chain + final value
-    // and emit the equivalent right-to-left assigns (`y = e; x = y;` —
-    // e is evaluated exactly once) in a scoped block. Without this the
-    // trailing `= e` was left as junk and only the first link ran, a
-    // silent wrong result (#4339 item 1). Index / field middle targets
-    // fall through to the single-assign path unchanged (as before).
     if (is_assign && p.peek_punct() == "=") {
-      match (e_expr) {
-        ast.ExprIdent(id0) => {
-          let chain: string[] = [];
-          let okchain: boolean = true;
-          let moretgt: boolean = true;
-          while (moretgt && okchain) {
-            match (av_expr) {
-              ast.ExprIdent(idn) => {
-                chain = chain.append(idn.name);
-                p = p.advance();  // consume the `=`
-                let (nx_expr, nx_p) = parse_expr(p);
-                p = nx_p;
-                av_expr = nx_expr;
-                av_p = nx_p;
-                moretgt = p.peek_punct() == "=";
-              },
-              _ => {
-                okchain = false;
-              }
-            }
-          }
-          if (okchain && chain.len() > 0) {
-            p = p.end_of(av_expr);
-            let stmts: ast.Stmt[] = [];
-            // innermost target gets the final value, then each
-            // earlier target copies from the one to its right.
-            stmts = stmts.append(s_assign(chain[chain.len() - 1], av_expr));
-            let ci: i32 = chain.len() - 1;
-            while (ci > 0) {
-              stmts = stmts.append(s_assign(chain[ci - 1], e_ident(chain[ci])));
-              ci = ci - 1;
-            }
-            stmts = stmts.append(s_assign(id0.name, e_ident(chain[0])));
-            return (s_if_tagged(stmts, "chain_assign"), p);
-          }
-        },
-        _ => {}
-      }
+      return parse_assign_chain(p, [e_expr, av_expr], [aline], [acol]);
     }
     p = p.end_of(av_expr);
     let rhs: ast.Expr = av_expr;
-    // Dispatch on the lvalue shape: bare ident → StmtAssign;
-    // `arr[idx]` → desugar to the builtin __set_index(arr, idx,
-    // value) (an expression statement) so no new Stmt node is
-    // needed. Compound `arr[idx] += y` reads the element back (see
-    // the ExprIndex arm below); field compounds work the same way.
-    match (e_expr) {
-      ast.ExprIdent(id) => {
-        let rhs2: ast.Expr = rhs;
-        if (is_compound) {
-          // `x += y` desugars to `x = x + y`. Strip the
-          // trailing `=` off the op to recover the operator.
-          let op: str = slice_unchecked(assign_op, 0, assign_op.len() - 1);
-          rhs2 = e_binary(op, e_ident(id.name), rhs);
-        }
-        return (s_assign_at(id.name, rhs2, aline, acol, id.line, id.col), p);
-      },
-      ast.ExprIndex(ix) => {
-        // `arr[idx] = rhs` → __set_index(arr, idx, rhs). A compound
-        // `arr[idx] += y` reads the element back: rhs becomes
-        // `arr[idx] <op> y`.
-        let irhs: ast.Expr = rhs;
-        if (is_compound) {
-          let iop: str = slice_unchecked(assign_op, 0, assign_op.len() - 1);
-          irhs = e_binary(iop, e_index(ix.array, ix.index, ix.line, ix.col), rhs);
-        }
-        let sargs: ast.Expr[] = [];
-        sargs = sargs.append(ix.array);
-        sargs = sargs.append(ix.index);
-        sargs = sargs.append(irhs);
-        return (s_expr(e_call(e_ident("__set_index"), sargs)), p);
-      },
-      ast.ExprFieldAccess(fa) => {
-        // `obj.field = rhs` → __set_field(obj, "field", rhs)
-        // (an expression statement; the emitter shape-dispatches
-        // to the field's slot). Compound forms desugar to a read
-        // of the same field (re-evaluates obj — fine for the
-        // simple lvalues that use this).
-        let frhs: ast.Expr = rhs;
-        if (is_compound) {
-          let fop: str = slice_unchecked(assign_op, 0, assign_op.len() - 1);
-          frhs = e_binary(fop, e_field_access(fa.obj, fa.field), rhs);
-        }
-        let fargs: ast.Expr[] = [];
-        fargs = fargs.append(fa.obj);
-        // Carry the field-access dot position on the field-name
-        // string so the checker can report E048 (assign to an
-        // immutable field) at the dot, matching the Go checker's
-        // FieldAccess position. Codegen ignores the position.
-        fargs = fargs.append(e_string_at(fa.field, fa.line, fa.col));
-        fargs = fargs.append(frhs);
-        return (s_expr(e_call(e_ident("__set_field"), fargs)), p);
-      },
-      _ => {
-        return (s_unknown_at(coded_kind("P003", "left-hand side of assignment is not assignable"), aline, acol), p);
-      }
+    if (is_compound) {
+      // `x += y` desugars to `x = x + y`: strip the trailing `=` off the op
+      // to recover the operator.
+      rhs = e_binary(slice_unchecked(assign_op, 0, assign_op.len() - 1), read_back(e_expr), av_expr);
     }
+    return (assign_to(e_expr, rhs, aline, acol), p);
   }
   p = p.end_of(e_expr);
   return (s_expr(e_expr), p);
+}
+
+// parse_assign_chain finishes a chained assignment `t0 = t1 = … = e` with p at
+// the `=` after t1; exprs holds what is parsed so far and lines / cols the
+// position of the `=` after each target. The chain runs as right-to-left
+// assigns, each target reading back the one to its right, so `e` is evaluated
+// once. Assignment is right-recursive in the Go parser, so the innermost
+// unassignable target is the one refused.
+function parse_assign_chain(p0: Par, exprs0: ast.Expr[], lines0: i32[], cols0: i32[]): (ast.Stmt, Par) {
+  let p: Par = p0;
+  let exprs: ast.Expr[] = exprs0;
+  let lines: i32[] = lines0;
+  let cols: i32[] = cols0;
+  while (p.peek_punct() == "=") {
+    lines = lines.append(p.peek_line());
+    cols = cols.append(p.peek_col());
+    let (nx, np) = parse_expr(p.advance());
+    p = np;
+    exprs = exprs.append(nx);
+  }
+  p = p.end_of(exprs[exprs.len() - 1]);
+  let stmts: ast.Stmt[] = [];
+  let i: i32 = exprs.len() - 2;
+  while (i >= 0) {
+    let rhs: ast.Expr = exprs[i + 1];
+    if (i < exprs.len() - 2) {
+      rhs = read_back(rhs);
+    }
+    let link: ast.Stmt = assign_to(exprs[i], rhs, lines[i], cols[i]);
+    if let ast.StmtUnknown(_) = link {
+      return (link, p);
+    }
+    stmts = stmts.append(link);
+    i = i - 1;
+  }
+  return (s_if_tagged(stmts, "chain_assign"), p);
+}
+
+// assign_to is the statement `target = rhs` for the `=` at line:col. An array
+// element or a field assigns through __set_index / __set_field, an expression
+// statement the emitter shape-dispatches; the checker refuses both (E056,
+// E048), at the subscript's `[` or the field's dot.
+function assign_to(target: ast.Expr, rhs: ast.Expr, line: i32, col: i32): ast.Stmt {
+  match (target) {
+    ast.ExprIdent(id) => {
+      return s_assign_at(id.name, rhs, line, col, id.line, id.col);
+    },
+    ast.ExprIndex(ix) => {
+      return s_expr(e_call_at(e_ident("__set_index"), [ix.array, ix.index, rhs], ix.line, ix.col));
+    },
+    ast.ExprFieldAccess(fa) => {
+      return s_expr(e_call(e_ident("__set_field"), [fa.obj, e_string_at(fa.field, fa.line, fa.col), rhs]));
+    },
+    _ => {
+      return s_unknown_at(coded_kind("P003", "left-hand side of assignment is not assignable"), line, col);
+    }
+  }
+}
+
+// read_back reads the place an assignment target names.
+function read_back(target: ast.Expr): ast.Expr {
+  match (target) {
+    ast.ExprIdent(id) => {
+      return e_ident(id.name);
+    },
+    ast.ExprIndex(ix) => {
+      return e_index(ix.array, ix.index, ix.line, ix.col);
+    },
+    ast.ExprFieldAccess(fa) => {
+      return e_field_access(fa.obj, fa.field);
+    },
+    _ => {
+      return target;
+    }
+  }
 }
 
 pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {

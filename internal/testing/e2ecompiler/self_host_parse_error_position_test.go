@@ -82,6 +82,9 @@ var parseErrPosCases = []struct {
 	// Parse errors with a code of their own rather than P001 (#12689).
 	{"assign-to-call-p003", "function main(): i32 {\n  foo() = 1;\n  return 0;\n}\n"},
 	{"assign-to-literal-p003", "function main(): i32 {\n  42 = 1;\n  return 0;\n}\n"},
+	{"chained-assign-inner-call-p003", "function foo(): i32 {\n  return 1;\n}\nfunction main(): i32 {\n  foo() = foo() = 1;\n  return 0;\n}\n"},
+	{"chained-assign-middle-call-p003", "function foo(): i32 {\n  return 1;\n}\nfunction main(): i32 {\n  let x = 0;\n  x = foo() = 1;\n  return x;\n}\n"},
+	{"chained-assign-outer-call-p003", "function main(): i32 {\n  let x = 0;\n  (x + 1) = x = 1;\n  return x;\n}\n"},
 	{"compound-assign-to-binary-p003", "function main(): i32 {\n  let a = 1;\n  (a + 1) += 5;\n  return 0;\n}\n"},
 	{"two-pipe-holes-p004", "function add(a: i32, b: i32): i32 {\n  return a + b;\n}\nfunction main(): i32 {\n  5 |> add(_, _);\n  return 0;\n}\n"},
 	{"function-expression-p006", "function main(): i32 {\n  let f = function (x: i32): i32 { return x + 1; };\n  return f(41);\n}\n"},
