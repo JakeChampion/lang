@@ -205,13 +205,13 @@ name, n, m, out, log = sys.argv[1:6]
 u0, s0, u1, s1 = (int(x) for x in sys.argv[6:10])
 text = open(out).read()
 rps = re.search(r"finished in [^,]*, ([0-9.]+) req/s", text)
-req = re.search(r"requests: (\d+) total, \d+ started, \d+ done, (\d+) succeeded, (\d+) failed, (\d+) errored, (\d+) timeout", text)
+req = re.search(r"requests: (\d+) total, \d+ started, (\d+) done, (\d+) succeeded, (\d+) failed, (\d+) errored, (\d+) timeout", text)
 if not rps or not req:
     sys.exit("net-bench: no h2load summary for %s c%sm%s:\n%s" % (name, n, m, text))
 times = sorted(int(line.split()[2]) for line in open(log) if len(line.split()) == 3)
 def pct(p):
     return times[min(len(times) - 1, int(len(times) * p))] if times else 0
-failed = int(req.group(3)) + int(req.group(4)) + int(req.group(5))
+failed = int(req.group(4)) + int(req.group(5)) + int(req.group(6))
 done = int(req.group(2))
 row = f"net/{name}/c{n}m{m}"
 print(f"{row}.rps\t{int(float(rps.group(1)))}")
@@ -222,35 +222,6 @@ jiffy_us = 1e6 / os.sysconf("SC_CLK_TCK")
 if done > 0:
     print(f"{row}.server_user_us_per_req\t{(u1 - u0) * jiffy_us / done:.2f}")
     print(f"{row}.server_sys_us_per_req\t{(s1 - s0) * jiffy_us / done:.2f}")
-PY
-}
-
-# group_cpu PGID — the user and system jiffies the process group has spent,
-# summed over every live member (the supervisor and its workers), as two
-# space-separated numbers. Fields 14 (utime) and 15 (stime) of
-# /proc/PID/stat, read after the last ')' so a comm with spaces or parens
-# does not shift the split; field 5 is the process group.
-group_cpu() {
-  python3 - "$1" <<'PY'
-import os, sys
-pgid = int(sys.argv[1])
-u = v = 0
-for d in os.listdir("/proc"):
-    if not d.isdigit():
-        continue
-    try:
-        data = open("/proc/" + d + "/stat").read()
-    except OSError:
-        continue
-    r = data.rfind(")")
-    if r < 0:
-        continue
-    f = data[r + 2:].split()
-    if len(f) < 13 or int(f[2]) != pgid:
-        continue
-    u += int(f[11])
-    v += int(f[12])
-print(u, v)
 PY
 }
 
