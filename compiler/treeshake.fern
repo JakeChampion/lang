@@ -161,10 +161,10 @@ function ts_routed_map_roots(): string[] {
 // keyed by one probes through them (ssasem.keyed_map_key_fn), and no source
 // spells that call. A type nothing kept names keys no map.
 function ts_with_key_roots(mod: parser.Module, rs: RefSet): RefSet {
-  let live: string[] = ts_live_type_names(mod, rs);
+  let live: util.NameIndex = ts_live_type_names(mod, rs);
   for fd in mod.funcs {
     let base: string = util.base_type_name(fd.receiver_type);
-    if (ts_key_method(fd) && ts_nominal(mod, base) && util.index_of_str(live, base) >= 0) {
+    if (ts_key_method(fd) && ts_nominal(mod, base) && live.has(base)) {
       rs = ts_with_root(rs, ts_qualified_root(base, fd.name));
     }
   }
@@ -816,9 +816,9 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
   if (owners.len() == 0) {
     return false;
   }
-  let live: string[] = ts_live_type_names(mod, rs);
+  let live: util.NameIndex = ts_live_type_names(mod, rs);
   for o in owners {
-    if (util.index_of_str(live, o) >= 0) {
+    if (live.has(o)) {
       return true;
     }
   }
@@ -832,8 +832,8 @@ function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
 // whether or not the program ever builds one: a nested function nothing calls
 // still releases its parameters, and an enum's drop releases every variant's
 // payload.
-function ts_live_type_names(mod: parser.Module, rs: RefSet): string[] {
-  let live: string[] = [];
+function ts_live_type_names(mod: parser.Module, rs: RefSet): util.NameIndex {
+  let live: util.NameIndex = util.name_index([]);
   for fd in mod.funcs {
     if (ts_kept_name(fd, rs)) {
       for t in ts_named_types(fd) {
@@ -849,8 +849,8 @@ function ts_live_type_names(mod: parser.Module, rs: RefSet): string[] {
     }
     let named: boolean = refset_has(rs, st.name) || refset_has(rs, ts_free_root(st.name))
       || refset_has(rs, owner) || refset_has(rs, ts_free_root(owner));
-    if (named && util.index_of_str(live, key) < 0) {
-      live = live.append(key);
+    if (named && !live.has(key)) {
+      live = live.added(key);
     }
   }
   let grew: boolean = true;
@@ -861,13 +861,13 @@ function ts_live_type_names(mod: parser.Module, rs: RefSet): string[] {
       if (st.enum_owner.len() > 0) {
         key = st.enum_owner;
       }
-      if (util.index_of_str(live, key) < 0) {
+      if (!live.has(key)) {
         continue;
       }
       for fl in st.fields {
-        let before: i32 = live.len();
+        let before: i32 = live.names.len();
         live = ts_add_type_words(live, fl.type_name);
-        if (live.len() > before) {
+        if (live.names.len() > before) {
           grew = true;
         }
       }
@@ -878,7 +878,7 @@ function ts_live_type_names(mod: parser.Module, rs: RefSet): string[] {
 
 // ts_add_type_words adds each identifier a type spelling names to `names`,
 // once.
-function ts_add_type_words(names: string[], t: string): string[] {
+function ts_add_type_words(names: util.NameIndex, t: string): util.NameIndex {
   let i: i32 = 0;
   while (i < t.len()) {
     if (!lexer.is_alnum(t[i] as i32)) {
@@ -890,8 +890,8 @@ function ts_add_type_words(names: string[], t: string): string[] {
       j = j + 1;
     }
     let w: string = slice_unchecked(t, i, j) + "";
-    if (util.index_of_str(names, w) < 0) {
-      names = names.append(w);
+    if (!names.has(w)) {
+      names = names.added(w);
     }
     i = j;
   }
