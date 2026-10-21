@@ -5,9 +5,11 @@ scripts/net-bench calls this once per load — `oha` for the HTTP/1.1 and
 two-fetch rows (from oha's JSON), `h2load` for the HTTP/3 rows (from
 h2load's summary and per-request log) — passing the server process
 group's user and system clock ticks before (U0 S0) and after (U1 S1) the
-load. Both families divide those ticks by the same quantity, the requests
-the load completed — oha's status codes plus errors, h2load's `done` —
-so the server-CPU-per-request rows mean the same thing across protocols.
+load. Both families divide those ticks by the requests the load completed
+— oha's status codes plus errors, h2load's `done` — which agree to within
+the requests still in flight when the load ends (at most one per
+connection: oha counts those as deadline cut-offs, h2load drops them), so
+the server-CPU-per-request rows mean the same thing across protocols.
 scripts/net-bench.d/test_net_bench_rows.py covers the parsing and that
 denominator.
 """
