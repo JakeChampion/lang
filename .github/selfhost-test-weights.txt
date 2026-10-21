@@ -12,7 +12,7 @@
 # the shards; their rows come from that job's own timing artifact and steer
 # its two workers. OWN_JOB_TESTS have no row, as the own-job pin requires.
 #
-# Validation, replays and the previous refresh: docs/CI-SHARD-REBALANCE.md.
+# Validation, replays and the previous refresh: docs/ci-log/2026-09-16-shard-rebalance.md.
 # Sixty-nine entries raised on 2026-10-18 from run 39087054640's audit (the
 # "Corrected weights" list scripts/ci-test-weights check prints: ceil of 1.5
 # times the measurement), after x86_64 shard 9 timed out on the stale ones.

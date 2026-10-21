@@ -11,7 +11,7 @@ name: Full suite
 # peaking at 36-38 jobs but averaging only ~20, so a single suite leaves half
 # the pool idle across its ramp and tail while the next PR waits. Measurements,
 # including the two-suite overlap that pinned the pool flat at 36-37, are in
-# docs/CI-PERFORMANCE.md. Two suites fill that slack: the pair completes in
+# docs/ci-log/2026-09-15-performance.md. Two suites fill that slack: the pair completes in
 # ~25 minutes against ~41 serialized. A third lane adds no throughput once the
 # ceiling is the binding constraint — it only stretches every suite's tail.
 on:

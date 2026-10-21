@@ -166,9 +166,9 @@ distinction does not rescue the "unfired and unmeasured" claim: a profiled real
 Fern program where the SSA emitter is the demonstrated answer is exactly the
 evidence that clause was waiting for, and it has existed since 2026-09-07.
 
-**And the work is live.** `docs/COREUTILS-SSA-ARGS-2026-09-08.md`,
-`COREUTILS-SSA-BRANCHES-2026-09-08.md` and
-`COREUTILS-X86-SSA-SLICES-2026-09-08.md` are a stream of SSA-backend work under
+**And the work is live.** `docs/coreutils-log/2026-09-08-ssa-args.md`,
+`coreutils-log/2026-09-08-ssa-branches.md` and
+`coreutils-log/2026-09-08-x86-ssa-slices.md` are a stream of SSA-backend work under
 epic #8278, and the index-helper inlining landed on both native SSA backends on
 2026-09-15. Each of those documents is careful to say it proposes **no
 default-backend switch** — so the active work is not itself a cutover, but it

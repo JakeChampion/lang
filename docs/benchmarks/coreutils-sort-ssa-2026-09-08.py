@@ -5,7 +5,7 @@ Place native -O binaries at /bench/sort and /bench/sort-ssa-fixed and the uutils
 multicall binary at /bench/uutils/coreutils. GNU 9.4+ must be in /usr/bin.
 Run `uv run --script THIS_FILE 2000 pilot`, then change only 2000 to 200000.
 Inputs and raw JSON are generated under /bench; existing names are overwritten.
-See ../COREUTILS-SSA-ARGS-2026-09-08.md for build and measurement details.
+See ../coreutils-log/2026-09-08-ssa-args.md for build and measurement details.
 """
 
 import hashlib

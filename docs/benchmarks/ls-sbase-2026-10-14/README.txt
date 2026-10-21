@@ -4,7 +4,7 @@ GNU9.12, latest published uutils0.12.0, BusyBox1.38.0, Toybox0.8.15.
 Sbase c546c3a5724c81cee9a11d816a38ccdf17472129, make ls with
 CFLAGS='-O3 -march=x86-64-v3', dynamic glibc2.41.
 
-Same frozen binaries as COREUTILS-LISTING-2026-10-13.md, not the later
+Same frozen binaries as ../../coreutils-log/2026-10-13-listing.md, not the later
 ownership pilot. SHA256:
 Fern base 5b851ea5ea0b7e79f2e21f39da2e592ca510caa12cc0beaf6832a6d2ff486bbf
 Fern changed 259536594261842a9dcd7012cc48c5a9f97004e45eb94b6f54592f617cd7dae1

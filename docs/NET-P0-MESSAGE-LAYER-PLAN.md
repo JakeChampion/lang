@@ -65,8 +65,8 @@ The rest of #8635 has moved on since it was filed:
   is new native-only surface, which the freeze (`docs/NATIVE-FREEZE.md`)
   does not admit.
 - **Self-host.** `[u8]` is already one tagged word with no header box
-  (`docs/STRING-BYTE-VIEWS-2026-10-02.md`). Its escape diagnostics, E063 and
-  E065, cover returns and records (`docs/STRING-VIEW-DIAGNOSTICS-2026-10-03.md`).
+  (`docs/string-log/2026-10-02-byte-views.md`). Its escape diagnostics, E063 and
+  E065, cover returns and records (`docs/string-log/2026-10-03-view-diagnostics.md`).
 - **What is left.** Slicing a `[u8]` copies on the self-host. A zero-copy
   sub-range view is the one piece no shipped work covers. Nothing in P0
   needs it. P3's streaming body hands the handler owned chunks.
