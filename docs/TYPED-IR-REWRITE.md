@@ -1,6 +1,6 @@
 # Typed-IR rewrite: feed lowering the types the checker already computes
 
-Status: done. The AST lowering (`irlower.fern`) and its re-inference
+Status: [record] done. The AST lowering (`irlower.fern`) and its re-inference
 predicates were deleted in ee2681cd8; `semlower.fern` lowers every body from
 the checker's types. The rest of this document is the plan as it was
 followed, kept for its reasoning; #5531 and #5986 tracked it.

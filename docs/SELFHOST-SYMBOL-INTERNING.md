@@ -1,6 +1,6 @@
 # Self-host symbol interning (#4394 lever 1) — measured and retired
 
-Status: **closed, negative result.** Interning the self-host compiler's
+Status: [record] closed, negative result. Interning the self-host compiler's
 identifier space was specified, built, and measured; it moves nothing worth the
 code, because the churn it targets is not there. This note records what the
 premise was, what the measurement said, and the one real allocation source the

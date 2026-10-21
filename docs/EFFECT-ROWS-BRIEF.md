@@ -1,6 +1,6 @@
 # Effect rows — prototype and findings
 
-Status: **research** (2026-09-02). Issue **#5320**, split out of #4416,
+Status: [record] closed investigation (2026-09-02). Issue **#5320**, split out of #4416,
 absorbing `PLATFORM-RESEARCH.md` Rec §10. The two design sketches this
 descends from are `PLATFORM-RESEARCH.md` §10 (`uses [io.http, io.kv]`,
 inference-primary) and `LANGUAGE-DIRECTION.md ▸ Algebraic effects`

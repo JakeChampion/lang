@@ -1,5 +1,7 @@
 # Verified ownership plans to production IR
 
+Status: [record] the first landing of `ssarc.fern`, the physical rc lowering; its vocabulary has grown since (closures among others), and `RC-DESIGN.md` describes it as it stands.
+
 Under #8920, `ssarc.lower` connects the independent counted-unit verifier to
 the production stack IR used by the self-hosted native and Wasm backends.
 For example, returning a borrowed row from a local array retains that row

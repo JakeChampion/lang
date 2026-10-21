@@ -1,8 +1,8 @@
 # Move semantics for threaded array params — the SSA self-compile memory unblock
 
-## Status
+Status: [record] a plan from the Go native compiler era; the self-host compiler now recompiles itself (`BOOTSTRAP.md`) and its RC is described in `RC-DESIGN.md`.
 
-Planning doc. The allocator + owned-array reclamation work that motivated it
+The allocator + owned-array reclamation work that motivated it
 has landed (#2501 two-tier large-block freelist + `i32[]` self-reassign free;
 #2506 `string[]`/`struct[]` self-append; #2510 arm64 parity; #2519 mantissa-bit
 classes). This doc specifies the **one remaining piece** that lets the

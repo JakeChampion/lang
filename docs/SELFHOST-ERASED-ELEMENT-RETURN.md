@@ -1,6 +1,6 @@
 # `T[] -> T` generics silently miscompile on the self-host x86-64 backend
 
-**Status:** FIXED. Clause (c-arr) in `parse_func` now promotes on ANY mention of
+Status: [record] fixed. Clause (c-arr) in `parse_func` now promotes on ANY mention of
 the type var in the return, so `first_of[T](xs: T[]): T` monomorphises per
 concrete element type. Every row in the table below is now the oracle's value on
 every path. One shape remains — see the last section.

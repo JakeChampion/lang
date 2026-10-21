@@ -1,5 +1,7 @@
 # Profiling native programs
 
+Status: [reference] how to sample a native program's CPU profile with `FERN_PROFILE=cpu`.
+
 Compile a native executable with CPU sampling enabled:
 
 ```sh

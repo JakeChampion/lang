@@ -1,6 +1,6 @@
 # Self-host IR rebuild — native-shaped `[]Op` stack IR (Option A)
 
-Status: **design + rollout tracker** (started 2026-06-09).
+Status: [record] design + rollout tracker (started 2026-06-09), finished: every backend routes through the IR and the AST emitters are deleted (`SELFHOST-AST-RETIREMENT.md`).
 Decision: **Option A** from `RC-PERCEUS-SELF-HOST-IR.md` — rebuild the
 self-hosted compiler around the same IR shape as native, rather than
 continuing the AST→asm-direct port. This is the whole-backend

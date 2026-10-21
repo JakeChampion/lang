@@ -1,5 +1,7 @@
 # Semantic production pipeline: compiler-size attribution
 
+Status: [record] compiler-size measurement snapshot taken on 2026-09-15.
+
 Measured on 2026-09-15 at `4c006c860`, against the last baseline refresh
 `5f4cb2400`. The CLI now includes the typed semantic producer and ownership
 lowering introduced by #9321.

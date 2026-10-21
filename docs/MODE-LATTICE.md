@@ -1,6 +1,6 @@
 # The mode lattice — own / fip / views / @must_consume as one system
 
-Status: design note (research issue **#5365**). **No surface change** —
+Status: [research] design note (research issue **#5365**). **No surface change** —
 every existing spelling stays exactly as it is; no new syntax is
 proposed here. Thesis: Fern's four shipped ownership-adjacent
 surfaces — `own` consuming params (E050/E051), `fip` functions

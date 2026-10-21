@@ -1,8 +1,8 @@
 # Packed-operand-stack migration plan
 
-> **Status: x86-64 done, arm64 outstanding** — tracked as
-> [#4111](https://github.com/JakeChampion/lang/issues/4111) (8-byte stack
-> slots + real push/pop on the native backends).
+Status: [record] x86-64 done, arm64 never done; #4111 (8-byte stack slots +
+real push/pop on the native backends) is closed, and the Go native backends
+this plan targets were deleted (`NATIVE-RETIREMENT.md`).
 
 Captures the multi-PR migration strategy for BACKEND-PARITY
 perf item #3 (Pack the operand-stack into 8-byte slots).

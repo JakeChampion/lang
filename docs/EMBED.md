@@ -1,6 +1,6 @@
 # Asset embedding
 
-**Status: [reference]** — shipped. Issue
+Status: [reference] shipped. Issue
 [#6069](https://github.com/JakeChampion/lang/issues/6069), sub-issue (b) of
 the single-file-distributable epic
 [#6067](https://github.com/JakeChampion/lang/issues/6067).

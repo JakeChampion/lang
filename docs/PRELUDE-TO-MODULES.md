@@ -1,9 +1,10 @@
 # Prelude → modules migration
 
-> **Status: complete.** All six phases have landed — the auto-injected
-> prelude and the `internal/prelude` package were removed in #1561.
-> Programs now declare their `std/` + `core/` imports explicitly. The
-> rest of this document is kept as the historical migration record.
+Status: [reference] the migration is complete (#1561); "`pub use` re-exports" and "How loading works now" describe module loading today.
+All six phases have landed — the auto-injected prelude and the
+`internal/prelude` package were removed in #1561. Programs now declare
+their `std/` + `core/` imports explicitly. The phased plan below is kept
+as the historical migration record.
 
 ## Problem
 

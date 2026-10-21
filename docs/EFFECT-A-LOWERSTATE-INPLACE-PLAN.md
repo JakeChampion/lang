@@ -1,7 +1,7 @@
 # Effect A — `LowerState` in-place accumulation plan
 
 Date: 2026-06-21.
-Status: **SUPERSEDED (2026-06-21).** Direct measurement
+Status: [record] superseded (2026-06-21). Direct measurement
 (`docs/IR-SELFCOMPILE-OOM-FINDINGS.md` → "Finding 2 RE-MEASURED") shows
 the premise of this plan is wrong: the 45-field `LowerState` rebuild is
 **already in-place** under clean self-reassign threading (verified flat

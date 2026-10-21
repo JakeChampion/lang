@@ -1,5 +1,7 @@
 # Building bounded applications with FIP and FBIP
 
+Status: [reference] guidance drawn from the recorded FIP experiment measurements.
+
 Start with an ordinary implementation and a workload that checks its answers.
 Use FIP or FBIP when a checked allocation discipline helps express the
 application's resource limits. Measure the resulting program: an annotation

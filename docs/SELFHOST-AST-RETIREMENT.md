@@ -1,7 +1,8 @@
 # Retiring the self-host legacy AST emitters (#3457)
 
-Status: **IN PROGRESS — slice 1 done; #3425 (the memory gate) CLOSED; slice 2
-is now unblocked.** This doc is the single home for the #3457 endgame (retire
+Status: [record] finished: the AST emitters are deleted (`asm.fern` +
+`asm_arm64.fern` #5972, `wasm.fern` #3457) and every backend routes IR-or-error.
+While in progress this doc was the single home for the #3457 endgame (retire
 `asm.fern` / `asm_arm64.fern` / `wasm.fern`, the pre-IR AST→asm emitters, plus
 the ~512-function merged-bundle budget). It exists because the analysis kept
 being re-derived and mis-scoped — CLAUDE.md's "VERIFY tracker state against the

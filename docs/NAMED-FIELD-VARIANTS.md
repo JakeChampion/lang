@@ -1,5 +1,7 @@
 # Named-field enum variants
 
+Status: [reference] shipped.
+
 Enum variants may carry **named fields** instead of positional payloads:
 
 ```fern

@@ -1,5 +1,7 @@
 # Whole-program reachability: what actually gets dropped
 
+Status: [record] audit measured 2026-08-26: module-granular pruning already worked, and the dynamic-dispatch over-rooting it found was fixed in #4114.
+
 Audit behind #4114 (child of the binary-size epic #4109), measured
 2026-08-26 on a 4-core x86-64 host.
 

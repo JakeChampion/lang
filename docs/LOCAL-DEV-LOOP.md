@@ -1,5 +1,7 @@
 # The local dev loop
 
+Status: [reference] dated measurements; re-measure before quoting one.
+
 Machine-shaped facts: how long things take on a dev box, how much RAM they
 want, which knobs move that, and which instrument to measure with. `CLAUDE.md`
 states the *rules* that follow from this; the numbers live here so a

@@ -1,5 +1,7 @@
 # Toolchain self-hosting plan
 
+Status: [record] complete: every target builds with no external toolchain on `$PATH`.
+
 > **Update — the SELF-HOST compiler now matches on Linux.** Everything
 > below describes the *native* (Go) compiler, which reached the
 > no-binary-on-`$PATH` property in 2026-05. The self-hosted compiler had
@@ -13,7 +15,7 @@
 > This closes precondition 2 of the backend-retirement list in
 > `NATIVE-CONVERGENCE.md §3a`.
 
-> **Status (2026-05-28): all phases complete.** The default build of
+> **2026-05-28: all phases complete.** The default build of
 > `fern -o out src.fern` now requires **no binary on `$PATH` other than
 > the `fern` compiler itself** for any supported target — arm64-Linux,
 > x86-64-Linux, and arm64-darwin. The external toolchains (gcc / clang /

@@ -1,5 +1,7 @@
 # Feature audit — built-ins & standard library
 
+Status: [tracker] living per-feature, per-backend audit matrix and audit log.
+
 This document is the **living record** of an ongoing audit of every
 built-in language feature and every standard-library function in Fern.
 The goal: confirm each feature works **correctly on every backend of the

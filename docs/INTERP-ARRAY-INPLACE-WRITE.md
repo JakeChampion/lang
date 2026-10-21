@@ -1,5 +1,7 @@
 # In-place element writes in the interpreter (`arr.with(i, v)`)
 
+Status: [reference] shipped in the interpreter; decision record for #7287.
+
 Why the interpreter's `T[]` carries an owner count, what that count is
 allowed to get wrong, and how to prove it did not lie. Decision record
 for #7287, split out of #6395; the map counterpart is

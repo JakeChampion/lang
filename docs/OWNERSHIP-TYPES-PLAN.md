@@ -1,5 +1,7 @@
 # Ownership Types Plan (issue #4297)
 
+Status: [record] #4297 and its sub-issues #4812 to #4814 are closed; the native-compiler phases C4 to C6 were never filed, and that compiler is gone.
+
 Turning the accepted conclusion of issue #4297 into an executable, phased
 implementation. **Goal:** lift the owned / borrowed / view / static distinction
 out of scattered heuristics and runtime sentinels and into a *checked type

@@ -1,5 +1,7 @@
 # Iterator fusion contract
 
+Status: [policy] the contract iterator fusion must meet; the eager pass and part of the lazy surface are built.
+
 Plan item **B3** of `docs/NICHE-BORROWS-PLAN.md`. Fern's standing
 posture (`LANGUAGE-DIRECTION.md`, "Things deliberately NOT
 cribbed") rejects Rust-style lazy iterator chains *until the IR

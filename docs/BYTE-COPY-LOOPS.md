@@ -1,5 +1,7 @@
 # Bulk byte-copy loops
 
+Status: [reference] the `compiler/sembytecopy.fern` pass as shipped.
+
 The typed semantic pass in `compiler/sembytecopy.fern` recognizes zero-based
 byte walks before ownership planning:
 

@@ -1,5 +1,7 @@
 # Reference counting in the self-host compiler
 
+Status: [reference] how the self-host compiler's reference counting works today.
+
 How a Fern function's reference counting is decided and emitted, written for
 a reader who knows Perceus but not this code. Each section names the module,
 its one job, what it may assume of the stage before it, and the tests that pin

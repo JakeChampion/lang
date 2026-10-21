@@ -1,5 +1,7 @@
 # SOTA stdlib implementation matrix — 2026 H2
 
+Status: [tracker] execution matrix for the stdlib's per-primitive work, updated as rows land.
+
 The companion to `SOTA-STDLIB-BLUEPRINT.md`. The blueprint is an **audit**:
 it records what the code does today and what the literature's best is. This
 document is the **execution matrix**: the same territory turned into rows that
