@@ -203,13 +203,20 @@ pub struct Streams {
   resend: recovery.Resend[],
   fit: boolean,
   retired: i32,
+  // The position in `list`, plus one, of the bidirectional stream with key
+  // `base + k` (__bidi_key) at `index[k]`; 0 for none. `base` is at or
+  // below the key of every bidirectional stream live or yet to be opened,
+  // so the index spans the live window only. The few unidirectional
+  // streams live for the connection and are found by scanning.
+  index: i32[],
+  base: i64,
 }
 
 // table is a side's streams before the peer's transport parameters are
 // known: the peer may open what `local` allows, and this side nothing yet.
 pub function table(server: boolean, local: params.Params): Streams {
   let none: params.Params = params.defaults();
-  let s: Streams = Streams { server: server, list: [], local: local, peer: none, limits: [0 as i64, 0 as i64, 0 as i64, 0 as i64], opened: [0 as i64, 0 as i64, 0 as i64, 0 as i64], limits_dirty: [false, false, false, false], open_blocked: [0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64], recv_max: local.initial_max_data, recv_window: local.initial_max_data, recv_highest: 0 as i64, recv_taken: 0 as i64, recv_max_dirty: false, send_max: 0 as i64, send_sent: 0 as i64, blocked_at: 0 - 1 as i64, next: 0, events: [], refused: "", failed: None, last_opened: 0 - 1 as i64, read_data: [], read_fin: false, filled: [], resend: [], fit: false, retired: 0 };
+  let s: Streams = Streams { server: server, list: [], local: local, peer: none, limits: [0 as i64, 0 as i64, 0 as i64, 0 as i64], opened: [0 as i64, 0 as i64, 0 as i64, 0 as i64], limits_dirty: [false, false, false, false], open_blocked: [0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64, 0 - 1 as i64], recv_max: local.initial_max_data, recv_window: local.initial_max_data, recv_highest: 0 as i64, recv_taken: 0 as i64, recv_max_dirty: false, send_max: 0 as i64, send_sent: 0 as i64, blocked_at: 0 - 1 as i64, next: 0, events: [], refused: "", failed: None, last_opened: 0 - 1 as i64, read_data: [], read_fin: false, filled: [], resend: [], fit: false, retired: 0, index: [], base: 0 as i64 };
   let bidi: i32 = s.__peer_type(false);
   return Streams { ...s, limits: s.limits.with(bidi, local.initial_max_streams_bidi).with(bidi + 2, local.initial_max_streams_uni) };
 }
@@ -284,9 +291,39 @@ function (s: Streams) __new_stream(id: i64): Stream {
   return Stream { id: id, has_send: local || !__is_uni(id), send: send, has_recv: !local || !__is_uni(id), recv: recv, closed: false };
 }
 
-// __find scans from the end: the streams in use are the latest opened,
-// and the finished ones leave from the front. A closed stream answers -1.
+// __find is the position of the stream `id`, -1 for none or a closed one.
 function (s: Streams) __find(id: i64): i32 {
+  if ((id & 2) != 0) {
+    let i: i32 = s.list.len() - 1;
+    while (i >= 0) {
+      if (s.list[i].id == id) {
+        if (s.list[i].closed) {
+          return 0 - 1;
+        }
+        return i;
+      }
+      i = i - 1;
+    }
+    return 0 - 1;
+  }
+  let k: i64 = __bidi_key(id) - s.base;
+  if (k < 0) {
+    return s.__scan(id);
+  }
+  if (k >= s.index.len() as i64) {
+    return 0 - 1;
+  }
+  let i: i32 = s.index[k as i32] - 1;
+  if (i < 0 || s.list[i].closed) {
+    return 0 - 1;
+  }
+  return i;
+}
+
+// __scan is __find for a stream below the index's window, which only a
+// peer opening a bidirectional stream of its own long after this side's
+// reaches, from the end of the list.
+function (s: Streams) __scan(id: i64): i32 {
   let i: i32 = s.list.len() - 1;
   while (i >= 0) {
     if (s.list[i].id == id) {
@@ -298,6 +335,47 @@ function (s: Streams) __find(id: i64): i32 {
     i = i - 1;
   }
   return 0 - 1;
+}
+
+// __bidi_key orders the bidirectional streams of both sides as one
+// sequence: the client's 4k at 2k, the server's 4k + 1 at 2k + 1.
+function __bidi_key(id: i64): i64 {
+  return (id >> 2) * 2 + (id & 1);
+}
+
+// __indexed is `s` with the bidirectional stream `id` at position `pos`
+// of its list; a unidirectional stream, or one below the window, leaves
+// the index as it is. The index is updated in place: it is written only
+// through the table that owns it.
+function (s: Streams) __indexed(id: i64, pos: i32): Streams {
+  if ((id & 2) != 0) {
+    return s;
+  }
+  let k: i64 = __bidi_key(id) - s.base;
+  if (k < 0) {
+    return s;
+  }
+  if (k >= s.index.len() as i64) {
+    let grown: Streams = Streams { ...s, index: __grown(s.index, k as i32 + 1) };
+    return Streams { ...grown, index: grown.index.with(k as i32, pos + 1) };
+  }
+  return Streams { ...s, index: s.index.with(k as i32, pos + 1) };
+}
+
+// __grown is a fresh index holding `index`, with room for `n` entries and
+// as much again.
+function __grown(index: i32[], n: i32): i32[] {
+  let size: i32 = n * 2;
+  if (size < 16) {
+    size = 16;
+  }
+  let out: i32[] = __alloc_i32(size);
+  let i: i32 = 0;
+  while (i < index.len()) {
+    out = out.with(i, index[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 function (s: Streams) __put(i: i32, st: Stream): Streams {
@@ -327,7 +405,8 @@ pub function (s: Streams) open(uni: boolean): Streams {
     return Streams { ...s, refused: "the peer's limit on streams is reached", last_opened: 0 - 1 as i64 };
   }
   let id: i64 = s.opened[t] * 4 + t as i64;
-  return Streams { ...s, list: s.list.append(s.__new_stream(id)), opened: s.opened.with(t, s.opened[t] + 1), refused: "", last_opened: id };
+  let cur: Streams = Streams { ...s, list: s.list.append(s.__new_stream(id)), opened: s.opened.with(t, s.opened[t] + 1), refused: "", last_opened: id };
+  return cur.__indexed(id, cur.list.len() - 1);
 }
 
 // write queues `data` on a stream's sending half, and with `fin` ends it.
@@ -340,7 +419,11 @@ pub function (s: Streams) write(id: i64, data: [u8], fin: boolean): Streams {
   if (st.send.fin || st.send.reset >= 0) {
     return s.__refuse("the stream's sending half is closed");
   }
-  return s.__refuse("").__put(i, Stream { ...st, send: Send { ...st.send, buf: st.send.buf.concat(__copy(data)), fin: fin } });
+  let buf: u8[] = __copy(data);
+  if (st.send.buf.len() > 0) {
+    buf = st.send.buf.concat(buf);
+  }
+  return s.__refuse("").__put(i, Stream { ...st, send: Send { ...st.send, buf: buf, fin: fin } });
 }
 
 // read takes what can be read of a stream, in order, into `read_data`, and
@@ -498,16 +581,15 @@ function (s: Streams) __stream_for(id: i64, recv: boolean, kind: i64): (Streams,
 
 // __peer_opens opens the peer's streams of type `t` up to number `n`.
 function (s: Streams) __peer_opens(t: i32, n: i64): Streams {
-  let list: Stream[] = s.list;
-  let events: Event[] = s.events;
+  let cur: Streams = s;
   let k: i64 = s.opened[t];
   while (k <= n) {
     let id: i64 = k * 4 + t as i64;
-    list = list.append(s.__new_stream(id));
-    events = events.append(Opened(id));
+    cur = Streams { ...cur, list: cur.list.append(cur.__new_stream(id)), events: cur.events.append(Opened(id)) };
+    cur = cur.__indexed(id, cur.list.len() - 1);
     k = k + 1;
   }
-  return Streams { ...s, list: list, events: events, opened: s.opened.with(t, n + 1) };
+  return Streams { ...cur, opened: cur.opened.with(t, n + 1) };
 }
 
 function (s: Streams) __on_stream(d: frames.StreamData): Streams {
@@ -1054,21 +1136,42 @@ function (s: Streams) __retire_done(i: i32): Streams {
     cur = Streams { ...cur, limits: cur.limits.with(t, cur.limits[t] + 1), limits_dirty: cur.limits_dirty.with(t, true) };
   }
   cur = cur.__put(i, Stream { ...st, closed: true });
-  if (cur.retired * 2 >= cur.list.len()) {
+  // Sweep only once enough are closed, so a stream at a time does not
+  // rebuild a one-element list.
+  if (cur.retired >= 32 && cur.retired * 2 >= cur.list.len()) {
     return cur.__sweep();
   }
   return cur;
 }
 
-// __sweep drops the closed streams from the list.
+// __sweep drops the closed streams from the list and rebuilds the index
+// from the lowest bidirectional key still live, or the next the client
+// opens when none is.
 function (s: Streams) __sweep(): Streams {
+  let base: i64 = s.opened[0] * 2;
+  let top: i64 = base;
   let list: Stream[] = [];
   for st in s.list {
     if (!st.closed) {
       list = list.append(st);
+      if ((st.id & 2) == 0) {
+        let key: i64 = __bidi_key(st.id);
+        if (key < base) {
+          base = key;
+        }
+        if (key > top) {
+          top = key;
+        }
+      }
     }
   }
-  return Streams { ...s, list: list, retired: 0 };
+  let cur: Streams = Streams { ...s, list: list, index: __alloc_i32((top - base) as i32 + 16), base: base, retired: 0 };
+  let i: i32 = 0;
+  while (i < list.len()) {
+    cur = cur.__indexed(list[i].id, i);
+    i = i + 1;
+  }
+  return cur;
 }
 
 function __done(st: Stream): boolean {

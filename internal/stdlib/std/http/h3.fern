@@ -142,7 +142,8 @@ const AFTER_TRAILERS: i32 = 2;
 // whether the peer has ended it and this side has, and, at a client,
 // whether it asked HEAD, whose response has no body whatever its
 // content-length says.
-struct Req { id: i64, frames: Frames, phase: i32, held: u8[], blocked: boolean, length: i64, received: i64, fin: boolean, done: boolean, sent_fin: boolean, head: boolean }
+// `gone` marks a request forgotten but not yet swept from the list.
+struct Req { id: i64, frames: Frames, phase: i32, held: u8[], blocked: boolean, length: i64, received: i64, fin: boolean, done: boolean, sent_fin: boolean, head: boolean, gone: boolean }
 
 // Uni — one of the peer's unidirectional streams: its type once read (-1
 // before), and its frames.
@@ -162,6 +163,14 @@ pub struct Session {
   dec: qpack.Decoder,
   enc: qpack.Encoder,
   reqs: Req[],
+  // The position in `reqs`, plus one, of the request on the stream with
+  // sequence number `req_base + k` (its ID over 4) at `req_index[k]`; 0
+  // for none. `req_base` is at or below the live requests, so the index
+  // spans those. `req_gone` counts the forgotten requests still in the
+  // list, swept once they are half of it.
+  req_index: i32[],
+  req_base: i64,
+  req_gone: i32,
   unis: Uni[],
   goaway: i64,
   closed: boolean,
@@ -170,7 +179,7 @@ pub struct Session {
 }
 
 function __session(server: boolean, c: Config): Session {
-  return Session { server: server, config: c, control: 0 - 1 as i64, decoder_stream: 0 - 1 as i64, peer_control: 0 - 1 as i64, peer_encoder: 0 - 1 as i64, peer_decoder: 0 - 1 as i64, peer: Settings { max_table_capacity: 0 as i64, blocked_streams: 0 as i64, max_field_section_size: 0 - 1 as i64 }, settings_seen: false, dec: qpack.decoder(c.max_table_capacity, c.blocked_streams, c.max_field_section_size), enc: qpack.encoder(), reqs: [], unis: [], goaway: 0 - 1 as i64, closed: false, actions: [], events: [] };
+  return Session { server: server, config: c, control: 0 - 1 as i64, decoder_stream: 0 - 1 as i64, peer_control: 0 - 1 as i64, peer_encoder: 0 - 1 as i64, peer_decoder: 0 - 1 as i64, peer: Settings { max_table_capacity: 0 as i64, blocked_streams: 0 as i64, max_field_section_size: 0 - 1 as i64 }, settings_seen: false, dec: qpack.decoder(c.max_table_capacity, c.blocked_streams, c.max_field_section_size), enc: qpack.encoder(), reqs: [], req_index: [], req_base: 0 as i64, req_gone: 0, unis: [], goaway: 0 - 1 as i64, closed: false, actions: [], events: [] };
 }
 
 pub function client(c: Config): Session {
@@ -224,7 +233,7 @@ pub function (s: Session) goaway_received(): i64 {
 pub function (s: Session) send_headers(id: i64, fields: qpack.Field[], fin: boolean): Session {
   let cur: Session = s;
   if (!s.server && s.__find(id) < 0) {
-    cur = Session { ...s, reqs: s.reqs.append(Req { ...__req(id), head: __value(fields, ":method") == "HEAD" }) };
+    cur = s.__added(Req { ...__req(id), head: __value(fields, ":method") == "HEAD" });
   }
   return cur.__write(id, __frame([], HEADERS, cur.enc.encode(fields)), fin);
 }
@@ -408,7 +417,7 @@ function (s: Session) __encoder_bytes(buf: u8[]): Session {
     Ok(d) => {
       let cur: Session = Session { ...s, dec: d }.__decoder_instructions();
       for r in cur.reqs {
-        if (r.blocked) {
+        if (r.blocked && !r.gone) {
           cur = cur.__on_request(r.id, [], false);
         }
       }
@@ -538,7 +547,7 @@ function (s: Session) __on_goaway(payload: u8[]): Session {
   }
   let cur: Session = Session { ...s, goaway: id, events: s.events.append(GoawayReceived(id)) };
   for q in s.reqs {
-    if (q.id >= id) {
+    if (q.id >= id && !q.gone) {
       cur = Session { ...cur, events: cur.events.append(StreamAborted(q.id, H3_REQUEST_REJECTED)) }.__forget(q.id);
     }
   }
@@ -548,7 +557,7 @@ function (s: Session) __on_goaway(payload: u8[]): Session {
 // === request streams ========================================================
 
 function __req(id: i64): Req {
-  return Req { id: id, frames: __frames(), phase: BEFORE_HEADERS, held: [], blocked: false, length: 0 - 1 as i64, received: 0 as i64, fin: false, done: false, sent_fin: false, head: false };
+  return Req { id: id, frames: __frames(), phase: BEFORE_HEADERS, held: [], blocked: false, length: 0 - 1 as i64, received: 0 as i64, fin: false, done: false, sent_fin: false, head: false, gone: false };
 }
 
 // __on_request takes a request stream's bytes: a client's request at a
@@ -560,7 +569,7 @@ function (s: Session) __on_request(id: i64, bytes: [u8], fin: boolean): Session 
     if (!s.server || (id & 1) != 0) {
       return s;
     }
-    cur = Session { ...s, reqs: s.reqs.append(__req(id)) };
+    cur = s.__added(__req(id));
     i = cur.reqs.len() - 1;
   }
   let r: Req = cur.reqs[i];
@@ -935,31 +944,110 @@ function __known(kind: i64): boolean {
 
 // === the tables of streams ==================================================
 
-// __find scans from the end: the requests in flight are the latest, and
-// the finished ones leave from the front.
+// __find is the position of the request on stream `id`, -1 for none or
+// one forgotten.
 function (s: Session) __find(id: i64): i32 {
-  let i: i32 = s.reqs.len() - 1;
-  while (i >= 0) {
-    if (s.reqs[i].id == id) {
-      return i;
-    }
-    i = i - 1;
+  let k: i64 = (id >> 2) - s.req_base;
+  if (k < 0 || k >= s.req_index.len() as i64) {
+    return 0 - 1;
   }
-  return 0 - 1;
+  let i: i32 = s.req_index[k as i32] - 1;
+  if (i < 0 || s.reqs[i].gone) {
+    return 0 - 1;
+  }
+  return i;
+}
+
+// __added is the session with request `r` appended and indexed.
+function (s: Session) __added(r: Req): Session {
+  let cur: Session = Session { ...s, reqs: s.reqs.append(r) };
+  return cur.__indexed(r.id, cur.reqs.len() - 1);
+}
+
+// __indexed is `s` with the request on stream `id` at position `pos` of
+// its list, the index grown when `id` is past it. The index is written
+// only through the session that owns it, so the update is in place.
+function (s: Session) __indexed(id: i64, pos: i32): Session {
+  let k: i64 = (id >> 2) - s.req_base;
+  if (k < 0) {
+    return s;
+  }
+  if (k >= s.req_index.len() as i64) {
+    let grown: Session = Session { ...s, req_index: __grown(s.req_index, k as i32 + 1) };
+    return Session { ...grown, req_index: grown.req_index.with(k as i32, pos + 1) };
+  }
+  return Session { ...s, req_index: s.req_index.with(k as i32, pos + 1) };
+}
+
+// __grown is a fresh index holding `index`, with room for `n` entries and
+// as much again.
+function __grown(index: i32[], n: i32): i32[] {
+  let size: i32 = n * 2;
+  if (size < 16) {
+    size = 16;
+  }
+  let out: i32[] = __alloc_i32(size);
+  let i: i32 = 0;
+  while (i < index.len()) {
+    out = out.with(i, index[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 function (s: Session) __put_req(i: i32, r: Req): Session {
   return Session { ...s, reqs: s.reqs.with(i, r) };
 }
 
+// __forget marks the request on stream `id` gone, and sweeps the list once
+// half of it is, so a finished request does not rebuild it.
 function (s: Session) __forget(id: i64): Session {
+  let i: i32 = s.__find(id);
+  if (i < 0) {
+    return s;
+  }
+  let cur: Session = Session { ...s, reqs: s.reqs.with(i, Req { ...s.reqs[i], gone: true }), req_gone: s.req_gone + 1 };
+  // Sweep only once enough are gone: a request at a time never rebuilds a
+  // one-element list, and a busy connection sweeps a few times, not once a
+  // request.
+  if (cur.req_gone < 32 || cur.req_gone * 2 < cur.reqs.len()) {
+    return cur;
+  }
+  let base: i64 = 0 - 1 as i64;
   let kept: Req[] = [];
-  for r in s.reqs {
-    if (r.id != id) {
+  for r in cur.reqs {
+    if (!r.gone) {
       kept = kept.append(r);
+      if (base < 0 || r.id >> 2 < base) {
+        base = r.id >> 2;
+      }
     }
   }
-  return Session { ...s, reqs: kept };
+  if (base < 0) {
+    base = (__highest(cur.reqs) >> 2) + 1;
+  }
+  let top: i64 = __highest(kept) >> 2;
+  if (top < base) {
+    top = base;
+  }
+  let next: Session = Session { ...cur, reqs: kept, req_index: __alloc_i32((top - base) as i32 + 16), req_base: base, req_gone: 0 };
+  let k: i32 = 0;
+  while (k < kept.len()) {
+    next = next.__indexed(kept[k].id, k);
+    k = k + 1;
+  }
+  return next;
+}
+
+// __highest is the largest stream ID in `rs`, -1 for none.
+function __highest(rs: Req[]): i64 {
+  let top: i64 = 0 - 1 as i64;
+  for r in rs {
+    if (r.id > top) {
+      top = r.id;
+    }
+  }
+  return top;
 }
 
 // __collect forgets a request stream once both sides have ended it.
