@@ -152,7 +152,7 @@ function main(): i32 { let f = narrow(); let g: f64 = 16777216.0; if (f as f64 =
 		// type is not the shadowed declaration's. Reading the declaration here
 		// widens this multiply to 64 bits and answers 42.
 		{"call-shadowed-by-local", `function pick(): i64 { return 1; }
-function main(): i32 { let pick: () => i32 = (() => 100000); let x = pick(); let y = x * 100000; if (y > 4294967296) { return 42; } return 1; }`},
+function main(): i32 { let pick: () => i32 = (() => 100000); let x = pick(); let y = x * 100000; if (y == 1410065408) { return 1; } return 42; }`},
 		// A closure held in a FIELD is called through the same field-access
 		// callee shape as a method, and matches no method declaration.
 		{"closure-in-field-call", `struct H { f: () => i32 }

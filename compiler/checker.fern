@@ -27671,6 +27671,33 @@ function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
   return parser.settle_int_tree(e, tag);
 }
 
+// settle_at settles a tree of unsuffixed integer literals at the integer type
+// of the destination it is written to: `let a: i64 = 2147483647 + 1` adds at
+// 64 bits.
+function settle_at(e: ast.Expr, t: typeinfo.Type): ast.Expr {
+  if (is_integer(t) && int_literal_tree(e)) {
+    return settle_int_tree(e, type_to_irtag(t));
+  }
+  return e;
+}
+
+// settle_args_at_params is settle_at for each argument of a call whose callee
+// types as a function of known parameters.
+function settle_args_at_params(args: ast.Expr[], callee: typeinfo.Type): ast.Expr[] {
+  if let typeinfo.TypeFunc(ft) = callee {
+    if (ft.params_known && ft.param_types.len() == args.len()) {
+      let out: ast.Expr[] = [];
+      let i: i32 = 0;
+      while (i < args.len()) {
+        out = out.append(settle_at(args[i], ft.param_types[i]));
+        i = i + 1;
+      }
+      return out;
+    }
+  }
+  return args;
+}
+
 // settle_array_literals gives the unsuffixed literals of an array literal no
 // destination has settled the type of a concrete numeric sibling, as native's
 // settleNumeric does after joining the element type: `id([4, half(1.0)])` is an
@@ -27815,6 +27842,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       for arg in c.args {
         nargs = nargs.append(annotate_expr(arg, s));
       }
+      nargs = settle_args_at_params(nargs, check_expr(c.callee, s));
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
       let ct: typeinfo.Type = check_expr(e, s);
@@ -28009,7 +28037,13 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string, b
   if (lm.ret_type.len() == 0 || parser.is_value_block_origin(lm.origin)) {
     typed = inferred_lambda_result(lm, ls, lm.ret_type.len() > 0, block);
   }
-  return ast.ExprLambda { ...typed, body: annotate_block(lm.body, ls), captures: captures, captures_known: true };
+  // Only a written result type is a destination a `return` settles at; a
+  // value block's is its tail's guess, which the enclosing arm may widen.
+  let body: Scope = ls;
+  if (lm.ret_type.len() == 0 || parser.is_value_block_origin(lm.origin)) {
+    body = Scope { ...ls, ret_type: t_unknown("") };
+  }
+  return ast.ExprLambda { ...typed, body: annotate_block(lm.body, body), captures: captures, captures_known: true };
 }
 
 // names_whole_type reports whether `t` is a complete type: nothing unknown in
@@ -28276,6 +28310,9 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       } else {
         init = annotate_expr(v.init, s);
       }
+      if (v.type_name.len() > 0) {
+        init = settle_at(init, after.lookup(v.name));
+      }
       let callable: ast.ParamDecl = decltypes.fn_param_from_type(v.name, after.lookup(v.name));
       if (callable.type_name == "fn") {
         return ast.StmtVar {
@@ -28286,7 +28323,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtVar { ...v, init: init };
     },
     ast.StmtReturn(r) => {
-      return ast.StmtReturn { value: annotate_expr(r.value, s), line: r.line, col: r.col };
+      return ast.StmtReturn { value: settle_at(annotate_expr(r.value, s), s.ret_type), line: r.line, col: r.col };
     },
     ast.StmtExpr(x) => {
       return ast.StmtExpr { value: annotate_expr(x.value, s), line: x.line };
@@ -28298,7 +28335,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       return ast.StmtWhile { cond: annotate_expr(w.cond, s), body: annotate_block(w.body, s), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
     },
     ast.StmtAssign(a) => {
-      return ast.StmtAssign { target: a.target, value: annotate_expr(a.value, s), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+      return ast.StmtAssign { target: a.target, value: settle_at(annotate_expr(a.value, s), s.lookup(a.target)), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
     },
     ast.StmtMatch(m) => {
       let narms: ast.MatchArm[] = [];
