@@ -721,7 +721,8 @@ pub function str_has_suffix(s: string, suffix: string): boolean {
 // contains reports whether `needle` occurs in `haystack` (substring
 // search; empty needle matches). literate.fern keeps its own copy — it
 // is a standalone module not staged through util. Byte-wise compare at
-// each offset, for the same reason as str_has_prefix.
+// the offsets the first-byte scan finds, for the same reason as
+// str_has_prefix.
 pub function contains(haystack: string, needle: string): boolean {
   return index_of_sub(haystack, needle) >= 0;
 }
