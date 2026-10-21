@@ -106,7 +106,9 @@ function main(): i32 {
 
 ## Arrays and slices
 
-`T[]` is an array. Its elements are **read-only after construction**:
+`T[]` is an array. `xs[i]` takes an index of any integer type, and an index
+outside the array aborts whatever its width. Its elements are **read-only
+after construction**:
 `xs[i] = v` is a compile error (`E056`). The update methods return a new
 array, and you rebind the name to it:
 

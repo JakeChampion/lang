@@ -915,12 +915,6 @@ function integer_literal(text: string): boolean {
 // A literal's width is the suffix it carries, which a byte literal (`b'x'`)
 // has as much as a written `7u8` does. An unsuffixed decimal is an i32 unless
 // its destination names another integer type.
-//
-// `usize` is here although no source can write it: the value-block desugar
-// (checker.fern's vb_zero_of) stamps the tag as the suffix of the placeholder
-// zero it builds, so an if-expression at the pointer width hands this table a
-// `usize`-suffixed literal. Without the arm it typed to unknown and the
-// function was refused for a WIDTH that was never the problem.
 function literal_type(suffix: string): typeinfo.Type {
   if (suffix == "u8") {
     return t_u8();
@@ -1339,12 +1333,13 @@ function index(ix: ast.ExprIndex, s: State): Value {
     return environment_read(ix, container.id, container.s);
   }
   let at: Value = expr(ix.index, container.s, t_i32());
+  if (!at.s.ok) {
+    return at;
+  }
+  at = index_operand(at);
   s = at.s;
   if (!s.ok) {
     return at;
-  }
-  if (!is_i32(s.values[at.id])) {
-    return refused(s, "array projection contract");
   }
   // A string's element is one byte, typed u8 the way the checker types it.
   // Nothing is borrowed, so this is a read of the source rather than a
@@ -1361,6 +1356,36 @@ function index(ix: ast.ExprIndex, s: State): Value {
     return refused(s, "array projection contract");
   }
   return define(s, ssasem.array_get(), [container.id, at.id], unchecked, "", elem);
+}
+
+// An index of another integer type is the i32 it converts to exactly, and -1,
+// outside every bound, when it has no exact i32 conversion; a u8 always has one.
+function index_operand(v: Value): Value {
+  let s: State = v.s;
+  let source: typeinfo.Type = s.values[v.id];
+  if (is_i32(source)) {
+    return v;
+  }
+  if (!ssasem.is_integer(source)) {
+    return refused(s, "array projection contract");
+  }
+  let narrowed: Value = define(s, ssasem.cast(), [v.id], 0, "", t_i32());
+  if (ssasem.is_u8(source)) {
+    return narrowed;
+  }
+  let back: Value = define(narrowed.s, ssasem.cast(), [narrowed.id], 0, "", source);
+  let fits: Value = define(back.s, 9, [back.id, v.id], 0, "==", t_bool());
+  s = fits.s;
+  let pred: i32 = s.cur.id;
+  let hit: i32 = s.next_block;
+  let miss: i32 = hit + 1;
+  let join: i32 = hit + 2;
+  s = State { ...s, next_block: join + 1 };
+  s = terminate(s, t_brif(fits.id, hit, miss));
+  s = terminate(open(s, hit, [pred]), t_br(join));
+  let outside: Value = define(open(s, miss, [pred]), 1, [], 0 - 1, "", t_i32());
+  s = terminate(outside.s, t_br(join));
+  return define(open(s, join, [hit, miss]), 8, [narrowed.id, outside.id], 0, "", t_i32());
 }
 
 // A checked slice's decision tree as it is built: the state, and the blocks

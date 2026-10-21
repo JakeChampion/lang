@@ -46,9 +46,9 @@ identifiers everywhere else:
 
 | Form | Examples | Type |
 | ---- | -------- | ---- |
-| Integer | `42`, `0xff`, `0b1010`, `0o17` | whatever integer type the context needs, else `i32` |
-| Suffixed integer | `7i64`, `3u32`, `255u8` | the suffix (`i32` `i64` `u8` `u32` `u64`) |
-| Float | `2.5`, `1e3`, `2.5f32` | `f64`, or `f32` with the suffix |
+| Integer | `42`, `1_000_000`, `0xff`, `0b1010`, `0o17` | whatever integer type the context needs, else `i32` |
+| Suffixed integer | `7i64`, `3u32`, `255u8`, `8usize` | the suffix (`i32` `i64` `u8` `u32` `u64` `usize`) |
+| Float | `2.5`, `1e3`, `2.5f32`, `1_000.25` | `f64`, or `f32` with the suffix |
 | Character | `'x'`, `'é'`, `'\u{1F600}'` | `char`, one Unicode scalar value |
 | Byte | `b'x'`, `b'\n'` | `u8` |
 | String | `"tab\there"` | `string` |
@@ -56,7 +56,8 @@ identifiers everywhere else:
 | Boolean | `true`, `false` | `boolean` |
 | Unit | `()` | `void` |
 
-There are no digit separators. An integer literal that does not fit its
+An `_` between two digits separates them and is otherwise ignored, in every
+numeric form: `0xffff_0000`, `0b1010_0101u8`, `6.022_140e23`. An integer literal that does not fit its
 type is a compile error (`E047`), so `let b: u8 = 300;` is rejected rather
 than wrapped. A character literal and a byte literal never convert into
 each other or into an integer without an `as` cast: `s[i] == b'['`

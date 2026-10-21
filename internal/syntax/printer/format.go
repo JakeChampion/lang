@@ -1866,7 +1866,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		// it on round-trip — the format pass runs pre-checker, so
 		// the only source of Width here is user authorship.
 		suffix := ""
-		if x.Width != 0 {
+		if x.Width == ast.WidthPtr {
+			suffix = "usize"
+		} else if x.Width != 0 {
 			if x.IsUnsigned {
 				suffix = fmt.Sprintf("u%d", x.Width)
 			} else {

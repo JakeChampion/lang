@@ -464,12 +464,11 @@ function e_number(text: string, suffix: string, is_float: boolean): ast.Expr {
   return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: is_float, line: 0, col: 0 };
 }
 
-function e_number_at(text: string, suffix: string, is_float: boolean, line: i32, col: i32): ast.Expr {
-  return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: is_float, line: line, col: col };
-}
-
-function e_quoted_at(text: string, suffix: string, raw: string, line: i32, col: i32): ast.Expr {
-  return ast.ExprNumber { text: text, suffix: suffix, raw: raw, is_float: false, line: line, col: col };
+// e_spelled_at is a number token's literal: `raw` is its spelling when that
+// is not `text`, a quoted character, a `0o` / `0b` numeral or one with `_`
+// separators.
+function e_spelled_at(text: string, suffix: string, raw: string, is_float: boolean, line: i32, col: i32): ast.Expr {
+  return ast.ExprNumber { text: text, suffix: suffix, raw: raw, is_float: is_float, line: line, col: col };
 }
 
 // e_unit_at builds the unit value `()`. Its payload is the constant 0 the
@@ -3353,10 +3352,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       }
       // Route through parse_postfix so a numeric primary can
       // carry a trailing `as Type` cast (e.g. `15 as u8`).
-      if (x.raw.len() > 0) {
-        return parse_postfix(p, e_quoted_at(x.text, x.suffix, x.raw, nline, ncol));
-      }
-      return parse_postfix(p, e_number_at(x.text, x.suffix, x.is_float, nline, ncol));
+      return parse_postfix(p, e_spelled_at(x.text, x.suffix, x.raw, x.is_float, nline, ncol));
     },
     lexer.TokString(x) => {
       let sline: i32 = p.peek_line();

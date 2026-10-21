@@ -191,8 +191,71 @@ pub function keywords(): string[] {
 
 function is_valid_numeric_suffix(s: string): boolean {
   return s == "i32" || s == "i64"
-    || s == "u8" || s == "u32" || s == "u64"
+    || s == "u8" || s == "u32" || s == "u64" || s == "usize"
     || s == "f32" || s == "f64";
+}
+
+// suffix_end is where a numeric suffix starting at src[i] ends: `usize`, or
+// its first letter and the digits after it.
+function suffix_end(src: string, i: i32, n: i32): i32 {
+  if (i + 5 <= n && slice_unchecked(src, i, i + 5) == "usize") {
+    return i + 5;
+  }
+  let e: i32 = i + 1;
+  while (e < n && is_digit(src[e] as i32)) {
+    e = e + 1;
+  }
+  return e;
+}
+
+// digit_run_end is where the run of base-`base` digits from src[i] ends, each
+// `_` in it sitting between two digits when `separators` admits them. A `0o` /
+// `0b` run takes a separator before a decimal digit outside its base, so the
+// caller names that digit.
+function digit_run_end(src: string, i: i32, n: i32, base: i32, separators: boolean): i32 {
+  let e: i32 = i;
+  while (e < n) {
+    let c: i32 = src[e] as i32;
+    if (is_base_digit(c, base)) {
+      e = e + 1;
+    } else if (separators && c == 95 && e > i && e + 1 < n
+      && (is_base_digit(src[e + 1] as i32, base) || base < 10 && is_digit(src[e + 1] as i32))) {
+      e = e + 1;
+    } else {
+      return e;
+    }
+  }
+  return e;
+}
+
+function is_base_digit(c: i32, base: i32): boolean {
+  if (base == 16) {
+    return is_hex_digit(c);
+  }
+  return is_digit(c) && c - 48 < base;
+}
+
+// misplaced_separator is whether the digit run [begin, end) stopped at a `_`
+// it could not take.
+function misplaced_separator(src: string, begin: i32, end: i32, n: i32): boolean {
+  return end > begin && end < n && src[end] == b'_';
+}
+
+// without_separators is `text` with its `_` digit separators removed.
+function without_separators(text: string): string {
+  let out: string = "";
+  let from: i32 = 0;
+  for at in 0..text.len() {
+    if (text[at] == b'_') {
+      out = out + slice_unchecked(text, from, at);
+      from = at + 1;
+    }
+  }
+  return out + slice_unchecked(text, from, text.len());
+}
+
+function separator_message(): string {
+  return "a digit separator '_' must sit between two digits";
 }
 
 // Multi-char punctuator longest-prefix match. The Go lexer
@@ -768,11 +831,11 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
     is_hex = true;
     l = l.skip(2);  // '0' then 'x' / 'X'
     let hex_start: i32 = l.i;
-    let he: i32 = l.i;
-    while (he < l.n && is_hex_digit(l.src[he] as i32)) {
-      he = he + 1;
+    let run_end: i32 = digit_run_end(l.src, l.i, l.n, 16, true);
+    l = l.advance_in_line(run_end);
+    if (misplaced_separator(l.src, hex_start, l.i, l.n)) {
+      return NumResult { lex: l, tok: num_error_tok(separator_message(), start_line, start_col) };
     }
-    l = l.advance_in_line(he);
     if (l.i == hex_start) {
       return NumResult { lex: l, tok: num_error_tok("hex literal needs at least one digit after 0x", start_line, start_col) };
     }
@@ -781,11 +844,12 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
     let base: i32 = radix_prefix(l.src, l.i, l.n);
     return scan_radix_number(l, base, start_line, start_col);
   } else {
-    let de: i32 = l.i;
-    while (de < l.n && is_digit(l.src[de] as i32)) {
-      de = de + 1;
+    let int_start: i32 = l.i;
+    let run_end: i32 = digit_run_end(l.src, l.i, l.n, 10, !after_dot);
+    l = l.advance_in_line(run_end);
+    if (!after_dot && misplaced_separator(l.src, int_start, l.i, l.n)) {
+      return NumResult { lex: l, tok: num_error_tok(separator_message(), start_line, start_col) };
     }
-    l = l.advance_in_line(de);
   }
   let is_float: boolean = false;
   // Fractional part: `.<digit>+`. Suppressed for hex and right
@@ -793,11 +857,12 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
   if (!is_hex && !after_dot && l.i + 1 < l.n && l.src[l.i] == b'.' && is_digit(l.src[l.i + 1] as i32)) {
     is_float = true;
     l = l.skip(1);  // consume `.`
-    let fe: i32 = l.i;
-    while (fe < l.n && is_digit(l.src[fe] as i32)) {
-      fe = fe + 1;
+    let frac_start: i32 = l.i;
+    let run_end: i32 = digit_run_end(l.src, l.i, l.n, 10, true);
+    l = l.advance_in_line(run_end);
+    if (misplaced_separator(l.src, frac_start, l.i, l.n)) {
+      return NumResult { lex: l, tok: num_error_tok(separator_message(), start_line, start_col) };
     }
-    l = l.advance_in_line(fe);
   }
   // Scientific-notation exponent: `[eE][+-]?[0-9]+`, valid on an
   // integer base (`1e3`) or a fractional one (`1.5e-2`). Only
@@ -815,15 +880,16 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
       if (!l.at_end() && (l.peek_byte() == 43 || l.peek_byte() == 45)) {
         l = l.skip(1);  // sign
       }
-      let ee: i32 = l.i;
-      while (ee < l.n && is_digit(l.src[ee] as i32)) {
-        ee = ee + 1;
+      let exp_start: i32 = l.i;
+      let run_end: i32 = digit_run_end(l.src, l.i, l.n, 10, true);
+      l = l.advance_in_line(run_end);
+      if (misplaced_separator(l.src, exp_start, l.i, l.n)) {
+        return NumResult { lex: l, tok: num_error_tok(separator_message(), start_line, start_col) };
       }
-      l = l.advance_in_line(ee);
     }
   }
   let text: str = slice_unchecked(l.src, begin, l.i);
-  // Optional typed suffix: i32/i64/u8/u32/u64/f32/f64.
+  // Optional typed suffix: i32/i64/u8/u32/u64/usize/f32/f64.
   // The suffix character set is a closed list, so misspellings
   // like `42i33` / a truncated `42i` fail here rather than
   // partially consuming. An integer suffix on a float literal
@@ -831,12 +897,8 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
   let suffix: string = "";
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
     let s_begin: i32 = l.i;
-    l = l.skip(1);
-    let se: i32 = l.i;
-    while (se < l.n && is_digit(l.src[se] as i32)) {
-      se = se + 1;
-    }
-    l = l.advance_in_line(se);
+    let run_end: i32 = suffix_end(l.src, l.i, l.n);
+    l = l.advance_in_line(run_end);
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
     if (!is_valid_numeric_suffix(suffix)) {
       return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + quoted(suffix) + " on " + quoted(text + ""), start_line, start_col) };
@@ -850,6 +912,12 @@ function scan_number(own l: Lex, after_dot: boolean, start_line: i32, start_col:
   // float-literal construction path.
   if (!is_float && suffix.len() > 0 && suffix[0] == b'f') {
     is_float = true;
+  }
+  let spelled: string = text + "";
+  let digits: string = without_separators(spelled);
+  if (digits.len() != spelled.len()) {
+    let raw: string = slice_unchecked(l.src, begin, l.i) + "";
+    return NumResult { lex: l, tok: TokNumber { text: digits, suffix: suffix, raw: raw, is_float: is_float, line: start_line, col: start_col } };
   }
   let tok: Token = number_tok(text, suffix, is_float, start_line, start_col);
   return NumResult { lex: l, tok: tok };
@@ -881,12 +949,17 @@ function scan_radix_number(own l0: Lex, base: i32, start_line: i32, start_col: i
   let prefix: string = slice_unchecked(l.src, l.i, l.i + 2) + "";
   l = l.skip(2);
   let digits: i32[] = [];
-  let e: i32 = l.i;
-  while (e < l.n && is_digit(l.src[e] as i32) && l.src[e] as i32 - 48 < base) {
-    digits = digits.append(l.src[e] as i32 - 48);
-    e = e + 1;
+  let e: i32 = digit_run_end(l.src, l.i, l.n, base, true);
+  for at in l.i..e {
+    if (l.src[at] != b'_') {
+      digits = digits.append(l.src[at] as i32 - 48);
+    }
   }
+  let run_start: i32 = l.i;
   l = l.advance_in_line(e);
+  if (misplaced_separator(l.src, run_start, l.i, l.n)) {
+    return NumResult { lex: l, tok: num_error_tok(separator_message(), start_line, start_col) };
+  }
   if (digits.len() == 0) {
     return NumResult { lex: l, tok: num_error_tok("integer literal needs at least one digit after " + prefix, start_line, start_col) };
   }
@@ -896,12 +969,8 @@ function scan_radix_number(own l0: Lex, base: i32, start_line: i32, start_col: i
   let suffix: string = "";
   if (!l.at_end() && is_suffix_start(l.peek_byte())) {
     let s_begin: i32 = l.i;
-    l = l.skip(1);
-    let se: i32 = l.i;
-    while (se < l.n && is_digit(l.src[se] as i32)) {
-      se = se + 1;
-    }
-    l = l.advance_in_line(se);
+    let run_end: i32 = suffix_end(l.src, l.i, l.n);
+    l = l.advance_in_line(run_end);
     suffix = slice_unchecked(l.src, s_begin, l.i) + "";
     if (!is_valid_numeric_suffix(suffix) || suffix[0] == b'f') {
       return NumResult { lex: l, tok: num_error_tok("unknown numeric suffix " + quoted(suffix) + " on " + quoted(slice_unchecked(l.src, begin, s_begin) + ""), start_line, start_col) };
