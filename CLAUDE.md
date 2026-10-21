@@ -132,9 +132,13 @@ user can provide.
 - **Edit surgically; never rewrite a file to change part of it.** The compiler's
   sources run to thousands of lines, and a whole-file rewrite buries the change
   in a diff nobody can review.
-- **Write plainly.** Commit messages, PR bodies and `docs/` are read by people.
-  Say the thing literally instead of reaching for a metaphor — "a parameter
-  worth varying", not "a dial worth turning".
+- **Write in Simplified Technical English.** Commit messages, PR bodies,
+  `docs/`, comments, help text and diagnostics are read by people. Follow the
+  ASD-STE100 rules the `simplified-technical-english` skill carries
+  (`.claude/skills/simplified-technical-english/SKILL.md`): one instruction
+  per sentence, about 20 words, active voice, no contractions, no semicolons,
+  no metaphor, one name per thing. Code, identifiers, flags and quoted output
+  are exempt. Check a document with its `scripts/ste_check.py --no-vocab`.
 
 `docs/AGENT-PROMPTING.md` has the rest: the model behaviours these four correct
 for, the harness settings no prompt can fix (effort levels, append-only history,
