@@ -77,20 +77,20 @@ x86_64/closure_call.text	774
 x86_64/closure_call.ir	63018106
 x86_64/enum_match.text	891
 x86_64/enum_match.ir	50850037
-x86_64/http_hello.text	15395
+x86_64/http_hello.text	15466
 x86_64/http_hello.ir	24268390
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
-x86_64/map_int.text	5590
+x86_64/map_int.text	5638
 x86_64/map_int.ir	38013213
-x86_64/map_probe_chain.text	5597
+x86_64/map_probe_chain.text	5645
 x86_64/map_probe_chain.ir	354691233
-x86_64/map_string.text	6536
+x86_64/map_string.text	6565
 x86_64/map_string.ir	62112069	2
-x86_64/ordmap_insert.text	2737
-x86_64/ordmap_insert.ir	107976333
-x86_64/pmap_insert.text	2618
-x86_64/pmap_insert.ir	59526732
+x86_64/ordmap_insert.text	2712
+x86_64/ordmap_insert.ir	105979300
+x86_64/pmap_insert.text	2484
+x86_64/pmap_insert.ir	56484087
 x86_64/pvec_with.text	2662
 x86_64/pvec_with.ir	57131286
 x86_64/record_update.ir	109849111
@@ -117,9 +117,9 @@ x86_64/struct_drop.text	2097
 x86_64/struct_drop.ir	191340526
 x86_64/tokenize.text	934
 x86_64/tokenize.ir	36960039
-x86_64/utf8_ingest_unchecked.text	7106
+x86_64/utf8_ingest_unchecked.text	7100
 x86_64/utf8_ingest_unchecked.ir	2833481
-x86_64/utf8_ingest_validated.text	7368
+x86_64/utf8_ingest_validated.text	7348
 x86_64/utf8_ingest_validated.ir	5916089
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -282,19 +282,19 @@ aarch64/closure_call.text	965
 aarch64/closure_call.ir	72624111
 aarch64/enum_match.text	1085
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	15919
+aarch64/http_hello.text	16008
 aarch64/http_hello.ir	26308603
 aarch64/int_loop.text	90
 aarch64/int_loop.ir	18000025
-aarch64/map_int.text	5955
+aarch64/map_int.text	5987
 aarch64/map_int.ir	37224371
-aarch64/map_probe_chain.text	5966
+aarch64/map_probe_chain.text	5998
 aarch64/map_probe_chain.ir	353848242
-aarch64/map_string.text	7063
+aarch64/map_string.text	7079
 aarch64/map_string.ir	63502584	2
-aarch64/ordmap_insert.text	3123
+aarch64/ordmap_insert.text	3068
 aarch64/ordmap_insert.ir	115601873
-aarch64/pmap_insert.text	2884
+aarch64/pmap_insert.text	2743
 aarch64/pmap_insert.ir	69269531
 aarch64/pvec_with.text	2916
 aarch64/pvec_with.ir	60838467
@@ -304,9 +304,9 @@ aarch64/sort_inplace.text	1371
 aarch64/sort_inplace.ir	52514479
 aarch64/sort_ints.text	1926
 aarch64/sort_ints.ir	33759009
-aarch64/sort_strings.text	3327
+aarch64/sort_strings.text	3346
 aarch64/sort_strings.ir	106027235
-aarch64/string_build.text	2137
+aarch64/string_build.text	2121
 aarch64/string_build.ir	47221394
 aarch64/string_count_byte.text	1259
 aarch64/string_count_byte.ir	295398919
@@ -314,17 +314,17 @@ aarch64/string_find_byte.text	1665
 aarch64/string_find_byte.ir	55807313
 aarch64/string_rfind_byte.text	1755
 aarch64/string_rfind_byte.ir	55809919
-aarch64/string_scan.text	2295
+aarch64/string_scan.text	2314
 aarch64/string_scan.ir	60275834
 aarch64/string_slice.text	901
 aarch64/string_slice.ir	43620043
-aarch64/struct_drop.text	2400
+aarch64/struct_drop.text	2419
 aarch64/struct_drop.ir	221660785
 aarch64/tokenize.text	1157
 aarch64/tokenize.ir	38580038
-aarch64/utf8_ingest_unchecked.text	7515
+aarch64/utf8_ingest_unchecked.text	7494
 aarch64/utf8_ingest_unchecked.ir	2703816
-aarch64/utf8_ingest_validated.text	7780
+aarch64/utf8_ingest_validated.text	7746
 aarch64/utf8_ingest_validated.ir	6278000
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.

@@ -14462,7 +14462,7 @@ function mono_stmts(stmts: ast.Stmt[], env: MEnv, funcs: MFns, ins: Insts, ret_t
 // param coarsens to "fn", "fn[]" or "[fn]" with its signature held in the
 // fn_ret / fn_param_types sidecars; the env holds the spelling rebuilt from
 // them, so lambda_ret_of can bind a callee's return-position type var from a
-// fn PARAM passed on (`map_values(f)` calling `__om_map_values(t, f)` with
+// fn PARAM passed on (`map_values(f)` calling `node_map_values(t, f)` with
 // `f: (V) => W`), and an array of callables passed on binds the callee's
 // variable the same way (`drive(start(entries))` with
 // `entries: (() => T)[]`).
@@ -17868,7 +17868,7 @@ function ms_module(mod: Module): Module {
   // Phase 2: generate clones; a worklist covers clones whose own field
   // types / method bodies reference further instantiations. The same
   // worklist carries the bounded-generic instantiations a method clone's
-  // body makes (`__om_insert(m.root, k, v)` under `OrdMap__i32__i32`):
+  // body makes (`__ps_add_all(s, xs)` under `PSet__i32`):
   // those are cloned here from the templates monomorphize_module passed
   // through, and a clone's own annotations feed back struct instantiations.
   let done: Insts = Insts { inames: [], itypes: [], iargs: [] };
@@ -19405,8 +19405,8 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
         // on the bound value recovers its instantiation: each binding
         // takes its declared field type under the scrutinee's
         // original-spelling type args (`Sm(n)` over `Opt[Opt[i32]]` →
-        // n: `Opt[i32]`; `Bin(l, k, v, r, s)` over `OrdNode[i32,
-        // string]` → l: `OrdNode[i32, string]`, k: i32, v: string).
+        // n: `Opt[i32]`; `Bin(l, k, v, r, s)` over `OrdMap[i32,
+        // string]` → l: `OrdMap[i32, string]`, k: i32, v: string).
         let armenv: MEnv = mono_arm_env(env, m.arms[i].pattern, sty, funcs);
         if (gi.ok) {
           let gidx: i32 = genum_index(enums, gi.base);

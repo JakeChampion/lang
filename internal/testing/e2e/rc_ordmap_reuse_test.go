@@ -7,7 +7,7 @@ import (
 )
 
 // std/ordmap's insert takes a node apart and rebuilds it through
-// __om_balance, a function its two insert paths share. The node dies before
+// node_balance, a function its two insert paths share. The node dies before
 // the call and a reuse token cannot cross one, so every re-insert allocated
 // its whole path. The inliner splices a shared callee where the caller takes
 // apart a box of the type it returns, and the path is rebuilt in place.
