@@ -332,3 +332,26 @@ grpc/unimplemented_service	1
 h2spec/passed	146
 h2spec/failed	0
 h2spec/skipped	0
+
+# lane: net-soak
+soak/static.requests	31160697
+soak/static.failed	0
+soak/static.rss_warm_kb	3296
+soak/static.rss_end_kb	3296
+soak/static.rss_growth_kb	0
+soak/static.allocs	272338
+soak/static.live_bytes	0
+soak/echo.requests	22490260
+soak/echo.failed	0
+soak/echo.rss_warm_kb	3264
+soak/echo.rss_end_kb	3264
+soak/echo.rss_growth_kb	0
+soak/echo.allocs	1100565490
+soak/echo.live_bytes	0
+soak/recent.requests	17628023
+soak/recent.failed	0
+soak/recent.rss_warm_kb	3192
+soak/recent.rss_end_kb	3192
+soak/recent.rss_growth_kb	0
+soak/recent.allocs	447915110
+soak/recent.live_bytes	0
