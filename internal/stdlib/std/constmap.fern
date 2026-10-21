@@ -25,6 +25,7 @@
 
 import "core/map";
 import "std/hash";
+import "std/string";
 
 // The positions are three segments of `segment_length` slots: the first
 // chosen by the high bits of the hash over `segment_count_length`, the other
