@@ -491,6 +491,141 @@ function empty_array_block(label: string): string {
   return "    .section .data\n    .balign 8\n    .quad 0\n    .quad -1\n" + label + ":\n    .quad 0\n    .section .text\n";
 }
 
+// apo_grow is __fern_arr_push_owned past its fast path on the plain build.
+function apo_grow(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    movl -8(%rdi), %ecx\n");
+  s = s.write("    testl %ecx, %ecx\n");
+  s = s.write("    js .Larr_push_slow\n");
+  s = s.write("    cmpl $1, %ecx\n");
+  s = s.write("    jne .Larr_push_slow\n");
+  s = s.write("    pushq %rbp\n");
+  s = s.write("    movq %rsp, %rbp\n");
+  s = s.write("    pushq %r12\n");
+  s = s.write("    pushq %r13\n");
+  s = s.write("    pushq %r14\n");
+  s = s.write("    pushq %r15\n");
+  s = s.write("    movq %rdi, %r12\n");  // old arr ptr
+  s = s.write("    movq %rsi, %r13\n");  // value
+  s = s.write("    movq (%r12), %r14\n");  // len
+  s = s.write("    movq -16(%r12), %r15\n");  // old cap
+  s = s.write("    leaq (%r15,%r15), %rcx\n");  // newcap: doubled, or 4 from 0
+  s = s.write("    testq %rcx, %rcx\n");
+  s = s.write("    jnz .Lapo_cap\n");
+  s = s.write("    movq $4, %rcx\n");
+  s = s.write(".Lapo_cap:\n");
+  // The box shim's pop, without the call: the block's byte count
+  // indexes the freelist as it is; a miss or a block over 256 words
+  // takes __fern_alloc, which keeps %rcx.
+  s = s.write("    leaq 24(,%rcx,8), %rdi\n");
+  s = s.write("    cmpq $2048, %rdi\n");
+  s = s.write("    ja .Lapo_alloc\n");
+  s = s.write("    leaq __fern_freelist(%rip), %rax\n");
+  s = s.write("    addq %rax, %rdi\n");
+  s = s.write("    movq (%rdi), %rax\n");
+  s = s.write("    testq %rax, %rax\n");
+  s = s.write("    jz .Lapo_miss\n");
+  s = s.write("    movq (%rax), %rdx\n");
+  s = s.write("    movq %rdx, (%rdi)\n");
+  s = s.write(".Lapo_box:\n");
+  s = s.write("    movq %rcx, (%rax)\n");  // cap
+  s = s.write("    movq $1, 8(%rax)\n");  // rc
+  s = s.write("    addq $16, %rax\n");  // data ptr
+  s = s.write("    leaq 1(%r14), %rcx\n");
+  s = s.write("    movq %rcx, (%rax)\n");  // new len = old+1
+  s = s.write(arr_copy_elems(".Lapo"));
+  s = s.write("    movq %r13, 8(%rax,%r14,8)\n");  // the value, at slot len+1
+  s = s.write("    leaq 3(%r15), %rcx\n");  // old block words = cap + 3 (header)
+  s = s.write("    cmpq $65536, %rcx\n");
+  s = s.write("    jae .Lapo_large\n");  // large tier -> recycle via __fern_large_push
+  s = s.write(quarantine_rc("-8(%r12)", false));
+  s = s.write("    leaq -16(%r12), %rdx\n");  // old box base
+  s = freelist_push(s, "%rdx", "%rcx", "%rdi");
+  s = s.write(".Lapo_ret:\n");
+  s = s.write("    popq %r15\n");
+  s = s.write("    popq %r14\n");
+  s = s.write("    popq %r13\n");
+  s = s.write("    popq %r12\n");
+  s = s.write("    leave\n");
+  s = s.write("    ret\n");
+  s = s.write(".Lapo_miss:\n");
+  s = s.write("    leaq __fern_freelist(%rip), %rax\n");
+  s = s.write("    subq %rax, %rdi\n");
+  s = s.write(".Lapo_alloc:\n");
+  s = s.write("    call __fern_alloc\n");
+  s = s.write("    jmp .Lapo_box\n");
+  return s;
+}
+
+// apo_wrapped is __fern_arr_push_owned past its fast path on the diagnostic
+// builds: the old pointer saved, the shared slow path called, and the old
+// block freed through the hooks iff the result moved.
+function apo_wrapped(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.rc_free_debug) {
+    // The first append to a static empty array leaves nothing to free, so
+    // it goes straight to the shared slow path and returns from there.
+    s = s.write("    cmpq $0, (%rdi)\n");
+    s = s.write("    jne .Lapo_grow\n");
+    s = s.write("    cmpq $0, -16(%rdi)\n");
+    s = s.write("    jne .Lapo_grow\n");
+    s = s.write("    cmpl $0, -8(%rdi)\n");
+    s = s.write("    js .Larr_push_slow\n");
+    s = s.write(".Lapo_grow:\n");
+  }
+  s = s.write("    pushq %rbp\n");
+  s = s.write("    movq %rsp, %rbp\n");
+  s = s.write("    pushq %r12\n");
+  s = s.write("    pushq %r13\n");  // align stack to 16 for the call
+  s = s.write("    movq %rdi, %r12\n");  // save old arr ptr
+  // %rax = new (grew) or old (in place); the fast path already declined.
+  if (s.rc_free_debug) {
+    s = s.write("    call __fern_arr_push\n");
+  } else {
+    s = s.write("    call .Larr_push_slow\n");
+  }
+  s = s.write("    cmpq %rax, %r12\n");
+  s = s.write("    je .Lapo_ret\n");  // in place — nothing freed
+  s = s.write("    cmpq $0x10000, %r12\n");  // grew: free the dead old box %r12
+  s = s.write("    jb .Lapo_ret\n");  // low-addr / SSO sentinel
+  s = s.write("    movl -8(%r12), %ecx\n");  // old rc
+  s = s.write(san_poison_check("%ecx", s.rc_free_debug));
+  s = s.write("    testl %ecx, %ecx\n");
+  s = s.write("    js .Lapo_ret\n");  // static sentinel (rc<0)
+  s = s.write("    cmpl $1, %ecx\n");
+  s = s.write("    jne .Lapo_ret\n");  // not sole owner — leave (defensive)
+  s = s.write("    movl -16(%r12), %ecx\n");  // old cap
+  s = s.write("    addq $3, %rcx\n");  // words = cap + 3 (header)
+  s = s.write("    cmpq $65536, %rcx\n");
+  s = s.write("    jae .Lapo_large\n");  // large tier -> recycle via __fern_large_push
+  s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
+  s = s.write("    leaq -16(%r12), %rdx\n");  // old box base
+  s = hev_free(s, "%rdx", "%rcx");
+  if (!s.rc_free_debug) {
+    s = freelist_push(s, "%rdx", "%rcx", "%rdi");
+  }
+  s = s.write(".Lapo_ret:\n");
+  s = s.write("    popq %r13\n");
+  s = s.write("    popq %r12\n");
+  s = s.write("    leave\n");
+  s = s.write("    ret\n");
+  return s;
+}
+
+// apo_large recycles a superseded old buffer of the large tier (#3425),
+// >=512 KiB, base = old-16 and bytes = words*8, instead of leaking it. %rax
+// holds the return value `new` and __fern_large_push clobbers it, so it is
+// kept across the call; %r12 is callee-saved.
+function apo_large(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write(".Lapo_large:\n");
+  s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
+  s = s.write("    leaq -16(%r12), %r8\n");  // base = old - 16
+  s = s.write("    leaq 0(,%rcx,8), %rsi\n");  // bytes = words*8
+  s = s.write("    pushq %rax\n");  // preserve return value (new)
+  s = s.write("    call __fern_large_push\n");
+  s = ssa_pop_r(s, "%rax");
+  s = s.write("    jmp .Lapo_ret\n");
+  return s;
+}
+
 // __fern_arr_push_u8 and __fern_arr_push_owned_u8 are __fern_arr_push and
 // __fern_arr_push_owned for a packed u8[] (%rsi's low byte appended): the
 // capacity stays in 8-byte words, so a box has room while len < cap * 8, a
@@ -561,6 +696,26 @@ function arr_push_fast_u8(slow: string, on: boolean): string {
     + "    testl %ecx, %ecx\n    jns " + slow + "\n"
     + ok + ":\n    movb %sil, 8(%rdi,%rdx)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
     + "    movq %rdi, %rax\n    ret\n";
+}
+
+// arr_copy_elems copies a grown array's old elements (slots 1..len) from the
+// old buffer in %r12 to the new one in %rax, %r14 holding len: eight to the
+// round through a pair of 32-byte AVX2 moves (one instruction per element),
+// then at most one round of four through 16-byte moves, then one at a time.
+// AVX2 is inside the x86-64-v3 baseline, so the moves need no dispatch;
+// vzeroupper follows the ymm loop. %rsi / %rdi / %rcx / %rdx and ymm0-1 are
+// the scratch; %rax, %r12, %r13 and %r14 are untouched. `l` prefixes the
+// labels.
+function arr_copy_elems(l: string): string {
+  return "    leaq 8(%r12), %rsi\n    leaq 8(%rax), %rdi\n    movq %r14, %rcx\n    subq $8, %rcx\n    jl " + l + "_copy_lt8\n"
+    + l + "_copy8:\n    vmovdqu (%rsi), %ymm0\n    vmovdqu 32(%rsi), %ymm1\n    vmovdqu %ymm0, (%rdi)\n    vmovdqu %ymm1, 32(%rdi)\n"
+    + "    addq $64, %rsi\n    addq $64, %rdi\n    subq $8, %rcx\n    jge " + l + "_copy8\n    vzeroupper\n"
+    + l + "_copy_lt8:\n    addq $8, %rcx\n    cmpq $4, %rcx\n    jl " + l + "_copy1\n"
+    + "    movdqu (%rsi), %xmm0\n    movdqu 16(%rsi), %xmm1\n    movdqu %xmm0, (%rdi)\n    movdqu %xmm1, 16(%rdi)\n"
+    + "    addq $32, %rsi\n    addq $32, %rdi\n    subq $4, %rcx\n"
+    + l + "_copy1:\n    testq %rcx, %rcx\n    jz " + l + "_copy_done\n"
+    + l + "_copy1_loop:\n    movq (%rsi), %rdx\n    movq %rdx, (%rdi)\n    addq $8, %rsi\n    addq $8, %rdi\n    decq %rcx\n    jnz " + l + "_copy1_loop\n"
+    + l + "_copy_done:\n";
 }
 
 // arr_push_fast is the append both __fern_arr_push and __fern_arr_push_owned
@@ -4354,50 +4509,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %r14, %rcx\n");
     s = s.write("    incq %rcx\n");
     s = s.write("    movq %rcx, (%rax)\n");  // new len = old+1 (overwrite helper's len)
-    // Copy old elements (slots 1..len) from old arr to new, eight to the
-    // round through a pair of 32-byte AVX2 moves (one instruction per
-    // element), then at most one round of four through 16-byte moves, then
-    // one at a time. AVX2 is inside the x86-64-v3 baseline, so the moves need
-    // no dispatch; vzeroupper follows the ymm loop. %rsi / %rdi / %rcx / %rdx
-    // and ymm0-1 are the scratch; %rax (the new buffer, the return value),
-    // %r12, %r13 and %r14 all outlive this and are untouched.
-    s = s.write("    leaq 8(%r12), %rsi\n");  // src cursor
-    s = s.write("    leaq 8(%rax), %rdi\n");  // dst cursor
-    s = s.write("    movq %r14, %rcx\n");
-    s = s.write("    subq $8, %rcx\n");  // elements remaining, less one round
-    s = s.write("    jl .Larr_push_copy_lt8\n");
-    s = s.write(".Larr_push_copy8:\n");
-    s = s.write("    vmovdqu (%rsi), %ymm0\n");
-    s = s.write("    vmovdqu 32(%rsi), %ymm1\n");
-    s = s.write("    vmovdqu %ymm0, (%rdi)\n");
-    s = s.write("    vmovdqu %ymm1, 32(%rdi)\n");
-    s = s.write("    addq $64, %rsi\n");
-    s = s.write("    addq $64, %rdi\n");
-    s = s.write("    subq $8, %rcx\n");
-    s = s.write("    jge .Larr_push_copy8\n");
-    s = s.write("    vzeroupper\n");
-    s = s.write(".Larr_push_copy_lt8:\n");
-    s = s.write("    addq $8, %rcx\n");  // 0..7 left
-    s = s.write("    cmpq $4, %rcx\n");
-    s = s.write("    jl .Larr_push_copy1\n");
-    s = s.write("    movdqu (%rsi), %xmm0\n");
-    s = s.write("    movdqu 16(%rsi), %xmm1\n");
-    s = s.write("    movdqu %xmm0, (%rdi)\n");
-    s = s.write("    movdqu %xmm1, 16(%rdi)\n");
-    s = s.write("    addq $32, %rsi\n");
-    s = s.write("    addq $32, %rdi\n");
-    s = s.write("    subq $4, %rcx\n");
-    s = s.write(".Larr_push_copy1:\n");
-    s = s.write("    testq %rcx, %rcx\n");
-    s = s.write("    jz .Larr_push_copy_done\n");
-    s = s.write(".Larr_push_copy1_loop:\n");
-    s = s.write("    movq (%rsi), %rdx\n");
-    s = s.write("    movq %rdx, (%rdi)\n");
-    s = s.write("    addq $8, %rsi\n");
-    s = s.write("    addq $8, %rdi\n");
-    s = s.write("    decq %rcx\n");
-    s = s.write("    jnz .Larr_push_copy1_loop\n");
-    s = s.write(".Larr_push_copy_done:\n");
+    s = s.write(arr_copy_elems(".Larr_push"));
     s = s.write("    movq %r14, %rcx\n");
     s = s.write("    incq %rcx\n");
     s = s.write("    movq %r13, (%rax,%rcx,8)\n");
@@ -4411,81 +4523,35 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
 
   // __fern_arr_push_owned — the sole-owner self-append (an !aliased
-  // `a = a.append(v)`). Identical to __fern_arr_push but reclaims the old buffer
-  // when the push GREW (reallocated): a thin wrapper that saves the old ptr,
-  // calls __fern_arr_push, and — iff the result differs (grow) — pushes the old
-  // box onto its size class (the arr_dec free path). Sound only because the
-  // emitting site proved the slot unaliased (sole owner), so the superseded old
-  // buffer has no surviving reference. This is the safe, gated form of the free
-  // the shared __fern_arr_push must NOT do (see .Larr_push_grow). Closes the
-  // dominant per-module self-compile leak (#3452 / #3425). Depends on
-  // __fern_arr_push, so it shares arr_push's emit gate — the op handler marks the
-  // arr_push need alongside arr_push_owned, so the two are always co-present, and
-  // the per-module entry (which emits __fern_arr_push) gets this wrapper too
-  // without threading a separate need through the union.
+  // `a = a.append(v)`): __fern_arr_push that also reclaims the old buffer
+  // when the push grew, pushing it onto its size class (the arr_dec free
+  // path). Sound only because the emitting site proved the slot unaliased
+  // (sole owner), so the superseded old buffer has no surviving reference.
+  // This is the safe, gated form of the free the shared __fern_arr_push must
+  // NOT do (see .Larr_push_grow). Depends on __fern_arr_push, so it shares
+  // arr_push's emit gate — the op handler marks the arr_push need alongside
+  // arr_push_owned, so the two are always co-present, and the per-module
+  // entry (which emits __fern_arr_push) gets this one too without threading
+  // a separate need through the union.
+  //
+  // A full sole-owned receiver, the common case past the inline fast path,
+  // grows here in one frame: the new block is popped from its class as the
+  // box shim would, the elements copied, and the old block pushed onto its
+  // class with nothing re-read, since the rc check at entry already proved
+  // the receiver ours. A static literal and a shared receiver go to the
+  // shared slow path, which copies and frees nothing. The diagnostic builds
+  // keep the wrapper shape: the old pointer saved, the shared slow path
+  // called, and the old block freed through the hooks iff the result moved.
   if (s.has_need("arr_push")) {
     s = s.write("__fern_arr_push_owned:\n");
     s = s.write(arr_push_fast(".Lapo_slow", s.rc_free_debug));
     s = s.write(".Lapo_slow:\n");
-    if (!s.rc_free_debug) {
-      // The first append to a static empty array leaves nothing to free, so
-      // it goes straight to the shared slow path and returns from there.
-      s = s.write("    cmpq $0, (%rdi)\n");
-      s = s.write("    jne .Lapo_grow\n");
-      s = s.write("    cmpq $0, -16(%rdi)\n");
-      s = s.write("    jne .Lapo_grow\n");
-      s = s.write("    cmpl $0, -8(%rdi)\n");
-      s = s.write("    js .Larr_push_slow\n");
-      s = s.write(".Lapo_grow:\n");
-    }
-    s = s.write("    pushq %rbp\n");
-    s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    pushq %r13\n");  // align stack to 16 for the call
-    s = s.write("    movq %rdi, %r12\n");  // save old arr ptr
-    // %rax = new (grew) or old (in place); the fast path already declined.
-    if (s.rc_free_debug) {
-      s = s.write("    call __fern_arr_push\n");
+    if (!s.rc_free_debug && !hev_on(s) && !s.has_need("alloc_count")) {
+      s = apo_grow(s);
     } else {
-      s = s.write("    call .Larr_push_slow\n");
+      s = apo_wrapped(s);
     }
-    s = s.write("    cmpq %rax, %r12\n");
-    s = s.write("    je .Lapo_ret\n");  // in place — nothing freed
-    s = s.write("    cmpq $0x10000, %r12\n");  // grew: free the dead old box %r12
-    s = s.write("    jb .Lapo_ret\n");  // low-addr / SSO sentinel
-    s = s.write("    movl -8(%r12), %ecx\n");  // old rc
-    s = s.write(san_poison_check("%ecx", s.rc_free_debug));
-    s = s.write("    testl %ecx, %ecx\n");
-    s = s.write("    js .Lapo_ret\n");  // static sentinel (rc<0)
-    s = s.write("    cmpl $1, %ecx\n");
-    s = s.write("    jne .Lapo_ret\n");  // not sole owner — leave (defensive)
-    s = s.write("    movl -16(%r12), %ecx\n");  // old cap
-    s = s.write("    addq $3, %rcx\n");  // words = cap + 3 (header)
-    s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Lapo_large\n");  // large tier -> recycle via __fern_large_push
-    s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
-    s = s.write("    leaq -16(%r12), %rdx\n");  // old box base
-    s = hev_free(s, "%rdx", "%rcx");
-    if (!s.rc_free_debug) {
-      s = freelist_push(s, "%rdx", "%rcx", "%rdi");
-    }
-    s = s.write(".Lapo_ret:\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    leave\n");
-    s = s.write("    ret\n");
-    // Large tier (#3425): recycle the >=512 KiB superseded old buffer (base =
-    // old-16, bytes = words*8) instead of leaking. %rax holds the return value
-    // `new` and __fern_large_push clobbers it, so preserve it across the call;
-    // %r12 is callee-saved.
-    s = s.write(".Lapo_large:\n");
-    s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
-    s = s.write("    leaq -16(%r12), %r8\n");  // base = old - 16
-    s = s.write("    leaq 0(,%rcx,8), %rsi\n");  // bytes = words*8
-    s = s.write("    pushq %rax\n");  // preserve return value (new)
-    s = s.write("    call __fern_large_push\n");
-    s = ssa_pop_r(s, "%rax");
-    s = s.write("    jmp .Lapo_ret\n");
+    s = apo_large(s);
   }
 
   if (s.has_need("arr_push_u8")) {
