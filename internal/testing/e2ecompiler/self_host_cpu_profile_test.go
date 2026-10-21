@@ -304,3 +304,30 @@ function main(): i32 {
 		}
 	}
 }
+
+// TestSelfHostCPUProfileArm64UsesLSE: the arm64 profiler's counters and
+// capture lock use the LSE add and compare-and-swap of the ARMv8.2-A
+// baseline, not ARMv8.0 exclusive retry loops.
+func TestSelfHostCPUProfileArm64UsesLSE(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, kind := range []string{"cpu", "alloc"} {
+		asm := compileCPUProfile(t, cli, `function main(): i32 { return 0; }`, "arm64-linux", kind, "-emit", "asm")
+		data, err := os.ReadFile(asm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		for _, mnem := range []string{"ldaxr", "stlxr"} {
+			if strings.Contains(text, "\t"+mnem+" ") || strings.Contains(text, " "+mnem+" ") {
+				t.Errorf("%s profile: the runtime still has an exclusive %s", kind, mnem)
+			}
+		}
+		if !strings.Contains(text, "casal ") {
+			t.Errorf("%s profile: no casal in the runtime", kind)
+		}
+		// GNU as at its default -march takes the text only with the LSE
+		// extension enabled ahead of the first such instruction.
+		gcc, _ := arm64Tooling(t)
+		buildBinArm64(t, gcc, t.TempDir(), "prof-"+kind, text)
+	}
+}

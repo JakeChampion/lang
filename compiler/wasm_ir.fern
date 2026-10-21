@@ -2201,7 +2201,8 @@ pub function env_func_p2(): string {
 }
 
 // config_imports_p2 is the proxy world's source for the env op:
-// wasi:config/store's get, lowered to (key_ptr, key_len, retptr).
+// wasi:config/store's get, lowered to (key_ptr, key_len, retptr), at the
+// 0.2.0-rc.1 release candidate wasmtime serves: wasi-config has no release.
 pub function config_imports_p2(): string {
   return "  (import \"wasi:config/store@0.2.0-rc.1\" \"get\" (func $__fern_config_get (param i32 i32 i32)))\n";
 }
