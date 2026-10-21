@@ -62,16 +62,18 @@ there, a second lexer beside `compiler/lexer.fern` in a language nobody here
 writes.
 
 What does apply is the article's premise: a grammar maintained beside a lexer
-drifts from it. Fern's keyword set is written three times — `is_keyword` in
-`compiler/lexer.fern`, the `keywords` map in `internal/syntax/lexer/lexer.go`
-it says it mirrors, and the grammar's `keyword.control.fern` pattern — and
-only the first two are pinned to each other by a test. The cheap fix is a
-parity test reading `lexer.keywords()` and the grammar as data, the shape
-`compiler/funcdecl_bounds_parity_test.go` already takes. The expensive fix,
-a `fern -highlight` mode emitting spans from `lexer.fern` for the site and the
-playground's WASI build, would make the grammar a derived artefact; it is
-worth doing only when the playground wants live highlighting, and is not
-scheduled.
+drifts from it. Fern's keyword set is written four times: `is_keyword` and
+`keywords()` in `compiler/lexer.fern`, the `keywords` map in
+`internal/syntax/lexer/lexer.go`, and the grammar's four keyword scopes. The
+grammar, the Go map and `keywords()` were already held to one set by
+`TestGrammarHighlightsExactlyTheKeywords`, which reads the grammar and the
+Fern source as data. The pair nothing pinned was inside the compiler,
+`is_keyword` against the `keywords()` list it is documented to mirror, and
+`TestFernLexerKeywordTableMatchesItsList` now pins it the same way. The
+expensive change, a `fern -highlight` mode emitting spans from `lexer.fern`
+for the site and the playground's WASI build, would make the grammar a derived
+artefact; it is worth doing only when the playground wants live highlighting,
+and is not scheduled.
 
 ## packslip: one signed file per release
 
@@ -160,7 +162,7 @@ structure is immutable, so it fits sets known at construction.
 
 Where Fern has static string sets:
 
-- `std/publicsuffix` holds 6,952 rules as one 84 KB string and answers
+- `std/publicsuffix` holds 6,949 rules as one 78 KB string and answers
   `__rule(r)` with `contains("\n" + r + "\n")`: a substring scan of the whole
   list per label, up to a few labels per host. This is the clearest case for a
   built-once structure. A sorted array with binary search is the smallest
