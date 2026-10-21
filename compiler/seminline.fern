@@ -1883,6 +1883,10 @@ function swapped_blocks(blocks: ssa.SBlock[], swap: i32[]): ssa.SBlock[] {
   }
   let out: ssa.SBlock[] = [];
   for b in blocks {
+    if (!block_swaps_any(swap, b)) {
+      out = out.append(b);
+      continue;
+    }
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
       insts = insts.append(swapped_inst(swap, ins));
@@ -1904,11 +1908,26 @@ function swapped_inst(swap: i32[], ins: ssa.SInst): ssa.SInst {
 
 function swaps_any(swap: i32[], args: i32[]): boolean {
   for a in args {
-    if (a >= 0 && a < swap.len() && swap[a] >= 0) {
+    if (swaps_one(swap, a)) {
       return true;
     }
   }
   return false;
+}
+
+function swaps_one(swap: i32[], v: i32): boolean {
+  return v >= 0 && v < swap.len() && swap[v] >= 0;
+}
+
+// Whether `swap` renames anything in `b`: an operand, a record update's
+// base, or the terminator's condition or value.
+function block_swaps_any(swap: i32[], b: ssa.SBlock): boolean {
+  for ins in b.insts {
+    if (swaps_any(swap, ins.args) || swaps_one(swap, ssasem.update_base(ins))) {
+      return true;
+    }
+  }
+  return swaps_one(swap, b.term.cond) || swaps_one(swap, b.term.value);
 }
 
 function swapped_all(swap: i32[], args: i32[]): i32[] {
