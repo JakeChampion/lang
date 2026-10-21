@@ -2538,6 +2538,23 @@ function ambiguous_call_diags(fa: ast.ExprFieldAccess, recv_type: string, s: Sco
   return out.append(dg_at("E074", msg, fa.line, fa.col));
 }
 
+// finalizer_call_diags is E073 for `recv.drop()` on a type with a
+// `core/mem.Drop` impl: the drop glue already calls it when the value's last
+// reference goes away, so an explicit call runs the finalizer twice.
+function finalizer_call_diags(fa: ast.ExprFieldAccess, recv_type: string, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (fa.field != "drop") {
+    return out;
+  }
+  for m in s.trait_providers("drop", recv_type) {
+    if (method_simple_name(m.impl_trait) == "Drop") {
+      let msg: string = "`drop` is a finalizer, not a method to call: the runtime runs " + util.demangle(recv_type) + "'s `drop` when the value's last reference goes away, so calling it here runs the body a second time on a value that will still be finalized";
+      return out.append(dg_at("E073", msg, fa.line, fa.col + 1));
+    }
+  }
+  return out;
+}
+
 // sig_provider names a candidate as native's E074 does: the trait and where
 // its method was declared.
 function sig_provider(m: MethodSig): string {
@@ -15642,6 +15659,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             out = util.append_diags(out, cell_call_diags(c, mfa, recv, s));
           } else {
             out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
+            out = util.append_diags(out, finalizer_call_diags(mfa, sn.name, s));
             let msig: MethodSig = s.lookup_method(mfa.field, sn.name);
             if (msig.name.len() > 0) {
               if (c.args.len() != msig.param_types.len()) {
@@ -15700,6 +15718,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         },
         typeinfo.TypeUnion(un) => {
           out = util.append_diags(out, ambiguous_call_diags(mfa, un.name, s));
+          out = util.append_diags(out, finalizer_call_diags(mfa, un.name, s));
           let umsig: MethodSig = s.lookup_method(mfa.field, un.name);
           if (umsig.name.len() > 0 && c.args.len() == umsig.param_types.len()) {
             out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));

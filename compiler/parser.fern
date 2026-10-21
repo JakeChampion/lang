@@ -3385,7 +3385,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         // keyword appeared mid-expression — the retired anonymous
         // form. Name the arrow lambda that replaced it rather than
         // reporting an unknown token. Mirrors native P006.
-        return (e_unknown_at("`function` introduces a named declaration; write an anonymous function as an arrow lambda — `(x: T): R => …`", p.peek_line(), p.peek_col()), p.advance());
+        return (e_unknown_at(coded_kind("P006", "`function` introduces a named declaration; write an anonymous function as an arrow lambda — `(x: T): R => …`"), p.peek_line(), p.peek_col()), p.advance());
       }
       if (x.name == "match") {
         // match-expression in value position: desugar to an
@@ -5699,8 +5699,7 @@ function pipe_fill(e: ast.Expr, left: ast.Expr): ast.Expr {
 // pipe_desugar lowers `left |> right`. `x |> f(a, b)` prepends x to the
 // call's args → `f(x, a, b)`; `x |> f(a, _)` or `x |> f(b = _)` substitutes
 // x at the `_` topic placeholder instead → `f(a, x)` (at most one `_`,
-// direct args only — the native parser rejects two with P004, so a
-// native-valid program has at most one; this mirror substitutes at the first);
+// direct args only; a second is P004);
 // `x |> f` (a bare callee) wraps it as a single-arg call → `f(x)`.
 // Mirrors the Go parser's parsePipe, lowering to the same ExprCall the
 // rest of the pipeline already handles.
@@ -5710,7 +5709,11 @@ function pipe_desugar(left: ast.Expr, right: ast.Expr): ast.Expr {
       let hole: i32 = 0 - 1;
       let hi: i32 = 0;
       while (hi < c.args.len()) {
-        if (hole < 0 && pipe_is_hole(c.args[hi])) {
+        if (pipe_is_hole(c.args[hi])) {
+          if (hole >= 0) {
+            let extra: ast.Expr = fda_marker_value(c.args[hi]);
+            return e_unknown_at(coded_kind("P004", "at most one `_` placeholder in a piped call"), ast.expr_line(extra), ast.expr_col(extra));
+          }
           hole = hi;
         }
         hi = hi + 1;
@@ -8113,7 +8116,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         return (s_expr(e_call(e_ident("__set_field"), fargs)), p);
       },
       _ => {
-        return (s_unknown(p, "lhs of assign must be ident, index, or field"), p);
+        return (s_unknown_at(coded_kind("P003", "left-hand side of assignment is not assignable"), aline, acol), p);
       }
     }
   }
@@ -30270,6 +30273,12 @@ function stream_lex_error(toks: lexer.Token[]): Option[lexer.TokError] {
 // and its message, which asmcore.parse_unknown_error reports as written.
 function lex_error_kind(e: lexer.TokError): string {
   return "lex:" + e.code + ":" + e.msg;
+}
+
+// coded_kind is the sentinel kind of a parse error with its own code rather
+// than the generic P001: `code:`, the code, `:` and the message.
+function coded_kind(code: string, msg: string): string {
+  return "code:" + code + ":" + msg;
 }
 
 // lex_error_module is a module holding nothing but the lex error `le`.
