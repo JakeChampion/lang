@@ -121,6 +121,8 @@ pub struct EmitState {
   // flushed as one data block per entry alongside the string pool. See
   // add_const_agg.
   const_aggs: string[],
+  // const_agg_ix finds a constant in const_aggs by its packed text.
+  const_agg_ix: util.NameIndex,
   // ssa_frame is the byte size of the SSA function being emitted, 0 outside
   // one; the arm64 emitter addresses that function's frame slots from sp.
   // ssa_save is the part of it holding the callee-saved registers the
@@ -537,6 +539,7 @@ pub function new_state(): EmitState {
     str_ns: "",
     shape_lits: [],
     const_aggs: [],
+    const_agg_ix: util.name_index([]),
     ssa_frame: 0,
     ssa_save: 0,
     ssa_trap_suffix: "",
@@ -8937,15 +8940,12 @@ pub struct ConstAggOut { state: EmitState, idx: i32 }
 // update or an FBIP reuse degrades to a fresh allocation) and E048 forbids field
 // assignment, so no observer can see a constant change.
 pub function add_const_agg(s: EmitState, packed: string): ConstAggOut {
-  let i: i32 = 0;
-  while (i < s.const_aggs.len()) {
-    if (s.const_aggs[i] == packed) {
-      return ConstAggOut { state: s, idx: i };
-    }
-    i = i + 1;
+  let i: i32 = s.const_agg_ix.find(packed);
+  if (i >= 0) {
+    return ConstAggOut { state: s, idx: i };
   }
   let idx: i32 = s.const_aggs.len();
-  return ConstAggOut { state: EmitState { ...s, const_aggs: s.const_aggs.append(packed) }, idx: idx };
+  return ConstAggOut { state: EmitState { ...s, const_aggs: s.const_aggs.append(packed), const_agg_ix: s.const_agg_ix.added(packed) }, idx: idx };
 }
 
 // str_lit_label builds the `.rodata` label for string-literal `idx`, honouring
