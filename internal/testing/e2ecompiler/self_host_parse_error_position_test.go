@@ -69,6 +69,16 @@ var parseErrPosCases = []struct {
 	{"fstring-format-spec", "function main(): i32 {\n  let x = 5;\n  let s = f\"{x:04}\";\n  return 0;\n}\n"},
 	{"fstring-nested-sentinel-then-trailing", "function main(): i32 {\n  let x = 5;\n  let s = f\"{x + @} {x y}\";\n  return 0;\n}\n"},
 	{"fstring-placeholder-missing-type", "function main(): i32 {\n  let x = 5;\n  let s = f\"{(a: ) => a}\";\n  return 0;\n}\n"},
+	// A `pub use` names its list as `.{a, b}`: each entry is a name followed by
+	// `,` or `}`, and the list holds at least one (#12692).
+	{"pub-use-without-list", "pub use \"std/i32\";\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"pub-use-without-braces", "pub use \"std/i32\".to_string;\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"pub-use-empty-list", "pub use \"std/i32\".{};\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"pub-use-names-without-comma", "pub use \"./m\".{a b};\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"pub-use-leading-comma", "pub use \"./m\".{,a};\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"pub-use-list-at-eof", "pub use \"./m\".{a,"},
+	{"pub-use-open-brace-at-eof", "pub use \"./m\".{"},
+	{"pub-use-without-semicolon", "pub use \"./m\".{a}"},
 	// Parse errors with a code of their own rather than P001 (#12689).
 	{"assign-to-call-p003", "function main(): i32 {\n  foo() = 1;\n  return 0;\n}\n"},
 	{"assign-to-literal-p003", "function main(): i32 {\n  42 = 1;\n  return 0;\n}\n"},
@@ -199,6 +209,10 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 				"error[P001]: in fn 'b': expected an expression, got \";\" (9:14)\n" +
 				"error[P001]: at top level: expected an expression, got \";\" (1:14)\n" +
 				"error[P001]: at top level: expected \"(\", got \"x\" (8:6)"},
+		// A `pub use` that stops early reports where it stops and nothing more.
+		{"pub-use-empty-list-without-semicolon",
+			"pub use \"./m\".{}",
+			"error[P001]: at top level: expected \";\", got the end of the file (1:17)"},
 		// A sentinel inside a defer's action: the walk descends StmtDefer.
 		{"defer-action-sentinel",
 			"function main(): i32 {\n  defer print(;);\n  return 0;\n}\n",

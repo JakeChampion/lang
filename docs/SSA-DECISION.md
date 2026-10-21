@@ -448,7 +448,7 @@ ground on the native side, exactly as `-backend ssa` (wasm) is.
   refusal counted as the documented coverage endpoint rather than as a pass.
   Its first run found four wrong answers and 56 heap SIGSEGVs; the
   divergence file (`internal/testing/e2e/testdata/arm64-ssa-diff-known-divergences.txt`)
-  has no rows today. `x86_64ssa` has the same shape of leg
+  had no rows; it outlived the differential that read it and went in #12692. `x86_64ssa` has the same shape of leg
   (`internal/testing/e2e/x86_64_ssa_differential_test.go`) over the same corpus, but it
   compares 30 programs to arm64's 281 — the rest are refused for missing
   helpers. **`-backend ssa` (wasm) still has no corpus differential**; its only

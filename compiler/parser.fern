@@ -10239,6 +10239,7 @@ function parse_import(p: Par): (Import, ast.Stmt[], Par) {
 // leading `pub`.
 function parse_pubuse(p: Par, pu_line: i32, pu_col: i32): (Import, ast.Stmt[], Par) {
   p = p.advance();  // consume `use`
+  let none: Import = Import { path: "", is_reexport: true, reexport_names: [], alias: "", line: pu_line, col: pu_col, resolved: "" };
   let path: string = "";
   let bad: ast.Stmt[] = [];
   let t: lexer.Token = p.peek();
@@ -10249,40 +10250,44 @@ function parse_pubuse(p: Par, pu_line: i32, pu_col: i32): (Import, ast.Stmt[], P
     },
     _ => {
       bad = bad.append(decl_sentinel(p, "malformed re-export: its path could not be read"));
-      return (Import { path: "", is_reexport: true, reexport_names: [], alias: "", line: pu_line, col: pu_col, resolved: "" }, bad, sync_to_top_level(p));
+      return (none, bad, sync_to_top_level(p));
     }
   }
-  if (p.at_path_sep()) {
+  for want in [".", "{"] {
+    if (p.peek_punct() != want) {
+      bad = bad.append(decl_sentinel(p, "expected \"" + want + "\", got " + tok_desc(p.peek())));
+      return (none, bad, sync_to_top_level(p));
+    }
     p = p.advance();
   }
+  // Each name is followed by `,` or the closing `}`, as the Go parser reads it.
   let names: string[] = [];
-  if (p.peek_punct() == "{") {
-    p = p.advance();
-    while (!p.at_end() && p.peek_punct() != "}") {
-      let nm: string = p.peek_ident();
-      if (nm.len() > 0) {
-        names = names.append(nm);
-        p = p.advance();
-      }
-      if (p.peek_punct() == ",") {
-        p = p.advance();
-        continue;
-      }
-      if (p.peek_punct() == "}") {
-        continue;
-      }
-      // Unexpected token: report it, then step past it to avoid spinning.
-      if (nm.len() == 0) {
-        bad = bad.append(decl_sentinel(p, "malformed re-export: a name in the list could not be read (a keyword such as `type` or `match` cannot be a name)"));
-        p = p.advance();
-      }
+  while (p.peek_punct() != "}") {
+    let nm: string = p.peek_member_name();
+    if (nm.len() == 0) {
+      bad = bad.append(decl_sentinel(p, "expected a name, got " + tok_desc(p.peek())));
+      return (none, bad, sync_to_top_level(p));
     }
-    if (p.peek_punct() == "}") {
+    names = names.append(nm);
+    p = p.advance();
+    if (p.peek_punct() == ",") {
       p = p.advance();
+    } else if (p.peek_punct() != "}") {
+      bad = bad.append(decl_sentinel(p, "expected \"}\", got " + tok_desc(p.peek())));
+      return (none, bad, sync_to_top_level(p));
     }
   }
-  p = p.expect_semi();
-  return (Import { path: path, is_reexport: true, reexport_names: names, alias: "", line: pu_line, col: pu_col, resolved: "" }, bad, p);
+  p = p.advance();  // `}`
+  if (p.peek_punct() != ";") {
+    bad = bad.append(decl_sentinel(p, "expected \";\", got " + tok_desc(p.peek())));
+    return (none, bad, sync_to_top_level(p));
+  }
+  p = p.advance();
+  if (names.len() == 0) {
+    bad = bad.append(s_unknown_at("decl:`pub use` must name at least one symbol, e.g. `pub use \"std/string\".{split};`", pu_line, pu_col));
+    return (none, bad, p);
+  }
+  return (Import { ...none, path: path, reexport_names: names }, bad, p);
 }
 
 // parse_const_decl consumes `const NAME[: T] = EXPR;` (cursor on the
@@ -10381,9 +10386,9 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_types: str
 // list means a new builtin is registered once instead of being remembered in
 // two places — the drift that made a whitelist look unassemblable (#5644).
 // Runtime intrinsics are all `__`-prefixed and handled by the callers' prefix
-// test; this is the user-facing / lowered-helper set, a superset of the Go
-// checker's FuncSigs builtins. Over-inclusion is safe for both consumers (it
-// only suppresses a diagnostic), so the list errs toward completeness.
+// test; this is the user-facing / lowered-helper set, and it names exactly the
+// Go checker's FuncSigs builtins: TestSelfHostKnowsEveryNativeBuiltin and
+// TestNativeKnowsEverySelfHostBuiltin hold the two lists equal.
 pub function builtin_function_names(): string[] {
   return [
     // I/O + process + environment

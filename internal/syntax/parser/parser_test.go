@@ -2737,9 +2737,11 @@ function main(): i32 { return 0; }`)
 	if prog.PubUses[1].Path != "./helpers" || len(prog.PubUses[1].Names) != 1 || prog.PubUses[1].Names[0] != "add5" {
 		t.Errorf("pub use[1] = %+v, want ./helpers {add5}", prog.PubUses[1])
 	}
-	// Empty name list is a parse error.
-	if _, err := Parse(`pub use "x".{};`); err == nil {
-		t.Error("`pub use \"x\".{};` with no names should be a parse error")
+	// A missing or empty name list is P001.
+	for _, src := range []string{`pub use "x".{};`, `pub use "x";`, `pub use "x".y;`} {
+		if _, err := Parse(src); !hasParseCode(err, "P001") {
+			t.Errorf("%s: err = %v, want P001", src, err)
+		}
 	}
 }
 

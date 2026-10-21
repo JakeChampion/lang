@@ -6,9 +6,10 @@ language, and should be reviewed as one.
 
 `cases/` holds one self-contained program per directory, each with the
 program plus a few declarative sidecar files describing what running it
-must produce. Every Fern implementation is measured against it:
-`internal/oracle/interp`, the three native backends (x86-64, arm64, wasm), and
-the self-hosted compiler's own three emitters.
+must produce. Every Fern implementation is measured against it: the
+oracle, `internal/oracle/interp` (`bin/fern-oracle -interp`), and the
+compiler users run, `fern`, through its interpreter, its front end and its
+three targets (x86-64, arm64, wasm).
 
 ## Why this lives outside `internal/`
 
@@ -16,13 +17,11 @@ It used to be `internal/testing/e2e/testdata/cases` — inside one implementatio
 which made it look like that implementation's test suite rather than the
 language's definition. That framing is about to stop being harmless.
 
-Today the specification of Fern is "whatever `internal/` does", and that
-works: when the self-host wasm leg disagrees with native, native is right
-by definition. `docs/NATIVE-CONVERGENCE.md` plans to end it — after the
-freeze preconditions (#4451) go green, new surface lands self-host-first
-and native stops being the oracle. This corpus is what has to carry the
-definition across that transition, so it is positioned as a peer of the
-implementations rather than as a component of one.
+The native compiler that once defined Fern by its behaviour is gone
+(`docs/NATIVE-RETIREMENT.md`); new surface lands in `compiler/` first, and
+the Go oracle learns it so the differentials can check it. This corpus is
+what carries the definition between them, so it is positioned as a peer of
+the implementations rather than as a component of one.
 
 See `docs/SPECIFICATION-RESEARCH.md` for the wider argument and for the
 staged shape this is the first slice of.
@@ -99,12 +98,12 @@ asserts no output at all.
 
 Not every rejection is a front-end rejection. `E068` — a `fbip`
 function that allocates without a donor to reuse — is reported by
-`internal/oracle/ir/fip_verify.go` during lowering, after the checker has
+`compiler/irfipverify.fern` during lowering, after the checker has
 already accepted the program, so an `expected.error` case can never
 reach it: that path stops at the type check.
 
 A case carrying `expected.lowering-error` asserts **both** halves. The
-front end must accept the program, and `ir.LowerWith` must then reject
+front end must accept the program, and `fern -target` must then reject
 it with an error containing the file's trimmed contents. Asserting only
 the second half would let a program the checker already rejects
 masquerade as a lowering rule, which is the confusion the separate
@@ -122,25 +121,19 @@ program is precisely what these cases pin, and it cannot be two.
 
 ### A program that aborts cannot opt into wasm
 
-The same convention makes an *aborting* case unobservable on the wasm
-leg: a trapping program never reaches the trailing result line, so the
-runner sees empty stdout rather than an exit code, and the case fails
-whatever `expected.exit` says. The abort family (`oob_index_read` and
-its siblings) therefore restricts `backends` to the natives and carries
-a `harness-limit` waiver. This is a property of how the exit code is
-recovered, not of the wasm backend, which traps exactly as intended.
+An abort on wasm is a trap, and the wasm leg fails any case that traps,
+since a trap is also how a miscompile shows there. The abort family
+(`oob_index_read` and its siblings) therefore restricts `backends` to the
+natives and carries a `harness-limit` waiver. This is a property of how
+the leg reads a run, not of the wasm target, which traps exactly as
+intended.
 
 ### The wasm exit-code convention
 
-Native and interp backends propagate `main`'s return value straight to
-the process exit code (full `0..255`). A preview-2 wasm host only
-surfaces 0/1 through `wasi:cli/exit`, so the wasm leg builds with
-`PrintMainResult` and recovers the value from a trailing result line
-appended to stdout. Two consequences for a case that opts into wasm:
-`main` must return `i32` (not void), and `int_to_string` must be
-reachable so the line can be formatted — i.e. an exact-match case
-targeting wasm must `import "core/int";`, or drop `wasm` from its
-`backends` file.
+Every target propagates `main`'s return value to the process exit code,
+but WASI refuses an exit status outside `0..125`: wasmtime reports 1
+instead. On the wasm leg a case whose `expected.exit` is 126 or more
+therefore keeps its trap and rejection checks and loses its value check.
 
 ## Justifying a weaker assertion
 

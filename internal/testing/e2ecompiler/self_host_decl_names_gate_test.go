@@ -72,7 +72,7 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		{"impl-assoc-binding-nameless", "trait T { type Item; }\nstruct A { x: i32 }\nimpl T for A { type 123 = i32; }\nfunction main(): i32 { return 0; }", true, "malformed associated type binding: its name could not be read"},
 		{"impl-stray-token", "trait T { }\nstruct A { x: i32 }\nimpl T for A { 123 }\nfunction main(): i32 { return 0; }", true, "unexpected token in an impl body"},
 		{"import-alias-keyword", "import \"./lib\" as use;\nfunction main(): i32 { return 0; }", true, "malformed import alias: its name could not be read"},
-		{"pub-use-keyword", "pub use \"./lib\".{use};\nfunction main(): i32 { return 0; }", true, "malformed re-export: a name in the list could not be read"},
+		{"pub-use-keyword", "pub use \"./lib\".{use};\nfunction main(): i32 { return 0; }", true, "expected a name, got \"use\""},
 		{"import-resource-nameless", "@import(\"wasi:io@0.2.0\", \"thing\") resource 123;\nfunction main(): i32 { return 0; }", true, "@import only applies to a function or resource declaration"},
 		// An attribute neither parser knows (#11852): named, not read as a
 		// statement at top level.
