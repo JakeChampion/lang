@@ -600,6 +600,13 @@ pub struct TangleErr { msg: string, line: i32, col: i32 }
 
 pub type TangleResult = TangleOk | TangleErr;
 
+// is_program is whether a document tangles to modules at all: it defines the
+// root chunk or carries `file=` blocks. A document with neither is a chunk
+// library, read through -chunk or -doctest rather than compiled.
+pub function is_program(src: string): boolean {
+  return chunk_defined(parse_pieces(src), "*") || parse_file_pieces(src).len() > 0;
+}
+
 // tangle expands the root chunk `<<*>>` into compilable Fern source.
 // Errors: no root chunk, reference to an undefined chunk, or a cyclic
 // chunk reference.

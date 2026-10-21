@@ -8,7 +8,9 @@ everything else about the design.
 Engine: `compiler/lint.fern`. CLI: `run_lint` in `compiler/fern.fern`.
 
 A literate `.fern.md` document is linted as the modules it tangles to, and
-each finding is reported at its line in the document (`lint_module`).
+each finding is reported at its line in the document (`lint_module`). A
+chunk library, a document with no root chunk and no `file=` blocks, has no
+module to lint: a directory walk skips it, and naming it is an error.
 
 ## Why it runs on the parse tree
 

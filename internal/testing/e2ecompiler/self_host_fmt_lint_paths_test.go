@@ -48,16 +48,31 @@ func TestSelfHostFmtLintPaths(t *testing.T) {
 			t.Errorf("exit %d, stderr %q; want a usage error", code, errs)
 		}
 	})
-	t.Run("fmt-directory", func(t *testing.T) {
-		out, errs, code := run("", "-fmt", "-d", "tree")
+	diffHeads := func(out string) []string {
 		var heads []string
 		for _, l := range strings.Split(out, "\n") {
 			if strings.HasPrefix(l, "--- ") {
 				heads = append(heads, strings.TrimPrefix(l, "--- "))
 			}
 		}
-		want := []string{"tree/a.fern", "tree/c.fern.md", "tree/sub/b.fern"}
-		if code != 1 || strings.Join(heads, " ") != strings.Join(want, " ") {
+		return heads
+	}
+	t.Run("fmt-directory", func(t *testing.T) {
+		// A directory's sources come sorted, and a trailing slash does not
+		// double in the names.
+		for _, arg := range []string{"tree", "tree/"} {
+			out, errs, code := run("", "-fmt", "-d", arg)
+			want := []string{"tree/a.fern", "tree/c.fern.md", "tree/sub/b.fern"}
+			if heads := diffHeads(out); code != 1 || strings.Join(heads, " ") != strings.Join(want, " ") {
+				t.Errorf("%s: exit %d, diffs of %v, stderr %q; want %v", arg, code, heads, errs, want)
+			}
+		}
+	})
+	t.Run("fmt-argument-order", func(t *testing.T) {
+		// Named files keep the order they were given in, as the native -fmt does.
+		out, errs, code := run("", "-fmt", "-d", "tree/sub/b.fern", "tree/a.fern")
+		want := []string{"tree/sub/b.fern", "tree/a.fern"}
+		if heads := diffHeads(out); code != 1 || strings.Join(heads, " ") != strings.Join(want, " ") {
 			t.Errorf("exit %d, diffs of %v, stderr %q; want %v", code, heads, errs, want)
 		}
 	})
