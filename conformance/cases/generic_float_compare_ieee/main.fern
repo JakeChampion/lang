@@ -5,6 +5,9 @@ import "core/cmp";
 @derive(cmp.Eq, cmp.Ord)
 struct P { x: i32 }
 
+@derive(cmp.Eq, cmp.Ord)
+enum Size { Small, Large }
+
 function same_op[T: cmp.Eq](a: T, b: T): boolean { return a == b; }
 function differ_op[T: cmp.Eq](a: T, b: T): boolean { return a != b; }
 function lt_op[T: cmp.Ord](a: T, b: T): boolean { return a < b; }
@@ -32,5 +35,8 @@ function main(): i32 {
     show("generic f32 nan == nan", same_op(n32, n32));
     show("generic struct ==", same_op(P { x: 1 }, P { x: 1 }));
     show("generic struct <", lt_op(P { x: 1 }, P { x: 2 }));
+    show("concrete struct >=", P { x: 1 } >= P { x: 2 });
+    show("concrete enum <", Size.Small < Size.Large);
+    show("generic enum >=", ge_op(Size.Small, Size.Large));
     return 0;
 }

@@ -9,3 +9,6 @@ cmp 1 nan < 0 true
 generic f32 nan == nan false
 generic struct == true
 generic struct < true
+concrete struct >= false
+concrete enum < true
+generic enum >= false
