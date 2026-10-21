@@ -1340,7 +1340,7 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		}
 		f.formatBlock(x, depth)
 	case *ast.ForEach:
-		// A lazy `stream[T]` foreach is left undesugared for the checker, so
+		// A lazy `Stream[T]` foreach is left undesugared for the checker, so
 		// this form does reach the printer directly.
 		f.formatForEach(x, depth)
 	case *ast.If:
@@ -2586,7 +2586,7 @@ func formatType(t ast.Type) string {
 	case ast.SliceType:
 		return "[" + formatType(x.Elem) + "]"
 	case ast.StreamType:
-		return "stream[" + formatType(x.Elem) + "]"
+		return "Stream[" + formatType(x.Elem) + "]"
 	case ast.TupleType:
 		out := "("
 		for i, e := range x.Elems {

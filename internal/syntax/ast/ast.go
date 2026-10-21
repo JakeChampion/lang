@@ -162,10 +162,10 @@ type FloatType struct {
 }
 type ArrayType struct{ Elem Type }
 
-// StreamType is the WASI Preview-3 async data channel `stream[T]` — a sequence
+// StreamType is the WASI Preview-3 async data channel `Stream[T]` — a sequence
 // of `T` delivered incrementally over the wire. It appears in Fern source only
 // as the result type of an async `@import` (e.g. `async function body():
-// stream[u8]`); under the colorless model the call site yields the fully
+// Stream[u8]`); under the colorless model the call site yields the fully
 // collected `T[]` (the compiler drives `stream.read` + the await loop to EOF —
 // see docs/STREAM-TYPE-SURFACE.md). `future[T]` is intentionally NOT a surface
 // type (colorless auto-await subsumes a single deferred value).
@@ -563,7 +563,7 @@ func (s StreamType) String() string {
 	if s.Elem == nil {
 		return "stream"
 	}
-	return "stream[" + s.Elem.String() + "]"
+	return "Stream[" + s.Elem.String() + "]"
 }
 func (t TupleType) String() string {
 	out := "("

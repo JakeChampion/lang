@@ -18,7 +18,6 @@ function let use as
 if else while for loop break continue return
 true false boolean void string
 i32 i64 u8 u32 u64 usize f32 f64
-default
 struct enum type
 import pub const
 match when

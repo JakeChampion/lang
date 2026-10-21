@@ -903,7 +903,7 @@ function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
 function user_func_exists(name: string, funcs: parser.FuncDecl[]): boolean {
   let i: i32 = 0;
   while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0) {
+    if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
       return true;
     }
     i = i + 1;
@@ -4799,7 +4799,7 @@ function resolve_ident_value(name: string, env: Env): Value {
   if (is_err(idv)) {
     let ci: i32 = 0;
     while (ci < env.funcs.len()) {
-      if (env.funcs[ci].name == name && env.funcs[ci].receiver_name.len() == 0 && env.funcs[ci].params.len() == 0 && env.funcs[ci].is_const) {
+      if (env.funcs[ci].name == name && env.funcs[ci].receiver_type.len() == 0 && env.funcs[ci].params.len() == 0 && env.funcs[ci].is_const) {
         let no_args: Value[] = [];
         return call_func(name, no_args, env.funcs, env.aliases, env.type_decls, env.outs);
       }
@@ -4821,7 +4821,7 @@ function resolve_ident_value(name: string, env: Env): Value {
     let vfi: i32 = 0;
     while (vfi < env.funcs.len()) {
       let vfd: parser.FuncDecl = env.funcs[vfi];
-      if (vfd.name == name && vfd.receiver_name.len() == 0) {
+      if (vfd.name == name && vfd.receiver_type.len() == 0) {
         let no_names: string[] = [];
         let no_values: Value[] = [];
         let no_types: string[] = [];
@@ -5040,7 +5040,7 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
           let qi: i32 = 0;
           let qfound: boolean = false;
           while (qi < env.funcs.len()) {
-            if (env.funcs[qi].name == qname && env.funcs[qi].receiver_name.len() == 0) {
+            if (env.funcs[qi].name == qname && env.funcs[qi].receiver_type.len() == 0) {
               qfound = true;
             }
             qi = qi + 1;
@@ -7679,10 +7679,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   }
   let i: i32 = 0;
   while (i < funcs.len()) {
-    // Skip receiver methods — they're dispatched via
-    // call_method only. A plain function call must match
-    // a non-method (receiver_name empty) of the same name.
-    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0) {
+    // A plain call names a free function: a method or an associated
+    // function (`impl Default for i32`'s `default`) has a receiver type.
+    if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
       let fd: parser.FuncDecl = funcs[i];
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
