@@ -88,6 +88,33 @@ var parseErrPosCases = []struct {
 	{"compound-assign-to-binary-p003", "function main(): i32 {\n  let a = 1;\n  (a + 1) += 5;\n  return 0;\n}\n"},
 	{"two-pipe-holes-p004", "function add(a: i32, b: i32): i32 {\n  return a + b;\n}\nfunction main(): i32 {\n  5 |> add(_, _);\n  return 0;\n}\n"},
 	{"function-expression-p006", "function main(): i32 {\n  let f = function (x: i32): i32 { return x + 1; };\n  return f(41);\n}\n"},
+	// A `return` whose value is refused at a `;` is not a bare `return;`
+	// (#12915), in a valued function or a void one.
+	{"return-refused-paren", "function main(): i32 {\n  return (;\n}\n"},
+	{"return-refused-paren-void", "function f(): void {\n  return (;\n}\nfunction main(): i32 {\n  f();\n  return 0;\n}\n"},
+	{"return-refused-unary", "function main(): i32 {\n  return -;\n}\n"},
+	{"return-refused-array", "function main(): i32 {\n  return [;\n}\n"},
+	{"defer-refused-paren", "function main(): i32 {\n  defer (;\n  return 0;\n}\n"},
+	{"errdefer-refused-paren", "function main(): i32 {\n  errdefer (;\n  return 0;\n}\n"},
+	{"expr-stmt-refused-paren", "function main(): i32 {\n  (;\n  return 0;\n}\n"},
+	{"lambda-return-refused-paren", "function main(): i32 {\n  let f = (): i32 => { return (; };\n  return f();\n}\n"},
+	{"arrow-lambda-refused-body", "function main(): i32 {\n  let f = () => ;\n  return 0;\n}\n"},
+	{"return-refused-fstring", "function main(): i32 {\n  return f\"{;}\";\n}\n"},
+	// A refused element stands for the construct whose closer is then
+	// missing: it is the earlier error.
+	{"array-refused-element", "function main(): i32 {\n  let x = [1, ;\n  return 0;\n}\n"},
+	{"array-refused-nested-element", "function main(): i32 {\n  let x = [1 + ;\n  return 0;\n}\n"},
+	{"call-refused-arg", "function main(): i32 {\n  let x = f(1, ;\n  return 0;\n}\n"},
+	{"call-refused-named-arg", "function main(): i32 {\n  let x = f(a = ;\n  return 0;\n}\n"},
+	{"index-refused", "function main(): i32 {\n  let x = a[;\n  return 0;\n}\n"},
+	{"slice-refused-high", "function main(): i32 {\n  let x = a[1:;\n  return 0;\n}\n"},
+	{"slice-refused-leading-colon", "function main(): i32 {\n  let x = a[:;\n  return 0;\n}\n"},
+	{"struct-lit-refused-field", "struct Foo { x: i32 }\nfunction main(): i32 {\n  let x = Foo { x: ;\n  return 0;\n}\n"},
+	{"struct-update-refused-field", "struct Foo { x: i32 }\nfunction main(): i32 {\n  let a = Foo { x: 1 };\n  let x = Foo { ...a, x: ;\n  return 0;\n}\n"},
+	{"struct-update-refused-base", "struct Foo { x: i32 }\nfunction main(): i32 {\n  let x = Foo { ...(; ;\n  return 0;\n}\n"},
+	// A missing closer after a well-formed element is still its own error.
+	{"struct-lit-missing-brace", "struct Foo { x: i32 }\nfunction main(): i32 {\n  let x = Foo { x: 1 ;\n  return 0;\n}\n"},
+	{"array-missing-bracket", "function main(): i32 {\n  let x = [1 2];\n  return 0;\n}\n"},
 }
 
 // TestSelfHostParseErrorPositions pins SH-041 (tracking #2849): a
@@ -175,13 +202,10 @@ func stageParseProbeTree(t *testing.T) string {
 // folded onto astwalk (#6993), so the fold is held to reproducing the exact
 // sequence rather than to whatever it happens to print.
 //
-// The essential rows are the punct:; pair. A bare `return;` parses to the
-// sentinel ExprUnknown("punct:;") in the return's value slot and is exempt
-// there — and ONLY there: `let x: i32 = ;` plants the SAME sentinel in an
-// init slot and must stay diagnosed, and `return 1 + ;` plants it nested
-// INSIDE the return's value where it must also stay diagnosed. A collector
-// that exempts the sentinel by kind alone, position-independent, passes every
-// other gate and silently swallows both.
+// The essential rows are the bare-return ones. A bare `return;` parses to
+// its own sentinel, which is exempt; the `punct:;` a refused expression
+// leaves stays diagnosed wherever it lands — in an init slot, nested inside a
+// return's value, or AS a return's whole value (`return (;`, #12915).
 func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 	fernBin := buildLangBinForInterp(t)
 	stage := stageParseProbeTree(t)
@@ -199,6 +223,12 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"var-init-sentinel",
 			"function main(): i32 {\n  let x: i32 = ;\n  return 0;\n}\n",
 			"error[P001]: in fn 'main': expected an expression, got \";\" (2:16)"},
+		{"refused-return-value",
+			"function f(): void {\n  return (;\n}\nfunction main(): i32 {\n  f();\n  return 0;\n}\n",
+			"error[P001]: in fn 'f': expected an expression, got \";\" (2:11)"},
+		{"refused-arrow-lambda-body",
+			"function main(): i32 {\n  let f = () => ;\n  return 0;\n}\n",
+			"error[P001]: in fn 'main': expected an expression, got \";\" (2:17)"},
 		{"sentinel-nested-in-return",
 			"function main(): i32 {\n  return 1 + ;\n}\n",
 			"error[P001]: in fn 'main': expected an expression, got \";\" (2:14)"},
