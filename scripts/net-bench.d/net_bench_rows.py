@@ -6,9 +6,10 @@ two-fetch rows (from oha's JSON), `h2load` for the HTTP/3 rows (from
 h2load's summary and per-request log) — passing the server process
 group's user and system clock ticks before (U0 S0) and after (U1 S1) the
 load. Both families divide those ticks by the same quantity, the requests
-the server handled, so the server-CPU-per-request rows mean the same
-thing across protocols. scripts/net-bench.d/test_net_bench_rows.py covers
-the parsing and that denominator.
+the load completed — oha's status codes plus errors, h2load's `done` —
+so the server-CPU-per-request rows mean the same thing across protocols.
+scripts/net-bench.d/test_net_bench_rows.py covers the parsing and that
+denominator.
 """
 import json
 import os
@@ -51,14 +52,17 @@ def oha_rows(name, n, path, u0, s0, u1, s1):
 def h2load_rows(name, n, m, out, log, u0, s0, u1, s1):
     text = open(out).read()
     rps = re.search(r"finished in [^,]*, ([0-9.]+) req/s", text)
-    req = re.search(r"requests: (\d+) total, \d+ started, (\d+) done, (\d+) succeeded, (\d+) failed, (\d+) errored, (\d+) timeout", text)
+    req = re.search(r"requests: (\d+) total, \d+ started, (\d+) done, \d+ succeeded, (\d+) failed, \d+ errored, \d+ timeout", text)
     if not rps or not req:
         sys.exit("net-bench: no h2load summary for %s c%sm%s:\n%s" % (name, n, m, text))
     times = sorted(int(line.split()[2]) for line in open(log) if len(line.split()) == 3)
     def pct(p):
         return times[min(len(times) - 1, int(len(times) * p))] if times else 0
     done = int(req.group(2))
-    failed = int(req.group(4)) + int(req.group(5)) + int(req.group(6))
+    # h2load nests its failure counters: timeout is a subset of errored,
+    # which is a subset of failed, so `failed` alone is the total that did
+    # not succeed. Summing the three would count a timeout three times.
+    failed = int(req.group(3))
     row = f"net/{name}/c{n}m{m}"
     return [
         f"{row}.rps\t{int(float(rps.group(1)))}",

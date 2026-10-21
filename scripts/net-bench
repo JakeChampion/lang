@@ -41,7 +41,7 @@
 # its p50 / p99 latency per server and N, and the server's own CPU per
 # request, user and system (`server_user_us_per_req` / `server_sys_us_per_req`,
 # the process group's utime / stime over the load divided by the requests
-# answered) — the deterministic figure a throughput gap on a shared runner
+# the load completed) — the deterministic figure a throughput gap on a shared runner
 # is attributed to, kernel or user time rather than guessed at. Plus, on
 # x86-64, the bump-allocator growth one held idle connection, one suspended
 # handler and one stream parked on an HTTP/2 connection cost the Fern loop
@@ -83,7 +83,9 @@
 #   net/<server>/c<N>.server_user_us_per_req,
 #   net/<server>/c<N>.server_sys_us_per_req   the server process group's
 #                               user / system CPU over the load divided by
-#                               the requests it handled, microseconds. The
+#                               the requests the load completed (oha's
+#                               status codes plus errors, h2load's `done`),
+#                               microseconds. The
 #                               source counters are whole 10 ms clock
 #                               ticks, so the figure carries up to one tick
 #                               per process of rounding — coarsest on the
@@ -261,7 +263,10 @@ h3_rows() {
       # h2load appends to its log rather than starting it afresh.
       rm -f "$work/h3.log"
       read -r u0 s0 <<< "$(group_cpu "$server_pgid")"
-      "$h3tools/bin/h2load" --alpn-list=h3 -c "$n" -m "$m" -t "$threads" -D "$SECONDS_PER" --warm-up-time=1 \
+      # No --warm-up-time: h2load excludes warm-up requests from its counts
+      # but not from the wall clock, so a warm-up would leave the CPU window
+      # (bracketed here) wider than the requests it is divided by.
+      "$h3tools/bin/h2load" --alpn-list=h3 -c "$n" -m "$m" -t "$threads" -D "$SECONDS_PER" \
         --log-file="$work/h3.log" "https://127.0.0.1:$port/" > "$work/h3.out" 2>&1 || {
         echo "net-bench: h2load failed against $server:" >&2
         cat "$work/h3.out" >&2
