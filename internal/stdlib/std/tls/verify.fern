@@ -131,6 +131,11 @@ pub function (r: Roots) distrusting(i: i32, after: i64): Roots {
   return Roots { ...r, distrust_after: r.distrust_after.with(i, after) };
 }
 
+// no_roots trusts nothing.
+pub function no_roots(): Roots {
+  return Roots { certs: [], distrust_after: [] };
+}
+
 // roots trusts the DER certificates given, skipping any that do not parse,
 // as a system bundle may hold one this module cannot read.
 pub function roots(ders: u8[][]): Roots {
@@ -157,7 +162,7 @@ pub function roots_from_pem(text: string): Result[Roots, VerifyError] {
       return Err(Pem(e));
     }
   }
-  return Ok(roots([]));
+  return Ok(no_roots());
 }
 
 // The bundles distributions keep their trusted roots in, in the order Go's

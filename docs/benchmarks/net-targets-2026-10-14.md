@@ -9,7 +9,7 @@ rows that need one take these indicative figures as their answer.
 
 | axis | target | measured | state |
 |---|---|---|---|
-| binary with HTTP/1.1 + TLS + DNS | under 500 KB static | with `-size`, 1,039,024 bytes (`scripts/net-h2spec.d/server.fern`, HTTP/1.1, h2 and TLS) and 894,672 (`scripts/net-bench.d/hello.fern`, HTTP/1.1 and TLS); 1,572,880 and 1,335,760 by default | missed, 1.8x; the work is under #9851 |
+| binary with HTTP/1.1 + TLS + DNS | under 500 KB static | with `-size`, 1,039,024 bytes (`scripts/net-h2spec.d/server.fern`, HTTP/1.1, h2 and TLS) and 894,672 (`scripts/net-bench.d/hello.fern`, HTTP/1.1 and TLS); 1,572,880 and 1,335,760 by default. Re-measured 2026-10-21 after HTTP/3 landed: an HTTP/1.1 and TLS server is 994,416 with `-size` (`net-size-2026-10-21.md`) | missed, 2x; the work is under #9851 |
 | idle heap per worker | `__heap_bump_bytes()` under 64 KiB after first accept | 15,840 bytes at the first request | met |
 | per idle keep-alive connection | under 1 KiB of bump growth per held connection | 992 bytes (`net/fern/held.bytes_per_connection`, nightly) | met |
 | allocations per request, hello and static | 0 | 0, gated by the zero-allocation tests | met |

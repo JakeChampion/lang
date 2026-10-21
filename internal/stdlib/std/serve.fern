@@ -1264,7 +1264,7 @@ function __flight_filler[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], f
 function __tail_park[D: async.Driver](drv: D, c: __Conns, at: i32, producer: ChunkProducer, index: i32, end: string, t: async.Task[Option[u8[]]], w: async.Wait): __Conns {
   let none: i32[] = [];
   let now: i64 = monotonic_ns();
-  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: __pulling(c, at), idle: __idle_due(producer, now), ends: 0 - 1 as i64, stream: 0, since: 0 - 1 as i64, grpc: false, quic: 0 - 1 }, now);
+  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: __pulling(c, at), idle: __idle_due(producer, now), ends: 0 - 1 as i64, stream: 0, since: 0 - 1 as i64, grpc: false, quic: 0 }, now);
   match (c.framing[at]) {
     Pulling(b) => {},
     _ => {
@@ -1350,7 +1350,7 @@ function __background_start[D: async.Driver](drv: D, fls: __Flight[], work: () =
     Suspended(w) => {
       let none: i32[] = [];
       let now: i64 = monotonic_ns();
-      return fls.append(__flight_watch(drv, __Flight { job: Background(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: __bound_ends(opts.background_deadline, now), stream: 0, since: 0 - 1 as i64, grpc: false, quic: 0 - 1 }, now));
+      return fls.append(__flight_watch(drv, __Flight { job: Background(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: __bound_ends(opts.background_deadline, now), stream: 0, since: 0 - 1 as i64, grpc: false, quic: 0 }, now));
     },
     _ => {
       async.task_free(t);
@@ -3029,7 +3029,7 @@ function __h2_produce[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i3
         let running: __H2Producer = __H2Producer { ...p, running: true };
         let conns: __Conns = __Conns { ...a.conns, producers: a.conns.producers.with(pi, running) };
         let none: i32[] = [];
-        let fl: __Flight = __Flight { job: Producer(t), wait: w, fd: fd, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: 0 - 1 as i64, stream: sid, since: 0 - 1 as i64, grpc: false, quic: 0 - 1 };
+        let fl: __Flight = __Flight { job: Producer(t), wait: w, fd: fd, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: 0 - 1 as i64, stream: sid, since: 0 - 1 as i64, grpc: false, quic: 0 };
         return __H2Answered { ...a, conns: conns, fls: a.fls.append(__flight_watch(drv, fl, monotonic_ns())) };
       },
       Cancelled => {
@@ -4592,6 +4592,8 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
 // keeps the request's clock (`rate_since`) as the flight parked, what its
 // answer is counted from. `grpc` is whether the request is a gRPC call,
 // which a missed deadline answers with the call's status rather than 503.
+// `quic` is the serial of the HTTP/3 connection the request came on, 0
+// for a TCP connection's (serials start at 1), and `stream` its stream.
 struct __Flight { job: __Job, wait: async.Wait, fd: i32, set: i32[], due: i64, method: string, version: string, kept: boolean, behind: __Behind, body: Option[__Body], idle: i64, ends: i64, stream: i32, since: i64, grpc: boolean, quic: i32 }
 
 // __Job — the task a flight runs: a handler, whose response the flight
@@ -4636,7 +4638,7 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
     },
     Suspended(w) => {
       let none: i32[] = [];
-      return HandlerParked(__Flight { job: Handler(async.call_of(w, handler, req, plat)), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends, stream: 0, since: 0 - 1 as i64, grpc: grpc.is_grpc(req), quic: 0 - 1 });
+      return HandlerParked(__Flight { job: Handler(async.call_of(w, handler, req, plat)), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends, stream: 0, since: 0 - 1 as i64, grpc: grpc.is_grpc(req), quic: 0 });
     },
     Cancelled => {}
   }
@@ -4820,7 +4822,7 @@ function __flight_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fi:
       return __handler_wake(drv, c, fls, fl, call, ready, opts, clk);
     },
     Producer(t) => {
-      if (fl.quic >= 0) {
+      if (fl.quic > 0) {
         return __h3_producer_wake(drv, c, fls, fl, t, ready);
       }
       if (fl.stream > 0) {
@@ -4867,7 +4869,7 @@ function __handler_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fl
     },
     Cancelled => {
       async.call_free(call);
-      if (fl.quic >= 0) {
+      if (fl.quic > 0) {
         return (__h3_abandon(c, fl), fls);
       }
       return (__serve_abandon(drv, c, fl.fd), fls);
@@ -4897,7 +4899,7 @@ function __background_wake[D: async.Driver](drv: D, fls: __Flight[], fl: __Fligh
 // (`__h2_answer`). A connection that went away meanwhile drops the
 // response.
 function __serve_answer[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], fl: __Flight, resp: HttpResponse, opts: Config, clk: __Clock): (__Conns, __Flight[]) {
-  if (fl.quic >= 0) {
+  if (fl.quic > 0) {
     return __h3_answer(drv, c, fls, fl, resp);
   }
   let at: i32 = __conns_index(c, fl.fd);
@@ -5429,7 +5431,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
         conns = __serve_accept(drv, listener, conns, opts, host_for);
         continue;
       }
-      if (fd == conns.quic.sock) {
+      if (__quic_owns(conns, fd)) {
         let datagrams: (__Conns, __Flight[], __H3Burst) = __h3_event(drv, conns, flights, opts, stop);
         let started: (__Conns, __Flight[]) = __h3_start_all(drv, datagrams.0, datagrams.1, datagrams.2, handler, host_for, opts, stop);
         conns = started.0;
@@ -5476,10 +5478,12 @@ function __serve_loop(listener: i32, handler: (HttpRequest, platform.Host) => Ht
     let woken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts, plat.pool);
     conns = woken.0;
     flights = woken.1;
-    let ticked: (__Conns, __Flight[], __H3Burst) = __h3_pass(drv, conns, flights, opts, stop);
-    let started_late: (__Conns, __Flight[]) = __h3_start_all(drv, ticked.0, ticked.1, ticked.2, handler, host_for, opts, stop);
-    conns = started_late.0;
-    flights = started_late.1;
+    if (__quic_on(conns)) {
+      let ticked: (__Conns, __Flight[], __H3Burst) = __h3_pass(drv, conns, flights, opts, stop);
+      let started_late: (__Conns, __Flight[]) = __h3_start_all(drv, ticked.0, ticked.1, ticked.2, handler, host_for, opts, stop);
+      conns = started_late.0;
+      flights = started_late.1;
+    }
     let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting, flights.len());
     conns = ended.0;
     stop = ended.1;
@@ -5626,7 +5630,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         conns = __serve_accept(drv, listener, conns, opts, host_for);
         continue;
       }
-      if (fd == conns.quic.sock) {
+      if (__quic_owns(conns, fd)) {
         let datagrams: (__Conns, __Flight[], __H3Burst) = __h3_event(drv, conns, flights, opts, stop);
         let answered: (__Conns, __Flight[], S) = __h3_start_all_with(drv, datagrams.0, datagrams.1, datagrams.2, st, handler, host_for);
         conns = answered.0;
@@ -5706,11 +5710,13 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     let woken: (__Conns, __Flight[]) = __staged_taken(drv, conns, flights, opts, plat.pool);
     conns = woken.0;
     flights = woken.1;
-    let ticked: (__Conns, __Flight[], __H3Burst) = __h3_pass(drv, conns, flights, opts, stop);
-    let answered: (__Conns, __Flight[], S) = __h3_start_all_with(drv, ticked.0, ticked.1, ticked.2, st, handler, host_for);
-    conns = answered.0;
-    flights = answered.1;
-    st = answered.2;
+    if (__quic_on(conns)) {
+      let ticked: (__Conns, __Flight[], __H3Burst) = __h3_pass(drv, conns, flights, opts, stop);
+      let answered: (__Conns, __Flight[], S) = __h3_start_all_with(drv, ticked.0, ticked.1, ticked.2, st, handler, host_for);
+      conns = answered.0;
+      flights = answered.1;
+      st = answered.2;
+    }
     let ended: (__Conns, __Stop, boolean, boolean) = __serve_pass_end(drv, listener, conns, opts, stop, accepting, flights.len());
     conns = ended.0;
     stop = ended.1;
@@ -6389,7 +6395,7 @@ function __h3_burst(): i32 {
 }
 
 function __quic_none(): __Quic {
-  return __Quic { sock: 0 - 1, port: 0, cfg: quic.config([]), conns: [], keys: [], origs: [], peers: [], serials: [], next: 0, producers: [], stopping: false, buf: [] };
+  return __Quic { sock: 0 - 1, port: 0, cfg: quic.config([]), conns: [], keys: [], origs: [], peers: [], serials: [], next: 1, producers: [], stopping: false, buf: [] };
 }
 
 // Every worker needs its own UDP socket even when its TCP listener is
@@ -6427,6 +6433,18 @@ function __quic_open[D: async.Driver](drv: D, listener: i32, opts: Config): __Qu
     return __quic_none();
   }
   return __Quic { ...__quic_none(), sock: sock, port: port, cfg: h3q.transport(quic.config([]).server_side(t.identity)), buf: __alloc_u8(65536) };
+}
+
+// __quic_on(c) — whether the worker opened a QUIC socket. Every piece of
+// HTTP/3 work the loop does is behind this, so a loop that never opened
+// one never reaches it.
+function __quic_on(c: __Conns): boolean {
+  return c.quic.sock >= 0;
+}
+
+// __quic_owns(c, fd) — whether `fd` is the worker's QUIC socket.
+function __quic_owns(c: __Conns, fd: i32): boolean {
+  return __quic_on(c) && fd == c.quic.sock;
 }
 
 // __quic_close(drv, q) — every connection closed, what that leaves to
@@ -6468,7 +6486,7 @@ function __quic_timeout(q: __Quic, now: i64): i32 {
 // __with_alt_svc(c, resp) — the response naming the worker's HTTP/3 port
 // (RFC 7838), unless it names one itself.
 function __with_alt_svc(c: __Conns, resp: HttpResponse): HttpResponse {
-  if (c.quic.sock < 0 || resp.headers.has("alt-svc")) {
+  if (!__quic_on(c) || resp.headers.has("alt-svc")) {
     return resp;
   }
   return HttpResponse { ...resp, headers: resp.headers.append("alt-svc", "h3=\":" + int.int_to_string(c.quic.port) + "\"; ma=86400") };
@@ -6945,9 +6963,6 @@ function __h3_flush(c: __Conns, serial: i32): __Conns {
 // again once they are answered.
 function __h3_pass[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], opts: Config, stop: __Stop): (__Conns, __Flight[], __H3Burst) {
   let burst: __H3Burst = __H3Burst { reqs: [], touched: [] };
-  if (c.quic.sock < 0) {
-    return (c, fls, burst);
-  }
   let cur: __Conns = __h3_goaway(c, stop);
   let now: i64 = monotonic_ns();
   let i: i32 = 0;

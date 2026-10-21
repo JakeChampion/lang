@@ -328,7 +328,7 @@ pub function restore(saved: [u8]): Result[Session, TlsError] {
   }
   match (handshake.client_restore(saved[4:4 + n])) {
     Ok(c) => {
-      return Ok(Session { client: c, name: "", roots: verify.roots([]), identity: None, held: __copy(saved[4 + n:saved.len()]) });
+      return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __copy(saved[4 + n:saved.len()]) });
     },
     Err(e) => {
       return Err(HandshakeFailed(e));
