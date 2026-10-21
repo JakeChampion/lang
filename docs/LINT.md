@@ -35,12 +35,12 @@ checker, as a warning.
 ## Rules
 
 A rule has a stable kebab-case name, a one-line description, a default
-severity and, optionally, `<rule>.<key>` options. There is one rule today, so
-`lint.Config` holds its severity and threshold directly; a second rule adds its
-fields there, an arm to `set_pair` / `set_option`, its run to `lint_file`, and
-its entry to `rules_listing` and `known_rules`. An unknown key or an unusable
-value must error: linting at a default the user did not ask for is worse than
-refusing.
+severity and, optionally, `<rule>.<key>` options. There are two rules today,
+and `lint.Config` holds each one's severity and threshold directly; a new rule
+adds its fields there, an arm to `set_pair` / `set_option`, its run to
+`lint_file`, and its entry to `rules_listing` and `known_rules`. An unknown key
+or an unusable value must error: linting at a default the user did not ask for
+is worse than refusing.
 
 `lint_file` applies the `fern-lint:` suppressions, so no rule knows they
 exist.
@@ -76,6 +76,50 @@ recovers, and the loop a `todo` lowers to not at all.
 A lambda's body counts INTO the function that spells it. An inline closure
 is code the reader walks past, so hiding an `if` in one must not make the
 enclosing function read as simpler than it is.
+
+### change-risk
+
+Default: `warn`, `max = 30`. Runs only when `-lint-cover FILE` names a saved
+`-cover` run (`docs/COVERAGE.md`): the stderr of an instrumented binary,
+several runs' output concatenated if the suite is several programs.
+
+The score is CRAP1 (Savoia and Evans, 2007, "Change Risk Anti-Patterns"):
+
+```
+complexity^2 * (1 - coverage)^3 + complexity
+```
+
+with `complexity` the cyclomatic score above and `coverage` the share of the
+function's instrumented lines the run hit. The two inputs pull in opposite
+directions on purpose: a complex function under test scores about its
+complexity, a simple untested one scores about its complexity, and only
+complex code nobody exercises climbs. Thirty is Savoia's own threshold; the
+formula is a fit to developers' judgements, not a derivation, so the number
+is a convention rather than a measurement.
+
+A function's lines are the rows between its first line and the last line any
+statement or expression in its body starts on (`span_end`). The closing brace
+may sit lower, but no instrumented line can, so the span needs no end marker
+from the parser, and a lambda's rows count into the function that spells it,
+as its forks do. Coverage is by LINE, not branch edge: every statement has a
+row, so the denominator is dense and stable, where edges exist only for
+functions with conditionals.
+
+The run names a file as the compile was told it and the lint as it was
+walked, so a run file matches a linted one when spelled identically or when
+one is the other with leading directories added or removed; the longest such
+name wins. The score is computed in integers (`risk_score`), rounded half up,
+so it is the same on every backend.
+
+Three things are deliberately NOT a quiet pass. A function the run holds no
+row for is skipped, because the run never instrumented it (a file outside the
+covered program, say), but a `-lint-cover` file with no rows, one that cannot
+be read, or one naming none of the linted files is a usage error (exit 2) —
+as is configuring the rule, by `[lint]`, `-lint-set` or `-lint-opt`, without
+giving a run. A gate that can pass with its measurement missing is the one
+the ratchet test guards against, and this rule holds itself to the same bar.
+The repository ratchet does not include this rule: it needs a run of every
+suite, which the gate's one-parse-per-file cost cannot afford.
 
 ### Why a tolerance, and why the asymmetry
 

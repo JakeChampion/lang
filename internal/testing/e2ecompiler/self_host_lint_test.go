@@ -291,7 +291,10 @@ func TestSelfHostLintRules(t *testing.T) {
 	out, err := exec.Command(e2eharness.SelfHostCLI(t), "-lint-rules").Output()
 	want := "cyclomatic-complexity  [warn]\n" +
 		"    function has more independent control-flow paths than the configured limit\n" +
-		"    option cyclomatic-complexity.max = 10 (default)\n"
+		"    option cyclomatic-complexity.max = 10 (default)\n" +
+		"change-risk  [warn]\n" +
+		"    function is complex and mostly untested: complexity^2 * (1 - coverage)^3 + complexity, scored from the -cover run -lint-cover names\n" +
+		"    option change-risk.max = 30 (default)\n"
 	if err != nil || string(out) != want {
 		t.Errorf("-lint-rules: %v\n--- got ---\n%s--- want ---\n%s", err, out, want)
 	}
@@ -325,5 +328,153 @@ func TestSelfHostLintSplittingImprovesExcess(t *testing.T) {
 	sc, se := measure(fn("a", 13) + fn("b", 13) + fn("c", 13))
 	if wc != 1 || we != 30 || sc != 3 || se != 12 {
 		t.Errorf("whole: %d finding(s), excess %d; split: %d, excess %d — want 1 and 30, then 3 and 12", wc, we, sc, se)
+	}
+}
+
+// lintForkFn is a function of `forks` consecutive `if`s on lines 2 through
+// forks+1 and a return on the line after, so its complexity is forks+1 and
+// a -cover run instruments forks+1 of its lines.
+func lintForkFn(name string, forks int) string {
+	var b strings.Builder
+	b.WriteString("function " + name + "(n: i32): i32 {\n")
+	for i := 0; i < forks; i++ {
+		b.WriteString("  if (n == " + strconv.Itoa(i) + ") { return " + strconv.Itoa(i) + "; }\n")
+	}
+	return b.String() + "  return 0;\n}\n"
+}
+
+// coverRows is a -cover stream for `file`: one row per line in `hits`, keyed
+// by line number.
+func coverRows(file string, hits map[int]int) string {
+	var b strings.Builder
+	for line, n := range hits {
+		b.WriteString("fern-cover: " + file + ":" + strconv.Itoa(line) + " " + strconv.Itoa(n) + "\n")
+	}
+	return b.String()
+}
+
+// The change-risk score: complexity^2 * (1 - coverage)^3 + complexity,
+// rounded, over the rows between a function's first line and the last line
+// its body reaches. A function the run holds no row for is not scored.
+func TestSelfHostLintChangeRisk(t *testing.T) {
+	// Four copies of the same 3-fork function at lines 1, 6, 11 and 16, with
+	// 0, 1, 2 and 3 of their 3 instrumented lines hit, then an 11-fork one at
+	// line 21 with nothing hit, then one with no rows at all.
+	src := lintForkFn("none", 2) + lintForkFn("third", 2) + lintForkFn("most", 2) + lintForkFn("all", 2) +
+		lintForkFn("big", 10) + lintForkFn("unmeasured", 2)
+	hits := map[int]int{2: 0, 3: 0, 4: 0, 7: 1, 8: 0, 9: 0, 12: 1, 13: 1, 14: 0, 17: 1, 18: 1, 19: 1}
+	for l := 22; l <= 32; l++ {
+		hits[l] = 0
+	}
+	files := map[string]string{"t.fern": src, "cov.txt": coverRows("t.fern", hits)}
+	out, errOut, code := lintRun(t, files, "-lint-cover", "cov.txt", "t.fern")
+	want := "t.fern:21:1: warning[change-risk]: function `big` has a change risk of 132: complexity 11 with 0.0% of its 11 lines covered, over the limit of 30\n" +
+		"    function big(n: i32): i32 {\n" +
+		"    ^\n" +
+		"    help: test it, or split out the branch-heavy part; `// fern-lint: allow change-risk` exempts this site\n" +
+		"\n" +
+		"t.fern:21:1: warning[cyclomatic-complexity]: function `big` has a cyclomatic complexity of 11, over the limit of 10\n" +
+		"    function big(n: i32): i32 {\n" +
+		"    ^\n" +
+		"    help: split out the branch-heavy part, or raise the limit for this site with `// fern-lint: allow cyclomatic-complexity`\n" +
+		"2 warnings generated\n"
+	if code != 0 || out != want || errOut != "" {
+		t.Errorf("default limit: exit %d, stderr %q\n--- got ---\n%s--- want ---\n%s", code, errOut, out, want)
+	}
+	// 3^2 * 1 + 3 = 12; 9 * (2/3)^3 = 2.67 -> 3, plus 3 = 6; 9 * (1/3)^3 =
+	// 0.33 -> 0, plus 3 = 3; and 3 for the fully covered one.
+	out, _, code = lintRun(t, files, "-lint-cover", "cov.txt", "-lint-set", "cyclomatic-complexity=allow", "-lint-opt", "change-risk.max=2", "t.fern")
+	riskRe := regexp.MustCompile("function `([^`]+)` has a change risk of (\\d+): complexity 3 with ([0-9.]+%) of its 3 lines covered")
+	got := map[string]string{}
+	for _, m := range riskRe.FindAllStringSubmatch(out, -1) {
+		got[m[1]] = m[2] + " at " + m[3]
+	}
+	wantRisks := map[string]string{"none": "12 at 0.0%", "third": "6 at 33.3%", "most": "3 at 66.7%", "all": "3 at 100.0%"}
+	if code != 0 || len(got) != len(wantRisks) {
+		t.Errorf("max=2: exit %d, %d change-risk findings:\n%s", code, len(got), out)
+	}
+	for name, want := range wantRisks {
+		if got[name] != want {
+			t.Errorf("%s: risk %q, want %q", name, got[name], want)
+		}
+	}
+	if strings.Contains(out, "`unmeasured`") {
+		t.Errorf("a function with no rows was scored:\n%s", out)
+	}
+	// deny fails the run; a suppression on the function or the file silences it.
+	out, _, code = lintRun(t, files, "-lint-cover", "cov.txt", "-lint-set", "change-risk=deny", "t.fern")
+	if code != 1 || !strings.Contains(out, "error[change-risk]: function `big`") {
+		t.Errorf("deny: exit %d\n%s", code, out)
+	}
+	for _, directive := range []string{"// fern-lint: allow change-risk\n", "// fern-lint: allow-file change-risk\n"} {
+		shifted := map[int]int{}
+		for l, n := range hits {
+			shifted[l+1] = n
+		}
+		quiet := map[string]string{"t.fern": directive + src, "cov.txt": coverRows("t.fern", shifted)}
+		if directive == "// fern-lint: allow change-risk\n" {
+			// The directive covers only `none`; `big` still fires.
+			out, _, _ = lintRun(t, quiet, "-lint-cover", "cov.txt", "-lint-set", "cyclomatic-complexity=allow", "-lint-opt", "change-risk.max=2", "t.fern")
+			if strings.Contains(out, "`none`") || !strings.Contains(out, "`big`") {
+				t.Errorf("allow on the first function:\n%s", out)
+			}
+			continue
+		}
+		out, _, code = lintRun(t, quiet, "-lint-cover", "cov.txt", "-lint-set", "cyclomatic-complexity=allow", "t.fern")
+		if code != 0 || out != "" {
+			t.Errorf("allow-file: exit %d, output %q", code, out)
+		}
+	}
+}
+
+// A run names a file as the compile was told it and the lint as it was
+// walked; one spelled with more or fewer leading directories still matches.
+func TestSelfHostLintChangeRiskPaths(t *testing.T) {
+	hits := map[int]int{2: 0, 3: 0, 4: 0}
+	big := lintForkFn("noisy", 2)
+	for _, tc := range []struct{ name, covered, linted string }{
+		{"same spelling", "src/a.fern", "src/a.fern"},
+		{"run is absolute", "/work/pkg/src/a.fern", "src/a.fern"},
+		{"run is bare", "a.fern", "src"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{"src/a.fern": big, "cov.txt": coverRows(tc.covered, hits)}
+			out, errOut, code := lintRun(t, files, "-lint-cover", "cov.txt", "-lint-opt", "change-risk.max=5", tc.linted)
+			if code != 0 || !strings.Contains(out, "src/a.fern:1:1: warning[change-risk]: function `noisy` has a change risk of 12") {
+				t.Errorf("exit %d, stderr %q\n%s", code, errOut, out)
+			}
+		})
+	}
+}
+
+// The rule refuses to pass vacuously: configuring it without a run, a run
+// that cannot be read or holds no rows, and a run naming none of the linted
+// files are all usage errors.
+func TestSelfHostLintChangeRiskRefusals(t *testing.T) {
+	noisy := map[string]string{"t.fern": lintNoisyFn}
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		args  []string
+		want  string
+	}{
+		{"severity set, no run", noisy, []string{"-lint-set", "change-risk=deny", "t.fern"}, "change-risk is configured but no coverage was given: pass -lint-cover FILE"},
+		{"option set, no run", noisy, []string{"-lint-opt", "change-risk.max=5", "t.fern"}, "change-risk is configured but no coverage was given"},
+		{"manifest sets it, no run", map[string]string{"t.fern": lintNoisyFn, "fern.toml": "[lint]\nchange-risk = \"deny\"\n"}, []string{"t.fern"}, "change-risk is configured but no coverage was given"},
+		{"unreadable run", noisy, []string{"-lint-cover", "missing.txt", "t.fern"}, "-lint-cover: cannot read missing.txt"},
+		{"no rows", map[string]string{"t.fern": lintNoisyFn, "cov.txt": "program noise\n"}, []string{"-lint-cover", "cov.txt", "t.fern"}, "-lint-cover cov.txt: no fern-cover rows"},
+		{"malformed row", map[string]string{"t.fern": lintNoisyFn, "cov.txt": "fern-cover: t.fern:x 1\n"}, []string{"-lint-cover", "cov.txt", "t.fern"}, "-lint-cover cov.txt: line 1:"},
+		{"names other files", map[string]string{"t.fern": lintNoisyFn, "cov.txt": "fern-cover: other.fern:2 1\n"}, []string{"-lint-cover", "cov.txt", "t.fern"}, "-lint-cover cov.txt covers none of the linted files: it names other.fern"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, errOut, code := lintRun(t, tc.files, tc.args...)
+			if code != 2 || !strings.Contains(errOut, tc.want) {
+				t.Errorf("exit %d, stdout %q, stderr %q; want 2 and %q", code, out, errOut, tc.want)
+			}
+		})
+	}
+	// Setting the rule to allow with no run is not a configuration that needs one.
+	if out, errOut, code := lintRun(t, noisy, "-lint-set", "change-risk=allow", "t.fern"); code != 0 || out != "" {
+		t.Errorf("allow without a run: exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
 }

@@ -1,0 +1,180 @@
+# Reading notes, 2026-10-21
+
+Seven outside sources, read against the code as it stands, and what each one
+changes for Fern. One of them became a change in the same PR (the change-risk
+lint rule, `docs/LINT.md`); the rest are recorded here as a decision, with the
+facts the decision rests on, so nobody has to re-derive them.
+
+| Source | Verdict |
+|---|---|
+| Savoia, "This code is CRAP" (Google Testing Blog, 2011) | **Done:** `change-risk` lint rule from a `-cover` run |
+| Pierre, "On highlighting code" (Highlights, a WAT lexer-highlighter) | Recommend a grammar-versus-lexer parity test; no new highlighter |
+| packslip.dev (signed release metadata, by the authors of mise and aqua) | Recommend publishing a packslip from `release.yml`; not landed blind |
+| ASD-STE100 Simplified Technical English (0xpili's skill) | Pointer added to `docs/AGENT-PROMPTING.md`; dictionary not adoptable |
+| MultiTable (Petkus, 2026) | No action; the open map lever is monomorphisation, not layout |
+| rsconstmap (Lemire; binary fuse static maps) | Recommend: `std/publicsuffix` lookup, then string `match` lowering |
+| "Principles for fast Tokio applications" (dial9) | No change without a measurement; two things worth measuring |
+
+## CRAP: complexity against coverage
+
+The post's content is one formula and one threshold. CRAP1(m) =
+comp(m)² × (1 − cov(m))³ + comp(m), with comp the cyclomatic complexity and cov
+the coverage from automated tests; over 30 is the anti-pattern. Savoia says
+plainly that it is a curve fit to colleagues' judgements of real Java code,
+not a derivation, and that it does nothing for cohesion or coupling.
+
+Fern already measured both halves and reported them in different places:
+`fern -lint` scores cyclomatic complexity per function (`compiler/lint.fern`),
+and `fern -cover` writes a row per instrumented line (`compiler/cover.fern`,
+folded by `compiler/coverreport.fern`). The repository's own complexity
+ratchet (`docs/COMPLEXITY-CAMPAIGN.md`) has been working the first half alone,
+and a complexity number cannot say whether a 400-fork function is dangerous or
+merely large. Joining the two is a second lint rule, which `docs/LINT.md`
+documents and `-lint -lint-cover FILE` runs. Line coverage stands in for the
+post's "basis path" coverage, as every port of the metric does; Fern's branch
+rows exist only for functions with conditionals, so lines are the denominator
+that is dense for every function.
+
+## Highlights: a lexer, not a grammar, drives the colours
+
+The article's result is a hand-written-WAT lexer that emits HTML or token
+records directly, scanning 16 bytes at a time for strings and comments, with
+a streaming mode that keeps lexer state across chunks and re-tokenizes only
+the lines an edit touched. The numbers (up to 298× Shiki's throughput, 50 MiB
+against 155 MiB) are the vendor's, on one machine.
+
+Where Fern stands: the documentation site highlights ```fern fences through
+Starlight, which runs Shiki over the VS Code extension's TextMate grammar
+(`editors/vscode/syntaxes/fern.tmLanguage.json`, loaded in
+`site/astro.config.mjs` so the two stay one file). That is a build-time cost
+on a static site, so the article's speed argument does not apply. The
+playground (`web/index.html`) mounts CodeMirror 6. The language server emits
+semantic tokens from the real lexer and parser (`compiler/lsptokens.fern`).
+
+What does apply is the article's premise: a grammar maintained beside a lexer
+drifts from it. Fern's keyword set is written three times — `is_keyword` in
+`compiler/lexer.fern`, the `keywords` map in `internal/syntax/lexer/lexer.go`
+it says it mirrors, and the grammar's `keyword.control.fern` pattern — and
+only the first two are pinned to each other by a test. The cheap fix is a
+parity test reading `lexer.keywords()` and the grammar as data, the shape
+`compiler/funcdecl_bounds_parity_test.go` already takes. The expensive fix,
+a `fern -highlight` mode emitting spans from `lexer.fern` for the site and the
+playground's WASI build, would make the grammar a derived artefact; it is
+worth doing only when the playground wants live highlighting, and is not
+scheduled.
+
+## packslip: one signed file per release
+
+packslip is a format and CLI, stable at version 1: a release publishes
+`packslip.sigstore.json` beside its artifacts, recording each file's digest,
+platform (`os`, `arch`, `libc`) and executable paths, signed keylessly from a
+CI OIDC identity or with an Ed25519 key, as an in-toto statement in a
+sigstore bundle. The point it makes against the usual `.sha256` sidecar is
+that whoever can replace the binary can replace the checksum beside it;
+verification against a trusted signer is what the sidecar lacks. It does not
+by itself detect a withdrawn or rolled-back release; separately signed
+release lists do that.
+
+Where Fern stands: `release.yml` publishes a rolling `nightly` of `fern` and
+the coreutils per host as `.tar.gz` plus a `.tar.gz.sha256` sidecar, exactly
+the shape the format criticises. The bootstrap pin is the other way round and
+sound: `bootstrap/stage0.lock` carries the sha256 of each stage0 binary in the
+repository, so a `make bootstrap` verifies against a hash the vendor cannot
+rewrite after the fact (the "hash-in-manifest closes TOFU" posture of
+`docs/PACKAGE-MANAGEMENT-SOTA.md`); package fetches (`compiler/pkgfetch.fern`)
+verify the same way. The toolchain here is already managed by mise
+(`mise.toml`), whose author co-wrote packslip and whose installer consumes it.
+
+Recommendation: add a `packslip` step to the nightly `release.yml` signing
+keylessly through the workflow's GitHub OIDC identity, so `mise` and other
+packslip-aware installers can select and verify the right archive without a
+per-vendor layout rule, and keep the `.sha256` files for hand verification.
+Not landed here: a release workflow cannot be exercised from a development
+container, and `workflow_dispatch` builds without publishing, which is the
+safe way to try the step first. A signed release list is the follow-on once
+the nightly has more than one version worth distinguishing.
+
+## Simplified Technical English
+
+ASD-STE100 is a controlled language for maintenance documentation: 53 writing
+rules (one instruction per sentence, about twenty words, active voice, no
+contractions, a paragraph of at most six sentences) and an 869-word dictionary
+in which each word has one approved meaning. The repository packages it as an
+agent skill with a checker script.
+
+Where Fern stands: `CLAUDE.md` ("Write plainly") and `docs/AGENT-PROMPTING.md`
+("mannered prose") already ask for the same thing less mechanically. The
+procedural rules are a sharper statement of that ask for help text, `fern
+-explain` pages and `docs/`. The dictionary is not adoptable: it has no
+approved word for most of what a compiler does, and the specification is
+ASD's, not something to vendor. A pointer went into `docs/AGENT-PROMPTING.md`;
+nothing else changes.
+
+## MultiTable
+
+A cascading multi-level hash table: a key hashes to one bucket per level and
+settles in the first with room, trading extra probes for a physical load
+factor up to 1. Fixed-size byte keys and values, no resize, no iteration, and
+the README calls it not production-grade; the paper's claim is less memory
+than hashbrown at any load factor.
+
+Where Fern stands: `internal/stdlib/core/map.fern` is a SwissTable-style open
+table: power-of-two bucket count, a 7-bit control byte per slot scanned eight
+at a time with the SWAR zero-byte finder, tombstones, a 75% load-factor grow,
+runtime key-kind tags. The documented perf lever left on maps is
+monomorphising the runtime dispatch (`docs/MAP-SPECIALIZATION.md`, two measured
+attempts, not yet landed), not the layout. No action.
+
+## rsconstmap: static string maps from binary fuse filters
+
+An immutable string-to-u64 map built as a binary fuse filter: for every key,
+`data[h0] ^ data[h1] ^ data[h2] == value`, so a lookup is one hash, three
+loads and two XORs, at about 9 bytes per key (18 with a fingerprint so absent
+keys are detected). The author's numbers put it at 7 ns against 55 ns for a
+`HashMap` at a million keys on an M4 Max; at ten thousand keys everything is
+in cache and the gap is small. Build is slower than a hash map's and the
+structure is immutable, so it fits sets known at construction.
+
+Where Fern has static string sets:
+
+- `std/publicsuffix` holds 6,952 rules as one 84 KB string and answers
+  `__rule(r)` with `contains("\n" + r + "\n")`: a substring scan of the whole
+  list per label, up to a few labels per host. This is the clearest case for a
+  built-once structure. A sorted array with binary search is the smallest
+  change; a binary fuse set is the fast one and would be a `std` module in its
+  own right. Measure against the string scan before choosing.
+- `match` on string literals lowers to an `str_eq` if-else-if chain
+  (`docs/FEATURE-AUDIT.md`). For the arm counts programs write, a hash would
+  lose to comparing lengths first; a length-then-bytes dispatch in the
+  lowering is the win there, and belongs in the IR so every backend gets it.
+- The lexer's `is_keyword` already dispatches on the first byte and compares
+  a handful of candidates, which is the right shape for forty keys.
+
+## Fast Tokio applications
+
+The principles that transfer to a reactor-driven HTTP server: measure a real
+latency metric before changing anything, and the metric that matters is the
+time from a task becoming ready to its being polled; yield between pipelined
+requests for latency and batch for throughput (yielding after four
+consecutive ready reads took a mini-Redis p99 from 2.5 ms to 0.3 ms at the
+same throughput); bound concurrency with a semaphore rather than an adaptive
+scheme; keep critical sections tiny and never hold a lock across I/O; isolate
+the event loop's threads from other work, because an OS scheduling delay of
+10 to 20 ms under load is the whole p99 budget.
+
+Where Fern stands (`internal/stdlib/std/serve.fern`): each worker is one
+single-threaded reactor loop, so the mutex and global-queue advice has no
+object; concurrency is bounded already (`max_connections`,
+`max_connections_per_ip`, `max_in_flight`, per-request limits); workers are
+preforked (`workers`), and nothing pins them to cores. The one place the
+article's first principle bites is step 6 of the loop's contract: requests
+pipelined behind an answered one are served from the same readable event and
+their responses corked into one write. The loop's single 4 KiB read buffer
+bounds how many that can be, so one connection cannot starve the others
+beyond a few dozen tiny requests, but the article's point is that it still
+costs the other connections' p99. Two things are worth measuring before
+anything is changed, and `tools/fernload` (open-loop, corrected for
+coordinated omission) is the instrument: a cap on requests answered per
+readable event, and a "ready to served" latency histogram in
+`std/metrics.ServerMetrics` beside the request-duration one, which is the
+schedule-latency metric the article says to read first. No change here.
