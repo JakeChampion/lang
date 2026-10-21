@@ -1,0 +1,417 @@
+// std/constmap — an immutable map from string keys to u64 values, built once
+// from the whole key set. The structure is a binary fuse filter (Graf and
+// Lemire, 2022) with the values in place of the fingerprints: for every key,
+//
+//     data[h0] ^ data[h1] ^ data[h2] == value
+//
+// so a lookup is one hash, three loads and two xors, and the table holds
+// about 1.125 words per key. The shape is Lemire's `constmap` (Go, Rust, C),
+// which `std/constmap` matches in behaviour, not in file format.
+//
+// `ConstMap` stores no keys: `map(key)` for a key that was not in the set
+// returns a value that means nothing. `VerifiedConstMap` adds a fingerprint
+// beside each value, doubling the table, and its `get(key)` answers `None`
+// for a key it never saw. Both are built by one call that takes the keys
+// and values together and fails on a duplicate key or a length mismatch.
+// Building is slower than filling a `Map`; lookups do not depend on the
+// number of keys, which is what makes the structure worth it for a key set
+// that is fixed and queried often.
+//
+//   import "std/constmap";
+//   let m: constmap.ConstMap = constmap.constmap_new(keys, values).unwrap();
+//   m.map("some key");           // the value, or anything for an absent key
+//   let v: constmap.VerifiedConstMap = constmap.verified_new(keys, values).unwrap();
+//   v.get("some key");           // Some(value), None for a key not in the set
+
+import "core/map";
+import "std/hash";
+
+// The positions are three segments of `segment_length` slots: the first
+// chosen by the high bits of the hash over `segment_count_length`, the other
+// two the next two segments, each offset by a slice of the hash's low bits.
+// `data` has `segment_count_length + 2 * segment_length` slots.
+pub struct ConstMap { len: i32, seed: u64, segment_length: u64, segment_length_mask: u64, segment_count_length: u64, data: u64[] }
+
+// The same table twice over: `data` holds the values and `tags` the
+// fingerprints, so a lookup checks the key before trusting the value.
+pub struct VerifiedConstMap { len: i32, seed: u64, segment_length: u64, segment_length_mask: u64, segment_count_length: u64, data: u64[], tags: u64[] }
+
+// Layout is the geometry a key count needs.
+struct Layout { segment_length: u64, segment_length_mask: u64, segment_count_length: u64, array_length: i32 }
+
+// Peeled is a successful peeling: the keys in the order the assignment
+// walks them backwards, each with its hash and which of its three positions
+// was the one left alone.
+struct Peeled { ok: boolean, hashes: u64[], indices: i32[], found: i32[] }
+
+const ATTEMPTS: i32 = 64;
+
+// `constmap_new(keys, values)` — the map holding `values[i]` under
+// `keys[i]`. The error names a duplicate key, a length mismatch, or a key
+// set the construction gave up on.
+pub function constmap_new(keys: string[], values: u64[]): Result[ConstMap, string] {
+  match (__check(keys, values)) {
+    Err(e) => {
+      return Err(e);
+    },
+    Ok(_) => {}
+  }
+  let lay: Layout = __layout(keys.len());
+  let seed: u64 = __FIRST_SEED;
+  let attempt: i32 = 0;
+  while (attempt < ATTEMPTS) {
+    seed = __splitmix(seed);
+    let p: Peeled = __peel(keys, seed, lay);
+    if (p.ok) {
+      let data: u64[] = __assign(p, values, lay);
+      return Ok(ConstMap { len: keys.len(), seed: seed, segment_length: lay.segment_length, segment_length_mask: lay.segment_length_mask, segment_count_length: lay.segment_count_length, data: data });
+    }
+    attempt = attempt + 1;
+  }
+  return Err("constmap: could not place " + __i32_str(keys.len()) + " keys in " + __i32_str(ATTEMPTS) + " attempts");
+}
+
+// `verified_new(keys, values)` — as `constmap_new`, with the fingerprints
+// that let `get` reject a key not in the set.
+pub function verified_new(keys: string[], values: u64[]): Result[VerifiedConstMap, string] {
+  match (__check(keys, values)) {
+    Err(e) => {
+      return Err(e);
+    },
+    Ok(_) => {}
+  }
+  let lay: Layout = __layout(keys.len());
+  let seed: u64 = __FIRST_SEED;
+  let attempt: i32 = 0;
+  while (attempt < ATTEMPTS) {
+    seed = __splitmix(seed);
+    let p: Peeled = __peel(keys, seed, lay);
+    if (p.ok) {
+      let data: u64[] = __assign(p, values, lay);
+      let tags: u64[] = __assign_tags(p, lay);
+      return Ok(VerifiedConstMap { len: keys.len(), seed: seed, segment_length: lay.segment_length, segment_length_mask: lay.segment_length_mask, segment_count_length: lay.segment_count_length, data: data, tags: tags });
+    }
+    attempt = attempt + 1;
+  }
+  return Err("constmap: could not place " + __i32_str(keys.len()) + " keys in " + __i32_str(ATTEMPTS) + " attempts");
+}
+
+// `len()` — how many keys the map was built from.
+pub function (m: ConstMap) len(): i32 {
+  return m.len;
+}
+
+pub function (m: VerifiedConstMap) len(): i32 {
+  return m.len;
+}
+
+// `map(key)` — the value stored under `key`. For a key that was not in the
+// set the result is an arbitrary value, never an error: use
+// `VerifiedConstMap` when absent keys are possible.
+pub function (m: ConstMap) map(key: string): u64 {
+  let h: u64 = __hash_key(key, m.seed);
+  let (h0, h1, h2) = __positions(h, m.segment_length, m.segment_length_mask, m.segment_count_length);
+  return m.data[h0] ^ m.data[h1] ^ m.data[h2];
+}
+
+// `get(key)` — `Some(value)` for a key in the set, `None` otherwise. The
+// check is a 64-bit fingerprint, so a key not in the set is accepted with
+// probability 2^-64, which is to say never.
+pub function (m: VerifiedConstMap) get(key: string): Option[u64] {
+  let h: u64 = __hash_key(key, m.seed);
+  let (h0, h1, h2) = __positions(h, m.segment_length, m.segment_length_mask, m.segment_count_length);
+  if ((m.tags[h0] ^ m.tags[h1] ^ m.tags[h2]) != __tag(h)) {
+    return None;
+  }
+  return Some(m.data[h0] ^ m.data[h1] ^ m.data[h2]);
+}
+
+// `contains(key)` — whether `key` was in the set.
+pub function (m: VerifiedConstMap) contains(key: string): boolean {
+  match (m.get(key)) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
+// `get_or(key, fallback)` — the value under `key`, or `fallback`.
+pub function (m: VerifiedConstMap) get_or(key: string, fallback: u64): u64 {
+  match (m.get(key)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return fallback;
+    }
+  }
+}
+
+const __FIRST_SEED: u64 = 0x5BD1E9955BD1E995;
+
+// __check rejects a length mismatch and a repeated key, naming it.
+function __check(keys: string[], values: u64[]): Result[boolean, string] {
+  if (keys.len() != values.len()) {
+    return Err("constmap: " + __i32_str(keys.len()) + " keys but " + __i32_str(values.len()) + " values");
+  }
+  let seen: Map[string, i32] = Map { };
+  let i: i32 = 0;
+  while (i < keys.len()) {
+    if (seen.has(keys[i])) {
+      return Err("constmap: duplicate key \"" + keys[i] + "\"");
+    }
+    seen = seen.insert(keys[i], i);
+    i = i + 1;
+  }
+  return Ok(true);
+}
+
+// __layout follows the reference construction: segment length a power of
+// two near size^(1/3.33) * 4.75, capped at 2^18, and a capacity of 1.125
+// times the key count for large sets, more for small ones, where the
+// peeling needs the slack.
+function __layout(size: i32): Layout {
+  let seg: u64 = 4;
+  if (size > 0) {
+    // floor(log(size) / log(3.33) + 2.25), with log2 standing in for log
+    // through the fixed ratio log(2) / log(3.33).
+    let bits: i32 = 0;
+    let n: i32 = size;
+    while (n > 0) {
+      bits = bits + 1;
+      n = n >> 1;
+    }
+    let exp: i32 = ((bits - 1) as f64 * 0.5762 + 2.25) as i32;
+    if (exp > 18) {
+      exp = 18;
+    }
+    seg = 1 as u64 << exp as u64;
+  }
+  let factor: f64 = 1.125;
+  if (size > 1 && size < 1000000) {
+    // 0.875 + 0.25 * log(1e6) / log(size), size's log again through log2.
+    let bits: i32 = 0;
+    let n: i32 = size;
+    while (n > 0) {
+      bits = bits + 1;
+      n = n >> 1;
+    }
+    let f: f64 = 0.875 + 0.25 * 19.93 / ((bits - 1) as f64 + 0.5);
+    if (f > factor) {
+      factor = f;
+    }
+  }
+  let capacity: i64 = (size as f64 * factor) as i64 + 1;
+  let count: i64 = (capacity + seg as i64 - 1) / (seg as i64) - 2;
+  if (count < 1) {
+    count = 1;
+  }
+  let array_length: i64 = (count + 2) * (seg as i64);
+  return Layout { segment_length: seg, segment_length_mask: seg - 1, segment_count_length: count as u64 * seg, array_length: array_length as i32 };
+}
+
+function __splitmix(x: u64): u64 {
+  let z: u64 = x + 0x9E3779B97F4A7C15;
+  z = (z ^ z >> 30) * 0xBF58476D1CE4E5B9;
+  z = (z ^ z >> 27) * 0x94D049BB133111EB;
+  return z ^ z >> 31;
+}
+
+function __hash_key(key: string, seed: u64): u64 {
+  return hash.xxh64(key.bytes(), seed);
+}
+
+// __tag is the fingerprint `VerifiedConstMap` keeps for a hash: a second
+// mix, so it does not repeat the bits the positions already consumed.
+function __tag(h: u64): u64 {
+  return __splitmix(h ^ 0xA0761D6478BD642F);
+}
+
+// __mulhi is the high 64 bits of the 128-bit product, through 32-bit halves.
+function __mulhi(a: u64, b: u64): u64 {
+  let lo_mask: u64 = 0xFFFFFFFF;
+  let a_lo: u64 = a & lo_mask;
+  let a_hi: u64 = a >> 32;
+  let b_lo: u64 = b & lo_mask;
+  let b_hi: u64 = b >> 32;
+  let lo_lo: u64 = a_lo * b_lo;
+  let hi_lo: u64 = a_hi * b_lo;
+  let lo_hi: u64 = a_lo * b_hi;
+  let hi_hi: u64 = a_hi * b_hi;
+  let cross: u64 = (lo_lo >> 32) + (hi_lo & lo_mask) + (lo_hi & lo_mask);
+  return hi_hi + (hi_lo >> 32) + (lo_hi >> 32) + (cross >> 32);
+}
+
+// __positions is the key's three slots: the first anywhere in the first
+// `segment_count_length` slots, the next two in the two segments after it.
+function __positions(h: u64, segment_length: u64, mask: u64, segment_count_length: u64): (i32, i32, i32) {
+  let h0: u64 = __mulhi(h, segment_count_length);
+  let h1: u64 = h0 + segment_length;
+  let h2: u64 = h1 + segment_length;
+  h1 = h1 ^ h >> 18 & mask;
+  h2 = h2 ^ h & mask;
+  return (h0 as i32, h1 as i32, h2 as i32);
+}
+
+function __zeros_u64(n: i32): u64[] {
+  let out: u64[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(0);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __zeros_i32(n: i32): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(0);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __mod3(x: i32): i32 {
+  if (x >= 3) {
+    return x - 3;
+  }
+  return x;
+}
+
+// __peel is the construction's core. Every slot counts the keys that hash
+// to it and xors their hashes, their indices and which of each key's three
+// positions it is, so a slot with one key left can name that key. Keys are
+// peeled from such slots onto a stack, each removal uncovering more, until
+// every key is on the stack or none is left to peel; the latter is a failure
+// the caller retries with another seed.
+function __peel(keys: string[], seed: u64, lay: Layout): Peeled {
+  let size: i32 = keys.len();
+  let n: i32 = lay.array_length;
+  let hashes: u64[] = [];
+  let i: i32 = 0;
+  while (i < size) {
+    hashes = hashes.append(__hash_key(keys[i], seed));
+    i = i + 1;
+  }
+  let count: i32[] = __zeros_i32(n);
+  let xhash: u64[] = __zeros_u64(n);
+  let xidx: i32[] = __zeros_i32(n);
+  i = 0;
+  while (i < size) {
+    let h: u64 = hashes[i];
+    let (h0, h1, h2) = __positions(h, lay.segment_length, lay.segment_length_mask, lay.segment_count_length);
+    count = count.with(h0, count[h0] + 4);
+    xhash = xhash.with(h0, xhash[h0] ^ h);
+    xidx = xidx.with(h0, xidx[h0] ^ i);
+    count = count.with(h1, count[h1] + 4 ^ 1);
+    xhash = xhash.with(h1, xhash[h1] ^ h);
+    xidx = xidx.with(h1, xidx[h1] ^ i);
+    count = count.with(h2, count[h2] + 4 ^ 2);
+    xhash = xhash.with(h2, xhash[h2] ^ h);
+    xidx = xidx.with(h2, xidx[h2] ^ i);
+    i = i + 1;
+  }
+  let alone: i32[] = __zeros_i32(n);
+  let q: i32 = 0;
+  i = 0;
+  while (i < n) {
+    if (count[i] >> 2 == 1) {
+      alone = alone.with(q, i);
+      q = q + 1;
+    }
+    i = i + 1;
+  }
+  let out_hashes: u64[] = __zeros_u64(size);
+  let out_indices: i32[] = __zeros_i32(size);
+  let out_found: i32[] = __zeros_i32(size);
+  let stack: i32 = 0;
+  while (q > 0) {
+    q = q - 1;
+    let index: i32 = alone[q];
+    if (count[index] >> 2 != 1) {
+      continue;
+    }
+    let h: u64 = xhash[index];
+    let idx: i32 = xidx[index];
+    let found: i32 = count[index] & 3;
+    out_hashes = out_hashes.with(stack, h);
+    out_indices = out_indices.with(stack, idx);
+    out_found = out_found.with(stack, found);
+    stack = stack + 1;
+    let (h0, h1, h2) = __positions(h, lay.segment_length, lay.segment_length_mask, lay.segment_count_length);
+    let h012: i32[] = [h0, h1, h2, h0, h1];
+    let other1: i32 = h012[found + 1];
+    alone = alone.with(q, other1);
+    if (count[other1] >> 2 == 2) {
+      q = q + 1;
+    }
+    count = count.with(other1, count[other1] - 4 ^ __mod3(found + 1));
+    xhash = xhash.with(other1, xhash[other1] ^ h);
+    xidx = xidx.with(other1, xidx[other1] ^ idx);
+    let other2: i32 = h012[found + 2];
+    alone = alone.with(q, other2);
+    if (count[other2] >> 2 == 2) {
+      q = q + 1;
+    }
+    count = count.with(other2, count[other2] - 4 ^ __mod3(found + 2));
+    xhash = xhash.with(other2, xhash[other2] ^ h);
+    xidx = xidx.with(other2, xidx[other2] ^ idx);
+  }
+  return Peeled { ok: stack == size, hashes: out_hashes, indices: out_indices, found: out_found };
+}
+
+// __assign walks the peeled keys backwards, setting each key's free slot so
+// its three slots xor to its value; the two other slots are already final.
+function __assign(p: Peeled, values: u64[], lay: Layout): u64[] {
+  let data: u64[] = __zeros_u64(lay.array_length);
+  let i: i32 = p.hashes.len() - 1;
+  while (i >= 0) {
+    let h: u64 = p.hashes[i];
+    let (h0, h1, h2) = __positions(h, lay.segment_length, lay.segment_length_mask, lay.segment_count_length);
+    let h012: i32[] = [h0, h1, h2, h0, h1];
+    let found: i32 = p.found[i];
+    let target: i32 = h012[found];
+    data = data.with(target, values[p.indices[i]] ^ data[h012[found + 1]] ^ data[h012[found + 2]]);
+    i = i - 1;
+  }
+  return data;
+}
+
+function __assign_tags(p: Peeled, lay: Layout): u64[] {
+  let tags: u64[] = __zeros_u64(lay.array_length);
+  let i: i32 = p.hashes.len() - 1;
+  while (i >= 0) {
+    let h: u64 = p.hashes[i];
+    let (h0, h1, h2) = __positions(h, lay.segment_length, lay.segment_length_mask, lay.segment_count_length);
+    let h012: i32[] = [h0, h1, h2, h0, h1];
+    let found: i32 = p.found[i];
+    tags = tags.with(h012[found], __tag(h) ^ tags[h012[found + 1]] ^ tags[h012[found + 2]]);
+    i = i - 1;
+  }
+  return tags;
+}
+
+function __i32_str(n: i32): string {
+  if (n == 0) {
+    return "0";
+  }
+  let neg: boolean = n < 0;
+  let v: i64 = n as i64;
+  if (neg) {
+    v = 0 as i64 - v;
+  }
+  let out: string = "";
+  while (v > 0) {
+    out = string_from_bytes_unchecked([(48 as i64 + v % 10) as u8]) + out;
+    v = v / 10;
+  }
+  if (neg) {
+    return "-" + out;
+  }
+  return out;
+}

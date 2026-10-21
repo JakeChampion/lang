@@ -57,7 +57,7 @@ const STDLIB_GROUPS = [
     "table", "textwrap", "unicode", "utf8"]],
   ["Data & encoding", ["base32", "base64", "brotli", "brotli_dictionary", "crypto", "crypto_aes_gcm", "crypto_chacha20poly1305",
     "crypto_ecdsa", "crypto_ed25519", "crypto_field25519", "crypto_mlkem768", "crypto_montgomery", "crypto_p256", "crypto_rsa", "crypto_x25519", "csv", "deflate", "hash", "hex", "json", "protobuf", "semver", "url", "uuid", "zstd"]],
-  ["Collections & errors", ["array", "error", "iter", "map", "ndarray", "option",
+  ["Collections & errors", ["array", "constmap", "error", "iter", "map", "ndarray", "option",
     "result", "set", "sort", "ordmap", "ordset", "pmap", "pset", "pvec"]],
   ["Traits", ["cmp", "convert", "mem", "num"]],
   ["Numbers", ["bigint", "float", "i32", "i64", "int", "math", "rand", "u32",
