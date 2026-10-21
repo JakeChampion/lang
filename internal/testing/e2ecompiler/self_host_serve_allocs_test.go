@@ -165,9 +165,10 @@ const ServeAllocsH3Ceiling = 232
 // multiplexed path the 1x256 nightly row exercises. It sits well under the
 // serial ServeAllocsH3Ceiling: a burst's flush and its acknowledgements are
 // shared across the requests answered in one pass, so the per-request share
-// falls as the concurrency rises. Measured 133.7 on the x86-64 runner
-// (docs/benchmarks/net-h3-2026-10-21.md); bounded like the H2 and serial H3
-// means, a ceiling that a gain lowers.
+// falls as the concurrency rises. Measured 133.33 at this ratchet's shape
+// (64 in flight, 100,000 rounds) on the x86-64 runner
+// (docs/benchmarks/net-h3-encode-2026-10-21.md); bounded like the H2 and
+// serial H3 means, a ceiling that a gain lowers.
 const ServeAllocsH3MuxCeiling = 134
 
 // ServeAllocsH3MuxConcurrency is how many requests the multiplexed client
@@ -177,6 +178,12 @@ const ServeAllocsH3MuxCeiling = 134
 // learn the credit returned). The nightly's 1x256 row offers more with
 // h2load, which does.
 const ServeAllocsH3MuxConcurrency = 64
+
+// ServeAllocsH3MuxMinPeak is the fewest requests the client must have held
+// in flight for the run to count as multiplexed: three quarters of the
+// target, so a run that quietly fell back toward the serial path fails
+// rather than passing under a ceiling it was not measured against.
+const ServeAllocsH3MuxMinPeak = ServeAllocsH3MuxConcurrency * 3 / 4
 
 func TestSelfHostServeAllocsPerRequestH3(t *testing.T) {
 	cli := buildSelfHostCLI(t)
@@ -222,7 +229,7 @@ func TestSelfHostServeAllocsPerRequestH3Mux(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := runX86_64Bin(cli.runner, client, port, strconv.Itoa(e2eharness.ServeAllocsRounds), strconv.Itoa(ServeAllocsH3MuxConcurrency))
-	e2eharness.CheckServeAllocsH3Mux(t, addr, run, ServeAllocsH3MuxCeiling, e2eharness.ServeAllocsRounds, 48)
+	e2eharness.CheckServeAllocsH3Mux(t, addr, run, ServeAllocsH3MuxCeiling, e2eharness.ServeAllocsRounds, ServeAllocsH3MuxMinPeak)
 }
 
 // ServeFetchAllocsCeiling bounds what a handler making two requests

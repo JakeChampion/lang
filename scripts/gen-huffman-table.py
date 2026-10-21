@@ -4,6 +4,10 @@
 # the packed form the Fern decoder reads, and the encoder's packed table
 # (HUFF, `code << 8 | length`). Paste OUT's entries into HUFF_DEC, sixteen
 # a line, and the printed HUFF entries into HUFF, eight a line.
+#
+# gen-huffman-table.py --check — fail if the committed HUFF or HUFF_DEC has
+# drifted from what the authored HUFF_CODE and HUFF_LEN generate, the mode
+# make check-sources runs.
 import re, random, sys
 import os
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "http", "huffman.fern")).read()
@@ -107,11 +111,25 @@ for t in range(20000):
     if decode_packed(encode(s)) != s: bad += 1
 assert decode_packed(bytes.fromhex("1fff")) is None and decode_packed(bytes([0xff] * 4)) is None
 print("packed roundtrip failures:", bad)
-open(sys.argv[1], "w").write(",".join(str(v) for v in vals))
-print("entries", len(vals), "max", max(vals))
 # HUFF: each symbol's code and length as code << 8 | length, the encoder's
 # one indexed load per symbol.
 huff = [(CODE[s] << 8) | LEN[s] for s in range(len(LEN))]
+if "--check" in sys.argv[1:]:
+    # The committed HUFF and HUFF_DEC must be what the authored HUFF_CODE and
+    # HUFF_LEN generate; a drift fails here, where make check-sources runs it,
+    # rather than later as a failing HPACK round trip.
+    stale = [name for name, want in (("HUFF", huff), ("HUFF_DEC", vals)) if arr(name) != want]
+    if stale:
+        print("internal/stdlib/std/http/huffman.fern is out of date: "
+              + ", ".join(stale) + "; run scripts/gen-huffman-table.py OUT", file=sys.stderr)
+        sys.exit(1)
+    print("huffman tables up to date")
+    sys.exit(0)
+if len(sys.argv) < 2:
+    print("usage: gen-huffman-table.py OUT | gen-huffman-table.py --check", file=sys.stderr)
+    sys.exit(2)
+open(sys.argv[1], "w").write(",".join(str(v) for v in vals))
+print("entries", len(vals), "max", max(vals))
 print("HUFF entries", len(huff), "max", max(huff))
 for i in range(0, len(huff), 8):
     print("  " + ", ".join(str(v) for v in huff[i:i + 8]) + ",")
