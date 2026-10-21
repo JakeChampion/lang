@@ -64,10 +64,12 @@ function successor_table(f: ssa.SFunc, at: i32[]): i32[][] {
 // The natural loop of a back edge: the header plus every block that reaches
 // the edge's source without passing through the header.
 function absorb(f: ssa.SFunc, own l: Loops, h: i32, u: i32, reachable: boolean[]): Loops {
+  // The work stack keeps its storage: `sp` is its depth.
   let work: i32[] = [u];
-  while (work.len() > 0) {
-    let x: i32 = work[work.len() - 1];
-    work = prefix(work, work.len() - 1);
+  let sp: i32 = 1;
+  while (sp > 0) {
+    sp = sp - 1;
+    let x: i32 = work[sp];
     if (x == h || l.members[h * l.n + x]) {
       continue;
     }
@@ -75,21 +77,19 @@ function absorb(f: ssa.SFunc, own l: Loops, h: i32, u: i32, reachable: boolean[]
     for pred in f.blocks[x].preds {
       let pi: i32 = position(l.at, pred);
       if (reachable[pi]) {
-        work = work.append(pi);
+        work = pushed_at(work, sp, pi);
+        sp = sp + 1;
       }
     }
   }
   return l;
 }
 
-function prefix(xs: i32[], n: i32): i32[] {
-  let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(xs[i]);
-    i = i + 1;
+function pushed_at(own stack: i32[], d: i32, v: i32): i32[] {
+  if (d < stack.len()) {
+    return stack.with(d, v);
   }
-  return out;
+  return stack.append(v);
 }
 
 function find_loops(f: ssa.SFunc, reachable: boolean[], dom: ssadeps.Dom): Loops {
@@ -205,7 +205,17 @@ function members_by_rep(l: Loops, region: boolean[], reps: i32[]): Members {
   return Members { start: start, list: list };
 }
 
-function release(l: Loops, region: boolean[], root: i32, chosen: i32, own pending: i32[], reps: i32[], members: Members): i32[] {
+// Ready counts, per representative, the edges into it from other
+// representatives not yet placed; `floor` is a position below which no
+// representative is ready, kept so the position-order fallback scans on
+// from where it last found one rather than from zero. A representative
+// stays ready once it is until it is placed, so the floor only moves back
+// when a release brings a lower one to zero.
+struct Ready { pending: i32[], floor: i32 }
+
+function release(l: Loops, region: boolean[], root: i32, chosen: i32, own ready: Ready, reps: i32[], members: Members): Ready {
+  let pending: i32[] = ready.pending;
+  let floor: i32 = ready.floor;
   let m: i32 = members.start[chosen];
   while (m < members.start[chosen + 1]) {
     let x: i32 = members.list[m];
@@ -215,33 +225,39 @@ function release(l: Loops, region: boolean[], root: i32, chosen: i32, own pendin
       }
       let ry: i32 = reps[y];
       if (ry != chosen) {
-        pending = pending.with(ry, pending[ry] - 1);
+        let left: i32 = pending[ry] - 1;
+        pending = pending.with(ry, left);
+        if (left == 0 && ry < floor) {
+          floor = ry;
+        }
       }
     }
     m = m + 1;
   }
-  return pending;
+  return Ready { pending: pending, floor: floor };
 }
 
-function next_ready(l: Loops, region: boolean[], pending: i32[], done: boolean[], reps: i32[], previous: i32): i32 {
+// next_ready is the next representative to place and the floor after the
+// search: the fallback's answer when it found one, else the region's size.
+function next_ready(l: Loops, region: boolean[], ready: Ready, done: boolean[], reps: i32[], previous: i32): (i32, i32) {
   // Follow a ready successor before the stable position-order fallback.
   // In particular, a ready true arm can fall through instead of jumping
   // across an unrelated ready false arm. Region and predecessor constraints
   // still decide eligibility, including around nested loops and joins.
   for successor in l.succ[previous] {
     let candidate: i32 = reps[successor];
-    if (region[candidate] && !done[candidate] && pending[candidate] == 0) {
-      return candidate;
+    if (region[candidate] && !done[candidate] && ready.pending[candidate] == 0) {
+      return (candidate, ready.floor);
     }
   }
-  let x: i32 = 0;
+  let x: i32 = ready.floor;
   while (x < l.n) {
-    if (region[x] && !done[x] && reps[x] == x && pending[x] == 0) {
-      return x;
+    if (region[x] && !done[x] && reps[x] == x && ready.pending[x] == 0) {
+      return (x, x);
     }
     x = x + 1;
   }
-  return 0 - 1;
+  return (0 - 1, l.n);
 }
 
 function row(l: Loops, h: i32): boolean[] {
@@ -273,7 +289,7 @@ function region_order(l: Loops, region: boolean[], root: i32, out: Layout): Layo
   let start: i32 = out.order.len();
   let reps: i32[] = representatives(l, region, root);
   let members: Members = members_by_rep(l, region, reps);
-  let pending: i32[] = pending_edges(l, region, root, reps);
+  let ready: Ready = Ready { pending: pending_edges(l, region, root, reps), floor: 0 };
   let done: boolean[] = __alloc_bool(l.n);
   let chosen: i32 = root;
   while (chosen >= 0) {
@@ -286,8 +302,10 @@ function region_order(l: Loops, region: boolean[], root: i32, out: Layout): Layo
     } else {
       out = Layout { ok: true, order: out.order.append(chosen), loop_end: out.loop_end.append(0 - 1) };
     }
-    pending = release(l, region, root, chosen, pending, reps, members);
-    chosen = next_ready(l, region, pending, done, reps, chosen);
+    ready = release(l, region, root, chosen, ready, reps, members);
+    let (next, floor) = next_ready(l, region, ready, done, reps, chosen);
+    ready = Ready { ...ready, floor: floor };
+    chosen = next;
   }
   if (!complete(l, region, done, reps)) {
     return irreducible();
