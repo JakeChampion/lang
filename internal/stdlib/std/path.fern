@@ -2,8 +2,8 @@
 // interaction).
 //
 // POSIX separator (`/`) only; Windows paths aren't a target
-// right now (lang's stated platforms are Linux + macOS +
-// wasi-edge). Matches Go `path/filepath` (Unix mode) and Zig
+// (Fern's targets are Linux, Android, macOS, WASI and no OS at
+// all). Matches Go `path/filepath` (Unix mode) and Zig
 // `std.fs.path` minimally.
 //
 // Functions:

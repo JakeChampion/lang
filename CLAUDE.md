@@ -8,8 +8,9 @@ file small" at the bottom before adding to it.
 The language is **Fern**. Source files are `.fern`; the CLI is `fern`
 (`compiler/fern_main.fern`, built by `make build`), whose `-lsp` is the
 language server; the Go oracle `cmd/fern` (`bin/fern-oracle`); the browser
-playground `web/`, running `compiler/playground_run.fern` built for WASI; the
-stdlib doc generator `cmd/ferndoc`. Emitted runtime symbols are `__fern_*`.
+playground `web/`, running `compiler/playground_run.fern` built for WASI; and
+`fern -doc`, the stdlib reference generator. Emitted runtime symbols are
+`__fern_*`.
 
 The **only** things still on the old `lang` name are the Go module path
 `github.com/jakechampion/lang` and the GitHub repo + Pages URLs

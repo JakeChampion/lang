@@ -382,9 +382,14 @@ pub function inlay_hint(line: i32, character: i32, label: string): string {
   return "{\"position\":" + position_json(line, character) + ",\"label\":" + quote(label) + ",\"kind\":1}";
 }
 
-// hover_result is a Hover showing `code` as a Fern code block over `range`.
-pub function hover_result(code: string, range: string): string {
-  return "{\"contents\":{\"kind\":\"markdown\",\"value\":" + quote("```fern\n" + code + "\n```") + "},\"range\":" + range + "}";
+// hover_result is a Hover showing `code` as a Fern code block, followed by
+// `doc` when there is one, over `range`.
+pub function hover_result(code: string, doc: string, range: string): string {
+  let value: string = "```fern\n" + code + "\n```";
+  if (doc.len() > 0) {
+    value = value + "\n\n" + doc;
+  }
+  return "{\"contents\":{\"kind\":\"markdown\",\"value\":" + quote(value) + "},\"range\":" + range + "}";
 }
 
 // location is a Location: `range` in the document `uri` names.

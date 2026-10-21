@@ -11,8 +11,8 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// Keep this oracle aligned with cmd/ferndoc's moduleSummary. In particular,
-// the reference uppercases one byte, even when that byte starts a UTF-8 rune.
+// docSummaryReference is the summary rule ferndoc.module_summary implements:
+// in particular it uppercases one byte, even one that starts a UTF-8 rune.
 func docSummaryReference(intro string) string {
 	para, _, _ := strings.Cut(intro, "\n\n")
 	s := strings.Join(strings.Fields(para), " ")

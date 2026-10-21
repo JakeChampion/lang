@@ -1,4 +1,4 @@
-// Module descriptions mirror cmd/ferndoc, including its quoted front matter.
+// Module descriptions for a reference page's front matter, and their quoting.
 import "./util";
 import "./docprintable";
 import "std/utf8";

@@ -4,7 +4,7 @@ name: Docs build
 # layers stacked on top of each other:
 #
 #   1. Build the playground wasm, stage it under site/public/,
-#      regenerate the stdlib reference via cmd/ferndoc, then run
+#      regenerate the stdlib reference with `fern -doc`, then run
 #      `npm run build` under site/. Failures here block the PR —
 #      a docs change that breaks the build (broken MDX, missing
 #      component import) shouldn't land.
@@ -78,7 +78,9 @@ jobs:
           cp -L web/*.html web/*.js web/*.wasm site/public/playground/
 
       - name: Generate stdlib reference
-        run: go run ./cmd/ferndoc -out site/src/content/docs/stdlib/
+        run: |
+          bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/std
+          bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/core
 
       - name: Install + build
         working-directory: site

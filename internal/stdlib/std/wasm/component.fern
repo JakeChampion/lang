@@ -236,7 +236,7 @@ pub function put_core_type_section_one_func(buf: u8[], param_valtypes: u8[], res
 // independent of the surrounding component. Generating them
 // requires walking a WIT world; that's out of scope for std/wasm
 // (and the production driver already ships precomputed payloads
-// in internal/wasm/componenttype/{lang,http}.bin). This composer
+// in internal/wasm/componenttype/{fern,http,proxy}.bin). This composer
 // just wraps whatever payload the caller hands in.
 //
 // Spec: custom sections in components share the same wire shape
@@ -263,7 +263,7 @@ pub function put_component_type_section(buf: u8[], payload: u8[]): u8[] {
 // section that contains a single "instantiate" entry: instantiate
 // a core module by index, with no `instantiation-arg`s. This is
 // the minimum shape needed by a self-contained core module (one
-// with no imports, e.g. the lang CLI core after every WASI import
+// with no imports, e.g. the fern CLI core after every WASI import
 // is satisfied by canonical-ABI host imports at the component
 // level).
 //
@@ -575,7 +575,7 @@ pub function cvaltype_string(): u8 {  // 0x73
 //                | 0x01 lts:vec(<labelvaltype>) -- named results
 //
 // This composer covers the "single anonymous result" form, which
-// is what every WASI function in the lang / http worlds uses. The
+// is what every WASI function in the fern / http worlds uses. The
 // named-result form lands in a later slice if/when a world needs it.
 pub function put_type_section_funcs(buf: u8[], param_names_per_func: string[][], param_valtypes_per_func: u8[][], result_valtype_per_func: u8[]): u8[] {
   let body: u8[] = [];

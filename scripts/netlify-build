@@ -9,7 +9,7 @@
 #      (compiler/playground_run.fern, built by bin/fern-selfhost).
 #   2. Stage web/ under site/public/playground/ so Astro serves it at
 #      /playground/ alongside the docs.
-#   3. Run cmd/ferndoc to emit the generated stdlib reference pages.
+#   3. Run `fern -doc` to emit the generated stdlib reference pages.
 #   4. npm install && astro build under site/ → site/dist/.
 #
 # One deliberate difference from the Pages workflow, to leave the source tree
@@ -50,7 +50,8 @@ echo "==> staging playground assets"
 cp -L web/*.html web/*.js "$stage/"
 
 echo "==> generating stdlib reference"
-go run ./cmd/ferndoc -out site/src/content/docs/stdlib/
+bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/std
+bin/fern-selfhost -doc -o site/src/content/docs/stdlib internal/stdlib/core
 
 echo "==> building site"
 cd site

@@ -51,7 +51,7 @@ func TestEveryStdlibModuleHasASidebarGroup(t *testing.T) {
 	root := filepath.Join("..", "..", "stdlib", "std")
 	var missing []string
 	// A module in a directory (`std/http/cookie`) is the page `http_cookie`,
-	// the path's separators joined by `_`, as ferndoc names it.
+	// the path's separators joined by `_`, as `fern -doc` names it.
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -66,7 +66,7 @@ func TestEveryStdlibModuleHasASidebarGroup(t *testing.T) {
 		}
 		slug := strings.ReplaceAll(strings.TrimSuffix(rel, ".fern"), string(filepath.Separator), "_")
 		// `_test_empty` is a fixture, not a module anyone imports, and
-		// ferndoc emits no page for it.
+		// `fern -doc` emits no page for it.
 		if strings.HasPrefix(slug, "_") {
 			return nil
 		}

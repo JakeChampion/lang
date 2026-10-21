@@ -121,7 +121,6 @@ jobs:
               "docs-build": { "paths": [
                 "cmd/fern/**",
                 "compiler/**",
-                "cmd/ferndoc/**",
                 "web/**",
                 "site/**",
                 "scripts/check-site-examples",

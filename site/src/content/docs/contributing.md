@@ -24,7 +24,8 @@ mkdir -p public/playground
 cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
 
 # Generate the standard-library reference pages (see below).
-go run ../cmd/ferndoc -out src/content/docs/stdlib/
+../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/std
+../bin/fern-selfhost -doc -o src/content/docs/stdlib ../internal/stdlib/core
 
 npm run dev      # live-reload dev server
 ```
@@ -110,7 +111,7 @@ editable session.
 ## The standard-library reference is generated
 
 Pages under `stdlib/` are **machine-generated** by
-[`cmd/ferndoc`][ferndoc] from the source modules — it parses every public
+`fern -doc` from the source modules — it parses every public
 declaration in `internal/stdlib/std/*.fern` **and** `internal/stdlib/core/*.fern`
 (functions, structs, enums, consts, and traits + a per-trait
 implementations table) along with the doc comment immediately above each
@@ -153,4 +154,3 @@ design documents under `docs/`, and follow the existing test
 conventions — every feature ships with a test at the layer it touches.
 
 [repo]: https://github.com/JakeChampion/lang
-[ferndoc]: https://github.com/JakeChampion/lang/tree/main/cmd/ferndoc

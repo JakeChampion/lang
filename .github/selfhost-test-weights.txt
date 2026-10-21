@@ -507,9 +507,8 @@ TestSelfHostF64ToStringArm64 3
 TestSelfHostF64ToStringX86_64 2
 TestSelfHostFStringIR 5
 TestSelfHostFactorBytes 4
-TestSelfHostFernDocModeMatchesFerndoc 2
+TestSelfHostFernDocMode 2
 TestSelfHostFerndocDescription 2
-TestSelfHostFerndocPagesMatchNative 3
 TestSelfHostFerndocSelfChecks 2
 TestSelfHostFetchAccumulatorStaysLinearX86_64 14
 TestSelfHostFetchClient 136

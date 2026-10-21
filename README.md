@@ -195,7 +195,6 @@ in place for a fresh one of the same shape.
 ```
 compiler/             the compiler, written in Fern (fern_main.fern is `fern`; drivers/ holds its test drivers)
 cmd/fern/             the Go oracle's CLI
-cmd/ferndoc/          stdlib doc generator
 web/                  the browser playground, which runs the compiler built for WASI
 internal/syntax/      the Go oracle's lexer, parser, AST, printer and diagnostics
 internal/check/       its type checker and the rules it runs
