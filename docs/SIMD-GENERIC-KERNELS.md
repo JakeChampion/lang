@@ -231,12 +231,58 @@ x86-64 and wasm.
 The pieces are the table in §4, built in this order so each is gated as it
 lands: the type and the interpreters first (so a program using `f64x2` runs
 under `-interp` and the differential exists), then the IR ops and the wasm
-lowering (the simplest backend, and the one whose `v128` locals need no
-register allocator), then the two native lifts, then `impl Lanes for f64x2`
-and `impl Lanes for f32x4` in `std/simd`.
+lowering, then the two native lifts, then `impl Lanes for f64x2` and
+`impl Lanes for f32x4` in `std/simd`.
 
 `internal/testing/e2ecompiler` is the primary gate for the lifts; the fixpoint
 is secondary, since it is blind to a stable miscompile (`TEST-GATES.md`).
+
+What the survey behind slices 2 and 3 established about the cost, file by
+file, so the slice starts from facts rather than from §4's table:
+
+- **The x86-64 SSA emitter already has the register class.** `ssa.float_values`
+  marks the f64 values that take a float home; the class is `%xmm3`–`%xmm15`
+  (`asm_ir.ssa_fbase`, thirteen registers, all caller-saved), `%xmm0`–`%xmm2`
+  are scratch, and `ssa_fread` / `ssa_fput` / `ssa_fsrc` move a value between
+  its home, a scratch and its slot. A lane value is the same class with three
+  differences: it never has an integer home (an f64 may, as its bit pattern),
+  its slot is 16 bytes and aligned where `ssa_slot_disp` hands out 8-byte
+  slots, and its moves are `movapd` where f64's are `movq`. arm64's
+  `asm_arm64_ir.ssa_fhome` is the same shape over `d` registers, with `q`
+  registers for the lanes.
+- **Calls.** A direct call moves arguments into the pool through
+  `ssa_parallel_moves` and the `.r` entry reads f64 parameters from float
+  registers; a call through a function value takes the `.k` entry, which
+  receives every argument in an integer register and moves f64s across. A
+  lane argument has no integer register to arrive in, so a function value
+  with a lane parameter needs its own entry or a refusal naming it.
+- **Memory.** Every array element and struct field is 1, 4 or 8 bytes wide;
+  a lane value in a field or an element is a 16-byte width the layout code
+  does not have. The first slice keeps lanes out of fields and elements and
+  reaches memory through `__f64x2_load(xs, i)` / `__f64x2_store`, which is
+  how a SIMD kernel reads an `f64[]` anyway.
+- **wasm** is the stack machine over `i64` locals with `v128` used only inside
+  the byte kernels; a lane value needs a `v128` local class of its own, so it
+  is not the cheap backend §4 took it for.
+- **The front ends.** `f64x2` and `f32x4` are type keywords in both lexers; a
+  `TypeLanes` variant joins `typeinfo.Type` and every exhaustive match over it
+  (27 arms in `checker.fern`, about 15 across the lowering); the Go side is
+  `ast.LanesType` beside `FloatType` (70 arms in `checker.go`). The thirteen
+  operations `Lanes` needs beyond the operators (`splat`, `of`, `lane`,
+  `fma`, `sqrt`, `abs`, `floor`, `round`, `min`, `max`, `lt`, `select`,
+  `ldexp`) and the two memory ops are `__f64x2_*` / `__f32x4_*` builtins:
+  each is a signature in both checkers, an arm in both interpreters, an IR
+  op, a lift arm per native, a `v128` emission, and an entry in the four
+  capability tables.
+- **The interpreters** take a `VLanes` / `Lanes` value kind with the element
+  width and the lane values; `tyarg_of_value` names it `f64x2`.
+
+The slice is a register-class project across the two native emitters, the
+wasm emitter, two front ends and two interpreters, with the Atlas §1.2
+estimate (two weeks before the SSA backend existed) as its floor. It is
+sequenced after this PR rather than started at its tail: a lane type whose
+backends refuse it, or one that spills a 128-bit value into an 8-byte slot,
+is worse than none.
 
 ## 7. Slices
 
@@ -245,6 +291,7 @@ is secondary, since it is blind to a stable miscompile (`TEST-GATES.md`).
 | 1 | This brief | this PR |
 | 2 | Associated constants, both compilers | this PR |
 | 3 | `std/simd`: `Lanes`, `Math`, scalar impls, `Dual`, `DoubleDouble`, benchmark | this PR |
-| 4 | Lane types `f64x2` / `f32x4`: type, interpreters, IR ops, wasm, x86-64, arm64, capability tables | this PR |
-| 5 | `impl Lanes for f64x2` / `f32x4`; array fusion picks the lane instance for a packed `f64[]` map | this PR |
+| 4 | Lane types `f64x2` / `f32x4`: type, interpreters, IR ops, wasm, x86-64, arm64, capability tables | next PR (§6 has the file-level plan) |
+| 5 | `impl Lanes` / `impl Math` for `f64x2` / `f32x4`; array fusion picks the lane instance for a packed `f64[]` map | after 4 |
 | 6 | Const generics; `Vec[N, T]` | follow-on project |
+| — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |
