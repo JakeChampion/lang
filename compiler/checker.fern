@@ -24479,6 +24479,36 @@ function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, im: pa
   return e021_req_spelling(req.ret_type, im, tparams, impls) == impl_fn.ret_type;
 }
 
+// e021_wrong_sig is E021 for an impl method whose signature differs from the
+// trait's, both spelled as the Go checker spells a function type.
+function e021_wrong_sig(req: parser.FuncDecl, impl_fn: parser.FuncDecl, im: parser.ImplInfo, tparams: string[], impls: parser.ImplInfo[]): util.Diag {
+  let want: string[] = [];
+  let got: string[] = [];
+  for p in req.params {
+    if (p.name == "self" && p.type_name.len() == 0) {
+      want = want.append(im.impl_type);
+    } else {
+      want = want.append(e021_req_spelling(p.type_name, im, tparams, impls));
+    }
+  }
+  if (req.params.len() > 0 && req.params[0].name == "self") {
+    got = got.append(impl_fn.receiver_type);
+  }
+  for p in impl_fn.params {
+    got = got.append(p.type_name);
+  }
+  let expected: string = e021_sig_text(want, e021_req_spelling(req.ret_type, im, tparams, impls));
+  return dg_at("E021", im.impl_type + "." + req.name + " has the wrong signature for trait " + im.trait_name + ": expected " + expected + ", got " + e021_sig_text(got, impl_fn.ret_type), im.line, im.col);
+}
+
+function e021_sig_text(params: string[], ret: string): string {
+  let r: string = ret;
+  if (r.len() == 0) {
+    r = "void";
+  }
+  return "(" + comma_list(params) + ") => " + r;
+}
+
 // e021_self_matches reports whether a requirement's `self`, if it has one,
 // names the impl type: the impl peels `self` into a receiver of that type,
 // an inherited default's copy included.
@@ -24528,7 +24558,7 @@ function e021_diags(mod: parser.Module): util.Diag[] {
         let sup: string[] = trait_req.supertraits;
         for elem in sup {
           if (!e021_has_impl(mod, elem, im.impl_type)) {
-            out = out.append(dg("E021", "impl " + im.trait_name + " for " + im.impl_type + " also requires `impl " + elem + " for " + im.impl_type + "` (supertrait of " + im.trait_name + ")"));
+            out = out.append(dg_at("E021", "impl " + im.trait_name + " for " + im.impl_type + " also requires `impl " + elem + " for " + im.impl_type + "` (supertrait of " + im.trait_name + ")", im.line, im.col));
           }
         }
         // Associated types: an impl must bind EXACTLY the trait's set — every
@@ -24541,12 +24571,12 @@ function e021_diags(mod: parser.Module): util.Diag[] {
         let im_base: string = util.base_type_name(im.impl_type);
         for at_req in trait_req.assoc_types {
           if (!name_in(at_req, im.assoc_names)) {
-            out = out.append(dg("E021", "impl of " + im.trait_name + " for " + im_base + " must bind associated type \"" + at_req + "\" (`type " + at_req + " = …;`)"));
+            out = out.append(dg_at("E021", "impl of " + im.trait_name + " for " + im_base + " must bind associated type \"" + at_req + "\" (`type " + at_req + " = …;`)", im.line, im.col));
           }
         }
         for at_bound in im.assoc_names {
           if (!name_in(at_bound, trait_req.assoc_types)) {
-            out = out.append(dg("E021", "impl of " + im.trait_name + " for " + im_base + " binds associated type \"" + at_bound + "\" which the trait does not declare"));
+            out = out.append(dg_at("E021", "impl of " + im.trait_name + " for " + im_base + " binds associated type \"" + at_bound + "\" which the trait does not declare", im.line, im.col));
           }
         }
         let reqs: string[] = trait_req.methods;
@@ -24558,12 +24588,12 @@ function e021_diags(mod: parser.Module): util.Diag[] {
           // "adopt the existing method" rule).
           let midx: i32 = e021_recv_method_idx(mod, im.impl_type, reqs[ri]);
           if (!name_in(reqs[ri], im.method_names) && midx < 0) {
-            out = out.append(dg("E021", im.impl_type + " does not implement " + im.trait_name + ": missing method \"" + reqs[ri] + "\""));
+            out = out.append(dg_at("E021", im.impl_type + " does not implement " + im.trait_name + ": missing method \"" + reqs[ri] + "\"", im.line, im.col));
           } else if (midx >= 0 && ri < sigs.len()) {
             // Provided as a receiver method — check its signature
             // against the trait's declaration (#4347 slice 2).
             if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im, trait_req.type_params, mod.impls)) {
-              out = out.append(dg("E021", im.impl_type + "." + reqs[ri] + " has the wrong signature for trait " + im.trait_name));
+              out = out.append(e021_wrong_sig(sigs[ri], mod.funcs[midx], im, trait_req.type_params, mod.impls));
             }
           }
           ri = ri + 1;
@@ -24574,8 +24604,10 @@ function e021_diags(mod: parser.Module): util.Diag[] {
         for ds in trait_req.default_sigs {
           let didx: i32 = e021_recv_method_idx(mod, im.impl_type, ds.name);
           let written: boolean = name_in(ds.name, im.method_names) && didx >= 0;
-          if (written && !e021_sig_matches(ds, mod.funcs[didx], im, trait_req.type_params, mod.impls) || !written && !e021_self_matches(ds, im, trait_req.type_params, mod.impls)) {
-            out = out.append(dg("E021", im.impl_type + "." + ds.name + " has the wrong signature for trait " + im.trait_name));
+          if (written && !e021_sig_matches(ds, mod.funcs[didx], im, trait_req.type_params, mod.impls)) {
+            out = out.append(e021_wrong_sig(ds, mod.funcs[didx], im, trait_req.type_params, mod.impls));
+          } else if (!written && !e021_self_matches(ds, im, trait_req.type_params, mod.impls)) {
+            out = out.append(dg_at("E021", im.impl_type + "." + ds.name + " has the wrong signature for trait " + im.trait_name, im.line, im.col));
           }
         }
       }

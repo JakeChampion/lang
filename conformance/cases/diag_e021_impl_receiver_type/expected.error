@@ -1,0 +1,1 @@
+S.d has the wrong signature for trait Tr: expected (i32) => i32, got (S) => i32

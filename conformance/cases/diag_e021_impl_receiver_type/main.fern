@@ -1,0 +1,19 @@
+// A trait method whose `self` names a concrete type is implemented only by
+// that type: the impl's receiver is the impl type, so the signatures differ.
+trait Tr {
+  function d(self: i32): i32;
+}
+
+struct S {
+  v: i32,
+}
+
+impl Tr for S {
+  function d(self: Self): i32 {
+    return self.v;
+  }
+}
+
+function main(): i32 {
+  return 0;
+}
