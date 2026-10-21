@@ -2205,11 +2205,11 @@ function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
 }
 
 // expr_is_missing reports an expression slot the parser never filled — a void
-// `return;`, whose value is the unknown-token placeholder for the `;`.
+// `return;`'s value among them.
 function expr_is_missing(e: ast.Expr): boolean {
   match (e) {
     ast.ExprUnknown(u) => {
-      return u.kind.len() == 0 || util.str_has_prefix(u.kind, "punct:");
+      return u.kind.len() == 0 || u.kind == parser.BARE_RETURN || util.str_has_prefix(u.kind, "punct:");
     },
     _ => {
       return false;

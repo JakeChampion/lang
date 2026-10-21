@@ -4658,7 +4658,7 @@ function assign(a: ast.StmtAssign, s: State): State {
   return replace(value.s, a.target, value.id);
 }
 
-// A bare `return;` carries the parser's `punct:;` sentinel in place of a
+// A bare `return;` carries the parser's BARE_RETURN sentinel in place of a
 // value, as the checker reads it; the unit literal is the other spelling.
 function ret(r: ast.StmtReturn, s: State): State {
   if (parser.bare_return(r.value)) {
