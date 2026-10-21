@@ -810,7 +810,7 @@ to becoming the default.
 
 The single-column bench over every workload: 669 rows over 106 utilities,
 built by the self-hosted compiler at b506237, on a 4-core container with
-nothing else running. Full table: `docs/COREUTILS-BENCH-2026-10-12.md`. A
+nothing else running. Full table: `docs/coreutils-log/2026-10-12-bench.md`. A
 ratio within about 10% of 1 is still not a measured difference: `mv a
 400-file tree` read 0.57x in the full run and 0.94x when `mv` was re-run
 alone. The two `yes` rows are from a later run, after `w.splice_forever` gave
@@ -898,7 +898,7 @@ Everything else on the list is a constant factor of 2x to 4x, which is
 ordinary self-host codegen quality rather than a complexity bug.
 
 Full run, every row and both flip lists:
-`docs/COREUTILS-BOTH-COMPILERS-2026-09-17.md`.
+`docs/coreutils-log/2026-09-17-both-compilers.md`.
 
 Two things this measurement does NOT say. It does not say the self-host
 miscompiles anything: `TestSelfHostCoreutilsParity` holds both builds to the
@@ -3396,7 +3396,7 @@ its length. Then `numeric_key` at 22%.
 
 The whole corpus — 650 rows over 101 utilities, every utility the host's GNU
 tree provides — on Apple Silicon, `fern f9a9e3bf1`, both builds `-O`. The raw
-run is `docs/COREUTILS-BOTH-COMPILERS-2026-10-03.md`. The 2026-09-17 and
+run is `docs/coreutils-log/2026-10-03-both-compilers.md`. The 2026-09-17 and
 2026-09-22 runs above were Linux x86-64, so only the direction carries across.
 
 | | native build | self-host build |

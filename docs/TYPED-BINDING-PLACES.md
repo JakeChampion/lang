@@ -64,7 +64,7 @@ every body to be built and to agree with that contract.
 ## Immutable availability snapshots
 
 Promoted observations retain an independent typed semantic contract through
-read/phi aliasing and DCE. See [the post-promotion proof and measured costs](TYPED-SNAPSHOT-CONTRACT-2026-09-09.md).
+read/phi aliasing and DCE. See [the post-promotion proof and measured costs](typed-log/2026-09-09-snapshot-contract.md).
 
 Internal `binding_snapshot` observes one BindingID at its instruction position
 and produces `Absent | Present(T)`. Unlike an ordinary read, it can safely observe

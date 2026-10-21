@@ -11,7 +11,7 @@ alongside (byte views, scalar/char, paths, symbols, builders).
 The producer migrations for #5714 landed through PR #11520, completing
 the implementation of epic #5626. D9 requires every observable `string` to
 be well-formed UTF-8, subject to the D10 OS-input contract below. The
-[boundary report](STRING-VALIDITY-BOUNDARIES-2026-10-04.md) records target
+[boundary report](string-log/2026-10-04-validity-boundaries.md) records target
 coverage, bootstrap fixed points, native measurements and existing Darwin
 parity exceptions. Issue #5714 tracks the final integration and closure
 record; a closed epic alone is not validation evidence.
@@ -42,7 +42,7 @@ record; a closed epic alone is not validation evidence.
 HTTP response serialization now has `*_bytes` siblings that preserve the
 body and frame its byte length. The text siblings retain replacement decoding
 and count the decoded bytes they emit. Both evaluate chunk producers once.
-See [HTTP byte serialization](STRING-HTTP-SERIALIZATION-2026-10-02.md).
+See [HTTP byte serialization](string-log/2026-10-02-http-serialization.md).
 
 The rule the table follows: where the API has an error channel the
 bytes are refused through it; where it has none they decode as U+FFFD,
@@ -534,7 +534,7 @@ entries drop it, and expansion uses complete eight-entry records with a
 length clamped to seven. These operations remove the text conversion from
 binary translation and display loops. Target, allocation, compiler-size
 and native measurements are recorded in
-[the builder-transform report](STRING-BYTE-BUILDER-MAPS-2026-10-03.md).
+[the builder-transform report](string-log/2026-10-03-byte-builder-maps.md).
 
 ---
 
@@ -835,7 +835,7 @@ ordinary array lending. Actual stage-2 allocation tests verify zero-allocation
 conversion for both receivers, with balanced lifetimes through aliases,
 calls and containers. The existing CRC32 consumer also loses its hidden
 conversion allocation. Bounds and ownership tests pass on Linux x86-64,
-Linux ARM64 and WASM. See [the runtime report](STRING-BYTE-VIEWS-2026-10-02.md)
+Linux ARM64 and WASM. See [the runtime report](string-log/2026-10-02-byte-views.md)
 for measurements and reproduction.
 
 The lifetime rule from #4814 is now established: escaping views must refer
@@ -844,7 +844,7 @@ lending and source anchors preserve it through calls, returns and containers.
 Production lowering rejects a returned byte view over local storage.
 The primary `-check` command now uses the same typed source anchors to report
 E063 for array-view escapes and E065 for string-view escapes, including
-generic and imported declarations. See [the diagnostic report](STRING-VIEW-DIAGNOSTICS-2026-10-03.md).
+generic and imported declarations. See [the diagnostic report](string-log/2026-10-03-view-diagnostics.md).
 The runtime, consumer and diagnostic changes were validated and merged in
 PR #11459.
 
@@ -975,103 +975,103 @@ bootstrap compiler builds it at each use.
 `__count_runs_bytes(bytes, inside, set)` counts transitions into membership.
 Both borrow their byte arrays without constructing text.
 Target, ownership, size and native measurement evidence is recorded in
-[the membership-scan report](STRING-BYTE-SET-SCANS-2026-10-03.md).
+[the membership-scan report](string-log/2026-10-03-byte-set-scans.md).
 
 `wc` keeps counted input and filename-list buffers as bytes, validates
 filenames at their text boundary and preserves GNU counting rules. Target,
 ownership, size and native measurements are recorded in
-[the wc report](STRING-WC-BYTES-2026-10-03.md).
+[the wc report](string-log/2026-10-03-wc-bytes.md).
 
 `cat` keeps chunks and visible-character expansion tables as raw bytes.
 GNU parity, ownership, size and native measurements are recorded in
-[the cat report](STRING-CAT-BYTES-2026-10-03.md).
+[the cat report](string-log/2026-10-03-cat-bytes.md).
 
 `tr` keeps input and operand sets as bytes and uses borrowed transformations.
 GNU parity, ownership, size and native measurements are recorded in
-[the tr report](STRING-TR-BYTES-2026-10-03.md).
+[the tr report](string-log/2026-10-03-tr-bytes.md).
 
 `cut` selects fields and byte ranges from raw records, accumulating long
 records in a byte builder. Evidence is recorded in
-[the cut report](STRING-CUT-BYTES-2026-10-03.md).
+[the cut report](string-log/2026-10-03-cut-bytes.md).
 
 `fold` carries raw records and finds control bytes with one membership
 scan for its selected mode. Evidence is recorded in
-[the fold report](STRING-FOLD-BYTES-2026-10-03.md).
+[the fold report](string-log/2026-10-03-fold-bytes.md).
 
 `nl` numbers raw records and applies byte BRE matching without constructing
 text from input bytes. Evidence is recorded in
-[the nl report](STRING-NL-BYTES-2026-10-03.md).
+[the nl report](string-log/2026-10-03-nl-bytes.md).
 
 `od` keeps dump blocks, string searches and raw-byte diagnostics out of
 text buffers, preserving the platform-specific NaN spelling. Evidence is recorded in
-[the od report](STRING-OD-BYTES-2026-10-03.md).
+[the od report](string-log/2026-10-03-od-bytes.md).
 
 `fmt` stores paragraph lines and word ranges as bytes and accumulates long
 records in a builder. Evidence is recorded in
-[the fmt report](STRING-FMT-BYTES-2026-10-03.md).
+[the fmt report](string-log/2026-10-03-fmt-bytes.md).
 
 `join` stores keys, records and disorder diagnostics as bytes, with builder
 accumulation across reads. Evidence is recorded in
-[the join report](STRING-JOIN-BYTES-2026-10-03.md).
+[the join report](string-log/2026-10-03-join-bytes.md).
 
 `csplit` uses raw record buffers, byte BRE matching and raw output pieces. Evidence is recorded in
-[the csplit report](STRING-CSPLIT-BYTES-2026-10-03.md).
+[the csplit report](string-log/2026-10-03-csplit-bytes.md).
 
 BRE patterns can also be compiled directly from raw bytes, sharing the
 existing parser and matching engine. Target and parser-cost evidence is in
-[the raw-pattern report](STRING-BRE-BYTE-PATTERNS-2026-10-03.md).
+[the raw-pattern report](string-log/2026-10-03-bre-byte-patterns.md).
 
 `ptx` keeps records, escaped patterns, references and output ranges as bytes.
 GNU parity, ownership and measured costs are recorded in
-[the ptx report](STRING-PTX-BYTES-2026-10-03.md).
+[the ptx report](string-log/2026-10-03-ptx-bytes.md).
 
 `stat` formats escaped output, byte precision and raw diagnostics through
 byte sinks. Evidence and platform limits are recorded in
-[the stat report](STRING-STAT-BYTES-2026-10-03.md).
+[the stat report](string-log/2026-10-03-stat-bytes.md).
 
 `printf` uses raw output for escaped bytes, character conversions, byte
 precision and diagnostics. Evidence and platform limits are recorded in
-[the printf report](STRING-PRINTF-BYTES-2026-10-03.md).
+[the printf report](string-log/2026-10-03-printf-bytes.md).
 
 The shared copy engine keeps file data and sparse-block comparisons as
 bytes for `cp`, `install` and cross-device `mv`. Target checks, allocation
 and performance measurements are recorded in
-[the copy report](STRING-COPY-BYTES-2026-10-03.md).
+[the copy report](string-log/2026-10-03-copy-bytes.md).
 
 `shred` keeps overwrite buffers and partial writes in byte arrays, preserving
 GNU random-source exhaustion boundaries. Target checks, size measurements,
 native benchmarks and the existing Darwin terminal limitation are recorded in
-[the shred report](STRING-SHRED-BYTES-2026-10-03.md).
+[the shred report](string-log/2026-10-03-shred-bytes.md).
 
 `uniq` keeps records and comparison keys in raw byte ranges, using a builder
 for records that span reads. GNU parity, allocation checks, size and native
 measurements are recorded in
-[the uniq report](STRING-UNIQ-BYTES-2026-10-03.md).
+[the uniq report](string-log/2026-10-03-uniq-bytes.md).
 
 Base64, base32 and basenc keep raw input and decoded output in byte buffers
 and release their lookup tables after successful runs. GNU error-prefix
 corrections, target checks, size and native measurements are recorded in
-[the base encoding report](STRING-BASE-BYTES-2026-10-03.md).
+[the base encoding report](string-log/2026-10-03-base-bytes.md).
 
 `factor` scans raw tokens and quotes invalid bytes without decoding them.
 Only validated ASCII digits become text for big-integer parsing. Token
 carry uses a byte builder; correctness and measurements are recorded in
-[the factor report](STRING-FACTOR-BYTES-2026-10-03.md).
+[the factor report](string-log/2026-10-03-factor-bytes.md).
 
 The plain `cksum` algorithms read raw byte arrays and retain the accelerated
 CRC kernel through a borrowing array intrinsic. Validation, code-size
 attribution and GNU/uutils measurements are recorded in
-[the cksum report](STRING-CKSUM-BYTES-2026-10-03.md).
+[the cksum report](string-log/2026-10-03-cksum-bytes.md).
 
 Streaming cryptographic digests also consume raw arrays through borrowing
 entry points. Coverage and size measurements are recorded in
-[the digest report](STRING-DIGEST-BYTES-2026-10-03.md).
+[the digest report](string-log/2026-10-03-digest-bytes.md).
 
 `head` and `tail` use raw byte input, delimiter scans and output. Their
 shared hold retains input blocks with a 64-bit byte count and releases
 consumed blocks without repeatedly copying long records. Target checks and
 allocation censuses pass; the remaining validation and measurement gates are
-recorded in [the byte-stream report](STRING-BYTE-STREAMS-2026-10-02.md).
+recorded in [the byte-stream report](string-log/2026-10-02-byte-streams.md).
 
 `__sum_bytes_array(bytes)` and `__bsd_sum_bytes(bytes, seed)` reduce borrowed
 byte arrays without converting them to text. The first wraps at 32 bits;
@@ -1080,11 +1080,11 @@ the existing kernels. `hash.BsdSum.update_array` and
 `hash.SysvSum.update_array` expose the path for owned reader buffers while
 preserving the existing view APIs. Target, ownership, bootstrap, size and
 native measurement evidence is recorded in
-[the reduction report](STRING-BYTE-REDUCTIONS-2026-10-03.md).
+[the reduction report](string-log/2026-10-03-byte-reductions.md).
 
 `sum` reads raw chunks and uses these array methods for both checksum
 algorithms. Target, ownership, size and native measurement evidence is
-recorded in [the sum report](STRING-SUM-BYTES-2026-10-03.md).
+recorded in [the sum report](string-log/2026-10-03-sum-bytes.md).
 
 `__mismatch_bytes(a, ao, b, bo, n)` compares two borrowed byte ranges without
 allocating or constructing strings. Each offset clamps to its array's bounds;
@@ -1100,7 +1100,7 @@ matching wire bytes against a string it already holds (std/http's
 
 `install -C` uses raw byte comparison. Target, ownership, bootstrap and GNU
 parity checks pass. Current size and native measurements are recorded in
-[the comparison report](STRING-BYTE-COMPARE-2026-10-03.md).
+[the comparison report](string-log/2026-10-03-byte-compare.md).
 
 `comm` keeps input chunks and retained line ranges in byte arrays, using the
 same comparator and byte scans. Split lines accumulate in a byte builder;
@@ -1110,13 +1110,13 @@ prefixes and late ordering errors. Primary x86, ARM and wasm tests also
 check balanced ownership, including the late ordering-error return.
 The WASM descriptor-flags helper releases its scratch storage on both result
 paths. Current target, size and native measurement evidence is recorded in
-[the comm report](STRING-BYTE-COMM-2026-10-03.md).
+[the comm report](string-log/2026-10-03-byte-comm.md).
 
 `expand` and `unexpand` keep input chunks and completed lines as bytes. A
 partial line uses a raw builder, allocated on demand and freed when the line
 is taken, so it no longer recopies its growing prefix on each read.
 Current target, ownership, size and native measurement evidence is recorded
-in [the tab utility report](STRING-BYTE-TABS-2026-10-03.md).
+in [the tab utility report](string-log/2026-10-04-byte-tabs.md).
 
 WASI filesystem errors retain borrowed filenames independently of their
 callers. Dropping an `IoError` leaves the caller's filename valid; errors
@@ -1129,15 +1129,15 @@ component coverage for file reads and writes.
 and the shared stdin cursor as bytes. Delimiter cycling preserves each byte
 of a UTF-8 option and skips NUL entries without changing the cycle.
 Target, ownership, size and native measurement evidence is recorded in
-[the paste report](STRING-PASTE-BYTES-2026-10-03.md).
+[the paste report](string-log/2026-10-03-paste-bytes.md).
 
 BRE patterns retain required literal prefixes as bytes, including prefixes
 that end within a scalar. Its raw-input APIs share the text matching engine
 and return byte offsets. `tac` uses these APIs for regex separators and raw
 scans for literal separators; seekable windows, held streams and output
 remain bytes. Target, ownership, size and native measurement evidence is
-recorded in [the BRE report](STRING-BRE-BYTES-2026-10-03.md) and
-[the tac report](STRING-TAC-BYTES-2026-10-03.md).
+recorded in [the BRE report](string-log/2026-10-03-bre-bytes.md) and
+[the tac report](string-log/2026-10-03-tac-bytes.md).
 
 `Reader.read_chunk_bytes(n): Result[u8[], IoError]` provides owned raw input
 on the bootstrap interpreter and native/wasm backends, and on the self-hosted
@@ -1159,7 +1159,7 @@ input, so scalars split across reads remain valid. Malformed stdin returns
 The example `tee` uses byte input and output, including true append opens
 that preserve an existing file's arbitrary bytes.
 Current target, bootstrap, allocation, size and native comparison evidence
-is recorded in [the stdin report](STRING-STDIN-UTF8-2026-10-02.md).
+is recorded in [the stdin report](string-log/2026-10-02-stdin-utf8.md).
 
 `ByteLineReader` keeps buffered chunks and returned records in `u8[]`.
 It scans for a byte delimiter, includes that delimiter when present, and
@@ -1177,7 +1177,7 @@ The WebAssembly seek helper releases its syscall return buffer on success
 and error; repeated seek tests and the file-input cases check for leaks.
 
 Current target, ownership, bootstrap and performance results are recorded
-in [the byte-line report](STRING-BYTE-LINES-2026-10-02.md). The full unit suite
+in [the byte-line report](string-log/2026-10-02-byte-lines.md). The full unit suite
 and all lint gates pass.
 
 `ByteLineReader` keeps buffered chunks and returned records in `u8[]`.
@@ -1196,7 +1196,7 @@ The WebAssembly seek helper releases its syscall return buffer on success
 and error; repeated seek tests and the file-input cases check for leaks.
 
 Current target, ownership, bootstrap and performance results are recorded
-in [the byte-line report](STRING-BYTE-LINES-2026-10-02.md). The full unit suite
+in [the byte-line report](string-log/2026-10-02-byte-lines.md). The full unit suite
 and all lint gates pass.
 
 The Fern interpreter also supports raw stdin reads; its file-handle opening
@@ -1243,7 +1243,7 @@ converts binary bodies through a string. Each hands off the response before
 writing its body, letting the host drain the stream under backpressure.
 This closes the HTTP component adapters' part of #10948; the TCP, UDP and
 file sinks still need byte-domain interfaces. See the
-[HTTP byte validation and size report](STRING-WASI-HTTP-BYTES-2026-10-02.md).
+[HTTP byte validation and size report](string-log/2026-10-02-wasi-http-bytes.md).
 
 The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end: `send(req)`

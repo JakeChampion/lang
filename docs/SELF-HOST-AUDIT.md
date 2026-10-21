@@ -992,7 +992,7 @@ appendix §6.)
   identical `build_func_scope` call. This does not merge scopes built for
   distinct analyses or promise that the entire compiler builds each scope
   only once. The cold-checker measurement and differential coverage are in
-  `SELFHOST-FUSION-COMPILE-COST-2026-10-17.md`.
+  `compiler-log/2026-10-17-fusion-compile-cost.md`.
 - [x] **SH-046 — builtin function / enum-variant membership as hand-kept `||`
   chains.** _Done:_ `is_builtin_variant` (`checker.fern:1048`) derives from the
   single variant→enum table in `mx_builtin_enum_of`, and `is_builtin_function`
