@@ -100,11 +100,13 @@ what you mean. When a literal phrase is available, use it.
 
 ASD-STE100, Simplified Technical English, is the same rule set made
 mechanical for maintenance manuals: one instruction per sentence, about
-twenty words, active voice, each word in one approved meaning. Its
-procedural rules are a sharper statement of "write plainly" for help text and
-`docs/`; its 869-word dictionary is not adoptable here, since it has no word
-for most of what a compiler does. `docs/READING-NOTES-2026-10-21.md` has the
-pointer.
+twenty words, active voice, each word in one approved meaning. It is the
+standing rule for prose here (`CLAUDE.md`, "Write in Simplified Technical
+English"), carried by the repository skill
+`.claude/skills/simplified-technical-english/`. The skill holds the 53 rules
+and a checker, not ASD's dictionary, which is ASD's property; the names of
+this project's types, functions and flags are technical names, which STE
+permits beside the approved words.
 
 **Less formatting in chat, not more.** Prompts written against older models
 often carry anti-bullet, anti-header rules. This generation already under-uses
