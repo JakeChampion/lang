@@ -4709,6 +4709,16 @@ function eval_unary(op: string, ov: Value): Value {
       }
     }
   }
+  // `x as? T` between integers: Some of the converted value when it holds x
+  // exactly, else None (#12708).
+  if (op.len() > 4 && slice_unchecked(op, 0, 4) == "as?_" && is_int_like(ov)) {
+    let t: Value = eval_unary("as_" + slice_unchecked(op, 4, op.len()), ov);
+    if (vint_as_i64(t) == vint_as_i64(ov) && int_is_negative(t) == int_is_negative(ov)) {
+      return v_variant("Some", [t]);
+    }
+    let none: Value[] = [];
+    return v_variant("None", none);
+  }
   // A non-numeric `as <Type>` (`as_i32[]`, `as_string`, `as_Option[i32]`,
   // …) is a zero-cost type ascription — identity on the runtime value.
   // Pass the operand through unchanged (matching the AST/IR emitters, which
@@ -4717,6 +4727,17 @@ function eval_unary(op: string, ov: Value): Value {
     return ov;
   }
   return v_err("unknown unary op: " + op);
+}
+
+// int_is_negative reads an integer value by its own signedness: a u64 with its
+// top bit set is a large number, not a negative one.
+function int_is_negative(v: Value): boolean {
+  if let VInt64(w) = v {
+    if (w.unsigned) {
+      return false;
+    }
+  }
+  return vint_as_i64(v) < 0;
 }
 
 // `as usize` extends an integer to 64 bits by its own signedness and wraps it
