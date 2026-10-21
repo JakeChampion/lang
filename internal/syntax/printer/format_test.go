@@ -784,20 +784,20 @@ func TestFormatTraitRoundTrip(t *testing.T) {
 // An impl block round-trips: trait impls, inherent impls, parametric
 // impls, associated functions (no `self`), and associated-type
 // bindings. Regression guard — impls were dropped entirely, and their
-// methods leaked out as top-level receiver functions. `Self` renders as
-// the concrete impl type (the desugared form), which re-parses to the
-// same AST.
+// methods leaked out as top-level receiver functions. Each signature keeps
+// the spelling it was written with, `Self` or the concrete type (#12891).
 func TestFormatImplRoundTrip(t *testing.T) {
 	src := `struct Box[T] { xs: T[] }
 trait Maker { function make(): Self; }
 impl Maker for Box[i32] { function make(): Self { return Box { xs: [] }; } }
-impl[T] Box[T] { function size(self: Self): i32 { return self.xs.len(); } }`
+impl[T] Box[T] { function size(self: Self): i32 { return self.xs.len(); } function same(self: Box[T], o: Self): Box[T] { return o; } }`
 	got := formatSrc(t, src)
 	for _, w := range []string{
 		"impl Maker for Box[i32] {",
-		"function make(): Box[i32] {",        // assoc fn, Self -> concrete, no self param
-		"impl[T] Box[T] {",                   // inherent parametric impl
-		"function size(self: Box[T]): i32 {", // method: self re-inserted, params NOT respelled
+		"function make(): Self {",        // assoc fn, no self param
+		"impl[T] Box[T] {",               // inherent parametric impl
+		"function size(self: Self): i32", // method: params NOT respelled
+		"function same(self: Box[T], o: Self): Box[T] {",
 	} {
 		if !strings.Contains(got, w) {
 			t.Errorf("output missing %q; got:\n%s", w, got)
