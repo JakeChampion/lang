@@ -76,11 +76,16 @@ stop_upstream() {
   fi
 }
 
-# group_cpu PGID — the user and system clock ticks every live process in
-# the group (the supervisor and the workers start_server places there) has
-# spent, as two space-separated numbers, utime then stime. Fields 14 and
-# 15 of /proc/PID/stat, read after the last ')' so a comm with spaces or
-# parens does not shift the split; field 5 is the process group.
+# group_cpu PGID — the user and system clock ticks the process group has
+# spent, as two space-separated numbers, utime then stime. For each live
+# member its own ticks (fields 14, 15 of /proc/PID/stat) plus the ticks of
+# the children it has reaped (fields 16, 17, cutime/cstime): a serve
+# supervisor replaces a worker that dies, and the dead worker's ticks move
+# into the supervisor's cutime when it is reaped, so without those a
+# replaced worker's CPU would be lost. A live child is still in its own
+# fields and not yet in a parent's cutime, so nothing is double counted.
+# Fields are read after the last ')' so a comm with spaces or parens does
+# not shift the split; field 5 is the process group.
 group_cpu() {
   python3 - "$1" <<'PY'
 import os, sys
@@ -97,10 +102,10 @@ for d in os.listdir("/proc"):
     if r < 0:
         continue
     f = data[r + 2:].split()
-    if len(f) < 13 or int(f[2]) != pgid:
+    if len(f) < 15 or int(f[2]) != pgid:
         continue
-    u += int(f[11])
-    v += int(f[12])
+    u += int(f[11]) + int(f[13])
+    v += int(f[12]) + int(f[14])
 print(u, v)
 PY
 }
