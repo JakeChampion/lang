@@ -137,7 +137,7 @@ same code(s) the Go checker does — restricted to
   is legal only when that match is inside a loop (matching the Go checker).
   Purely structural, no scope.
 - **Slice 10 (done): return without value** (E012). A bare `return;`
-  parses to a `punct:;` placeholder value; in a function with a declared
+  parses to a `bare-return` placeholder value; in a function with a declared
   (non-void) return type — the only context `ret_diags` runs in — that's
   E012. Void functions (no declared return) never reach `ret_diags`, so a
   bare `return;` there is fine, matching the Go checker.
