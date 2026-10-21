@@ -5019,7 +5019,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// docs/TRAITS.md.
 	c.synthesizeTraitDefaults(prog)
 
-	// Colorless stream result: an `@import async function f(): stream[T]` is
+	// Colorless stream result: an `@import async function f(): Stream[T]` is
 	// delivered incrementally over the wire but, under the colorless model,
 	// yields the fully-collected `T[]` at the call site (docs/STREAM-TYPE-SURFACE.md).
 	// Rewrite the effective return type to `T[]` here, before FuncSigs and every
@@ -5030,8 +5030,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				fn.ReturnType = ast.ArrayType{Elem: st.Elem}
 			}
 			// Colorless stream PARAMETER (the mirror of the result transform): an
-			// `@import async function f(s: stream[T])` accepts an eager `T[]` at the
-			// call site. Rewrite each `stream[T]` param to `T[]`.
+			// `@import async function f(s: Stream[T])` accepts an eager `T[]` at the
+			// call site. Rewrite each `Stream[T]` param to `T[]`.
 			for i := range fn.Params {
 				if st, ok := fn.Params[i].Type.(ast.StreamType); ok && st.Elem != nil {
 					fn.Params[i].Type = ast.ArrayType{Elem: st.Elem}

@@ -10846,7 +10846,7 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
 // The self-host parser is deliberately permissive — `Par` carries no error
 // channel, so a token it cannot use is skipped and the drivers' gates catch the
 // consequences. For a declaration NAME that leaves no consequence to catch:
-// `peek_member_name` returns "" for a keyword, and parse_func_decl then returns
+// `peek_ident` returns "" for a keyword, and parse_func_decl then returns
 // a FuncDecl with an empty name. The module parses "successfully" and the
 // nameless function is simply carried through the whole pipeline.
 //

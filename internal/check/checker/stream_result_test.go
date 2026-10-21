@@ -7,14 +7,14 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
-// TestStreamResultColorlessTransform covers the colorless `stream[T]` result
+// TestStreamResultColorlessTransform covers the colorless `Stream[T]` result
 // transform (docs/STREAM-TYPE-SURFACE.md): an `@import async function body():
-// stream[u8]` is delivered incrementally over the wire but yields the fully
+// Stream[u8]` is delivered incrementally over the wire but yields the fully
 // collected `u8[]` at the call site. The checker rewrites the effective return
 // type to `u8[]`, so `let b: u8[] = body()` type-checks with no special call-site
 // rule.
 func TestStreamResultColorlessTransform(t *testing.T) {
-	src := `@import("test:dep/d", "body") async function body(): stream[u8];
+	src := `@import("test:dep/d", "body") async function body(): Stream[u8];
 async function run(): i32 { let b: u8[] = body(); return b.len(); }
 `
 	prog, err := parser.Parse(src)
@@ -38,13 +38,13 @@ async function run(): i32 { let b: u8[] = body(); return b.len(); }
 	}
 }
 
-// TestStreamParamColorlessTransform covers the colorless `stream[T]` PARAMETER
+// TestStreamParamColorlessTransform covers the colorless `Stream[T]` PARAMETER
 // transform (the mirror of the result side): an `@import async function
-// sink(s: stream[u8]): i32` accepts an eager `u8[]` at the call site (codegen
+// sink(s: Stream[u8]): i32` accepts an eager `u8[]` at the call site (codegen
 // streams its elements over the wire). The checker rewrites the param's effective
 // type to `u8[]`, so `sink(xs)` with `xs: u8[]` type-checks.
 func TestStreamParamColorlessTransform(t *testing.T) {
-	src := `@import("test:dep/d", "sink") async function sink(s: stream[u8]): i32;
+	src := `@import("test:dep/d", "sink") async function sink(s: Stream[u8]): i32;
 async function run(): i32 { let xs: u8[] = [10 as u8, 20 as u8, 12 as u8]; return sink(xs); }
 `
 	prog, err := parser.Parse(src)

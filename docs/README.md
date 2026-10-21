@@ -213,9 +213,9 @@ which ones.
 | `ASYNC-REDESIGN.md` | [record] | The decision to replace the concurrent/await/race surface with `Future[T]` plus gather/race/with_deadline; shipped as std/async. |
 | `ASYNC-SELFHOST-IR.md` | [record] | The plan to compile std/async through the self-host IR path; done, `async_combinators_test.fern` runs 6/6. |
 | `NET-P3-SUSPENSION-PLAN.md` | [record] | Networking P3: inferred suspension of handlers as resumable state machines, cancellation and streamed bodies; landed (#9857). |
-| `STREAM-TYPE-SURFACE.md` | [record] | The design checkpoint that exposed `stream[T]` and kept `future[T]` internal; shipped (#11530). |
+| `STREAM-TYPE-SURFACE.md` | [record] | The design checkpoint that exposed the stream type (now `Stream[T]`) and kept `future[T]` internal; shipped (#11530). |
 | `WASI-PREVIEW2.md` | [record] | The WASI Preview 1 to 2 component migration; complete, with components composed in-tree. |
-| `WASI-PREVIEW3-ASYNC-PLAN.md` | [record] | Preview-3 component-model async; async exports, async imports and `stream[T]` shipped for scalar types. |
+| `WASI-PREVIEW3-ASYNC-PLAN.md` | [record] | Preview-3 component-model async; async exports, async imports and `Stream[T]` shipped for scalar types. |
 | `WASM-COMPONENT-GENERATOR.md` | [record] | A generated wasm component envelope in the self-host; complete. |
 | `WASM-REACTOR-PLAN.md` | [record] | The wasm reactor on Preview-2 pollables and the composition blocker it hit; shipped. |
 | `WIT-BRING-YOUR-OWN.md` | [record] | Compiling against a user-supplied WIT world; P1–P6 shipped in both compilers. |

@@ -171,6 +171,7 @@ csv_fields                                           0
 date_iso                                             0
 default_args                                         0
 default_args_const                                   0
+default_is_an_identifier                             0
 defer_binding_action_write                           0
 defer_binding_conditional                            0
 defer_binding_early_exit                             0
