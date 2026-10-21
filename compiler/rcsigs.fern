@@ -174,7 +174,8 @@ pub function table(): Table {
   // unit by comparing addresses, as core/map's copy-on-write caller does, and
   // marks the call counted where the frame holds the receiver's unit, so the
   // result is one of the frame's own; unmarked, onto a box the frame holds no
-  // unit of, the result is settled as the borrowed push's is.
+  // unit of, the result is a word the certifier does not count, and the
+  // retain the lowering adds on identity is what makes it the frame's.
   rows = add(rows, ["__fern_arr_concat"], sig(2, effect_unsure(), result_marked()));
   // A cursor's map, read through core/map: the cursor holds the unit.
   rows = add(rows, ["__mapiter_map_impl"], inert(result_borrow()));

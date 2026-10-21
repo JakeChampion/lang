@@ -12,7 +12,8 @@ import "testing"
 // a record's field rebuilt around the join — 200 times each, and report
 // whether that cost fewer than 20 boxes: the receiver's block grows in place
 // and doubles, as a chain of appends does. shared keeps a receiver another
-// binding still reads.
+// binding still reads. constant joins onto a literal, whose block is immortal
+// rather than sole, and counts the copies: two, on every backend alike.
 const concatKernelProgram = `import "std/array";
 
 struct S { buf: u8[], n: i32 }
@@ -119,6 +120,16 @@ struct S { buf: u8[], n: i32 }
   return few * 100000000 + s.buf.len() * 1000 + s.n + (sum_u8(s.buf) % 100);
 }
 
+@noinline function constant(): i32 {
+  let c: u8[] = [1, 2, 3];
+  let none: u8[] = [];
+  let before: i64 = __heap_alloc_count();
+  let r: u8[] = c.concat(none);
+  let q: u8[] = c.concat([4]);
+  let boxes: i32 = (__heap_alloc_count() - before) as i32;
+  return boxes * 1000000 + r.len() * 10000 + q.len() * 100 + sum_u8(q) % 100;
+}
+
 @noinline function shared(): i32 {
   let a: u8[] = bytes(8, 1);
   let keep: u8[] = a;
@@ -133,13 +144,14 @@ function main(): i32 {
   print(allocs().to_string());
   print(chain().to_string());
   print(field().to_string());
+  print(constant().to_string());
   print(shared().to_string());
   return 0;
 }
 `
 
 func TestSelfHostArrayConcatKernel(t *testing.T) {
-	want := "1205565925\n1,-2,3,40,50,9000000000,-1,7,1.5,2.25,-3,true,false,true,x,y,z,32\n100110000\n103200652\n100800297\n8111068\n"
-	runSemanticProgram(t, "concatkernel", concatKernelProgram, []string{"joined", "words", "allocs", "chain", "field", "shared"},
+	want := "1205565925\n1,-2,3,40,50,9000000000,-1,7,1.5,2.25,-3,true,false,true,x,y,z,32\n100110000\n103200652\n100800297\n2030410\n8111068\n"
+	runSemanticProgram(t, "concatkernel", concatKernelProgram, []string{"joined", "words", "allocs", "chain", "field", "constant", "shared"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
 }

@@ -11704,8 +11704,9 @@ function bytes_copy_out(len: string, src: string, empty: i32): string {
 }
 
 // arr_concat_helper emits $__fern_arr_concat, `xs.concat(ys)` over scalar
-// elements: onto xs's own block when xs is sole (rc 1, or immortal) with
-// room — cap counts elements — else a fresh box of both, with room to grow
+// elements: onto xs's own block when xs is sole (rc 1; a constant's negative
+// rc is never sole, as $__fern_rc_is_unique answers) with room — cap counts
+// elements — else a fresh box of both, with room to grow
 // (twice xs's length or what the join needs) when xs was sole and outgrew
 // its block, exactly sized when xs is shared. xs is never freed. An empty ys
 // hands a sole xs back; a shared xs is copied even then, so a caller that
@@ -11724,7 +11725,7 @@ pub function arr_concat_helper(): string {
   o = o + "    (local.set $n (i32.add (local.get $na) (local.get $nb)))\n";
   o = o + "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
   o = o + "    (local.set $rc (i32.load (i32.sub (local.get $a) (i32.const 8))))\n";
-  o = o + "    (local.set $sole (i32.or (i32.eq (local.get $rc) (i32.const 1)) (i32.lt_s (local.get $rc) (i32.const 0))))\n";
+  o = o + "    (local.set $sole (i32.eq (local.get $rc) (i32.const 1)))\n";
   o = o + "    (if (i32.and (local.get $sole) (i32.le_s (local.get $n) (local.get $cap))) (then\n";
   o = o + "      (memory.copy (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $nb) (local.get $stride)))\n";
   o = o + "      (i32.store (local.get $a) (local.get $n))\n";
