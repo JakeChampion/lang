@@ -38,10 +38,14 @@
 # pooled client on the multi-threaded runtime. The upstream is the Go
 # hello. The report's header names the versions. oha holds N connections
 # closed-loop for the duration and the report keeps its throughput and
-# its p50 / p99 latency per server and N, plus, on x86-64, the
-# bump-allocator growth one held idle connection, one suspended handler
-# and one stream parked on an HTTP/2 connection cost the Fern loop (the
-# numbers TestSelfHostHeldConnectionsHeapBoundX86_64 bounds). Closed-loop,
+# its p50 / p99 latency per server and N, and the server's own CPU per
+# request, user and system (`server_user_us_per_req` / `server_sys_us_per_req`,
+# the process group's utime / stime over the load divided by the requests
+# answered) — the deterministic figure a throughput gap on a shared runner
+# is attributed to, kernel or user time rather than guessed at. Plus, on
+# x86-64, the bump-allocator growth one held idle connection, one suspended
+# handler and one stream parked on an HTTP/2 connection cost the Fern loop
+# (the numbers TestSelfHostHeldConnectionsHeapBoundX86_64 bounds). Closed-loop,
 # without `-q`, because these are throughput ceilings: oha's latency
 # correction only applies under a fixed rate, and the p99 here says how
 # the server queues at saturation, not what a client at a given rate
@@ -190,12 +194,15 @@ EOF
   await_port "$1" "$2" "$work/server.log"
 }
 
-# h3_rows NAME N M OUT LOG — the report rows for one HTTP/3 load, from
-# h2load's output and its per-request log.
+# h3_rows NAME N M OUT LOG U0 S0 U1 S1 — the report rows for one HTTP/3
+# load, from h2load's output and its per-request log, with the server
+# group's user/system jiffies before (U0 S0) and after (U1 S1) for the
+# server CPU per request.
 h3_rows() {
   python3 - "$@" <<'PY'
-import re, sys
+import os, re, sys
 name, n, m, out, log = sys.argv[1:6]
+u0, s0, u1, s1 = (int(x) for x in sys.argv[6:10])
 text = open(out).read()
 rps = re.search(r"finished in [^,]*, ([0-9.]+) req/s", text)
 req = re.search(r"requests: (\d+) total, \d+ started, \d+ done, (\d+) succeeded, (\d+) failed, (\d+) errored, (\d+) timeout", text)
@@ -205,28 +212,72 @@ times = sorted(int(line.split()[2]) for line in open(log) if len(line.split()) =
 def pct(p):
     return times[min(len(times) - 1, int(len(times) * p))] if times else 0
 failed = int(req.group(3)) + int(req.group(4)) + int(req.group(5))
+done = int(req.group(2))
 row = f"net/{name}/c{n}m{m}"
 print(f"{row}.rps\t{int(float(rps.group(1)))}")
 print(f"{row}.p50_us\t{pct(0.50)}")
 print(f"{row}.p99_us\t{pct(0.99)}")
 print(f"{row}.failed\t{failed}")
+jiffy_us = 1e6 / os.sysconf("SC_CLK_TCK")
+if done > 0:
+    print(f"{row}.server_user_us_per_req\t{(u1 - u0) * jiffy_us / done:.2f}")
+    print(f"{row}.server_sys_us_per_req\t{(s1 - s0) * jiffy_us / done:.2f}")
 PY
 }
 
-# rows NAME N JSON — the report rows for one load, from oha's JSON.
+# group_cpu PGID — the user and system jiffies the process group has spent,
+# summed over every live member (the supervisor and its workers), as two
+# space-separated numbers. Fields 14 (utime) and 15 (stime) of
+# /proc/PID/stat, read after the last ')' so a comm with spaces or parens
+# does not shift the split; field 5 is the process group.
+group_cpu() {
+  python3 - "$1" <<'PY'
+import os, sys
+pgid = int(sys.argv[1])
+u = v = 0
+for d in os.listdir("/proc"):
+    if not d.isdigit():
+        continue
+    try:
+        data = open("/proc/" + d + "/stat").read()
+    except OSError:
+        continue
+    r = data.rfind(")")
+    if r < 0:
+        continue
+    f = data[r + 2:].split()
+    if len(f) < 13 or int(f[2]) != pgid:
+        continue
+    u += int(f[11])
+    v += int(f[12])
+print(u, v)
+PY
+}
+
+# rows NAME N JSON U0 S0 U1 S1 — the report rows for one load, from oha's
+# JSON and the server group's user/system jiffies before (U0 S0) and after
+# (U1 S1) it, which give the server CPU per request each row carries.
 rows() {
-  python3 - "$1" "$2" "$3" <<'PY'
-import json, sys
+  python3 - "$1" "$2" "$3" "$4" "$5" "$6" "$7" <<'PY'
+import json, os, sys
 name, n, path = sys.argv[1], sys.argv[2], sys.argv[3]
+u0, s0, u1, s1 = (int(x) for x in sys.argv[4:8])
 j = json.load(open(path))
 s = j["summary"]
 p = j["latencyPercentiles"]
-failed = sum(v for k, v in j.get("statusCodeDistribution", {}).items() if k != "200")
-failed += sum(v for k, v in j.get("errorDistribution", {}).items() if "deadline" not in k)
+codes = j.get("statusCodeDistribution", {})
+errs = j.get("errorDistribution", {})
+failed = sum(v for k, v in codes.items() if k != "200")
+failed += sum(v for k, v in errs.items() if "deadline" not in k)
+done = sum(codes.values()) + sum(errs.values())
 print(f"net/{name}/c{n}.rps\t{int(s['requestsPerSec'])}")
 print(f"net/{name}/c{n}.p50_us\t{int(p['p50'] * 1e6)}")
 print(f"net/{name}/c{n}.p99_us\t{int(p['p99'] * 1e6)}")
 print(f"net/{name}/c{n}.failed\t{failed}")
+jiffy_us = 1e6 / os.sysconf("SC_CLK_TCK")
+if done > 0:
+    print(f"net/{name}/c{n}.server_user_us_per_req\t{(u1 - u0) * jiffy_us / done:.2f}")
+    print(f"net/{name}/c{n}.server_sys_us_per_req\t{(s1 - s0) * jiffy_us / done:.2f}")
 PY
 }
 
@@ -238,8 +289,10 @@ PY
     port="$(free_port)"
     start "$server" "$port"
     for n in $CONNECTIONS; do
+      read -r u0 s0 <<< "$(group_cpu "$server_pgid")"
       "$OHA" -z "${SECONDS_PER}s" -c "$n" --no-tui --output-format json "http://127.0.0.1:$port/" > "$work/$server-c$n.json"
-      rows "$server" "$n" "$work/$server-c$n.json"
+      read -r u1 s1 <<< "$(group_cpu "$server_pgid")"
+      rows "$server" "$n" "$work/$server-c$n.json" "$u0" "$s0" "$u1" "$s1"
       "$work/pipeload" -addr "127.0.0.1:$port" -c "$n" -depth 16 -d "${SECONDS_PER}s" |
         awk -v s="$server" -v n="$n" '{ printf "net/%s/p%s.rps\t%s\nnet/%s/p%s.failed\t%s\n", s, n, $2, s, n, $4 }'
     done
@@ -252,8 +305,10 @@ PY
     port="$(free_port)"
     start_twofetch "$server" "$port" "$upstream_port"
     for n in $CONNECTIONS; do
+      read -r u0 s0 <<< "$(group_cpu "$server_pgid")"
       "$OHA" -z "${SECONDS_PER}s" -c "$n" --no-tui --output-format json "http://127.0.0.1:$port/" > "$work/$server-c$n.json"
-      rows "$server" "$n" "$work/$server-c$n.json"
+      read -r u1 s1 <<< "$(group_cpu "$server_pgid")"
+      rows "$server" "$n" "$work/$server-c$n.json" "$u0" "$s0" "$u1" "$s1"
     done
     stop_server
   done
@@ -268,13 +323,15 @@ PY
       [ "$n" -lt "$threads" ] && threads="$n"
       # h2load appends to its log rather than starting it afresh.
       rm -f "$work/h3.log"
+      read -r u0 s0 <<< "$(group_cpu "$server_pgid")"
       "$h3tools/bin/h2load" --alpn-list=h3 -c "$n" -m "$m" -t "$threads" -D "$SECONDS_PER" --warm-up-time=1 \
         --log-file="$work/h3.log" "https://127.0.0.1:$port/" > "$work/h3.out" 2>&1 || {
         echo "net-bench: h2load failed against $server:" >&2
         cat "$work/h3.out" >&2
         exit 1
       }
-      h3_rows "$server" "$n" "$m" "$work/h3.out" "$work/h3.log"
+      read -r u1 s1 <<< "$(group_cpu "$server_pgid")"
+      h3_rows "$server" "$n" "$m" "$work/h3.out" "$work/h3.log" "$u0" "$s0" "$u1" "$s1"
     done
     stop_server
   done
