@@ -1053,13 +1053,13 @@ pub function op_arr_reserve(width: i32): Op {
 // %rdx on x86-64, x1 on arm64 and a global on wasm. [word] -> dummy: the
 // callee sets it, as the last thing before its return.
 pub function op_ret_word(): Op {
-  return op0(384);
+  return op0(K_RET_WORD);
 }
 
 // () -> word: the caller reads it, as the first thing after the call has
 // stored its result.
 pub function op_call_word(): Op {
-  return op0(385);
+  return op0(K_CALL_WORD);
 }
 
 // Private scalar-record return lanes: full 64-bit bits, slot 0..2. Width zero
@@ -3344,6 +3344,10 @@ pub const K_POPCOUNT: i32 = 221;
 pub const K_LINE: i32 = 288;
 
 pub const K_STR_DATA: i32 = 345;
+
+pub const K_RET_WORD: i32 = 384;
+
+pub const K_CALL_WORD: i32 = 385;
 
 pub const K_BSWAP: i32 = 411;
 
