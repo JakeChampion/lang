@@ -305,8 +305,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// it spells, compared against the bound's.
 		{"dyn-generic-trait-bound-args", "trait Container[T] { function first(self: Self): T; }\nstruct Ints { v: i32 }\nimpl Container[i32] for Ints { function first(self: Ints): i32 { return self.v; } }\nfunction head_len[C: Container[string]](c: C): i32 { return c.first().len(); }\nfunction main(): i32 { let d: dyn Container[i32] = Ints { v: 3 }; return head_len(d); }\n", []string{"E021"}},
 		{"dyn-generic-trait-bound-args-match", "trait Container[T] { function first(self: Self): T; }\nstruct Strs { v: string }\nimpl Container[string] for Strs { function first(self: Strs): string { return self.v; } }\nfunction head_len[C: Container[string]](c: C): i32 { return c.first().len(); }\nfunction main(): i32 { let d: dyn Container[string] = Strs { v: \"abcd\" }; return head_len(d); }\n", nil},
-		// `float` after `own` names a resource, so it is an unknown name (E021),
-		// not the refused type spelling (P001).
+		{"dyn-unknown-trait", "function g(x: dyn Nope): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		// `float` after `dyn` or `own` names a trait or a resource, so it is
+		// an unknown name (E021), not the refused type spelling (P001).
+		{"dyn-float-is-a-trait-name", "function g(x: dyn float): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"own-float-is-a-resource-name", "function g(x: own float): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"dyn-undefined-method", "trait Speak { function say(self: Self): i32; }\nimpl Speak for i32 { function say(self: Self): i32 { return self + 100; } }\nfunction f(s: dyn Speak): i32 { return s.nope(); }\nfunction main(): i32 { return f(1); }\n", []string{"E021"}},
 		{"dyn-supertrait-method-not-named", "trait Base { function tag(self: Self): i32; }\ntrait Derived : Base { function base(self: Self): i32; }\nimpl Base for i32 { function tag(self: Self): i32 { return 9; } }\nimpl Derived for i32 { function base(self: Self): i32 { return self; } }\nfunction f(d: dyn Derived): i32 { return d.tag(); }\nfunction main(): i32 { return f(1); }\n", []string{"E021"}},
