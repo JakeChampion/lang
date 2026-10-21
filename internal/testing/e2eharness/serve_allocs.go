@@ -423,8 +423,11 @@ function main(): i32 {
 // there.
 var ServeAllocsH3MuxClientSource = serveAllocsH3ClientCommon + `
 // drive keeps up to m hello requests in flight until rounds are answered,
-// pumping the socket between top-ups, and returns the peak held at once.
-function drive(k0: Cli, rounds: i32, m: i32): (Cli, i32) {
+// pumping the socket between top-ups, and returns the peak held at once and
+// how many were answered. Fewer than rounds means the 30-second no-progress
+// window expired: the connection stalled, and the caller must not read the
+// allocation count as a measurement of rounds requests.
+function drive(k0: Cli, rounds: i32, m: i32): (Cli, i32, i32) {
   let k: Cli = k0;
   let completed: i32 = 0;
   let inflight: i32 = 0;
@@ -464,10 +467,10 @@ function drive(k0: Cli, rounds: i32, m: i32): (Cli, i32) {
       }
     }
     if (now() - last > 30000000000) {
-      return (k, peak);
+      return (k, peak, completed);
     }
   }
-  return (k, peak);
+  return (k, peak, completed);
 }
 
 function main(): i32 {
@@ -492,6 +495,7 @@ function main(): i32 {
     return 2;
   };
   let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  let warm: i32 = ` + strconv.Itoa(serveAllocsWarm) + `;
   let k: Cli = Cli { c: h3q.client(q, h3.config()), sock: sock, peer: peer, buf: __alloc_u8(65536) };
   let started: i64 = now();
   while (!k.c.ready() && now() - started < 30000000000) {
@@ -501,15 +505,23 @@ function main(): i32 {
     print("handshake failed");
     return 1;
   }
-  let w: (Cli, i32) = drive(k, 2000, m);
+  let w: (Cli, i32, i32) = drive(k, warm, m);
   k = w.0;
+  if (w.2 < warm) {
+    print("stalled during warm-up: " + w.2.to_string() + " of " + warm.to_string() + " answered");
+    return 1;
+  }
   let (k1, c0) = count(k);
   let (k2, c1) = count(k1);
   k = k2;
   let t0: i64 = now();
-  let d: (Cli, i32) = drive(k, rounds, m);
+  let d: (Cli, i32, i32) = drive(k, rounds, m);
   k = d.0;
   let peak: i32 = d.1;
+  if (d.2 < rounds) {
+    print("stalled: " + d.2.to_string() + " of " + rounds.to_string() + " requests answered");
+    return 1;
+  }
   let seconds: i64 = (now() - t0) / 1000000000 + 2;
   let (k3, c2) = count(k);
   k = k3;

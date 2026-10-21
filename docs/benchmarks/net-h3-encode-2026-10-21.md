@@ -51,6 +51,13 @@ every HPACK (HTTP/2) and QPACK (HTTP/3) header value a request or a response
 carries, not the HTTP/3 server alone. Output is unchanged: the HPACK and QPACK
 RFC-vector suites (`http_hpack`, `http_qpack`) pass.
 
+The live table costs about 1 KB more for it: `HUFF_CODE` (about 1 KB) plus
+`HUFF_LEN` (257 B) become `HUFF` (about 2 KB), with `HUFF_CODE` now read only by
+the generator. `HUFF_DEC` is 16 KB and dominates the module's data either way,
+so the trade is a fair one. `gen-huffman-table.py --check`, which
+`make check-sources` runs, holds `HUFF` and `HUFF_DEC` to what the authored
+`HUFF_CODE` and `HUFF_LEN` generate.
+
 ## Ratchet
 
 `TestSelfHostServeAllocsPerRequestH3Mux` pins the multiplexed allocation count
