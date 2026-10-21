@@ -729,26 +729,18 @@ pub function contains(haystack: string, needle: string): boolean {
 // index_of_sub is the offset of the first occurrence of `needle` in
 // `haystack`, or -1; an empty needle is found at 0.
 pub function index_of_sub(haystack: string, needle: string): i32 {
-  if (needle.len() == 0) {
+  let n: i32 = needle.len();
+  if (n == 0) {
     return 0;
   }
-  if (haystack.len() < needle.len()) {
-    return 0 - 1;
-  }
-  let i: i32 = 0;
-  while (i <= haystack.len() - needle.len()) {
-    let j: i32 = 0;
-    let hit: boolean = true;
-    while (hit && j < needle.len()) {
-      if (haystack[i + j] != needle[j]) {
-        hit = false;
-      }
-      j = j + 1;
-    }
-    if (hit) {
+  let last: i32 = haystack.len() - n;
+  let first: i32 = needle[0] as i32;
+  let i: i32 = __memchr(haystack, first, 0);
+  while (i >= 0 && i <= last) {
+    if (__mismatch(haystack, i, needle, 0, n) == n) {
       return i;
     }
-    i = i + 1;
+    i = __memchr(haystack, first, i + 1);
   }
   return 0 - 1;
 }
