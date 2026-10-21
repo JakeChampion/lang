@@ -7,7 +7,7 @@
 #
 # gen-huffman-table.py --check — fail if the committed HUFF or HUFF_DEC has
 # drifted from what the authored HUFF_CODE and HUFF_LEN generate, the mode
-# make check-sources runs.
+# make huffman-table-check runs in the lint lane.
 import re, random, sys
 import os
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "http", "huffman.fern")).read()
@@ -116,12 +116,13 @@ print("packed roundtrip failures:", bad)
 huff = [(CODE[s] << 8) | LEN[s] for s in range(len(LEN))]
 if "--check" in sys.argv[1:]:
     # The committed HUFF and HUFF_DEC must be what the authored HUFF_CODE and
-    # HUFF_LEN generate; a drift fails here, where make check-sources runs it,
-    # rather than later as a failing HPACK round trip.
+    # HUFF_LEN generate; a drift fails here, where make huffman-table-check
+    # runs it, rather than later as a failing HPACK round trip.
     stale = [name for name, want in (("HUFF", huff), ("HUFF_DEC", vals)) if arr(name) != want]
     if stale:
         print("internal/stdlib/std/http/huffman.fern is out of date: "
-              + ", ".join(stale) + "; run scripts/gen-huffman-table.py OUT", file=sys.stderr)
+              + ", ".join(stale) + "; regenerate with scripts/gen-huffman-table.py OUT "
+              "and paste OUT's entries into HUFF_DEC, the printed entries into HUFF", file=sys.stderr)
         sys.exit(1)
     print("huffman tables up to date")
     sys.exit(0)
