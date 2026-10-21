@@ -410,11 +410,62 @@ function test_shutdown_late(): test.TestOutcome {
   return test.assert_eq(e.requests.len().to_string() + " " + e.client.ready().to_string(), "0 false");
 }
 
+// Every stream the server allows at once (100) opened, all answered and
+// settled: the client must be able to open another, since the server
+// grants a stream back as each closes.
+function test_limit(): test.TestOutcome {
+  match (begin()) {
+    Ok(e0) => {
+      let e: Ends = Ends { ...settled(e0, 12), log: "" };
+      let i: i32 = 0;
+      while (i < 100) {
+        match (asked(e, get("/p" + i.to_string()))) {
+          Ok(next) => {
+            e = next;
+          },
+          Err(why) => {
+            return test.fail("request " + i.to_string() + ": " + why);
+          }
+        }
+        i = i + 1;
+      }
+      e = settled(e, 20);
+      if (e.ids.len() != 100) {
+        return test.fail("server saw " + e.ids.len().to_string() + " requests");
+      }
+      i = 0;
+      while (i < 100) {
+        e = answered(e, i, text(200, "x"));
+        i = i + 1;
+      }
+      e = settled(e, 20);
+      let got: i32 = e.log.split("response").len() - 1;
+      if (got != 100) {
+        return test.fail("client saw " + got.to_string() + " responses");
+      }
+      e = Ends { ...e, log: "" };
+      match (asked(e, get("/more"))) {
+        Ok(next) => {
+          e = settled(next, 20);
+          return test.assert_eq(e.log, "server request 400 GET /more 0b host=tls.example; ");
+        },
+        Err(why) => {
+          return test.fail("after the limit: " + why);
+        }
+      }
+    },
+    Err(why) => {
+      return test.fail(why);
+    }
+  }
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/h3q");
   r = r.it("a GET and its response", test_get);
   r = r.it("an upload through loss and reordering, answered with a trailer", test_upload_lossy);
   r = r.it("three requests answered out of order", test_concurrent);
+  r = r.it("the stream limit grants back as streams close", test_limit);
   r = r.it("a graceful close", test_close);
   r = r.it("shutdown finishes a request whose body is still arriving", test_shutdown_inflight);
   r = r.it("shutdown refuses an in-flight request above its boundary", test_shutdown_late);

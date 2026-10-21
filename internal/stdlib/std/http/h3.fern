@@ -948,7 +948,10 @@ function __known(kind: i64): boolean {
 // one forgotten.
 function (s: Session) __find(id: i64): i32 {
   let k: i64 = (id >> 2) - s.req_base;
-  if (k < 0 || k >= s.req_index.len() as i64) {
+  if (k < 0) {
+    return s.__scan(id);
+  }
+  if (k >= s.req_index.len() as i64) {
     return 0 - 1;
   }
   let i: i32 = s.req_index[k as i32] - 1;
@@ -956,6 +959,25 @@ function (s: Session) __find(id: i64): i32 {
     return 0 - 1;
   }
   return i;
+}
+
+// __scan is __find for a request stream below the index's window, which a
+// client's lower stream ID reaches only when its first bytes arrive after a
+// sweep advanced req_base past it (QUIC delivers streams independently). It
+// is appended to the list unindexed and found here until the next sweep
+// folds it back into the window.
+function (s: Session) __scan(id: i64): i32 {
+  let i: i32 = s.reqs.len() - 1;
+  while (i >= 0) {
+    if (s.reqs[i].id == id) {
+      if (s.reqs[i].gone) {
+        return 0 - 1;
+      }
+      return i;
+    }
+    i = i - 1;
+  }
+  return 0 - 1;
 }
 
 // __added is the session with request `r` appended and indexed.
