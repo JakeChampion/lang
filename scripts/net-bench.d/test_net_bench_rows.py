@@ -27,10 +27,12 @@ def run(*args):
 
 
 class H2loadRowsTest(unittest.TestCase):
-    # done=900 differs from succeeded=800, and failed+errored+timeout=100.
+    # h2load's counters nest: done = succeeded + failed, and timeout (20) is
+    # within errored (30) within failed (50). done (850) differs from
+    # succeeded (800), so it tells the two denominators apart.
     SUMMARY = (
         "finished in 10.00s, 90.00 req/s, 1.00MB/s\n"
-        "requests: 1000 total, 990 started, 900 done, "
+        "requests: 1000 total, 1000 started, 850 done, "
         "800 succeeded, 50 failed, 30 errored, 20 timeout\n"
     )
 
@@ -44,16 +46,17 @@ class H2loadRowsTest(unittest.TestCase):
                        "0", "0", str(u1), str(s1))
 
     def test_cpu_divides_by_done_not_succeeded(self):
-        r = self.rows(90, 45)
+        r = self.rows(85, 34)
         self.assertAlmostEqual(
             float(r["net/fern-h3/c1m32.server_user_us_per_req"]),
-            90 * TICK_US / 900, places=2)
+            85 * TICK_US / 850, places=2)
         self.assertAlmostEqual(
             float(r["net/fern-h3/c1m32.server_sys_us_per_req"]),
-            45 * TICK_US / 900, places=2)
+            34 * TICK_US / 850, places=2)
 
-    def test_failed_is_failed_plus_errored_plus_timeout(self):
-        self.assertEqual(self.rows(0, 0)["net/fern-h3/c1m32.failed"], "100")
+    def test_failed_is_the_failed_counter_not_the_nested_sum(self):
+        # failed alone (50), not failed + errored + timeout (100).
+        self.assertEqual(self.rows(0, 0)["net/fern-h3/c1m32.failed"], "50")
 
     def test_rps_and_percentiles(self):
         r = self.rows(0, 0)
