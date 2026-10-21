@@ -13,11 +13,13 @@
 /.claude/*
 !/.claude/settings.json
 !/.claude/hooks/
+!/.claude/skills/
 /unicodegen
 /x86tblgen
 
 # cargo's build directory when the hyper bench server is built in place
 scripts/net-bench.d/hyperhello/target/
+bench/maps/rust/target/
 __pycache__/
 /rootsgen
 /pslgen

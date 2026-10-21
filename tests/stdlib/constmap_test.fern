@@ -1,0 +1,146 @@
+import "std/test";
+import "std/constmap";
+import "std/i32";
+import "std/result";
+
+// tests/stdlib/constmap_test.fern — std/constmap, the immutable string-keyed
+// map built as a binary fuse structure. What is pinned: every key maps to its
+// value at several sizes (the peeling must succeed and the assignment must
+// agree with the lookup), the verified map rejects keys it never saw, and
+// the construction refuses a duplicate key and a length mismatch.
+function keys_of(n: i32): string[] {
+  let ks: string[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    ks = ks.append("checker__symbol_" + i.to_string());
+    i = i + 1;
+  }
+  return ks;
+}
+
+function values_of(n: i32): u64[] {
+  let vs: u64[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    vs = vs.append(i as u64 * 2654435761 + 7);
+    i = i + 1;
+  }
+  return vs;
+}
+
+// round_trip builds an n-key map and names the first key that maps wrong,
+// or the build error; "" when every key maps to its value.
+function round_trip(n: i32): string {
+  let ks: string[] = keys_of(n);
+  let vs: u64[] = values_of(n);
+  match (constmap.constmap_new(ks, vs)) {
+    Err(e) => {
+      return "build failed: " + e;
+    },
+    Ok(m) => {
+      if (m.len() != n) {
+        return "len is " + m.len().to_string();
+      }
+      let i: i32 = 0;
+      while (i < n) {
+        if (m.map(ks[i]) != vs[i]) {
+          return "key " + i.to_string() + " of " + n.to_string() + " maps wrong";
+        }
+        i = i + 1;
+      }
+      return "";
+    }
+  }
+}
+
+function test_round_trip_1000(): test.TestOutcome {
+  return test.assert_eq(round_trip(1000), "");
+}
+
+// The small sets are where the peeling has the least slack.
+function test_round_trip_small(): test.TestOutcome {
+  let n: i32 = 1;
+  while (n <= 9) {
+    let r: string = round_trip(n);
+    if (r.len() > 0) {
+      return test.fail(r);
+    }
+    n = n + 1;
+  }
+  return test.assert_eq(round_trip(100), "");
+}
+
+function test_empty(): test.TestOutcome {
+  let none_k: string[] = [];
+  let none_v: u64[] = [];
+  match (constmap.verified_new(none_k, none_v)) {
+    Err(e) => {
+      return test.fail(e);
+    },
+    Ok(m) => {
+      return test.assert_true(m.len() == 0 && !m.contains("anything"));
+    }
+  }
+}
+
+// The verified map answers every key it holds and none it does not.
+function test_verified(): test.TestOutcome {
+  let n: i32 = 1000;
+  let ks: string[] = keys_of(n);
+  let vs: u64[] = values_of(n);
+  match (constmap.verified_new(ks, vs)) {
+    Err(e) => {
+      return test.fail("build failed: " + e);
+    },
+    Ok(m) => {
+      let i: i32 = 0;
+      while (i < n) {
+        if (m.get_or(ks[i], 0) != vs[i] || !m.contains(ks[i])) {
+          return test.fail("key " + i.to_string() + " not found or wrong");
+        }
+        if (m.contains("absent__" + i.to_string()) || m.contains("checker__symbol_" + (i + n).to_string())) {
+          return test.fail("absent key " + i.to_string() + " accepted");
+        }
+        i = i + 1;
+      }
+      return test.assert_eq(m.get_or("not a key", 99), 99);
+    }
+  }
+}
+
+function test_duplicate_key(): test.TestOutcome {
+  let ks: string[] = ["a", "b", "a"];
+  let vs: u64[] = [1, 2, 3];
+  match (constmap.constmap_new(ks, vs)) {
+    Err(e) => {
+      return test.assert_eq(e, "constmap: duplicate key \"a\"");
+    },
+    Ok(_) => {
+      return test.fail("a duplicate key was accepted");
+    }
+  }
+}
+
+function test_length_mismatch(): test.TestOutcome {
+  let ks: string[] = ["a", "b"];
+  let vs: u64[] = [1];
+  match (constmap.verified_new(ks, vs)) {
+    Err(e) => {
+      return test.assert_eq(e, "constmap: 2 keys but 1 values");
+    },
+    Ok(_) => {
+      return test.fail("a length mismatch was accepted");
+    }
+  }
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/constmap");
+  r = r.it("round trip 1000 keys", test_round_trip_1000);
+  r = r.it("round trip small sets", test_round_trip_small);
+  r = r.it("empty map", test_empty);
+  r = r.it("verified map rejects absent keys", test_verified);
+  r = r.it("duplicate key refused", test_duplicate_key);
+  r = r.it("length mismatch refused", test_length_mismatch);
+  return r.finish();
+}

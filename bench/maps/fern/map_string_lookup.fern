@@ -1,0 +1,36 @@
+// Map[string, u64] with keys `checker__symbol_<i>` and value `i`: the Rust
+// half's `HashMap<String,u64>` and `hashbrown<&str,u64>` rows, and the
+// mutable map std/constmap is the alternative to.
+import "core/map";
+import "std/bench";
+import "std/i32";
+import "std/u64";
+import "./shared";
+
+// Built in helpers for the reason map_int_lookup gives (#12927).
+function build(keys: string[]): Map[string, u64] {
+  let m: Map[string, u64] = Map { };
+  let i: i32 = 0;
+  while (i < keys.len()) {
+    m = m.insert(keys[i], i as u64);
+    i = i + 1;
+  }
+  return m;
+}
+
+function main(): i32 {
+  let p: shared.Params = shared.params(args());
+  let keys: string[] = shared.string_keys(p.n);
+  let m: Map[string, u64] = build(keys);
+  let probe: i32[] = shared.order(p.n);
+  let sum: u64 = 0;
+  let r: bench.Report = bench.run("map_string", 1, p.rounds, () => {
+    let j: i32 = 0;
+    while (j < probe.len()) {
+      sum = sum + m.get_or(keys[probe[j]], 0);
+      j = j + 1;
+    }
+  });
+  shared.report("Map[string,u64]", p.n, r.wall_ns, p.rounds, sum);
+  return 0;
+}
