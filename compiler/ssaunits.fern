@@ -4035,10 +4035,12 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
 // written here. `links` are the appends threaded through a borrowed
 // parameter whose unit is encoded at run time (`links_of`); a link is never
 // a donor, since its box may be the caller's.
-pub struct Reuse { pairs: ReusePairs[], keeps: Keeps[], carry: Carry, reads: VariantReads }
+// `disabled` is reuse_layer_disabled's answer for the function, read once
+// here for the lowering's readers.
+pub struct Reuse { pairs: ReusePairs[], keeps: Keeps[], carry: Carry, reads: VariantReads, disabled: boolean }
 
 pub function no_reuse(): Reuse {
-  return Reuse { pairs: [], keeps: [], carry: no_carry(), reads: VariantReads { at: [], dom: ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] }, sites: [], names: [], shared: [] } };
+  return Reuse { pairs: [], keeps: [], carry: no_carry(), reads: VariantReads { at: [], dom: ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] }, sites: [], names: [], shared: [] }, disabled: false };
 }
 
 // reuse_layer_disabled: the #4350 §6.5 differential switch. When
@@ -4074,7 +4076,7 @@ pub function with_reuse(f: ssasem.Func, p: Plan): Plan {
     keeps = keeps.append(block_keeps(f, p, idx, b, pr, carry, links, uses));
     pairs = pairs.append(pr);
   }
-  return Plan { ...p, links: links, reuse: Reuse { pairs: pairs, keeps: keeps, carry: carry, reads: vr } };
+  return Plan { ...p, links: links, reuse: Reuse { pairs: pairs, keeps: keeps, carry: carry, reads: vr, disabled: off } };
 }
 
 // A value built as static data: its count is immortal and its box is nobody's
