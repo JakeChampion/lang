@@ -917,7 +917,7 @@ func (p *parser) parsePubUse(pubPos ast.Position) (*ast.PubUse, error) {
 		return nil, err
 	}
 	if len(names) == 0 {
-		return nil, p.errorf(pubPos, "`pub use` must name at least one symbol, e.g. `pub use \"std/string\".{split};`")
+		return nil, p.errorfCode(pubPos, "P001", "`pub use` must name at least one symbol, e.g. `pub use \"std/string\".{split};`")
 	}
 	return &ast.PubUse{P: pubPos, Path: pathTok.Text, Names: names}, nil
 }

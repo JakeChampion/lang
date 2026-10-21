@@ -60,6 +60,30 @@ func TestSelfHostKnowsEveryNativeBuiltin(t *testing.T) {
 		len(missing), strings.Join(missing, ", "))
 }
 
+// TestNativeKnowsEverySelfHostBuiltin is the other direction: a name the
+// self-hosted compiler accepts as a builtin and the Go checker does not is a
+// program the oracle refuses with E001, so no differential can check it.
+// `__`-prefixed names are compiler internals on both sides.
+func TestNativeKnowsEverySelfHostBuiltin(t *testing.T) {
+	native := map[string]bool{}
+	for _, name := range nativeBuiltinNames(t) {
+		native[name] = true
+	}
+	var extra []string
+	for name := range selfHostBuiltinNames(t) {
+		if !native[name] && !strings.HasPrefix(name, "__") {
+			extra = append(extra, name)
+		}
+	}
+	if len(extra) > 0 {
+		sort.Strings(extra)
+		t.Errorf("%d builtin(s) the self-hosted compiler knows and the Go checker does not: %s\n"+
+			"A builtin the language has is missing from the Go checker's FuncSigs, which must learn it;\n"+
+			"a name the language does not have is a leftover in compiler/parser.fern's builtin_function_names().",
+			len(extra), strings.Join(extra, ", "))
+	}
+}
+
 // nativeBuiltinNames is every bare builtin the checker registers, taken from a
 // real Check rather than by reading checker.go: the question is what the
 // compiler actually offers, and a regex over the source answers a different
