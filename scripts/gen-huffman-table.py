@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # gen-huffman-table.py OUT — the decoding states of std/http/huffman
 # (HUFF_DEC) from its code tables, checked against a bit-by-bit decoder and
-# the packed form the Fern decoder reads. Paste OUT's entries into the
-# table, sixteen a line.
+# the packed form the Fern decoder reads, and the encoder's packed table
+# (HUFF, `code << 8 | length`). Paste OUT's entries into HUFF_DEC, sixteen
+# a line, and the printed HUFF entries into HUFF, eight a line.
 import re, random, sys
 import os
 src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "http", "huffman.fern")).read()
@@ -108,3 +109,9 @@ assert decode_packed(bytes.fromhex("1fff")) is None and decode_packed(bytes([0xf
 print("packed roundtrip failures:", bad)
 open(sys.argv[1], "w").write(",".join(str(v) for v in vals))
 print("entries", len(vals), "max", max(vals))
+# HUFF: each symbol's code and length as code << 8 | length, the encoder's
+# one indexed load per symbol.
+huff = [(CODE[s] << 8) | LEN[s] for s in range(len(LEN))]
+print("HUFF entries", len(huff), "max", max(huff))
+for i in range(0, len(huff), 8):
+    print("  " + ", ".join(str(v) for v in huff[i:i + 8]) + ",")

@@ -255,12 +255,11 @@ function main(): i32 {
 `, serveAllocsH3Identity, port, serveAllocsWarm+rounds+8)
 }
 
-// ServeAllocsH3ClientSource is the client of CheckServeAllocsH3: one
-// HTTP/3 connection to 127.0.0.1 on the port in its first argument, the
-// warm-up, then its second argument's rounds of hello requests one at a
-// time, counted as serveAllocsRounds counts them. It prints
-// `allocs TOTAL SECONDS`.
-var ServeAllocsH3ClientSource = `import "std/net";
+// serveAllocsH3ClientCommon is the shared head of the HTTP/3 allocation
+// clients: the imports, the test identity, and the helpers the serial
+// driver (ServeAllocsH3ClientSource) and the multiplexed one
+// (ServeAllocsH3MuxClientSource) both build on.
+const serveAllocsH3ClientCommon = `import "std/net";
 import "std/quic/conn";
 import "std/http/h3";
 import "std/http/h3q";
@@ -339,7 +338,13 @@ function count(k: Cli): (Cli, i64) {
   let (k2, body) = get(k, "/count");
   return (k2, body.parse_int().unwrap_or(0 - 1) as i64);
 }
+`
 
+// ServeAllocsH3ClientSource drives the server serially: one HTTP/3
+// connection to 127.0.0.1 on the port in its first argument, the warm-up,
+// then its second argument's rounds of hello requests one at a time,
+// counted as serveAllocsRounds counts them. It prints `allocs TOTAL SECONDS`.
+var ServeAllocsH3ClientSource = serveAllocsH3ClientCommon + `
 function main(): i32 {
   let argv: string[] = args();
   let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
@@ -410,6 +415,113 @@ function main(): i32 {
 }
 `
 
+// ServeAllocsH3MuxClientSource is ServeAllocsH3ClientSource with up to its
+// third argument's requests in flight on the one connection at a time
+// (`drive`), the multiplexed path the 1x256 nightly row exercises. It
+// prints `allocs TOTAL SECONDS peak PEAK`, peak the most it held at once:
+// the server grants 100 request streams, so a higher argument tops out
+// there.
+var ServeAllocsH3MuxClientSource = serveAllocsH3ClientCommon + `
+// drive keeps up to m hello requests in flight until rounds are answered,
+// pumping the socket between top-ups, and returns the peak held at once.
+function drive(k0: Cli, rounds: i32, m: i32): (Cli, i32) {
+  let k: Cli = k0;
+  let completed: i32 = 0;
+  let inflight: i32 = 0;
+  let peak: i32 = 0;
+  let last: i64 = now();
+  while (completed < rounds) {
+    let topping: boolean = true;
+    while (topping) {
+      if (inflight >= m || completed + inflight >= rounds || !k.c.quic().can_open(false)) {
+        topping = false;
+      } else {
+        match (k.c.request(request("/"), "https")) {
+          Ok(sent) => {
+            k = Cli { ...k, c: sent.0 };
+            inflight = inflight + 1;
+          },
+          Err(_) => {
+            topping = false;
+          }
+        }
+      }
+    }
+    if (inflight > peak) {
+      peak = inflight;
+    }
+    k = pump(k, 10);
+    let evs: h3q.Event[] = k.c.events;
+    k = Cli { ...k, c: k.c.events_taken() };
+    for e in evs {
+      match (e) {
+        h3q.Responded(rid, resp) => {
+          inflight = inflight - 1;
+          completed = completed + 1;
+          last = now();
+        },
+        _ => {}
+      }
+    }
+    if (now() - last > 30000000000) {
+      return (k, peak);
+    }
+  }
+  return (k, peak);
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
+    return 2;
+  };
+  let Some(rounds) = argv[2].parse_int() else {
+    return 2;
+  };
+  let Some(m) = argv[3].parse_int() else {
+    return 2;
+  };
+  let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([hex.hex_decode(ROOT)])));
+  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), now_unix_ms()) else {
+    return 2;
+  };
+  let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
+    return 2;
+  };
+  let Ok(sock) = net.udp_socket(any) else {
+    return 2;
+  };
+  let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
+  let k: Cli = Cli { c: h3q.client(q, h3.config()), sock: sock, peer: peer, buf: __alloc_u8(65536) };
+  let started: i64 = now();
+  while (!k.c.ready() && now() - started < 30000000000) {
+    k = pump(k, 10);
+  }
+  if (!k.c.ready()) {
+    print("handshake failed");
+    return 1;
+  }
+  let w: (Cli, i32) = drive(k, 2000, m);
+  k = w.0;
+  let (k1, c0) = count(k);
+  let (k2, c1) = count(k1);
+  k = k2;
+  let t0: i64 = now();
+  let d: (Cli, i32) = drive(k, rounds, m);
+  k = d.0;
+  let peak: i32 = d.1;
+  let seconds: i64 = (now() - t0) / 1000000000 + 2;
+  let (k3, c2) = count(k);
+  k = k3;
+  if (c0 < 0 || c1 < 0 || c2 < 0) {
+    print("count failed");
+    return 1;
+  }
+  print("allocs " + (c2 - c1 - (c1 - c0)).to_string() + " " + seconds.to_string() + " peak " + peak.to_string());
+  return 0;
+}
+`
+
 // CheckServeAllocsH3 runs `client`, a ServeAllocsH3ClientSource build with
 // its arguments set, and holds the mean it reports under `ceiling` as
 // CheckServeAllocsH2 does: above it is a regression, and a mean
@@ -432,6 +544,36 @@ func CheckServeAllocsH3(t *testing.T, addr string, client *exec.Cmd, ceiling int
 	}
 	if total < (ceiling-serveAllocsH2Drift)*int64(rounds) {
 		t.Errorf("the serve loop allocates %.2f times per HTTP/3 hello request, %d or more under the ceiling of %d: lower the ceiling in the same change.", mean, serveAllocsH2Drift, ceiling)
+	}
+}
+
+// CheckServeAllocsH3Mux runs `client`, a ServeAllocsH3MuxClientSource build,
+// and bounds the mean it reports under `ceiling` as CheckServeAllocsH3 does.
+// It also holds the peak it reports at or above `minPeak`, so a client that
+// quietly fell back to one stream in flight — which would measure the
+// serial path, not the multiplexed one — fails rather than passing.
+func CheckServeAllocsH3Mux(t *testing.T, addr string, client *exec.Cmd, ceiling int64, rounds int, minPeak int) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	out, err := client.CombinedOutput()
+	if err != nil {
+		t.Fatalf("h3 mux client: %v\n%s", err, out)
+	}
+	var total, seconds int64
+	var peak int
+	if _, err := fmt.Sscanf(string(out), "allocs %d %d peak %d", &total, &seconds, &peak); err != nil {
+		t.Fatalf("h3 mux client printed %q, want `allocs TOTAL SECONDS peak PEAK`", out)
+	}
+	mean := float64(total) / float64(rounds)
+	t.Logf("%d allocations over %d multiplexed HTTP/3 requests in %d s: %.2f per request, peak %d in flight", total, rounds, seconds-2, mean, peak)
+	if peak < minPeak {
+		t.Fatalf("the client held at most %d requests in flight; want at least %d, else the measurement is the serial path", peak, minPeak)
+	}
+	if total > ceiling*int64(rounds)+serveAllocsSlackPerSecond*seconds {
+		t.Errorf("the serve loop allocates %.2f times per multiplexed HTTP/3 hello request; the ceiling is %d. Above it is a regression.", mean, ceiling)
+	}
+	if total < (ceiling-serveAllocsH2Drift)*int64(rounds) {
+		t.Errorf("the serve loop allocates %.2f times per multiplexed HTTP/3 hello request, %d or more under the ceiling of %d: lower the ceiling in the same change.", mean, serveAllocsH2Drift, ceiling)
 	}
 }
 
