@@ -138,6 +138,28 @@ function post(length: string): qpack.Field[] {
   return [qpack.field(":method", "POST"), qpack.field(":scheme", "https"), qpack.field(":authority", "example.com"), qpack.field(":path", "/upload"), qpack.field("content-length", length)];
 }
 
+// A request stream whose id is below the window a sweep left behind is
+// still seen and answered. Thirty-two higher request streams complete and
+// are swept, which advances req_base past stream 0; stream 0 then arrives
+// (QUIC delivers streams independently, so a lower id can come last) and
+// must reach the handler, not be dropped as unindexed.
+function test_reordered_low_stream(): test.TestOutcome {
+  let p: Link = linked();
+  let k: i32 = 1;
+  while (k <= 32) {
+    let id: i64 = k as i64 * 4;
+    p = flow(Link { ...p, log: "", c: p.c.send_headers(id, get("/h"), true) });
+    p = flow(Link { ...p, log: "", s: p.s.send_headers(id, [qpack.field(":status", "200")], true) });
+    k = k + 1;
+  }
+  p = flow(Link { ...p, log: "", c: p.c.send_headers(0 as i64, get("/late"), true) });
+  if (count(p.log, "server headers 0 ") != "1") {
+    return test.fail("the late low request stream was dropped: " + p.log);
+  }
+  p = flow(Link { ...p, log: "", s: p.s.send_headers(0 as i64, [qpack.field(":status", "200")], true) });
+  return test.assert_eq(count(p.log, "client headers 0 [:status=200 "), "1");
+}
+
 // A GET and its response, with each side's SETTINGS read first.
 function test_request_response(): test.TestOutcome {
   let p: Link = linked();
@@ -308,5 +330,6 @@ function main(): i32 {
   r = r.it("frames out of place are connection errors", test_connection_errors);
   r = r.it("GOAWAY", test_goaway);
   r = r.it("a field section blocked on QPACK", test_qpack_blocked);
+  r = r.it("a request stream below the swept window is still answered", test_reordered_low_stream);
   return r.finish();
 }
