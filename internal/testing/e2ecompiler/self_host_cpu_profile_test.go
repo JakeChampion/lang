@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 const cpuProfileHot = `import "std/i64";
@@ -327,7 +329,8 @@ func TestSelfHostCPUProfileArm64UsesLSE(t *testing.T) {
 		}
 		// GNU as at its default -march takes the text only with the LSE
 		// extension enabled ahead of the first such instruction.
-		gcc, _ := arm64Tooling(t)
-		buildBinArm64(t, gcc, t.TempDir(), "prof-"+kind, text)
+		if gcc := e2eharness.Arm64Assembler(t); gcc != "" {
+			buildBinArm64(t, gcc, t.TempDir(), "prof-"+kind, text)
+		}
 	}
 }
