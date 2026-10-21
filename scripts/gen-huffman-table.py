@@ -8,9 +8,14 @@
 # gen-huffman-table.py --check — fail if the committed HUFF or HUFF_DEC has
 # drifted from what the authored HUFF_CODE and HUFF_LEN generate, the mode
 # make huffman-table-check runs in the lint lane.
-import re, random, sys
-import os
-src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "http", "huffman.fern")).read()
+import re, random, sys, os, argparse
+DEFAULT_TARGET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "http", "huffman.fern")
+ap = argparse.ArgumentParser(description="generate or check std/http/huffman's HUFF and HUFF_DEC tables")
+ap.add_argument("out", nargs="?", help="write HUFF_DEC entries here; omit with --check")
+ap.add_argument("--check", action="store_true", help="fail if the committed HUFF or HUFF_DEC drifted")
+ap.add_argument("--target", default=DEFAULT_TARGET, help="the huffman.fern to read and check")
+args = ap.parse_args()
+src = open(args.target).read()
 def arr(name):
     m = re.search(r"const " + name + r": [^=]*= \[(.*?)\];", src, re.S)
     return [int(x) for x in re.findall(r"\d+", m.group(1))]
@@ -88,6 +93,7 @@ for t in range(20000):
     s = bytes(random.randrange(256) for _ in range(random.randrange(0, 40)))
     if decode(encode(s)) != s: bad += 1
 print("roundtrip failures:", bad)
+assert bad == 0, "the authored HUFF_CODE/HUFF_LEN encode and decode disagree"
 # Packed as the Fern decoder reads it: the symbol in the low byte, the
 # flags in bits 8 to 10, the next state above them.
 vals = []
@@ -111,10 +117,11 @@ for t in range(20000):
     if decode_packed(encode(s)) != s: bad += 1
 assert decode_packed(bytes.fromhex("1fff")) is None and decode_packed(bytes([0xff] * 4)) is None
 print("packed roundtrip failures:", bad)
+assert bad == 0, "the packed HUFF_DEC encode and decode disagree"
 # HUFF: each symbol's code and length as code << 8 | length, the encoder's
 # one indexed load per symbol.
 huff = [(CODE[s] << 8) | LEN[s] for s in range(len(LEN))]
-if "--check" in sys.argv[1:]:
+if args.check:
     # The committed HUFF and HUFF_DEC must be what the authored HUFF_CODE and
     # HUFF_LEN generate; a drift fails here, where make huffman-table-check
     # runs it, rather than later as a failing HPACK round trip.
@@ -126,10 +133,10 @@ if "--check" in sys.argv[1:]:
         sys.exit(1)
     print("huffman tables up to date")
     sys.exit(0)
-if len(sys.argv) < 2:
+if args.out is None:
     print("usage: gen-huffman-table.py OUT | gen-huffman-table.py --check", file=sys.stderr)
     sys.exit(2)
-open(sys.argv[1], "w").write(",".join(str(v) for v in vals))
+open(args.out, "w").write(",".join(str(v) for v in vals))
 print("entries", len(vals), "max", max(vals))
 print("HUFF entries", len(huff), "max", max(huff))
 for i in range(0, len(huff), 8):
