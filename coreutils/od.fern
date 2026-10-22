@@ -37,7 +37,7 @@
 import "std/string";
 import "std/array";
 import "std/io_buffered";
-import "std/float";
+import "std/f64";
 import "./lib/gnu";
 import "./lib/ld";
 
@@ -806,7 +806,7 @@ function ftoa(f: ld.Format, v: ld.LD): string {
 }
 
 // The same search for a float or a double, where the shortest decimal
-// that reads back is one `std/float` call and fixes the first precision
+// that reads back is one `std/f64` call and fixes the first precision
 // that can succeed, and each candidate is one exact rounding in
 // `lib/ld.fern` rather than an expansion, a print and a parse.
 function ftoa_ieee(f: ld.Format, v: ld.LD, prec: i32, bound: i32): string {

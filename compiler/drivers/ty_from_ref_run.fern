@@ -18,7 +18,7 @@ import "../util";
 
 function main(): i32 {
   let corpus: string[] = [
-    "i32", "u32", "u64", "i64", "usize", "f64", "f32", "float", "bool", "boolean", "string",
+    "i32", "u32", "u64", "i64", "usize", "f64", "f32", "bool", "boolean", "string",
     "i32[]", "u32[]", "u64[]", "i64[]", "string[]", "bool[]", "boolean[]", "f64[]",
     "i32[][]", "string[][]", "Foo[]", "Option[i32][]", "Map[string, i32][]",
     "Map[string, i32]", "Map[i32, string]", "Map[i32, Option[i32]]", "Map[string, Map[i32, string]]",

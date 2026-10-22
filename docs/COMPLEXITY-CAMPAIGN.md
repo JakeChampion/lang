@@ -478,7 +478,7 @@ slice.
 
 A caution for whoever scans for these: **a scanner that finds extents by
 counting braces is wrong on `parser.fern`, `printer.fern`, `interp.fern`,
-`string.fern`, `float.fern`, `asm_ir.fern`, `asm_arm64_ir.fern` and
+`string.fern`, `f64.fern`, `asm_ir.fern`, `asm_arm64_ir.fern` and
 `irlower.fern`** — they carry string literals containing braces (the asm files
 emit assembly; the others embed Fern programs as test input). Strip string
 literals and comments before counting, and cross-check against the first

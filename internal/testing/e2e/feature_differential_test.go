@@ -581,7 +581,7 @@ function main(): i32 {
 }`},
 
 	// ---- floats in aggregates (struct / tuple / array / map) ----
-	{"float_aggregates", `import "std/float";
+	{"float_aggregates", `import "std/f64";
 import "std/i32";
 import "core/map";
 struct V3 { x: f64, y: f64, z: f64 }

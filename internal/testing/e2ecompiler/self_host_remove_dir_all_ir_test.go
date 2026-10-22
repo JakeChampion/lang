@@ -85,7 +85,7 @@ func TestSelfHostRemoveDirAllIR(t *testing.T) {
 }
 
 // TestSelfHostRemoveDirAllIRWasm pins `remove_dir_all(path)` lowering on the wasm
-// IR path. remove_dir_all is a recursive rm -rf returning Result[(), IoError] (Ok(()) on
+// IR path. remove_dir_all is a recursive rm -rf returning Result[void, IoError] (Ok(()) on
 // success / Some(IoError) on failure); it was a wasm_eligible exclusion (no wasm
 // IR runtime), so any module using it bailed. It now
 // lowers to op_remove_dir_all -> a fresh recursive wasm runtime

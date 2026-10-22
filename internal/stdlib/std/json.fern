@@ -34,7 +34,7 @@ import "std/i64";
 import "std/u32";
 import "std/u64";
 // Float `to_string` for the `impl Json for f32 / f64` serialisers.
-import "std/float";
+import "std/f64";
 
 // JsonValue is a JSON document. A number keeps its text, since JSON fixes no
 // precision; `s.parse_int()` / `s.parse_float()` read it.

@@ -798,31 +798,22 @@ func TestFloatLiteralAndType(t *testing.T) {
 	}
 }
 
-// `float` is the width-unqualified alias for f64 (#5363) — a
-// contextual Ident in type position (like `str`), producing
-// FloatType{Width:64, Spelling:"float"}. A `float.`-qualified name
-// stays a module struct reference.
-func TestFloatAliasType(t *testing.T) {
-	prog, err := Parse(`function f(x: float): float { let xs: float[] = [x]; return xs[0] as float; }`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fn := prog.Funcs[0]
-	for _, ty := range []ast.Type{fn.ReturnType, fn.Params[0].Type} {
-		ft, ok := ty.(ast.FloatType)
-		if !ok {
-			t.Fatalf("type = %T, want FloatType", ty)
-		}
-		if ft.Width != 64 || ft.Spelling != "float" {
-			t.Errorf("got FloatType{Width:%d, Spelling:%q}, want {64, \"float\"}", ft.Width, ft.Spelling)
+// `float` and `()` are not types (#12700): each is refused with a P001 naming
+// the one spelling the language keeps. A `float.`-qualified name is a module
+// struct reference, and `()` as a value is still the unit value.
+func TestRefusedTypeSpellings(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{`function f(x: float): i32 { return 0; }`, "written `f64`"},
+		{`function f(): Option[float] { return None; }`, "written `f64`"},
+		{`function f(): Result[(), string] { return Ok(()); }`, "written `void`"},
+		{`function f(u: ()): i32 { return 0; }`, "written `void`"},
+	} {
+		_, err := Parse(tc.src)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want an error saying %q", tc.src, err, tc.want)
 		}
 	}
-	at, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type.(ast.ArrayType)
-	if !ok || at.Elem.(ast.FloatType).Width != 64 {
-		t.Errorf("let type = %#v, want float[] with f64 elem", prog.Funcs[0].Body.Stmts[0].(*ast.Var).Type)
-	}
-
-	prog, err = Parse(`function g(v: float.Vec): i32 { return 0; }`)
+	prog, err := Parse(`function g(v: float.Vec): void { let u = (); }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -913,6 +904,33 @@ func TestNonLvalueAssignTargetsRejected(t *testing.T) {
 		if !hasParseCode(err, "P003") {
 			t.Errorf("want P003 for %s, got %T: %v", src, err, err)
 		}
+	}
+}
+
+// A refusal at a missing closer or name says what the token does there,
+// in the words the self-hosted parser uses for the same refusal.
+func TestRefusalsNameTheirConstruct(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{"let x = [1\n2];", `expected "]" to close this array literal`},
+		{"let x = g(1\n2);", `expected ")" to close this call`},
+		{"let a = [1]; let x = a[0;", `expected "]" to close this index`},
+		{"let a = [1]; let x = a[0:1;", `expected "]" to close this slice`},
+		{"let a = 1; a.;", `expected a field or method name after "."`},
+		{"let x 1;", `expected "=" after the name in this declaration`},
+		{"let x: i32 1;", `expected "=" after the name in this declaration`},
+		{"let p = P { 1 };", "expected a field name in this struct literal"},
+		{"let p = P { a 1 };", `expected ":" after the field name in this struct literal`},
+		{"let p = P { a: 1 a: 2 };", `expected "}" to close this struct literal`},
+		{"let p = P { a: 1 }; let q = P { ...p a: 2 };", `expected "}" to close this struct update`},
+	} {
+		src := "struct P { a: i32 }\nfunction g(a: i32, b: i32): i32 { return a; }\nfunction f(): i32 {\n" + tc.body + "\nreturn 0;\n}"
+		_, err := Parse(src)
+		if err == nil || !hasParseCode(err, "P001") || !strings.Contains(err.Error(), ": "+tc.want) {
+			t.Errorf("%s: want P001 %q, got %v", tc.body, tc.want, err)
+		}
+	}
+	if _, err := Parse("function f(): i32 { let Some(x) 5 else { return 1; }; return 0; }"); err == nil || !strings.Contains(err.Error(), `expected "=", got "5"`) {
+		t.Errorf(`a refutable pattern keeps "expected \"=\", got": %v`, err)
 	}
 }
 

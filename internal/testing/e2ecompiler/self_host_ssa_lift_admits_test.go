@@ -41,7 +41,7 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// The eight Dir kinds (420-427) each have a modelled pop count and push
 	// one Result, so all eight are admitted through the flat arm.
 	// sha256_hw and sha256_hw_blocks are two more, and bswap one more.
-	// The five transcendental kinds (62-66) are retired: std/float now
+	// The five transcendental kinds (62-66) are retired: std/f64 now
 	// computes them in Fern. mulhi_u (430) adds one admitted binary operation
 	// with two inputs and one result. The three strbuf kinds (117-119) are
 	// retired: the compiler writes its text through a buf_* builder.

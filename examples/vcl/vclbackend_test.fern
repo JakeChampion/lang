@@ -12,7 +12,7 @@
 import "std/test";
 import "std/string";
 import "std/i64";
-import "std/float";
+import "std/f64";
 import "./ast";
 import "./value";
 import "./runtime";

@@ -1,11 +1,11 @@
 // Command floattablegen generates the lookup tables that Fern's float
 // conversion routines use, and rewrites them into the stdlib in place:
 //
-//	go run ./cmd/floattablegen internal/stdlib/std/float.fern internal/stdlib/std/string.fern
+//	go run ./cmd/floattablegen internal/stdlib/std/f64.fern internal/stdlib/std/string.fern
 //
 // It handles two tables, one per direction of conversion:
 //
-//   - DRAGONBOX (binary→decimal, `std/float.fern`): normalised powers of ten,
+//   - DRAGONBOX (binary→decimal, `std/f64.fern`): normalised powers of ten,
 //     128-bit for f64 and 64-bit for f32.
 //   - EISEL-LEMIRE (decimal→binary, `std/string.fern`): normalised 128-bit
 //     powers of five.

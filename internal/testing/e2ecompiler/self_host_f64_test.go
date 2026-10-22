@@ -6,8 +6,8 @@ import (
 )
 
 // f64ToStringProgram formats a spread of f64 values one per line through
-// std/float's `.to_string()`. It imports the module explicitly: the register
-// f64 formatting is std/float's shortest-round-trip formatter on every
+// std/f64's `.to_string()`. It imports the module explicitly: the register
+// f64 formatting is std/f64's shortest-round-trip formatter on every
 // backend (there is no builtin `.to_string()` — #5826 removed the hand-asm
 // k=15 fixed-precision one), the same one
 // the Go backend compiles and the interpreter runs, so an import-free
@@ -22,14 +22,14 @@ import (
 // unsuffixed literal is f64 — 1.0/3.0 renders at f64 precision, not f32's.
 //
 // The `let fx: float` line this program used to carry is GONE, not moved:
-// with std/float actually imported, a `float`-declared receiver dispatches
+// with std/f64 actually imported, a `float`-declared receiver dispatches
 // to that module's f32 `.to_string()` and renders "0.33333334" (#5882).
 // That is a pre-existing self-host dispatch bug — a pre-deletion driver
 // emits the same `__fn_f32__to_string` call — which was invisible here only
 // because this test ran import-free, where no f32 method existed and the
 // now-deleted builtin caught f32 and f64 alike. Restore the line as part of
 // fixing #5882 rather than pinning it to the wrong value here.
-const f64ToStringProgram = `import "std/float";
+const f64ToStringProgram = `import "std/f64";
 function main(): i32 {
     print((3.5 as f64).to_string());
     print((0.0 as f64 - 2.25).to_string());
@@ -46,7 +46,7 @@ function main(): i32 {
 }`
 
 // Byte-for-byte the native interpreter's output for the same program —
-// std/float is the single formatter now, so self-host and native agree by
+// std/f64 is the single formatter now, so self-host and native agree by
 // construction rather than by a hand-maintained transcription contract.
 const f64ToStringWant = "3.5\n" +
 	"-2.25\n" +

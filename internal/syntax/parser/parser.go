@@ -454,6 +454,16 @@ func (p *parser) expect(kind lexer.Kind, text string) (lexer.Token, error) {
 	return p.advance(), nil
 }
 
+// expectAs is expect with a message that names what the token does there,
+// worded as the self-hosted parser words the same refusal.
+func (p *parser) expectAs(kind lexer.Kind, text, msg string) (lexer.Token, error) {
+	t := p.peek()
+	if t.Kind != kind || (text != "" && t.Text != text) {
+		return lexer.Token{}, p.errorfCode(t.Pos, "P001", "%s", msg)
+	}
+	return p.advance(), nil
+}
+
 // ---------- Program / declarations ----------
 
 func (p *parser) parseProgram() *ast.Program {
@@ -2430,12 +2440,9 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 			// group.
 			base = elems[0]
 		} else {
-			// `()` — the unit type, void's other spelling. Written
-			// where a generic needs a "nothing to report" argument:
-			// `Result[(), IoError]`. The `=>` form above already
-			// claimed the zero-arg function type, so reaching here
-			// with no elements means the bare unit type.
-			base = ast.VoidType{}
+			// The `=>` form above already claimed the zero-arg function
+			// type, so this is `()` written as a type.
+			return nil, p.errorfCode(t.Pos, "P001", "`()` is not a type; the unit type is written `void`")
 		}
 	case t.Kind == lexer.Keyword && t.Text == "dyn":
 		// `dyn Trait` (single) or `dyn A + B` (multi-trait object) — a
@@ -2547,15 +2554,7 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 		base = ast.CharType{}
 	case t.Kind == lexer.Ident && t.Text == "float" &&
 		!(p.i+1 < len(p.tokens) && p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "."):
-		// `float` is the width-unqualified float alias — f64, the
-		// language's primary float (#5363), matching the self-host
-		// checker's long-standing resolution. Contextual like `str`:
-		// an Ident, not a lexer keyword, so `float.pi()` calls into
-		// the std/float module and `float` locals stay untouched;
-		// the `float.` guard keeps module-qualified struct references
-		// (`float.Foo`) on the bare-identifier path below.
-		p.advance()
-		base = ast.FloatType{Width: 64, Spelling: t.Text}
+		return nil, p.errorfCode(t.Pos, "P001", "`float` is not a type; the 64-bit float is written `f64`")
 	case t.Kind == lexer.Ident:
 		// Bare identifier is a struct type reference. The checker
 		// validates that the name actually resolves to a struct.
@@ -5053,11 +5052,17 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	if p.atLetBindingHead() {
 		return p.parseLetBinding(kw.Pos)
 	}
+	start := p.i
 	pats, err := p.parseOrPatterns()
 	if err != nil {
 		return nil, err
 	}
-	if _, err := p.expect(lexer.Punct, "="); err != nil {
+	if p.i == start+1 && p.tokens[start].Kind == lexer.Ident {
+		_, err = p.expectAs(lexer.Punct, "=", letNeedsEq)
+	} else {
+		_, err = p.expect(lexer.Punct, "=")
+	}
+	if err != nil {
 		return nil, err
 	}
 	// Suppress trailing struct-literal parsing while reading
@@ -5102,6 +5107,8 @@ func (p *parser) atLetBindingHead() bool {
 	return p.peekAt(1).Text == ":" || p.peekAt(1).Text == "="
 }
 
+const letNeedsEq = `expected "=" after the name in this declaration`
+
 // parseLetBinding parses the unconditional forms after `let` — a plain
 // name with an optional annotation, or a destructuring pattern — through
 // the trailing `;`. A `for` initialiser admits exactly these.
@@ -5123,7 +5130,7 @@ func (p *parser) parseLetBinding(pos ast.Position) (ast.Stmt, error) {
 		typ = t
 		wasAnnotated = true
 	}
-	if _, err := p.expect(lexer.Punct, "="); err != nil {
+	if _, err := p.expectAs(lexer.Punct, "=", letNeedsEq); err != nil {
 		return nil, err
 	}
 	init, err := p.parseExpr()
@@ -5727,6 +5734,8 @@ func (p *parser) parseCallArgs() ([]ast.Expr, []string, error) {
 	return args, names, nil
 }
 
+const closeCall = `expected ")" to close this call`
+
 func (p *parser) parseCall() (ast.Expr, error) {
 	expr, err := p.parsePrimary()
 	if err != nil {
@@ -5740,7 +5749,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			if err != nil {
 				return nil, err
 			}
-			if _, err := p.expect(lexer.Punct, ")"); err != nil {
+			if _, err := p.expectAs(lexer.Punct, ")", closeCall); err != nil {
 				return nil, err
 			}
 			expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, ArgNames: names}
@@ -5776,7 +5785,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				if err != nil {
 					return nil, err
 				}
-				if _, err := p.expect(lexer.Punct, ")"); err != nil {
+				if _, err := p.expectAs(lexer.Punct, ")", closeCall); err != nil {
 					return nil, err
 				}
 				expr = &ast.Call{P: open.Pos, Callee: expr, Args: args, ArgNames: names, TypeArgs: typeArgs, TypeArgsWritten: true}
@@ -5818,7 +5827,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 					}
 					high = h
 				}
-				if _, err := p.expect(lexer.Punct, "]"); err != nil {
+				if _, err := p.expectAs(lexer.Punct, "]", `expected "]" to close this slice`); err != nil {
 					return nil, err
 				}
 				expr = &ast.SliceExpr{P: open.Pos, Source: expr, High: high}
@@ -5838,13 +5847,13 @@ func (p *parser) parseCall() (ast.Expr, error) {
 					}
 					high = h
 				}
-				if _, err := p.expect(lexer.Punct, "]"); err != nil {
+				if _, err := p.expectAs(lexer.Punct, "]", `expected "]" to close this slice`); err != nil {
 					return nil, err
 				}
 				expr = &ast.SliceExpr{P: open.Pos, Source: expr, Low: first, High: high}
 				continue
 			}
-			if _, err := p.expect(lexer.Punct, "]"); err != nil {
+			if _, err := p.expectAs(lexer.Punct, "]", `expected "]" to close this index`); err != nil {
 				return nil, err
 			}
 			expr = &ast.Index{P: open.Pos, Array: expr, Idx: first}
@@ -5859,7 +5868,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: numTok.Text, FieldPos: numTok.Pos}
 				continue
 			}
-			fname, err := p.expect(lexer.Ident, "")
+			fname, err := p.expectAs(lexer.Ident, "", `expected a field or method name after "."`)
 			if err != nil {
 				return nil, err
 			}
@@ -5951,7 +5960,7 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string, typeArgs []as
 		base = b
 		if _, ok := p.accept(lexer.Punct, ","); !ok {
 			// No overrides — expect the closing brace (pure copy).
-			if _, err := p.expect(lexer.Punct, "}"); err != nil {
+			if _, err := p.expectAs(lexer.Punct, "}", `expected "}" to close this struct update`); err != nil {
 				return nil, err
 			}
 			return &ast.StructLit{P: pos, TypeName: typeName, Base: base, TypeArgs: typeArgs, TypeArgsWritten: typeArgs != nil}, nil
@@ -5959,11 +5968,11 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string, typeArgs []as
 	}
 	if !p.match(lexer.Punct, "}") {
 		for {
-			fname, err := p.expect(lexer.Ident, "")
+			fname, err := p.expectAs(lexer.Ident, "", "expected a field name in this struct literal")
 			if err != nil {
 				return nil, err
 			}
-			if _, err := p.expect(lexer.Punct, ":"); err != nil {
+			if _, err := p.expectAs(lexer.Punct, ":", `expected ":" after the field name in this struct literal`); err != nil {
 				return nil, err
 			}
 			val, err := p.parseExpr()
@@ -5980,7 +5989,7 @@ func (p *parser) parseStructLit(pos ast.Position, typeName string, typeArgs []as
 			break
 		}
 	}
-	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+	if _, err := p.expectAs(lexer.Punct, "}", `expected "}" to close this struct literal`); err != nil {
 		return nil, err
 	}
 	return &ast.StructLit{P: pos, TypeName: typeName, Fields: fields, Base: base, TypeArgs: typeArgs, TypeArgsWritten: typeArgs != nil}, nil
@@ -6414,8 +6423,8 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		}
 		// A builtin type-name keyword in expression position followed
 		// by `.` is a *module* qualifier, not a type. The std modules
-		// `std/string` / `std/i32` / `std/i64` / `std/u32` / `std/u64`
-		// have basenames that collide with type keywords, so a free
+		// `std/string` / `std/i32` / `std/i64` / `std/u32` / `std/u64` /
+		// `std/f64` have basenames that collide with type keywords, so a free
 		// function like `string.repeat_char(...)` would otherwise be a
 		// parse error. Treat the keyword as a bare module-name Ident
 		// and let postfix `.field` / call parsing + modload's `mod.Foo`
@@ -6505,7 +6514,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 					break
 				}
 			}
-			if _, err := p.expect(lexer.Punct, "]"); err != nil {
+			if _, err := p.expectAs(lexer.Punct, "]", `expected "]" to close this array literal`); err != nil {
 				return nil, err
 			}
 			return &ast.ArrayLit{P: open.Pos, Elems: elems}, nil

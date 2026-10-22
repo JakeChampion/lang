@@ -1,6 +1,6 @@
 import "std/test";
 import "std/simd" as simd;
-import "std/float";
+import "std/f64";
 import "std/num" as num;
 
 // tests/stdlib/simd_test.fern — one kernel, several evaluators
@@ -281,9 +281,9 @@ function close_rel(a: f64, b: f64, tol: f64): boolean {
 }
 
 // Every Math function on DoubleDouble and every Dual derivative against
-// std/float over a range of arguments: the double-double value within a few
+// std/f64 over a range of arguments: the double-double value within a few
 // ulp of the f64 result (the f64 side is the less accurate one), and the
-// derivative against the analytic form built from std/float.
+// derivative against the analytic form built from std/f64.
 function test_sweep_against_float(): test.TestOutcome {
   let names: string[] = ["exp", "log", "sin", "cos", "tan", "tanh", "atan", "expm1", "log1p", "pow"];
   let i: i32 = 0;
@@ -344,6 +344,6 @@ function main(): i32 {
   r = r.it("dual of double-double", test_dual_of_dd);
   r = r.it("double-double over f32", test_dd_f32);
   r = r.it("eq is IEEE for NaN", test_eq_nan);
-  r = r.it("sweep against std/float", test_sweep_against_float);
+  r = r.it("sweep against std/f64", test_sweep_against_float);
   return r.finish();
 }

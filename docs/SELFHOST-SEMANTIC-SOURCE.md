@@ -648,7 +648,7 @@ Unsupported constructs refuse the whole function with a reason.
   call stands in statement position like any void call.
 
 - The runtime INTRINSICS, typed as native's `FuncSigs` types them: the six f64
-  primitives `std/float` dispatches to, the six bit counts, the
+  primitives `std/f64` dispatches to, the six bit counts, the
   raw-memory escape hatches (`__alloc`, `__alloc_u8`, `__free`, the loads and
   stores, `__memcpy` / `__memset`, `__ptr_width`, the heap marks), and the byte
   scans over a LENT string (`__sum_bytes`, `__ascii_run`, `__count_byte`,
