@@ -670,15 +670,23 @@ function is_bit_count(name: string): boolean {
   return false;
 }
 
+// Every runtime intrinsic is named `__…`, so a name without the prefix is none.
+function internal_name(name: string): boolean {
+  return name.len() > 2 && name[0] == b'_' && name[1] == b'_';
+}
+
 // The runtime intrinsics: the float primitives, the bit counts, the raw-memory
 // escape hatches, the byte scans over a borrowed string, and the C-ABI
 // trampolines. `__alloc_u8` and its typed siblings are the ones whose result
 // the caller OWNS — a fresh zeroed array — where every other answer here is a
 // scalar.
-function intrinsic_result(name: string, argc: i32): typeinfo.Type {
-  let raw: RawFloorSig[] = raw_floor_find(name);
-  if (raw.len() == 1 && raw[0].params.len() == argc) {
-    return raw[0].result;
+function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
+  if (!internal_name(name)) {
+    return t_unknown("not a runtime intrinsic");
+  }
+  let at: i32 = raw_floor_at(t, name);
+  if (at >= 0 && t.raw[at].params.len() == argc) {
+    return t.raw[at].result;
   }
   if (argc == 1 && is_f64_primitive(name)) {
     return t_float();
@@ -923,11 +931,11 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
 
 // The builtin results a call carries ahead of the user tables. Unknown for
 // every other receiver or name, which is the caller's signal to keep resolving.
-function builtin_result_type(recv: typeinfo.Type, name: string, is_method: boolean, argc: i32): typeinfo.Type {
+function builtin_result_type(recv: typeinfo.Type, name: string, is_method: boolean, argc: i32, s: Scope): typeinfo.Type {
   if (is_method) {
     return cell_method_type(recv, name, argc);
   }
-  return intrinsic_result(name, argc);
+  return intrinsic_result(name, argc, s.sigs);
 }
 
 // The intrinsics' parameters, mirroring intrinsic_result entry for entry. The
@@ -935,10 +943,13 @@ function builtin_result_type(recv: typeinfo.Type, name: string, is_method: boole
 // the width is the whole reason there is one name per width, and it is the
 // parameter that carries it. The second half reports whether `name` is one at
 // all, since an empty list is a real signature (`__ptr_width()`).
-function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
-  let raw: RawFloorSig[] = raw_floor_find(name);
-  if (raw.len() == 1) {
-    return (raw[0].params, true);
+function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean) {
+  if (!internal_name(name)) {
+    return ([], false);
+  }
+  let at: i32 = raw_floor_at(t, name);
+  if (at >= 0) {
+    return (t.raw[at].params, true);
   }
   if (is_f64_primitive(name)) {
     return ([t_float()], true);
@@ -1211,27 +1222,29 @@ pub function raw_floor_sigs(): RawFloorSig[] {
   ];
 }
 
-// The raw-floor signature named `name`: one element, or none for any other name.
-function raw_floor_find(name: string): RawFloorSig[] {
+// The index in `t.raw` of the raw-floor signature named `name`, or -1.
+function raw_floor_at(t: SigTable, name: string): i32 {
   if (!util.str_has_prefix(name, "__raw_") && !util.str_has_prefix(name, "__syscall") && !util.str_has_prefix(name, "__fern_")) {
-    return [];
+    return 0 - 1;
   }
-  for sig in raw_floor_sigs() {
-    if (sig.name == name) {
-      return [sig];
+  let i: i32 = 0;
+  while (i < t.raw.len()) {
+    if (t.raw[i].name == name) {
+      return i;
     }
+    i = i + 1;
   }
-  return [];
+  return 0 - 1;
 }
 
 // free_builtin_sig is the callable a free builtin denotes, so a call to one is
 // argument-checked by the same callable_arg_diags a call to a declared
 // function goes through. Unknown for a name that is not a free builtin, and
 // for the Display builtins, which display_arg_diags judges instead.
-function free_builtin_sig(name: string): typeinfo.Type {
-  let (params, known) = intrinsic_params(name);
+function free_builtin_sig(name: string, s: Scope): typeinfo.Type {
+  let (params, known) = intrinsic_params(name, s.sigs);
   if (known) {
-    return t_func(params, intrinsic_result(name, params.len()));
+    return t_func(params, intrinsic_result(name, params.len(), s.sigs));
   }
   if (is_display_builtin(name)) {
     return t_unknown("a Display builtin");
@@ -2079,6 +2092,8 @@ pub struct SigTable {
   sigs: FuncSig[],
   head: i32[],
   next: i32[],
+  // The raw floor's signatures, which no module declares.
+  raw: RawFloorSig[],
 }
 
 // sig_buckets is the bucket count of the signature index. Prime, so unrelated
@@ -2108,7 +2123,7 @@ function sig_table(sigs: FuncSig[]): SigTable {
     head = head.with(bk, k);
     k = k - 1;
   }
-  return SigTable { sigs: sigs, head: head, next: next };
+  return SigTable { sigs: sigs, head: head, next: next, raw: raw_floor_sigs() };
 }
 
 // StructTable is `structs` with a name index over it, built once per module and
@@ -5855,7 +5870,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     }
     return t_unknown("slice_unchecked: first argument must be a string");
   }
-  let builtin_typed: typeinfo.Type = builtin_result_type(recv_ty, name, is_method, c.args.len());
+  let builtin_typed: typeinfo.Type = builtin_result_type(recv_ty, name, is_method, c.args.len(), s);
   if (!is_unknown(builtin_typed)) {
     return builtin_typed;
   }
@@ -15415,7 +15430,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // One the self-host TYPES carries a full signature, so its call
           // goes through the same callable_arg_diags a declared function's
           // does: E038 on a parameter, E004 on the count (#9987).
-          out = util.append_diags(out, callable_arg_diags(c, free_builtin_sig(id.name), s));
+          out = util.append_diags(out, callable_arg_diags(c, free_builtin_sig(id.name, s), s));
           // `print` / `write` / `eprint` take any Display type: the argument is
           // judged by display_arg_diags rather than typed `string`, which
           // would refuse a struct carrying its own `to_string`.
