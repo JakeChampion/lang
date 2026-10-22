@@ -159,8 +159,10 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 // arm64-darwin and 231.19 on the x86-64 runner with methods' variant returns
 // paired, where 247.33 was measured before; 226.06 and 226.92 on two runs
 // here with a scalar concat growing a sole receiver's block in place
-// (docs/benchmarks/net-h3-concat-2026-10-21.md).
-const ServeAllocsH3Ceiling = 228
+// (docs/benchmarks/net-h3-concat-2026-10-21.md); 224.92 here with a stream's
+// element taken out of the list across the update that keeps it
+// (docs/rc-log/2026-10-22-a-an-element-take-survives-the-update-that-keeps-its-array.md).
+const ServeAllocsH3Ceiling = 226
 
 // ServeAllocsH3MuxCeiling bounds allocations per hello request with
 // ServeAllocsH3MuxConcurrency requests in flight on one connection, the

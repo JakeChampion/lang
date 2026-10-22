@@ -1678,6 +1678,12 @@ answer, these are the tools, in the order they are usually reached for:
   (`e2eharness.SelfHostVerify`), so the suites verify what a plain compile
   does not.
 
+- **`FERN_SEM_DUMP=<function>`** — prints the semantic graph of that
+  function as the planner reads it, after the rewrites and with the parameter
+  modes, on stderr. `FERN_RC_CERTIFY_DUMP` prints the lowered graph instead.
+  A `*` at the end of the name selects every function with that prefix. Use
+  it to see which read the plan refuses to take or hold, before the lowering
+  adds a count to it.
 - **`__rc_underflow_count()`** — the counter. Exact yes/no signal for "did this
   compile over-release anything", readable from Fern. The self-host drivers
   call it themselves on every run (`util.rc_underflow_guard`).

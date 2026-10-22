@@ -51,17 +51,18 @@ pub struct Descriptor {
 }
 
 // capability_profile lists what a host underneath grants. Profiles exist
-// because the list belongs to the host and not the ISA: linux / darwin /
-// android are genuinely different environments — different object formats,
-// different syscall vectors — and grant the same set, which Darwin extends by
-// `sysctl`, the one thing only its kernel answers.
+// because the list belongs to the host and not the ISA: linux and android
+// are different environments — different object formats, different syscall
+// vectors — that grant the same set. Darwin's lacks the two only Linux
+// answers, `uring` and `ktls`, and adds `sysctl`, the one thing only its
+// kernel answers.
 //
 // `subprocess` and `proc` are the hosted profiles' alone: the native emitters
 // lower `__fern_subprocess` (pipe / fork / execve / wait4), and the wasm worlds
 // have no process model.
 function capability_profile(profile: string): string[] {
-  if (profile == "hosted-native") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor"];
+  if (profile == "hosted-linux") {
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "uring", "ktls"];
   }
   if (profile == "hosted-darwin") {
     return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl"];
@@ -96,7 +97,7 @@ function capability_profile(profile: string): string[] {
 // or "" when the environment is not one this compiler knows.
 function environment_profile(environment: string): string {
   if (environment == "linux" || environment == "android") {
-    return "hosted-native";
+    return "hosted-linux";
   }
   if (environment == "darwin") {
     return "hosted-darwin";
@@ -386,13 +387,14 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "reactor_new", capability: "reactor" },
     Gate { builtin: "reactor_ctl", capability: "reactor" },
     Gate { builtin: "reactor_wait", capability: "reactor" },
-    Gate { builtin: "ring_new", capability: "reactor" },
-    Gate { builtin: "ring_ctl", capability: "reactor" },
-    Gate { builtin: "ring_wait", capability: "reactor" },
-    Gate { builtin: "ring_recv", capability: "reactor" },
-    Gate { builtin: "ring_send_zc", capability: "reactor" },
     Gate { builtin: "tcp_recv_into", capability: "tcp" },
-    Gate { builtin: "tcp_ktls", capability: "tcp" },
+    // Linux's own: an io_uring, and the TLS record layer under a socket.
+    Gate { builtin: "ring_new", capability: "uring" },
+    Gate { builtin: "ring_ctl", capability: "uring" },
+    Gate { builtin: "ring_wait", capability: "uring" },
+    Gate { builtin: "ring_recv", capability: "uring" },
+    Gate { builtin: "ring_send_zc", capability: "uring" },
+    Gate { builtin: "tcp_ktls", capability: "ktls" },
     // Filesystem.
     Gate { builtin: "read_file", capability: "fs" },
     Gate { builtin: "read_file_bytes", capability: "fs" },

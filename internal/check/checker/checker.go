@@ -10079,23 +10079,18 @@ var arithOpTrait = map[string]string{
 	"add": "Add", "sub": "Sub", "mul": "Mul", "div": "Div", "neg": "Neg",
 }
 
-// paramComparison is the `a.<method>(b)` call a comparison of two operands of
-// one type parameter means when the parameter's bound supplies `method`:
-// `cmp` for the orderings on `T: Ord`, `eq` for the equalities on `T: Eq`. So
-// a generic comparison means the bound's order in every instance, f64's total
-// order included, rather than the instance type's native operator. nil when
-// the operands are not one bounded parameter.
-func (c *checker) paramComparison(n *ast.Binary, lt, rt ast.Type, method string, s *scope) *ast.Call {
+// paramComparable reports whether a comparison of two operands of one type
+// parameter is one the parameter's bound supplies `method` for: `cmp` for the
+// orderings on `T: Ord`, `eq` for the equalities on `T: Eq`. The operator stays
+// an operator, so each instance compares at its own type: IEEE for a float,
+// through `eq` / `cmp` for a struct or enum (#12697).
+func (c *checker) paramComparable(lt, rt ast.Type, method string) bool {
 	pt, ok := lt.(ast.ParamType)
 	if !ok || !ast.Equal(lt, rt) {
-		return nil
+		return false
 	}
-	if _, _, found := c.resolveTraitMethodForParam(pt.Name, method); !found {
-		return nil
-	}
-	call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: method}, Args: []ast.Expr{n.Right}}
-	c.checkExpr(call, s)
-	return call
+	_, _, found := c.resolveTraitMethodForParam(pt.Name, method)
+	return found
 }
 
 // compositeOpOverload handles operator overloading for a binary operator
@@ -20360,8 +20355,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			return common
 		case "<", ">", "<=", ">=":
-			if call := c.paramComparison(n, lt, rt, "cmp", s); call != nil {
-				n.CmpCall = call
+			if c.paramComparable(lt, rt, "cmp") {
+				n.ParamCmp = true
+				return ast.BoolType{}
+			}
+			if _, isChar := lt.(ast.CharType); isChar && n.ParamCmp && ast.Equal(lt, rt) {
+				n.CmpCall = &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "cmp"}, Args: []ast.Expr{n.Right}}
+				c.checkExpr(n.CmpCall, s)
 				return ast.BoolType{}
 			}
 			// Composite-type ordering. `<` / `<=` / `>` / `>=` on a
@@ -20480,9 +20480,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) && !(isStringLike(lt) && isStringLike(rt)) {
 				c.errfCode(n.P, "E041", "cannot compare %s with %s: both sides of %q must have the same type", lt, rt, n.Op)
 			}
-			if call := c.paramComparison(n, lt, rt, "eq", s); call != nil {
-				n.EqCall = call
-				n.EqNegate = n.Op == "!="
+			if c.paramComparable(lt, rt, "eq") {
 				return ast.BoolType{}
 			}
 			// Composite-type equality. `==` / `!=` on a struct or

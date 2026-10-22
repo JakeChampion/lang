@@ -275,6 +275,8 @@ generic_enum_method_at_two_instantiations            0
 generic_enum_method_builds_a_variant                 0
 generic_enum_method_reaches_generic_helpers          0
 generic_enum_named_without_arguments                 0
+generic_char_ordering                                0
+generic_float_compare_ieee                           0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
 generic_fnarg_typevar                                0
@@ -967,6 +969,7 @@ target_arch_arm64                                    0
 target_arch_named                                    0
 target_arch_wasm32                                   0
 target_arch_x86_64                                   0
+target_branch_hides_a_gated_builtin                  0
 target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0

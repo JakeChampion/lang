@@ -4937,6 +4937,16 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   if (is_checked_op(b.op)) {
     return eval_checked(b.op, lv, rv, checked_operand_type(b, lv));
   }
+  // Ordering two structs or enums is `a.cmp(b) <op> 0`.
+  if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
+    if let VStruct(sv) = lv {
+      let c: Value = call_method(lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls, env.outs);
+      if (is_err(c)) {
+        return c;
+      }
+      return eval_binary(b.op, c, v_int(0));
+    }
+  }
   return eval_typed_binary(b.op, lv, rv, b.ty);
 }
 

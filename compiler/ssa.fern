@@ -889,6 +889,25 @@ function preferred_register_allowed(reg: i32, abi: i32, abi_ok: boolean, calls: 
   return reg >= 0 && !spans_call(calls, lo, hi) && (reg != abi || abi_ok) && ssafixed.allows(fixed, reg, lo, hi);
 }
 
+// candidate is the `k`-th value whose register `v` tries to take: its alt
+// mate, its phi mate, then -2 for `wish[v]`, which names a register rather
+// than a value, then the two operands of its definition.
+function candidate(mates: Mates, def_a: i32[], def_b: i32[], v: i32, k: i32): i32 {
+  if (k == 0) {
+    return mates.alt[v];
+  }
+  if (k == 1) {
+    return mates.hint[v];
+  }
+  if (k == 2) {
+    return 0 - 2;
+  }
+  if (k == 3) {
+    return def_a[v];
+  }
+  return def_b[v];
+}
+
 function remove_reg(free: i32[], reg: i32): i32[] {
   let out: i32[] = [];
   let dropped: boolean = false;
@@ -1556,16 +1575,13 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     // writes, or the holder is the phi this loop-carried value feeds and
     // the two never live at once. First fit wins; the phi mate first.
     let placed: boolean = false;
-    // -2 stands for `wish[v]`, which names a register rather than a value.
-    let cands: i32[] = [];
-    if (mates.alt[v] != mates.hint[v]) {
-      cands = cands.append(mates.alt[v]);
-    }
-    cands = cands.append(mates.hint[v]).append(0 - 2).append(def_a[v]).append(def_b[v]);
     let ci: i32 = 0;
-    while (ci < cands.len() && !placed) {
-      let h: i32 = cands[ci];
+    while (ci < 5 && !placed) {
+      let h: i32 = candidate(mates, def_a, def_b, v, ci);
       ci = ci + 1;
+      if (ci == 1 && h == mates.hint[v]) {
+        continue;
+      }
       if (h == 0 - 2) {
         let pr: i32 = 0 - 1;
         if (v < wish.len()) {

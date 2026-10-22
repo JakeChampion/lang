@@ -73,7 +73,9 @@ costs a silent failure on the first target that lacks it.
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_*` | a network stack |
 | `unix` | `unix_listen`, `unix_connect` | Unix-domain sockets: a filesystem namespace for socket endpoints, which no WASI world has |
-| `reactor` | `reactor_new`, `reactor_ctl`, `reactor_wait`, `ring_new`, `ring_ctl`, `ring_wait`, `ring_recv`, `ring_send_zc` | a readiness set the host keeps between waits: epoll, kqueue, an io_uring on Linux when asked for, or on wasm a table of wasi:io pollables |
+| `reactor` | `reactor_new`, `reactor_ctl`, `reactor_wait` | a readiness set the host keeps between waits: epoll, kqueue, or on wasm a table of wasi:io pollables |
+| `uring` | `ring_new`, `ring_ctl`, `ring_wait`, `ring_recv`, `ring_send_zc` | an io_uring: Linux's submission and completion rings. Granted by `hosted-linux` alone; std/async reaches it under a `target_os()` branch |
+| `ktls` | `tcp_ktls` | the kernel's TLS record layer under a socket: Linux's `tls` ULP. Granted by `hosted-linux` alone; std/tls/ktls reaches it under a `target_os()` branch |
 | `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `pipe`, `proc_waitpid`, `proc_waitpid_nohang`, `proc_waitpid_status`, `process_alive`, `signal_send`, `set_process_group` | processes |
 | `rlimit` | `rlimit_nofile`, `disable_core_dumps` | a kernel that enforces ceilings on this process's resources |
 | `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |
@@ -515,7 +517,7 @@ than an `unknown callee` out of the emitter:
   `gatedBuiltins` rather than matched by prefix, so the table stays the one place the
   classification lives.
 
-The three are enumerated in the `hosted-native` profile and granted by neither wasi
+The three are enumerated in both hosted profiles and granted by neither wasi
 profile nor by `none`. A freestanding target could in principle honour `cabi` — a
 calling convention is an ISA property, and nothing about a kernel forbids one — but
 `none` grants nothing at all by construction, and no backend emits for a freestanding

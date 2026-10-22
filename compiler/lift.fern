@@ -5369,17 +5369,17 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
     // hoisted capture-free lambda sees it as a global — not a capture it
     // can't type — and lifts too (closure-calls-closure).
     let cbody: ast.Stmt[] = fd.body;
+    // acc only grows within a function, so each lifted function's name and
+    // signature join the module's once, on the round that lifts it.
+    let lgfns: string[] = gfns;
+    let lsigs: MFuncs = mf;
+    let joined: i32 = 0;
     let more: boolean = true;
     while (more) {
-      let lgfns: string[] = gfns;
-      let gj: i32 = 0;
-      while (gj < acc.funcs.len()) {
-        lgfns = lgfns.append(acc.funcs[gj].name);
-        gj = gj + 1;
-      }
-      let lsigs: MFuncs = mf;
-      if (acc.funcs.len() > 0) {
-        lsigs = mfuncs_extend(mf, acc.funcs);
+      while (joined < acc.funcs.len()) {
+        lgfns = lgfns.append(acc.funcs[joined].name);
+        lsigs = mfuncs_extend(lsigs, [acc.funcs[joined]]);
+        joined = joined + 1;
       }
       let cl: ClosureLift = closure_lift_one(cbody, fd, acc, lgfns, mstab, lsigs);
       cbody = cl.body;
