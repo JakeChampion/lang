@@ -2651,9 +2651,10 @@ function builtin_concat(c: ast.ExprCall, s: State): Value {
 
 // `xs.join(sep)` on a string array, which the parser folds to std/array's
 // `__carrm_string__join(xs, sep)`, is the runtime's one-allocation join rather
-// than std/array's builder-backed body.
+// than std/array's builder-backed body. A program's own `(xs: string[]) join`
+// takes the same name, so the declaration must be std/array's.
 function join_kernel(name: string, c: ast.ExprCall, s: State): boolean {
-  return c.args.len() == 2 && name == parser.concrete_array_method_name("string[]", "join") && is_string_array(checked(c.args[0], s));
+  return c.args.len() == 2 && name == parser.concrete_array_method_name("string[]", "join") && is_string_array(checked(c.args[0], s)) && s.scope.lookup_sig(name).module == "std/array";
 }
 
 function folded_join(c: ast.ExprCall, s: State): Value {
