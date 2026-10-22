@@ -5448,7 +5448,7 @@ function builtin_sigs(): string[] {
 pub function builtin_sig(name: string): typeinfo.Type {
   let head: string = name + "(";
   for row in builtin_sigs() {
-    if (row.len() > head.len() && util.str_has_prefix(row, head)) {
+    if (row.len() > head.len() && row[0] == head[0] && util.str_has_prefix(row, head)) {
       let close: i32 = util.index_of_sub(row, "): ");
       let inner: string = slice_unchecked(row, head.len(), close) + "";
       let params: typeinfo.Type[] = [];
