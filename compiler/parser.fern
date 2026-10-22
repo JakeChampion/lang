@@ -15096,12 +15096,11 @@ pub function split_plus_bounds(bound: string): string[] {
   let depth: i32 = 0;
   let i: i32 = 0;
   while (i <= bound.len()) {
-    // A `+` inside brackets joins an associated-type pin or a generic
-    // argument (`Holder[Item = dyn A + B]`), not the bound list.
+    // A `+` inside brackets belongs to an associated-type pin or a generic
+    // argument (`Holder[Item = dyn A + B]`), not to this bound list.
     if (i < bound.len() && bound[i] == b'[') {
       depth = depth + 1;
-    }
-    if (i < bound.len() && bound[i] == b']') {
+    } else if (i < bound.len() && bound[i] == b']') {
       depth = depth - 1;
     }
     if (i == bound.len() || depth == 0 && bound[i] == b'+') {
@@ -26874,10 +26873,10 @@ pub function dyn_trait_set(ty: string): string[] {
   if (ty.len() <= 4 || slice_unchecked(ty, 0, 4) != "dyn ") {
     return out;
   }
-  for part in split_plus_bounds(slice_unchecked(ty, 4, ty.len()) + "") {
-    let t: string = util.trim(part);
-    if (t.len() > 0) {
-      out = out.append(t);
+  for piece in split_plus_bounds(slice_unchecked(ty, 4, ty.len()) + "") {
+    let part: string = util.trim(piece);
+    if (part.len() > 0) {
+      out = out.append(part);
     }
   }
   return out;

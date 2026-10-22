@@ -9241,8 +9241,8 @@ pub struct Arm64GasProg {
   // places with `data`, so the data directives always write `data`.
   ro: i32[],
   ro_base: i32,
-  // code_end is where the last instruction ends, before the padding that
-  // 16-aligns ro_base.
+  // Where the code ends in the text, before the padding ahead of ro_base; -1
+  // with no constants.
   code_end: i32,
   dlab_names: string[],
   dlab_offs: i32[],
@@ -9556,19 +9556,11 @@ function arm64_enter_section(own p: Arm64GasProg, from: i32, to: i32): Arm64GasP
   return Arm64GasProg { ...p, data: parked, ro: active };
 }
 
-// arm64_code_end is where the program's last instruction ends.
-pub function arm64_code_end(p: Arm64GasProg): i32 {
-  if (p.code_end >= 0) {
-    return p.code_end;
-  }
-  return p.asm.text.len();
-}
-
 // arm64_code_len is the length of the code in the program's text, without
 // the read-only constants laid after it.
 pub function arm64_code_len(p: Arm64GasProg): i32 {
-  if (p.ro_base >= 0) {
-    return p.ro_base;
+  if (p.code_end >= 0) {
+    return p.code_end;
   }
   return p.asm.text.len();
 }
@@ -11950,7 +11942,8 @@ function macho_text_seg(buf: i32[], text_vmsize: i32, text_off: i32, code_len: i
   buf = macho_sect(buf, "__text", "__TEXT", text_vaddr, code_len, text_off, 2, 0x80000400);
   if (code_len < text_len) {
     // S_REGULAR, 16-aligned as the assembler placed it.
-    buf = macho_sect(buf, "__const", "__TEXT", text_vaddr + code_len as i64, text_len - code_len, text_off + code_len, 4, 0);
+    let ro_at: i32 = macho_align_up(code_len, 16);
+    buf = macho_sect(buf, "__const", "__TEXT", text_vaddr + ro_at as i64, text_len - ro_at, text_off + ro_at, 4, 0);
   }
   if (eh_len > 0) {
     // __eh_frame is data, not instructions: no attributes, 8-aligned.
@@ -11980,7 +11973,7 @@ pub function macho_executable(text: u8[], eh: i32[], data: i32[], ident: string,
 // straight from the executable, with no dSYM.
 pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[], dwarf: i32[][]): i32[] {
   let text_len: i32 = text.len();
-  // The read-only constants follow the code inside the text, at code_len.
+  // The read-only constants follow the code inside the text, 16-aligned past code_len.
   let has_const: boolean = code_len < text_len;
   let eh_len: i32 = eh.len();
   let has_eh: boolean = eh_len > 0;
