@@ -178,11 +178,11 @@ side:
   and compares them with `BuiltinCaps` / `Ungated` / `Capabilities`
   entry-for-entry, so a builtin tagged on one side and not the other
   fails a fast Go test. `frontend_ungated()` is the one list with no
-  native counterpart: names the self-host front end registers as
-  builtins that native's checker does not (`__map_new_i32`), each held
-  to being absent from native's registry.
+  Go counterpart: names the compiler's front end registers as
+  builtins that the Go checker does not (`__map_new_i32`), each held
+  to being absent from the Go registry.
 - **Package identity is the resolved directory, not the display name.**
-  Both compilers use the nearest governing manifest for each loaded module.
+  The compiler and the oracle both use the nearest governing manifest for each loaded module.
   Local imports remain in that package; an explicit grant also establishes
   a boundary for a dependency without its own manifest. Equal package names
   cannot share grants or inherit the root exemption. Reports qualify
@@ -190,10 +190,10 @@ side:
   provenance using the bundler's assigned prefixes and `FuncDecl.module`,
   including when basenames collide; it never infers authority from a
   function's mangled-looking name. Stdlib modules fold into their callers.
-- **The example chain is spelled differently.** Both compilers mangle
-  an imported function as `<module>__<name>`, but native's module is
-  the dependency's lib FILE (`lib__save`) and the self-host's is the
-  name the import used (`helper__save`). The severity, package,
+- **The example chain is spelled differently.** The compiler and the
+  oracle both mangle an imported function as `<module>__<name>`, but the
+  oracle's module is the dependency's lib FILE (`lib__save`) and the
+  compiler's is the name the import used (`helper__save`). The severity, package,
   capability and builtin all match exactly — the differential in
   `internal/testing/e2ecompiler/self_host_caps_test.go` compares those and
   normalises the chain.

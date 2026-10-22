@@ -26,7 +26,7 @@ unenforceable where there is no existing guarantee to not change.**
 - **Evaluation order is unspecified.** `spec/semantics.md` says so
   outright: `AL-06` "is the only evaluation-order claim, and it covers
   one construct: where every other expression evaluates its parts is
-  still whatever the two compilers happen to agree on." So #9729's
+  still whatever the compiler and the interpreter happen to agree on." So #9729's
   question 2 cannot be answered by preserving something. §2 below
   specifies the ordering array pipelines need, because nothing else
   does.

@@ -72,7 +72,7 @@ it claims:
    type is marked: require every path from the binding site to
    function exit to contain ≥1 consuming use of the binding.
    Implemented as the same style of conservative divergence-aware
-   walk as `checkSliceEscape` / `blockDiverges` — if/match arms
+   walk as `checkSliceEscapes` / `blockDiverges` — if/match arms
    each checked, loops treated conservatively (a consuming use
    inside a loop body counts; the zero-iteration path is a
    violation unless consumed after the loop too).

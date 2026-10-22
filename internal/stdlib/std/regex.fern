@@ -78,10 +78,9 @@
 //
 // Matching is on raw bytes, so multi-byte UTF-8 is matched byte-wise.
 //
-// Backend note: the matcher and the whole module compile and run on the
-// native compiler's interp / x86-64 / arm64 / wasm backends, and on the
-// self-host IR path (the array-payload-enum parser bug #3720 that once
-// blocked grouped patterns there is fixed — see
+// Backend note: the matcher and the whole module compile and run on
+// x86-64, arm64 and wasm, and under the interpreter (the array-payload-enum
+// parser bug #3720 that once blocked grouped patterns is fixed — see
 // internal/testing/e2ecompiler/self_host_regex_ir_test.go).
 import "std/utf8" as utf8;
 

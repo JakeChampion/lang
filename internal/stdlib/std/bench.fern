@@ -53,13 +53,12 @@ import "std/string";
 //
 // The reason is the one `since` states below, one level up: a struct literal
 // is a box, and a box is an allocation the reading would then report. Which
-// side of the reading that box lands on is not specified — a compiler may
-// allocate an aggregate before evaluating its field initializers or after
-// (docs/ALLOCATION-OBSERVABLE.md) — so a snapshot taken THROUGH a struct
-// reports its own box as the body's on half the implementations and not the
-// other half. Measured: an empty body under `run` reported 0 allocations
-// built by the native compiler and 1 built by the self-host one, from a
-// `Mark { allocs: __heap_alloc_count(), … }` and nothing else (#9611).
+// side of the reading that box lands on was unspecified until #9614 (AL-06,
+// docs/ALLOCATION-OBSERVABLE.md: the box comes after its operands), and
+// while it was, a snapshot taken THROUGH a struct reported its own box as
+// the body's under one compiler and not under the other: an empty body
+// under `run` reported 0 allocations built by one and 1 built by the other,
+// from a `Mark { allocs: __heap_alloc_count(), … }` and nothing else (#9611).
 //
 // A scalar has no such box, so the snapshot is exact everywhere.
 

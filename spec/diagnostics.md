@@ -6,8 +6,9 @@ stable code, an explanation (`fern -explain E0NN`, sourced from
 case that pins it.
 
 The codes are the closest thing Fern has to a written statement of its
-static semantics. The *rules* they enforce still live only in
-`internal/check/checker`; this index says which rules exist and which are
+static semantics. The *rules* they enforce live only in code: the
+compiler's checker, `compiler/checker.fern`, and the Go oracle's,
+`internal/check/checker`. This index says which rules exist and which are
 pinned by something an independent implementation could be measured
 against, not what each rule is.
 
@@ -41,16 +42,16 @@ the same name still reports the collision and its previous location.
 ## Why conformance coverage, when the Go tests already pass
 
 Almost every code here is exercised by a Go test under
-`internal/check/checker` or `internal/syntax/parser`. That is good coverage of
-`internal/`, and **none of it survives the native freeze.**
+`internal/check/checker` or `internal/syntax/parser`. That is coverage of
+the Go oracle's front end, and **none of it reaches the compiler users
+run.**
 
-`docs/NATIVE-CONVERGENCE.md` makes the self-host compiler the
-definition once the freeze preconditions (#4451) go green. A Go test
-cannot measure the self-host compiler; a conformance case can, because
-the corpus is source plus expected output and any implementation can be
-run against it. So a diagnostic rule with only Go-side coverage is a
-rule that stops being checked at exactly the moment it starts mattering
-most.
+The self-host compiler is the only compiler (`docs/NATIVE-RETIREMENT.md`).
+A Go test cannot measure it; a conformance case can, because the corpus is
+source plus expected output and any implementation can be run against it
+(`TestFernFixturesSelfHostCheck` runs the compile-error cases through
+`fern -check`). So a diagnostic rule with only Go-side coverage is a rule
+the compiler is never checked against.
 
 **71 of 88** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:

@@ -19,7 +19,7 @@
 //     wasm (component-model-async via `@import async` is folded in later —
 //     docs/ASYNC-REDESIGN.md PR5).
 //
-// Generic over `T`: the native compiler monomorphizes, so
+// Generic over `T`: the compiler monomorphizes, so
 // `gather` over `Future[string]` (response bodies) is a first-class
 // case, not a hand-duplicated `…Str` twin. This is the shape that
 // drops the i32-throughout restriction of the old `std/task` runtime.
@@ -748,9 +748,9 @@ pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: F
 // scheduler read, and `task_cancel` runs it on with every later wait
 // answering `cancelled()`. A function reaches the park through `wait_any`,
 // which blocks instead when no task is current, so the same code runs under
-// a scheduler and in a plain program. The self-host compiler lowers the
-// functions that reach a park to resumable form; the native compiler keeps
-// the blocking fallback, where a task always runs to completion.
+// a scheduler and in a plain program. The compiler lowers the functions
+// that reach a park to resumable form; the interpreter keeps the blocking
+// fallback, where a task always runs to completion.
 pub enum TaskStatus[T] { Done(T), Suspended(Wait), Cancelled }
 
 // `Wait` — what a parked task waits for, as its scheduler reads it: the

@@ -58,10 +58,9 @@ asserts. A reclaiming loop is flat in bytes and linear in calls.
 **The counter is emitted only for a module that reads it.** A program
 that never calls `__heap_alloc_count()` compiles to the same bytes it
 did before the observable existed — the standard `FERN_LEAKCHECK` and
-`-sanitize` are already held to. On the natives the counter IS the leak
-census's `__fern_lc_alloc_count`, so the two readings cannot disagree;
-the self-host keeps its own word, because its census lives inside the
-heavier heap-event runtime.
+`-sanitize` are already held to. The counter is its own runtime word,
+`__fern_alloc_count`, ticked at `__fern_alloc`'s entry, apart from the
+leak census's count, which lives inside the heavier heap-event runtime.
 
 ## What is portable, and what is not
 
@@ -88,25 +87,20 @@ scales with N. That difference is exactly what separates a working
 reference-counting implementation from a leaking one, and it is
 observable without knowing a single absolute number.
 
-**When an aggregate's own box is allocated is not specified.** A struct,
-tuple or array literal allocates a box and evaluates its field
-initializers, and nothing says which comes first: the native compiler
-allocates the box and then fills it, the self-host compiler evaluates
-the fields and then builds the box from them. So a reading taken INSIDE
-a literal — `Mark { allocs: __heap_alloc_count(), … }` — may or may not
-include that literal's own box, and the two compilers disagree by
-exactly one allocation.
+**An aggregate's own box is bought after its operands (AL-06).** A
+struct, tuple or array literal evaluates its field initializers and
+then builds its box from them, so a reading taken INSIDE a literal —
+`Mark { allocs: __heap_alloc_count(), … }` — does not include that
+literal's own box.
 
-A measurement must therefore take its snapshot as a SCALAR, never
-through an aggregate. `std/bench` learned this the expensive way: its
-`mark()` returned a struct built that way, so an empty body under `run`
-reported 0 allocations when built by the native compiler and 1 when
-built by the self-host one — the harness charging its own bookkeeping to
-the body it measures, which is the one thing the module exists not to do
-(#9611). The snapshot is two scalars now. Specifying an order instead
-would be a language change, and a large one in the self-host compiler's
-hottest lowering; nothing needs it, because a scalar reading is exact on
-either order.
+Until #9614 the order was unspecified and the two compilers of the day
+disagreed by exactly one allocation. `std/bench` learned this the
+expensive way: its `mark()` returned a struct built that way, so an
+empty body under `run` reported 0 allocations under one compiler and 1
+under the other — the harness charging its own bookkeeping to the body
+it measures, which is the one thing the module exists not to do
+(#9611). The snapshot is two scalars now, which is exact under any
+order.
 
 **The interpreter does not model the arena.** Neither observable is
 available there, for one reason: `internal/oracle/interp` has no
@@ -158,16 +152,14 @@ All are stated over the *shape*, and all are pinned — see
   box. This is the post-order rule the rest of the language already
   follows — a call's arguments, a closure's captures — and it is what
   makes a reading taken inside a literal portable. It was not, until
-  #9614: native bought the box first and the self-host last, so a
+  #9614: the Go compiler bought the box first and the self-host last, so a
   function that snapshotted the counter and handed the snapshot back as
   a struct excluded its own result box under one compiler and included
   it under the other.
 
   The claim is over the ORDER, not the cost. How many allocator calls a
   construct spends stays per-backend, and a tuple or single-payload
-  variant small enough to be returned in registers spends none at all —
-  `internal/oracle/ir/aggregate_eval_order_test.go` pins those two on the op
-  stream, where there is an order to read whether or not a box is bought.
+  variant small enough to be returned in registers spends none at all.
 
 ## What it found immediately
 

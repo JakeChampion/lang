@@ -800,8 +800,7 @@ needs nothing special. This is what `@derive(Default)` builds on. Native-only so
    backends (interp / arm64 / x86-64 / wasm); a payload-less variant of a
    generic enum (`Nil`) still needs a type annotation at a bare
    `.method()` call site since `T` is otherwise unconstrained.
-   Self-host parity (the self-host parser/monomorphiser learning
-   `impl[T]`) is a follow-up — the Go compiler is the reference.
+   The self-host parser and monomorphiser learned `impl[T]` after it.
 
 7. **Phase 7 (shipped): parametric impls of a GENERIC trait.**
    `impl[T] Iterator[T] for ArrayIter[T]` — a parametric impl whose own

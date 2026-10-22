@@ -2135,16 +2135,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
 // survive: a dependency is a line spliced into `[dependencies]`, not a
 // re-render of a parsed tree.
 function run_add(pos: string[], grant: string, fetcher: Fetcher): i32 {
-  // `-add` runs no program, so a `-x` among its arguments is a driver flag
-  // written too late, never data.
-  for a in pos {
-    if (is_flag(a)) {
-      eprint("fern: " + a + " comes after -add's arguments, where flags are no longer parsed; put it before -add");
-      return 2;
-    }
-  }
-  if (pos.len() < 2 || pos.len() > 3) {
-    eprint("usage: fern [-grant CAPS] -add NAME SPEC [DIR]   (SPEC = path:../dir | url:https://… | workspace | version:X.Y.Z)");
+  if (add_args_refused(pos)) {
     return 2;
   }
   let name: string = pos[0];
@@ -2208,6 +2199,23 @@ function run_add(pos: string[], grant: string, fetcher: Fetcher): i32 {
   }
   eprint("fern: added " + line);
   return 0;
+}
+
+// add_args_refused reports, after saying why, whether `-add`'s arguments are
+// not NAME SPEC [DIR]. `-add` runs no program, so a `-x` among them is a
+// driver flag written too late, never data.
+function add_args_refused(pos: string[]): boolean {
+  for a in pos {
+    if (is_flag(a)) {
+      eprint("fern: " + a + " comes after -add's arguments, where flags are no longer parsed; put it before -add");
+      return true;
+    }
+  }
+  if (pos.len() < 2 || pos.len() > 3) {
+    eprint("usage: fern [-grant CAPS] -add NAME SPEC [DIR]   (SPEC = path:../dir | url:https://… | workspace | version:X.Y.Z)");
+    return true;
+  }
+  return false;
 }
 
 // dep_line is the manifest line declaring `name` from the `-add` source
