@@ -112,9 +112,10 @@ func TestDWARFMachO(t *testing.T) {
 		t.Errorf("CU high_pc %#x, want the end of __text %#x", hi, text.Addr+text.Size)
 	}
 	// The read-only constants follow the code in a section of their own, so
-	// __text holds only instructions.
-	if ro := g.Section("__const"); ro == nil || ro.Seg != "__TEXT" || ro.Addr != text.Addr+text.Size || ro.Size == 0 {
-		t.Errorf("__TEXT,__const %+v, want the constants right after __text [%#x,+%#x)", ro, text.Addr, text.Size)
+	// __text holds only instructions. The assembler 16-aligns them from the
+	// start of the text.
+	if ro := g.Section("__const"); ro == nil || ro.Seg != "__TEXT" || ro.Addr != text.Addr+(text.Size+15)&^15 || ro.Size == 0 {
+		t.Errorf("__TEXT,__const %+v, want the constants after __text [%#x,+%#x), 16-aligned from its start", ro, text.Addr, text.Size)
 	}
 	subs := map[string][2]uint64{}
 	vars := map[string]bool{}
