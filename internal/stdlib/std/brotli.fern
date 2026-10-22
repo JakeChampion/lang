@@ -12,11 +12,20 @@
 
 import "std/brotli/dictionary";
 import "core/cmp";
+import "std/error";
 
 // `BrotliError` — why a stream could not be decoded: it ends early
 // (`BrotliTruncated`), it breaks the format, with what was wrong
 // (`BrotliMalformed`), or its output passes `max_out` (`BrotliTooLarge`).
 pub enum BrotliError { BrotliTruncated, BrotliMalformed(string), BrotliTooLarge }
+
+pub function (e: BrotliError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for BrotliError {}
+
+impl cmp.Display for BrotliError {}
 
 pub function (e: BrotliError) message(): string {
   match (e) {
