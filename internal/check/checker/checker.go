@@ -19260,7 +19260,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 				}
 				for i, a := range n.Args {
+					// A bare variant in a payload position (`Node(Leaf, …)`) is
+					// disambiguated by the payload's monomorphised enum, as an
+					// argument is by its parameter's.
+					if i < len(vr.payloads) && c.monomorphCloneEnumName(substituteType(vr.payloads[i], sub)) != "" {
+						c.expectedType = substituteType(vr.payloads[i], sub)
+					}
 					at := c.checkExpr(a, s)
+					c.expectedType = nil
 					if i < len(vr.payloads) {
 						// A declaration variable is not a destination: stamping
 						// H[T][] onto [Leaf(1)] would erase its inferred H[i32].
