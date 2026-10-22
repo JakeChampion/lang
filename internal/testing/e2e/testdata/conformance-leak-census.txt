@@ -384,6 +384,7 @@ lanes_generic_instances                              0
 lanes_methods                                        0
 lanes_receivers                                      0
 lanes_spill_pressure                                 0
+lanes_through_calls                                  0
 len_on_empty_u8                                      0
 let_else_at_binding                                  0
 let_else_chained                                     0
