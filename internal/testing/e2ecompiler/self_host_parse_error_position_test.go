@@ -307,6 +307,11 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"return-type-refused-one-error",
 			"function f(): = {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
 			"error[P001]: in fn 'f': expected a type, got \"=\" (1:15)"},
+		// A refused `for` header takes its body with it: `arr {` is not
+		// re-read as a struct literal whose `}` closes the function.
+		{"for-header-refused-one-error",
+			"function main(): i32 {\n  let arr: i32[] = [1];\n  for in arr { let q = 1; }\n  return 0;\n}\n",
+			"error[P001]: in fn 'main': expected \"in\" after the `for` pattern (3:10)"},
 		{"multi-error-two-fns-and-toplevel",
 			"let g: i32 = ;\nfunction a(): i32 {\n  let x: i32 = ;\n  let y: i32 = @;\n  return 0;\n}\nfunction b(): i32 {\n  if x > 1) { return 1; }\n  return 1 + ;\n}\nfunction main(): i32 {\n  return a() + b() + g;\n}\n",
 			"error[P001]: in fn 'a': expected an expression, got \";\" (3:16)\n" +

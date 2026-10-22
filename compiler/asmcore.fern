@@ -599,25 +599,6 @@ pub function sandbox_on(): boolean {
   return envflag.on("FERN_SANDBOX");
 }
 
-// The fatal aborts' cause lines, without their newline: the native backends'
-// texts (abortMessages), so a program's abort output does not say which
-// compiler built it (#5538).
-pub function msg_arr_oob(): string {
-  return "fern: array index out of range";
-}
-
-pub function msg_str_oob(): string {
-  return "fern: string index out of range";
-}
-
-pub function msg_slice_range(): string {
-  return "fern: slice range out of bounds";
-}
-
-pub function msg_stack_overflow(): string {
-  return "fern: stack overflow";
-}
-
 // The stack a hosted executable runs main on: 1 GiB of address space mapped
 // without reserve, so a page costs memory only once it is touched, with a
 // 1 MiB guard at its foot that no single frame steps over.
@@ -627,26 +608,6 @@ pub function stack_size(): i32 {
 
 pub function stack_guard(): i32 {
   return 1048576;
-}
-
-// Two threads inside a -shared build's code at once: its counts and freelists
-// are not atomic.
-pub function msg_busy(): string {
-  return "fern: two threads entered this shared object at once";
-}
-
-pub function msg_alloc_size(): string {
-  return "fern: allocation size out of range";
-}
-
-pub function msg_oom(): string {
-  return "fern: out of memory (heap arena exhausted)";
-}
-
-// msg_map_fail opens the cause line for an arena that was never mapped; the
-// runtime appends the errno and the closing ")".
-pub function msg_map_fail(): string {
-  return "fern: could not map the heap arena (errno ";
 }
 
 // backtrace_on is the -backtrace default: whether a fatal abort's report

@@ -210,7 +210,7 @@ function interpret(merged: parser.Module): i32 {
     interp.VErr(e) => {
       if (e.abort) {
         eprint(e.msg);
-        return 1;
+        return 134;
       }
       eprint("fern: interp: " + e.msg);
       return 254;
