@@ -2081,42 +2081,6 @@ pub struct SigTable {
   sigs: FuncSig[],
   head: i32[],
   next: i32[],
-  // A second index over the same array, keyed by the ARRAY-METHOD suffix
-  // (am_key) rather than the whole name — the key `has_array_method` and
-  // `array_method_ret_type` match on. Only signatures that carry such a
-  // suffix appear in it, which is a few dozen of the ~4,600.
-  am_head: i32[],
-  am_next: i32[],
-}
-
-// am_prefix is the convention name an array method is declared under: the
-// std/array helpers are free functions called `__method_Array_<field>`, and
-// the bundler's mangled form is `<mod>__method_Array_<field>`.
-function am_prefix(): string {
-  return "__method_Array_";
-}
-
-// am_key_at returns the offset of the LAST occurrence of am_prefix() in
-// `name`, or -1 when there is none. The substring from there to the end is the
-// key the two array-method lookups match on — taken as an offset rather than a
-// string so indexing the table allocates nothing per signature.
-//
-// A name matches `__method_Array_<field>` when it ENDS with it, which places an
-// am_prefix() occurrence at name.len() - target.len(); no method name contains
-// am_prefix() itself, so that occurrence is always the last one. Keying on the
-// last occurrence therefore selects exactly the candidates the suffix compare
-// would, and that compare still runs on each of them.
-function am_key_at(name: string): i32 {
-  let pre: string = am_prefix();
-  let pn: i32 = pre.len();
-  let i: i32 = name.len() - pn;
-  while (i >= 0) {
-    if (slice_unchecked(name, i, i + pn) == pre) {
-      return i;
-    }
-    i = i - 1;
-  }
-  return 0 - 1;
 }
 
 // sig_buckets is the bucket count of the signature index. Prime, so unrelated
@@ -2132,37 +2096,21 @@ function sig_name_bucket(name: string): i32 {
   return (__str_hash(name, 0) & 1073741823) % 4093;
 }
 
-// sig_bucket_from is sig_name_bucket over the SUFFIX of `name` starting at
-// `from`: the one hash body, over a copy of the suffix, so a suffix key and
-// the whole-string key it must match can never drift apart. It runs once per
-// signature when the table is built.
-function sig_bucket_from(name: string, from: i32): i32 {
-  return sig_name_bucket(slice_unchecked(name, from, name.len()) + "");
-}
-
 // sig_table indexes `sigs` by name. The chain is built by walking BACKWARD and
 // pushing each entry onto the front of its bucket, which leaves every chain in
 // ascending index order without needing a per-bucket tail.
 function sig_table(sigs: FuncSig[]): SigTable {
   let head: i32[] = util.minus_ones(sig_buckets());
-  let am_head: i32[] = util.minus_ones(sig_buckets());
   let next: i32[] = util.minus_ones(sigs.len());
-  let am_next: i32[] = util.minus_ones(sigs.len());
   let k: i32 = sigs.len() - 1;
   while (k >= 0) {
     let nm: string = sigs[k].name;
     let bk: i32 = sig_name_bucket(nm);
     next = next.with(k, head[bk]);
     head = head.with(bk, k);
-    let amat: i32 = am_key_at(nm);
-    if (amat >= 0) {
-      let ab: i32 = sig_bucket_from(nm, amat);
-      am_next = am_next.with(k, am_head[ab]);
-      am_head = am_head.with(ab, k);
-    }
     k = k - 1;
   }
-  return SigTable { sigs: sigs, head: head, next: next, am_head: am_head, am_next: am_next };
+  return SigTable { sigs: sigs, head: head, next: next };
 }
 
 // StructTable is `structs` with a name index over it, built once per module and
@@ -2736,7 +2684,7 @@ function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
   while (i < names.len()) {
     let ft: typeinfo.Type = t_unknown("binding");
     if (i < fields.len()) {
-      ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "" }, s);
+      ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "", path_sep: false, const_read: false }, s);
     }
     out = out.bind(names[i], ft);
     i = i + 1;
@@ -3668,14 +3616,12 @@ function bound_entry_decl_diags(entry: string, fd: parser.FuncDecl, tp: string, 
 }
 
 // array_recv_method resolves an ARRAY-RECEIVER method — one written
-// `function (xs: T[]) <field>(…)`, the element-polymorphic form std/array uses
-// for its Eq/Ord verbs (`.index_of` / `.contains` / `.index_of_last` /
-// `.dedup` / `.is_sorted` / …). These are ordinary MethodSigs whose
-// receiver_type spelling ends in `[]`, not `__method_Array_*` free functions,
-// so has_array_method's name scan cannot see them. The namespace is keyed on
-// the method NAME and cannot distinguish element types, so any array-receiver
-// method in scope applies to every array receiver — no element match to make,
-// whether the element is a type variable or a concrete `i32[]` / `string[]`.
+// `function (xs: T[]) <field>(…)`, element-polymorphic or pinned to one element
+// type (`function (arr: string[]) join(…)`): an ordinary MethodSig whose
+// receiver_type spelling ends in `[]`. The namespace is keyed on the method
+// NAME and cannot distinguish element types, so any array-receiver method in
+// scope applies to every array receiver — no element match to make, whether
+// the element is a type variable or a concrete `i32[]` / `string[]`.
 // A receiver whose element does not fit is caught against the method's own
 // signature. A view receiver (`[T]`) has a separate namespace; the caller
 // selects that namespace from the checked receiver type.
@@ -3703,44 +3649,10 @@ function (s: Scope) array_recv_method(field: string, view: boolean): MethodSig {
   return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "", impl_trait: "", line: 0, col: 0, file: "" };
 }
 
-// has_array_method reports whether an auto-discovered std/array method
-// `__method_Array_<field>` is in scope. The function is in scope only when
-// std/array is imported; the bundler (flatten.bundle) mangles it to
-// `<mod>__` + `__method_Array_<field>`, so the in-scope sig is either the bare
-// convention name (the native modload path, which keeps `__method_` bare) or a
-// mangled name ENDING in it. Match both so the array-method-existence check
-// resolves an imported method whichever loader built the table.
-//
-// An array-RECEIVER method (`(xs: T[]) <field>`) counts too — same surface,
-// declared the other way round.
-function (s: Scope) has_array_method(field: string, view: boolean): boolean {
-  if (view) {
-    return s.has_array_recv_method(field, true);
-  }
-  let target: string = "__method_Array_" + field;
-  let tn: i32 = target.len();
-  let i: i32 = s.sigs.am_head[sig_name_bucket(target)];
-  while (i >= 0) {
-    let nm: string = s.sigs.sigs[i].name;
-    if (nm == target) {
-      return true;
-    }
-    if (nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) {
-      return true;
-    }
-    i = s.sigs.am_next[i];
-  }
-  return s.has_array_recv_method(field, false);
-}
-
-// try_array_method_type resolves the result type of an array method call
-// `a.<field>(...)` where `a` is an array. The std/array helpers are free
-// functions named `__method_Array_<field>` (or the `<mod>__`-mangled form
-// the bundler emits, which still ends in that convention name), discovered
-// the same suffix-matching way has_array_method finds them, or array-receiver
-// methods found through array_recv_method. Returns the
-// helper's declared return type, or t_unknown when no such helper is in
-// scope — at which point check_call_expr falls through to its normal
+// array_method_ret_type resolves the result type of an array method call
+// `a.<field>(...)` where `a` is an array, through the array-receiver method
+// array_recv_method finds. Returns the method's declared return type, or
+// t_unknown when no such method is in scope — at which point check_call_expr falls through to its normal
 // "receiver isn't a typed value" handling so a genuine unknown array
 // method still surfaces as unknown rather than a wrong concrete type.
 // `append` / `with` are the built-in array growers and return the array
@@ -3751,19 +3663,12 @@ function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Typ
       if (!array.view && (field == "append" || field == "with")) {
         return recv_ty;
       }
-      // `xs.len()` — the method spelling of the `len(xs)` builtin. It
-      // resolves through `__method_Array_len` below, which is absent
-      // whenever the stdlib is not in scope; the receiver then falls to
-      // the "isn't a typed value" arm and the statement types unknown.
+      // `xs.len()` — the method spelling of the `len(xs)` builtin.
       if (field == "len") {
         return t_i32();
       }
       if (array.view) {
         return s.arr_recv_ret_type(c, recv_ty, s.array_recv_method(field, true));
-      }
-      let af: FuncSig = array_method_func(s, field);
-      if (af.name.len() > 0) {
-        return af.ret_type;
       }
       let arm: MethodSig = s.array_recv_method(field, false);
       if (arm.name.len() > 0) {
@@ -3775,23 +3680,6 @@ function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Typ
       return t_unknown("array_method_ret_type: receiver isn't an array");
     }
   }
-}
-
-// array_method_func is std/array's `__method_Array_<field>`, which `field`
-// called on an array runs, under the bare name or the one the bundle mangled;
-// the empty-named sentinel when it is not in scope.
-pub function array_method_func(s: Scope, field: string): FuncSig {
-  let target: string = "__method_Array_" + field;
-  let tn: i32 = target.len();
-  let i: i32 = s.sigs.am_head[sig_name_bucket(target)];
-  while (i >= 0) {
-    let nm: string = s.sigs.sigs[i].name;
-    if (nm == target || nm.len() > tn && slice_unchecked(nm, nm.len() - tn, nm.len()) == target) {
-      return s.sigs.sigs[i];
-    }
-    i = s.sigs.am_next[i];
-  }
-  return s.lookup_sig("");
 }
 
 // array_method_sig is the method an array receiver (a view's, when `view`)
@@ -4252,8 +4140,6 @@ function (s: Scope) has_sig(name: string): boolean {
   return s.sig_at(name) >= 0;
 }
 
-// has_array_recv_method is array_recv_method's predicate form, same rules,
-// without the sentinel MethodSig its miss allocates.
 // is_map_iter_method reports whether `name` is one of the MapIter cursor's
 // builtin methods (native registerMapIterMethod).
 function is_map_iter_method(name: string): boolean {
@@ -4418,8 +4304,8 @@ function map_receiver_type(rt: string): boolean {
 
 // namespace_is_exact: every method on `ns` declares a concrete receiver, so
 // this checker's set is the one native would list. An array namespace with any
-// module-supplied method fails it — that is the element-polymorphic case, and
-// `__method_Array_<name>` free functions carry no receiver spelling to test.
+// module-supplied method fails it: a pinned or element-polymorphic array
+// receiver.
 function (s: Scope) namespace_is_exact(ns: string): boolean {
   if (ns != "Array") {
     return true;
@@ -4430,26 +4316,7 @@ function (s: Scope) namespace_is_exact(ns: string): boolean {
       return false;
     }
   }
-  return !s.has_any_array_module_method();
-}
-
-// has_any_array_module_method: some `__method_Array_<name>` free function is in
-// scope, i.e. std/array (or another array-method provider) was imported. The
-// bare and bundler-mangled spellings both count, as they do in has_array_method.
-function (s: Scope) has_any_array_module_method(): boolean {
-  let target: string = "__method_Array_";
-  let tn: i32 = target.len();
-  for sig in s.sigs.sigs {
-    let nm: string = sig.name;
-    let at: i32 = 0;
-    while (at + tn <= nm.len()) {
-      if (slice_unchecked(nm, at, at + tn) == target) {
-        return true;
-      }
-      at = at + 1;
-    }
-  }
-  return false;
+  return true;
 }
 
 // push_str_unique_sorted inserts `v` in sorted position, dropping a duplicate.
@@ -4603,6 +4470,8 @@ function method_namespace_of(t: typeinfo.Type): string {
   return "";
 }
 
+// has_array_recv_method is array_recv_method's predicate form, same rules,
+// without the sentinel MethodSig its miss allocates.
 function (s: Scope) has_array_recv_method(field: string, view: boolean): boolean {
   let i: i32 = s.methods.head[sig_name_bucket(field)];
   while (i >= 0) {
@@ -5858,7 +5727,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       // returns unknown. `T` gives the type variable, a concrete type the real
       // type.
       if (!qhandled) {
-        let ah: AssocHit = assoc_call_req(fa.obj, fa.field, s);
+        let ah: AssocHit = assoc_call_req(fa.obj, fa.field, s, fa.const_read);
         if (ah.found) {
           // An inherent impl's associated function has no trait requirement to
           // read its return from, so it is typed from its own declaration.
@@ -5878,8 +5747,8 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         is_method = true;
         recv_ty = check_expr(fa.obj, s);
         // Array method-syntax dispatch: `a.<field>(...)` on an
-        // array resolves to the std/array `__method_Array_<field>`
-        // helper's return type (or the built-in append/with growers).
+        // array resolves to its array-receiver method's return type
+        // (or the built-in append/with growers).
         // Done ahead of the recv_type_name match below because an
         // array receiver has no nominal type-name and would
         // otherwise fall into the `_` "isn't a typed value" arm.
@@ -6438,17 +6307,17 @@ function elemless_array(t: typeinfo.Type): boolean {
 
 // uninferred_call_diags reports E040 for a type variable nothing binds: no
 // explicit type argument, argument or bound, and absent from the result, where
-// a destination could. Only an empty array literal counts as an argument that
-// binds nothing; one the checker types in part is left to native, and so is a
+// a destination could. Only an argument binds_nothing names counts as binding
+// nothing; one the checker types in part is left to native, and so is a
 // parameter a bound names, which only the bound's impl can bind.
-function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name: string): util.Diag[] {
+function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name: string, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.type_args.len() > 0) {
     return out;
   }
   let ret: parser.TypeRef = sig_ret_ref(sig);
   for tp in sig.all_type_params {
-    let (named, all_empty) = empty_array_positions(sig.param_type_names, c.args, tp);
+    let (named, all_empty) = empty_array_positions(sig.param_type_names, c.args, tp, s);
     if (util.index_of_str(bn, tp) < 0 && !type_ref_names_any(ret, [tp]) && !bound_names_tp(sig.type_bounds, tp) && all_empty) {
       out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + name + " — supply it explicitly at the call site (e.g. " + name + "[i32](...)) or annotate the binding", c.line, c.col));
     }
@@ -6460,7 +6329,7 @@ function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name
 // labelled `recv`.`method` as native labels it. The receiver binds exactly the
 // variables its declared type names, so a concrete receiver (`u8[]`, `[u8]`,
 // `string`) binds none of the method's own (#10991).
-function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig): util.Diag[] {
+function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.type_args.len() > 0 || msig.name.len() == 0 || c.args.len() != msig.param_type_names.len()) {
     return out;
@@ -6468,7 +6337,7 @@ function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, 
   let rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
   let ret: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
   for tp in msig.all_type_params {
-    let (named, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp);
+    let (named, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp, s);
     if (!type_ref_names_any(rref, [tp]) && !type_ref_names_any(ret, [tp]) && !bound_names_tp(msig.type_bounds, tp) && all_empty) {
       out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + recv + "." + method + " — supply it explicitly at the call site (e.g. ." + method + "[i32](...)) or annotate the binding", c.line, c.col));
     }
@@ -6484,7 +6353,7 @@ function declared_method_diags(c: ast.ExprCall, recv: string, method: string, s:
   if (msig.name.len() > 0 && c.args.len() != msig.param_types.len()) {
     return [dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col)];
   }
-  return uninferred_method_diags(c, recv, method, msig);
+  return uninferred_method_diags(c, recv, method, msig, s);
 }
 
 // uninferred_recv_diags reports E040 for a variable of the receiver's type
@@ -6492,7 +6361,7 @@ function declared_method_diags(c: ast.ExprCall, recv: string, method: string, s:
 // argument at all, so nothing binds `T` in `o.count()` unless an argument, the
 // result or a bound does, as in uninferred_method_diags. An argument that is a
 // type variable (`self` inside the type's own generic methods) binds it.
-function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, args: typeinfo.Type[]): util.Diag[] {
+function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, args: typeinfo.Type[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.type_args.len() > 0 || msig.name.len() == 0 || c.args.len() != msig.param_type_names.len()) {
     return out;
@@ -6506,7 +6375,7 @@ function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, ms
     let bare: boolean = ar.args.len() == 0 && ar.array_depth == 0 && !ar.is_tuple && !ar.is_fn;
     let bound: boolean = k < args.len();
     if (bare && !bound && !type_ref_names_any(ret, [tp]) && !bound_names_tp(msig.type_bounds, tp)) {
-      let (_, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp);
+      let (_, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp, s);
       if (all_empty) {
         out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + recv + "." + method + " — supply it explicitly at the call site (e.g. ." + method + "[i32](...)) or annotate the binding", c.line, c.col));
       }
@@ -6518,16 +6387,17 @@ function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, ms
 
 // empty_array_positions reads the values whose declared type spells `tp`:
 // whether any does, and whether every one binds nothing: an empty array
-// literal (#10499), or a `use` callback whose binding has no type (#10833).
+// literal (#10499), a `use` callback whose binding has no type (#10833), or a
+// bare payload-less variant of a generic enum (#12910).
 // An empty spelling declares no type.
-function empty_array_positions(spellings: string[], values: ast.Expr[], tp: string): (boolean, boolean) {
+function empty_array_positions(spellings: string[], values: ast.Expr[], tp: string, s: Scope): (boolean, boolean) {
   let named: boolean = false;
   let all_empty: boolean = true;
   let k: i32 = 0;
   while (k < spellings.len() && k < values.len()) {
     if (spellings[k].len() > 0 && type_ref_names_any(parser.parse_type_ref(spellings[k]), [tp])) {
       named = true;
-      if (!binds_nothing(values[k])) {
+      if (!binds_nothing(values[k], s)) {
         all_empty = false;
       }
     }
@@ -6536,10 +6406,13 @@ function empty_array_positions(spellings: string[], values: ast.Expr[], tp: stri
   return (named, all_empty);
 }
 
-function binds_nothing(e: ast.Expr): boolean {
+function binds_nothing(e: ast.Expr, s: Scope): boolean {
   match (e) {
     ast.ExprArray(arr) => {
       return arr.elements.len() == 0;
+    },
+    ast.ExprIdent(id) => {
+      return !s.is_bound(id.name) && generic_unit_variant(id.name, s);
     },
     ast.ExprLambda(lm) => {
       return lm.use_infer && lm.params.len() > 0 && lm.params[0].type_name.len() == 0;
@@ -6549,6 +6422,13 @@ function binds_nothing(e: ast.Expr): boolean {
     }
   }
   return false;
+}
+
+// generic_unit_variant: `name` is a payload-less variant of a generic enum,
+// which as a bare value names none of the enum's type arguments.
+function generic_unit_variant(name: string, s: Scope): boolean {
+  let owner: UnionSig = union_sig_of_variant(name, s.unions);
+  return owner.is_enum && owner.type_params.len() > 0 && !variant_carries_payload(s, name);
 }
 
 // bound_names_tp: one of `bounds` spells `tp`, so bound_bindings may be what
@@ -7073,7 +6953,7 @@ function reads_i64(t: typeinfo.Type): boolean {
 // lit_uninferable_param names a type parameter of a destination-less literal
 // that nothing can bind: unbound in `args`, and every field spelled with it
 // holds an empty array literal. "" when there is none.
-function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[]): string {
+function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[], s: Scope): string {
   // A struct update's base fixes every argument the overrides leave open.
   if (sl.has_base) {
     return "";
@@ -7091,7 +6971,7 @@ function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typ
           spellings = spellings.append("");
         }
       }
-      let (named, all_empty) = empty_array_positions(spellings, sl.field_values, tp);
+      let (named, all_empty) = empty_array_positions(spellings, sl.field_values, tp, s);
       if (named && all_empty) {
         return tp;
       }
@@ -7244,6 +7124,9 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
   }
   if (n.suffix == "u8") {
     return t_u8();
+  }
+  if (n.suffix == "usize") {
+    return t_usize();
   }
   // An `i32` suffix names i32 even past i32-max, where the magnitude rule
   // below would call the literal i64 and the assignment would fail E003
@@ -7641,7 +7524,7 @@ function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
 // index_result_type is check_index_expr over the checked array and index types.
 function index_result_type(at: typeinfo.Type, it: typeinfo.Type): typeinfo.Type {
   if (!is_integer(it)) {
-    return t_unknown("array index must be i32");
+    return t_unknown("array index must be an integer");
   }
   match (at) {
     typeinfo.TypeArray(ta) => {
@@ -7779,7 +7662,7 @@ function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
     return t_struct(sl.type_name);
   }
   let largs: typeinfo.Type[] = struct_lit_args(sl, ssig, s);
-  if (lit_uninferable_param(sl, ssig, largs).len() > 0) {
+  if (lit_uninferable_param(sl, ssig, largs, s).len() > 0) {
     return t_unknown("struct " + sl.type_name + " has a type argument nothing binds");
   }
   if (lit_field_clash(sl, ssig, largs, s) >= 0) {
@@ -14273,10 +14156,10 @@ function qual_variant_union(fa: ast.ExprFieldAccess, s: Scope): string {
 // trait that declared the requirement (empty for an inherent impl), which the
 // E021 "called as a method" message names. `params` are the requirement's
 // parameter spellings, also in `Self`, read only when `owner` is set.
-struct AssocHit { found: boolean, ret: string, owner: string, params: string[] }
+struct AssocHit { found: boolean, ret: string, owner: string, params: string[], is_const: boolean }
 
 function assoc_miss(): AssocHit {
-  return AssocHit { found: false, ret: "", owner: "", params: [] };
+  return AssocHit { found: false, ret: "", owner: "", params: [], is_const: false };
 }
 
 // trait_req_idx resolves a bound's trait SPELLING to its requirement record.
@@ -14342,7 +14225,7 @@ function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, see
       for p in rs.params {
         params = params.append(parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types));
       }
-      return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name, params: params };
+      return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name, params: params, is_const: rs.is_const };
     }
   }
   for supertrait in req.supertraits {
@@ -14688,7 +14571,7 @@ function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
         if (h.found) {
           return h;
         }
-        return AssocHit { found: true, ret: "", owner: "", params: [] };
+        return AssocHit { found: true, ret: "", owner: "", params: [], is_const: s.lookup_assoc_sig(base, field).is_const };
       }
     }
   }
@@ -14721,8 +14604,9 @@ function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): p
 // type. The object is a type qualifier with no value behind it, so walking it
 // reports E001 "undefined name" on a call native accepts (#6933). A value
 // binding of the same name shadows the type and makes it a genuine method
-// call.
-function assoc_call_req(obj: ast.Expr, field: string, s: Scope): AssocHit {
+// call. A `Base::NAME` read (`const_read`) names a declared constant, so the
+// instantiation-borne hit below is not for it.
+function assoc_call_req(obj: ast.Expr, field: string, s: Scope, const_read: boolean): AssocHit {
   match (obj) {
     ast.ExprIdent(oid) => {
       if (s.known(oid.name)) {
@@ -14744,8 +14628,8 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope): AssocHit {
       // return type is unrecoverable, as every erased parameter's is (#8461).
       // A bounded parameter must resolve through its declared traits above:
       // treating the qualifier alone as a hit also accepts T.nope().
-      if (util.index_of_str(s.tparams, oid.name) >= 0 && tp_bound_for(oid.name, s.tparams, s.tbounds).len() == 0) {
-        return AssocHit { found: true, ret: "", owner: "", params: [] };
+      if (!const_read && util.index_of_str(s.tparams, oid.name) >= 0 && tp_bound_for(oid.name, s.tparams, s.tbounds).len() == 0) {
+        return AssocHit { found: true, ret: "", owner: "", params: [], is_const: false };
       }
       return assoc_miss();
     },
@@ -14771,6 +14655,28 @@ function assoc_hit_type(h: AssocHit, obj: ast.Expr, s: Scope): typeinfo.Type {
     _ => {}
   }
   return s.resolve_type(parser.subst_self(h.ret, self_name));
+}
+
+// assoc_base_name is the type a `Base.f` names, or "" when the object is not
+// a bare name.
+function assoc_base_name(obj: ast.Expr): string {
+  if let ast.ExprIdent(oid) = obj {
+    return oid.name;
+  }
+  return "";
+}
+
+// assoc_const_read_diags holds a `Base::NAME` read to a constant and a
+// `Base.f(…)` call to a function.
+function assoc_const_read_diags(h: AssocHit, c: ast.ExprCall, mfa: ast.ExprFieldAccess): util.Diag[] {
+  if (mfa.const_read == h.is_const) {
+    return [];
+  }
+  let base: string = util.demangle(assoc_base_name(mfa.obj));
+  if (mfa.const_read) {
+    return [dg_at("E043", base + "::" + mfa.field + " is an associated function, not a constant; call it as " + base + "::" + mfa.field + "(...)", c.line, c.col)];
+  }
+  return [dg_at("E043", base + "::" + mfa.field + " is an associated constant; read it as " + base + "::" + mfa.field + " without an argument list", c.line, c.col)];
 }
 
 // assoc_arg_diags checks an associated call's arguments against the trait
@@ -15076,7 +14982,7 @@ function display_rewrite(c: ast.ExprCall, nargs: ast.Expr[], s: Scope): ast.Expr
   }
   let ln: i32 = expr_line(c.args[0]);
   let cl: i32 = expr_col(c.args[0]);
-  let callee: ast.Expr = ast.ExprFieldAccess { obj: nargs[0], field: "to_string", line: ln, col: cl, ty: "" };
+  let callee: ast.Expr = ast.ExprFieldAccess { obj: nargs[0], field: "to_string", line: ln, col: cl, ty: "", path_sep: false, const_read: false };
   return [ast.ExprCall { callee: callee, args: [], line: ln, col: cl, type_args: [], ty: "string" }];
 }
 
@@ -15242,7 +15148,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // resolution below has also missed. Ordered the other way this arm
       // claimed every such call and reported a variant nobody wrote (#8461).
       let cqen: string = qual_enum_name(mfa.obj, s);
-      if (cqen.len() > 0 && !assoc_call_req(mfa.obj, mfa.field, s).found) {
+      if (cqen.len() > 0 && !assoc_call_req(mfa.obj, mfa.field, s, mfa.const_read).found) {
         if (!qual_variant_exists(cqen, mfa.field, s)) {
           out = out.append(dg_at("E036", "enum " + cqen + " has no variant \"" + mfa.field + "\"", mfa.line, mfa.col));
         } else {
@@ -15259,12 +15165,21 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // so it must be diverted before the recursion reads it as a
       // value and reports E001 (#6933). The arguments are still
       // walked.
-      let ah: AssocHit = assoc_call_req(mfa.obj, mfa.field, s);
+      let ah: AssocHit = assoc_call_req(mfa.obj, mfa.field, s, mfa.const_read);
       if (ah.found) {
+        // A `Base::NAME` read names a constant and `Base.f(…)` a function;
+        // the rewrite marks the read's callee const_read.
+        let acr: util.Diag[] = assoc_const_read_diags(ah, c, mfa);
+        if (acr.len() > 0) {
+          return util.append_diags(out, acr);
+        }
         for arg in c.args {
           out = util.append_diags(out, call_diags(arg, s));
         }
         return util.append_diags(out, assoc_arg_diags(ah, c, mfa, s));
+      }
+      if (mfa.const_read) {
+        return out.append(dg_at("E043", util.demangle(assoc_base_name(mfa.obj)) + " has no associated constant \"" + mfa.field + "\"", c.line, c.col));
       }
       out = call_diags(mfa.obj, s);
       match (check_expr(mfa.obj, s)) {
@@ -15466,7 +15381,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               out = util.append_diags(out, call_bound_diags(sig.type_params, sig.type_bounds, sig.module, util.demangle(sig.name), cbn, cbt, s, c.line, c.col));
               let (fbn, fbt) = call_bindings(sig, c, s);
               out = util.append_diags(out, bound_arg_diags(sig, c, fbn, fbt, s));
-              out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name));
+              out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name, s));
             }
           }
         }
@@ -15586,9 +15501,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           }
           // E043 (array method existence): only `append` / `with`
           // / `len` are unconditional array builtins. Every other
-          // method comes from an imported module, in one of two
-          // spellings has_array_method covers — an auto-discovered
-          // `__method_Array_<name>` free function, or an
+          // method comes from an imported module as a
           // `function (xs: T[]) <name>(…)` receiver method,
           // element-polymorphic or pinned to one element type.
           // When the call is none of those it names a
@@ -15607,7 +15520,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             arr_label = "slice";
           }
           let asig: MethodSig = s.array_recv_method(mfa.field, ar.view);
-          out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig));
+          out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig, s));
           if (asig.name.len() > 0 && c.args.len() == asig.param_types.len()) {
             out = util.append_diags(out, method_arg_diags(c, mfa.field, asig, recv, s));
             out = util.append_diags(out, method_type_arg_diags(c, mfa.field, asig, recv, s));
@@ -15677,8 +15590,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               } else {
                 out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
                 out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
-                out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig));
-                out = util.append_diags(out, uninferred_recv_diags(c, sn.name, mfa.field, msig, sn.args));
+                out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig, s));
+                out = util.append_diags(out, uninferred_recv_diags(c, sn.name, mfa.field, msig, sn.args, s));
               }
             } else {
               // A call `obj.m(...)` on a known struct with no
@@ -15733,8 +15646,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (umsig.name.len() > 0 && c.args.len() == umsig.param_types.len()) {
             out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));
             out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
-            out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig));
-            out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args));
+            out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig, s));
+            out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args, s));
           }
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
@@ -16123,12 +16036,18 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
     }
     out = util.append_diags(out, cast_diags(u, tgt, check_expr(u.operand, s), s));
   }
-  // E059: an `as?` downcast (`x as? T`, parsed as the unary op
-  // `as?_T`) requires a `dyn Trait` value on the left.
+  // `x as? T` (the unary op `as?_T`) downcasts a `dyn Trait` value, or converts
+  // an integer to an integer type: E059 for any other operand, E060 for an
+  // integer's non-integer target.
   if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
     let aot: typeinfo.Type = check_expr(u.operand, s);
-    if (!downcast_operand_ok(aot)) {
-      out = out.append(dg_at("E059", "`as?` downcast requires a `dyn Trait` value on the left, got " + type_label(aot), u.line, u.col));
+    let target: string = slice_unchecked(u.op, 4, u.op.len()) + "";
+    if (is_integer(aot)) {
+      if (!is_integer(s.resolve_type(target))) {
+        out = out.append(dg_at("E060", "'as?' from " + type_label(aot) + " converts only to an integer type, got " + target, u.line, u.col));
+      }
+    } else if (!downcast_operand_ok(aot)) {
+      out = out.append(dg_at("E059", "'as?' requires a 'dyn Trait' value or an integer on the left, got " + type_label(aot), u.line, u.col));
     }
   }
   // E042: the `?` try operator (parsed as the unary op `try_`)
@@ -16426,12 +16345,11 @@ function struct_name_of(t: typeinfo.Type): string {
 
 function call_diags_index(ix: ast.ExprIndex, s: Scope, out: util.Diag[]): util.Diag[] {
   out = util.append_diags(call_diags(ix.array, s), call_diags(ix.index, s));
-  // E034: an array / string index must be an i32. Mirrors the Go
-  // checker's Index case (index type != i32 -> E034 at the index
-  // position). A missing / unknown index type is skipped (no cascade).
+  // E034: an array / string index must be an integer. A missing / unknown
+  // index type is skipped (no cascade).
   let ixt: typeinfo.Type = check_expr(ix.index, s);
-  if (!is_unknown(ixt) && !type_eq(ixt, t_i32())) {
-    out = out.append(dg_at("E034", "index must be i32, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
+  if (!is_unknown(ixt) && !is_integer(ixt)) {
+    out = out.append(dg_at("E034", "index must be an integer, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
   }
   // E034: the indexed value must be an array or string. Mirrors the Go
   // checker ("indexing non-array value"); a non-array/string (i32 /
@@ -16587,7 +16505,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
   }
   if (args.len() == 0 && fsig.type_params.len() > 0) {
     args = struct_lit_args(sl, fsig, s);
-    let utp: string = lit_uninferable_param(sl, fsig, args);
+    let utp: string = lit_uninferable_param(sl, fsig, args, s);
     if (utp.len() > 0) {
       out = out.append(dg_at("E040", "could not infer type parameter " + utp + " for struct " + sl.type_name + " — supply it explicitly at the construction site (e.g. " + sl.type_name + "[i32] { ... }) or annotate the binding (e.g. let x: " + sl.type_name + "[i32] = ...)", sl.line, sl.col));
     }
@@ -17112,7 +17030,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
     },
     typeinfo.TypeArray(array) => {
       let builtin: boolean = field == "len" || !array.view && (field == "append" || field == "with");
-      return !builtin && !s.has_array_method(field, array.view);
+      return !builtin && !s.has_array_recv_method(field, array.view);
     },
     typeinfo.TypeMap(_) => {
       return !util.has_str(s.methods_in_namespace("Map"), field);
@@ -17338,7 +17256,7 @@ function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
   let col: i32 = expr_col(fr.iter);
   let subject: ast.Expr = fr.iter;
   if (sub.via_iter) {
-    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "" }, args: [], line: line, col: col, type_args: [], ty: "" };
+    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "", path_sep: false, const_read: false }, args: [], line: line, col: col, type_args: [], ty: "" };
   }
   return Some(parser.iterator_loop(fr, subject, col));
 }
@@ -17347,7 +17265,7 @@ function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
 // of type `t`; unknown when `t` has no such method.
 function probe_method(t: typeinfo.Type, name: string, s: Scope): typeinfo.Type {
   let recv: ast.Expr = ast.ExprIdent { name: "__for_iter", line: 0, col: 0, ty: "" };
-  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "", path_sep: false, const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   return check_expr(call, s.bind("__for_iter", t));
 }
 
@@ -18766,7 +18684,8 @@ function const_grammar_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   let earlier: string[] = [];
   for fd in mod.funcs {
-    if (fd.is_const) {
+    // An associated constant is a function body, free to read `T::LANES`.
+    if (fd.is_const && fd.receiver_type.len() == 0) {
       for stmt in fd.body {
         match (stmt) {
           ast.StmtReturn(r) => {
@@ -19000,10 +18919,10 @@ function registered_intrinsics(): string[] {
 
 // redeclares reports whether funcs[di] redeclares an earlier function, method
 // or associated function, or a surface builtin.
-function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, helpers: string[], di: i32): boolean {
+function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): boolean {
   let f2: parser.FuncDecl = funcs[di];
-  let earlier: boolean = redeclares_preregistered(f2, helpers);
-  let ej: i32 = names.chain(f2.name);
+  let earlier: boolean = redeclares_preregistered(f2);
+  let ej: i32 = names.chain(decl_key(f2));
   while (ej >= 0 && ej < di) {
     let pe: parser.FuncDecl = funcs[ej];
     // Key redeclaration on the receiver TYPE, not the receiver NAME:
@@ -19030,41 +18949,31 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, helpers: st
   return earlier;
 }
 
-// same_method_decl: two declarations of one method by the same provider, the
-// type itself or one trait. An inherent method and a trait's are an ambiguity
-// (method_ambiguity_diags), not a redeclaration.
 // A method on a built-in namespace named like one the checker registers
-// there before any declaration (preregistered_methods), or an array method
-// named like a `__method_Array_<name>` helper the program imports, redeclares
-// it, as native's pre-registered table makes it.
-function redeclares_preregistered(f2: parser.FuncDecl, helpers: string[]): boolean {
+// there before any declaration (preregistered_methods) redeclares it, as
+// native's pre-registered table makes it.
+function redeclares_preregistered(f2: parser.FuncDecl): boolean {
   if (f2.receiver_type.len() == 0) {
     return false;
   }
-  let ns: string = parser.receiver_namespace(f2.receiver_type);
-  if (util.has_str(preregistered_methods(ns), f2.name)) {
-    return true;
-  }
-  return ns == "Array" && util.has_str(helpers, f2.name);
+  return util.has_str(preregistered_methods(parser.receiver_namespace(f2.receiver_type)), f2.name);
 }
 
-// array_helper_methods: the `<name>` of every free `__method_Array_<name>`
-// function in the program, bare or `<mod>__`-mangled.
-function array_helper_methods(funcs: parser.FuncDecl[]): string[] {
-  let out: string[] = [];
-  for fd in funcs {
-    if (fd.receiver_type.len() == 0) {
-      let m: string = util.array_method_helper_name(fd.name);
-      if (m.len() > 0 && m != "push") {
-        out = out.append(m);
-      }
-    }
+// decl_key is the name a redeclaration is keyed on: a free function's own, or
+// a method's simple name, which the bundler interposes with its module when an
+// earlier module claimed it (`Array.num.sum`).
+function decl_key(fd: parser.FuncDecl): string {
+  if (fd.receiver_type.len() == 0) {
+    return fd.name;
   }
-  return out;
+  return method_simple_name(fd.name);
 }
 
+// same_method_decl: two declarations of one method by the same provider, the
+// type itself or one trait. An inherent method and a trait's are an ambiguity
+// (method_ambiguity_diags), not a redeclaration.
 function same_method_decl(pe: parser.FuncDecl, f2: parser.FuncDecl): boolean {
-  if (f2.receiver_type.len() == 0 || pe.receiver_type.len() == 0 || pe.name != f2.name) {
+  if (f2.receiver_type.len() == 0 || pe.receiver_type.len() == 0 || decl_key(pe) != decl_key(f2)) {
     return false;
   }
   return pe.impl_trait == f2.impl_trait && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type);
@@ -19253,19 +19162,18 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   // checker.
   let decl_names: string[] = [];
   for fd in mod.funcs {
-    decl_names = decl_names.append(fd.name);
+    decl_names = decl_names.append(decl_key(fd));
   }
   out = util.append_diags(out, method_ambiguity_diags(mod));
   let decl_index: util.NameIndex = util.name_index(decl_names);
-  let helpers: string[] = array_helper_methods(mod.funcs);
   let di: i32 = 0;
   while (di < mod.funcs.len()) {
     let f2: parser.FuncDecl = mod.funcs[di];
-    if (redeclares(mod.funcs, decl_index, helpers, di)) {
+    if (redeclares(mod.funcs, decl_index, di)) {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
-        out = out.append(dg_at("E006", "method \"" + f2.name + "\" on " + parser.receiver_namespace(f2.receiver_type) + " redeclared", f2.line, f2.col));
+        out = out.append(dg_at("E006", "method \"" + decl_key(f2) + "\" on " + parser.receiver_namespace(f2.receiver_type) + " redeclared", f2.line, f2.col));
       }
     }
     // E021: a method whose receiver type isn't a known struct / enum /
@@ -24409,6 +24317,19 @@ function e032_stmts(stmts: ast.Stmt[], lastfn: string[], s: Scope): util.Diag[] 
 // default is synthesised onto the impl), so a complete-via-default impl is
 // never falsely flagged. This is the first slice of the E021 family; arity /
 // object-safety / supertrait / bound conformance (+ E060 / E062) are follow-ups.
+// e021_const_kind_diags is E021 when a trait's associated constant is bound by
+// a function, or its associated function by a const: the two are not
+// interchangeable even at the same signature.
+function e021_const_kind_diags(req: parser.FuncDecl, impl_fn: parser.FuncDecl, im: parser.ImplInfo): util.Diag[] {
+  if (req.is_const == impl_fn.is_const) {
+    return [];
+  }
+  if (req.is_const) {
+    return [dg_at("E021", im.impl_type + "." + req.name + " is an associated constant of trait " + im.trait_name + "; bind it with `const " + req.name + ": " + parser.subst_self(req.ret_type, im.impl_type) + " = …;`, not a function", im.line, im.col)];
+  }
+  return [dg_at("E021", im.impl_type + "." + req.name + " is an associated function of trait " + im.trait_name + "; provide it with `function`, not a const", im.line, im.col)];
+}
+
 // e021_recv_method_idx returns the index in mod.funcs of the receiver method
 // named `m` on base type `ty`, or -1. This is the impl's PROVIDING method — a
 // written impl method OR an inherent method an empty impl adopts (a builtin like
@@ -24587,11 +24508,18 @@ function e021_diags(mod: parser.Module): util.Diag[] {
           // "adopt the existing method" rule).
           let midx: i32 = e021_recv_method_idx(mod, im.impl_type, reqs[ri]);
           if (!name_in(reqs[ri], im.method_names) && midx < 0) {
-            out = out.append(dg_at("E021", im.impl_type + " does not implement " + im.trait_name + ": missing method \"" + reqs[ri] + "\"", im.line, im.col));
+            if (ri < sigs.len() && sigs[ri].is_const) {
+              out = out.append(dg_at("E021", im.impl_type + " does not implement " + im.trait_name + ": missing associated constant \"" + reqs[ri] + "\"", im.line, im.col));
+            } else {
+              out = out.append(dg_at("E021", im.impl_type + " does not implement " + im.trait_name + ": missing method \"" + reqs[ri] + "\"", im.line, im.col));
+            }
           } else if (midx >= 0 && ri < sigs.len()) {
             // Provided as a receiver method — check its signature
             // against the trait's declaration (#4347 slice 2).
-            if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im, trait_req.type_params, mod.impls)) {
+            let kind_dg: util.Diag[] = e021_const_kind_diags(sigs[ri], mod.funcs[midx], im);
+            if (kind_dg.len() > 0) {
+              out = util.append_diags(out, kind_dg);
+            } else if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im, trait_req.type_params, mod.impls)) {
               out = out.append(e021_wrong_sig(sigs[ri], mod.funcs[midx], im, trait_req.type_params, mod.impls));
             }
           }
@@ -24603,7 +24531,9 @@ function e021_diags(mod: parser.Module): util.Diag[] {
         for ds in trait_req.default_sigs {
           let didx: i32 = e021_recv_method_idx(mod, im.impl_type, ds.name);
           let written: boolean = name_in(ds.name, im.method_names) && didx >= 0;
-          if (written && !e021_sig_matches(ds, mod.funcs[didx], im, trait_req.type_params, mod.impls)) {
+          if (written && e021_const_kind_diags(ds, mod.funcs[didx], im).len() > 0) {
+            out = util.append_diags(out, e021_const_kind_diags(ds, mod.funcs[didx], im));
+          } else if (written && !e021_sig_matches(ds, mod.funcs[didx], im, trait_req.type_params, mod.impls)) {
             out = out.append(e021_wrong_sig(ds, mod.funcs[didx], im, trait_req.type_params, mod.impls));
           } else if (!written && !e021_self_matches(ds, im, trait_req.type_params, mod.impls)) {
             out = out.append(dg_at("E021", im.impl_type + "." + ds.name + " has the wrong signature for trait " + im.trait_name, im.line, im.col));
@@ -26670,18 +26600,13 @@ pub function builtin_method_names(recv: string): string[] {
   return out;
 }
 
-// array_method_names is the methods std/array gives an array
-// (array_method_func), each once.
-pub function array_method_names(s: Scope): string[] {
-  let key: string = "__method_Array_";
+// array_method_names is the methods an array (a view, when `view`) has from
+// its receiver declarations, each once, in declaration order.
+pub function array_method_names(s: Scope, view: boolean): string[] {
   let out: string[] = [];
-  for sig in s.sigs.sigs {
-    let at: i32 = util.index_of_sub(sig.name, key);
-    if (at >= 0) {
-      let name: string = slice_unchecked(sig.name, at + key.len(), sig.name.len()) + "";
-      if (!util.has_str(out, name)) {
-        out = out.append(name);
-      }
+  for method in s.methods.methods {
+    if (array_receiver_matches(method.receiver_type, view) && !util.has_str(out, method.name)) {
+      out = out.append(method.name);
     }
   }
   return out;
@@ -27943,7 +27868,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       if (vqu.len() == 0) {
         ft = field_access_result_type(fa, typed_type(oa, fa.obj, s), s);
       }
-      return Typed { e: ast.ExprFieldAccess { obj: oa.e, field: fa.field, line: fa.line, col: fa.col, ty: type_to_irtag(ft) }, ty: ft, known: true };
+      return Typed { e: ast.ExprFieldAccess { ...fa, obj: oa.e, ty: type_to_irtag(ft) }, ty: ft, known: true };
     },
     ast.ExprIndex(x) => {
       let aa: Typed = annotate_typed(x.array, s);
@@ -31381,7 +31306,7 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
     let elems: ast.Expr[] = [];
     let i: i32 = 0;
     while (i < want.args.len()) {
-      let part: ast.Expr = ast.ExprFieldAccess { obj: e, field: util.i32_to_string(i), line: expr_line(e), col: expr_col(e), ty: "" };
+      let part: ast.Expr = ast.ExprFieldAccess { obj: e, field: util.i32_to_string(i), line: expr_line(e), col: expr_col(e), ty: "", path_sep: false, const_read: false };
       elems = elems.append(lit_float_read(part, want.args[i]));
       i = i + 1;
     }

@@ -3,11 +3,8 @@ package e2e
 import "testing"
 
 // A receiver method pinned to one element type — `function (xs: i32[]) avg2()`
-// — is a declaration any program can write. std/array's concrete-element verbs
-// reached dispatch through the `__method_Array_<name>` naming convention, a
-// route the checker recognised and no user could spell; the receiver form is
-// the same dispatch without a compiler-known name behind it, and it mangles to
-// the same `__method_Array_<name>` symbol, so the backends see nothing new.
+// — is a declaration any program can write, and the form std/array's
+// concrete-element verbs (`join` over `string[]`, `gcd_all` over `i32[]`) take.
 //
 // Two element types in one program, because the "Array" method namespace is
 // keyed on the NAME: each method claims its name for every array, and it is the

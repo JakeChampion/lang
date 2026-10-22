@@ -12129,12 +12129,66 @@ function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmco
   if (asmcore.vdso_wanted(s, "x86_64")) {
     s = emit_vdso_scan(s);
   }
+  // A shared object's host owns the stack and the signal handlers.
+  if (!s.shared) {
+    s = emit_stack_switch(s);
+  }
   if (s.profile > 0) {
     s = s.write("    leaq .Lprofile_ring(%rip), %rax\n    movq %rsp, %rsi\n    leaq .Lprofile_action(%rip), %rdi\n    leaq .Lprofile_timer(%rip), %r8\n    call __fn___fern_profile_start.r\n");
   }
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
   return emit_process_finish(mod, s);
+}
+
+// emit_stack_switch moves the process onto the stack asmcore.stack_size
+// describes, and makes running into its guard — or into the kernel's below
+// the stack the process started on, when the mapping is refused — a reported
+// stack overflow rather than a bare SIGSEGV. The handler runs on a stack of
+// its own, since the one that overflowed has no room left; when that cannot be
+// mapped either, no handler is installed.
+function emit_stack_switch(own s: asmcore.EmitState): asmcore.EmitState {
+  s = emit_stack_map(s, asmcore.stack_size());
+  s = s.write("    cmpq $-4096, %rax\n    ja .Lfern_stack_kept\n    movq %rax, %rbx\n    movq %rax, %rdi\n    movq $" + util.i32_to_string(asmcore.stack_guard()) + ", %rsi\n    xorl %edx, %edx\n    movl $10, %eax\n");
+  s = s.syscall(10);
+  // Two zero words above the first frame end the backtrace walk there.
+  s = s.write("    leaq " + util.i32_to_string(asmcore.stack_size() - 16) + "(%rbx), %rsp\n.Lfern_stack_kept:\n");
+  // The sigaltstack and sigaction records are built below the stack pointer
+  // rather than held as data, so the image carries no absolute addresses.
+  s = emit_stack_map(s, 65536);
+  s = s.write("    cmpq $-4096, %rax\n    ja .Lfern_segv_skip\n    subq $32, %rsp\n    movq %rax, (%rsp)\n    movq $0, 8(%rsp)\n    movq $65536, 16(%rsp)\n    movq %rsp, %rdi\n    xorl %esi, %esi\n    movl $131, %eax\n");
+  s = s.syscall(131);
+  s = s.write("    leaq __fern_segv(%rip), %rax\n    movq %rax, (%rsp)\n    movq $0x0c000004, 8(%rsp)\n");
+  s = emit_segv_install(s);
+  return s.write("    addq $32, %rsp\n.Lfern_segv_skip:\n");
+}
+
+// emit_stack_map maps an anonymous read-write region of `size` bytes, leaving
+// its address, or a negative errno, in %rax.
+function emit_stack_map(own s: asmcore.EmitState, size: i32): asmcore.EmitState {
+  s = s.write("    xorl %edi, %edi\n    movq $" + util.i32_to_string(size) + ", %rsi\n    movl $3, %edx\n    movl $0x24022, %r10d\n    movq $-1, %r8\n    xorl %r9d, %r9d\n    movl $9, %eax\n");
+  return s.syscall(9);
+}
+
+// emit_segv_install sets SIGSEGV's action from the handler and flags already
+// at (%rsp) and 8(%rsp), with the restorer and an empty mask.
+function emit_segv_install(own s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    leaq .Lfern_segv_restorer(%rip), %rax\n    movq %rax, 16(%rsp)\n    movq $0, 24(%rsp)\n    movl $11, %edi\n    movq %rsp, %rsi\n    xorl %edx, %edx\n    movl $8, %r10d\n    movl $13, %eax\n");
+  return s.syscall(13);
+}
+
+// emit_stack_overflow_runtime is emit_stack_switch's handler. A fault within 1 MiB of the interrupted stack pointer is the stack
+// running out: it is reported as a fatal abort (exit 134), its backtrace walked
+// from a frame record naming the faulting instruction. Any other fault puts the
+// default action back and returns, so the access faults again and the process
+// dies of SIGSEGV as it would have.
+function emit_stack_overflow_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  let msg: string = asmcore.msg_stack_overflow();
+  s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
+  s = s.write("__fern_segv:\n    movq 16(%rsi), %rax\n    subq 160(%rdx), %rax\n    addq $1048576, %rax\n    cmpq $2097152, %rax\n    jae .Lfern_segv_other\n    movq 168(%rdx), %rax\n    movq 120(%rdx), %rcx\n    subq $16, %rsp\n    movq %rcx, (%rsp)\n    movq %rax, 8(%rsp)\n    movq %rsp, %rbp\n    leaq .Lmsg_stack_overflow(%rip), %rsi\n    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n    movq $134, %rdi\n    jmp __fern_report\n.Lfern_segv_other:\n    subq $32, %rsp\n    movq $0, (%rsp)\n    movq $0x04000000, 8(%rsp)\n");
+  s = emit_segv_install(s);
+  s = s.write("    addq $32, %rsp\n    ret\n.Lfern_segv_restorer:\n    movl $15, %eax\n");
+  return s.syscall(15);
 }
 
 function emit_process_finish(mod: parser.Module, own s: asmcore.EmitState): asmcore.EmitState {
@@ -12342,14 +12396,13 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_hev_runtime(s);
   }
-  // The abort reporter (#11405): with the heap runtime, whose traps jump to
-  // it, and under either sanitizer flag, whose reports end in its walk even
-  // when the program allocates nothing. A build that has neither carries no
-  // reporter.
-  if (needs_heap_runtime(s) || s.rc_free_debug || s.sanitize || s.shared) {
-    s = s.write("    .text\n");
-    s = emit_report(s);
+  // The abort reporter (#11405), which the heap runtime's traps, the
+  // sanitizer reports and the stack-overflow handler all end in.
+  s = s.write("    .text\n");
+  if (!s.shared) {
+    s = emit_stack_overflow_runtime(s);
   }
+  s = emit_report(s);
   // A -shared build's busy flag: set while this thread runs the object's
   // code, so a second thread entering an export aborts rather than racing the
   // non-atomic counts. The export entries and the __c_call shims keep it.

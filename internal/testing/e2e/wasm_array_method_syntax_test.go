@@ -8,12 +8,11 @@ import (
 )
 
 // TestWasmArrayMethodSyntax guards the wasm backend's array method-syntax
-// dispatch: `a.<field>(args)` whose `__method_Array_<field>` helper is in scope
-// lowers to a call of that helper (the wasm mirror of the asm-backend fix).
-// Before it, a non-intercepted array method fell through to `(i32.const 0)`.
-// The helpers are defined inline so the single-file wasm driver exercises the
-// dispatch without an import/bundle step (the dispatch keys off the helper
-// being in scope, however it got there).
+// dispatch: `a.<field>(args)` on a pinned array receiver method lowers to a
+// call of that method (the wasm mirror of the asm-backend fix). Before it, a
+// non-intercepted array method fell through to `(i32.const 0)`. The methods are
+// defined inline so the single-file wasm driver exercises the dispatch without
+// an import/bundle step.
 //
 // TestWasm* so the test-e2e-wasm workflow (which installs wasmtime) runs it.
 func TestWasmArrayMethodSyntax(t *testing.T) {
@@ -26,8 +25,8 @@ func TestWasmArrayMethodSyntax(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
-	const sumSq = "function __method_Array_sum_squared(arr: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < arr.len()) { s = s + arr[i] * arr[i]; i = i + 1; } return s; }\n"
-	const reversed = "function __method_Array_reversed(arr: i32[]): i32[] { let out: i32[] = []; let i: i32 = arr.len() - 1; while (i >= 0) { out = out.append(arr[i]); i = i - 1; } return out; }\n"
+	const sumSq = "function (arr: i32[]) sum_squared(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < arr.len()) { s = s + arr[i] * arr[i]; i = i + 1; } return s; }\n"
+	const reversed = "function (arr: i32[]) reversed(): i32[] { let out: i32[] = []; let i: i32 = arr.len() - 1; while (i >= 0) { out = out.append(arr[i]); i = i - 1; } return out; }\n"
 
 	cases := []struct {
 		name   string

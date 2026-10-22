@@ -157,7 +157,8 @@ function main(): i32 {
 
 ## Count with a map
 
-Map iteration order is insertion order, and that's part of the contract.
+Map iteration order is insertion order, except that removing a key moves
+the last entry into its place, and that's part of the contract.
 
 ```fern
 import "core/map";

@@ -1,0 +1,4 @@
+// A digit separator must sit between two digits.
+function main(): i32 {
+    return 1__000;
+}

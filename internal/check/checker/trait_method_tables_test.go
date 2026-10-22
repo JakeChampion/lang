@@ -158,26 +158,6 @@ function main(): i32 { let p = P { x: 1 }; return p.area(); }`)
 	}
 }
 
-// An inherent `impl Type { … }` block is not a trait impl either: its
-// methods and associated functions go in the flat namespace with no owner.
-func TestTraitMethodTablesInherentImplBlockHasNoOwner(t *testing.T) {
-	info := checkInfo(t, `struct P { x: i32 }
-impl P {
-  function origin(): P { return P { x: 0 }; }
-  function get(self: Self): i32 { return self.x; }
-}
-function main(): i32 { let p = P.origin(); return p.get(); }`)
-
-	for _, key := range []string{"P.origin", "P.get"} {
-		if _, ok := info.Methods[key]; !ok {
-			t.Fatalf("Methods[%q] missing", key)
-		}
-		if owners, ok := info.MethodOwners[key]; ok {
-			t.Errorf("MethodOwners[%q] = %v, want no entry for an inherent impl", key, owners)
-		}
-	}
-}
-
 // Two DIFFERENT traits providing one method name for one type is no
 // longer a redeclaration: both register, each addressable under its own
 // trait. What the call site does with them is E074's business.
@@ -212,8 +192,9 @@ function (p: P) go(): i32 { return 1; }
 function (p: P) go(): i32 { return 2; }
 function main(): i32 { let p = P { x: 1 }; return p.go(); }`,
 		"same assoc fn twice": `struct P { x: i32 }
-impl P { function make(): P { return P { x: 1 }; } }
-impl P { function make(): P { return P { x: 2 }; } }
+trait Mk { function make(): Self; }
+impl Mk for P { function make(): P { return P { x: 1 }; } }
+impl Mk for P { function make(): P { return P { x: 2 }; } }
 function main(): i32 { return P.make().x; }`,
 	} {
 		err := checkSource(t, src)

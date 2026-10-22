@@ -111,7 +111,6 @@ func TestLintDeduplicatesTargets(t *testing.T) {
 func TestLintUsageErrors(t *testing.T) {
 	dir := t.TempDir()
 	good := writeFile(t, dir, "a.fern", quietSrc)
-	md := writeFile(t, dir, "doc.fern.md", "# hi\n")
 	txt := writeFile(t, dir, "notes.txt", "hi\n")
 
 	cases := []struct {
@@ -121,7 +120,6 @@ func TestLintUsageErrors(t *testing.T) {
 		opts  []string
 	}{
 		{"missing path", []string{filepath.Join(dir, "nope.fern")}, nil, nil},
-		{"literate document", []string{md}, nil, nil},
 		{"not a fern source", []string{txt}, nil, nil},
 		{"empty directory", []string{t.TempDir()}, nil, nil},
 		{"malformed -lint-set", []string{good}, []string{"cyclomatic-complexity"}, nil},
@@ -138,16 +136,16 @@ func TestLintUsageErrors(t *testing.T) {
 	}
 }
 
-// A file that does not parse has no shape to lint, but must not stop the
-// run: linting a tree should report every file it can read.
+// A file that does not parse has no shape to lint and fails the run, but must
+// not stop it: linting a tree should report every file it can read.
 func TestLintContinuesPastUnparseableFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "a_broken.fern", "function {{{\n")
 	writeFile(t, dir, "b_good.fern", noisySrc)
 
 	code, out := runLintTest(t, []string{dir}, nil, []string{"cyclomatic-complexity.max=2"})
-	if code != 0 {
-		t.Fatalf("exit = %d\n%s", code, out)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 for the file that does not parse\n%s", code, out)
 	}
 	if !strings.Contains(out, "1 warning generated") {
 		t.Errorf("the parseable file was not linted:\n%s", out)

@@ -14,7 +14,7 @@ import (
 // every method it desugars, and used to write `bound_traits: []` while doing so,
 // which dropped BOTH halves: the impl's bound on the merged param, and the
 // method's own bound on the params it already had. Every type param of an
-// `impl[T: Ord] Box[T]` method then read back unbounded, and the checker's E021
+// `impl[T: Ord] Boxy for Box[T]` method then read back unbounded, and the checker's E021
 // conformance walk reads exactly that field (checker.fern's with_tparams).
 //
 // The loss was silent rather than a crash because tp_bound_for guards its read
@@ -33,7 +33,7 @@ import (
 //	              parse_module rather than written in the block. It reaches
 //	              finalize_impl_method through ImplInfo, which is why the bounds
 //	              have to be stored on that struct and not just on the local.
-//	Box[T].show   a trait impl rather than an inherent one
+//	Box[T].show   a second impl block on the same type
 //
 // The unbounded rows are the controls: free_plain and Plain.* have no type
 // params at all, and free_bounded keeps its bound without going through
@@ -61,7 +61,7 @@ trait Greet {
 struct Box[T] { v: T }
 struct Plain { n: i32 }
 
-impl[T: Ord] Box[T] {
+impl[T: Ord] Boxy for Box[T] {
     function rank(self: Self, o: T): i32 { return 0; }
     function make(v: T): Box[T] { return Box { v: v }; }
     function [U: Show] tag(self: Self, u: U): string { return "t"; }
@@ -79,9 +79,7 @@ impl[T: Ord] Greet for Box[T] {
     function name(self: Self): string { return "b"; }
 }
 
-impl Plain {
-    function bump(self: Self): i32 { return self.n + 1; }
-}
+function (self: Plain) bump(): i32 { return self.n + 1; }
 
 function free_bounded[U: Show](x: U): i32 { return 0; }
 function free_plain(x: i32): i32 { return x; }

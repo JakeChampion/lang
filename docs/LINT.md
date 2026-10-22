@@ -9,6 +9,11 @@ everything else about the design.
 
 Engine: `compiler/lint.fern`. CLI: `run_lint` in `compiler/fern.fern`.
 
+A literate `.fern.md` document is linted as the modules it tangles to, and
+each finding is reported at its line in the document (`lint_module`). A
+chunk library, a document with no root chunk and no `file=` blocks, has no
+module to lint: a directory walk skips it, and naming it is an error.
+
 ## Why it runs on the parse tree
 
 A lint sees `parser.parse_module` output and nothing else — no type-check,
@@ -180,10 +185,3 @@ in a Fern source exempts a function from the gate exactly as it does from the
 command line — one suppression mechanism, not a second one only the gate
 honours. Each finding carries its score in `Finding.value`, so the gate
 compares numbers instead of parsing them back out of prose.
-
-## Not here yet
-
-- **Literate documents.** `fern -lint` refuses a `.fern.md` rather than
-  parsing markdown as Fern. Wiring it up means routing findings through the
-  generated-line → document-line remap, which `docs/LITERATE.md` names as
-  the most regression-prone surface in that engine — worth its own change.

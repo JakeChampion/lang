@@ -73,6 +73,9 @@ var fmtParityCases = []struct {
 	// A function written without a return type (E081) prints without one;
 	// native used to fill in the parser's `: void` default.
 	{"omitted-return-type-as-written", "function helper() {}\n\nfunction main(): i32 {\n  return 0;\n}\n"},
+	// An associated constant prints as written in a trait and an impl, and a
+	// read keeps the `::` it was written with (docs/ASSOCIATED-TYPES.md).
+	{"assoc-const-as-written", "trait Lanes {\n  const LANES: i32;\n  const NAME: string = \"lanes\";\n  function width(self: Self): i32;\n}\n\nstruct V2 { a: f64 }\n\nimpl Lanes for V2 {\n  const LANES: i32 = 2;\n  function width(self: Self): i32 {\n    return Self::LANES;\n  }\n}\n\nfunction chunk[T: Lanes](n: i32): i32 {\n  return n / T::LANES + f64::LANES;\n}\n\nfunction main(): i32 {\n  return 0;\n}\n"},
 	// A value block whose statements span lines prints one per line (#12393).
 	{"value-block-statements-span-lines", `function g(c: boolean, n: i32): i32 {
   let total: i32 = 0;
@@ -1082,15 +1085,6 @@ return self.item == other.item;
 }
 }
 
-impl Box[i32] {
-function zero(): Box[i32] {
-return Box { item: 0 };
-}
-function get(self: Self): i32 {
-return self.item;
-}
-}
-
 function main(): i32 {
 return 0;
 }
@@ -1499,12 +1493,16 @@ xs: T[],
 trait Maker {
 function make(): Self;
 }
+trait Sized {
+function size(self: Self): i32;
+function same(self: Self, o: Self): Self;
+}
 impl Maker for Box[i32] {
 function make(): Self {
 return Box { xs: [] };
 }
 }
-impl[T] Box[T] {
+impl[T] Sized for Box[T] {
 function size(self: Self): i32 {
 return self.xs.len();
 }

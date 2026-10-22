@@ -93,6 +93,12 @@ baseline honest rather than for adding dispatch.
 
 ### 1.2 The portable vector *type* is the expensive design, and the payoff doesn't need it
 
+> **Revised 2026-10-21.** The stack-machine premise below no longer holds:
+> the SSA backend keeps an f64 in its float register across ops, which is
+> the register file a 128-bit lane type lives in. `SIMD-GENERIC-KERNELS.md`
+> §4 has what a lane type still costs and the plan that pays it. The
+> fused-intrinsic contract in §3 is unchanged for whole-loop kernels.
+
 Atlas puts a first-class portable vector type at the very bottom of the stack —
 `Vec32<u8>`, `Mask`, load/store/gather/scatter/shuffle/blend/compress/expand —
 and forbids algorithms from touching AVX2 directly. The *discipline* is
