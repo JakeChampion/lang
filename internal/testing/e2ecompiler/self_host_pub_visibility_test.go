@@ -115,6 +115,13 @@ pub(package) struct PkgBox { v: i32 }
 		"import \"./lib\";\nfunction main(): i32 { return lib.visible(); }\n",
 		0, "")
 
+	check(t, "private_enum_qualified_value",
+		"import \"./lib\";\nfunction main(): i32 { let x = lib.Hidden.Alpha; return 0; }\n",
+		1, "lib.Hidden is not exported")
+	check(t, "private_enum_qualified_pattern",
+		"import \"./lib\";\nfunction f(x: lib.Shown): i32 { match (x) { lib.Hidden.Alpha => { return 1; }, _ => { return 0; } } }\nfunction main(): i32 { return 0; }\n",
+		1, "lib.Hidden is not exported")
+
 	// ACCEPT: a module calling its OWN private function, reached from another
 	// module through a public entry point. Ownership must be tracked, not
 	// inferred from the mangled name.
