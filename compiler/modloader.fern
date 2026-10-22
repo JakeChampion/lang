@@ -47,8 +47,9 @@ pub function dirname(path: string): string {
   return slice_unchecked(path, 0, cut) + "";
 }
 
-// base_name strips the directory and the import-relative `./` prefix from
-// an import path: "./lexer" → "lexer", "std/io" → "io".
+// base_name is the qualifier an import path binds: its last segment, "./lexer"
+// → "lexer", "std/io" → "io". A `-`, legal in a file or package name and not
+// in an identifier, becomes `_`: "my-h" → "my_h".
 pub function base_name(path: string): string {
   let start: i32 = 0;
   let i: i32 = 0;
@@ -58,7 +59,17 @@ pub function base_name(path: string): string {
     }
     i = i + 1;
   }
-  return slice_unchecked(path, start, path.len()) + "";
+  let out: string = "";
+  let from: i32 = start;
+  i = start;
+  while (i < path.len()) {
+    if (path[i] == b'-') {
+      out = out + slice_unchecked(path, from, i) + "_";
+      from = i + 1;
+    }
+    i = i + 1;
+  }
+  return out + slice_unchecked(path, from, path.len());
 }
 
 // rel_path strips a leading import-relative `./` so the path joins cleanly

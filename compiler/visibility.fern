@@ -57,7 +57,17 @@ function base_name_of(path: string): string {
     }
     i = i + 1;
   }
-  return slice_unchecked(path, start, path.len()) + "";
+  let out: string = "";
+  let from: i32 = start;
+  i = start;
+  while (i < path.len()) {
+    if (path[i] == b'-') {
+      out = out + slice_unchecked(path, from, i) + "_";
+      from = i + 1;
+    }
+    i = i + 1;
+  }
+  return out + slice_unchecked(path, from, path.len());
 }
 
 // module_named finds a loaded module by its namespace name.

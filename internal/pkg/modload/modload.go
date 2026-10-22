@@ -1209,7 +1209,7 @@ func importLocalName(path string) string {
 	if ext := filepath.Ext(base); ext == ".fern" {
 		base = base[:len(base)-len(ext)]
 	}
-	return base
+	return strings.ReplaceAll(base, "-", "_")
 }
 
 // combine produces the final flat ast.Program. Entry-module decls
