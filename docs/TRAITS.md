@@ -706,6 +706,13 @@ let p: Point = Point.default();          // `Self` resolves to Point
 function mk[T: Default](): T { return T.default(); }  // generic constructor
 ```
 
+On a type parameter, `T.f()` resolves only through a bound that declares
+`f`. Without the bound, `T.default()` is E001, whatever `T` is instantiated
+at: the bound is what lets the checker see the call is well-typed for every
+`T`. A `@derive` on a generic type bounds each parameter by the derived
+trait, so the derived `Pair[T].default()` calls `T.default()` through
+`T: Default`.
+
 `.` is the one path separator, for modules (`helpers.add5(10)`,
 `helpers.BONUS`) as for types. `::` appears only in an associated-type
 projection (`Self::Item`); anywhere else it is a P001 that names `.`.
