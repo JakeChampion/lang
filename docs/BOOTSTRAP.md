@@ -3,7 +3,7 @@
 Status: [reference] how `make bootstrap` and `make distcheck` work today.
 
 `make bootstrap` builds the self-host compiler from a clean checkout with no Go
-toolchain and no native backend involved: a pinned earlier compiler (stage0)
+toolchain involved: a pinned earlier compiler (stage0)
 compiles `compiler/fern.fern`, the result compiles and runs a one-line
 program and `coreutils/tr`, and is installed as `bin/fern-selfhost` — the same artifact `make
 selfhost-cli` produces via `./bin/fern-oracle` — which `make build` then
@@ -61,11 +61,11 @@ which in turn compiles stage3.
 
 **The artifact is a compiler binary per host, hosted as a release asset, not a
 file in the tree**: the self-built stage2 the publish job reaches on each host.
-Settled by measurement on 2026-09-01, on native builds:
+Settled by measurement on 2026-09-01, on builds by the Go compiler of the day:
 
 | | size | gzip -9 | xz -9 |
 |---|---|---|---|
-| `x86-64-linux` compiler, built by native | 27.2 MB | 3.7 MB | 2.2 MB |
+| `x86-64-linux` compiler | 27.2 MB | 3.7 MB | 2.2 MB |
 | `arm64-linux` | 32.9 MB | 3.8 MB | 2.0 MB |
 | `arm64-darwin` | 100.8 MB | 4.1 MB | 2.3 MB |
 

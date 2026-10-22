@@ -242,7 +242,7 @@ The seeded flag is what `reduce` has instead of `z`, and it costs one
 `i1` in the loop rather than an allocation. The `Option` is built in
 `finish`, once — O(1), not per element.
 
-When no stage can skip an element, both compilers instead test for an empty
+When no stage can skip an element, the compiler instead tests for an empty
 input, run the map fragments on element zero to seed the accumulator, and
 start the loop at element one. That removes the arrival flag from the loop.
 Empty input still returns `None`, and a singleton never calls the combining

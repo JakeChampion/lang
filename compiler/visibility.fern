@@ -262,32 +262,41 @@ function module_diags(cx: VisCtx): util.Diag[] {
     }
   }
   for r in refs {
-    let mi: i32 = loaded_index(cx, r.qual);
-    let key: string = "";
-    if (mi >= 0) {
-      key = module_key(cx.loaded[mi]) + "." + r.name;
-    }
-    let (scoped, refused) = package_scope(cx, r.qual, r.name);
-    if (scoped) {
-      if (refused) {
-        out = out.append(package_diag(cx, r.qual, r.name, r.line, r.col));
-      }
-    } else if (mi >= 0 && cx.priv.has(key)) {
-      let kw: string = "function";
-      if (util.has_str(cx.priv_consts, key)) {
-        kw = "const";
-      }
-      out = out.append(util.Diag {
-        related: [],
-        code: "",
-        message: cx.loaded[mi].name + "." + r.name + " is not exported (declare it as `pub " + kw + " " + r.name + " …` to make it accessible from other modules)",
-        line: r.line,
-        col: r.col,
-        fix: None,
-      });
-    }
+    out = ref_diag(cx, r, out);
   }
   return out;
+}
+
+// ref_diag appends to `out` the refusal of `r`, if it reaches a declaration
+// its module may not.
+function ref_diag(cx: VisCtx, r: astwalk.QualRef, out: util.Diag[]): util.Diag[] {
+  let (scoped, refused) = package_scope(cx, r.qual, r.name);
+  if (scoped) {
+    if (refused) {
+      return out.append(package_diag(cx, r.qual, r.name, r.line, r.col));
+    }
+    return out;
+  }
+  let mi: i32 = loaded_index(cx, r.qual);
+  if (mi < 0) {
+    return out;
+  }
+  let key: string = module_key(cx.loaded[mi]) + "." + r.name;
+  if (!cx.priv.has(key)) {
+    return out;
+  }
+  let kw: string = "function";
+  if (util.has_str(cx.priv_consts, key)) {
+    kw = "const";
+  }
+  return out.append(util.Diag {
+    related: [],
+    code: "",
+    message: cx.loaded[mi].name + "." + r.name + " is not exported (declare it as `pub " + kw + " " + r.name + " …` to make it accessible from other modules)",
+    line: r.line,
+    col: r.col,
+    fix: None,
+  });
 }
 
 // export_diags checks the entry and every loaded module against the visibility
