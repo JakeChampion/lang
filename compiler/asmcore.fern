@@ -3984,11 +3984,8 @@ pub function rt_src_reactor_wait(t: string): string {
 // after its process exits until the ring's teardown. Under SINGLE_ISSUER
 // and DEFER_TASKRUN the kernel touches the completion and buffer rings only
 // inside this process's io_uring_enter, so plain loads and stores around it
-// are ordered. Darwin has no io_uring: ENOSYS there.
+// are ordered.
 pub function rt_src_ring(t: string): string {
-  if (t == "arm64-darwin") {
-    return "function __fern_ring_new(entries: i32): i64 { return (0 - 78) as i64; } function __fern_ring_ctl(ring: i64, op: i32, fd: i32, arg: i32): i32 { return 0 - 78; } function __fern_ring_wait(ring: i64, events: i32[], timeout_ms: i32): i32 { return 0 - 78; } function __fern_ring_recv_u8(ring: i64, fd: i32, buf: i32[]): i32 { return 0 - 78; } function __fern_ring_send_zc_u8(ring: i64, fd: i32, data: i32[], from: i32): i32 { return 0 - 78; }";
-  }
   let o: string = "function __fern_ring_queued(blk: usize): i32 { let sq: usize = __load_i64(blk + 8) as usize; let head: i64 = (__load_i32(sq + (__load_i32(blk + 32) as usize)) as i64) & (4294967295 as i64); let tail: i64 = (__load_i32(sq + (__load_i32(blk + 36) as usize)) as i64) & (4294967295 as i64); return ((tail - head) & (4294967295 as i64)) as i32; }";
   o = o + " " + "function __fern_ring_flush(blk: usize): i32 { let queued: i32 = __fern_ring_queued(blk); if (queued == 0) { return 0; } return __syscall6(" + sysno(t, "io_uring_enter") + ", __load_i32(blk) as i64, queued as i64, 0, 0, 0, 0) as i32; }";
   o = o + " " + "function __fern_ring_push(blk: usize, op: i32, fd: i32, events: i32, ud: i64, target: i64): i32 { let sq: usize = __load_i64(blk + 8) as usize; let headp: usize = sq + (__load_i32(blk + 32) as usize); let tailp: usize = sq + (__load_i32(blk + 36) as usize); let mask: i64 = __load_i32(blk + 40) as i64; let n: i64 = __load_i32(blk + 64) as i64; let tail: i64 = (__load_i32(tailp) as i64) & (4294967295 as i64); if (((tail - ((__load_i32(headp) as i64) & (4294967295 as i64))) & (4294967295 as i64)) >= n) { let flushed: i32 = __fern_ring_flush(blk); if (flushed < 0) { return flushed; } if (((tail - ((__load_i32(headp) as i64) & (4294967295 as i64))) & (4294967295 as i64)) >= n) { return 0 - 16; } } let idx: i64 = tail & mask; let e: usize = (__load_i64(blk + 24) as usize) + (idx as usize) * 64; let z: i32 = 0; while (z < 8) { __store_i64(e + (z as usize) * 8, 0); z = z + 1; } __raw_store8(e, 0, op); __store_i32(e + 4, fd); __store_i64(e + 16, target); __store_i32(e + 28, events); __store_i64(e + 32, ud); __store_i64(blk + 192, e as i64); __store_i32(sq + (__load_i32(blk + 44) as usize) + (idx as usize) * 4, idx as i32); __store_i32(tailp, (tail + 1) as i32); return 0; }";
@@ -6497,11 +6494,7 @@ pub function rt_src_random_bytes_u8(t: string): string {
 // reads. The scratch block holds the msghdr (0), the iovec (56) and one
 // control message (72); the record passes through a block of the helper's
 // own, since the caller's array is lent and its address may not be stored.
-// Darwin has no kernel TLS: ENOSYS.
 pub function rt_src_tcp_ktls(t: string): string {
-  if (t == "arm64-darwin") {
-    return "function __fern_tcp_ktls_u8(fd: i32, op: i32, arg: i32, data: i32[]): i32 { return 0 - 78; }";
-  }
   let set: string = sysno(t, "setsockopt");
   let attach: string = "if (op == 1) { let u: usize = __raw_scratch(4); __raw_store8(u, 0, 116); __raw_store8(u, 1, 108); __raw_store8(u, 2, 115); __raw_store8(u, 3, 0); return __syscall5(" + set + ", fd as i64, 6, 31, u as i64, 4) as i32; }";
   let keys: string = "if (op == 2 || op == 3) { return __syscall5(" + set + ", fd as i64, 282, (op - 1) as i64, p as i64, n as i64) as i32; }";

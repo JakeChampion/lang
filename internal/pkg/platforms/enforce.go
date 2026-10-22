@@ -179,13 +179,16 @@ var gatedBuiltins = map[string]string{
 	"reactor_new":   "reactor",
 	"reactor_ctl":   "reactor",
 	"reactor_wait":  "reactor",
-	"ring_new":      "reactor",
-	"ring_ctl":      "reactor",
-	"ring_wait":     "reactor",
-	"ring_recv":     "reactor",
-	"ring_send_zc":  "reactor",
 	"tcp_recv_into": "tcp",
-	"tcp_ktls":      "tcp",
+
+	// Linux's own: an io_uring, and the TLS record layer under a socket.
+	// std/async and std/tls/ktls reach them under a target_os() branch.
+	"ring_new":     "uring",
+	"ring_ctl":     "uring",
+	"ring_wait":    "uring",
+	"ring_recv":    "uring",
+	"ring_send_zc": "uring",
+	"tcp_ktls":     "ktls",
 
 	// Filesystem.
 	"read_file":        "fs",
@@ -393,7 +396,7 @@ var gatedBuiltins = map[string]string{
 	"__c_call3": "cabi", "__c_call3_f32": "cabi", "__c_call3_f64": "cabi",
 	"__c_call4": "cabi", "__c_call4_f32": "cabi", "__c_call4_f64": "cabi",
 	// The raw syscall floor: a kernel to trap into, which only the
-	// hosted-native profile has. wasm refuses it here rather than at
+	// hosted profiles have. wasm refuses it here rather than at
 	// codegen, and the interpreter never reaches it.
 	"__syscall3": "syscall", "__syscall4": "syscall", "__syscall5": "syscall", "__syscall6": "syscall",
 	// The raw-memory floor beside it: the native runtime's allocator block
