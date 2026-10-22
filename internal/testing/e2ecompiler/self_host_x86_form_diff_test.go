@@ -208,6 +208,18 @@ func vexFormCases() []string {
 		"vpsrlw $4, %xmm9, %xmm0",
 		"vpsrlw $3, %ymm2, %ymm10",
 		"vzeroupper",
+		// The lane type's fused multiply-adds (docs/SIMD-GENERIC-KERNELS.md
+		// §6): VEX.W selects the element width, so both widths at both
+		// register extensions and with a memory source.
+		"vfmadd213pd %xmm2, %xmm1, %xmm0",
+		"vfmadd213pd %xmm9, %xmm10, %xmm11",
+		"vfmadd213pd (%rax), %xmm1, %xmm0",
+		"vfmadd213pd 16(%r8,%rdx,8), %xmm12, %xmm13",
+		"vfmadd213pd %ymm3, %ymm4, %ymm5",
+		"vfmadd213ps %xmm2, %xmm1, %xmm0",
+		"vfmadd213ps %xmm9, %xmm10, %xmm11",
+		"vfmadd213ps (%r9), %xmm1, %xmm0",
+		"vfmadd213ps %ymm12, %ymm11, %ymm10",
 	}
 }
 

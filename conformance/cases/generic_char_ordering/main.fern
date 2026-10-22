@@ -1,0 +1,24 @@
+import "core/cmp";
+
+// `char` has `Ord` but no ordering operator, so a generic ordering
+// instantiated at `char` compares through its `cmp` (#12697).
+function lt_op[T: cmp.Ord](a: T, b: T): boolean { return a < b; }
+function ge_op[T: cmp.Ord](a: T, b: T): boolean { return a >= b; }
+function same_op[T: cmp.Eq](a: T, b: T): boolean { return a == b; }
+
+function show(label: string, v: boolean): void {
+    if (v) {
+        print(label + " true");
+    } else {
+        print(label + " false");
+    }
+}
+
+function main(): i32 {
+    show("'a' < 'b'", lt_op('a', 'b'));
+    show("'z' < 'a'", lt_op('z', 'a'));
+    show("'q' >= 'q'", ge_op('q', 'q'));
+    show("'a' == 'a'", same_op('a', 'a'));
+    show("3 < 4", lt_op(3, 4));
+    return 0;
+}

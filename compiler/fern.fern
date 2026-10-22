@@ -875,10 +875,10 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   // `-g`, the W^X counterpart of the x86 path. Arm64Asm records no section
   // per label — every label it holds is a .text label — so the section
   // filter is -1 rather than 0.
-  let aend: i32 = pa2.text.len();
+  let aend: i32 = arm64_native.arm64_code_len(p);
   let nosec: i32[] = [];
   let wide: i32[] = elf.elf_append_debug(
-    elf.elf_cat_u8([], bin), elf.elf_text_vaddr_wx(harden), elf.elf_wx_text_off(harden), pa2.text.len(),
+    elf.elf_cat_u8([], bin), elf.elf_text_vaddr_wx(harden), elf.elf_wx_text_off(harden), aend,
     elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
     elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
     elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
@@ -905,7 +905,7 @@ function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: s
     }
   }
   let nosec: i32[] = [];
-  let end: i32 = a.text.len();
+  let end: i32 = arm64_native.arm64_code_len(p);
   let dw: elf.DwSections = elf.dw_sections(
     tv, end,
     elf.elf_func_sym_names(names, a.lab_offs, nosec, 0 - 1, end),
@@ -995,9 +995,9 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
   // sizes span to the end of the code, which is what lets a backtrace
   // attribute an address INSIDE a function rather than only an exact
   // entry point.
-  let end: i32 = a.text.len();
+  let end: i32 = x86_native.x86_code_len(a);
   let wide: i32[] = elf.elf_append_debug(
-    elf.elf_cat_u8([], bin), tv as i32, elf.elf_x86_wx_text_off(), a.text.len(),
+    elf.elf_cat_u8([], bin), tv as i32, elf.elf_x86_wx_text_off(), end,
     elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
@@ -1279,7 +1279,7 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     rel_offs = rel_offs.append(data_at + off);
     rel_adds = rel_adds.append(le64_at(a.rodata, off));
   }
-  let end: i32 = a.text.len();
+  let end: i32 = x86_native.x86_code_len(a);
   let sym_names: string[] = elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
   let sym_offs: i32[] = elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
   let sym_sizes: i32[] = elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end);
@@ -1882,12 +1882,18 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
 // enforceTargetCapabilities); the cheap pre-pass is only about not shaking a
 // module whose answer cannot change. An empty shaken answer is an accept: the
 // pre-pass fired on a builtin only unreachable code reaches.
+//
+// The module is judged as built for `target`, its `target_os()` /
+// `target_arch()` branches folded and pruned as native's are, so `-check`
+// accepts what the build does.
 pub function capability_diags(merged: parser.Module, target: string): util.Diag[] {
   let out: util.Diag[] = [];
   if (platforms.enforce(merged, target).len() == 0) {
     return out;
   }
-  for v in platforms.enforce(treeshake.treeshake(merged), target) {
+  let desc: platforms.Descriptor = platforms.for_target(target);
+  let built: parser.Module = constfold.prune_literal_branches(constfold.fold_target_name(merged, desc.environment, desc.isa));
+  for v in platforms.enforce(treeshake.treeshake(built), target) {
     out = out.append(platforms.violation_diag(v));
   }
   return out;
@@ -2128,7 +2134,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
 function run_add(pos: string[], fetcher: Fetcher): i32 {
   if (pos.len() < 2) {
     eprint("usage: fern -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)");
-    return 1;
+    return 2;
   }
   let name: string = pos[0];
   let spec: string = pos[1];
@@ -4737,10 +4743,6 @@ function exec_and_wait(path: string, argv: string[]): i32 {
 function run_built(target: string, out: string, prog_args: string[], qemu: string): i32 {
   let desc: platforms.Descriptor = platforms.for_target(target);
   if (desc.isa == "wasm32") {
-    if (target == "wasm32-wasi-http") {
-      eprint("fern: -run cannot serve -target wasm32-wasi-http; build it with -o OUT.wasm and run `wasmtime serve OUT.wasm`");
-      return 1;
-    }
     let wt: string = find_on_path("wasmtime");
     if (wt.len() == 0) {
       eprint("fern: -run: wasmtime is not on PATH");
@@ -5100,6 +5102,10 @@ pub function core_form(emit: string): string {
 function run_output(target: string, emit: string, shared: boolean, out_path: string): (string, string, i32) {
   if (emit == "asm" || shared) {
     eprint("fern: -run executes the built program; it cannot be combined with -emit asm or -shared");
+    return ("", "", 2);
+  }
+  if (target == "wasm32-wasi-http") {
+    eprint("fern: -run cannot serve -target wasm32-wasi-http; build it with -o OUT.wasm and run `wasmtime serve OUT.wasm`");
     return ("", "", 2);
   }
   if (out_path.len() > 0) {
@@ -5897,22 +5903,22 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   if (shared) {
     if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android") {
       eprint("fern: -shared is only supported with -target x86-64, arm64, or arm64-android (got \"" + target + "\")");
-      return 1;
+      return 2;
     }
     if (out_path.len() == 0 && emit != "asm") {
       eprint("fern: -shared requires -o OUTPUT.so");
-      return 1;
+      return 2;
     }
   }
   let profile_mode: i32 = rtprofile.mode();
   let profile_error: string = rtprofile.error(profile_mode, target, shared);
   if (profile_error.len() > 0) {
     eprint(profile_error);
-    return 1;
+    return 2;
   }
   emit_syms = rtprofile.symbols(emit_syms, profile_mode);
   if (harden_refused(harden, target, shared)) {
-    return 1;
+    return 2;
   }
   if (backend != "" && backend != "ssa" && backend != "flat") {
     eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)");
@@ -6113,7 +6119,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     let bad: string = shared_export_refusal(merged, shared_roots);
     if (bad.len() > 0) {
       eprint("fern: " + bad);
-      return 1;
+      return 2;
     }
     for n in shared_roots {
       merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true }) };

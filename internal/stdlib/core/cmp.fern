@@ -616,13 +616,12 @@ impl Debug for string {
 // ---- Generic Ord helpers ---------------------------------------
 // Free functions over any `T: Ord`, derived from the single `cmp`
 // primitive — so they work for the integer/string impls above and for
-// any user `Ord` type (incl. `@derive(Ord)`). An ordering operator on a
-// `T: Ord` value means `cmp`'s order in every instance, and an integer or
-// string instance compiles it to the one native compare (#12034).
+// any user `Ord` type (incl. `@derive(Ord)`). They call `cmp` rather than
+// using an operator, which on a float would be IEEE (#12697).
 
 // min returns the smaller of `a` and `b` (`a` when equal).
 pub function min[T: Ord](a: T, b: T): T {
-  if (b < a) {
+  if (b.cmp(a) < 0) {
     return b;
   }
   return a;
@@ -630,7 +629,7 @@ pub function min[T: Ord](a: T, b: T): T {
 
 // max returns the larger of `a` and `b` (`a` when equal).
 pub function max[T: Ord](a: T, b: T): T {
-  if (a < b) {
+  if (a.cmp(b) < 0) {
     return b;
   }
   return a;
@@ -638,10 +637,10 @@ pub function max[T: Ord](a: T, b: T): T {
 
 // clamp constrains `x` to the inclusive range [lo, hi]. Assumes lo <= hi.
 pub function clamp[T: Ord](x: T, lo: T, hi: T): T {
-  if (x < lo) {
+  if (x.cmp(lo) < 0) {
     return lo;
   }
-  if (x > hi) {
+  if (x.cmp(hi) > 0) {
     return hi;
   }
   return x;
@@ -662,7 +661,7 @@ pub function max_of[T: Ord](xs: T[]): Option[T] {
   let best: T = xs[0];
   let i: i32 = 1;
   while (i < xs.len()) {
-    if (xs[i] > best) {
+    if (xs[i].cmp(best) > 0) {
       best = xs[i];
     }
     i = i + 1;
@@ -678,7 +677,7 @@ pub function min_of[T: Ord](xs: T[]): Option[T] {
   let best: T = xs[0];
   let i: i32 = 1;
   while (i < xs.len()) {
-    if (xs[i] < best) {
+    if (xs[i].cmp(best) < 0) {
       best = xs[i];
     }
     i = i + 1;
@@ -686,22 +685,22 @@ pub function min_of[T: Ord](xs: T[]): Option[T] {
   return Some(best);
 }
 
-// lt / lte / gt / gte are the ordering operators as functions, for a call
-// site that wants one as a value.
+// lt / lte / gt / gte compare under `cmp`, for a call site that wants an
+// ordering as a value.
 pub function lt[T: Ord](a: T, b: T): boolean {
-  return a < b;
+  return a.cmp(b) < 0;
 }
 
 pub function lte[T: Ord](a: T, b: T): boolean {
-  return a <= b;
+  return a.cmp(b) <= 0;
 }
 
 pub function gt[T: Ord](a: T, b: T): boolean {
-  return a > b;
+  return a.cmp(b) > 0;
 }
 
 pub function gte[T: Ord](a: T, b: T): boolean {
-  return a >= b;
+  return a.cmp(b) >= 0;
 }
 
 // is_sorted reports whether `arr` is in non-decreasing `Ord` order.

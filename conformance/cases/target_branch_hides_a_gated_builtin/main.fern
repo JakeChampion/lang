@@ -1,0 +1,19 @@
+// A call to a builtin only one target grants, under a branch on target_os(),
+// is in the program only for that target: every other target builds it, and
+// checks it, as if the arm were not there. `sysctl` is Darwin's alone.
+function boot_word(): i32 {
+    if (target_os() == "darwin") {
+        match (sysctl([1, 1])) {
+            Ok(bs) => { return bs.len(); },
+            Err(_) => { return 0; }
+        }
+    }
+    return 0;
+}
+
+function main(): i32 {
+    if (boot_word() >= 0) {
+        print("built");
+    }
+    return 0;
+}

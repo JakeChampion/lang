@@ -208,7 +208,15 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
 // TodoSite is where a `todo` stub was written; `-check` warns at each one.
 pub struct TodoSite { line: i32, col: i32 }
 
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[] }
+// ModuleSight is what one bundled module, by prefix ("" for the entry), can
+// reach: the paths it imports, and the prefix of every module its import
+// closure loads. A stdlib module reaches every other stdlib module the bundle
+// loads, as native's moduleSees has it, since the stdlib's own import graph
+// has cycles the loader breaks rather than records.
+pub struct ModuleSight { module: string, imports: string[], reaches: string[] }
+
+// `sights` is set on a bundle, one per module; a module parsed alone has none.
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[], sights: ModuleSight[] }
 
 // Only a loading driver supplies this provenance after resolving a standard
 // library import. Parsing source, including mangled-looking names, never does.
@@ -15146,14 +15154,14 @@ function bound_use(fd: FuncDecl, cts: string[], reqs: TraitReq[], funcs: MFns): 
 // naming the bound's provider by its trait, so the clone's check reads the
 // bound's answer rather than an ambiguity (ambiguous_call_diags), as the Go
 // checker re-checks a clone with the trait the template's check resolved
-// each call to. The comparison rewrite is left to the monomorphiser: the
-// template's operators were checked as written.
-pub function route_bound_calls(fd: FuncDecl, cts: string[], funcs: MFns): ast.Stmt[] {
-  let (routed, bases, traits) = bound_routes(fd, cts, funcs);
-  if (routed.len() == 0) {
+// each call to. Its comparisons are rewritten as the monomorphiser rewrites
+// them, so an instance at a type that orders only through `cmp` (`char`)
+// checks as it lowers.
+pub function route_bound_calls(fd: FuncDecl, cts: string[], reqs: TraitReq[], funcs: MFns): ast.Stmt[] {
+  let ctx: BoundUse = BoundUse { ...bound_use(fd, cts, reqs, funcs), by_trait: true };
+  if (ctx.ord.len() == 0 && ctx.eq.len() == 0 && ctx.routed.len() == 0) {
     return fd.body;
   }
-  let ctx: BoundUse = BoundUse { env: env_from_decl(fd), funcs: MFns { ...funcs, keep_vars: true }, ord: [], eq: [], routed: routed, bases: bases, traits: traits, by_trait: true };
   let (out, after) = bc_body(fd.body, ctx);
   return out;
 }
@@ -15240,14 +15248,15 @@ function bound_supplies(reqs: TraitReq[], bound: string, method: string): boolea
   return false;
 }
 
-// The integers' and string's `cmp` are their native order.
+// A primitive compares with its own operators, never through its `cmp` or `eq`:
+// a float's `cmp` is a total order where `<` is IEEE (#12697). `char` has `Ord`
+// but no ordering operator, so its orderings go through `cmp`.
 function native_order_agrees(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "u8" || t == "string";
+  return util.has_str(["i32", "i64", "u32", "u64", "u8", "usize", "f32", "f64", "string"], t);
 }
 
-// So are those types' `eq` and boolean's.
 function native_eq_agrees(t: string): boolean {
-  return native_order_agrees(t) || t == "boolean";
+  return native_order_agrees(t) || t == "boolean" || t == "char";
 }
 
 // Each statement list owns its scope: a binding it makes is gone after it.
@@ -30626,7 +30635,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     },
     None => {}
   }
-  let parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [], todo_sites: p.todos };
+  let parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [], todo_sites: p.todos, sights: [] };
   if (!verbatim) {
     let inferred: string[] = unannotated_const_names(funcs);
     let nothing: string[] = [];
@@ -30672,7 +30681,7 @@ function coded_kind(code: string, msg: string): string {
 
 // lex_error_module is a module holding nothing but the lex error `le`.
 function lex_error_module(le: lexer.TokError): (Module, TraitDecl[], ImplDecl[], FieldLines[], FunctionInlineHint[]) {
-  let m: Module = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [] };
+  let m: Module = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [], sights: [] };
   let traits: TraitDecl[] = [];
   let impls: ImplDecl[] = [];
   let flines: FieldLines[] = [];

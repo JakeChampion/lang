@@ -1,0 +1,5 @@
+import "std/string";
+
+pub function ready(): boolean {
+    return "ok".contains("o");
+}

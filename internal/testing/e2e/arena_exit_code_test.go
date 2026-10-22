@@ -86,5 +86,18 @@ func TestArenaExhaustedExitCodeSelfHostLockstep(t *testing.T) {
 				"added or removed, so one of them may be exiting with the "+
 				"wrong status", file, n, marker)
 		}
+		// A failed arena mmap has its own status, so the two causes are told
+		// apart (#12911).
+		unmapped := map[string]string{
+			"asm_ir.fern":       fmt.Sprintf("movq $%d, %%rdi", e2eharness.ExitArenaUnmapped),
+			"asm_arm64_ir.fern": fmt.Sprintf("mov x0, #%d", e2eharness.ExitArenaUnmapped),
+		}[file]
+		if !strings.Contains(text, unmapped) || !strings.Contains(text, ".Lalloc_map_fail") {
+			t.Errorf("%s: no .Lalloc_map_fail trap exiting %d (%q)", file, e2eharness.ExitArenaUnmapped, unmapped)
+		}
+	}
+	if e2eharness.ExitArenaUnmapped == want || e2eharness.ExitArenaUnmapped == e2eharness.ExitSanitizer ||
+		e2eharness.ExitArenaUnmapped >= 126 || e2eharness.ExitArenaUnmapped <= 0 {
+		t.Errorf("ExitArenaUnmapped %d collides with another runtime status or leaves 1..125", e2eharness.ExitArenaUnmapped)
 	}
 }

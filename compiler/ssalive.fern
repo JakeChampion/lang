@@ -67,23 +67,37 @@ pub function out_not_in(fl: Flow, bi: i32, si: i32): i32[] {
 // the bits set in minus from mbase when minus is not empty, and names each bit
 // left by the value it stands for.
 function set_ids(rows: i64[], base: i32, minus: i64[], mbase: i32, words: i32, values: i32[]): i32[] {
-  let out: i32[] = [];
   if (rows.len() == 0) {
-    return out;
+    return [];
   }
+  let n: i32 = 0;
   let w: i32 = 0;
   while (w < words) {
-    let x: i64 = rows[base + w];
-    if (minus.len() != 0) {
-      x = x & (minus[mbase + w] ^ 0i64 - 1i64);
-    }
+    n = n + __popcount64(set_word(rows, base, minus, mbase, w) as u64);
+    w = w + 1;
+  }
+  let out: i32[] = __alloc_i32(n);
+  let k: i32 = 0;
+  w = 0;
+  while (w < words) {
+    let x: i64 = set_word(rows, base, minus, mbase, w);
     while (x != 0i64) {
-      out = out.append(values[w * 64 + __ctz64(x as u64)]);
+      out = out.with(k, values[w * 64 + __ctz64(x as u64)]);
+      k = k + 1;
       x = x & x - 1i64;
     }
     w = w + 1;
   }
   return out;
+}
+
+// set_word is word `w` of the set at `base`, less the word of `minus`.
+function set_word(rows: i64[], base: i32, minus: i64[], mbase: i32, w: i32): i64 {
+  let x: i64 = rows[base + w];
+  if (minus.len() != 0) {
+    x = x & (minus[mbase + w] ^ 0i64 - 1i64);
+  }
+  return x;
 }
 
 // live_in_bits / live_out_bits spell a set out as one flag per block * nvals,

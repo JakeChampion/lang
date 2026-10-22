@@ -1283,6 +1283,15 @@ pub struct X86Asm {
   code: usize,
   text: u8[],
   rodata: i32[],
+  // The read-only constants, .rodata. They are laid out after the code in
+  // the executable segment, at ro_base, once relaxation has fixed the code's
+  // size. While a `.section .rodata` is open the two buffers trade places,
+  // so the directives always write `rodata`.
+  ro: i32[],
+  ro_base: i32,
+  // Where the code ends in `text`, before the padding ahead of ro_base; -1
+  // until .rodata is laid after it.
+  code_end: i32,
   bss_size: i32,
   // The linked data blob's offset relative to .text, or -1 until the
   // container chooses its layout. The default assembler uses adjacent data.
@@ -1416,7 +1425,7 @@ function x86_empty_buckets(): i32[] {
 // x86_asm_new returns an empty assembler state for the raw encoder API,
 // which emits every branch rel32 and never relaxes.
 function x86_asm_new(): X86Asm {
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], ro_base: 0 - 1, code_end: 0 - 1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 // x86_asm_new_prepared is the state for the round over text whose labels
@@ -1425,7 +1434,7 @@ function x86_asm_new(): X86Asm {
 // round reaches its definition.
 function x86_asm_new_prepared(labs: GasLabels): X86Asm {
   let n: i32 = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], ro_base: 0 - 1, code_end: 0 - 1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: x86_filled(n, 0 - 1), lab_offs: x86_filled(n, 0 - 1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
 }
 
 // x86_filled is n copies of v.
@@ -1537,19 +1546,33 @@ function x86_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
   return a;
 }
 
-// x86_rodata_label records `name` at the current .rodata offset (section
-// 1); follow it with bytes pushed onto a.rodata (e.g. via x86_rodata_quad).
-function x86_rodata_label(own a: X86Asm, name: string): X86Asm {
+// x86_rodata_label records `name` at the current offset of the data section
+// `sec` is writing, 1 for .data and 3 for .rodata; follow it with bytes pushed
+// onto a.rodata (e.g. via x86_rodata_quad).
+function x86_rodata_label(own a: X86Asm, name: string, sec: i32): X86Asm {
   let off: i32 = a.rodata.len();
-  return x86_add_label(a, name, 1, off);
+  return x86_add_label(a, name, sec, off);
 }
 
-function x86_rodata_label_at(own a: X86Asm, name: string, idx: i32): X86Asm {
+function x86_rodata_label_at(own a: X86Asm, name: string, idx: i32, sec: i32): X86Asm {
   if (idx < 0) {
-    return x86_rodata_label(a, name);
+    return x86_rodata_label(a, name, sec);
   }
   let off: i32 = a.rodata.len();
-  return x86_place_label(a, idx, 1, off);
+  return x86_place_label(a, idx, sec, off);
+}
+
+// x86_enter_section moves the assembler from section `from` to `to`, trading
+// the data and read-only buffers when one side is .rodata (section 3).
+function x86_enter_section(own a: X86Asm, from: i32, to: i32): X86Asm {
+  let leaving: boolean = from == 3;
+  let entering: boolean = to == 3;
+  if (leaving == entering) {
+    return a;
+  }
+  let active: i32[] = a.rodata;
+  let parked: i32[] = a.ro;
+  return X86Asm { ...a, rodata: parked, ro: active };
 }
 
 // x86_rodata_quad appends `v` as 8 little-endian bytes to .rodata — a `.quad`
@@ -1651,6 +1674,9 @@ function x86_final_off_at(a: X86Asm, i: i32, padded_text: i32, bss_base: i32): i
   }
   if (a.lab_secs[i] == 2) {
     return bss_base + a.lab_offs[i];
+  }
+  if (a.lab_secs[i] == 3) {
+    return a.ro_base + a.lab_offs[i];
   }
   return a.lab_offs[i];
 }
@@ -2062,6 +2088,27 @@ function x86_resolve(own a: X86Asm): X86Asm {
   return x86_patch(x86_take(a));
 }
 
+// x86_fold_ro lays .rodata after the code, 16-aligned, where the executable
+// segment maps it read-only. It runs once relaxation has fixed the code's
+// size, and is a no-op once it has run.
+function x86_fold_ro(own a: X86Asm): X86Asm {
+  if (a.ro.len() == 0) {
+    return a;
+  }
+  let text: u8[] = a.text;
+  let ro: i32[] = a.ro;
+  let end: i32 = text.len();
+  a = X86Asm { ...a, text: [], ro: [] };
+  while (text.len() % 16 != 0) {
+    text = text.append(0 as u8);
+  }
+  let base: i32 = text.len();
+  for b in ro {
+    text = text.append(b as u8);
+  }
+  return X86Asm { ...a, text: text, ro_base: base, code_end: end };
+}
+
 // x86_take moves the code and the queues out of their builders: the code
 // into `text` as it was laid down, the fixups into `fixes`, and the branch
 // records into br_offs and br_hi.
@@ -2088,6 +2135,7 @@ function x86_patch(own a: X86Asm): X86Asm {
   while (a.rodata.len() % 16 != 0) {
     a = X86Asm { ...a, rodata: a.rodata.append(0) };
   }
+  a = x86_fold_ro(a);
   let padded_text: i32 = x86_data_base(a, a.text.len());
   let bss_base: i32 = padded_text + a.rodata.len();
   let code: u8[] = a.text;
@@ -3483,6 +3531,12 @@ function x86_gas_imm3a_op(mnem: string): i32 {
     "roundsd" => {
       return 11;
     },
+    "roundps" => {
+      return 8;
+    },
+    "roundpd" => {
+      return 9;
+    },
     "pcmpestri" => {
       return 97;
     },
@@ -3504,7 +3558,7 @@ function x86_gas_imm3a_op(mnem: string): i32 {
   }
 }
 
-// x86_gas_shuf_op: the [Prefix] 0F Op /r ib shuffles; packed as pfx*256 + op.
+// x86_gas_shuf_op: the [Prefix] 0F Op /r ib shuffles and the packed compares, whose imm8 is the predicate; packed as pfx*256 + op.
 function x86_gas_shuf_op(mnem: string): i32 {
   match (mnem) {
     "pshufd" => {
@@ -3515,6 +3569,12 @@ function x86_gas_shuf_op(mnem: string): i32 {
     },
     "shufpd" => {
       return 26310;
+    },
+    "cmpps" => {
+      return 194;
+    },
+    "cmppd" => {
+      return 26306;
     },
     _ => {
       return 0 - 1;
@@ -4404,8 +4464,9 @@ function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean,
 
 // x86_gas_vex_rm emits one VEX instruction whose ModRM.rm is a memory
 // operand or a vector register: the prefix from the operand's REX bits, the
-// opcode, then the ModRM (+SIB+disp). l is VEX.L, set for the 256-bit form.
-function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string, l: boolean): X86Asm {
+// opcode, then the ModRM (+SIB+disp). l is VEX.L, set for the 256-bit form;
+// w is VEX.W, which the FMA forms read as the element width.
+function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string, l: boolean, w: boolean): X86Asm {
   if (x86_gas_has_paren(rm)) {
     let m: GasMem = x86_gas_parse_mem(rm);
     if (!x86_gas_mem_ok(m)) {
@@ -4419,7 +4480,7 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
       }
       bs = m.base >= 8;
     }
-    x86_push_arr(a.code, x86_vex([], reg >= 8, ix, bs, mmmmm, false, vvvv, l, pp));
+    x86_push_arr(a.code, x86_vex([], reg >= 8, ix, bs, mmmmm, w, vvvv, l, pp));
     buf_push_byte(a.code, op);
     return x86_gas_membytes(a, reg, m, 0);
   }
@@ -4428,7 +4489,7 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
     return x86_gas_bad(a, mnem + " " + rm);
   }
   let rr: i32 = rv & 15;
-  x86_push_arr(a.code, x86_vex([], reg >= 8, false, rr >= 8, mmmmm, false, vvvv, l, pp));
+  x86_push_arr(a.code, x86_vex([], reg >= 8, false, rr >= 8, mmmmm, w, vvvv, l, pp));
   buf_push_byte(a.code, op);
   buf_push_byte(a.code, x86_modrm(3, reg, rr));
   return a;
@@ -4451,14 +4512,14 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     if (id < 0 || !x86_gas_has_paren(src)) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    return x86_gas_vex_rm(a, mnem, 2, 1, 0, 90, id, src, true);
+    return x86_gas_vex_rm(a, mnem, 2, 1, 0, 90, id, src, true, false);
   }
   if (mnem == "vpbroadcastb" && x86_gas_has_paren(src)) {
     let md: i32 = x86_gas_ymm(dst);
     if (md < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    return x86_gas_vex_rm(a, mnem, 2, 1, 0, 120, md, src, true);
+    return x86_gas_vex_rm(a, mnem, 2, 1, 0, 120, md, src, true, false);
   }
   if (mnem == "vpbroadcastb" || mnem == "vbroadcastsd") {
     let bd: i32 = x86_gas_ymm(dst);
@@ -4505,9 +4566,9 @@ function x86_gas_vex_move(own a: X86Asm, mnem: string, src: string, dst: string)
     op = 16;
   }
   if (store) {
-    return x86_gas_vex_rm(a, mnem, 1, pp, 0, op + x86_vex_store_delta(mnem), v & 15, dst, v >= 16);
+    return x86_gas_vex_rm(a, mnem, 1, pp, 0, op + x86_vex_store_delta(mnem), v & 15, dst, v >= 16, false);
   }
-  return x86_gas_vex_rm(a, mnem, 1, pp, 0, op, v & 15, src, v >= 16);
+  return x86_gas_vex_rm(a, mnem, 1, pp, 0, op, v & 15, src, v >= 16, false);
 }
 
 // x86_vex_store_delta is how far a move's store opcode sits above its load:
@@ -4527,9 +4588,16 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 // map * 256 + opcode, or -1: vpcmpeqb (0F 74), vmulpd (0F 59), vpsubusb (0F
 // D8), vpminub (0F DA), vpand (0F DB), vpaddusb (0F DC), vpor (0F EB), vpxor
 // (0F EF), vpsubb
-// (0F F8) and vpshufb (0F38 00).
+// (0F F8), vpshufb (0F38 00) and the fused multiply-adds vfmadd213ps /
+// vfmadd213pd (0F38 A8, W0 / W1).
 function x86_vex_three_op(mnem: string): i32 {
   match (mnem) {
+    "vfmadd213ps" => {
+      return 512 + 168;
+    },
+    "vfmadd213pd" => {
+      return 512 + 168;
+    },
     "vpcmpeqb" => {
       return 256 + 116;
     },
@@ -4588,7 +4656,7 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
     return a;
   }
   let mo: i32 = x86_vex_three_op(mnem);
-  return x86_gas_vex_rm(a, mnem, mo / 256, 1, v1 & 15, mo & 255, vd & 15, ops[0], vd >= 16);
+  return x86_gas_vex_rm(a, mnem, mo / 256, 1, v1 & 15, mo & 255, vd & 15, ops[0], vd >= 16, mnem == "vfmadd213pd");
 }
 
 // BMI1 ANDN: AT&T `other, inverted, dst`, or dst = ~inverted & other.
@@ -6758,7 +6826,7 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
     }
     return a;
   }
-  if (section == 1) {
+  if (section == 1 || section == 3) {
     while (a.rodata.len() % align != 0) {
       a = X86Asm { ...a, rodata: a.rodata.append(0) };
     }
@@ -6876,7 +6944,16 @@ pub function x86_gas_assemble_words_unlinked(src: string, words: u8[]): X86Asm {
   if (x86_plan_long(plan)) {
     a = x86_relax_apply(a, plan);
   }
-  return a;
+  return x86_fold_ro(a);
+}
+
+// x86_code_len is the length of the code in `text`, without the .rodata
+// laid after it.
+pub function x86_code_len(a: X86Asm): i32 {
+  if (a.code_end >= 0) {
+    return a.code_end;
+  }
+  return a.text.len();
 }
 
 // The first round's .text layout as relaxation sees it: its relaxable
@@ -8119,7 +8196,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
   // into `a` once at the end: recording through the field would append its
   // rule arrays through a shared base and copy them per directive (#8172).
   let cfi: CfiState = cfi_new(cfi_profile_x86());
-  let section: i32 = 0;  // 0 = .text, 1 = .rodata
+  let section: i32 = 0;  // 0 = .text, 1 = .data, 2 = .bss, 3 = .rodata
   let ops: i32[] = prog.ops;
   let oi: i32 = 0;
   while (oi < ops.len()) {
@@ -8169,8 +8246,8 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
     let lbl: string = pline.label;
     let line: string = pline.body;
     if (lbl.len() > 0) {
-      if (section == 1) {
-        a = x86_rodata_label_at(a, lbl, pline.def_idx);
+      if (section == 1 || section == 3) {
+        a = x86_rodata_label_at(a, lbl, pline.def_idx, section);
       } else if (section == 2) {
         a = x86_bss_label_at(a, lbl, pline.def_idx);
       } else {
@@ -8202,21 +8279,25 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
           }
         }
       } else if (x86_str_starts_with(line, ".section")) {
+        let to: i32 = 0;
         if (x86_str_contains(line, ".rodata")) {
-          section = 1;
+          to = 3;
         } else if (x86_str_contains(line, ".bss")) {
-          section = 2;
+          to = 2;
         } else if (x86_str_contains(line, ".data")) {
-          section = 1;  // initialised data -> emit bytes like rodata
-        } else {
-          section = 0;
+          to = 1;
         }
+        a = x86_enter_section(a, section, to);
+        section = to;
       } else if (line == ".text") {
+        a = x86_enter_section(a, section, 0);
         section = 0;
       } else if (line == ".bss") {
         // The bare section shorthands, alongside `.section .bss`.
+        a = x86_enter_section(a, section, 2);
         section = 2;
       } else if (line == ".data") {
+        a = x86_enter_section(a, section, 1);
         section = 1;
       } else if (section == 2 && x86_gas_data_width(line) > 0) {
         // A data directive in .bss reserves its width for EVERY value it
@@ -8236,7 +8317,13 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
             if (qvals.len() == 1) {
               qref = pline.ref_idx;
             }
-            a = x86_rodata_quad_sym_at(a, qvals[qi], qref);
+            if (section == 3) {
+              // An address is fixed only at load, which read-only data
+              // cannot take: it belongs in .data.
+              a = X86Asm { ...a, unknown: a.unknown.append(".quad " + qvals[qi] + " in .rodata") };
+            } else {
+              a = x86_rodata_quad_sym_at(a, qvals[qi], qref);
+            }
           } else {
             // Parsed as i64, not i32: a `.quad` holds the full 64-bit
             // value, and reading it narrow lost both ends. A negative
@@ -8269,7 +8356,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
         let zn: i32 = x86_gas_atoi(x86_gas_trim(slice_unchecked(line, x86_str_indexof(line, " "), line.len())));
         if (section == 2) {
           a = x86_bss_skip(a, zn);
-        } else if (section == 1) {
+        } else if (section == 1 || section == 3) {
           a = x86_rodata_zero(a, zn);
         }
       } else if (x86_str_starts_with(line, ".byte")) {
@@ -8307,7 +8394,7 @@ function x86_gas_assemble_pass_prepared(prog: GasText, labs: GasLabels, words: u
   // Fold the recorder in before resolution: the data base sits past the
   // unwind data, so x86_patch reads its size through the field.
   a = X86Asm { ...a, cfi: cfi };
-  return x86_take(a);
+  return x86_take(x86_enter_section(a, section, 0));
 }
 
 // ---- call-frame information: `.cfi_*` directives into a .eh_frame image ----

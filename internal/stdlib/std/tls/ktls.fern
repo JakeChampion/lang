@@ -42,13 +42,13 @@ pub enum Attached { Kernel, Unchanged, Broken(i32) }
 // socket as it was.
 pub function attach(fd: i32, keys: handshake.KernelKeys): Attached {
   let none: u8[] = [];
-  if (tcp_ktls(fd, 1, 0, none) < 0) {
+  if (__ktls(fd, 1, 0, none) < 0) {
     return Unchanged;
   }
-  if (tcp_ktls(fd, 3, 0, keys.receive) < 0) {
+  if (__ktls(fd, 3, 0, keys.receive) < 0) {
     return Unchanged;
   }
-  let tx: i32 = tcp_ktls(fd, 2, 0, keys.transmit);
+  let tx: i32 = __ktls(fd, 2, 0, keys.transmit);
   if (tx < 0) {
     return Broken(0 - tx);
   }
@@ -59,13 +59,13 @@ pub function attach(fd: i32, keys: handshake.KernelKeys): Attached {
 // has one: 0, or -errno.
 pub function install(fd: i32, keys: handshake.KernelKeys): i32 {
   if (keys.receive.len() > 0) {
-    let r: i32 = tcp_ktls(fd, 3, 0, keys.receive);
+    let r: i32 = __ktls(fd, 3, 0, keys.receive);
     if (r < 0) {
       return r;
     }
   }
   if (keys.transmit.len() > 0) {
-    let t: i32 = tcp_ktls(fd, 2, 0, keys.transmit);
+    let t: i32 = __ktls(fd, 2, 0, keys.transmit);
     if (t < 0) {
       return t;
     }
@@ -86,7 +86,7 @@ pub function send_records(fd: i32, framed: [u8]): i32 {
     if (t == 23) {
       r = __send_all(fd, content);
     } else {
-      r = tcp_ktls(fd, 4, t, content);
+      r = __ktls(fd, 4, t, content);
     }
     if (r < 0) {
       return r;
@@ -138,7 +138,7 @@ pub function recv(fd: i32, wait: Duration): Read {
 // none has arrived (EAGAIN on a non-blocking socket).
 pub function read_now(fd: i32): Read {
   let buf: u8[] = __alloc_u8(16385);
-  let r: i32 = tcp_ktls(fd, 5, 0, buf);
+  let r: i32 = __ktls(fd, 5, 0, buf);
   if (r == 0 - 11) {
     return Read.NothingYet;
   }
@@ -167,7 +167,16 @@ pub function framed(t: i32, content: [u8]): u8[] {
 // a record that did not open).
 pub function alert(fd: i32, code: i32): void {
   let body: u8[] = [2 as u8, code as u8];
-  tcp_ktls(fd, 4, 21, body);
+  __ktls(fd, 4, 21, body);
+}
+
+// __ktls is tcp_ktls where the kernel has a TLS record layer, Linux's. On
+// every other target it answers ENOSYS and the call is not in the program.
+function __ktls(fd: i32, op: i32, arg: i32, data: u8[]): i32 {
+  if (target_os() == "linux" || target_os() == "android") {
+    return tcp_ktls(fd, op, arg, data);
+  }
+  return 0 - 38;
 }
 
 function __copy(src: [u8]): u8[] {

@@ -140,6 +140,16 @@ like `1.0e38f32`). The differential oracle still excludes f32 from
 its generated programs by policy (see below), but the snippets above
 are supported everywhere, not just on the native backends.
 
+## Comparison: operators are IEEE, `eq` and `cmp` are a total order
+
+`==`, `!=`, `<`, `<=`, `>` and `>=` on `f32` / `f64` are the IEEE comparisons
+everywhere, including inside a generic body bounded by `cmp.Eq` / `cmp.Ord`:
+`nan == nan` is false and `1.0 < nan` is false whether the code is concrete or
+generic. The `Eq` and `Ord` methods, `.eq()` and `.cmp()`, are a total order
+instead (NaN equals itself and sorts above every number), which is what
+`cmp.sort` and map keys use. Inlining or specialising a generic function never
+changes what its operators answer (#12697).
+
 ## Printing and round-trip
 
 The sections above cover float *arithmetic and conversion*. Float
