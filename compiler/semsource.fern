@@ -5848,13 +5848,8 @@ function reachable(blocks: ssa.SBlock[]): ssa.SBlock[] {
 // in block order, keeping parameters at their declared positions.
 function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[], dbg_vals: i32[], dbg_names: string[]): ssasem.Func {
   let has_lines: boolean = false;
-  let ids: i32[] = [];
+  let ids: i32[] = util.minus_ones(map.len());
   let kept: typeinfo.Type[] = [];
-  let i: i32 = 0;
-  while (i < map.len()) {
-    ids = ids.append(0 - 1);
-    i = i + 1;
-  }
   for b in blocks {
     for ins in b.insts {
       if (ins.kind_tag == 35) {
