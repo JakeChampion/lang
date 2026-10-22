@@ -52,7 +52,7 @@ run against it. So a diagnostic rule with only Go-side coverage is a
 rule that stops being checked at exactly the moment it starts mattering
 most.
 
-**69 of 87** codes are pinned by a conformance case. The table
+**70 of 87** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -111,7 +111,7 @@ language does not have. It is deleted.
 | `E036` | Variant constructor call error | `diag_e036` |
 | `E037` | Slice error | `diag_e037` |
 | `E038` | Call error | `err_arg_type` |
-| `E040` | Generic type-parameter inference / arity error | — |
+| `E040` | Generic type-parameter inference / arity error | `generic_call_unit_variant_binds_nothing` |
 | `E041` | Operator error | `diag_e041` |
 | `E042` | `?` operator error | `diag_e042` |
 | `E043` | Struct literal field error | `err_unknown_field` |
@@ -168,7 +168,7 @@ names each stage and a closed reason tag, including guarded reuse and why R7
 declined a map. See [`ARRAY-ALGEBRA.md`](../docs/ARRAY-ALGEBRA.md) for the
 interface.
 
-## The 19 unpinned codes
+## The 18 unpinned codes
 
 These have Go-side coverage but no conformance case. Most resisted the
 mechanical derivation used for the rest — their catalogue examples are
