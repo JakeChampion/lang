@@ -25,6 +25,8 @@
 
 import "core/int";
 import "std/crypto";
+import "std/error";
+import "core/cmp";
 
 // MlKemError — an input of the wrong length (the length it had), or a key
 // that fails the check FIPS 203 sets for it.
@@ -37,6 +39,14 @@ pub enum MlKemError {
   EncapsulationKeyModulus,
   DecapsulationKeyHash,
 }
+
+pub function (e: MlKemError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for MlKemError {}
+
+impl cmp.Display for MlKemError {}
 
 pub function (e: MlKemError) message(): string {
   match (e) {

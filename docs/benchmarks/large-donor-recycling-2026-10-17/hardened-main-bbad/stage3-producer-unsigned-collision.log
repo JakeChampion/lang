@@ -1,0 +1,195 @@
+=== RUN   TestSelfHostAllocReuseLargeDonor
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/0-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/3-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65532-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65533-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65534-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/70000-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65533-to-65533-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/3-to-70000-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/0-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/3-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65532-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65533-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65534-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/70000-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65533-to-65533-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/3-to-70000-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/0-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/3-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65532-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65533-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65534-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/70000-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65533-to-65533-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/3-to-70000-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/0-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/3-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65532-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65533-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65534-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/70000-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65533-to-65533-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/3-to-70000-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/0-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/3-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65532-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65533-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65534-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/70000-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65533-to-65533-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/3-to-70000-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/0-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/3-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65532-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65533-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65534-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/70000-to-1-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65533-to-65533-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/3-to-70000-stack-true
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/normal
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/0-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/3-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/65532-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/65533-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/65534-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/70000-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/65533-to-65533-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/3-to-70000-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/0-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/3-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/65532-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/65533-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/65534-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/70000-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/65533-to-65533-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/3-to-70000-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/0-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/3-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/65532-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/65533-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/65534-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/70000-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/65533-to-65533-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/3-to-70000-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/0-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/3-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/65532-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/65533-to-1-stack-false
+    self_host_alloc_reuse_large_test.go:125: mismatch returned with an unsigned saved return address:
+        leakcheck: allocs=3 frees=3 live_bytes=0
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/65534-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/70000-to-1-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/65533-to-65533-stack-false
+=== RUN   TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/3-to-70000-stack-false
+--- FAIL: TestSelfHostAllocReuseLargeDonor (21.80s)
+    --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux (0.41s)
+        --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal (0.13s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/0-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/3-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65532-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65533-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65534-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/70000-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65533-to-65533-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/3-to-70000-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/0-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/3-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65532-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65533-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65534-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/70000-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/65533-to-65533-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/normal/3-to-70000-stack-true (0.01s)
+        --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine (0.13s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/0-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/3-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65532-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65533-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65534-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/70000-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65533-to-65533-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/3-to-70000-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/0-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/3-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65532-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65533-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65534-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/70000-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/65533-to-65533-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/quarantine/3-to-70000-stack-true (0.01s)
+        --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized (0.15s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/0-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/3-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65532-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65533-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65534-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/70000-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65533-to-65533-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/3-to-70000-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/0-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/3-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65532-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65533-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65534-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/70000-to-1-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/65533-to-65533-stack-true (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/x86-64-linux/sanitized/3-to-70000-stack-true (0.01s)
+    --- FAIL: TestSelfHostAllocReuseLargeDonor/arm64-linux (0.54s)
+        --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/normal (0.13s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/0-to-1-stack-false (0.02s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/3-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/65532-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/65533-to-1-stack-false (0.02s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/65534-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/70000-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/65533-to-65533-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/normal/3-to-70000-stack-false (0.01s)
+        --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine (0.12s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/0-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/3-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/65532-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/65533-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/65534-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/70000-to-1-stack-false (0.02s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/65533-to-65533-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/quarantine/3-to-70000-stack-false (0.01s)
+        --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized (0.13s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/0-to-1-stack-false (0.02s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/3-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/65532-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/65533-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/65534-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/70000-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/65533-to-65533-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/sanitized/3-to-70000-stack-false (0.02s)
+        --- FAIL: TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened (0.16s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/0-to-1-stack-false (0.02s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/3-to-1-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/65532-to-1-stack-false (0.01s)
+            --- FAIL: TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/65533-to-1-stack-false (0.03s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/65534-to-1-stack-false (0.02s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/70000-to-1-stack-false (0.02s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/65533-to-65533-stack-false (0.01s)
+            --- PASS: TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened/3-to-70000-stack-false (0.01s)
+=== RUN   TestSelfHostHardenArm64
+=== RUN   TestSelfHostHardenArm64/in-process
+=== RUN   TestSelfHostHardenArm64/emit-asm
+=== RUN   TestSelfHostHardenArm64/backtrace
+=== RUN   TestSelfHostHardenArm64/refusals
+--- PASS: TestSelfHostHardenArm64 (1.75s)
+    --- PASS: TestSelfHostHardenArm64/in-process (0.27s)
+    --- PASS: TestSelfHostHardenArm64/emit-asm (0.20s)
+    --- PASS: TestSelfHostHardenArm64/backtrace (0.01s)
+    --- PASS: TestSelfHostHardenArm64/refusals (0.00s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	23.567s
+FAIL

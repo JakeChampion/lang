@@ -489,7 +489,7 @@ function successors(b: ssa.SBlock): i32[] {
 // The types that carry no unit at all: the scalars, a handle, which is its
 // descriptor, and never, which no value has (a `never[]` is always empty).
 function unit_free(t: typeinfo.Type): boolean {
-  if (semtypes.is_never(t)) {
+  if (semtypes.is_never(t) || ssasem.is_lanes(t)) {
     return true;
   }
   if let typeinfo.TypeI32(_) = t {

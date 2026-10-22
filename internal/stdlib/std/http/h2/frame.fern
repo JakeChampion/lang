@@ -17,6 +17,8 @@
 import "core/int";
 import "std/array";
 import "std/string";
+import "std/error";
+import "core/cmp";
 
 // The frame types (§6).
 pub const DATA: i32 = 0;
@@ -134,6 +136,14 @@ pub struct UnknownFrame { kind: i32, flags: i32, stream: i32, payload: u8[] }
 // FrameError — what a frame did wrong: the error code to answer with, the
 // stream the error is on (0 for a connection error), and why.
 pub struct FrameError { code: i32, stream: i32, reason: string }
+
+pub function (e: FrameError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for FrameError {}
+
+impl cmp.Display for FrameError {}
 
 pub function (e: FrameError) message(): string {
   if (e.stream == 0) {

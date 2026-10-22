@@ -26,6 +26,8 @@ import "std/net";
 import "std/string";
 import "std/tls/pem";
 import "std/tls/x509";
+import "std/error";
+import "core/cmp";
 
 // The deepest path accepted: the leaf, up to six intermediates and a root.
 const MAX_PATH: i32 = 8;
@@ -66,6 +68,14 @@ pub enum VerifyError {
   // The certificate's key is on DENIED_SPKI.
   DeniedKey(i32),
 }
+
+pub function (e: VerifyError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for VerifyError {}
+
+impl cmp.Display for VerifyError {}
 
 // One arm per variant.
 // fern-lint: allow cyclomatic-complexity

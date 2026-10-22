@@ -15,6 +15,8 @@
 import "core/int";
 import "std/crypto/ed25519";
 import "std/crypto/field25519" as fe;
+import "std/error";
+import "core/cmp";
 
 // X25519Error — a scalar or a point of the wrong length (the length it had),
 // or a peer key whose shared secret is all zeros.
@@ -23,6 +25,14 @@ pub enum X25519Error {
   PointLength(i32),
   LowOrder,
 }
+
+pub function (e: X25519Error) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for X25519Error {}
+
+impl cmp.Display for X25519Error {}
 
 pub function (e: X25519Error) message(): string {
   match (e) {

@@ -22,11 +22,21 @@
 import "core/int";
 import "std/crypto";
 import "std/crypto/field25519" as fe;
+import "std/error";
+import "core/cmp";
 
 // Ed25519Error — a seed of the wrong length (the length it had).
 pub enum Ed25519Error {
   SeedLength(i32),
 }
+
+pub function (e: Ed25519Error) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for Ed25519Error {}
+
+impl cmp.Display for Ed25519Error {}
 
 pub function (e: Ed25519Error) message(): string {
   match (e) {

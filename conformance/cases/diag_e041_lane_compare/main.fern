@@ -1,0 +1,16 @@
+// E041: a lane value has no `==` or `<`: it compares lane by lane, through
+// the lt and ne builtins, whose result is a mask.
+import "std/f64";
+
+function main(): i32 {
+  let a: f64x2 = __f64x2_splat(1.0);
+  let b: f64x2 = __f64x2_splat(2.0);
+  let m: f64x2 = __f64x2_lt(a, b);
+  if (a == b) {
+    return 1;
+  }
+  if (a < b) {
+    return 2;
+  }
+  return 0;
+}
