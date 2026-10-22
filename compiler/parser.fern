@@ -11415,7 +11415,7 @@ pub function split_top_commas(s: string): string[] {
 pub function std_qualifier(mod: Module, name: string): string {
   let want: string = "std/" + name;
   for imp in mod.imports {
-    let p: string = imp.path;
+    let p: string = util.without_fern_ext(imp.path);
     if (p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want) {
       if (imp.alias.len() > 0) {
         return imp.alias;

@@ -1100,6 +1100,8 @@ func targetSupervises(target string) bool {
 // wasm32-wasi-http, which the self-host's driver reports in the same words.
 const WasiHTTPStatefulHandler = "a wasi:http handler takes `(req, plat)` and no state: the proxy world starts a fresh instance for every request, so nothing carries from one to the next; build a stateful handler for a native target"
 
+const HandlerNeedsServe = "a top-level `handle` requires `std/serve`: add `import \"std/serve\";`"
+
 // wasiHTTPHandlerShape is E075's text for a `handle` of n parameters on
 // wasm32-wasi-http, in the self-host driver's words.
 func wasiHTTPHandlerShape(n int) string {
@@ -5643,7 +5645,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		// a second, positionless error about a call nobody wrote. The
 		// proxy world serves through its incoming-handler export, so a
 		// wasi-http handler gets no serve loop.
-		if c.checkHandlerStatePairing(prog) && !wasiHTTP {
+		if !wasiHTTP && !handlerImportsServe(prog) {
+			c.errfCode(h.P, "E001", "%s", HandlerNeedsServe)
+		} else if c.checkHandlerStatePairing(prog) && !wasiHTTP {
 			prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog, supervised))
 		}
 	}
@@ -23934,6 +23938,26 @@ func synthesiseWasiHandle() *ast.FuncDecl {
 	}
 }
 
+// handlerImportsServe also accepts flat fixtures that provide the serve API.
+func handlerImportsServe(prog *ast.Program) bool {
+	// Flat checker fixtures can provide the serve helpers directly.
+	if fn := findDecl(prog, "serve__config"); fn != nil && fn.SourceModule == prog.EntryModule {
+		return true
+	}
+	for path := range prog.DirectImports[prog.EntryModule] {
+		path = strings.TrimSuffix(path, ".fern")
+		if path == "stdlib://std/serve" || strings.HasSuffix(path, "/std/serve") {
+			return true
+		}
+	}
+	for _, imp := range prog.Imports {
+		if strings.TrimSuffix(imp.Path, ".fern") == "std/serve" {
+			return true
+		}
+	}
+	return false
+}
+
 // synthesiseHandleMain builds the main of a handler-shaped program: the
 // handler served under the supervisor (docs/CRASH-ONLY-SERVE.md) on
 // `PORT`, with `init`'s config and state where it answers them —
@@ -23961,8 +23985,7 @@ func synthesiseWasiHandle() *ast.FuncDecl {
 // export wrapper that invokes the user's `handle` directly and drops
 // this main before the tree-shake.
 //
-// The calls name std/serve's entries as modload mangles them; a program
-// that does not import std/serve is told they are undefined.
+// The caller checks for std/serve before it creates these calls.
 func synthesiseHandleMain(prog *ast.Program, supervised bool) *ast.FuncDecl {
 	pos := ast.Position{}
 	serveRef := func(name string, args ...ast.Expr) *ast.Call {
