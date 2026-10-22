@@ -7357,6 +7357,9 @@ function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
     if (is_integer(lt) && is_integer(rt)) {
       return t_bool();
     }
+    if (type_eq(lt, t_char()) && type_eq(rt, t_char())) {
+      return t_bool();
+    }
     if (float_operands_agree(lt, rt)) {
       return t_bool();
     }
@@ -16001,7 +16004,8 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
       let oki_o: boolean = o_both_int && int_operands_agree(olt, ort, b.left, b.right);
       let okf_o: boolean = float_operands_agree(olt, ort);
       let oks_o: boolean = type_eq(olt, t_string()) && type_eq(ort, t_string());
-      if (!oki_o && !okf_o && !oks_o) {
+      let okc_o: boolean = type_eq(olt, t_char()) && type_eq(ort, t_char());
+      if (!oki_o && !okf_o && !oks_o && !okc_o) {
         if (type_eq(olt, ort) && is_composite_type(olt)) {
           // Ordering two values of the SAME composite type is
           // structural comparison via the type's `Ord` impl —
