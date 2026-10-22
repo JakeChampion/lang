@@ -157,6 +157,7 @@ language does not have. It is deleted.
 | `E082` | a closure captures a borrowed view | `diag_e082` |
 | `E083` | a `for` subject is not iterable | `diag_e083` |
 | `E084` | `main` takes a parameter or returns a type that cannot be an exit status | `diag_e084` |
+| `E085` | a lane value is held inside another value | `diag_e085` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |

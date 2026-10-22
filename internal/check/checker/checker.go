@@ -2184,6 +2184,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__round_f64"] = f64ToF64Builtin
 	c.info.FuncSigs["__trunc_f64"] = f64ToF64Builtin
 	c.info.FuncSigs["__abs_f64"] = f64ToF64Builtin
+	c.registerLaneBuiltins()
 	// f64_bits / f64_from_bits — same idea for 64-bit floats.
 	// The interp owns the only implementation today; the native
 	// + wasm backends route f64 / i64 through their own
@@ -5769,7 +5770,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		// an integer op — which is how monomorph's post-clone re-check
 		// came to reject `one(1.5 + 2.5)` with "expected f64, got i32".
 		// String concatenation is flagged separately.
-		if b.IntWidth == 0 && !b.IsFloat && !b.IsStringConcat {
+		if b.IntWidth == 0 && !b.IsFloat && !b.IsLanes && !b.IsStringConcat {
 			switch b.Op {
 			case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|", "<<|":
 				b.IntWidth = 32
@@ -8846,6 +8847,9 @@ func isScalarBuiltinMethod(mangled string) bool {
 }
 
 type checker struct {
+	// callee is the callee expression the call arm is checking, so a function
+	// named there is told from one named as a value.
+	callee ast.Expr
 	// funcSources scopes free-function lookup to the referring module's
 	// imports. Builtins and synthetic functions have no source module.
 	funcSources map[string]string
@@ -9665,13 +9669,16 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 		}
 		for i := range fn.Params {
 			c.checkTypeKnown(fn.Params[i].Type, params, paramPos(fn.Params[i], fn.P))
+			c.lanesContained(fn.Params[i].Type, paramPos(fn.Params[i], fn.P))
 		}
 		c.checkTypeKnown(fn.ReturnType, params, fn.P)
+		c.lanesContained(fn.ReturnType, fn.P)
 		if fn.Body != nil {
 			ast.Walk(fn.Body, func(n ast.Node) bool {
 				forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
 					if *t != nil {
 						c.checkTypeKnown(*t, params, pos)
+						c.lanesContained(*t, pos)
 					}
 				})
 				return true
@@ -9682,6 +9689,7 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 		params := typeParamSet(sd.TypeParams)
 		for i := range sd.Fields {
 			c.checkTypeKnown(sd.Fields[i].Type, params, paramPos(sd.Fields[i], sd.P))
+			c.lanesHeld(sd.Fields[i].Type, paramPos(sd.Fields[i], sd.P))
 		}
 	}
 	for _, ed := range prog.Enums {
@@ -9689,6 +9697,7 @@ func (c *checker) validateKnownTypes(prog *ast.Program) {
 		for i := range ed.Variants {
 			for j := range ed.Variants[i].Payloads {
 				c.checkTypeKnown(ed.Variants[i].Payloads[j], params, ed.Variants[i].P)
+				c.lanesHeld(ed.Variants[i].Payloads[j], ed.Variants[i].P)
 			}
 		}
 	}
@@ -10280,14 +10289,10 @@ func (c *checker) tryConvertErrToDyn(n *ast.TryOp, srcEnum, retEnum ast.EnumType
 	if !ok {
 		return nil, false
 	}
-	tn, ok := methodTypeName(srcEnum.Args[1])
-	if !ok {
-		return nil, false
-	}
 	// E must implement EVERY trait in the dyn-error set — `dyn A + B` ⇐ E iff
 	// E impls A AND B (the same impl-all gate the multi-trait coercion uses).
 	// A single-trait `dyn Error` is the 1-element case.
-	if !c.implementsAllDynTraits(dt, tn) {
+	if !c.canBoxInto(dt, srcEnum.Args[1]) {
 		return nil, false
 	}
 	c.tryConvN++
@@ -11508,7 +11513,7 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 			// Coercion gate: the concrete must implement EVERY trait in
 			// the set (`dyn A + B` ⇐ C iff C impls A AND B). Record the
 			// whole set so tree-shaking roots all the impl methods.
-			if tn, ok := methodTypeName(srcType); ok && c.implementsAllDynTraits(dt, tn) {
+			if tn, ok := methodTypeName(srcType); ok && c.canBoxInto(dt, srcType) {
 				if c.info.DynCoercions == nil {
 					c.info.DynCoercions = map[ast.Expr]DynCoercion{}
 				}
@@ -11731,19 +11736,57 @@ func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string) bool {
 	return true
 }
 
+// canBoxInto checks concrete implementations or the source parameter's declared bounds.
+func (c *checker) canBoxInto(dt ast.DynTraitType, src ast.Type) bool {
+	param, isParam := src.(ast.ParamType)
+	if !isParam {
+		tn, ok := methodTypeName(src)
+		return ok && c.implementsAllDynTraits(dt, tn)
+	}
+	decl := c.typeParamDecl(param.Name)
+	if decl == nil {
+		return false
+	}
+	direct := decl.Bounds[param.Name]
+	traits := c.expandTraits(direct)
+	for i, trait := range dt.Traits {
+		if !slices.Contains(traits, trait) {
+			return false
+		}
+		// A bound does not establish the associated types of a concrete implementation.
+		if len(dt.AssocFor(i)) > 0 {
+			return false
+		}
+		if want := dt.ArgsFor(i); len(want) > 0 {
+			matched := false
+			for j, bound := range direct {
+				if args := decl.BoundArgs[param.Name]; bound == trait && j < len(args) && typeArgsEqual(args[j], want) {
+					matched = true
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // missingDynTraits returns a human-readable description of which trait(s)
 // in the `dyn` set the concrete type `src` fails to implement — used to
 // name the offending trait(s) in coercion-failure diagnostics. Returns
 // the single trait spelling for a 1-element gap (so the single-trait
 // message reads exactly as before).
 func (c *checker) missingDynTraits(dt ast.DynTraitType, src ast.Type) string {
-	tn, ok := methodTypeName(src)
-	if !ok {
-		return demangle(dt.Trait0())
+	if _, ok := methodTypeName(src); !ok {
+		if _, param := src.(ast.ParamType); !param {
+			return demangle(dt.Trait0())
+		}
 	}
 	var missing []string
-	for _, tr := range dt.Traits {
-		if !c.info.Impls[tr][tn] {
+	for i, tr := range dt.Traits {
+		one := ast.NewDynTraitTypeFull([]string{tr}, [][]ast.Type{dt.ArgsFor(i)}, [][]ast.AssocBinding{dt.AssocFor(i)})
+		if !c.canBoxInto(one, src) {
 			missing = append(missing, demangle(tr))
 		}
 	}
@@ -12002,12 +12045,7 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 		if _, isDyn := src.(ast.DynTraitType); isDyn {
 			return false // distinct dyn types: only Equal (handled above) assigns
 		}
-		if tn, ok := methodTypeName(src); ok {
-			// Impl-ALL: a concrete coerces to `dyn A + B` iff it impls
-			// every trait in the set.
-			return c.implementsAllDynTraits(dt, tn)
-		}
-		return false
+		return c.canBoxInto(dt, src)
 	}
 	// WIT resource handles (P5 — docs/WIT-BRING-YOUR-OWN.md): an owned handle
 	// `own R` coerces to a borrow `borrow R` of the same resource (you may
@@ -18434,7 +18472,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// The cast converts the local's value; the local's own uses
 			// decide its width, and settleLitLocals re-stamps InnerType.
 		} else if ft, innerIsFloat := inner.(ast.FloatType); innerIsFloat {
-			if _, tgtIsInt := n.Target.(ast.NumberType); tgtIsInt {
+			// A concrete float keeps its own width across a cast.
+			if _, tgtIsInt := n.Target.(ast.NumberType); tgtIsInt || !ft.Polymorphic {
 				floatHint := ast.FloatType(ft)
 				if ft.Polymorphic {
 					floatHint = ast.FloatType{Width: 64}
@@ -18735,6 +18774,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return nil
 		}
 		if sig, ok := c.visibleFuncSig(n.Name); ok {
+			if lanesInside(sig) && c.callee != ast.Expr(n) {
+				c.errfCode(n.P, "E085", "function %s takes or returns a lane value and cannot be used as a value; a lane value crosses only a direct call", n.Name)
+			}
 			return sig
 		}
 		if cd, ok := c.consts[n.Name]; ok && c.moduleSeesVariant(c.currentModule(), cd.SourceModule) {
@@ -18901,6 +18943,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		for _, el := range n.Elems {
 			c.settleNumeric(el, elemT)
 		}
+		c.lanesContained(ast.ArrayType{Elem: elemT}, n.P)
 		return ast.ArrayType{Elem: elemT}
 	case *ast.Index:
 		at := c.checkExpr(n.Array, s)
@@ -18982,6 +19025,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		return nil
 	case *ast.Call:
+		c.laneIndexArg(n)
 		// Snapshot the destination type this call's result flows into
 		// (set by `let x: T = …` / `return …`) and clear the field so
 		// it can't leak into the argument sub-expressions we check
@@ -19621,7 +19665,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// by the node that knows. Same type it would have returned.
 			callee = c.info.FuncSigs[id.Name]
 		} else {
+			prevCallee := c.callee
+			c.callee = n.Callee
 			callee = c.checkExpr(n.Callee, s)
+			c.callee = prevCallee
 			// A call in callee position has no destination of its own to
 			// settle its literals, so it takes an unannotated binding's
 			// defaults (#11488).
@@ -20159,6 +20206,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			fallthrough
 		case "-", "*", "/":
+			if isLanes(lt) || isLanes(rt) {
+				return c.lanesArith(n, lt, rt)
+			}
 			// Composite-type arithmetic operator overloading (`+`→add,
 			// `-`→sub, `*`→mul, `/`→div). See compositeOpOverload / #2706.
 			if rtt, handled := c.compositeOpOverload(n, lt, rt, s); handled {
@@ -20360,6 +20410,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			return common
 		case "<", ">", "<=", ">=":
+			if isLanes(lt) || isLanes(rt) {
+				c.lanesCompare(n, lt, rt)
+				return ast.BoolType{}
+			}
 			if c.paramComparable(lt, rt, "cmp") {
 				n.ParamCmp = true
 				return ast.BoolType{}
@@ -20451,6 +20505,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			return ast.BoolType{}
 		case "==", "!=":
+			if isLanes(lt) || isLanes(rt) {
+				c.lanesCompare(n, lt, rt)
+				return ast.BoolType{}
+			}
 			// Polymorphic-literal compare: settle the literal
 			// side to the concrete side's type before the
 			// equality check fires. `(x: i64) == 0` should not
@@ -20563,6 +20621,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// Propagate polymorphism — `-3.14` should still
 				// be polymorphic so it can settle to f32 / f64.
 				return ft
+			}
+			if isLanes(t) {
+				return t
 			}
 			// Unary minus over a trait-bounded TYPE PARAMETER: `-a` where
 			// `a: T` and `T: Neg` desugars to `a.neg()`, resolved through the
@@ -20766,6 +20827,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			switch t.(type) {
 			case ast.VoidType:
 				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
+			case ast.LanesType:
+				c.errfCode(n.P, "E085", "a lambda cannot capture %q of type %s; a lane value lives only in a local, a parameter or a result", name, t)
 			default:
 				c.captureView(n.P, name, t)
 				captured[name] = t
@@ -20795,6 +20858,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.Captures = append(n.Captures, ast.Param{Name: name, Type: captured[name]})
 		}
 		c.restampLitCaptures(n.Captures, s)
+		if lanesSignature(n.Params, n.ReturnType) {
+			c.errfCode(n.P, "E085", "a lambda cannot take or return a lane value; a lane value crosses only a direct call")
+		}
 		return paramSig(n.Params, n.ReturnType)
 	case *ast.BlockExpr:
 		return c.checkBlockExpr(n, s)
@@ -21178,14 +21244,21 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		return ast.StructType{Name: sd.Name}
 	case *ast.TupleLit:
+		hint, _ := c.expectedType.(ast.TupleType)
+		c.expectedType = nil
 		elems := make([]ast.Type, len(n.Elems))
 		for i, e := range n.Elems {
+			if i < len(hint.Elems) {
+				c.expectedType = hint.Elems[i]
+			}
 			t := c.checkExpr(e, s)
+			c.expectedType = nil
 			if t == nil {
 				return nil
 			}
 			elems[i] = t
 		}
+		c.lanesContained(ast.TupleType{Elems: elems}, n.P)
 		return ast.TupleType{Elems: elems}
 	case *ast.MapLit:
 		c.needCoreMap(n.P)
@@ -23324,6 +23397,141 @@ func (c *checker) requireFloat(p ast.Position, t ast.Type, op string) {
 func isFloat(t ast.Type) bool {
 	_, ok := t.(ast.FloatType)
 	return ok
+}
+
+// laneBuiltinVerbs are the lane builtins after their `__f64x2_` / `__f32x4_`
+// prefix (docs/SIMD-GENERIC-KERNELS.md §6).
+var laneBuiltinVerbs = []string{"splat", "of", "lane", "mul_add", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "load", "with"}
+
+// registerLaneBuiltins declares the lane builtins of f64x2 and f32x4. `lane`
+// reads one element, `lt` and `ne` give a mask, `select(a, b, m)` takes a
+// where m is set, and `with` gives the array with the lanes written at i.
+func (c *checker) registerLaneBuiltins() {
+	i32 := ast.NumberType{}
+	for _, lt := range []ast.LanesType{{Width: 64}, {Width: 32}} {
+		p := "__" + lt.String() + "_"
+		e := ast.FloatType{Width: lt.Width}
+		arr := ast.ArrayType{Elem: e}
+		of := make([]ast.Type, lt.Lanes())
+		for i := range of {
+			of[i] = e
+		}
+		sigs := map[string]*ast.FuncType{
+			"splat":   {Params: []ast.Type{e}, Result: lt},
+			"of":      {Params: of, Result: lt},
+			"lane":    {Params: []ast.Type{lt, i32}, Result: e},
+			"mul_add": {Params: []ast.Type{lt, lt, lt}, Result: lt},
+			"select":  {Params: []ast.Type{lt, lt, lt}, Result: lt},
+			"load":    {Params: []ast.Type{arr, i32}, Result: lt},
+			"with":    {Params: []ast.Type{arr, i32, lt}, Result: arr},
+		}
+		for _, v := range []string{"sqrt", "abs", "floor", "round"} {
+			sigs[v] = &ast.FuncType{Params: []ast.Type{lt}, Result: lt}
+		}
+		for _, v := range []string{"min", "max", "lt", "ne"} {
+			sigs[v] = &ast.FuncType{Params: []ast.Type{lt, lt}, Result: lt}
+		}
+		for _, v := range laneBuiltinVerbs {
+			c.info.FuncSigs[p+v] = sigs[v]
+		}
+	}
+}
+
+// laneIndexArg reports a `lane` builtin whose index is not an integer literal
+// below the lane count. The instruction holds the index, so it is fixed when
+// the program compiles.
+func (c *checker) laneIndexArg(n *ast.Call) {
+	id, ok := n.Callee.(*ast.Ident)
+	if !ok || len(n.Args) != 2 {
+		return
+	}
+	lanes := int64(0)
+	switch id.Name {
+	case "__f64x2_lane":
+		lanes = 2
+	case "__f32x4_lane":
+		lanes = 4
+	default:
+		return
+	}
+	if lit, ok := n.Args[1].(*ast.NumberLit); ok && !lit.IsFloat && lit.Value >= 0 && lit.Value < lanes {
+		return
+	}
+	c.errfCode(n.Args[1].Pos(), "E038", "argument 2 to %q: the lane index is an integer literal from 0 to %d", id.Name, lanes-1)
+}
+
+// lanesInside reports a lane type nested in `t`: an element of an array, a
+// slice or a tuple, a parameter or the result of a function type, or a type
+// argument. A lane value is 16 bytes, and no element or field is wider than 8.
+func lanesInside(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.ArrayType:
+		return holdsLanes(x.Elem)
+	case ast.SliceType:
+		return holdsLanes(x.Elem)
+	case ast.TupleType:
+		return slices.ContainsFunc(x.Elems, holdsLanes)
+	case *ast.FuncType:
+		return slices.ContainsFunc(x.Params, holdsLanes) || holdsLanes(x.Result)
+	case ast.StructType:
+		return slices.ContainsFunc(x.Args, holdsLanes)
+	case ast.EnumType:
+		return slices.ContainsFunc(x.Args, holdsLanes)
+	}
+	return false
+}
+
+func holdsLanes(t ast.Type) bool {
+	return isLanes(t) || lanesInside(t)
+}
+
+// lanesSignature reports a parameter or result of a lane type.
+func lanesSignature(params []ast.Param, result ast.Type) bool {
+	return isLanes(result) || slices.ContainsFunc(params, func(p ast.Param) bool { return isLanes(p.Type) })
+}
+
+// lanesContained reports E085 for a type that nests a lane type in another.
+func (c *checker) lanesContained(t ast.Type, pos ast.Position) {
+	if t != nil && lanesInside(t) {
+		c.errfCode(pos, "E085", "%s holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", t)
+	}
+}
+
+// lanesHeld reports E085 for a field or payload type that holds a lane type.
+func (c *checker) lanesHeld(t ast.Type, pos ast.Position) {
+	if t != nil && holdsLanes(t) {
+		c.errfCode(pos, "E085", "a field or payload of type %s holds a lane value; a lane value lives only in a local, a parameter or a result", t)
+	}
+}
+
+func isLanes(t ast.Type) bool {
+	_, ok := t.(ast.LanesType)
+	return ok
+}
+
+// lanesArith types `+ - * /` with a lane operand: two values of one lane
+// type give that type, and anything else is E009.
+func (c *checker) lanesArith(n *ast.Binary, lt, rt ast.Type) ast.Type {
+	if ast.Equal(lt, rt) {
+		n.IsLanes = true
+		return lt
+	}
+	what := "numeric"
+	if n.Op == "+" {
+		what = "numeric or string"
+	}
+	c.errfCode(n.P, "E009", "operator %q requires matching %s operands, got %s and %s", n.Op, what, lt, rt)
+	return lt
+}
+
+// lanesCompare reports a comparison with a lane operand. A lane comparison
+// has a mask for its answer, which the `lt` and `ne` builtins give.
+func (c *checker) lanesCompare(n *ast.Binary, lt, rt ast.Type) {
+	t := lt
+	if !isLanes(t) {
+		t = rt
+	}
+	c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: a lane value compares lane by lane, through __%s_lt and __%s_ne", t, n.Op, t, t)
 }
 
 // isInteger reports whether t is an integer type (any width / signedness).

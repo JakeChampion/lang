@@ -1772,6 +1772,7 @@ func New() *Interp {
 	i.Builtins["__round_f64"] = mkUnaryF64Builtin("__round_f64", math.Round)
 	i.Builtins["__trunc_f64"] = mkUnaryF64Builtin("__trunc_f64", math.Trunc)
 	i.Builtins["__abs_f64"] = mkUnaryF64Builtin("__abs_f64", math.Abs)
+	i.registerLaneBuiltins()
 	i.Builtins["now_unix_ms"] = &Builtin{Fn: builtinNowUnixMS}
 	i.Builtins["now_ns"] = &Builtin{Fn: builtinNowNS}
 	i.Builtins["monotonic_ns"] = &Builtin{Fn: builtinMonotonicNS}
@@ -8450,6 +8451,9 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 				}
 				return Float{V: nv, Width: f.Width}, nil
 			}
+			if l, ok := v.(Lanes); ok {
+				return lanesNeg(l), nil
+			}
 			return nil, fmt.Errorf("interp: unary - on %T", v)
 		case "!":
 			b, _ := v.(Bool)
@@ -9409,6 +9413,11 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 				return Bool(uint64(ln) >= uint64(rn)), nil
 			}
 			return Bool(signExtend(ln) >= signExtend(rn)), nil
+		}
+	}
+	if ll, ok := l.(Lanes); ok {
+		if rl, ok := r.(Lanes); ok {
+			return lanesBinary(b.Op, ll, rl)
 		}
 	}
 	if lf, ok := l.(Float); ok {

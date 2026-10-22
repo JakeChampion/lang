@@ -136,6 +136,11 @@ var intrinsicFamilies = []intrinsicFamily{
 			return strings.HasPrefix(n, "__rc_") || strings.HasPrefix(n, "__arr_push_shared_")
 		})
 	}},
+	{"lane", func(m map[string]*sigShape) []string {
+		return matching(m, func(n string, _ *sigShape) bool {
+			return strings.HasPrefix(n, "__f64x2_") || strings.HasPrefix(n, "__f32x4_")
+		})
+	}},
 	{"byte scan", func(m map[string]*sigShape) []string {
 		return matching(m, func(n string, _ *sigShape) bool {
 			for _, s := range []string{"__sum_bytes", "__ascii_run", "__count_byte", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__memchr_bytes", "__rmemchr_bytes", "__scan_set_bytes", "__count_runs_bytes", "__rmemchr", "__mismatch"} {

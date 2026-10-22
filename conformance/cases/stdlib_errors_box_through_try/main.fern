@@ -1,0 +1,47 @@
+import "std/error";
+import "core/cmp";
+import "std/brotli";
+import "std/deflate";
+import "std/zstd";
+import "std/json";
+import "std/http";
+import "std/wasi_http";
+import "std/http/form";
+import "std/http/huffman";
+
+function boxed[E: error.Error](e: E): Result[i32, dyn error.Error] {
+  let failed: Result[i32, E] = Err(e);
+  let value: i32 = failed?;
+  return Ok(value);
+}
+
+function report[E: error.Error + cmp.Display](e: E): void {
+  let text: string = e.to_string();
+  match (boxed(e)) {
+    Err(value) => {
+      if (value.message() != text) { print("display differs from message"); }
+      print(value.message());
+    },
+    Ok(_) => { print("unexpected success"); }
+  }
+}
+
+function main(): i32 {
+  report(brotli.BrotliMalformed("code"));
+  report(deflate.Malformed("code"));
+  report(zstd.ZstdMalformed("code"));
+  report(json.JsonError { message: "bad value", offset: 5, line: 2, col: 3 });
+  report(http.fail(400, "bad body"));
+  report(http.NotUtf8);
+  report(wasi_http.Field("host"));
+  report(wasi_http.Code(7));
+  report(wasi_http.BodyPastCap);
+  report(wasi_http.CutShort);
+  report(wasi_http.Lost);
+  report(http.UnsupportedMediaType("text/plain"));
+  report(http.WrongShape("missing name"));
+  report(form.NotAForm("text/plain"));
+  report(huffman.InvalidCode);
+  report(huffman.ExceedsRoom);
+  return 0;
+}

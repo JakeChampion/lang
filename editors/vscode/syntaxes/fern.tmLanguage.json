@@ -64,7 +64,7 @@
       "patterns": [
         {
           "name": "support.type.primitive.fern",
-          "match": "\\b(i32|i64|u8|u32|u64|usize|f32|f64|boolean|void|string)\\b"
+          "match": "\\b(i32|i64|u8|u32|u64|usize|f32|f64|f64x2|f32x4|boolean|void|string)\\b"
         },
         {
           "name": "entity.name.type.fern",

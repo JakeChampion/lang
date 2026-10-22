@@ -216,6 +216,19 @@ function t_f32(): typeinfo.Type {
   return typeinfo.TypeFloat { width: 32, polymorphic: false };
 }
 
+// t_lanes is the lane type of element width `width`, 64 for f64x2 and 32 for
+// f32x4.
+function t_lanes(width: i32): typeinfo.Type {
+  return typeinfo.TypeLanes { width: width };
+}
+
+function is_lanes(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeLanes(_) = t {
+    return true;
+  }
+  return false;
+}
+
 function is_float(t: typeinfo.Type): boolean {
   if let typeinfo.TypeFloat(f) = t {
     return true;
@@ -657,6 +670,20 @@ function is_f64_primitive(name: string): boolean {
   return false;
 }
 
+// The lane builtins, one set per lane type (docs/SIMD-GENERIC-KERNELS.md §6).
+// typeinfo.lane_builtin_params and lane_builtin_result give their signatures.
+function is_lane_builtin(name: string): boolean {
+  let names: string[] = [
+    "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_mul_add", "__f64x2_sqrt",
+    "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max",
+    "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with",
+    "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_mul_add", "__f32x4_sqrt",
+    "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
+    "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with",
+  ];
+  return typeinfo.lane_builtin_width(name) > 0 && util.has_str(names, name);
+}
+
 // The bit-counting intrinsics, one name per operand width because the width is
 // what the backend needs and the argument's static type is what fixes it. Each
 // answers an i32 count.
@@ -690,6 +717,9 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   }
   if (argc == 1 && is_f64_primitive(name)) {
     return t_float();
+  }
+  if (is_lane_builtin(name) && argc == typeinfo.lane_builtin_params(name).len()) {
+    return typeinfo.lane_builtin_result(name);
   }
   if (argc == 1 && is_bit_count(name)) {
     return t_i32();
@@ -762,6 +792,11 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 0 && name == "__task_cur") {
     return t_i32();
   }
+  return intrinsic_result_task(name, argc);
+}
+
+// intrinsic_result_task continues intrinsic_result's table.
+function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__task_enter") {
     return t_void();
   }
@@ -836,6 +871,11 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__load_ptr") {
     return t_usize();
   }
+  return intrinsic_result_memory(name, argc);
+}
+
+// intrinsic_result_memory continues intrinsic_result_task's table.
+function intrinsic_result_memory(name: string, argc: i32): typeinfo.Type {
   if (argc == 2 && name == "__store_u8") {
     return t_void();
   }
@@ -953,6 +993,9 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   }
   if (is_f64_primitive(name)) {
     return ([t_float()], true);
+  }
+  if (is_lane_builtin(name)) {
+    return (typeinfo.lane_builtin_params(name), true);
   }
   if (name == "__clz32" || name == "__ctz32" || name == "__popcount32") {
     return ([t_u32()], true);
@@ -1237,6 +1280,26 @@ function raw_floor_at(t: SigTable, name: string): i32 {
   return 0 - 1;
 }
 
+// lane_index_diags is E038 for a `lane` builtin whose index is not an integer
+// literal below the lane count. The instruction holds the index, so it is
+// fixed when the program compiles.
+function lane_index_diags(name: string, c: ast.ExprCall): util.Diag[] {
+  if (c.args.len() != 2 || !is_lane_builtin(name) || typeinfo.lane_builtin_verb(name) != "lane") {
+    return [];
+  }
+  let lanes: i32 = 128 / typeinfo.lane_builtin_width(name);
+  if let ast.ExprNumber(n) = c.args[1] {
+    let start: i32 = 0;
+    if (parser.is_hex_lit(n.text)) {
+      start = 2;
+    }
+    if (!n.is_float && !parser.is_quoted_literal(n) && parser.magnitude_fits(n.text, start, util.i32_to_string(lanes - 1))) {
+      return [];
+    }
+  }
+  return [dg_at("E038", "argument 2 to \"" + name + "\": the lane index is an integer literal from 0 to " + util.i32_to_string(lanes - 1), expr_line(c.args[1]), expr_col(c.args[1]))];
+}
+
 // free_builtin_sig is the callable a free builtin denotes, so a call to one is
 // argument-checked by the same callable_arg_diags a call to a declared
 // function goes through. Unknown for a name that is not a free builtin, and
@@ -1272,6 +1335,9 @@ pub function type_debug(t: typeinfo.Type): string {
     },
     typeinfo.TypeFloat(f) => {
       return float_label(f);
+    },
+    typeinfo.TypeLanes(l) => {
+      return typeinfo.lanes_spelling(l.width);
     },
     typeinfo.TypeArray(a) => {
       return "array<" + type_debug(a.elem) + ">";
@@ -1479,6 +1545,16 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
       match (b) {
         typeinfo.TypeFloat(bf) => {
           return af.width == bf.width;
+        },
+        _ => {
+          return false;
+        }
+      }
+    },
+    typeinfo.TypeLanes(al) => {
+      match (b) {
+        typeinfo.TypeLanes(bl) => {
+          return al.width == bl.width;
         },
         _ => {
           return false;
@@ -7290,10 +7366,26 @@ function binary_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.T
   return operator_result_type(b, sl, sr, s);
 }
 
+// lanes_result_type types a binary with a lane operand: two values of one lane
+// type under `+ - * /` give that type. A comparison, which E041 refuses, is a
+// boolean, so no second error follows it.
+function lanes_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): typeinfo.Type {
+  if (util.has_str(["==", "!=", "<", ">", "<=", ">="], b.op)) {
+    return t_bool();
+  }
+  if (util.has_str(["+", "-", "*", "/"], b.op) && type_eq(lt, rt)) {
+    return lt;
+  }
+  return t_unknown("lane operands need one lane type and an arithmetic operator");
+}
+
 // operator_result_type types `b` over its settled operand types.
 function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type, s: Scope): typeinfo.Type {
   // `+` is overloaded across i32 (arithmetic) and string
   // (concatenation). Other arithmetic ops are i32-only.
+  if (is_lanes(lt) || is_lanes(rt)) {
+    return lanes_result_type(b, lt, rt);
+  }
   if (b.op == "+") {
     if (type_eq(lt, t_string()) && type_eq(rt, t_string())) {
       return t_string();
@@ -7347,6 +7439,12 @@ function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
     }
     return t_unknown("arithmetic op `" + b.op + "` requires matching i32 or f64 operands");
   }
+  return bitwise_result_type(b, lt, rt, s);
+}
+
+// bitwise_result_type continues operator_result_type: the bitwise, shift,
+// comparison and logical operators.
+function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type, s: Scope): typeinfo.Type {
   // Bitwise expressions retain their operand type. Without this a u32
   // mask becomes unknown and a following wide literal loses its context.
   if (b.op == "&" || b.op == "|" || b.op == "^") {
@@ -7437,7 +7535,7 @@ function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typei
     if (is_integer(ot)) {
       return ot;
     }
-    if (is_float(ot)) {
+    if (is_float(ot) || is_lanes(ot)) {
       return ot;
     }
     // Composite operator overload (#2706): `-a` on a struct / enum is
@@ -8725,6 +8823,9 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (name == "f64") {
     return t_float();
   }
+  if (typeinfo.lanes_width(name) > 0) {
+    return t_lanes(typeinfo.lanes_width(name));
+  }
   if (name == "void") {
     return t_void();
   }
@@ -9528,6 +9629,9 @@ pub function type_label(t: typeinfo.Type): string {
     },
     typeinfo.TypeFloat(f) => {
       return float_label(f);
+    },
+    typeinfo.TypeLanes(l) => {
+      return typeinfo.lanes_spelling(l.width);
     },
     typeinfo.TypeArray(a) => {
       return array_label(a);
@@ -14790,6 +14894,85 @@ function operand_open(t: typeinfo.Type): boolean {
   return is_unknown(t);
 }
 
+// lanes_inside reports a lane type nested in `t`: an element of an array or a
+// tuple, a map column, a parameter or the result of a function type, or a
+// type argument. A lane value is 16 bytes, and no element or field is wider
+// than 8.
+function lanes_inside(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeArray(a) => {
+      return holds_lanes(a.elem);
+    },
+    typeinfo.TypeTuple(tp) => {
+      return any_holds_lanes(tp.elements);
+    },
+    typeinfo.TypeMap(m) => {
+      return holds_lanes(m.key) || holds_lanes(m.value);
+    },
+    typeinfo.TypeFunc(f) => {
+      return any_holds_lanes(f.param_types) || holds_lanes(f.ret_type);
+    },
+    typeinfo.TypeStruct(st) => {
+      return any_holds_lanes(st.args);
+    },
+    typeinfo.TypeUnion(u) => {
+      return any_holds_lanes(u.args);
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function holds_lanes(t: typeinfo.Type): boolean {
+  return is_lanes(t) || lanes_inside(t);
+}
+
+function any_holds_lanes(ts: typeinfo.Type[]): boolean {
+  for t in ts {
+    if (holds_lanes(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// lanes_inside_diags is E085 for a type that nests a lane type in another.
+function lanes_inside_diags(t: typeinfo.Type, line: i32, col: i32): util.Diag[] {
+  if (!lanes_inside(t)) {
+    return [];
+  }
+  return [dg_at("E085", type_label(t) + " holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", line, col)];
+}
+
+// e085_decl_diags is E085 for the declared types of a module: a parameter, a
+// result or a `let` annotation that nests a lane type, and a field or payload
+// that holds one.
+function e085_decl_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeNames): util.Diag[] {
+  let out: util.Diag[] = [];
+  for efn in mod.funcs {
+    if (in_focus(focus, efn)) {
+      for param in efn.params {
+        out = util.append_diags(out, lanes_inside_diags(type_from_spelling(e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), tn), efn.line, efn.col));
+      }
+      out = util.append_diags(out, lanes_inside_diags(type_from_spelling(e064_decl_spelling(efn.ret_type, efn.ret_fn_ret, efn.ret_fn_param_types), tn), efn.line, efn.col));
+      for an in collect_annots(efn.body) {
+        out = util.append_diags(out, lanes_inside_diags(type_from_spelling(an.type_name, tn), an.line, an.col));
+      }
+    }
+  }
+  for esd in mod.structs {
+    for field in esd.fields {
+      let ft: typeinfo.Type = type_from_spelling(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn);
+      if (holds_lanes(ft)) {
+        out = out.append(dg_at("E085", "a field or payload of type " + type_label(ft) + " holds a lane value; a lane value lives only in a local, a parameter or a result", esd.line, esd.col));
+      }
+    }
+  }
+  return out;
+}
+
 function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   match (e) {
@@ -14804,11 +14987,13 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
     },
     ast.ExprArray(a) => {
       out = call_diags_array(a, s, out);
+      out = util.append_diags(out, lanes_inside_diags(check_expr(e, s), a.line, a.col));
     },
     ast.ExprTuple(t) => {
       for element in t.elements {
         out = util.append_diags(out, call_diags(element, s));
       }
+      out = util.append_diags(out, lanes_inside_diags(check_expr(e, s), t.line, t.col));
     },
     ast.ExprIndex(ix) => {
       out = call_diags_index(ix, s, out);
@@ -15459,6 +15644,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // goes through the same callable_arg_diags a declared function's
           // does: E038 on a parameter, E004 on the count (#9987).
           out = util.append_diags(out, callable_arg_diags(c, free_builtin_sig(id.name, s), s));
+          out = util.append_diags(out, lane_index_diags(id.name, c));
           // `print` / `write` / `eprint` take any Display type: the argument is
           // judged by display_arg_diags rather than typed `string`, which
           // would refuse a struct carrying its own `to_string`.
@@ -15886,12 +16072,39 @@ function operand_diags_typed(e: ast.Expr, s: Scope): (util.Diag[], typeinfo.Type
 
 // binary_diags_typed is call_diags_binary for an operator other than the
 // named-argument marker, together with check_expr's type of `b`.
+// lanes_operator_diags judges a binary with a lane operand. `+ - * /` take two
+// values of one lane type (E009 otherwise), and no comparison takes a lane
+// value, whose answer is a mask the `lt` and `ne` builtins give (E041).
+function lanes_operator_diags(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): util.Diag[] {
+  if (util.has_str(["==", "!=", "<", ">", "<=", ">="], b.op)) {
+    let lanes: string = type_label(lt);
+    if (!is_lanes(lt)) {
+      lanes = type_label(rt);
+    }
+    return [dg_at("E041", "cannot compare values of type " + lanes + " with \"" + b.op + "\": a lane value compares lane by lane, through __" + lanes + "_lt and __" + lanes + "_ne", b.line, b.col)];
+  }
+  if (util.has_str(["+", "-", "*", "/"], b.op) && type_eq(lt, rt)) {
+    return [];
+  }
+  if (operand_open(lt) || operand_open(rt)) {
+    return [];
+  }
+  let what: string = "numeric";
+  if (b.op == "+") {
+    what = "numeric or string";
+  }
+  return [dg_at("E009", "operator \"" + b.op + "\" requires matching " + what + " operands, got " + type_label(lt) + " and " + type_label(rt), b.line, b.col)];
+}
+
 function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo.Type) {
   let (ldiags, blt) = operand_diags_typed(b.left, s);
   let (rdiags, brt) = operand_diags_typed(b.right, s);
   let out: util.Diag[] = util.append_diags(ldiags, rdiags);
   out = util.append_diags(out, binop_lit_range_diags(b, blt, brt));
   out = util.append_diags(out, tvar_operator_diags(b, blt, brt, s));
+  if (is_lanes(blt) || is_lanes(brt)) {
+    return (util.append_diags(out, lanes_operator_diags(b, blt, brt)), binary_result_type(b, blt, brt, s));
+  }
   // E009: `&&` / `||` require both operands to be boolean.
   if (b.op == "&&" || b.op == "||") {
     if (!is_unknown(blt) && !type_eq(blt, t_bool())) {
@@ -16071,7 +16284,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
   if (u.op == "-") {
     let nt: typeinfo.Type = check_expr(u.operand, s);
     let nok: boolean = !is_unknown(s.unop_overload_ret(u.op, nt));
-    if (!operand_open(nt) && !is_integer(nt) && !is_float(nt) && !nok) {
+    if (!operand_open(nt) && !is_integer(nt) && !is_float(nt) && !is_lanes(nt) && !nok) {
       out = out.append(dg_at("E009", "operator \"-\" requires a numeric type, got " + type_label(nt), u.line, u.col));
     }
   }
@@ -16662,8 +16875,26 @@ pub function lambda_body_scope(lm: ast.ExprLambda, s: Scope): Scope {
 function call_diags_lambda(lm: ast.ExprLambda, s: Scope, out: util.Diag[]): util.Diag[] {
   if (parser.is_written_lambda_origin(lm.origin)) {
     out = util.append_diags(out, capture_view_diags(lm, s));
+    out = util.append_diags(out, lambda_lane_diags(lm, s));
   }
   return util.append_diags(out, stmts_call_diags(lm.body, lambda_body_scope(lm, s)));
+}
+
+// lambda_lane_diags is E085 for a lambda: a function value carries no lane
+// value, so a lambda neither takes, returns nor captures one.
+function lambda_lane_diags(lm: ast.ExprLambda, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (lanes_inside(check_lambda_expr(lm, s))) {
+    out = out.append(dg_at("E085", "a lambda cannot take or return a lane value; a lane value crosses only a direct call", lm.line, lm.col));
+  }
+  let seen: string[] = [];
+  for name in astwalk.collect_lambda_idents(lm, []) {
+    if (!util.has_str(seen, name) && s.is_bound(name) && is_lanes(s.lookup(name))) {
+      out = out.append(dg_at("E085", "a lambda cannot capture \"" + name + "\" of type " + type_label(s.lookup(name)) + "; a lane value lives only in a local, a parameter or a result", lm.line, lm.col));
+    }
+    seen = seen.append(name);
+  }
+  return out;
 }
 
 // capture_view_diags is E082, native's captureView: a closure may not capture
@@ -16776,6 +17007,8 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
     out = out.append(dg_at("E036", "variant " + id.name + " expects a payload; call it as " + id.name + "(...)", id.line, id.col));
   } else if (!s.known(id.name) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name))) {
     out = out.append(generic_fn_value_diag(id, s.lookup_sig(id.name)));
+  } else if (lane_fn_value(id, s)) {
+    out = out.append(dg_at("E085", "function " + id.name + " takes or returns a lane value and cannot be used as a value; a lane value crosses only a direct call", id.line, id.col));
   } else if (!is_resolvable_value(id.name, s)) {
     // E001: a bare identifier in VALUE position that resolves to
     // nothing — not a local / param / loop / match binding, a free
@@ -16865,6 +17098,16 @@ function bound_param_dest(c: ast.ExprCall, di: i32, dest: typeinfo.Type, s: Scop
 // parameters; native refuses it with E040 (#7040).
 function generic_fn_value(sig: FuncSig): boolean {
   return sig.name.len() > 0 && !sig.is_const && sig.all_type_params.len() > 0;
+}
+
+// lane_fn_value: `id` names a function whose signature holds a lane type,
+// where a value is expected. A function value carries no lane value (E085).
+function lane_fn_value(id: ast.ExprIdent, s: Scope): boolean {
+  if (s.known(id.name) || s.is_bound(id.name)) {
+    return false;
+  }
+  let sig: FuncSig = s.lookup_sig(id.name);
+  return sig.name.len() > 0 && !sig.is_const && (any_holds_lanes(sig.param_types) || holds_lanes(sig.ret_type));
 }
 
 // generic_fn_value_diag spells native's E040, whose hint eta-expands the
@@ -18982,6 +19225,8 @@ function registered_intrinsics(): string[] {
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
+    "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with",
+    "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with",
   ];
 }
 
@@ -26437,6 +26682,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     }
     body_diags = util.append_diags(body_diags, e057_struct_diags(esd, mod.enums, fld_scope));
   }
+  body_diags = util.append_diags(body_diags, e085_decl_diags(mod, focus, e064_tn));
   // Native folds top-level consts BEFORE the checker runs, and a const the
   // fold refuses aborts it — so the checker never sees the module and nothing
   // else is reported. Mirror that ordering: without it a refused const also

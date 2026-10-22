@@ -1714,7 +1714,14 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 		return ast.StructType{Name: mang}
 	case ast.EnumType:
 		if len(x.Args) == 0 {
-			return x
+			ed := genericEnum(info, x.Name)
+			if ed == nil || !enumNeedsClone(ed, info) {
+				return x
+			}
+			// A bare enum holds no parameter-dependent payload. Its clone uses never.
+			for range ed.TypeParams {
+				x.Args = append(x.Args, ast.NeverType{})
+			}
 		}
 		// Recursively rewrite nested args first (a generic enum's args
 		// may reference other generic nominals).

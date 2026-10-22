@@ -1125,6 +1125,39 @@ pub function result_f64(): i32 {
   return 3;
 }
 
+pub function result_v128(): i32 {
+  return 4;
+}
+
+// lane_builtin_op is the lane op a lane builtin's verb is, "" for `lane`,
+// `of`, `mul_add`, `load` and `with`, which are more than one op.
+pub function lane_builtin_op(verb: string): string {
+  let verbs: string[] = ["splat", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select"];
+  let i: i32 = util.index_of_str(verbs, verb);
+  if (i < 0) {
+    return "";
+  }
+  return "v" + verb;
+}
+
+// lane_operator is the lane op of the operator `op` on lane values: unary
+// (kind 10) `-` or binary `+ - * /`.
+pub function lane_operator(kind: i32, op: string): string {
+  if (kind == 10) {
+    return "vneg";
+  }
+  if (op == "+") {
+    return "vadd";
+  }
+  if (op == "-") {
+    return "vsub";
+  }
+  if (op == "*") {
+    return "vmul";
+  }
+  return "vdiv";
+}
+
 // is_f64_scalar_type_name reports whether a declared SCALAR type is an 8-byte
 // IEEE float — f64 or f32 (Fern represents f32 as an f64 internally: f32<->f64
 // casts are no-ops and every float op runs at double width), so the two spell

@@ -25,10 +25,10 @@ func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 	}
 	// Preserve the existing discriminants and complete recursive field types.
 	// An intentional model extension must update this contract and its consumers.
-	wantNames := []string{"TypeI32", "TypeBool", "TypeString", "TypeFloat", "TypeArray", "TypeStruct", "TypeTuple", "TypeFunc", "TypeMap", "TypeUnion", "TypeDyn", "TypeHandle", "TypeVoid", "TypeUnknown", "TypeErased", "TypeNever"}
+	wantNames := []string{"TypeI32", "TypeBool", "TypeString", "TypeFloat", "TypeLanes", "TypeArray", "TypeStruct", "TypeTuple", "TypeFunc", "TypeMap", "TypeUnion", "TypeDyn", "TypeHandle", "TypeVoid", "TypeUnknown", "TypeErased", "TypeNever"}
 	wantFields := [][]string{
 		{"is_char:boolean", "width:i32", "unsigned:boolean", "polymorphic:boolean"},
-		{"tag:i32"}, {"tag:i32"}, {"width:i32", "polymorphic:boolean"}, {"elem:Type", "view:boolean"},
+		{"tag:i32"}, {"tag:i32"}, {"width:i32", "polymorphic:boolean"}, {"width:i32"}, {"elem:Type", "view:boolean"},
 		{"name:string", "args:Type[]"}, {"elements:Type[]"},
 		{"param_types:Type[]", "param_own:boolean[]", "ret_type:Type", "params_known:boolean"},
 		{"key:Type", "value:Type"}, {"name:string", "args:Type[]"},

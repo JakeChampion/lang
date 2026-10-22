@@ -1775,11 +1775,13 @@ tier → leak.
   `asm_ir.fern` (#5651), arm64 in `asm_arm64.fern` (the #5609→#5614-style mirror:
   `.Lsaf`/`.Laaf`/`.Lssaf`/`.Loaf`/`.Lapo` `bl`+`b` through the frame that already
   saves x30; `.Lsd` a terminal tail-`b` since `__fern_large_push` preserves x0).
-  - **Still leaking on BOTH backends** (parity, separate follow-ups): the
-    `__fern_alloc_reuse` oversize-donor discard (`.Lsarelo`), and arm64-only, the
-    `__fern_str_free` DATA buffer's ≥512 KiB path (`.Lstrfree`, a #5614 gap x86
-    already closed). Neither is a collection *outer* buffer, so both are out of
-    scope for the #5651 mirror.
+  - **Follow-ups recorded at this checkpoint:** the `__fern_alloc_reuse`
+    oversize-donor discard (`.Lsarelo`) on both backends, and the ARM64
+    `__fern_str_free` DATA buffer's ≥512 KiB path (`.Lstrfree`). Both were
+    outside the collection outer-buffer scope of the #5651 mirror.
+    **2026-10-22 correction:** #12994 closes the donor discard on both native
+    backends through ordinary array release. The 80 ABI probes cover the
+    large boundary, quarantine, sanitizer and ARM64 pointer authentication.
   - **Measured: this is soundness-completeness, NOT an arena-wall win — the doc's
     original assessment was right.** A single-process `-per-module-emit-all` gen1
     emit still OOMs at the SAME batch boundary with these sites recycled as
@@ -4535,9 +4537,10 @@ exiting 3 against `fern -interp`: frees 600 -> 800 of 1000 allocs
 **Suspects eliminated along the way.** `__fern_free`'s large tier bins to 3
 significant bits up to 1 GiB and is fine. `__fern_alloc_reuse` is cleared for the
 native backend — its class-mismatch path calls `__fern_free` before allocating,
-so it cannot leak the donor. (The self-host runtime's `.Lsarelo` remains open,
-but this leak reproduces natively, so it is not the cause.) The fault is in RC
-insertion for a loop-carried owned binding, not in the allocator.
+so it cannot leak the donor. At this checkpoint, the self-host runtime's
+`.Lsarelo` donor discard was still open. #12994 closes that separate leak on
+both native backends (2026-10-22). The loop leak reproduced on the retired
+native backend. Its cause was RC insertion for a loop-carried owned binding.
 
 **Scope — not self-host-only.** It reproduces on the native backend, so it
 affects `fern` itself and anything that parses repeatedly in one process.
