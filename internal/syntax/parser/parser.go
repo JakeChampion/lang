@@ -5416,7 +5416,18 @@ var compoundOps = map[string]string{
 	"&=": "&", "|=": "|", "^=": "^", "<<=": "<<", ">>=": ">>",
 }
 
+// chainedCompoundMessage is the P001 for a compound assignment joined to
+// another assignment, reported at the operator that joins them.
+const chainedCompoundMessage = "a compound assignment stands alone: it cannot be part of an assignment chain"
+
 func (p *parser) parseAssign() (ast.Expr, error) {
+	return p.parseAssignChain(false)
+}
+
+// parseAssignChain parses an assignment whose value may be another plain
+// assignment (`a = b = c`). chained is set for a link after a `=`, where a
+// compound operator is refused.
+func (p *parser) parseAssignChain(chained bool) (ast.Expr, error) {
 	if err := p.enter(); err != nil {
 		return nil, err
 	}
@@ -5426,7 +5437,7 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 		return nil, err
 	}
 	if eq, ok := p.accept(lexer.Punct, "="); ok {
-		rhs, err := p.parseAssign()
+		rhs, err := p.parseAssignChain(true)
 		if err != nil {
 			return nil, err
 		}
@@ -5440,10 +5451,18 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 	}
 	if t := p.peek(); t.Kind == lexer.Punct {
 		if op, ok := compoundOps[t.Text]; ok {
+			if chained {
+				return nil, p.errorfCode(t.Pos, "P001", chainedCompoundMessage)
+			}
 			tok := p.advance()
-			rhs, err := p.parseAssign()
+			rhs, err := p.parsePipe()
 			if err != nil {
 				return nil, err
+			}
+			if next := p.peek(); next.Kind == lexer.Punct {
+				if _, compound := compoundOps[next.Text]; compound || next.Text == "=" {
+					return nil, p.errorfCode(next.Pos, "P001", chainedCompoundMessage)
+				}
 			}
 			switch left.(type) {
 			case *ast.Ident, *ast.Index, *ast.FieldAccess:
@@ -6242,18 +6261,18 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	switch t.Kind {
 	case lexer.Number:
 		p.advance()
-		digits, base := t.Text, 10
-		if len(t.Text) > 2 && t.Text[0] == '0' {
-			switch t.Text[1] {
+		digits, base := strings.ReplaceAll(t.Text, "_", ""), 10
+		if len(digits) > 2 && digits[0] == '0' {
+			switch digits[1] {
 			case 'x', 'X':
-				digits, base = t.Text[2:], 16
+				digits, base = digits[2:], 16
 			case 'o', 'O':
-				digits, base = t.Text[2:], 8
+				digits, base = digits[2:], 8
 			case 'b', 'B':
-				digits, base = t.Text[2:], 2
+				digits, base = digits[2:], 2
 			}
 		}
-		prefixed := base != 10
+		spelled := base != 10 || strings.Contains(t.Text, "_")
 		lit := &ast.NumberLit{P: t.Pos}
 		// strconv rather than a hand-rolled accumulate, so a magnitude past
 		// 64 bits is seen instead of wrapping (docs/ADVERSARIAL-REVIEW-2026-06.md, F3).
@@ -6277,7 +6296,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			}
 		}
 		lit.Value = v
-		if prefixed {
+		if spelled {
 			lit.Raw = t.Text
 		}
 		// Typed suffix (`42i64`, `7u8`): stamp Width + IsUnsigned
@@ -6299,6 +6318,9 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		case "u64":
 			lit.Width = 64
 			lit.IsUnsigned = true
+		case "usize":
+			lit.Width = ast.WidthPtr
+			lit.IsUnsigned = true
 		default:
 			return nil, p.errorfCode(t.Pos, "P002", "unexpected numeric suffix %q on integer literal", t.Suffix)
 		}
@@ -6307,7 +6329,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		p.advance()
 		// `42f32` — integer-shaped text with a float suffix. Use
 		// strconv.ParseFloat which handles both `42` and `1.5`.
-		f, err := strconv.ParseFloat(t.Text, 64)
+		f, err := strconv.ParseFloat(strings.ReplaceAll(t.Text, "_", ""), 64)
 		if err != nil {
 			return nil, p.errorfCode(t.Pos, "P002", "invalid float literal %q: %v", t.Text, err)
 		}

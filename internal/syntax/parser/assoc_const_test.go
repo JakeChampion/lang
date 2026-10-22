@@ -9,8 +9,7 @@ import (
 // An associated constant parses in a trait body (abstract, or with a
 // default) and in an impl body, each as an associated function with no
 // parameters marked const; `f64.LANES` parses as a field access on the
-// primitive keyword, which the formatter round-trips (see
-// docs/ASSOCIATED-TYPES.md).
+// primitive keyword, which the formatter round-trips (see docs/ASSOCIATED-TYPES.md).
 func TestAssocConstParse(t *testing.T) {
 	prog, err := Parse(`trait Lanes {
     const LANES: i32;

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -940,6 +941,33 @@ func TestAssignmentIsAStatement(t *testing.T) {
 	}
 }
 
+// A compound assignment stands alone: joined to another assignment, either
+// side, it is a P001 at the operator that joins them.
+func TestCompoundAssignmentStandsAlone(t *testing.T) {
+	for _, tc := range []struct {
+		stmt string
+		col  int
+	}{
+		{"a += b = 1;", 10},
+		{"a = b += 5;", 9},
+		{"a += b += 5;", 10},
+		{"a = b = c += 2;", 13},
+	} {
+		src := "function f(): i32 {\n  let a = 0; let b = 0; let c = 0;\n  " + tc.stmt + "\n  return a;\n}"
+		_, err := Parse(src)
+		if err == nil || !hasParseCode(err, "P001") || !strings.Contains(err.Error(), chainedCompoundMessage) {
+			t.Errorf("%s: want P001 %q, got %v", tc.stmt, chainedCompoundMessage, err)
+			continue
+		}
+		if at := "at 3:" + strconv.Itoa(tc.col) + ":"; !strings.Contains(err.Error(), at) {
+			t.Errorf("%s: want the error %s, got %v", tc.stmt, at, err)
+		}
+	}
+	if _, err := Parse("function f(): i32 { let a = 0; let b = 0; a = b = 1; a += 2; return a; }"); err != nil {
+		t.Errorf("a plain chain and a lone compound assignment: %v", err)
+	}
+}
+
 // A union alias may carry its own type parameters, and each member may
 // be instantiated with them (#7737). Both halves are the parser's job:
 // the checker only ever sees what this produced.
@@ -1102,6 +1130,39 @@ func TestRadixLiteralValue(t *testing.T) {
 	}
 }
 
+// `_` separators drop out of the value and stay in Raw, so -fmt keeps them
+// (#12707).
+func TestDigitSeparatorLiteralValue(t *testing.T) {
+	cases := map[string]int64{
+		"1_000_000":   1000000,
+		"0xff_ff":     65535,
+		"0o7_7":       63,
+		"0b1010_0101": 165,
+	}
+	for src, wantVal := range cases {
+		prog, err := Parse(`function f(): i32 { return ` + src + `; }`)
+		if err != nil {
+			t.Errorf("%s: parse: %v", src, err)
+			continue
+		}
+		lit, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.NumberLit)
+		if !ok {
+			t.Errorf("%s: not a *NumberLit", src)
+			continue
+		}
+		if lit.Value != wantVal || lit.Raw != src {
+			t.Errorf("%s: Value = %d, Raw = %q, want %d, %q", src, lit.Value, lit.Raw, wantVal, src)
+		}
+	}
+	prog, err := Parse(`function f(): f64 { return 1_000.25e0_1; }`)
+	if err != nil {
+		t.Fatalf("float: parse: %v", err)
+	}
+	if lit := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.FloatLit); lit.Value != 10002.5 || lit.Raw != "1_000.25e0_1" {
+		t.Errorf("float: Value = %v, Raw = %q", lit.Value, lit.Raw)
+	}
+}
+
 // Typed numeric literal suffixes: lexer captures the suffix, the
 // parser stamps Width / IsUnsigned at parse time so the checker
 // sees a non-polymorphic type from the start.
@@ -1112,13 +1173,14 @@ func TestNumericLiteralSuffixes(t *testing.T) {
 		isUnsigned bool
 	}
 	cases := map[string]want{
-		"42i32":  {false, 32, false},
-		"42i64":  {false, 64, false},
-		"42u8":   {false, 8, true},
-		"42u32":  {false, 32, true},
-		"42u64":  {false, 64, true},
-		"1.5f32": {true, 32, false},
-		"1.5f64": {true, 64, false},
+		"42i32":   {false, 32, false},
+		"42i64":   {false, 64, false},
+		"42u8":    {false, 8, true},
+		"42u32":   {false, 32, true},
+		"42u64":   {false, 64, true},
+		"42usize": {false, ast.WidthPtr, true},
+		"1.5f32":  {true, 32, false},
+		"1.5f64":  {true, 64, false},
 		// Integer-shaped text + float suffix promotes to float.
 		"42f64": {true, 64, false},
 	}

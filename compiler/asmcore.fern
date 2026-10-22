@@ -6420,16 +6420,27 @@ pub function rt_src_string_from_bytes_u8(): string {
   return "function __fern_string_from_bytes_u8(a: i32[]): string { let n: i32 = a.len(); let p: usize = __raw_alloc(n); __memcpy(p, (__raw_arr_ptr(a) + 8), n); return __raw_string(p, n); }";
 }
 
-// A packed slice copies the byte range in one move: its byte count is the
-// element count, so the chunking the word slice needs never applies.
-// rt_src_arr_concat backs `xs.concat(ys)` over scalar elements: one box sized
-// for both and two copies. `width` is the element's bits: 8 is a packed u8[],
-// every other width an 8-byte word. A word count is copied in chunks, as the
-// slice's is, so its byte count stays in an i32.
+// rt_src_arr_concat backs `xs.concat(ys)` over scalar elements: ys appended
+// onto xs's own block when xs is the block's only count and the block has
+// room — the capacity word ahead of the count, in words — else a fresh box
+// of both: with room to grow, twice xs's length or what the join needs, when
+// xs was sole and outgrew its block, so a chain of concats pays amortised
+// O(1) boxes as a chain of appends does; exactly sized when xs is shared, as
+// a one-shot join of a kept array is. The receiver is never freed: the
+// caller decides, as it does after __fern_arr_push. An empty ys hands a sole
+// xs itself back; a shared xs is copied even then, so a caller that moves
+// the buffer out of a record's field on identity never touches a shared
+// record. `width` is the element's bits: 8 is a packed u8[], every other
+// width an 8-byte word, copied in chunks as the slice's is so its byte count
+// stays in an i32. xs arrives as its raw block, as __fern_bytes_into's does:
+// the body hands the block back as the result on the in-place path, which no
+// counted parameter may be.
 pub function rt_src_arr_concat(): string {
-  let packed: string = "if (width == 8) { " + packed_box("p", "m") + " __memcpy(p + 8, __raw_arr_ptr(a) + 8, na); __memcpy(p + 8 + na, __raw_arr_ptr(b) + 8, nb); return __raw_array(p); }";
-  let words: string = "let p: usize = __raw_arr_box(m); let dst: usize = p + 8; let src: usize = __raw_arr_ptr(a) + 8; let left: i32 = na; let part: i32 = 0; while (part < 2) { while (left > 0) { let cc: i32 = left; if (cc > 134217728) { cc = 134217728; } __memcpy(dst, src, cc * 8); dst = dst + cc * 8; src = src + cc * 8; left = left - cc; } src = __raw_arr_ptr(b) + 8; left = nb; part = part + 1; } return __raw_array(p);";
-  return "function __fern_arr_concat(a: i32[], b: i32[], width: i32): i32[] { let na: i32 = a.len(); let nb: i32 = b.len(); let m: i32 = na + nb; " + packed + " " + words + " }";
+  let words_in: string = "let dst: usize = pa + 8 + na * 8; let src: usize = __raw_arr_ptr(b) + 8; let left: i32 = nb; while (left > 0) { let cc: i32 = left; if (cc > 134217728) { cc = 134217728; } __memcpy(dst, src, cc * 8); dst = dst + cc * 8; src = src + cc * 8; left = left - cc; }";
+  let in_place: string = "let want: i32 = m; if (__fern_rc_is_unique(pa) != 0) { if (nb == 0) { return __raw_array(pa); } let capw: i32 = __load_i32(pa - 16); let need: i32 = m; if (width == 8) { need = (m + 7) / 8; } if (need <= capw) { if (width == 8) { __memcpy(pa + 8 + na, __raw_arr_ptr(b) + 8, nb); } else { " + words_in + " } __store_i64(pa, m as i64); return __raw_array(pa); } if (na <= 536870912 && na * 2 > want) { want = na * 2; } }";
+  let packed: string = "if (width == 8) { let p: usize = __raw_arr_box((want + 7) / 8); __store_i64(p, m as i64); __memcpy(p + 8, pa + 8, na); __memcpy(p + 8 + na, __raw_arr_ptr(b) + 8, nb); return __raw_array(p); }";
+  let words: string = "let q: usize = __raw_arr_box(want); __store_i64(q, m as i64); let dst2: usize = q + 8; let src2: usize = pa + 8; let left2: i32 = na; let part: i32 = 0; while (part < 2) { while (left2 > 0) { let cc2: i32 = left2; if (cc2 > 134217728) { cc2 = 134217728; } __memcpy(dst2, src2, cc2 * 8); dst2 = dst2 + cc2 * 8; src2 = src2 + cc2 * 8; left2 = left2 - cc2; } src2 = __raw_arr_ptr(b) + 8; left2 = nb; part = part + 1; } return __raw_array(q);";
+  return "function __fern_arr_concat(pa: usize, b: i32[], width: i32): i32[] { let na: i32 = __load_i32(pa); let nb: i32 = b.len(); let m: i32 = na + nb; " + in_place + " " + packed + " " + words + " }";
 }
 
 // rt_src_bytes_owned backs `__bytes_owned(b)`: the view's bytes in a fresh
@@ -9454,12 +9465,14 @@ pub function escape_for_ascii(s: string): string {
 }
 
 pub function has_main(mod: parser.Module): boolean {
-  let i: i32 = 0;
-  while (i < mod.funcs.len()) {
-    if (mod.funcs[i].name == "main") {
+  return declares_main(mod.funcs);
+}
+
+pub function declares_main(funcs: parser.FuncDecl[]): boolean {
+  for fd in funcs {
+    if (fd.name == "main") {
       return true;
     }
-    i = i + 1;
   }
   return false;
 }
