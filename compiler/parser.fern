@@ -645,11 +645,11 @@ function e_struct_update(type_name: string, field_names: string[], field_lines: 
 }
 
 function e_field_access(obj: ast.Expr, field: string): ast.Expr {
-  return ast.ExprFieldAccess { obj: obj, field: field, line: 0, col: 0, ty: "", path_sep: false, const_read: false };
+  return ast.ExprFieldAccess { obj: obj, field: field, line: 0, col: 0, ty: "", const_read: false };
 }
 
 function e_field_access_at(obj: ast.Expr, field: string, line: i32, col: i32): ast.Expr {
-  return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "", path_sep: false, const_read: false };
+  return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "", const_read: false };
 }
 
 // e_lambda_at is the one place the ExprLambda literal is written; e_lambda_fn
@@ -3240,7 +3240,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         p = qr_p;
         base = qr_expr;
       } else {
-        base = ast.ExprFieldAccess { obj: base, field: fname, line: dline, col: dcol, ty: "", path_sep: pk == "::", const_read: false };
+        base = ast.ExprFieldAccess { obj: base, field: fname, line: dline, col: dcol, ty: "", const_read: false };
       }
     } else if (p.peek_keyword() == "as") {
       // `expr as Type` cast. Desugar to a unary op

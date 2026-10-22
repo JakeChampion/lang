@@ -179,7 +179,7 @@ pub struct ExprStructLit { type_name: string, field_names: string[], field_lines
 // annotate_module stamps the field read's inferred type tag so
 // the lowering reads it instead of re-deriving the receiver's struct
 // type structurally. "" when unannotated.
-pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: string, path_sep: boolean, const_read: boolean }
+pub struct ExprFieldAccess { obj: Expr, field: string, line: i32, col: i32, ty: string, const_read: boolean }
 
 // ExprUnknown is the parser's rejection channel: there is no error list, so a
 // construct the parser refuses becomes this node, which every consumer reports
