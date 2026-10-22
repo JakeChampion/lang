@@ -3638,7 +3638,7 @@ function (s: Scope) array_recv_method(field: string, view: boolean): MethodSig {
   while (i >= 0) {
     let method: MethodSig = s.methods.methods[i];
     let rt: string = method.receiver_type;
-    if (method.name == field && array_receiver_matches(rt, view)) {
+    if (method.name == field && array_receiver_matches(rt, view) && s.method_visible(method)) {
       return method;
     }
     i = s.methods.next[i];
@@ -4339,7 +4339,7 @@ function (s: Scope) namespace_is_exact(ns: string): boolean {
   }
   for method in s.methods.methods {
     let rt: string = method.receiver_type;
-    if (rt.len() > 2 && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]") {
+    if (rt.len() > 2 && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]" && s.method_visible(method)) {
       return false;
     }
   }
@@ -4424,7 +4424,15 @@ function (s: Scope) method_fix_candidates(ns: string, recv: typeinfo.Type): stri
   if (!s.namespace_is_exact(ns)) {
     return [];
   }
-  return s.methods_in_namespace(ns);
+  // Only what the caller can reach: naming a method it cannot see would
+  // hide the import hint that repairs the call.
+  let out: string[] = preregistered_methods(ns);
+  for method in s.methods.methods {
+    if ((method.receiver_type == ns || ns == "Map" && map_receiver_type(method.receiver_type)) && s.method_visible(method)) {
+      out = push_str_unique_sorted(out, method.name);
+    }
+  }
+  return out;
 }
 
 // unknown_method_advice: the E043 text for a method call on a non-struct
@@ -4497,19 +4505,9 @@ function method_namespace_of(t: typeinfo.Type): string {
   return "";
 }
 
-// has_array_recv_method is array_recv_method's predicate form, same rules,
-// without the sentinel MethodSig its miss allocates.
+// has_array_recv_method reports whether array_recv_method finds a method.
 function (s: Scope) has_array_recv_method(field: string, view: boolean): boolean {
-  let i: i32 = s.methods.head[sig_name_bucket(field)];
-  while (i >= 0) {
-    let method: MethodSig = s.methods.methods[i];
-    let rt: string = method.receiver_type;
-    if (method.name == field && array_receiver_matches(rt, view) && s.method_visible(method)) {
-      return true;
-    }
-    i = s.methods.next[i];
-  }
-  return false;
+  return s.array_recv_method(field, view).name.len() > 0;
 }
 
 function (s: Scope) lookup_union(name: string): UnionSig {
