@@ -1592,13 +1592,23 @@ pub function dir_of(p: string): string {
 }
 
 // module_name maps an import path to its bundle name: the final path
-// segment (`./a/lexer` → `lexer`, `./parser` → `parser`).
+// segment (`./a/lexer` → `lexer`, `./parser.fern` → `parser`).
 pub function module_name(import_path: string): string {
-  let ls: i32 = last_slash(import_path);
+  let path: string = without_fern_ext(import_path);
+  let ls: i32 = last_slash(path);
   if (ls >= 0) {
-    return slice_unchecked(import_path, ls + 1, import_path.len()) + "";
+    return slice_unchecked(path, ls + 1, path.len()) + "";
   }
-  return import_path;
+  return path;
+}
+
+// without_fern_ext drops a trailing `.fern`, which an import may write or leave
+// off: "./api.fern" → "./api", "lib" → "lib".
+pub function without_fern_ext(path: string): string {
+  if (str_has_suffix(path, ".fern")) {
+    return slice_unchecked(path, 0, path.len() - 5) + "";
+  }
+  return path;
 }
 
 // dep_name is the dependency a bare import names: its first path segment
@@ -1809,9 +1819,9 @@ pub function is_dir(path: string): boolean {
 // `./lib/gnu` from `<dir>` is `<dir>/lib/gnu.fern`, as native joins them.
 pub function resolve_path(import_path: string, entry_dir: string, root: string): string {
   if (is_stdlib_path(import_path) && root.len() > 0) {
-    return clean_path(root + "/" + import_path + ".fern");
+    return clean_path(root + "/" + without_fern_ext(import_path) + ".fern");
   }
-  let rel: string = import_path;
+  let rel: string = without_fern_ext(import_path);
   if (rel.len() >= 2 && slice_unchecked(rel, 0, 2) == "./") {
     rel = slice_unchecked(rel, 2, rel.len()) + "";
   }
