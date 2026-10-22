@@ -3146,7 +3146,7 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 - Gate: `TestSelfHostServeSSE` (x86-64, arm64) streams events whose
   producer sleeps through the platform while the worker answers another
   connection, the keep-alive written between them;
-  `TestServeSSESequentialInterp` is the Go compiler's twin, where the
+  `TestServeSSESequentialInterp` is the interpreter's twin, where the
   blocking fallback naps the worker through the producer's sleep.
 
 ### `std/http/websocket`
@@ -3695,12 +3695,12 @@ points that run a handler under it.
   take the hook of the `_shutdown` entries, which each worker's loop calls
   on its way out. Where there is no fork (the interpreter) every one of
   them serves single-process. A worker runs one handler at a time, and
-  what a waiting handler costs it depends on the compiler: built by the
-  self-host compiler, a handler that waits on `plat.http` or on a streamed
-  request body parks, and the worker serves its other connections until
-  the wait is answered (`TestSelfHostServeHandlersOverlap`;
-  `docs/NET-P3-SUSPENSION-PLAN.md`); built by the Go compiler, every wait
-  blocks and the handler holds the worker until it returns. A handler
+  what a waiting handler costs it depends on how it runs: compiled, a
+  handler that waits on `plat.http` or on a streamed request body parks,
+  and the worker serves its other connections until the wait is answered
+  (`TestSelfHostServeHandlersOverlap`; `docs/NET-P3-SUSPENSION-PLAN.md`);
+  under the interpreter, every wait blocks and the handler holds the
+  worker until it returns. A handler
   that computes holds its worker either way
   (`TestSelfHostSupervisedServeHandlerStallsItsWorker`), so workers, not
   connections, absorb CPU-bound handlers.
@@ -3714,9 +3714,9 @@ points that run a handler under it.
   platform (`__init_platform()`, the host bag with no reactor, since it
   runs once in the supervising parent), and answers nothing, the state
   `S`, the `serve.Config` alone, or `(serve.Config, S)`; a config it
-  answers replaces the defaults. Both compilers know the config by its
-  module, whatever the program imports std/serve as, so a struct of the
-  program's own named `Config` is a state like any other. On a target
+  answers replaces the defaults. The compiler and the interpreter know the
+  config by its module, whatever the program imports std/serve as, so a
+  struct of the program's own named `Config` is a state like any other. On a target
   without processes (wasm32-wasi) the synthesis serves through `run` and its
   `_with` / `_shutdown` twins instead. Mismatching `init` and `handle` about the
   state, or an `init` taking anything else, is E075. A top-level
@@ -3725,7 +3725,7 @@ points that run a handler under it.
   with the hook; a hook whose state parameter disagrees with the
   handler's is E075 too. A `handle` declared as `Result[HttpResponse, E]` (or
   `(S, Result[HttpResponse, E])` with state), so its body fails with
-  `?`, is accepted by both compilers: they rename it
+  `?`, is accepted by the compiler and the interpreter: they rename it
   `__fern_handle_result` and synthesise the plain `handle` calling
   `http.respond` (or `respond_with`) over it — `respond_error` (or
   `respond_error_with`) with the handler's platform when `E` is
@@ -4207,8 +4207,8 @@ old `concurrent { … }` / `await` keyword surface.
   and `interest_bits(interest)` is the interest without them. `wait_any` blocks when no task is
   current, which is how `net.read_deadline` and std/dns's connect
   and exchange waits work in a plain program; under a scheduler the
-  self-host compiler lowers every function that reaches it to a resumable
-  form, and the native compiler keeps the blocking fallback, where
+  compiler lowers every function that reaches it to a resumable form, and
+  the interpreter keeps the blocking fallback, where
   `task_start` runs its entry to completion. `cancelled()` is what a
   cancelled task's waits answer from then on, and `task_cancelled()`
   whether the task running the caller was cancelled (false outside one).
@@ -4287,11 +4287,11 @@ proxy world grants log / now / random / config / fetch, and `.env` is an
 E066 there.
 
 Under std/serve's loop a handler's `plat.http` is a wait the loop can
-park: in a self-host-built server the handler's call chain saves itself
+park: in a compiled server the handler's call chain saves itself
 at the wait and the worker serves its other connections until the
 upstream answers, up to `Config.max_in_flight` parked handlers at once
-(`docs/ASYNC.md` §8, `docs/NET-P3-SUSPENSION-PLAN.md`); in a Go-built
-server the same call blocks the worker.
+(`docs/ASYNC.md` §8, `docs/NET-P3-SUSPENSION-PLAN.md`); under the
+interpreter the same call blocks the worker.
 
 ```
 import "std/platform";

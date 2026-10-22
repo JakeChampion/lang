@@ -323,23 +323,15 @@ Tuples (follow-up status):
   struct sub-patterns at any depth (#12257); an arm
   after an irrefutable arm is unreachable (E026) — a nested tuple
   is refutable exactly when one of its own elements is. The
-  native compiler lowers them directly (checker + interp + a
-  dedicated IR path mirroring the literal-match chain, with
-  bindings borrowed from the tuple box like enum payload binds).
-  Every position inside the box is addressed as a PATH of
-  (offset, width) hops from the cached scrutinee pointer, so a
-  binder, a literal's scratch local, a variant element's raw tag
-  load — ANDed onto the arm's AST condition, sound because every
-  element test is a pure read — and a payload bind all share one
-  emitter, and nesting is one more hop. The self-host parser
-  desugars the whole match at parse time (build_tuple_match) into
+  Go checker and interpreter take them directly. The compiler's
+  parser desugars the whole match at parse time (build_tuple_match) into
   a destructure + flag-guarded if chain — a variant element nests
   the arm's matched path inside a match on the element temp, and
   a nested tuple element destructures that temp one level deeper
-  — so every self-host backend gets them for free. Two self-host
+  — so every backend gets them for free. Two compiler
   dispatch limits: the FIRST arm must be a tuple pattern (a
-  guarded-`_`-first tuple match parses natively but not in the
-  self-host compiler), and a tuple pattern in an `if let` head
+  guarded-`_`-first tuple match parses in the Go front end but not
+  in the compiler), and a tuple pattern in an `if let` head
   does not parse there at all. At the IRREFUTABLE binding sites
   (`let` destructure, destructured parameters) a nested
   tuple element is still rejected: a destructure binds one flat
@@ -606,14 +598,13 @@ Deferred to a follow-up:
     Fern doesn't yet expose (raw byte-buffer alloc, manual
     byte-stride pokes for the bucket / entries arrays),
     so the boxing shape ships first.
-  - Wide K (i64 / u64 keys): the same boxing shape, on both
-    compilers — the key is a cell the map owns, hashed and
-    compared through the cell (the self-host's `_k64` helpers,
-    #10005). An f64 key is refused by the checker (E045).
+  - Wide K (i64 / u64 keys): the same boxing shape — the key is
+    a cell the map owns, hashed and compared through the cell
+    (the `_k64` helpers, #10005). An f64 key is refused by the checker (E045).
   - Tuple / array K: compared and hashed element by element, when
     every element is an integer, boolean, char, string, or another
-    such tuple or array (#10020). The self-host generates each key
-    type's `eq` / `hash`; the native backends refuse to compile one.
+    such tuple or array (#10020). The compiler generates each key
+    type's `eq` / `hash`.
 - Map literals: TBD syntax. `{ "k": v }` collides with struct
   literals. Candidates: `#{ "k": v }`, `Map { "k": v }`,
   `Map.from([("k", v)])`. Lean `Map { ... }` — it reads naturally
@@ -700,8 +691,8 @@ Deferred to a follow-up:
 > now RC ownership, not an arena reset. As of #2677 a **static escape
 > check** (`E063`) backs the contract: returning a `[T]` slice that
 > views function-local storage is now a checker error, in both the
-> native compiler (`internal/check/checker` `checkSliceEscape`) and the
-> self-hosted checker (`compiler/checker.fern` `slc_walk`).
+> compiler's checker (`compiler/checker.fern` `slc_walk`) and the Go
+> oracle's (`internal/check/checker` `checkSliceEscapes`).
 
 - **`arena { … }` block shipped.** Sugar for `arena_save() →
   body → arena_restore()` so the bump-allocator cursor snaps
@@ -1019,7 +1010,7 @@ to smallest. Status pending unless marked.
   The whole feature has since been removed: the `state` syntax,
   the AST node, the checker state-let table, the IR persistent-
   mode ops, and (once the arena reset was also dropped) the
-  two-cursor allocator itself — both native backends now use a
+  two-cursor allocator itself — every backend now uses a
   single bump cursor reclaimed by reference counting. If it were
   reintroduced it would want a cycle collector alongside it (a
   `state`-rooted cycle leaks unboundedly — see
@@ -1510,7 +1501,7 @@ Source: https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md
 
 TigerStyle is a tight engineering culture — NASA Power of
 Ten, zero-tech-debt, statically-allocated, assertion-rich.
-Not all of it transplants to a tree-walking Go compiler, but
+Not all of it transplants to Fern, but
 the heart of it (proactive design, limits-on-everything,
 named-with-meaning) maps cleanly onto the Fern's own
 runtime + the prelude. We're already accidentally Tiger-
@@ -1747,14 +1738,21 @@ they are needed on function TYPES for the handler shape;
 
 ### Concurrency: structured fan-out over a stackless task runtime
 
+> **Superseded.** The `concurrent { … }` / `spawn` / `await` surface
+> and the parser CPS behind it were removed (`docs/ASYNC-REDESIGN.md`).
+> The async surface is `std/async`: `Future[T]` and the `gather` /
+> `race` / `with_deadline` combinators, and tasks whose call chain
+> the compiler lowers to resumable form (`docs/ASYNC.md` §8). What
+> follows is the decision as it was taken.
+
 Sources:
 - `docs/ASYNC-IMPLEMENTATION-RESEARCH.md` (Koka / Lean 4 / Roc /
   AOT+WASM mechanics)
 - `docs/CONCURRENCY-RESEARCH.md` (the menu + the chosen surface)
 - `docs/ASYNC-IMPLEMENTATION-PLAN.md` (the phased build)
 
-The standing decision (Rec §10 of `CONCURRENCY-RESEARCH.md` asks
-this be recorded here once the surface lands — it has):
+The decision as recorded when the surface landed (Rec §10 of
+`CONCURRENCY-RESEARCH.md` asked for it here):
 
 **The decision.** Fern gets **colorless structured concurrency**:
 a `concurrent { … }` block fans out `spawn`ed tasks whose I/O
@@ -1804,16 +1802,6 @@ concurrent {
   handler the model is single-threaded interleaving — two tasks
   share locals freely because only their suspension points
   interleave. Parallelism (if ever) is a host-scheduler concern.
-
-**What's shipped vs pending.** The pure-Fern runtime (fan-out,
-multi-await, `select`/cancellation) and the `concurrent`/`spawn`/
-`await` surface are live on the **Go compiler** (interp / x86-64 /
-arm64; wasm compiles). Pending: the suspending-`await` CPS
-transform (drops today's `(Reactor) -> (Step, Reactor)` spawn-target
-protocol leak), the real syscall reactor (`poll(2)`/`epoll`/
-`wasi:io/poll` — makes I/O real), `plat.fetch` as the first real
-awaitable, and the self-hosted-compiler path (blocked on the
-fn-typed-enum-payload codegen gap, `docs/SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md`).
 
 **When to revisit.** (a) When a real handler needs two parallel
 fetches doing *real* network I/O — that's the trigger for the

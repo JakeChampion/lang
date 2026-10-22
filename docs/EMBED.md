@@ -13,8 +13,10 @@ the program.
 fern -embed ./assets -target x86-64-linux -o prog prog.fern
 ```
 
-Both compilers take the flag. The self-host CLI spells it identically and
-still takes the stdlib root as its trailing positional argument:
+The Go oracle (`cmd/fern`) takes the flag too, for its own `-check` and
+`-interp`, and passes it on to the compiler for a `-target` build.
+`fern-selfhost`, the compiler without the stdlib embedded, spells it
+identically and takes the stdlib root as its trailing positional argument:
 
 ```
 fern-selfhost -embed ./assets -target x86-64-linux -o prog prog.fern internal/stdlib
@@ -178,9 +180,9 @@ or nothing".
 The **root** is followed, because it is the path named on the command line
 and `-embed ./link-to-assets` plainly means the directory behind it.
 
-Both compilers draw the line in the same place. Native uses `os.Stat` on the
-root and `WalkDir`'s per-entry `lstat` below it; the self-host uses `stat` on
-the root and the `lstat` builtin below it. `lstat` exists for this (#7982) —
+The compiler and the oracle draw the line in the same place. The oracle uses
+`os.Stat` on the root and `WalkDir`'s per-entry `lstat` below it; the compiler
+uses `stat` on the root and the `lstat` builtin below it. `lstat` exists for this (#7982) —
 `stat` follows links and `FileStat` carries no link bit, so before it the
 self-host had no way to ask the question at all. Under `lstat` a symlink is
 neither `is_file` nor `is_dir`, which is the same three-way answer
@@ -195,7 +197,7 @@ a ZIP would be purely additive.
 Every form is a compile-time constant, so any may initialise a `const`:
 `const ICON: u8[] = __fern_asset_bytes("img/favicon.png");` and
 `const XS: (string, u8[])[] = __fern_assets_bytes();` fold to the same value
-a `let` would hold, on both compilers.
+a `let` would hold, in the compiler and the oracle.
 
 ## Coverage
 

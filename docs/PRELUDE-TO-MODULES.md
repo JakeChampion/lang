@@ -412,14 +412,14 @@ consumer can write (`net.NetError.Other` is refused), because a `mod.Type`
 reference is a type, not a namespace. A public function of the same name wins
 over the variant, as it does for a bare name. The self-host reaches the same
 spellings through its mangled variant names (`net.Other` mangles to
-`net__Other`, which is the variant's bundled name), so both compilers accept
-them (#10430).
+`net__Other`, which is the variant's bundled name), so the compiler and the
+oracle both accept them (#10430).
 
 The self-host bundler (`compiler/flatten.fern`) does mangle an
 imported module's variants (`Full` → `g3__Full`) and rewrites bare references to
 them, so only the ENTRY's variants stay bare. It rewrites a bare reference only
 to a variant of a module in the referring module's import closure
-(`flatten.variant_scope`), the same closure native's checker tests, so a module
+(`flatten.variant_scope`), the same closure the Go checker tests, so a module
 that reaches an enum through another module's function may match on its variants
 bare while one the program loads for an unrelated module's sake (std/net's
 `Other` beside IoError's) does not capture the name. Its checker therefore needs one

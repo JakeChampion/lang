@@ -9,32 +9,28 @@ trait-conformance family (#4347; generic-bound conformance has its own
 follow-up issue). The old coarse tracker #2857 is closed.
 
 Goal: grow `compiler/checker.fern` to parity with the Go
-checker (`internal/check/checker/checker.go`, ~6700 LOC, 50 stable diagnostic
-codes E001–E051) so the Go checker can be retired as the strict gate.
+checker (`internal/check/checker`) so the Go checker can be retired as the
+strict gate. It has been: `checker.fern` (31,682 lines) gates every compile,
+and the Go checker is the oracle's, held to it by the differentials under
+"Differential testing" below.
 
 This is the **standalone type-checker port**. It is distinct from
 `docs/SELFHOST-CHECKER.md`, which describes a narrow Option/Result guard
 embedded in the asm emitter; this document is about the full
 `checker.fern` rule set + coded diagnostics.
 
-## Where we are
+## Where it started
 
-`checker.fern` (≈2000 LOC) already walks the whole `parser.Module`:
+At the start of the port, `checker.fern` already walked the whole `parser.Module`:
 primitives, vars, binary/unary ops, string concat, arrays, structs +
 fields, methods + receiver dispatch, closures, unions, function
 signatures + arity/arg-type checks, struct-literal field checks. Errors
 were reported only as a lenient `TypeUnknown(reason)` sentinel surfaced
-through the single boolean `ModuleTypes.all_well_typed`. It is wired into
-`fern.fern` and `pipeline.fern` as a pass/fail gate.
-
-As of slice 1 it also returns `ModuleTypes.diags: Diag[]` — a list of
-coded diagnostics (`Diag { code, message }`) carrying the same `E0XX`
-codes the Go checker emits.
-
-`checker.fern` is **not** in the native fixpoint bundle (lexer + parser +
-asm + flatten + bundle_run), so it can evolve freely without fixpoint
-risk; the regression gate is the Go-vs-self-host **differential** on
-emitted diagnostic codes.
+through the single boolean `ModuleTypes.all_well_typed`, wired into
+`fern.fern` as a pass/fail gate. Slice 1 added `ModuleTypes.diags: Diag[]`
+— a list of coded diagnostics (`Diag { code, message }`) carrying the same
+`E0XX` codes the Go checker emits — and the regression gate became the
+Go-vs-self-host **differential** on emitted diagnostic codes.
 
 ## The two gaps
 
@@ -1257,7 +1253,7 @@ picks them up with the right prerequisite, not as a lone checker tweak:
 ## Differential testing
 
 `internal/testing/e2ecompiler/self_host_checker_codes_test.go` compiles
-`checker_codes_run.fern` with the Go-built bundle compiler, runs it over
+`checker_codes_run.fern` with the self-host modload driver, runs it over
 a corpus, and asserts the printed code set equals what Go's
 `checker.Check` (formatted through `diag.Format`) reports for the same
 source — **unfiltered**. The historical `selfHostImplementedCodes`

@@ -1,5 +1,7 @@
 # The coreutils under both Fern compilers — 2026-10-03
 
+> On this date `bin/fern` was the Go compiler (`go build ./cmd/fern`), retired since (`docs/NATIVE-RETIREMENT.md`).
+
 Status: [measurement] — the whole corpus of `scripts/coreutils-bench`'s
 two-compiler leg, every utility the host's GNU tree provides. `fern` is
 `bin/fern`'s build of a utility and `fern-sh` is `bin/fern-selfhost`'s build

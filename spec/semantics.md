@@ -133,9 +133,9 @@ of them.
 
 `IS-10`, `IS-11`, `ML-05`, `MC-01` and `MC-02` were all *rejections*
 exercised only by a Go test under `internal/check/checker`. That is coverage
-of `internal/`, and `docs/NATIVE-CONVERGENCE.md` makes the self-host
-compiler the definition once the freeze preconditions (#4451) go green
-— at which point a Go test measures the wrong implementation. `E050`
+of the Go oracle, and the self-host compiler is the only compiler
+(`docs/NATIVE-RETIREMENT.md`), so a Go test measures the wrong
+implementation. `E050`
 and `E067` were also two of the three codes `spec/diagnostics.md`
 listed as unpinned, so those rows closed in both indexes at once.
 
@@ -175,7 +175,7 @@ a retaining one's does. That is far short of a store semantics, and
 it is the difference between a property that can be pinned and one that
 cannot, and the first thing it found was a real leak: the wasm backend
 never reclaims a short-lived string, consuming exactly 32 fresh bytes
-per iteration where both natives are flat (#6423).
+per iteration where x86-64 and arm64 are flat (#6423).
 
 ## What is still not here
 
@@ -184,7 +184,7 @@ not a semantics: there is no typing rule, no memory model, and — beyond
 the allocation-shape claims — no statement of when a value is freed.
 `AL-06` is the only evaluation-order claim, and it covers one
 construct: where every other expression evaluates its parts is still
-whatever the two compilers happen to agree on.
+whatever the compiler and the interpreter happen to agree on.
 
 Read this file as a list of the promises that have been written down,
 not as the set of promises Fern makes.

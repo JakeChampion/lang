@@ -531,8 +531,7 @@ pub function (n: i32) clamp(lo: i32, hi: i32): i32 {
 // `saturating_*` clamps to i32::MAX / i32::MIN instead of
 // wrapping; `checked_*` returns None on overflow so the
 // caller can decide. Overflow detection is sign-bit-based —
-// no i64 widening (the natives' i64 codegen has a comparison
-// bug with values straddling the i32::MAX threshold).
+// no i64 widening.
 
 pub function (n: i32) saturating_add(other: i32): i32 {
   let r: i32 = n + other;

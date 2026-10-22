@@ -1261,7 +1261,7 @@ combinator timing.
 
 The HTTP MESSAGE layer followed. A serve loop holds its buffer as
 `u8[]` and parses it with `http_parse_request_bytes`; `HttpRequest.body`
-is a `Stream` over the body's bytes, on both compilers and in the
+is a `Stream` over the body's bytes, on every target and in the
 wasi-http marshalling. The request line and header block are checked
 where they become text: a method and a header name are tokens, so
 ASCII by grammar; a header value may carry obs-text (RFC 9110 §5.5),
