@@ -1716,6 +1716,11 @@ function ssa_operand_sep(c: u8): boolean {
   return c == b' ' || c == b',' || c == b'[' || c == b']' || c == b'!' || c == b'\t';
 }
 
+// The traps with a `_leaf` entry, for a caller with no frame record of its own.
+function leaf_aborts(): string[] {
+  return ["__fern_oob_abort", "__fern_str_oob_abort", "__fern_slice_abort", "__fern_alloc_size_abort"];
+}
+
 // ssa_resolve_exits replaces each exit mark of a buffered body: a frameless
 // one returns or branches straight to its tail callee, and a bounds trap
 // goes through its `_leaf` entry, which gives the backtrace the frame
@@ -1737,7 +1742,7 @@ function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmco
       } else {
         s = s.write("    b " + tail + "\n");
       }
-    } else if (!framed && (line == "    b __fern_oob_abort" || line == "    b __fern_str_oob_abort")) {
+    } else if (!framed && util.str_has_prefix(line, "    b ") && util.has_str(leaf_aborts(), slice_unchecked(line, 6, line.len()) + "")) {
       s = s.write(line + "_leaf\n");
     } else {
       s = s.write(line + "\n");
@@ -7561,7 +7566,7 @@ function arr_push_fast_u8(slow: string, on: boolean): string {
 function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(empty_array_block(".Lfern_empty_bytes"));
   s = s.write("__fern_alloc_bytes:\n");
-  s = s.write("    tbz w0, #31, .Lfern_alloc_bytes_sized\n    b __fern_alloc_size_abort\n.Lfern_alloc_bytes_sized:\n");
+  s = s.write("    tbz w0, #31, .Lfern_alloc_bytes_sized\n    b __fern_alloc_size_abort_leaf\n.Lfern_alloc_bytes_sized:\n");
   s = s.write("    cbz w0, .Lfern_alloc_bytes_empty\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n");
   s = s.write("    sxtw x19, w0\n    add x0, x19, #7\n    lsr x0, x0, #3\n    mov x20, x0\n");
@@ -8733,15 +8738,17 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // 2 GiB. Texts and statuses match the native backends'. __fern_report itself is emitted outside the heap gate
   // (emit_rt_report), where the sanitizer's reports can reach it too.
   s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", aborts.arr_oob(), 134);
-  // A function with no frame (ssa_needs_frame) traps with x29 still its
-  // caller's frame record, so the backtrace walk would start one frame too far
-  // out and lose the caller; its trap comes through here, which makes the
-  // record it did not.
-  s = s.write("__fern_oob_abort_leaf:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    b __fern_oob_abort\n");
   s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", aborts.str_oob(), 134);
-  s = s.write("__fern_str_oob_abort_leaf:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    b __fern_str_oob_abort\n");
   s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", aborts.slice_range(), 134);
   s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
+  // A function with no frame (ssa_needs_frame), or a runtime helper that
+  // traps before making its own, traps with x29 still its caller's frame
+  // record, so the backtrace walk would start one frame too far out and lose
+  // the caller; its trap comes through the `_leaf` entry, which makes the
+  // record it did not.
+  for name in leaf_aborts() {
+    s = s.write(name + "_leaf:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    b " + name + "\n");
+  }
 
   // __fern_arr_box(x0 = cap element count) -> x0 = array data
   // pointer. Centralises the array box layout (mirrors the x86-64
@@ -9490,16 +9497,16 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldrsw x2, [sp, #16]\n");  // lo
     s = s.write("    ldrsw x3, [sp]\n");  // hi
     s = s.write("    tbz x2, #63, .Lsgf_lo\n");
-    s = s.write("    b __fern_slice_abort\n");
+    s = s.write("    b __fern_slice_abort_leaf\n");
     s = s.write(".Lsgf_lo:\n");
     s = s.write("    ldr x4, [x1, #8]\n");  // s's length
     s = s.write("    cmp x3, x4\n");
     s = s.write("    b.le .Lsgf_hi\n");
-    s = s.write("    b __fern_slice_abort\n");
+    s = s.write("    b __fern_slice_abort_leaf\n");
     s = s.write(".Lsgf_hi:\n");
     s = s.write("    subs x3, x3, x2\n");  // lb
     s = s.write("    b.ge .Lsgf_range\n");
-    s = s.write("    b __fern_slice_abort\n");
+    s = s.write("    b __fern_slice_abort_leaf\n");
     s = s.write(".Lsgf_range:\n");
     s = s.write("    ldr x1, [x1]\n");
     s = s.write("    add x1, x1, x2\n");  // s's data + lo
@@ -10501,7 +10508,7 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = s.write(".globl __fern_alloc_u8\n");
   s = s.write(".type __fern_alloc_u8, %function\n");
   s = s.write("__fern_alloc_u8:\n");
-  s = s.write("    tbz w0, #31, .Lfern_alloc_u8_sized\n    b __fern_alloc_size_abort\n.Lfern_alloc_u8_sized:\n");
+  s = s.write("    tbz w0, #31, .Lfern_alloc_u8_sized\n    b __fern_alloc_size_abort_leaf\n.Lfern_alloc_u8_sized:\n");
   s = s.write("    cbz w0, .Lfern_alloc_u8_empty\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
@@ -12626,7 +12633,9 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   if (is_entry && globl_defs) {
     s = asmcore.emit_runtime_globls(s);
     // The frameless functions' bounds traps, arm64's alone.
-    s = s.write(".globl __fern_oob_abort_leaf\n.globl __fern_str_oob_abort_leaf\n");
+    for name in leaf_aborts() {
+      s = s.write(".globl " + name + "_leaf\n");
+    }
   }
   // [lo, hi) function-index window (function-sharding, #3425 — the arm64
   // mirror of asm_ir.emit_module_funcs' windowing). A full window (lo=0,
