@@ -20828,7 +20828,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			case ast.VoidType:
 				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
 			case ast.LanesType:
-				c.errfCode(n.P, "E085", "a lambda cannot capture %q of type %s; a lane value lives only in a local, a parameter or a result", name, t)
+				c.errfCode(n.P, "E085", "a lambda cannot capture %q of type %s; a lane value lives only in a local, a parameter or a result", name, typeLabel(t))
 			default:
 				c.captureView(n.P, name, t)
 				captured[name] = t
@@ -21600,19 +21600,19 @@ func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
 	}
 }
 
-// refineSingleCallTypeArgs is the leaf case of
-// refineCallTypeArgsFromDest — picks up a Call directly.
 // isPrimitiveTypeName reports whether `name` is a built-in scalar type that
 // can carry associated functions via `impl Trait for <prim>` (hoisted to
 // `__assoc_<prim>_<f>`).
 func isPrimitiveTypeName(name string) bool {
 	switch name {
-	case "i32", "i64", "u8", "u32", "u64", "f32", "f64", "string", "boolean":
+	case "i32", "i64", "u8", "u32", "u64", "f32", "f64", "f64x2", "f32x4", "string", "boolean":
 		return true
 	}
 	return false
 }
 
+// refineSingleCallTypeArgs is the leaf case of
+// refineCallTypeArgsFromDest — picks up a Call directly.
 func (c *checker) refineSingleCallTypeArgs(call *ast.Call, dst ast.Type) {
 	id, ok := call.Callee.(*ast.Ident)
 	if !ok || c.shadowedGenericCalls[call] {
@@ -23493,14 +23493,14 @@ func lanesSignature(params []ast.Param, result ast.Type) bool {
 // lanesContained reports E085 for a type that nests a lane type in another.
 func (c *checker) lanesContained(t ast.Type, pos ast.Position) {
 	if t != nil && lanesInside(t) {
-		c.errfCode(pos, "E085", "%s holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", t)
+		c.errfCode(pos, "E085", "%s holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", typeLabel(t))
 	}
 }
 
 // lanesHeld reports E085 for a field or payload type that holds a lane type.
 func (c *checker) lanesHeld(t ast.Type, pos ast.Position) {
 	if t != nil && holdsLanes(t) {
-		c.errfCode(pos, "E085", "a field or payload of type %s holds a lane value; a lane value lives only in a local, a parameter or a result", t)
+		c.errfCode(pos, "E085", "a field or payload of type %s holds a lane value; a lane value lives only in a local, a parameter or a result", typeLabel(t))
 	}
 }
 

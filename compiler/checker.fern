@@ -3568,6 +3568,7 @@ function impl_type_name(t: typeinfo.Type): string {
     typeinfo.TypeBool(_) => {},
     typeinfo.TypeString(_) => {},
     typeinfo.TypeFloat(_) => {},
+    typeinfo.TypeLanes(_) => {},
     typeinfo.TypeStruct(_) => {},
     typeinfo.TypeUnion(_) => {},
     typeinfo.TypeMap(_) => {},
@@ -14922,7 +14923,7 @@ function lanes_inside_diags(t: typeinfo.Type, line: i32, col: i32): util.Diag[] 
   if (!lanes_inside(t)) {
     return [];
   }
-  return [dg_at("E085", type_label(t) + " holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", line, col)];
+  return [dg_at("E085", util.demangle_all(type_label(t)) + " holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", line, col)];
 }
 
 // e085_decl_diags is E085 for the declared types of a module: a parameter, a
@@ -14945,7 +14946,7 @@ function e085_decl_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeName
     for field in esd.fields {
       let ft: typeinfo.Type = type_from_spelling(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn);
       if (holds_lanes(ft)) {
-        out = out.append(dg_at("E085", "a field or payload of type " + type_label(ft) + " holds a lane value; a lane value lives only in a local, a parameter or a result", esd.line, esd.col));
+        out = out.append(dg_at("E085", "a field or payload of type " + util.demangle_all(type_label(ft)) + " holds a lane value; a lane value lives only in a local, a parameter or a result", esd.line, esd.col));
       }
     }
   }
@@ -16869,7 +16870,7 @@ function lambda_lane_diags(lm: ast.ExprLambda, s: Scope): util.Diag[] {
   let seen: string[] = [];
   for name in astwalk.collect_lambda_idents(lm, []) {
     if (!util.has_str(seen, name) && s.is_bound(name) && is_lanes(s.lookup(name))) {
-      out = out.append(dg_at("E085", "a lambda cannot capture \"" + name + "\" of type " + type_label(s.lookup(name)) + "; a lane value lives only in a local, a parameter or a result", lm.line, lm.col));
+      out = out.append(dg_at("E085", "a lambda cannot capture \"" + name + "\" of type " + util.demangle_all(type_label(s.lookup(name))) + "; a lane value lives only in a local, a parameter or a result", lm.line, lm.col));
     }
     seen = seen.append(name);
   }
@@ -18859,7 +18860,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   // methods; `u8` when std/i32's 21 ascii classifiers moved onto the
   // byte type (both #5629). That is the same bug twice, so the whole
   // integer family is listed now rather than one width at a time.
-  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char") {
+  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char" || typeinfo.lanes_width(rt) > 0) {
     return true;
   }
   for ch in rt {

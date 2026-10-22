@@ -6322,6 +6322,9 @@ function tyarg_of_value(v: Value): string {
     VFloat32(_) => {
       return "f32";
     },
+    VLanes(l) => {
+      return typeinfo.lanes_spelling(l.width);
+    },
     VStruct(sv) => {
       if (sv.targs.len() == 0) {
         return sv.type_name;
