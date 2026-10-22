@@ -734,8 +734,12 @@ func TestBuiltinReadFileInvalidUtf8(t *testing.T) {
 // `return <slice>;`, returning the Option the interpreter produced.
 func evalSliceOption(t *testing.T, decl, expr string) *Enum {
 	t.Helper()
-	v := evalProgramValue(t, "function f(): Option[str] { "+decl+" return "+expr+"; }\n"+
-		"function main(): Option[str] { return f(); }")
+	_, in := evalProgram(t, "function f(): Option[str] { "+decl+" return "+expr+"; }\n"+
+		"function main(): i32 { return 0; }")
+	v, err := in.CallByName("f", nil)
+	if err != nil {
+		t.Fatalf("%s: call f: %v", expr, err)
+	}
 	e, ok := v.(*Enum)
 	if !ok {
 		t.Fatalf("%s: got %#v, want an Option enum", expr, v)

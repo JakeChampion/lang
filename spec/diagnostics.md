@@ -52,7 +52,7 @@ run against it. So a diagnostic rule with only Go-side coverage is a
 rule that stops being checked at exactly the moment it starts mattering
 most.
 
-**70 of 87** codes are pinned by a conformance case. The table
+**71 of 88** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -155,6 +155,7 @@ language does not have. It is deleted.
 | `E081` | a named function or `const` declares no type | — |
 | `E082` | a closure captures a borrowed view | `diag_e082` |
 | `E083` | a `for` subject is not iterable | `diag_e083` |
+| `E084` | `main` takes a parameter or returns a type that cannot be an exit status | `diag_e084` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |

@@ -13284,6 +13284,9 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	if fn.ReturnUnannotated {
 		c.errfCode(fn.P, "E081", "missing return type on function %q; declare it explicitly (use `: void` if it returns nothing)", fn.Name)
 	}
+	if fn.Name == "main" {
+		c.checkMainSignature(fn)
+	}
 
 	// Return-type inference: a plain (non-method, non-generic) function
 	// that wrote no `: Type` accumulates its return-expression types
@@ -23355,6 +23358,22 @@ func hasHandleDecl(prog *ast.Program) bool {
 		}
 	}
 	return false
+}
+
+// checkMainSignature is E084: every runner calls `main` with no arguments
+// and turns its result into the exit status, which an integer or a boolean
+// can be and nothing else can.
+func (c *checker) checkMainSignature(fn *ast.FuncDecl) {
+	if len(fn.Params) > 0 {
+		c.errfCode(fn.P, "E084", "main takes no parameters; read the command line with args()")
+	}
+	switch fn.ReturnType.(type) {
+	case ast.NumberType, ast.BoolType, ast.VoidType:
+	default:
+		if !fn.ReturnUnannotated {
+			c.errfCode(fn.P, "E084", "main returns an integer, a boolean or void, not %s", fn.ReturnType)
+		}
+	}
 }
 
 // hasMainDecl mirrors hasHandleDecl for `main`. Used to gate

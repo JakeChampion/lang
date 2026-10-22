@@ -13130,6 +13130,10 @@ function magnitude_is_zero(text: string, start: i32): boolean {
   return i == text.len();
 }
 
+function main_result_ty(ty: string): boolean {
+  return ty == "void" || ty == "boolean" || ty == "i32" || ty == "i64" || is_unsigned_int_ty(ty);
+}
+
 function is_unsigned_int_ty(ty: string): boolean {
   return ty == "u8" || ty == "u32" || ty == "u64" || ty == "usize";
 }
@@ -19296,6 +19300,19 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E081", "cannot infer the type of const \"" + func.name + "\"; declare it explicitly", func.line, func.col));
     } else if (func.ret_type == "" && func.import_iface == "" && !func.is_const) {
       out = out.append(dg_at("E081", "missing return type on function \"" + func.name + "\"; declare it explicitly (use `: void` if it returns nothing)", func.line, func.col));
+    }
+  }
+  // E084: every runner calls `main` with no arguments and turns its result
+  // into the exit status, which an integer or a boolean can be and nothing
+  // else can. Mirrors the native checkMainSignature.
+  for func in mod.funcs {
+    if (func.name == "main" && func.receiver_type == "" && func.import_iface == "") {
+      if (func.params.len() > 0) {
+        out = out.append(dg_at("E084", "main takes no parameters; read the command line with args()", func.line, func.col));
+      }
+      if (func.ret_type != "" && !main_result_ty(func.ret_type)) {
+        out = out.append(dg_at("E084", "main returns an integer, a boolean or void, not " + func.ret_type, func.line, func.col));
+      }
     }
   }
   // E016: a `type X = …` union alias the Go checker refuses to desugar, and
