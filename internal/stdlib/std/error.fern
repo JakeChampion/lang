@@ -18,6 +18,8 @@
 // A type opts in with `impl error.Error for MyError { function message(...) … }`.
 // The builtin `IoError` has no module of its own, so its impl is here, in the
 // trait's module, as `core/cmp` holds the primitive types' `Display` impls.
+
+// Error supplies a human-readable message for an error value.
 pub trait Error {
   function message(self: Self): string;
 }

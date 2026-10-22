@@ -31,9 +31,9 @@ let label: string = match (tag) {
 Two facts forced a dedicated construct rather than reusing an existing
 shape:
 
-1. **Fern lambdas do not infer return types.** An IIFE desugar
-   (`(function() { … })()`) can't work, because the synthesised lambda
-   would need a return type the compiler can't infer.
+1. **A block keeps the enclosing control-flow targets.** An immediate
+   lambda call makes `return` leave the lambda instead of the enclosing function.
+   Lambda return-type inference does not preserve those control-flow targets.
 2. **Fern requires a `;` on every statement.** A trailing expression
    *without* a `;` is therefore a genuinely new grammar form — there was
    no existing place where the final element of a brace block could be a
@@ -194,10 +194,6 @@ backends, differential).
 
 - General value-position `{ … }` blocks (needs struct-literal
   disambiguation) — landed for the common cases (`#4521`).
-- **Self-host mirror of the control-flow / `never` forms.** The
-  self-host desugars value-position blocks (and if/match value-branches)
-  to IIFEs (`e_call(e_lambda([], rt, body), [])`); a `return` inside a
-  lambda returns from the *lambda*, not the enclosing function, so a
-  control-flow-containing block needs an *inline* statement-sequence
-  representation there rather than the IIFE. Tracked as native-
-  convergence debt (`#4451`).
+- **Control-flow forms are supported by both front ends.** Typed lowering
+  keeps value blocks inline. `return`, `break`, and `continue` keep their
+  enclosing function or loop as the target.

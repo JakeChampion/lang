@@ -18,12 +18,9 @@
 //   Zoned → Date discards the zone.
 //   Span ↔ Duration only round-trips in the no-DST-shift case.
 //
-// Phase 1 (this PR): constants + the simplest constructors.
-// Phase 2: Instant.now() via clock_gettime, basic arithmetic.
-// Phase 3: Hinnant civil-date algorithms (add_days, weekday).
-// Phase 4: RFC 3339 parse + format.
-// Phase 5: Zoned operations; a real zone with its transitions is `std/tz`.
-// Phase 6: Span vs Duration calendar arithmetic.
+// Includes constructors, clock reads, arithmetic, civil-date operations,
+// RFC 3339 parsing and formatting, and calendar intervals.
+// std/tz supplies time zones and their transitions.
 
 import "core/int";
 // `relative_to` renders magnitudes via (i64) `.to_string()`; declare
@@ -1266,10 +1263,7 @@ pub function instant_zoned_parse_rfc3339(s: string): Option[Zoned] {
 // absolute intent stays visible at the call site.
 // ============================================================
 
-// Span constructors for the remaining unit grains. `span_days`
-// and `span_hours` already exist (Phase 1). `span_seconds`,
-// `span_minutes`, `span_weeks`, `span_months`, `span_years`
-// round out the surface.
+// Span constructors for seconds, minutes, weeks, months, and years.
 pub function span_seconds(n: i32): Span {
   return Span {
     years: 0, months: 0, weeks: 0, days: 0,

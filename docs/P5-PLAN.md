@@ -5,7 +5,7 @@ Status: [record] shipped; `own R` / `borrow R` handle types are checked and the 
 Adds the *language* layer on top of the shipped P5 baseline (a handle is
 already an opaque `i32` at the canonical ABI). Two user-visible goals:
 
-1. **Handle types** — stop writing raw `i32`; write `own<T>` / `borrow<T>`
+1. **Handle types** — stop writing raw `i32`; write `own R` / `borrow R`
    over a named resource.
 2. **Automatic drop** — the compiler calls the resource's `[resource-drop]`
    when an owned handle goes out of scope.
@@ -80,26 +80,26 @@ already an opaque `i32` at the canonical ABI). Two user-visible goals:
 
 - **Lexer/parser:** `@resource("iface","wit-name")` attribute; `resource Name;`
   declaration (contextual keyword at decl position, no hard reserved word);
-  `parseType` parses `own<T>` / `borrow<T>`.
+  `parseType` parses `own R` / `borrow R`.
 - **AST:** `ResourceDecl{Name, Iface, WITName}` recorded on `Program`;
   `OwnType{Inner}` / `BorrowType{Inner}`; a nominal `ResourceType{Name}` (or
   reuse the `StructType`-style nominal) for the inner reference.
 - **Checker:** register resource decls (name → WIT binding) in `Info`; add
-  `resolveType` cases for the new nodes; reject `own<>`/`borrow<>` over an
+  `resolveType` cases for the new nodes; reject `own R`/`borrow R` over an
   undeclared resource; type-check `@import` signatures + call sites using the
-  new types (erasing to the handle scalar). Light linearity: `own<T>` is a
-  move, `borrow<T>` is non-consuming — full use-after-move enforcement lands
+  new types (erasing to the handle scalar). Light linearity: `own R` is a
+  move, `borrow R` is non-consuming — full use-after-move enforcement lands
   with the drop slice.
 - **Codegen:** `own`/`borrow`/resource erase to `i32`; extend the extern
   scalar-type gate (`externScalarType` / self-host `wat_extern_valtype`) to
   accept handle types as scalars.
-- **Self-host:** `parser.fern` (`@resource`, `resource` decl, `own<>`/`borrow<>`
+- **Self-host:** `parser.fern` (`@resource`, `resource` decl, `own R`/`borrow R`
   type-name strings), `printer.fern` render + round-trip, type-name handling.
 - **Tests:** parser test (own/borrow + resource decl); checker test
   (resolution + reject undeclared resource + own/borrow rules); e2e — rewrite
   the P5 baseline (`wit_p5_resource_handle_test.go` /
-  `self_host_p5_resource_handle_test.go`) to use `own<Pollable>` /
-  `borrow<Pollable>` and confirm it still runs under wasmtime (proves erasure);
+  `self_host_p5_resource_handle_test.go`) to use `own Pollable` /
+  `borrow Pollable` and confirm it still runs under wasmtime (proves erasure);
   self-host printer assertions.
 
 ### Slice 2 — composer `[resource-drop]` wiring (additive, byte-identity-gated)
@@ -120,9 +120,9 @@ already an opaque `i32` at the canonical ABI). Two user-visible goals:
 
 - Register a synthetic `ExternFunc` per resource for `[resource-drop]<wit-name>`
   in the resource's iface so the backend imports it.
-- IR: mark `own<T>` locals; at scope exit / last use (hook
+- IR: mark `own R` locals; at scope exit / last use (hook
   `emitRcDecLocalsAtExit` / `computePreciseDrops`) emit the drop call.
-  `borrow<T>` is never dropped; an `own<T>` moved into a callee that takes
+  `borrow R` is never dropped; an `own R` moved into a callee that takes
   `own` is not double-dropped.
 - Checker: finalize use-after-move (an E-code, mirroring `checkOwnedParams`).
 - **Tests:** e2e proving the drop import is present and called (drop observable

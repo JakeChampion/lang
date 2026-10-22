@@ -112,11 +112,9 @@ payloadless failure. Reading the payload the same way `match` does is what makes
 an erased generic (`Maybe[T]` at two instantiations in one module) and an f32
 payload come out right.
 
-There is one gap left, and it is in the self-host CHECKER, not the lowering: its
-E042 subset only flags a `?` whose operand is a known scalar primitive, so `?`
-on an UNMARKED user enum is accepted where native reports E042. That
-conservatism predates the marker and covers every non-primitive operand — see
-#9331.
+Both checkers require the `@try` marker on a user enum used with `?`.
+An unmarked user enum produces E042. The built-in Option and Result types
+support `?` without a user declaration of that marker.
 
 ## Diagnostics
 

@@ -1,10 +1,9 @@
-// std/csv — CSV escape / join / single-line parse (RFC 4180).
+// std/csv — CSV field, record, and document operations (RFC 4180).
 //
 // `csv_escape(s)` quotes fields containing comma / quote /
 // newline. `csv_join(arr)` joins after escaping each field.
-// `csv_parse_line(s)` parses ONE CSV record (no embedded
-// newline support — multi-line records left for a richer
-// follow-up).
+// `csv_parse_line(s)` parses one record. `csv_parse(s)` separates records
+// while it preserves newlines inside quoted fields.
 //
 // No prelude: these are in scope only after a program
 // declares `import "std/csv";` (docs/PRELUDE-TO-MODULES.md,
@@ -70,16 +69,8 @@ pub function csv_join(arr: string[]): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `csv_parse_line(s)` — RFC 4180 parser for a single line.
-// Splits on `,`, but a field wrapped in `"..."` may contain
-// commas / newlines, and `""` inside a quoted field decodes
-// to a single `"`. Returns the field list with quotes
-// stripped + escapes unescaped. Newlines in the input
-// terminate the line — parsing a multi-line CSV requires
-// pre-splitting on \n EXCEPT inside quoted fields, which
-// is a more complex parser left for a follow-up. For the
-// common single-line case (CSV header / a single record)
-// this helper covers the surface.
+// csv_parse_line parses one CSV record and decodes quoted fields.
+// Use csv_parse to separate records in a document with quoted newlines.
 pub function csv_parse_line(s: string): string[] {
   let out: string[] = [];
   let n: i32 = s.len();
@@ -127,9 +118,8 @@ pub function csv_parse_line(s: string): string[] {
 // `csv_parse(s)` — a full RFC 4180 document parser: `s` may hold many
 // records separated by `\n` or `\r\n`, and a field wrapped in `"..."`
 // may contain commas AND newlines (a doubled `""` inside decodes to a
-// literal `"`). Returns one `string[]` of fields per record. Unlike
-// `csv_parse_line`, quote state is carried across line breaks, so a
-// newline inside a quoted field does not end the record.
+// literal `"`). Returns one `string[]` of fields per record.
+// A newline inside a quoted field does not end the record.
 //
 // A trailing record terminator does not yield a spurious empty final
 // record (`"a\nb\n"` → 2 records, not 3); an empty input yields no

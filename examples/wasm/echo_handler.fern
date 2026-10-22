@@ -20,10 +20,8 @@
 //   hello
 //
 // Showcases: `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse`
-// — the canonical handler entry point. The codegen wraps each
-// invocation in an implicit arena (PR #200): all the strings
-// the handler builds get reclaimed at handler-return, so
-// multi-request long-running deployments don't leak.
+// — the canonical handler entry point. Request and response values use
+// reference counting. The runtime releases a value after its last reference.
 // HttpRequest / HttpResponse struct types live in std/http; the
 // synthesised `main()` calls into std/serve; the f-string in
 // `body` interpolates an i32 length, which the formatter

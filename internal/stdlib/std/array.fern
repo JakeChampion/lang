@@ -1,15 +1,8 @@
 // std/array — methods on arrays: map, filter, fold, zip, windows, and more.
 //
-// A method is a receiver function: `pub function (xs: T[]) name(…)` for
-// anything usable at more than one element type, and a pinned receiver,
-// `pub function (arr: string[]) join(…)`, for a verb specific to one.
-//
-// The namespace is keyed on the method NAME, so a pinned receiver must not
-// take a name an element-polymorphic verb would want (E006).
-//
-// No prelude: a program `import "std/array";` explicitly to
-// call `arr.sum()` / `arr.join(",")` / etc.
-// (docs/PRELUDE-TO-MODULES.md, Phase 5).
+// Import std/array to use its receiver methods.
+// Generic methods operate on T[] values. Other methods select a specific
+// element type, such as string[] for join.
 
 import "std/sort";
 // core/cmp supplies the `Eq` trait that bounds the equality-driven verbs
