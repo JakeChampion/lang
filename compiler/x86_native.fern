@@ -6112,6 +6112,9 @@ function x86_gas_sse_imm3(own a: X86Asm, mnem: string, rest: string): X86Asm {
     return x86_gas_bad(a, mnem + " " + rest);
   }
   let imm: i32 = x86_gas_atoi(ops[0]);
+  if (x86_gas_shuf_op(mnem) >= 0 && x86_gas_has_paren(ops[1])) {
+    return x86_gas_shuf_mem(a, mnem, imm, ops[1], ops[2]);
+  }
   let xs: i32 = x86_gas_xmm(ops[1]);
   let xd: i32 = x86_gas_xmm(ops[2]);
   if (xs < 0 || xd < 0) {
@@ -6124,6 +6127,20 @@ function x86_gas_sse_imm3(own a: X86Asm, mnem: string, rest: string): X86Asm {
   }
   let sh: i32 = x86_gas_shuf_op(mnem);
   x86_push_arr(a.code, x86_sse_any_rr([], sh / 256, sh & 255, xd, xs));
+  buf_push_byte(a.code, imm & 255);
+  return a;
+}
+
+// x86_gas_shuf_mem: a shuffle or packed compare with a memory source (rip
+// included); the imm8 follows the displacement.
+function x86_gas_shuf_mem(own a: X86Asm, mnem: string, imm: i32, src: string, dst: string): X86Asm {
+  let m: GasMem = x86_gas_parse_mem(src);
+  let xd: i32 = x86_gas_xmm(dst);
+  if (!x86_gas_mem_ok(m) || xd < 0) {
+    return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+  }
+  let sh: i32 = x86_gas_shuf_op(mnem);
+  a = x86_gas_sse_mem(a, sh / 256, sh & 255, xd, m, 1);
   buf_push_byte(a.code, imm & 255);
   return a;
 }

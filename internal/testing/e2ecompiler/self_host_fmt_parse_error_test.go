@@ -15,7 +15,7 @@ var fmtParseErrorCases = []struct{ name, src, where string }{
 	// The printer read this `return @;` as a void `return;`, losing the `@`.
 	{"stray-token", "function main(): i32 { return @; }\n", ":1:31: error[P001]"},
 	{"lex-error", "function main(): i32 { let s = \"abc\n  return 0; }\n", ":1:32: error[P001]"},
-	{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n", ":1:1: error[P001]"},
+	{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n", ":1:13: error[P001]"},
 }
 
 // TestSelfHostFmtRefusesParseErrors pins #12646: `-fmt` on a file that does

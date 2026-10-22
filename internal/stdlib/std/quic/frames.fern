@@ -17,6 +17,8 @@ import "std/i64";
 import "std/array";
 import "std/option";
 import "std/utf8";
+import "std/error";
+import "core/cmp";
 
 // The largest value a variable-length integer holds, 2^62-1.
 pub const MAX_VARINT: i64 = 4611686018427387903;
@@ -252,6 +254,14 @@ pub enum Frame {
 // FrameError — a frame that is not one (§12.4): the transport error to
 // close with, the frame type it was found in, and why.
 pub struct FrameError { code: i64, frame_type: i64, reason: string }
+
+pub function (e: FrameError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for FrameError {}
+
+impl cmp.Display for FrameError {}
 
 pub function (e: FrameError) message(): string {
   return "quic frame: error " + e.code.to_string() + " in frame type " + e.frame_type.to_string() + ": " + e.reason;

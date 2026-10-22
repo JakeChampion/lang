@@ -14,6 +14,7 @@ import "std/hash";
 import "std/array";
 import "core/cmp";
 import "core/int";
+import "std/error";
 
 // `InflateError` — why a stream could not be decoded. `Truncated` for
 // input that ends inside a block or a header; `Malformed(what)` for a
@@ -28,6 +29,10 @@ pub enum InflateError {
   BadChecksum,
   BadHeader(string),
 }
+
+impl error.Error for InflateError {}
+
+impl cmp.Display for InflateError {}
 
 pub function (e: InflateError) message(): string {
   match (e) {

@@ -30,6 +30,8 @@
 import "core/int";
 import "std/http/huffman";
 import "std/string";
+import "std/error";
+import "core/cmp";
 
 // Field — one field line; `sensitive` asks every intermediary never to
 // index it (the N bit, §4.5.4).
@@ -47,6 +49,14 @@ pub function sensitive(name: string, value: string): Field {
 // decoded, an instruction on its encoder stream, or one on its decoder
 // stream.
 pub enum QpackError { DecompressionFailed(string), EncoderStreamError(string), DecoderStreamError(string) }
+
+pub function (e: QpackError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for QpackError {}
+
+impl cmp.Display for QpackError {}
 
 // The HTTP/3 error codes (§6).
 pub const QPACK_DECOMPRESSION_FAILED: i64 = 512;

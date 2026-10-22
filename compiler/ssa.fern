@@ -1105,9 +1105,32 @@ pub function lane_inst(ins: SInst): boolean {
   return (k == 9 || k == 10 || k == 61 || k == 62) && lane_op(ins.str);
 }
 
+// lane_param reports parameter p of f a lane value (ssa_lift.lift_with_lanes
+// marks it).
+pub function lane_param(f: SFunc, p: i32): boolean {
+  if (f.blocks.len() == 0) {
+    return false;
+  }
+  for ins in f.blocks[0].insts {
+    if (ins.kind_tag == 6 && ins.imm == p) {
+      return ins.str == lane_param_mark();
+    }
+  }
+  return false;
+}
+
+// lane_param_mark is the `str` of a parameter (kind 6) that is a lane value.
+pub function lane_param_mark(): string {
+  return "v128";
+}
+
 // lane_result reports an instruction whose result is a lane value: a lane op
-// other than vextract (an f64) and vstore (a dead result).
+// other than vextract (an f64) and vstore (a dead result), a lane parameter,
+// and a call marked as returning one (call mark 6, ir.lane_call).
 pub function lane_result(ins: SInst): boolean {
+  if (ins.kind_tag == 6 && ins.str == lane_param_mark() || ins.kind_tag == 11 && ins.imm == 6) {
+    return true;
+  }
   if (!lane_inst(ins)) {
     return false;
   }

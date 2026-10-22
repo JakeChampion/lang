@@ -34,6 +34,8 @@ import "std/tls/keyshare";
 import "std/tls/message";
 import "std/tls/record";
 import "std/utf8";
+import "std/error";
+import "core/cmp";
 
 // HandshakeError — why a handshake or connection failed. `alert()` is the
 // alert to send, and `(c: Client) alert(e)` / `(s: Server) alert(e)` the
@@ -69,6 +71,14 @@ pub enum HandshakeError {
   // A call out of turn, naming it.
   Misuse(string),
 }
+
+pub function (e: HandshakeError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for HandshakeError {}
+
+impl cmp.Display for HandshakeError {}
 
 function __record_alert(e: record.RecordError): i32 {
   match (e) {

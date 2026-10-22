@@ -9,6 +9,8 @@ import (
 )
 
 const tailArrayAllocationSource = `@noinline function raw_arr_box(x: f64): f64 { return x + 1.0; }
+@noinline function lane_keep(v: f64x2): f64x2 { return v + __f64x2_splat(2.0); }
+@noinline function lane_tail(v: f64x2): f64x2 { return lane_keep(v); }
 @noinline function overwrite(p: usize): i32 { __store_i32(p, 7); return 0; }
 @noinline function live(n: i32): i32[] {
   overwrite(__raw_scratch(8));
@@ -36,6 +38,7 @@ function main(): i32 {
   let c: i32 = checked_cleanup(17);
   let d: i32[] = live(5);
   if (a.len() != 3 || b.len() != 80 || c != 17 || d.len() != 5 || raw_arr_box(1.25) != 2.25) { return 91; }
+  if (__f64x2_lane(lane_tail(__f64x2_splat(0.5)), 1) != 2.5) { return 92; }
   return 0;
 }
 `
@@ -81,6 +84,13 @@ func TestSelfHostTailArrayAllocation(t *testing.T) {
 					}
 					if body := asmFuncBody(t, string(raw), "__fn_cleanup"); !strings.Contains(body, call) {
 						t.Errorf("post-allocation work must retain the call:\n%s", body)
+					}
+					laneTail := `\bjmp __fn_lane_keep\.r\b`
+					if target == "arm64-linux" {
+						laneTail = `\bb __fn_lane_keep\.r\b`
+					}
+					if body := asmFuncBody(t, string(raw), "__fn_lane_tail"); !regexp.MustCompile(laneTail).MatchString(body) {
+						t.Errorf("lane arguments must keep their register ABI in a tail call:\n%s", body)
 					}
 					gcc, runner := x86_64Tooling(t)
 					if target == "arm64-linux" {

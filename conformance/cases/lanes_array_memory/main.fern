@@ -1,0 +1,37 @@
+// `load` reads the lanes at an index of an array, and `with` answers the
+// array with them written there, leaving any other holder of the array as it
+// was. An f32 array takes an f32x4 the same way.
+import "std/f64";
+
+function total(xs: f64[]): f64 {
+  let t: f64 = 0.0;
+  for x in xs {
+    t = t + x;
+  }
+  return t;
+}
+
+function main(): i32 {
+  let xs: f64[] = [1.0, 2.0, 3.0, 4.0, 5.0];
+  let v: f64x2 = __f64x2_load(xs, 3);
+  print(__f64x2_lane(v, 0).to_string() + " " + __f64x2_lane(v, 1).to_string());
+  let ys: f64[] = __f64x2_with(xs, 0, v * __f64x2_splat(10.0));
+  print(total(xs).to_string() + " " + total(ys).to_string() + " " + ys[0].to_string() + " " + ys[1].to_string() + " " + ys[2].to_string());
+  let acc: f64x2 = __f64x2_splat(0.0);
+  let i: i32 = 0;
+  while (i + 1 < ys.len()) {
+    acc = acc + __f64x2_load(ys, i);
+    i = i + 2;
+  }
+  print(__f64x2_lane(acc, 0).to_string() + " " + __f64x2_lane(acc, 1).to_string());
+  let fs: f32[] = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5];
+  let gs: f32[] = __f32x4_with(fs, 2, __f32x4_load(fs, 1) * __f32x4_splat(2.0));
+  let k: i32 = 0;
+  let line: string = "";
+  while (k < gs.len()) {
+    line = line + (gs[k] as f64).to_string() + " ";
+    k = k + 1;
+  }
+  print(line + (fs[5] as f64).to_string());
+  return 0;
+}

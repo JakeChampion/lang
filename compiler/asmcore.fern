@@ -359,9 +359,10 @@ pub function tail_allocator(ins: ssa.SInst): string {
   return "";
 }
 
-// FloatAbi is unit_float_abi's answer: the functions with an f64 parameter or
-// result, and the shape of each, one character per parameter (`f` for an f64,
-// `x` for anything else), a `|`, and the result's.
+// FloatAbi is unit_float_abi's answer: the functions with an f64 or lane
+// parameter or result, and the shape of each, one character per parameter
+// (`f` for an f64, `v` for a lane value, `x` for anything else), a `|`, and
+// the result's.
 pub struct FloatAbi { names: irtables.SigReg, masks: string[] }
 
 // unit_float_abi reads the shapes off the unit's lowered bodies, as
@@ -393,25 +394,33 @@ pub function unit_float_abi(mod: parser.Module, lo: i32, hi: i32, cache: irtable
 }
 
 function float_mask_of(r: irtables.LowerResult): string {
-  let any: boolean = r.result_kind == irtables.result_f64();
   let mask: string = "";
   let p: i32 = 0;
   while (p < r.n_params) {
-    if (util.index_of_i32(r.f64_slots, p) >= 0) {
-      mask = mask + "f";
-      any = true;
-    } else {
-      mask = mask + "x";
-    }
+    mask = mask + slot_class(r, p);
     p = p + 1;
   }
-  if (!any) {
+  let res: string = "x";
+  if (r.result_kind == irtables.result_f64()) {
+    res = "f";
+  } else if (r.result_kind == irtables.result_v128()) {
+    res = "v";
+  }
+  if (res == "x" && !util.contains(mask, "f") && !util.contains(mask, "v")) {
     return "";
   }
-  if (r.result_kind == irtables.result_f64()) {
-    return mask + "|f";
+  return mask + "|" + res;
+}
+
+// slot_class is parameter p's character in a float mask.
+function slot_class(r: irtables.LowerResult, p: i32): string {
+  if (util.index_of_i32(r.f64_slots, p) >= 0) {
+    return "f";
   }
-  return mask + "|x";
+  if (util.index_of_i32(r.v128_slots, p) >= 0) {
+    return "v";
+  }
+  return "x";
 }
 
 // float_mask is function `label`'s shape (FloatAbi), or "" for one with no
@@ -432,6 +441,27 @@ pub function float_param(mask: string, p: i32): boolean {
 
 pub function float_result(mask: string): boolean {
   return mask.len() > 0 && mask[mask.len() - 1] == b'f';
+}
+
+// lane_param reports parameter p of a function of shape `mask` a lane value,
+// passed in a vector register; lane_result a lane result, returned in one.
+pub function lane_param(mask: string, p: i32): boolean {
+  return p < mask.len() && mask[p] == b'v';
+}
+
+pub function has_lane_param(mask: string): boolean {
+  let p: i32 = 0;
+  while (p < mask.len() && mask[p] != b'|') {
+    if (mask[p] == b'v') {
+      return true;
+    }
+    p = p + 1;
+  }
+  return false;
+}
+
+pub function lane_result(mask: string): boolean {
+  return mask.len() > 0 && mask[mask.len() - 1] == b'v';
 }
 
 // unit_leaves lifts every small body in the unit's cache (the same bodies
@@ -457,7 +487,7 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
           name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name;
         }
       }
-      let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops, false);
+      let lifted: ssa_lift.LResult = ssa_lift.lift_with_lanes(kt, name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops, false, cache[fi].v128_slots);
       if (lifted.ok) {
         let f: ssa.Formed = ssa.register_form(lifted.func);
         for leaf in ssa.leaf_of(name, f.f) {
@@ -516,7 +546,7 @@ pub function (s: EmitState) lift(pre: Prelift, label_name: string, r: irtables.L
   if let Some(l) = pre.lifted {
     return l;
   }
-  return ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.source_positions.entry.line > 0 || r.dbg_slots.len() > 0 && s.var_rows);
+  return ssa_lift.lift_with_lanes(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.source_positions.entry.line > 0 || r.dbg_slots.len() > 0 && s.var_rows, r.v128_slots);
 }
 
 // finish is ssaprepare.finish over the unit's leaves, taking the register
@@ -10848,34 +10878,8 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
   });
 }
 
-// check_decl_names rejects a module holding a NAMELESS function, const, trait,
-// trait requirement, struct, enum or type alias, or a parameter written with no
-// type.
-// mod.resources is not walked: parse_module records a resource only when a name
-// follows `resource`, and refuses an `@import` with neither form through a
-// sentinel.
-//
-// The self-host parser is deliberately permissive — `Par` carries no error
-// channel, so a token it cannot use is skipped and the drivers' gates catch the
-// consequences. For a declaration NAME that leaves no consequence to catch:
-// `peek_ident` returns "" for a keyword, and parse_func_decl then returns
-// a FuncDecl with an empty name. The module parses "successfully" and the
-// nameless function is simply carried through the whole pipeline.
-//
-// That is not hypothetical. `function use()` — `use` is in the lexer's keyword
-// set — produced exactly this, and the empty-named function it left behind cost
-// two sessions of #3457 a confidently WRONG bisection: probe programs that were
-// silently malformed were read as evidence about the IR subset, and the
-// conclusion was written into docs/SELFHOST-AST-RETIREMENT.md before anyone
-// noticed the eligibility report listing a function called "". The native
-// parser rejects the same source properly (`expected "Ident", got "use"`), so
-// this is a self-host-only blind spot, and the divergence is what made it
-// survive: every native oracle agreed the program was invalid while the
-// self-host pipeline reported verdicts about it.
-//
-// A gate rather than a parser error because the parser has nowhere to put one;
-// this is the same shape as check_call_arity / check_undefined_calls, and it
-// runs in the same place.
+// The parser reports malformed source at the token that failed.
+// This fallback refuses nameless declarations in modules from other producers.
 pub function check_decl_names(mod: parser.Module): util.Diag[] {
   let errs: util.Diag[] = [];
   let i: i32 = 0;
@@ -10898,7 +10902,6 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         fix: None,
       });
     }
-    errs = untyped_param_errs(mod.funcs[i], errs);
     i = i + 1;
   }
   for td in mod.trait_decls {
@@ -10909,7 +10912,6 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
       if (tm.name.len() == 0) {
         errs = errs.append(util.Diag { related: [], length: 0, code: "P001", message: parser.malformed_fn_decl_message(), line: tm.line, col: tm.col, fix: None });
       }
-      errs = untyped_param_errs(tm, errs);
     }
   }
   let si: i32 = 0;
@@ -10942,7 +10944,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
 // order, so the first is the earliest mistake, as on native (#12773):
 //
 // - The parser's ExprUnknown / StmtUnknown sentinels.
-// - Nameless declarations and untyped parameters (check_decl_names).
+// - Nameless declarations from other module producers (check_decl_names).
 // - Statements outside any declaration in a module that declares `main`
 //   (check_top_level_stmts).
 //
@@ -11000,24 +11002,6 @@ pub function refuse_parse_errors(mods: parser.Module[]): boolean {
 // parser.malformed_fn_decl_message does.
 function malformed_type_decl_message(kw: string): string {
   return "malformed " + kw + " declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name)";
-}
-
-// untyped_param_errs reports each parameter of `fd` written without `: TYPE`,
-// which parse_param records with an empty type.
-function untyped_param_errs(fd: parser.FuncDecl, errs: util.Diag[]): util.Diag[] {
-  let out: util.Diag[] = errs;
-  for param in fd.params {
-    if (param.type_name.len() == 0) {
-      out = out.append(util.Diag {
-        length: 0,
-        related: [],
-        code: "P001", message: "parameter \"" + param.name + "\" of \"" + fd.name + "\" has no type: expected \":\" after its name",
-        line: fd.line, col: fd.col,
-        fix: None,
-      });
-    }
-  }
-  return out;
 }
 
 // check_top_level_stmts refuses a statement written at module level in a module

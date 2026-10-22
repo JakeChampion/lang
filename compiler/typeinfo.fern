@@ -24,7 +24,7 @@ pub function width_ptr(): i32 {
 // spelling survives verbatim inside a generic argument) and `void`.
 pub function is_primitive_type_name(t: string): boolean {
   return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "usize"
-    || t == "f32" || t == "f64"
+    || t == "f32" || t == "f64" || lanes_width(t) > 0
     || t == "boolean" || t == "bool"
     || t == "string" || t == "str" || t == "char" || t == "void";
 }
@@ -35,6 +35,11 @@ pub struct TypeString { tag: i32 }
 
 // An uncommitted literal defaults to f64 but may adopt a contextual width.
 pub struct TypeFloat { width: i32, polymorphic: boolean }
+
+// A 128-bit vector of floats: `f64x2` (width 64, two lanes) or `f32x4` (width
+// 32, four lanes). A lane value lives in a local, a parameter or a result,
+// never in a field or an element.
+pub struct TypeLanes { width: i32 }
 
 // Array of homogeneous elements. elem can itself be any Type, so
 // `i32[][]` is representable. An empty literal `[]` defaults to
@@ -93,6 +98,9 @@ pub function ownable(t: Type): boolean {
     return false;
   }
   if let TypeFloat(_) = t {
+    return false;
+  }
+  if let TypeLanes(_) = t {
     return false;
   }
   if let TypeVoid(_) = t {
@@ -183,7 +191,7 @@ pub struct TypeErased { name: string }
 // payload, but never a produced value or a generic declaration's variable.
 pub struct TypeNever { tag: i32 }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeErased | TypeNever;
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeLanes | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeErased | TypeNever;
 
 pub function unchecked(): Type {
   return TypeUnknown { reason: "not yet checked" };
@@ -296,6 +304,114 @@ function renamed_list(ts: Type[], clone_of: (Type) => string): Type[] {
   return out;
 }
 
+// lanes_spelling names the lane type of element width `width`: `f64x2` or
+// `f32x4`, and "" for any other width.
+pub function lanes_spelling(width: i32): string {
+  if (width == 64) {
+    return "f64x2";
+  }
+  if (width == 32) {
+    return "f32x4";
+  }
+  return "";
+}
+
+// lanes_width is the element width the lane spelling `t` names, 0 when `t`
+// is not one.
+pub function lanes_width(t: string): i32 {
+  if (t == "f64x2") {
+    return 64;
+  }
+  if (t == "f32x4") {
+    return 32;
+  }
+  return 0;
+}
+
+// lane_builtin_width is the element width of a lane builtin's lane type: 64
+// for `__f64x2_*`, 32 for `__f32x4_*` and 0 for any other name.
+pub function lane_builtin_width(name: string): i32 {
+  if (name.len() <= 8) {
+    return 0;
+  }
+  let head: string = slice_unchecked(name, 0, 8) + "";
+  if (head == "__f64x2_") {
+    return 64;
+  }
+  if (head == "__f32x4_") {
+    return 32;
+  }
+  return 0;
+}
+
+// lane_builtin_verb is a lane builtin's name after its `__f64x2_` or
+// `__f32x4_` prefix, "" for a name without one.
+pub function lane_builtin_verb(name: string): string {
+  if (lane_builtin_width(name) == 0) {
+    return "";
+  }
+  return slice_unchecked(name, 8, name.len()) + "";
+}
+
+// lane_builtin_params is the parameter list of the lane builtin `name`
+// (docs/SIMD-GENERIC-KERNELS.md §6). `of` takes one element per lane, `lane`
+// a lane value and an index, `load` an array and an index, and `with` an
+// array, an index and a lane value.
+pub function lane_builtin_params(name: string): Type[] {
+  let w: i32 = lane_builtin_width(name);
+  let lt: Type = TypeLanes { width: w };
+  let e: Type = TypeFloat { width: w, polymorphic: false };
+  let i: Type = TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
+  let arr: Type = TypeArray { elem: e, view: false };
+  let v: string = lane_builtin_verb(name);
+  if (v == "splat") {
+    return [e];
+  }
+  if (v == "of") {
+    let out: Type[] = [];
+    while (out.len() < 128 / w) {
+      out = out.append(e);
+    }
+    return out;
+  }
+  if (v == "lane") {
+    return [lt, i];
+  }
+  if (v == "load") {
+    return [arr, i];
+  }
+  if (v == "with") {
+    return [arr, i, lt];
+  }
+  return lane_operands(v, lt);
+}
+
+// lane_operands is the parameter list of a lane builtin whose operands are
+// all lane values.
+function lane_operands(v: string, lt: Type): Type[] {
+  if (v == "mul_add" || v == "select") {
+    return [lt, lt, lt];
+  }
+  if (v == "sqrt" || v == "abs" || v == "floor" || v == "round") {
+    return [lt];
+  }
+  return [lt, lt];
+}
+
+// lane_builtin_result is the result type of the lane builtin `name`: an
+// element for `lane`, the array for `with` and the lane type otherwise.
+pub function lane_builtin_result(name: string): Type {
+  let w: i32 = lane_builtin_width(name);
+  let v: string = lane_builtin_verb(name);
+  if (v == "lane") {
+    return TypeFloat { width: w, polymorphic: false };
+  }
+  if (v == "with") {
+    return TypeArray { elem: TypeFloat { width: w, polymorphic: false }, view: false };
+  }
+  return TypeLanes { width: w };
+}
+
 pub function spelling(t: Type): string {
   match (t) {
     TypeI32(i) => {
@@ -321,6 +437,9 @@ pub function spelling(t: Type): string {
         return "f64";
       }
       return "";
+    },
+    TypeLanes(l) => {
+      return lanes_spelling(l.width);
     },
     TypeArray(a) => {
       let elem: string = spelling(a.elem);
