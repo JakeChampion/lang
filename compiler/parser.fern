@@ -7276,10 +7276,10 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     let (kvnames, kvcount, kvok, kvnames_p) = parse_destructure_names(kv_open);
     p = kvnames_p;
     if (!kvok || kvcount < 2) {
-      return (s_unknown(p, "for pattern needs at least 2 binders"), p);
+      return for_refused(p, "for pattern needs at least 2 binders");
     }
     if (p.peek_ident() != "in") {
-      return (s_unknown(p, "missing `in` in for"), p);
+      return for_refused(p, "missing `in` in for");
     }
     p = p.advance();
     // Suppress trailing struct-literal parsing — the `{` that
@@ -7321,7 +7321,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
       let (fpnames, fpcount, fpok, fpnames_p) = parse_destructure_names(p);
       p = fpnames_p;
       if (!fpok || fpcount < 2) {
-        return (s_unknown(p, "for pattern needs at least 2 binders"), p);
+        return for_refused(p, "for pattern needs at least 2 binders");
       }
       fpre = [s_var_at(fpnames, destr_marker(fp_at, false, ""), fp_init, fp_line, fp_col)];
     } else {
@@ -7338,12 +7338,12 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
   } else {
     fvar = p.peek_ident();
     if (fvar.len() == 0) {
-      return (s_unknown(p, "missing for-let name"), p);
+      return for_refused(p, "missing for-let name");
     }
     p = p.advance();
   }
   if (p.peek_ident() != "in") {
-    return (s_unknown(p, "missing `in` in for"), p);
+    return for_refused(p, "missing `in` in for");
   }
   p = p.advance();  // consume `in`
   // Suppress trailing struct-literal parsing on the iter so that
@@ -7388,6 +7388,17 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     fbi = fbi + 1;
   }
   return (s_for(fvar, iter_expr, fpre), p);
+}
+
+// for_refused is a `for` whose header was refused at `p`. The loop's body
+// is parsed past, so it is not re-read as statements after the refusal.
+function for_refused(p: Par, kind: string): (ast.Stmt, Par) {
+  let open: Par = p.skip_to_open();
+  if (open.peek_punct() != "{") {
+    return (s_unknown(p, kind), p);
+  }
+  let (skipped, sp) = parse_block(open);
+  return (s_unknown(p, kind), sp);
 }
 
 // with_stmt_line stamps the source line a statement STARTS on. Five Stmt kinds
@@ -7918,7 +7929,8 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     if (p.peek_is_pat_literal() || p.peek_at_literal()) {
       let (lel_at, lel_atp) = take_at_binding(p);
       let (lel_lits, lel_his, lel_hrs, lel_incs, lel_p) = parse_lit_alts(lel_atp);
-      let (lel_init, lel_ip) = parse_expr(lel_p.expect("="));
+      let (lel_init, lel_ip) = parse_expr(lel_p.expect("=").with_no_struct(true));
+      lel_ip = lel_ip.with_no_struct(p.no_struct);
       let (lel_else, lel_rest, lel_restp) = parse_let_else_tail(lel_ip);
       p = lel_restp;
       let lel_arms: ast.LitArm[] = [];
@@ -7962,7 +7974,8 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         lsp_p = lsp_ap;
         lsp_pats = lsp_pats.append(lsp_alt);
       }
-      let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("="));
+      let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("=").with_no_struct(true));
+      lsp_ip = lsp_ip.with_no_struct(p.no_struct);
       let (lsp_else, lsp_rest, lsp_restp) = parse_let_else_tail(lsp_ip);
       p = lsp_restp;
       let lsp_arms: ast.MatchArm[] = [];
@@ -9327,10 +9340,11 @@ pub function is_struct_destr_marker(type_name: string): boolean {
 }
 
 pub function is_destr_marker(type_name: string): boolean {
-  return util.str_has_prefix(type_name, "@pp;")
+  return type_name.len() > 0 && type_name[0] == b'@'
+    && (util.str_has_prefix(type_name, "@pp;")
     || util.str_has_prefix(type_name, "@at:")
     || util.str_has_prefix(type_name, "@rest;")
-    || util.str_has_prefix(type_name, "@sd:");
+    || util.str_has_prefix(type_name, "@sd:"));
 }
 
 // parse_pattern_param consumes a destructuring parameter — `(a, b): (T, U)`
@@ -15090,9 +15104,17 @@ function ref_bind(pattern: TypeRef, actual: TypeRef, vars: string[], names: stri
 pub function split_plus_bounds(bound: string): string[] {
   let out: string[] = [];
   let start: i32 = 0;
+  let depth: i32 = 0;
   let i: i32 = 0;
   while (i <= bound.len()) {
-    if (i == bound.len() || bound[i] == b'+') {
+    // A `+` inside brackets belongs to an associated-type pin or a generic
+    // argument (`Holder[Item = dyn A + B]`), not to this bound list.
+    if (i < bound.len() && bound[i] == b'[') {
+      depth = depth + 1;
+    } else if (i < bound.len() && bound[i] == b']') {
+      depth = depth - 1;
+    }
+    if (i == bound.len() || depth == 0 && bound[i] == b'+') {
       if (i > start) {
         out = out.append(slice_unchecked(bound, start, i) + "");
       }
@@ -26862,26 +26884,11 @@ pub function dyn_trait_set(ty: string): string[] {
   if (ty.len() <= 4 || slice_unchecked(ty, 0, 4) != "dyn ") {
     return out;
   }
-  let start: i32 = 4;
-  let depth: i32 = 0;
-  let i: i32 = 4;
-  while (i <= ty.len()) {
-    // A `+` inside brackets joins an associated-type pin or generic
-    // argument (`dyn Holder[Item = i32]`), not the trait set.
-    if (i < ty.len() && ty[i] == b'[') {
-      depth = depth + 1;
+  for piece in split_plus_bounds(slice_unchecked(ty, 4, ty.len()) + "") {
+    let part: string = util.trim(piece);
+    if (part.len() > 0) {
+      out = out.append(part);
     }
-    if (i < ty.len() && ty[i] == b']') {
-      depth = depth - 1;
-    }
-    if (i == ty.len() || depth == 0 && ty[i] == b'+') {
-      let part: string = util.trim(slice_unchecked(ty, start, i) + "");
-      if (part.len() > 0) {
-        out = out.append(part);
-      }
-      start = i + 1;
-    }
-    i = i + 1;
   }
   return out;
 }

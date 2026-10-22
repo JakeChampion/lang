@@ -549,8 +549,13 @@
 # output for the tracked artifact. The source, fixpoint hashes and complete
 # driver report are recorded in docs/rc-log/2026-10-17-scalar-record-returns.md.
 # The other ten baselines and the 5% tolerance are unchanged.
+#
+# 2026-10-22 — fern.fern 12630080 -> 13273088 (+5.1%), measured by the
+# driver-sizes lane on #12961 (lane types 4b: the thirty lane ops on every
+# backend, the lane register class and its spill pairs), merged with main
+# at 826a5d0. The other ten baselines and the 5% tolerance are unchanged.
 fern.fern/stage2 12672208
-fern.fern 12630080
+fern.fern 13273088
 drivers/asm_load_run.fern 10125912
 drivers/asm_modload_run.fern 8699400
 drivers/asm_ir_run.fern 8418328

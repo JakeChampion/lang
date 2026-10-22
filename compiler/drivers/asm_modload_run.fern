@@ -931,9 +931,8 @@ function main(): i32 {
   // `-func-range LO:HI` shards one oversized module's emit across processes.
   let pm_lo: i32 = 0;
   let pm_hi: i32 = 0 - 1;
-  // `-target x86_64|arm64` selects the emit backend (#4398 part 1: the fold
-  // that retired the asm_arm64_modload_run mirror). Default x86_64 keeps
-  // every pre-fold caller byte-identical; module loading, the probe, and the
+  // `-target x86-64-linux|arm64-linux` selects the emit backend; a caller
+  // that names none gets x86-64-linux. Module loading, the probe, and the
   // per-module analyses are target-agnostic.
   let target: string = "x86-64-linux";
   // `-per-module-emit-all -out-dir DIR` emits every unit in ONE process (#3457

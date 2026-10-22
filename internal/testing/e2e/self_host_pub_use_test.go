@@ -130,7 +130,7 @@ func TestWasmSelfHostPubUseReexport(t *testing.T) {
 
 	wat, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", entry).Output()
 	if err != nil || len(wat) == 0 {
-		t.Fatalf("fern -target wasm on pub-use program: %v (%d bytes)", err, len(wat))
+		t.Fatalf("fern -target wasm32-wasi on pub-use program: %v (%d bytes)", err, len(wat))
 	}
 	watPath := filepath.Join(progDir, "prog.wat")
 	if err := os.WriteFile(watPath, wat, 0o644); err != nil {

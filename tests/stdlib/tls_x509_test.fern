@@ -108,7 +108,7 @@ function rfc8448_certificate(): u8[] {
 // A certificate standing for a parse that failed, its algorithm the error.
 function failed(why: string): x509.Certificate {
   let none: x509.Name = x509.Name { raw: [], common_name: "" };
-  return x509.Certificate { raw: [], tbs: [], version: 0, serial: [], algorithm: x509.OtherAlgorithm(why), issuer: none, subject: none, not_before: 0 as i64, not_after: 0 as i64, key: x509.OtherKey(""), ca: false, path_len: -1, key_usage: -1, ext_key_usage: [], has_ext_key_usage: false, dns_names: [], ip_addresses: [], permitted_dns: [], excluded_dns: [], permitted_ip: [], excluded_ip: [], unknown_critical: [], signature: [] };
+  return x509.Certificate { raw: [], tbs: [], version: 0, serial: [], algorithm: x509.OtherAlgorithm(why), issuer: none, subject: none, not_before: 0 as i64, not_after: 0 as i64, key: x509.OtherKey(""), spki: [], ca: false, path_len: -1, key_usage: -1, ext_key_usage: [], has_ext_key_usage: false, dns_names: [], ip_addresses: [], permitted_dns: [], excluded_dns: [], permitted_ip: [], excluded_ip: [], unknown_critical: [], signature: [] };
 }
 
 function parsed(b: u8[]): x509.Certificate {

@@ -68,6 +68,19 @@ func checkMachOReadOnly(t *testing.T, bin string, at uint64) {
 		t.Fatal(err)
 	}
 	defer f.Close()
+	// The constants are a __const section of __TEXT, after the code: __text
+	// covers the instructions alone.
+	text, cst := f.Section("__text"), f.Section("__const")
+	if text == nil || cst == nil || cst.Seg != "__TEXT" {
+		t.Errorf("want __text and a __TEXT,__const section, got %v and %v", text, cst)
+	} else {
+		if text.Addr+text.Size > cst.Addr {
+			t.Errorf("__text [%#x,+%#x) runs into __const at %#x", text.Addr, text.Size, cst.Addr)
+		}
+		if at < uint64(cst.Offset) || at >= uint64(cst.Offset)+cst.Size {
+			t.Errorf("the literal at file offset %#x is outside __const [%#x,+%#x)", at, cst.Offset, cst.Size)
+		}
+	}
 	const vmProtWrite = 2
 	for _, l := range f.Loads {
 		s, ok := l.(*macho.Segment)

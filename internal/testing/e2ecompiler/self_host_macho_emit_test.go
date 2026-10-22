@@ -57,9 +57,10 @@ func TestSelfHostMachO(t *testing.T) {
 // Mach-O plus the SHA-256 test vectors that back the ad-hoc code signature.
 // Each `return N` is a distinct failing-check id (0 = all pass).
 //
-// For the no-data case, text_off = 32 + 648 + 392 = 1072. The 392 bytes
-// reserve the optional DWARF commands; sizeofcmds remains 600, excluding
-// that reservation and the 48-byte layout slack. text_vmsize rounds 1076 up to one 16 KiB page
+// For the no-data case, text_off = 32 + 648 + 392 + 80 = 1152. The 392 bytes
+// reserve the optional DWARF commands and the 80 the optional __const
+// section header; sizeofcmds remains 600, excluding those reservations and
+// the 48-byte layout slack. text_vmsize rounds 1156 up to one 16 KiB page
 // = 16384 = code_limit; ident "fern" (len 4) gives sig_len = 20 + (88+5) +
 // 4*32 = 241, so total = 16625.
 //
@@ -125,10 +126,10 @@ function main(): i32 {
     if (bin[536] != 12 || bin[540] != 56 || bin[544] != 24) { return 24; }
     if (bin[560] != 47 || bin[561] != 117 || bin[562] != 115 || bin[563] != 114) { return 25; }
     // LC_MAIN @592 = 0x80000028, cmdsize 24. entryoff @600 is a FILE offset
-    // (dyld adds the slid load address), = text_off + entry_off = 1072 (0x430).
+    // (dyld adds the slid load address), = text_off + entry_off = 1152 (0x480).
     if (bin[592] != 40 || bin[593] != 0 || bin[594] != 0 || bin[595] != 128) { return 26; }
     if (bin[596] != 24) { return 27; }
-    if (bin[600] != 48 || bin[601] != 4 || bin[602] != 0 || bin[603] != 0) { return 28; }
+    if (bin[600] != 128 || bin[601] != 4 || bin[602] != 0 || bin[603] != 0) { return 28; }
     // LC_CODE_SIGNATURE @616 = 29 (0x1d), cmdsize 16.
     if (bin[616] != 29 || bin[620] != 16) { return 29; }
 
@@ -144,8 +145,8 @@ function main(): i32 {
     // The walk must land exactly on the end of the commands (32 + 600).
     if (off != 632) { return 31; }
 
-    // .text bytes laid down at text_off = 1072.
-    if (bin[1072] != 1 || bin[1073] != 2 || bin[1074] != 3 || bin[1075] != 4) { return 32; }
+    // .text bytes laid down at text_off = 1152.
+    if (bin[1152] != 1 || bin[1153] != 2 || bin[1154] != 3 || bin[1155] != 4) { return 32; }
     // code signature at code_limit = 16384: CSMAGIC_EMBEDDED_SIGNATURE
     // (0xfade0cc0) big-endian.
     if (bin[16384] != 250 || bin[16385] != 222 || bin[16386] != 12 || bin[16387] != 192) { return 33; }
@@ -166,7 +167,7 @@ function main(): i32 {
     if (he[31] != 85) { return 39; }
 
     // ---- data variant: text (5 bytes) + data (2 bytes) ----
-    // __DATA adds a 152-byte segment+section, so text_off = 32 + 800 + 392 = 1224.
+    // __DATA adds a 152-byte segment+section, so text_off = 32 + 800 + 392 + 80 = 1304.
     let t2: u8[] = [1, 2, 3, 4, 5];
     let d2: i32[] = [9, 9];
     let b2: i32[] = macho_executable(t2, none, d2, "fern", 0, 0, none);
@@ -184,8 +185,8 @@ function main(): i32 {
     if (b2[16384] != 9 || b2[16385] != 9) { return 45; }
     // total = code_limit (32768) + sig_len (369).
     if (b2.len() != 33137) { return 46; }
-    // LC_MAIN entryoff @752 = text_off = 1224 (0x4c8).
-    if (b2[752] != 200 || b2[753] != 4 || b2[754] != 0 || b2[755] != 0) { return 47; }
+    // LC_MAIN entryoff @752 = text_off = 1304 (0x518).
+    if (b2[752] != 24 || b2[753] != 5 || b2[754] != 0 || b2[755] != 0) { return 47; }
 
     // ---- entry_off + bss (#6042) ----
     // entry_off shifts LC_MAIN only: the emitter writes _main after the
@@ -195,7 +196,7 @@ function main(): i32 {
     // inside the mapped segment. 2 + 20000 rounds to two pages = 32768,
     // against one page (16384) of file bytes.
     let b3: i32[] = macho_executable(t2, none, d2, "fern", 8, 20000, none);
-    if (b3[752] != 208 || b3[753] != 4 || b3[754] != 0 || b3[755] != 0) { return 48; }
+    if (b3[752] != 32 || b3[753] != 5 || b3[754] != 0 || b3[755] != 0) { return 48; }
     if (b3[289] != 128 || b3[288] != 0) { return 49; }
     if (b3[305] != 64 || b3[304] != 0) { return 50; }
     // The file layout (hence the signature) is unchanged by bss.
@@ -239,6 +240,28 @@ function main(): i32 {
     if (b5[264] != 95 || b5[265] != 95 || b5[266] != 68) { return 62; }
     if (b5[289] != 64 || b5[288] != 0) { return 63; }
     if (b5[304] != 0 || b5[305] != 0 || b5[306] != 0) { return 64; }
+
+    // ---- read-only constants after the code ----
+    // 16 code bytes then 16 of constants: __text spans only the code and a
+    // __const section (@256, after __text's header @176) the rest, both in
+    // __TEXT, whose header space text_off already reserved.
+    let t6: u8[] = [];
+    while (t6.len() < 32) { t6 = t6.append(7 as u8); }
+    let ns: string[] = [];
+    let nd: i32[][] = [];
+    let b6: i32[] = macho_executable_binds(t6, 16, none, none, "fern", 0, 0, none, none, ns, ns, none, nd);
+    // sizeofcmds = 680 (0x2a8), __TEXT nsects @168 = 2.
+    if (b6[20] != 168 || b6[21] != 2) { return 65; }
+    if (b6[168] != 2) { return 66; }
+    // __text size @216 = 16.
+    if (b6[216] != 16 || b6[217] != 0) { return 67; }
+    // "__const" @256, segment "__TEXT" @272, size @296 = 16, offset @304 = 1168 (0x490).
+    if (b6[256] != 95 || b6[258] != 99 || b6[259] != 111) { return 68; }
+    if (b6[274] != 84) { return 69; }
+    if (b6[296] != 16 || b6[297] != 0) { return 70; }
+    if (b6[304] != 144 || b6[305] != 4) { return 71; }
+    // The code still starts at the reserved text_off.
+    if (b6[1152] != 7 || b6[1184] != 0) { return 72; }
     return 0;
 }
 `

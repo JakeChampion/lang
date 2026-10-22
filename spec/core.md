@@ -463,6 +463,36 @@ is the number of slots it leaves.
 | `aes_gcm_seal` | 444 | 5 | 1 |
 | `aes_gcm_open` | 445 | 5 | 1 |
 | `mismatch_bytes_str` | 446 | 5 | 1 |
+| `vsplat` | 447 | 1 | 1 |
+| `vextract` | 448 | 1 | 1 |
+| `vreplace` | 449 | 2 | 1 |
+| `vadd` | 450 | 2 | 1 |
+| `vsub` | 451 | 2 | 1 |
+| `vmul` | 452 | 2 | 1 |
+| `vdiv` | 453 | 2 | 1 |
+| `vmin` | 454 | 2 | 1 |
+| `vmax` | 455 | 2 | 1 |
+| `vfma` | 456 | 3 | 1 |
+| `vsqrt` | 457 | 1 | 1 |
+| `vabs` | 458 | 1 | 1 |
+| `vneg` | 459 | 1 | 1 |
+| `vfloor` | 460 | 1 | 1 |
+| `vceil` | 461 | 1 | 1 |
+| `vtrunc` | 462 | 1 | 1 |
+| `vround` | 463 | 1 | 1 |
+| `veq` | 464 | 2 | 1 |
+| `vne` | 465 | 2 | 1 |
+| `vlt` | 466 | 2 | 1 |
+| `vle` | 467 | 2 | 1 |
+| `vgt` | 468 | 2 | 1 |
+| `vge` | 469 | 2 | 1 |
+| `vand` | 470 | 2 | 1 |
+| `vor` | 471 | 2 | 1 |
+| `vxor` | 472 | 2 | 1 |
+| `vandnot` | 473 | 2 | 1 |
+| `vselect` | 474 | 3 | 1 |
+| `vload` | 475 | 1 | 1 |
+| `vstore` | 476 | 2 | 0 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

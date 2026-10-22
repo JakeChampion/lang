@@ -35,13 +35,12 @@ import "./parser";
 import "./astwalk";
 import "./platforms";
 
-// `locals` lists the value-binding names in scope for the body being
-// rewritten (params + every `let` / `for` / match-arm binding in the
-// function). A bare ident matching one of these is a LOCAL variable, so
-// it must NOT be mangled even when it shares a name with a module-level
-// decl (e.g. a local `range` shadowing the `range()` function). Without
-// this, a shadowing local was rewritten to the decl's mangled name and
-// the codegen resolved it to the function value — see std/math.random_int.
+// `locals` lists the value-binding names in scope at the point being
+// rewritten: the params, and each `let` / `for` / match-arm binding from
+// the statement that makes it to the end of its scope. A local shadows a
+// module-level decl of its name (a local `range` beside the `range()`
+// function, std/math.random_int) and an import's qualifier (`let util =
+// "abc"; util.len()`), so neither is rewritten under it.
 // `ivar_names` / `ivar_mangled` are parallel arrays mapping a bare
 // imported-enum variant name (e.g. `Fail`, a variant of `std/test`'s
 // `TestOutcome`) to its bundled, prefix-mangled struct name
@@ -538,7 +537,7 @@ pub function mod_names(mod: parser.Module): string[] {
     if (mod.imports[i].alias.len() > 0) {
       out = out.append(mod.imports[i].alias);
     } else {
-      out = out.append(basename(mod.imports[i].path));
+      out = out.append(util.import_qualifier(mod.imports[i].path));
     }
     i = i + 1;
   }
@@ -1198,7 +1197,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
     ast.ExprFieldAccess(fa) => {
       match (fa.obj) {
         ast.ExprIdent(id) => {
-          if (is_in(id.name, ctx.modnames)) {
+          if (is_in(id.name, ctx.modnames) && !is_in(id.name, ctx.locals)) {
             // Alias-aware: `io.foo` -> `io_buffered__foo`.
             // `prefix + "__"` and NOT mangled_name: native mangles a
             // qualified reference blindly, so `map.__map_pow2_ceil`
@@ -1300,42 +1299,13 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       return ast.ExprStructLit { ...slit, type_name: rewrite_type_name(slit.type_name, ctx), field_values: fvs, base: new_base, written: rewrite_written(slit.written, ctx) };
     },
     ast.ExprLambda(lm) => {
-      // The lambda's params and body locals shadow module-level
-      // decls inside the body, while the ENCLOSING function's
-      // locals stay visible to it (captures) — so the body
-      // rewrites under ctx.locals EXTENDED with the lambda's own
-      // bindings. Without this a lambda param or body local named
-      // like a module decl was mis-mangled to the decl's flat
-      // name (the lambda-scope sibling of the top-level shadow
-      // fix in rewrite_module_bodies; native fix: #4802).
-      //
-      // Only extend the shadow set in a PREFIXED (imported) module.
-      // The entry module (prefix "") mangles no bare own-decls
-      // (mangle_bare returns the name unchanged when declnames is
-      // empty), so extending its shadow set can't fix any
-      // own-decl mis-mangle there — and doing so unnecessarily
-      // perturbs the checker's monomorphization of chained
-      // combinator calls (`x.or_else(fn).unwrap_or(0)`),
-      // mis-inferring the receiver as f64 and emitting an
-      // undefined `f64__unwrap_or` (the result_combinators
-      // regression). Gate on prefix so the fix applies exactly
-      // where a bare own-decl reference could be mis-mangled.
-      let lctx: RewriteCtx = ctx;
-      if (ctx.prefix.len() > 0) {
-        let inner: string[] = ctx.locals;
-        let pi: i32 = 0;
-        while (pi < lm.params.len()) {
-          inner = inner.append(lm.params[pi].name);
-          pi = pi + 1;
-        }
-        inner = astwalk.collect_bound_stmts(lm.body, inner);
-        lctx = RewriteCtx {
-          modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
-          declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: inner,
-          enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope,
-          reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets,
-        };
+      // The lambda's params join the enclosing locals, which it can
+      // capture; rewrite_block adds the body's own bindings.
+      let inner: string[] = ctx.locals;
+      for lp in lm.params {
+        inner = inner.append(lp.name);
       }
+      let lctx: RewriteCtx = RewriteCtx { ...ctx, locals: inner };
       return ast.ExprLambda {
         ...lm,
         params: rewrite_params(lm.params, ctx),
@@ -1354,10 +1324,15 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
 
 pub function rewrite_block(stmts: ast.Stmt[], ctx: RewriteCtx): ast.Stmt[] {
   let out: ast.Stmt[] = [];
-  let i: i32 = 0;
-  while (i < stmts.len()) {
-    out = out.append(rewrite_stmt(stmts[i], ctx));
-    i = i + 1;
+  let scope: RewriteCtx = ctx;
+  for st in stmts {
+    out = out.append(rewrite_stmt(st, scope));
+    match (st) {
+      ast.StmtVar(v) => {
+        scope = RewriteCtx { ...scope, locals: astwalk.append_bound_name(scope.locals, v.name) };
+      },
+      _ => {}
+    }
   }
   return out;
 }
@@ -1411,10 +1386,11 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       return ast.StmtWhile { cond: rewrite_expr(w.cond, ctx), body: rewrite_block(w.body, ctx), label: w.label, line: w.line, is_loop: w.is_loop, todo: w.todo };
     },
     ast.StmtFor(f) => {
+      let loop_locals: string[] = ctx.locals;
       return ast.StmtFor {
         var_name: f.var_name,
         iter: rewrite_expr(f.iter, ctx),
-        body: rewrite_block(f.body, ctx),
+        body: rewrite_block(f.body, RewriteCtx { ...ctx, locals: astwalk.append_bound_name(loop_locals, f.var_name) }),
         label: f.label,
         line: f.line,
       };
@@ -1423,7 +1399,9 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       let arms: ast.MatchArm[] = [];
       let i: i32 = 0;
       while (i < m.arms.len()) {
-        arms = arms.append(ast.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, ctx), line: m.arms[i].line, col: m.arms[i].col, guard: rewrite_expr(m.arms[i].guard, ctx), has_guard: m.arms[i].has_guard, alt_cont: false });
+        let arm_locals: string[] = util.append_all([], ctx.locals);
+        let actx: RewriteCtx = RewriteCtx { ...ctx, locals: astwalk.pattern_binders(m.arms[i].pattern, arm_locals) };
+        arms = arms.append(ast.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, actx), line: m.arms[i].line, col: m.arms[i].col, guard: rewrite_expr(m.arms[i].guard, actx), has_guard: m.arms[i].has_guard, alt_cont: false });
         i = i + 1;
       }
       return ast.StmtMatch { ...m, scrutinee: rewrite_expr(m.scrutinee, ctx), arms: arms };
@@ -1560,9 +1538,10 @@ function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx
   return out;
 }
 
-// collect_local_names — all value-binding names in a function (receiver +
-// params + body bindings).
-function collect_local_names(fd: parser.FuncDecl): string[] {
+// param_names is the names a function's body starts with in scope: its
+// receiver and its parameters. rewrite_block adds each binding from the
+// statement that makes it.
+function param_names(fd: parser.FuncDecl): string[] {
   let out: string[] = [];
   if (fd.receiver_name.len() > 0) {
     out = out.append(fd.receiver_name);
@@ -1572,7 +1551,7 @@ function collect_local_names(fd: parser.FuncDecl): string[] {
     out = out.append(fd.params[i].name);
     i = i + 1;
   }
-  return astwalk.collect_bound_stmts(fd.body, out);
+  return out;
 }
 
 // rewrite_module_bodies applies ctx to every funcs/structs/aliases/
@@ -1603,7 +1582,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     // bindings, so a local shadowing a module decl is left unmangled.
     let bctx: RewriteCtx = RewriteCtx {
       modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
-      declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: collect_local_names(fd),
+      declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: param_names(fd),
       enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope,
       reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets,
     };
@@ -1656,7 +1635,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     });
     k = k + 1;
   }
-  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
+  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: [], enumnames: ctx.enumnames, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
 }
 
 // mangle_trait_reqs rewrites the types a trait's requirement signatures name,
@@ -1899,7 +1878,7 @@ function module_trait_defaults(mod: parser.Module, ctx: RewriteCtx, acc: TraitDe
   for td in mod.trait_decls {
     for m in td.methods {
       if (m.body.len() > 0) {
-        let bctx: RewriteCtx = RewriteCtx { ...ctx, locals: collect_local_names(m) };
+        let bctx: RewriteCtx = RewriteCtx { ...ctx, locals: param_names(m) };
         let rm: parser.FuncDecl = parser.FuncDecl { ...m, params: rewrite_params(m.params, bctx), ret_type: rewrite_type_name(m.ret_type, ctx), ret_fn_ret: rewrite_type_name(m.ret_fn_ret, ctx), ret_fn_param_types: rewrite_type_name_list(m.ret_fn_param_types, ctx), body: rewrite_block(m.body, bctx), module: ctx.prefix };
         acc = acc.append(TraitDefaultIn { key: ctx.prefix + "." + td.name, params: td.type_params, method: rm });
       }
@@ -1961,9 +1940,9 @@ function rename_imports(entry: parser.Module, imports: LoadedModule[], ids: stri
 // LoadedModule pairs an imported module with its two names, which are NOT
 // the same string and must not be conflated:
 //
-//   name  — the QUALIFIER, the basename or alias source writes to reach it.
-//           visibility.fern keys on this, so it stays what a `lib.hidden`
-//           reference spells.
+//   name  — the module's own name, its file's basename, which a diagnostic
+//           names it by; an alias or a `-` makes it differ from the
+//           qualifier source writes.
 //   ident — the IDENTITY, one string per FILE, which the bundler needs to
 //           give two same-basename modules their own prefixes (#9762).
 //           Empty from a loader that does not resolve paths; then the

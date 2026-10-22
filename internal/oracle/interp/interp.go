@@ -63,7 +63,26 @@ type Number int64
 type Bool bool
 type String string
 type Void struct{}
+
 type Func struct{ Decl *ast.FuncDecl }
+
+// ExitStatus is the process status `main`'s result v maps to, and whether it
+// is one: an integer is its low byte (two's complement, as exit() keeps it),
+// a boolean 1 or 0, and void 0.
+func ExitStatus(v Value) (int, bool) {
+	switch x := v.(type) {
+	case Number:
+		return int(x) & 0xFF, true
+	case Bool:
+		if x {
+			return 1, true
+		}
+		return 0, true
+	case Void:
+		return 0, true
+	}
+	return 0, false
+}
 
 // Array is the interpreter's `T[]` value: a view (E) over a backing
 // buffer, plus that buffer's shared header. Every view of one allocation
@@ -377,6 +396,33 @@ func (i *Interp) keyEq(k Value) *ast.FuncDecl {
 		return nil
 	}
 	return i.Funcs[i.keyEqs[tn]]
+}
+
+// The fatal aborts' cause lines, compiler/aborts.fern's: the line a compiled
+// program prints for the stop.
+const (
+	CauseArrOOB     = "fern: array index out of range"
+	CauseStrOOB     = "fern: string index out of range"
+	CauseSliceRange = "fern: slice range out of bounds"
+	CauseAllocSize  = "fern: allocation size out of range"
+)
+
+// AbortStatus is the exit status of an Abort, a compiled program's.
+const AbortStatus = 134
+
+// Abort is a fatal stop. Cause is the line a compiled program prints for it,
+// and Detail is the interpreter's own line under it, where a compiled program
+// prints its backtrace.
+type Abort struct{ Cause, Detail string }
+
+func (a *Abort) Error() string { return a.Cause + "\n  " + a.Detail }
+
+func indexAbort(cause, idx string, n int) error {
+	return &Abort{cause, fmt.Sprintf("index %s, length %d", idx, n)}
+}
+
+func sliceAbort(cause, what string, lo, hi, n int64) error {
+	return &Abort{cause, fmt.Sprintf("%s [%d:%d], length %d", what, lo, hi, n)}
 }
 
 // MapIter is the interp's `MapIter[K, V]` cursor — pairs the
@@ -2776,7 +2822,7 @@ func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_Array_set: index must be number, got %T", args[1])
 	}
 	if idx < 0 || int(idx) >= len(arr.E) {
-		return nil, fmt.Errorf("array index %d out of range [0, %d)", int(idx), len(arr.E))
+		return nil, indexAbort(CauseArrOOB, strconv.Itoa(int(idx)), len(arr.E))
 	}
 	storeArray(args[2])
 	inPlace, err := ip.arrayWriteInPlace(arr)
@@ -3189,7 +3235,7 @@ func builtinMapIterKey(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_MapIter_key: expected 1 arg (receiver), got %d", len(args))
 	}
 	if it.pos >= len(it.m.keys) {
-		return nil, fmt.Errorf("__method_MapIter_key: iterator exhausted")
+		return nil, indexAbort(CauseArrOOB, strconv.Itoa(it.pos), len(it.m.keys))
 	}
 	return it.m.keys[it.pos], nil
 }
@@ -3203,7 +3249,7 @@ func builtinMapIterValue(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_MapIter_value: expected 1 arg (receiver), got %d", len(args))
 	}
 	if it.pos >= len(it.m.vals) {
-		return nil, fmt.Errorf("__method_MapIter_value: iterator exhausted")
+		return nil, indexAbort(CauseArrOOB, strconv.Itoa(it.pos), len(it.m.vals))
 	}
 	return it.m.vals[it.pos], nil
 }
@@ -3237,7 +3283,7 @@ func builtinAllocFilled(name string, zero Value) func(*Interp, []Value) (Value, 
 			return nil, fmt.Errorf("%s: arg must be number, got %T", name, args[0])
 		}
 		if n < 0 {
-			return nil, fmt.Errorf("%s: negative length %d", name, int64(n))
+			return nil, &Abort{CauseAllocSize, fmt.Sprintf("%s length %d", name, int64(n))}
 		}
 		out := newArray(int(n))
 		for i := range out.E {
@@ -3316,7 +3362,7 @@ func builtinSliceUnchecked(_ *Interp, args []Value) (Value, error) {
 	}
 	low, high, slen := int64(a), int64(b), int64(len(s))
 	if low < 0 || high > slen || low > high {
-		return nil, fmt.Errorf("slice [%d:%d] out of range for length %d", low, high, slen)
+		return nil, sliceAbort(CauseStrOOB, "slice_unchecked", low, high, slen)
 	}
 	return String(string(s)[low:high]), nil
 }
@@ -6497,7 +6543,7 @@ func builtinBufPushRange(i *Interp, args []Value) (Value, error) {
 	}
 	low, high, slen := int64(lo), int64(hi), int64(len(s))
 	if low < 0 || high > slen || low > high {
-		return nil, fmt.Errorf("buf_push_range [%d:%d] out of range for length %d", low, high, slen)
+		return nil, sliceAbort(CauseSliceRange, "buf_push_range", low, high, slen)
 	}
 	i.bufs[h] = append(b, string(s)[low:high]...)
 	return Void{}, nil
@@ -8282,7 +8328,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		// matching the codegen lowering of `s[i]`.
 		if s, ok := arrV.(String); ok {
 			if idx < 0 || idx >= Number(len(string(s))) {
-				return nil, fmt.Errorf("string index %s out of range [0, %d)", idxText, len(string(s)))
+				return nil, indexAbort(CauseStrOOB, idxText, len(string(s)))
 			}
 			return Number(int64(string(s)[idx])), nil
 		}
@@ -8291,7 +8337,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 			return nil, fmt.Errorf("indexing non-array %T", arrV)
 		}
 		if idx < 0 || idx >= Number(len(arr.E)) {
-			return nil, fmt.Errorf("array index %s out of range [0, %d)", idxText, len(arr.E))
+			return nil, indexAbort(CauseArrOOB, idxText, len(arr.E))
 		}
 		return arr.E[idx], nil
 	case *ast.SliceExpr:
@@ -8346,7 +8392,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		switch v := srcV.(type) {
 		case Array:
 			if low < 0 || high > slen || low > high {
-				return nil, fmt.Errorf("slice [%d:%d] out of range for length %d", low, high, slen)
+				return nil, sliceAbort(CauseSliceRange, "slice", low, high, slen)
 			}
 			return v.view(int(low), int(high)), nil
 		case String:
@@ -9450,7 +9496,7 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 			return nil, fmt.Errorf("array index must be number, got %T", idxV)
 		}
 		if idx < 0 || int(idx) >= len(arr.E) {
-			return nil, fmt.Errorf("array index %d out of range [0, %d)", idx, len(arr.E))
+			return nil, indexAbort(CauseArrOOB, strconv.Itoa(int(idx)), len(arr.E))
 		}
 		retainReplacing(v, arr.E[idx])
 		storeArray(v)

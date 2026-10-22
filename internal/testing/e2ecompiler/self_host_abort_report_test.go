@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/tables/symname"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // A fatal abort names its cause on stderr and walks the frame-pointer chain
@@ -19,14 +20,40 @@ import (
 // `0x<16 hex>` line per frame. FERN_BACKTRACE=0 on the compiler, or its
 // -backtrace=false flag, keeps the cause line and the exit code and drops the
 // walk at compile time.
+//
+// Both interpreters stop at the same places with the same cause line and exit
+// 134, and print their own detail line under it where a compiled program
+// prints its backtrace (#12691).
 
 var abortReportCases = []struct{ name, src, cause string }{
 	{"array_oob", `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[7]; }`, "fern: array index out of range"},
 	{"string_slice_oob", `function main(): i32 { let s: string = "hi"; let t: str = slice_unchecked(s, 1, 9); return t.len(); }`, "fern: string index out of range"},
+	{"string_index_oob", `function main(): i32 { let s: string = "abc"; return s[7] as i32; }`, "fern: string index out of range"},
+	{"string_index_oob_runtime", `function main(): i32 { let s: string = "abc"; return s[args().len() + 6] as i32; }`, "fern: string index out of range"},
+	{"alloc_size_negative", `function main(): i32 { let b: u8[] = __alloc_u8(args().len() - 6); return b.len(); }`, "fern: allocation size out of range"},
 	{"slice_range_oob", `function main(): i32 { let xs: i32[] = [1, 2, 3]; let ys: [i32] = xs[1:9]; return ys.len(); }`, "fern: slice range out of bounds"},
 	// A byte view's read is one unsigned compare, so both ends must still trap.
 	{"byte_view_negative_oob", byteViewReadSrc("args().len() - 2"), "fern: array index out of range"},
 	{"byte_view_past_end_oob", byteViewReadSrc("args().len() + 2"), "fern: array index out of range"},
+	// buf_push_range checks its range against the string as a slice does (#12962).
+	{"buf_push_range_past_end", bufPushRangeSrc("1", "args().len() + 8"), "fern: slice range out of bounds"},
+	{"buf_push_range_negative", bufPushRangeSrc("args().len() - 3", "2"), "fern: slice range out of bounds"},
+	{"buf_push_range_inverted", bufPushRangeSrc("args().len() + 2", "1"), "fern: slice range out of bounds"},
+	// A map cursor past its last entry has no key or value to read (#12962).
+	{"map_cursor_key_past_end", mapCursorPastEndSrc("key"), "fern: array index out of range"},
+	{"map_cursor_value_past_end", mapCursorPastEndSrc("value"), "fern: array index out of range"},
+}
+
+// mapCursorPastEndSrc reads `read` from a cursor advanced past a one-entry map.
+func mapCursorPastEndSrc(read string) string {
+	return `import "core/map";
+function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 5); let it = m.iter(); it.advance(); return it.` + read + `(); }`
+}
+
+// bufPushRangeSrc appends "abc"[lo:hi] to a buffer; args() keeps the bounds
+// from folding.
+func bufPushRangeSrc(lo, hi string) string {
+	return `function main(): i32 { let b: usize = buf_new(8); buf_push_range(b, "abc", ` + lo + `, ` + hi + `); return buf_take(b).len(); }`
 }
 
 const abortInBoundsSrc = `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[1]; }`
@@ -74,6 +101,18 @@ func checkAbortReports(t *testing.T, cli *selfHostCLI, target string) {
 
 func TestSelfHostAbortReportsX86_64(t *testing.T) {
 	checkAbortReports(t, buildSelfHostCLI(t), "x86-64-linux")
+}
+
+// wasm prints no cause line yet (#12956), but every case still traps.
+func TestSelfHostAbortsTrapWasm(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, tc := range abortReportCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if stderr, code := cli.exitOf(t, tc.src, "wasm32-wasi"); code != 134 {
+				t.Errorf("exit %d, want 134\nstderr:\n%s", code, stderr)
+			}
+		})
+	}
 }
 
 func TestSelfHostAbortReportsArm64(t *testing.T) {
@@ -199,9 +238,15 @@ func checkAbortBacktrace(t *testing.T, frames []string, stderr string) {
 // environment, returning the binary.
 func compileDeep(t *testing.T, cli *selfHostCLI, target string, flags []string, env ...string) string {
 	t.Helper()
+	return compileAbortSrc(t, cli, deepAbortSrc, target, flags, env...)
+}
+
+// compileAbortSrc is compileDeep for any source.
+func compileAbortSrc(t *testing.T, cli *selfHostCLI, text, target string, flags []string, env ...string) string {
+	t.Helper()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "deep.fern")
-	if err := os.WriteFile(src, []byte(deepAbortSrc), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "deep")
@@ -230,6 +275,48 @@ func TestSelfHostAbortBacktraceArm64(t *testing.T) {
 	bin := compileDeep(t, cli, "arm64-linux", nil)
 	frames, stderr := abortFrames(t, bin, runArm64Bin(qemu, bin))
 	checkAbortBacktrace(t, frames, stderr)
+}
+
+// helperTrapSrcs each make a request a runtime helper refuses before it
+// builds a frame of its own, from mk; args() keeps the operands from folding.
+var helperTrapSrcs = []struct{ name, src, cause string }{
+	{"alloc_u8", `@noinline function mk(n: i32): i32 { let b: u8[] = __alloc_u8(n); return b.len() + 1; }
+function main(): i32 { return mk(args().len() - 6) + 1; }
+`, "fern: allocation size out of range"},
+	{"buf_push_range", `@noinline function mk(n: i32): i32 { let b: usize = buf_new(8); buf_push_range(b, "abc", 1, n); return buf_take(b).len() + 1; }
+function main(): i32 { return mk(args().len() + 8) + 1; }
+`, "fern: slice range out of bounds"},
+}
+
+// A helper's abort lists the function that made the request first, on both
+// targets (#12981). mk and main keep no frame pointer on x86-64, so its walk
+// ends at mk; on arm64 a function that calls keeps a frame record, so main
+// follows.
+func TestSelfHostAbortHelperFrameAgrees(t *testing.T) {
+	_, qemu := arm64Tooling(t)
+	cli := buildSelfHostCLI(t)
+	for _, tc := range helperTrapSrcs {
+		t.Run(tc.name, func(t *testing.T) {
+			x86 := compileAbortSrc(t, cli, tc.src, "x86-64-linux", nil)
+			x86Frames, x86Stderr := abortFrames(t, x86, runX86_64Bin(cli.runner, x86))
+			arm := compileAbortSrc(t, cli, tc.src, "arm64-linux", nil)
+			armFrames, armStderr := abortFrames(t, arm, runArm64Bin(qemu, arm))
+			for _, leg := range []struct {
+				name, stderr string
+				frames, want []string
+			}{
+				{"x86-64", x86Stderr, x86Frames, []string{"mk"}},
+				{"arm64", armStderr, armFrames, []string{"mk", "main", "_start"}},
+			} {
+				if !strings.HasPrefix(leg.stderr, tc.cause+"\n") {
+					t.Errorf("%s: stderr does not open with %q:\n%s", leg.name, tc.cause, leg.stderr)
+				}
+				if len(leg.frames) < len(leg.want) || strings.Join(leg.frames[:len(leg.want)], " ") != strings.Join(leg.want, " ") {
+					t.Errorf("%s: frames %v, want %v first\nstderr:\n%s", leg.name, leg.frames, leg.want, leg.stderr)
+				}
+			}
+		})
+	}
 }
 
 // bareTrapSrc traps in cut, which keeps no frame pointer outside -g: it
@@ -317,4 +404,35 @@ func TestSelfHostAbortBacktraceOffArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
 	checkAbortBacktraceOff(t, cli, "arm64-linux", func(bin string) *exec.Cmd { return runArm64Bin(qemu, bin) })
+}
+
+func TestAbortCauseLineInterpreters(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	oracle := e2eharness.BuildLangBinForInterp(t)
+	for _, tc := range abortReportCases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(src, []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runs := []struct {
+				name string
+				cmd  *exec.Cmd
+			}{
+				{"self-host", runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib)},
+				{"oracle", exec.Command(oracle, "-interp", src)},
+			}
+			for _, run := range runs {
+				var stderr bytes.Buffer
+				run.cmd.Stderr = &stderr
+				_ = run.cmd.Run()
+				if code := run.cmd.ProcessState.ExitCode(); code != 134 {
+					t.Errorf("%s: exit %d, want 134\nstderr:\n%s", run.name, code, stderr.String())
+				}
+				if !strings.HasPrefix(stderr.String(), tc.cause+"\n  ") {
+					t.Errorf("%s: stderr does not open with the cause line and a detail line:\n%s", run.name, stderr.String())
+				}
+			}
+		})
+	}
 }

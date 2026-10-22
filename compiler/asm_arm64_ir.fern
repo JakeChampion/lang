@@ -22,6 +22,7 @@ import "./sourcepos";
 // untouched until a later fold/flip slice.
 
 import "./parser";
+import "./aborts";
 import "./asmcore";
 import "./rtprofile";
 import "./arm64_native";
@@ -511,7 +512,8 @@ function emit_outer_mul_f64(s: asmcore.EmitState): asmcore.EmitState {
   let d: asmcore.LabelOut = asmcore.fresh_label(c.state);
   s = d.state;
   s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    stp x1, x2, [sp, #-16]!\n");
-  s = s.write("    ldr x3, [x1]\n    ldr x4, [x2]\n    mul x0, x3, x4\n    mov x5, #1\n    lsl x5, x5, #31\n    sub x5, x5, #1\n    cmp x0, x5\n    b.hi __fern_oob_abort\n");
+  s = s.write("    ldr x3, [x1]\n    ldr x4, [x2]\n    mul x0, x3, x4\n    mov x5, #1\n    lsl x5, x5, #31\n    sub x5, x5, #1\n    cmp x0, x5\n");
+  s = ssa_trap_guard(s, CC_LS, "__fern_oob_abort");
   s = s.write("    bl __fern_arr_box\n    ldp x1, x2, [sp], #16\n    ldr x4, [x1]\n    ldr x5, [x2]\n    add x7, x0, #8\n    mov x3, #0\n    cmp x5, #0\n    b.eq " + d.name + "\n    and x8, x5, #-2\n");
   s = s.write(a.name + ":\n    cmp x3, x4\n    b.ge " + d.name + "\n");
   s = s.write("    add x9, x1, x3, lsl #3\n    ldr x10, [x9, #8]\n    dup v1.2d, x10\n    mov x6, #0\n");
@@ -529,8 +531,19 @@ function emit_inner_mul_add_f64(s: asmcore.EmitState): asmcore.EmitState {
   s = label.state;
   let lb: string = label.name;
   s = s.write("    ldr x6, [sp], #16\n    ldr x5, [sp], #16\n    ldr x4, [sp], #16\n    ldr x3, [sp], #16\n    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n");
-  s = s.write("    cmp w3, #0\n    b.lt __fern_oob_abort\n    cmp w4, #0\n    b.lt __fern_oob_abort\n    cmp w5, #0\n    b.lt __fern_oob_abort\n    mov w3, w3\n    mov w4, w4\n    mov w5, w5\n");
-  s = s.write("    mul x7, x3, x4\n    ldr x8, [x1]\n    cmp x7, x8\n    b.ne __fern_oob_abort\n    mul x7, x4, x5\n    ldr x8, [x2]\n    cmp x7, x8\n    b.ne __fern_oob_abort\n    mul x0, x3, x5\n    mov x8, #1\n    lsl x8, x8, #31\n    sub x8, x8, #1\n    cmp x0, x8\n    b.hi __fern_oob_abort\n");
+  s = s.write("    cmp w3, #0\n");
+  s = ssa_trap_guard(s, CC_GE, "__fern_oob_abort");
+  s = s.write("    cmp w4, #0\n");
+  s = ssa_trap_guard(s, CC_GE, "__fern_oob_abort");
+  s = s.write("    cmp w5, #0\n");
+  s = ssa_trap_guard(s, CC_GE, "__fern_oob_abort");
+  s = s.write("    mov w3, w3\n    mov w4, w4\n    mov w5, w5\n");
+  s = s.write("    mul x7, x3, x4\n    ldr x8, [x1]\n    cmp x7, x8\n");
+  s = ssa_trap_guard(s, CC_EQ, "__fern_oob_abort");
+  s = s.write("    mul x7, x4, x5\n    ldr x8, [x2]\n    cmp x7, x8\n");
+  s = ssa_trap_guard(s, CC_EQ, "__fern_oob_abort");
+  s = s.write("    mul x0, x3, x5\n    mov x8, #1\n    lsl x8, x8, #31\n    sub x8, x8, #1\n    cmp x0, x8\n");
+  s = ssa_trap_guard(s, CC_LS, "__fern_oob_abort");
   s = s.write("    stp x1, x2, [sp, #-16]!\n    stp x3, x4, [sp, #-16]!\n    stp x5, x6, [sp, #-16]!\n    bl __fern_arr_box\n    ldp x5, x6, [sp], #16\n    ldp x3, x4, [sp], #16\n    ldp x1, x2, [sp], #16\n");
   s = s.write("    cmp x3, #0\n    b.eq " + lb + "_done\n    cmp x5, #0\n    b.eq " + lb + "_done\n    add x7, x1, #8\n    add x8, x0, #8\n    add x2, x2, #8\n    dup v3.2d, x6\n");
   s = s.write(lb + "_row:\n    mov x9, #0\n" + lb + "_pair:\n    add x10, x9, #1\n    cmp x10, x5\n    b.ge " + lb + "_tail\n    add x11, x2, x9, lsl #3\n    dup v2.2d, x6\n    mov x10, #0\n");
@@ -554,7 +567,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     return s.write("    str " + reg + ", [sp, #-16]!\n");
   }
   if (o.kind_tag == 383) {
-    s = s.write("    ldr x0, [sp], #16\n    cmp w0, #0\n    b.lt __fern_oob_abort\n    mov w0, w0\n");
+    s = s.write("    ldr x0, [sp], #16\n    cmp w0, #0\n");
+    s = ssa_trap_guard(s, CC_GE, "__fern_oob_abort");
+    s = s.write("    mov w0, w0\n");
     if (o.width == 8) {
       s = s.write("    add x0, x0, #7\n    lsr x0, x0, #3\n");
     }
@@ -1701,9 +1716,14 @@ function ssa_operand_sep(c: u8): boolean {
   return c == b' ' || c == b',' || c == b'[' || c == b']' || c == b'!' || c == b'\t';
 }
 
+// The traps with a `_leaf` entry, for a caller with no frame record of its own.
+function leaf_aborts(): string[] {
+  return ["__fern_oob_abort", "__fern_str_oob_abort", "__fern_slice_abort", "__fern_alloc_size_abort"];
+}
+
 // ssa_resolve_exits replaces each exit mark of a buffered body: a frameless
-// one returns or branches straight to its tail callee, and an array bounds
-// trap goes through __fern_oob_abort_leaf, which gives the backtrace the frame
+// one returns or branches straight to its tail callee, and a bounds trap
+// goes through its `_leaf` entry, which gives the backtrace the frame
 // this function did not make; a framed one takes the frame down first.
 function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let start: i32 = 0;
@@ -1722,8 +1742,8 @@ function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmco
       } else {
         s = s.write("    b " + tail + "\n");
       }
-    } else if (!framed && line == "    b __fern_oob_abort") {
-      s = s.write("    b __fern_oob_abort_leaf\n");
+    } else if (!framed && util.str_has_prefix(line, "    b ") && util.has_str(leaf_aborts(), slice_unchecked(line, 6, line.len()) + "")) {
+      s = s.write(line + "_leaf\n");
     } else {
       s = s.write(line + "\n");
     }
@@ -2011,6 +2031,9 @@ function ssa_fr_pos(s: asmcore.EmitState, off: i32, pushed: i32): i32 {
 
 // A slot's x29-relative offset is below the callee-saved registers' save area.
 function ssa_fr_ldr(s: asmcore.EmitState, reg: string, off: i32, pushed: i32): asmcore.EmitState {
+  if (ssa_lane_off(off, s)) {
+    return ssa_fr_q(s, true, ssa_vq(ssa_lane_reg(reg)), off, pushed);
+  }
   let pos: i32 = ssa_fr_pos(s, off - s.ssa_save, pushed);
   if (pos >= 0) {
     return ssa_ldst(s, true, reg, "sp", pos);
@@ -2019,6 +2042,9 @@ function ssa_fr_ldr(s: asmcore.EmitState, reg: string, off: i32, pushed: i32): a
 }
 
 function ssa_fr_str(s: asmcore.EmitState, reg: string, off: i32, pushed: i32): asmcore.EmitState {
+  if (ssa_lane_off(off, s)) {
+    return ssa_fr_q(s, false, ssa_vq(ssa_lane_reg(reg)), off, pushed);
+  }
   let pos: i32 = ssa_fr_pos(s, off - s.ssa_save, pushed);
   if (pos >= 0) {
     return ssa_ldst(s, false, reg, "sp", pos);
@@ -2069,6 +2095,11 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
 
 // ssa_mov_rr copies register `src` into `dst`.
 function ssa_mov_rr(s: asmcore.EmitState, dst: string, src: string): asmcore.EmitState {
+  if (ssa_is_d(dst) && ssa_is_d(src)) {
+    // All 128 bits, so a lane value survives the copy; an f64 reads its low
+    // lane either way.
+    return s.write("    mov " + ssa_vbytes(dst) + ", " + ssa_vbytes(src) + "\n");
+  }
   if (ssa_is_d(dst) || ssa_is_d(src)) {
     return s.write("    fmov " + dst + ", " + src + "\n");
   }
@@ -2521,6 +2552,9 @@ function ssa_funary_known(what: string): boolean {
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
   let k: i32 = ins.kind_tag;
+  if (ssa.lane_inst(ins)) {
+    return true;
+  }
   if (k == 10) {
     return ssa_unary_known(ins.str);
   }
@@ -2753,6 +2787,301 @@ function ssa_fbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
   let d: string = ssa_dst(reg_of, ins.result);
   s = s.write("    fcmp " + a + ", " + b + "\n    cset " + ssa_wreg(d) + ", " + ssa_fcc(ins.str) + "\n");
   return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ---- lane ops (docs/SIMD-GENERIC-KERNELS.md §6) -----------------------------
+//
+// A lane value (ssa.lane_values) is 128 bits: two f64 lanes (imm 64) or four
+// f32 lanes (imm 32). It lives in a V register of the float class, which the
+// arms spell v<n>.2d / v<n>.4s and the loads and stores q<n>, or in a 16-byte
+// slot pair (ssa_lane_slots). The arms read an operand from its home or from
+// d1 / d2 / d3 once ssa_fread has loaded it and write the result into its
+// home or into d0 for ssa_fput.
+
+// ssa_lane_slot_table marks the frame slot units the lane values occupy.
+function ssa_lane_slot_table(reg_of: i32[], lanes: boolean[]): boolean[] {
+  let units: boolean[] = [];
+  let v: i32 = 0;
+  while (v < lanes.len()) {
+    if (lanes[v] && reg_of[v] < 0 - 1) {
+      let u: i32 = ssa.spill_slot(reg_of[v]);
+      while (units.len() <= u + 1) {
+        units = units.append(false);
+      }
+      units = units.with(u, true).with(u + 1, true);
+    }
+    v = v + 1;
+  }
+  return units;
+}
+
+// ssa_lane_off reports a slot offset (ssa_slot_off) inside a lane pair.
+function ssa_lane_off(off: i32, s: asmcore.EmitState): boolean {
+  if (s.ssa_lane_slots.len() == 0) {
+    return false;
+  }
+  let u: i32 = (0 - off) / 8 - 1;
+  return u >= 0 && u < s.ssa_lane_slots.len() && s.ssa_lane_slots[u];
+}
+
+// ssa_lane_spill is the spill count rounded up to whole pairs when the
+// function has a lane value, whose pair sits at an even index.
+function ssa_lane_spill(f: ssa.SFunc, nspill: i32): i32 {
+  if (nspill % 2 == 1 && ssa.has_lanes(f)) {
+    return nspill + 1;
+  }
+  return nspill;
+}
+
+// ssa_vq / ssa_varr / ssa_vbytes respell a d register as the q register and
+// the vector arrangements the lane arms use.
+function ssa_vq(d: string): string {
+  return "q" + slice_unchecked(d, 1, d.len());
+}
+
+function ssa_varr(d: string, width: i32): string {
+  if (width == 32) {
+    return "v" + slice_unchecked(d, 1, d.len()) + ".4s";
+  }
+  return "v" + slice_unchecked(d, 1, d.len()) + ".2d";
+}
+
+function ssa_vbytes(d: string): string {
+  return "v" + slice_unchecked(d, 1, d.len()) + ".16b";
+}
+
+// ssa_fr_q loads or stores a q register at a lane pair's frame offset, which
+// starts at the pair's second unit: the scaled form when the address is
+// 16-byte aligned and in range, else through x16.
+function ssa_fr_q(s: asmcore.EmitState, load: boolean, q: string, first: i32, pushed: i32): asmcore.EmitState {
+  let off: i32 = first - 8;
+  let m: string = "    str ";
+  if (load) {
+    m = "    ldr ";
+  }
+  let pos: i32 = ssa_fr_pos(s, off - s.ssa_save, pushed);
+  if (pos >= 0 && pos % 16 == 0 && pos <= 65520) {
+    return s.write(m + q + ", [sp, #" + util.i32_to_string(pos) + "]\n");
+  }
+  if (pos >= 0) {
+    s = ssa_addsub_imm(s, false, "x16", "sp", pos);
+  } else {
+    s = fr_sub_imm(s, "x16", "x29", 0 - (off - s.ssa_save));
+  }
+  return s.write(m + q + ", [x16]\n");
+}
+
+function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let b: string = ssa.lane_base(ins.str);
+  if (b == "vsplat") {
+    return ssa_vsplat(ins, reg_of, s);
+  }
+  if (b == "vextract") {
+    return ssa_vextract(ins, reg_of, s);
+  }
+  if (b == "vreplace") {
+    return ssa_vreplace(ins, reg_of, s);
+  }
+  if (b == "vfma" || b == "vselect") {
+    return ssa_vternary(ins, reg_of, s);
+  }
+  if (b == "vload") {
+    return ssa_vload(ins, reg_of, s);
+  }
+  if (b == "vstore") {
+    return ssa_vstore(ins, reg_of, s);
+  }
+  if (ins.args.len() == 2) {
+    return ssa_vbin(ins, reg_of, s);
+  }
+  return ssa_vunary(ins, reg_of, s);
+}
+
+// ssa_vsplat: every lane takes the f64, which an f32 lane rounds first.
+function ssa_vsplat(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "d1");
+  let d: string = ssa_fdst(reg_of, ins.result);
+  if (ins.imm == 32) {
+    s = s.write("    fcvt s0, " + a + "\n    dup " + ssa_varr(d, 32) + ", v0.s[0]\n");
+  } else {
+    s = s.write("    dup " + ssa_varr(d, 64) + ", " + ssa_vq_lane(a, 64, 0) + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vq_lane spells lane N of a d register's vector: v<n>.d[N] / v<n>.s[N].
+function ssa_vq_lane(d: string, width: i32, lane: i32): string {
+  let t: string = ".d[";
+  if (width == 32) {
+    t = ".s[";
+  }
+  return "v" + slice_unchecked(d, 1, d.len()) + t + util.i32_to_string(lane) + "]";
+}
+
+// ssa_vextract: lane N as an f64, through x16 (umov takes a general register)
+// into the result's float home or d0, from where ssa_fput moves it.
+function ssa_vextract(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let lane: i32 = ssa_lane_index(ins.str);
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  let v: string = ssa_fsrc(reg_of, ins.args[0], "d1");
+  let d: string = ssa_fdst(reg_of, ins.result);
+  if (ins.imm == 32) {
+    s = s.write("    umov w16, " + ssa_vq_lane(v, 32, lane) + "\n    fmov s0, w16\n    fcvt " + d + ", s0\n");
+  } else {
+    s = s.write("    umov x16, " + ssa_vq_lane(v, 64, lane) + "\n    fmov " + d + ", x16\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_lane_index is the lane after the colon of "vextract:1" / "vreplace:3".
+function ssa_lane_index(what: string): i32 {
+  let k: i32 = 0;
+  while (k < what.len()) {
+    if (what[k] == b':') {
+      return what[k + 1] as i32 - 48;
+    }
+    k = k + 1;
+  }
+  return 0;
+}
+
+// ssa_vreplace: the lane value with lane N replaced by the f64, inserted from
+// x16 (its f32 pattern for an f32 lane). The scalar goes to x16 first, as the
+// f32 rounding writes s0 and so clears a d0 destination.
+function ssa_vreplace(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let lane: i32 = ssa_lane_index(ins.str);
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  s = ssa_fread(reg_of, ins.args[1], "d2", s);
+  let v: string = ssa_fsrc(reg_of, ins.args[0], "d1");
+  let x: string = ssa_fsrc(reg_of, ins.args[1], "d2");
+  let d: string = ssa_fdst(reg_of, ins.result);
+  let width: i32 = 64;
+  let g: string = "x16";
+  if (ins.imm == 32) {
+    width = 32;
+    g = "w16";
+    s = s.write("    fcvt s0, " + x + "\n    fmov w16, s0\n");
+  } else {
+    s = s.write("    fmov x16, " + x + "\n");
+  }
+  if (v != d) {
+    s = s.write("    mov " + ssa_vbytes(d) + ", " + ssa_vbytes(v) + "\n");
+  }
+  s = s.write("    ins " + ssa_vq_lane(d, width, lane) + ", " + g + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vbin: the three-register arithmetic and compares. `b < a ? b : a` is a
+// compare into the destination and a bsl over it; a swapped compare reads its
+// operands the other way round; ne is eq inverted.
+function ssa_vbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let b: string = ssa.lane_base(ins.str);
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  s = ssa_fread(reg_of, ins.args[1], "d2", s);
+  let d: string = ssa_fdst(reg_of, ins.result);
+  let vd: string = ssa_varr(d, ins.imm);
+  let va: string = ssa_varr(ssa_fsrc(reg_of, ins.args[0], "d1"), ins.imm);
+  let vb: string = ssa_varr(ssa_fsrc(reg_of, ins.args[1], "d2"), ins.imm);
+  if (b == "vmin" || b == "vmax") {
+    if (b == "vmin") {
+      s = s.write("    fcmgt " + vd + ", " + va + ", " + vb + "\n");
+    } else {
+      s = s.write("    fcmgt " + vd + ", " + vb + ", " + va + "\n");
+    }
+    s = s.write("    bsl " + ssa_vbytes(d) + ", " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[1], "d2")) + ", " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[0], "d1")) + "\n");
+  } else if (b == "vand" || b == "vor" || b == "vxor" || b == "vandnot") {
+    let names: string[] = ["vand", "vor", "vxor", "vandnot"];
+    let mnems: string[] = ["and", "orr", "eor", "bic"];
+    s = s.write("    " + mnems[util.index_of_str(names, b)] + " " + ssa_vbytes(d) + ", " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[0], "d1")) + ", " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[1], "d2")) + "\n");
+  } else {
+    s = s.write(ssa_vbin_asm(b, vd, va, vb) + "\n");
+    if (b == "vne") {
+      s = s.write("    not " + ssa_vbytes(d) + ", " + ssa_vbytes(d) + "\n");
+    }
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+function ssa_vbin_asm(b: string, vd: string, va: string, vb: string): string {
+  let names: string[] = ["vadd", "vsub", "vmul", "vdiv", "veq", "vne", "vlt", "vle", "vgt", "vge"];
+  let mnems: string[] = ["fadd", "fsub", "fmul", "fdiv", "fcmeq", "fcmeq", "fcmgt", "fcmge", "fcmgt", "fcmge"];
+  let swapped: boolean[] = [false, false, false, false, false, false, true, true, false, false];
+  let i: i32 = util.index_of_str(names, b);
+  if (swapped[i]) {
+    return "    " + mnems[i] + " " + vd + ", " + vb + ", " + va;
+  }
+  return "    " + mnems[i] + " " + vd + ", " + va + ", " + vb;
+}
+
+// ssa_vunary: each is one instruction; frinta is round half away from zero.
+function ssa_vunary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let names: string[] = ["vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround"];
+  let mnems: string[] = ["fsqrt", "fabs", "fneg", "frintm", "frintp", "frintz", "frinta"];
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  let d: string = ssa_fdst(reg_of, ins.result);
+  let m: string = mnems[util.index_of_str(names, ssa.lane_base(ins.str))];
+  s = s.write("    " + m + " " + ssa_varr(d, ins.imm) + ", " + ssa_varr(ssa_fsrc(reg_of, ins.args[0], "d1"), ins.imm) + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_lane_arm_at reports a lane op or a copy of a lane value.
+function ssa_lane_arm_at(ins: ssa.SInst, fr: SsaFrame): boolean {
+  return ssa.lane_inst(ins) || ins.kind_tag == 7 && ins.result < fr.lanes.len() && fr.lanes[ins.result];
+}
+
+// ssa_lane_arm emits a lane op, or a copy of a lane value.
+function ssa_lane_arm(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ssa.lane_inst(ins)) {
+    return ssa_lane_inst(ins, reg_of, s);
+  }
+  return ssa_vcopy(ins, reg_of, s);
+}
+
+// ssa_vcopy moves a lane value to a copy's home, all 16 bytes of it.
+function ssa_vcopy(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "d1");
+  let d: string = ssa_fdst(reg_of, ins.result);
+  if (a != d) {
+    s = s.write("    mov " + ssa_vbytes(d) + ", " + ssa_vbytes(a) + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vternary: vfma is c copied into the destination and fmla by a and b,
+// one rounding; vselect is the mask copied there and bsl picking a over b.
+function ssa_vternary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  s = ssa_fread(reg_of, ins.args[1], "d2", s);
+  s = ssa_fread(reg_of, ins.args[2], "d3", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "d1");
+  let b: string = ssa_fsrc(reg_of, ins.args[1], "d2");
+  let c: string = ssa_fsrc(reg_of, ins.args[2], "d3");
+  let d: string = ssa_fdst(reg_of, ins.result);
+  if (c != d) {
+    s = s.write("    mov " + ssa_vbytes(d) + ", " + ssa_vbytes(c) + "\n");
+  }
+  if (ssa.lane_base(ins.str) == "vfma") {
+    s = s.write("    fmla " + ssa_varr(d, ins.imm) + ", " + ssa_varr(a, ins.imm) + ", " + ssa_varr(b, ins.imm) + "\n");
+  } else {
+    s = s.write("    bsl " + ssa_vbytes(d) + ", " + ssa_vbytes(a) + ", " + ssa_vbytes(b) + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vload / ssa_vstore: 16 bytes at an address in a general register.
+function ssa_vload(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_read(reg_of, ins.args[0], "x4", s);
+  let d: string = ssa_fdst(reg_of, ins.result);
+  s = s.write("    ldr " + ssa_vq(d) + ", [" + ssa_src(reg_of, ins.args[0], "x4") + "]\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+function ssa_vstore(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_read(reg_of, ins.args[0], "x4", s);
+  s = ssa_fread(reg_of, ins.args[1], "d1", s);
+  return s.write("    str " + ssa_vq(ssa_fsrc(reg_of, ins.args[1], "d1")) + ", [" + ssa_src(reg_of, ins.args[0], "x4") + "]\n");
 }
 
 // ssa_fcc is a float compare's condition code: the ordered forms, so a NaN
@@ -3187,7 +3516,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     if (ins.imm != 1) {
       s = ssa_ldst(s, true, "x6", a, 8);
       s = ssa_cmp_rr(s, b, "x6");
-      s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
+      s = ssa_trap_guard(s, CC_LO, "__fern_str_oob_abort");
     }
     if (ins.imm == 2) {
       return s;
@@ -3222,11 +3551,13 @@ function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string,
   }
   if (ins.imm != 1) {
     let len_at: i32 = 0;
+    let trap: string = "__fern_oob_abort";
     if (k == 44) {
       len_at = 8;
+      trap = "__fern_str_oob_abort";
     }
     s = ssa_cmp_imm(ssa_ldst(s, true, "x6", a, len_at), "x6", c);
-    s = ssa_trap_guard(s, CC_HI, "__fern_oob_abort");
+    s = ssa_trap_guard(s, CC_HI, trap);
   }
   if (k != 43 && ins.imm == 2) {
     return s;
@@ -3732,7 +4063,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 // SsaFrame is the frame below the values: three words per frame-resident
 // view box after the values. ssa_view_off is the offset of a view's lowest
 // word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string, lanes: boolean[] }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -4197,6 +4528,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   if (k == 35) {
     return ssa_line_loc(ins, s);
   }
+  if (ssa_lane_arm_at(ins, fr)) {
+    return ssa_lane_arm(ins, reg_of, s);
+  }
   if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
     return s;
   }
@@ -4339,7 +4673,7 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
     while (i < srcs.len()) {
       if (!done[i] && !ssa_move_blocked(srcs, dsts, done, i, parking, parked)) {
         if (parking && srcs[i] == parked) {
-          s = ssa_loc_str(dsts[i], "x4", s);
+          s = ssa_loc_str(dsts[i], ssa_park_reg(parked, s), s);
         } else {
           s = ssa_move(srcs[i], dsts[i], s);
         }
@@ -4354,12 +4688,30 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
       while (done[j]) {
         j = j + 1;
       }
-      s = ssa_loc_ldr(srcs[j], "x4", s);
+      s = ssa_loc_ldr(srcs[j], ssa_park_reg(srcs[j], s), s);
       parking = true;
       parked = srcs[j];
     }
   }
   return ssa_x0_forget(s);
+}
+
+// ssa_park_reg is where a cycle parks a location: d1 for one of the float
+// class (a d register, or a lane pair's slot), x4 otherwise.
+function ssa_park_reg(loc: i32, s: asmcore.EmitState): string {
+  if (loc >= ssa_fbase() || loc < 0 - 1 && ssa_lane_off(ssa_slot_off(ssa.spill_slot(loc)), s)) {
+    return "d1";
+  }
+  return "x4";
+}
+
+// ssa_lane_reg is the d register a lane pair moves through: the register
+// named, or d1 when a general register was asked for (a slot-to-slot copy).
+function ssa_lane_reg(reg: string): string {
+  if (ssa_is_d(reg)) {
+    return reg;
+  }
+  return "d1";
 }
 
 // A move is blocked while another pending move still reads its destination
@@ -4813,7 +5165,8 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let bp: i32[] = ssa.block_positions(f);
   let lbase: i32 = s.nlab;
   s = s.lab_take(bp.len());
-  let fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)) };
+  let lanes: boolean[] = ssa.lane_values(f);
+  let fr: SsaFrame = SsaFrame { nspill: ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes };
   let fusions: ssaprepare.Fusion[] = [];
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
   if (frame % 16 != 0) {
@@ -4822,7 +5175,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   if (frame > 0) {
     s = fr_sub_imm(s, "sp", "sp", frame);
   }
-  s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save };
+  s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save, ssa_lane_slots: ssa_lane_slot_table(reg_of, lanes) };
   s = ssa_load_params(f, reg_of, fr.fmask, s);
   // `pos` numbers the instructions and terminators as the allocator does, so
   // a `-g` variable range's labels land where its home takes and drops it.
@@ -4875,7 +5228,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     }
     s = ssa_resolve_exits(text, framed, saved, s);
   }
-  s = asmcore.EmitState { ...s, ssa_frame: 0, ssa_save: 0 };
+  s = asmcore.EmitState { ...s, ssa_frame: 0, ssa_save: 0, ssa_lane_slots: [] };
   s = asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg).write("    .ltorg\n");
   return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
 }
@@ -6627,7 +6980,7 @@ function emit_segv_install(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
 // instruction. Any other fault puts the default action back and returns, so
 // the access faults again and the process dies of the signal as it would have.
 function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  let msg: string = asmcore.msg_stack_overflow();
+  let msg: string = aborts.stack_overflow();
   // The fault address is in the siginfo; the interrupted sp, fp and pc in
   // the context, which on Darwin is reached through uc_mcontext.
   let addr: string = "    ldr x9, [x1, #16]\n";
@@ -6977,10 +7330,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
   // reached through the __raw_scratch op. It moved out of emit_rt_fs for the
   // same heap-independence reason: gating it on the fs runtime left a scalar
   // timing program referencing a slot nothing defined. Same gate as asm_ir's.
-  let ctgt: string = "arm64-linux";
-  if (darwin) {
-    ctgt = "arm64-darwin";
-  }
+  let ctgt: string = rt_key(darwin);
   if (s.any_need([
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
@@ -7547,7 +7897,7 @@ function arr_push_fast_u8(slow: string, on: boolean): string {
 function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(empty_array_block(".Lfern_empty_bytes"));
   s = s.write("__fern_alloc_bytes:\n");
-  s = s.write("    tbz w0, #31, .Lfern_alloc_bytes_sized\n    b __fern_alloc_size_abort\n.Lfern_alloc_bytes_sized:\n");
+  s = s.write("    tbz w0, #31, .Lfern_alloc_bytes_sized\n    b __fern_alloc_size_abort_leaf\n.Lfern_alloc_bytes_sized:\n");
   s = s.write("    cbz w0, .Lfern_alloc_bytes_empty\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n");
   s = s.write("    sxtw x19, w0\n    add x0, x19, #7\n    lsr x0, x0, #3\n    mov x20, x0\n");
@@ -8390,7 +8740,7 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
 // -errno. It spells the cause line with the errno on the stack and reports it
 // with exit 123, apart from a full arena's 125.
 function emit_map_fail_trap(s: asmcore.EmitState): asmcore.EmitState {
-  let text: string = asmcore.msg_map_fail();
+  let text: string = aborts.map_fail();
   let n: string = util.i32_to_string(text.len());
   s = s.write("    .section .rodata\n");
   s = s.write(".Lmsg_map_fail:\n    .ascii \"" + text + "\"\n");
@@ -8705,28 +9055,31 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // 125, not 137: 137 is 128+9, what a shell reports for SIGKILL, so an
   // arena trap could not be told apart from the kernel OOM-killer.
   // Lockstep with the native backends' ExitArenaExhausted and asm_ir.
-  s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", asmcore.msg_oom(), 125);
+  s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", aborts.oom(), 125);
   s = emit_map_fail_trap(s);
   s = s.write(".size __fern_alloc, .-__fern_alloc\n");
 
   // The fatal aborts (#5538, #11405): each trap names its cause and branches
   // to __fern_report, so a per-access check stays a cmp + a b.hs to a shared
   // label. __fern_oob_abort is arr_get / arr_set (kind_tag 88/89),
-  // __fern_str_oob_abort the inline str_slice view, __fern_slice_abort the
-  // __fern_arr_slice bodies' range check, __fern_alloc_size_abort a raw_alloc
-  // or __alloc_u8 size that is negative as an i32, which is how a helper's
-  // `la + lb` looks once it wraps past 2 GiB. Texts and statuses match the
-  // native backends'. __fern_report itself is emitted outside the heap gate
+  // __fern_str_oob_abort a string byte and the inline str_slice view,
+  // __fern_slice_abort the __fern_arr_slice bodies' range check,
+  // __fern_alloc_size_abort a raw_alloc or __alloc_u8 size that is negative
+  // as an i32, which is how a helper's `la + lb` looks once it wraps past
+  // 2 GiB. Texts and statuses match the native backends'. __fern_report itself is emitted outside the heap gate
   // (emit_rt_report), where the sanitizer's reports can reach it too.
-  s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", asmcore.msg_arr_oob(), 134);
-  // A function with no frame (ssa_needs_frame) traps with x29 still its
-  // caller's frame record, so the backtrace walk would start one frame too far
-  // out and lose the caller; its trap comes through here, which makes the
+  s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", aborts.arr_oob(), 134);
+  s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", aborts.str_oob(), 134);
+  s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", aborts.slice_range(), 134);
+  s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
+  // A function with no frame (ssa_needs_frame), or a runtime helper that
+  // traps before making its own, traps with x29 still its caller's frame
+  // record, so the backtrace walk would start one frame too far out and lose
+  // the caller; its trap comes through the `_leaf` entry, which makes the
   // record it did not.
-  s = s.write("__fern_oob_abort_leaf:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    b __fern_oob_abort\n");
-  s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", asmcore.msg_str_oob(), 134);
-  s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", asmcore.msg_slice_range(), 134);
-  s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", asmcore.msg_alloc_size(), 134);
+  for name in leaf_aborts() {
+    s = s.write(name + "_leaf:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    b " + name + "\n");
+  }
 
   // __fern_arr_box(x0 = cap element count) -> x0 = array data
   // pointer. Centralises the array box layout (mirrors the x86-64
@@ -8946,16 +9299,27 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    b __fern_buf_push_range\n");
     s = s.write(".size __fern_buf_push, .-__fern_buf_push\n");
     // __fern_buf_push_range(x0 = H, x1 = box, x2 = lo, x3 = hi): append
-    // s[lo:hi] with no intermediate string. An empty or inverted range is a
-    // no-op; the bounds are the caller's, as with slice_unchecked. A push
-    // that fits is a leaf with no frame; only a growth saves the operands
-    // across the reserve.
+    // s[lo:hi] with no intermediate string, or trap on a range outside s, as
+    // the interpreters do. A push that fits is a leaf with no frame; only a
+    // growth saves the operands across the reserve.
     s = s.write(".globl __fern_buf_push_range\n");
     s = s.write(".type __fern_buf_push_range, %function\n");
     s = s.write("__fern_buf_push_range:\n");
-    s = s.write("    sub x3, x3, x2\n");
-    s = s.write("    cmp x3, #0\n");
-    s = s.write("    b.le .Lbufrange_done\n");
+    s = s.write("    sxtw x2, w2\n");
+    s = s.write("    sxtw x3, w3\n");
+    s = s.write("    tbz x2, #63, .Lbufrange_lo\n");
+    s = s.write("    b __fern_slice_abort_leaf\n");
+    s = s.write(".Lbufrange_lo:\n");
+    s = s.write("    ldr x4, [x1, #8]\n");
+    s = s.write("    cmp x3, x4\n");
+    s = s.write("    b.le .Lbufrange_hi\n");
+    s = s.write("    b __fern_slice_abort_leaf\n");
+    s = s.write(".Lbufrange_hi:\n");
+    s = s.write("    subs x3, x3, x2\n");
+    s = s.write("    b.ge .Lbufrange_range\n");
+    s = s.write("    b __fern_slice_abort_leaf\n");
+    s = s.write(".Lbufrange_range:\n");
+    s = s.write("    b.eq .Lbufrange_done\n");
     s = s.write("    ldr x4, [x0, #8]\n");
     s = s.write("    add x5, x4, x3\n");
     s = s.write("    ldr x6, [x0, #16]\n");
@@ -9464,16 +9828,16 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldrsw x2, [sp, #16]\n");  // lo
     s = s.write("    ldrsw x3, [sp]\n");  // hi
     s = s.write("    tbz x2, #63, .Lsgf_lo\n");
-    s = s.write("    b __fern_slice_abort\n");
+    s = s.write("    b __fern_slice_abort_leaf\n");
     s = s.write(".Lsgf_lo:\n");
     s = s.write("    ldr x4, [x1, #8]\n");  // s's length
     s = s.write("    cmp x3, x4\n");
     s = s.write("    b.le .Lsgf_hi\n");
-    s = s.write("    b __fern_slice_abort\n");
+    s = s.write("    b __fern_slice_abort_leaf\n");
     s = s.write(".Lsgf_hi:\n");
     s = s.write("    subs x3, x3, x2\n");  // lb
     s = s.write("    b.ge .Lsgf_range\n");
-    s = s.write("    b __fern_slice_abort\n");
+    s = s.write("    b __fern_slice_abort_leaf\n");
     s = s.write(".Lsgf_range:\n");
     s = s.write("    ldr x1, [x1]\n");
     s = s.write("    add x1, x1, x2\n");  // s's data + lo
@@ -10033,13 +10397,17 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  // The target key the migrated Fern helpers below are built for — same
-  // derivation as emit_rt_clock_and_print's ctgt.
-  let tgt: string = "arm64-linux";
+// rt_key is the asmcore runtime key the Fern runtime bodies are built for.
+// arm64-android runs Linux's kernel ABI, so it takes arm64-linux's.
+function rt_key(darwin: boolean): string {
   if (darwin) {
-    tgt = "arm64-darwin";
+    return "arm64-darwin";
   }
+  return "arm64-linux";
+}
+
+function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  let tgt: string = rt_key(darwin);
   // __fern_reader_read_chunk and __fern_reader_close are Fern runtime functions
   // (#2649): asmcore.rt_src_reader_read_chunk / rt_src_reader_close, emitted
   // need-gated below. Their Option and string boxes come from ordinary lowering
@@ -10471,7 +10839,7 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = s.write(".globl __fern_alloc_u8\n");
   s = s.write(".type __fern_alloc_u8, %function\n");
   s = s.write("__fern_alloc_u8:\n");
-  s = s.write("    tbz w0, #31, .Lfern_alloc_u8_sized\n    b __fern_alloc_size_abort\n.Lfern_alloc_u8_sized:\n");
+  s = s.write("    tbz w0, #31, .Lfern_alloc_u8_sized\n    b __fern_alloc_size_abort_leaf\n.Lfern_alloc_u8_sized:\n");
   s = s.write("    cbz w0, .Lfern_alloc_u8_empty\n");
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
@@ -10552,7 +10920,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   // non-atomic counts. The export entries and the __c_call shims keep it.
   if (s.shared) {
     s = s.write("    .section .bss\n    .align 3\n__fern_busy: .skip 8\n    .text\n");
-    s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", asmcore.msg_busy(), 134);
+    s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", aborts.busy(), 134);
   }
   // The UAF quarantine's fatal report. Self-contained — its own write(2) +
   // exit(124) rather than the census writer — so FERN_RC_FREE_DEBUG works
@@ -10877,10 +11245,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // bodies. darwinize cannot remap a number the emitter only has at runtime
   // (its rule needs a literal `mov x8, #N`), which is why the target's number
   // is baked into the source here instead.
-  let tgt: string = "arm64-linux";
-  if (darwin) {
-    tgt = "arm64-darwin";
-  }
+  let tgt: string = rt_key(darwin);
   // random_bytes: fill a scratch buffer through __syscall3, spread the bytes
   // into a fresh u8[] box (__raw_arr_box).
   if (s.has_need("random_bytes")) {
@@ -12410,9 +12775,8 @@ function emit_profile_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Em
   // The runtime below uses LSE, which an external assembler enables only from here on.
   s = s.write("    .arch_extension lse\n");
   s = s.write("    .bss\n    .p2align 3\n.Lprofile_ring: .zero 4337824\n    .data\n    .p2align 3\n");
-  let target = "arm64-linux";
+  let target: string = rt_key(darwin);
   if (darwin) {
-    target = "arm64-darwin";
     // Darwin's raw sigaction has handler, trampoline, mask32 and flags32.
     s = s.write(".Lprofile_action: .quad __fern_profile_signal, __fern_profile_trampoline\n    .long 0, 66\n");
   } else {
@@ -12599,8 +12963,10 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   // symbol list — reused from asm_ir.
   if (is_entry && globl_defs) {
     s = asmcore.emit_runtime_globls(s);
-    // The frameless functions' bounds trap, arm64's alone.
-    s = s.write(".globl __fern_oob_abort_leaf\n");
+    // The frameless functions' bounds traps, arm64's alone.
+    for name in leaf_aborts() {
+      s = s.write(".globl " + name + "_leaf\n");
+    }
   }
   // [lo, hi) function-index window (function-sharding, #3425 — the arm64
   // mirror of asm_ir.emit_module_funcs' windowing). A full window (lo=0,

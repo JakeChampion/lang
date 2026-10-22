@@ -535,7 +535,7 @@ func builtinStructDecls() []*ast.StructDecl {
 			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
 		},
 		// HttpRequest / HttpResponse back the
-		// `fern -target wasi-http` mode (step 5 of
+		// `fern -target wasm32-wasi-http` mode (step 5 of
 		// docs/WASI-PREVIEW2.md). They're always available so
 		// CLI-target programs can construct one for tests, but
 		// the wasm backend only emits the
@@ -5023,6 +5023,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// prepended to the parameter list, so codegen never has to know
 	// about methods.
 	for _, fn := range prog.Funcs {
+		// Before any receiver is hoisted, a method is still told apart from
+		// the entry point.
+		if fn.Name == "main" && fn.Receiver == nil && fn.AssocType == "" && fn.Body != nil {
+			c.checkMainSignature(fn)
+		}
 		if fn.AssocType != "" {
 			// Associated function (`impl … for T { function f(): Self }`):
 			// no receiver, called as `T.f(args)`. Hoist to a flat
@@ -23355,6 +23360,22 @@ func hasHandleDecl(prog *ast.Program) bool {
 		}
 	}
 	return false
+}
+
+// checkMainSignature is E084: every runner calls `main` with no arguments
+// and turns its result into the exit status, which an integer or a boolean
+// can be and nothing else can.
+func (c *checker) checkMainSignature(fn *ast.FuncDecl) {
+	if len(fn.Params) > 0 {
+		c.errfCode(fn.P, "E084", "main takes no parameters; read the command line with args()")
+	}
+	switch fn.ReturnType.(type) {
+	case ast.NumberType, ast.BoolType, ast.VoidType:
+	default:
+		if !fn.ReturnUnannotated {
+			c.errfCode(fn.P, "E084", "main returns an integer, a boolean or void, not %s", fn.ReturnType)
+		}
+	}
 }
 
 // hasMainDecl mirrors hasHandleDecl for `main`. Used to gate

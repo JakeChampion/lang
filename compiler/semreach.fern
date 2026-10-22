@@ -958,7 +958,9 @@ function returned(ctx: Ctx, w: World, i: i32, wk: Walk, value: i32): World {
 }
 
 function absorb_inst(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst): World {
-  w = named(ctx, w, ins.str);
+  if (ins.str.len() > 0) {
+    w = named(ctx, w, ins.str);
+  }
   if (ins.kind_tag == ssasem.record_new()) {
     return built_record(ctx, w, wk.keys[ins.result], wk, ins.args, 0);
   }

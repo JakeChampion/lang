@@ -20,6 +20,7 @@ import "./sourcepos";
 
 import "./lexer";
 import "./parser";
+import "./aborts";
 import "./asmcore";
 import "./rtprofile";
 import "./x86_native";
@@ -473,7 +474,7 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
 function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(empty_array_block(".Lfern_empty_bytes"));
   s = s.write("__fern_alloc_bytes:\n");
-  s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort\n    jz .Lfern_alloc_bytes_empty\n");
+  s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort.c\n    jz .Lfern_alloc_bytes_empty\n");
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n");
   s = s.write("    movq %rdi, %r12\n    leaq 7(%rdi), %rdi\n    shrq $3, %rdi\n    movq %rdi, %r13\n");
   s = s.write("    call __fern_arr_box\n");
@@ -2609,7 +2610,7 @@ function ssa_jumped_traps(): string[] {
 
 // ssa_called_traps are the aborts a body reaches by a call rather than a jump.
 function ssa_called_traps(): string[] {
-  return ["__fern_oob_abort", "__fern_slice_abort"];
+  return ["__fern_oob_abort", "__fern_slice_abort", "__fern_alloc_size_abort"];
 }
 
 // leaf_trap is the suffix of the traps a function with no %rbp frame and n
@@ -2692,7 +2693,7 @@ function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: stri
 // -errno. It spells the cause line with the errno on the stack and reports it
 // with exit 123, apart from a full arena's 125.
 function emit_map_fail_trap(s: asmcore.EmitState): asmcore.EmitState {
-  let text: string = asmcore.msg_map_fail();
+  let text: string = aborts.map_fail();
   s = s.write("    .section .rodata\n");
   s = s.write(".Lmsg_map_fail:\n    .ascii \"" + text + "\"\n");
   s = s.write("    .section .text\n");
@@ -3032,20 +3033,29 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // 125, not 137: 137 is 128+9, what a shell reports for SIGKILL, so an arena
   // trap could not be told apart from the kernel OOM-killer. Opposite causes,
   // opposite fixes. Lockstep with the native backends' ExitArenaExhausted.
-  s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", asmcore.msg_oom(), 125);
+  s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", aborts.oom(), 125);
   s = emit_map_fail_trap(s);
   // The fatal aborts (#5538, #11405): each trap names its cause and
   // tail-jumps to __fern_report, so a per-access check stays a compare + a
   // jae to a shared label. __fern_oob_abort is arr_get / arr_set,
-  // __fern_str_oob_abort the inline str_slice view, __fern_slice_abort the
-  // __fern_arr_slice bodies' range check, __fern_alloc_size_abort a
-  // raw_alloc or __alloc_u8 size that is negative as an i32, which is how a
-  // helper's `la + lb` looks once it wraps past 2 GiB. Texts and statuses
-  // match the native backends'.
-  s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", asmcore.msg_arr_oob(), 134);
-  s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", asmcore.msg_str_oob(), 134);
-  s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", asmcore.msg_slice_range(), 134);
-  s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", asmcore.msg_alloc_size(), 134);
+  // __fern_str_oob_abort a string byte and the inline str_slice view,
+  // __fern_slice_abort the __fern_arr_slice bodies' range check,
+  // __fern_alloc_size_abort a raw_alloc or __alloc_u8 size that is negative
+  // as an i32, which is how a helper's `la + lb` looks once it wraps past
+  // 2 GiB. Texts and statuses match the native backends'.
+  s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", aborts.arr_oob(), 134);
+  s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", aborts.str_oob(), 134);
+  s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", aborts.slice_range(), 134);
+  s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
+  // The allocation helpers and str_grow test their operands before they make a
+  // frame, so they trap through the `.c` entries, which make one from their
+  // return address.
+  if (s.has_need("alloc_u8") || s.has_need("alloc_bytes") || s.has_need("str_grow")) {
+    s = s.need("__fern_alloc_size_abort.c");
+  }
+  if (s.has_need("str_grow") || s.has_need("buf")) {
+    s = s.need("__fern_slice_abort.c");
+  }
   s = emit_trap_stubs(s);
   // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
   // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
@@ -3742,18 +3752,18 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movslq 8(%rsp), %rsi\n");  // hi
     s = s.write("    movq 24(%rsp), %rdx\n");  // s
     s = s.write("    testq %rax, %rax\n");
-    s = s.write("    js __fern_slice_abort\n");
+    s = s.write("    js __fern_slice_abort.c\n");
     s = s.write("    cmpq 8(%rdx), %rsi\n");
-    s = s.write("    jg __fern_slice_abort\n");
+    s = s.write("    jg __fern_slice_abort.c\n");
     s = s.write("    subq %rax, %rsi\n");  // lb
-    s = s.write("    js __fern_slice_abort\n");
+    s = s.write("    js __fern_slice_abort.c\n");
     s = s.write("    movq (%rdx), %rdx\n");
     s = s.write("    addq %rax, %rdx\n");  // s's data + lo
     s = s.write(".Lsgf_body:\n");
     s = s.write("    movq 8(%r8), %rcx\n");  // la
     s = s.write("    leaq (%rcx,%rsi), %rdi\n");  // grown length
     s = s.write("    cmpq $0x7fffffff, %rdi\n");
-    s = s.write("    ja __fern_alloc_size_abort\n");
+    s = s.write("    ja __fern_alloc_size_abort.c\n");
     s = s.write("    leaq 39(%rdi), %r9\n");
     s = s.write("    shrq $3, %r9\n");  // words the grown string needs
     s = s.write("    leaq 31(%rcx), %r10\n");
@@ -4215,14 +4225,20 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    xorl %edx, %edx\n");
     s = s.write("    jmp __fern_buf_push_range\n");
     // __fern_buf_push_range(%rdi = H, %rsi = box, %rdx = lo, %rcx = hi):
-    // append s[lo:hi] with no intermediate string. An empty or inverted
-    // range is a no-op; the bounds are the caller's, as with
-    // slice_unchecked. A push that fits keeps no frame: it sets the new
-    // length and tail-calls the copy. Only a growth saves the operands
+    // append s[lo:hi] with no intermediate string, or trap on a range outside
+    // s, as the interpreters do. A push that fits keeps no frame: it sets the
+    // new length and tail-calls the copy. Only a growth saves the operands
     // across the reserve.
     s = s.write("__fern_buf_push_range:\n");
+    s = s.write("    movslq %edx, %rdx\n");
+    s = s.write("    movslq %ecx, %rcx\n");
+    s = s.write("    testq %rdx, %rdx\n");
+    s = s.write("    js __fern_slice_abort.c\n");
+    s = s.write("    cmpq 8(%rsi), %rcx\n");
+    s = s.write("    jg __fern_slice_abort.c\n");
     s = s.write("    subq %rdx, %rcx\n");
-    s = s.write("    jle .Lbufrange_done\n");
+    s = s.write("    js __fern_slice_abort.c\n");
+    s = s.write("    jz .Lbufrange_done\n");
     s = s.write("    movq 8(%rdi), %rax\n");
     s = s.write("    leaq (%rax,%rcx), %r8\n");
     s = s.write("    cmpq 16(%rdi), %r8\n");
@@ -4403,7 +4419,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".globl __fern_alloc_u8\n");
     s = s.write(".type __fern_alloc_u8, @function\n");
     s = s.write("__fern_alloc_u8:\n");
-    s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort\n    jz .Lfern_alloc_u8_empty\n");
+    s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort.c\n    jz .Lfern_alloc_u8_empty\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
     s = s.write("    pushq %r12\n");
@@ -6863,11 +6879,22 @@ function ssa_mov_rr(s: asmcore.EmitState, dst: string, src: string): asmcore.Emi
 // ssa_mov_slot writes the load `movq disp(%rbp), reg` or the store `movq
 // reg, disp(%rbp)`.
 function ssa_mov_slot(s: asmcore.EmitState, load: boolean, reg: string, disp: i32): asmcore.EmitState {
-  if (ssa_is_xmm(reg) && load) {
-    return s.write("    movsd " + ssa_mem("%rbp", disp, false) + ", " + reg + "\n");
-  }
   if (ssa_is_xmm(reg)) {
-    return s.write("    movsd " + reg + ", " + ssa_mem("%rbp", disp, false) + "\n");
+    let m: string = "movsd";
+    let at: i32 = disp;
+    if (ssa_lane_disp(disp, s)) {
+      // The pair's second unit is the lower address, where its 16 bytes start.
+      m = "movupd";
+      at = disp - 8;
+    }
+    if (load) {
+      return s.write("    " + m + " " + ssa_mem("%rbp", at, false) + ", " + reg + "\n");
+    }
+    return s.write("    " + m + " " + reg + ", " + ssa_mem("%rbp", at, false) + "\n");
+  }
+  if (ssa_lane_disp(disp, s)) {
+    // A lane pair copied slot to slot goes through %xmm2 as 16 bytes.
+    return ssa_mov_slot(s, load, "%xmm2", disp);
   }
   return ssa_mov_rm(s, 64, load, reg, "%rbp", disp);
 }
@@ -7569,6 +7596,9 @@ function ssa_funary_known(what: string): boolean {
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
   let k: i32 = ins.kind_tag;
+  if (ssa.lane_inst(ins)) {
+    return true;
+  }
   if (k == 10) {
     return ssa_unary_known(ins.str);
   }
@@ -7847,6 +7877,372 @@ function ssa_fbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
   }
   s = s.write("    ucomisd " + b + ", " + a + "\n    movq $0, " + d + "\n" + cc + "    movzbq " + r8 + ", " + d + "\n");
   return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ---- lane ops (docs/SIMD-GENERIC-KERNELS.md §6) -----------------------------
+//
+// A lane value (ssa.lane_values) is 128 bits: two f64 lanes (imm 64) or four
+// f32 lanes (imm 32). It lives in an xmm register of the float class or in a
+// 16-byte slot pair (ssa_lane_slots), moves as movapd / movupd, and the arms
+// below read an operand from its home or from %xmm1 / %xmm2 once ssa_fread
+// has loaded it, and write the result into its home or into %xmm0 for
+// ssa_fput. Where SSE is two-operand the left operand is copied into the
+// destination first, which the allocator keeps apart from every operand.
+
+// ssa_lane_slot_table marks the frame slot units the lane values occupy.
+function ssa_lane_slot_table(reg_of: i32[], lanes: boolean[]): boolean[] {
+  let units: boolean[] = [];
+  let v: i32 = 0;
+  while (v < lanes.len()) {
+    if (lanes[v] && reg_of[v] < 0 - 1) {
+      let u: i32 = ssa.spill_slot(reg_of[v]);
+      while (units.len() <= u + 1) {
+        units = units.append(false);
+      }
+      units = units.with(u, true).with(u + 1, true);
+    }
+    v = v + 1;
+  }
+  return units;
+}
+
+// ssa_lane_disp reports a slot displacement inside a lane pair.
+function ssa_lane_disp(disp: i32, s: asmcore.EmitState): boolean {
+  if (s.ssa_lane_slots.len() == 0) {
+    return false;
+  }
+  let u: i32 = (0 - disp - s.ssa_save) / 8 - 1;
+  return u >= 0 && u < s.ssa_lane_slots.len() && s.ssa_lane_slots[u];
+}
+
+// ssa_lane_spill is the spill count rounded up to whole pairs when the
+// function has a lane value, whose pair sits at an even index.
+function ssa_lane_spill(f: ssa.SFunc, nspill: i32): i32 {
+  if (nspill % 2 == 1 && ssa.has_lanes(f)) {
+    return nspill + 1;
+  }
+  return nspill;
+}
+
+// ssa_lane_sfx is the packed-float suffix of the element width.
+function ssa_lane_sfx(width: i32): string {
+  if (width == 32) {
+    return "ps";
+  }
+  return "pd";
+}
+
+function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let b: string = ssa.lane_base(ins.str);
+  if (b == "vsplat") {
+    return ssa_vsplat(ins, reg_of, s);
+  }
+  if (b == "vextract") {
+    return ssa_vextract(ins, reg_of, s);
+  }
+  if (b == "vreplace") {
+    return ssa_vreplace(ins, reg_of, s);
+  }
+  if (b == "vfma") {
+    return ssa_vfma(ins, reg_of, s);
+  }
+  if (b == "vselect") {
+    return ssa_vselect(ins, reg_of, s);
+  }
+  if (b == "vload") {
+    return ssa_vload(ins, reg_of, s);
+  }
+  if (b == "vstore") {
+    return ssa_vstore(ins, reg_of, s);
+  }
+  if (b == "vround") {
+    return ssa_vround(ins, reg_of, s);
+  }
+  if (ins.args.len() == 2) {
+    return ssa_vbin(ins, reg_of, s);
+  }
+  return ssa_vunary(ins, reg_of, s);
+}
+
+// ssa_lane_arm_at reports a lane op or a copy of a lane value.
+function ssa_lane_arm_at(ins: ssa.SInst, fr: SsaFrame): boolean {
+  return ssa.lane_inst(ins) || ins.kind_tag == 7 && ins.result < fr.lanes.len() && fr.lanes[ins.result];
+}
+
+// ssa_lane_arm emits a lane op, or a copy of a lane value.
+function ssa_lane_arm(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ssa.lane_inst(ins)) {
+    return ssa_lane_inst(ins, reg_of, s);
+  }
+  return ssa_vcopy(ins, reg_of, s);
+}
+
+// ssa_vcopy moves a lane value to a copy's home, all 16 bytes of it.
+function ssa_vcopy(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (a != d) {
+    s = s.write("    movapd " + a + ", " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vsplat: every lane takes the f64, which an f32 lane rounds first.
+function ssa_vsplat(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (ins.imm == 32) {
+    s = s.write("    cvtsd2ss " + a + ", " + d + "\n    shufps $0, " + d + ", " + d + "\n");
+  } else {
+    if (a != d) {
+      s = s.write("    movapd " + a + ", " + d + "\n");
+    }
+    s = s.write("    unpcklpd " + d + ", " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vextract: lane N as an f64, into the result's float home or %xmm0, from
+// where ssa_fput moves it to an integer home or a slot.
+function ssa_vextract(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let lane: i32 = ssa_lane_index(ins.str);
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let v: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (v != d) {
+    s = s.write("    movapd " + v + ", " + d + "\n");
+  }
+  if (ins.imm == 32) {
+    if (lane > 0) {
+      s = s.write("    shufps $" + util.i32_to_string(lane) + ", " + d + ", " + d + "\n");
+    }
+    s = s.write("    cvtss2sd " + d + ", " + d + "\n");
+  } else if (lane == 1) {
+    s = s.write("    unpckhpd " + d + ", " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_lane_index is the lane after the colon of "vextract:1" / "vreplace:3".
+function ssa_lane_index(what: string): i32 {
+  let k: i32 = 0;
+  while (k < what.len()) {
+    if (what[k] == b':') {
+      return what[k + 1] as i32 - 48;
+    }
+    k = k + 1;
+  }
+  return 0;
+}
+
+// ssa_vreplace: the lane value with lane N replaced by the f64, which goes
+// through %rcx as its bit pattern (its f32 pattern for an f32 lane).
+function ssa_vreplace(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let lane: string = util.i32_to_string(ssa_lane_index(ins.str));
+  s = ssa_fread(reg_of, ins.args[0], "%xmm2", s);
+  let v: string = ssa_fsrc(reg_of, ins.args[0], "%xmm2");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (v != d) {
+    s = s.write("    movapd " + v + ", " + d + "\n");
+  }
+  if (ins.imm == 32) {
+    s = ssa_fread(reg_of, ins.args[1], "%xmm1", s);
+    s = s.write("    cvtsd2ss " + ssa_fsrc(reg_of, ins.args[1], "%xmm1") + ", %xmm1\n    movd %xmm1, %ecx\n    pinsrd $" + lane + ", %ecx, " + d + "\n");
+  } else {
+    s = ssa_load(reg_of, ins.args[1], "%rcx", s);
+    s = s.write("    pinsrq $" + lane + ", %rcx, " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vbin_form is a lane binary's SSE mnemonic (without the width suffix),
+// its compare predicate (-1 for none) and whether the destination takes the
+// RIGHT operand: `b < a ? b : a` is minpd with b in the destination, and the
+// swapped compares and andnot read the same way.
+struct VBinForm { mnem: string, pred: i32, right: boolean }
+
+function ssa_vbin_form(b: string): VBinForm {
+  let names: string[] = ["vadd", "vsub", "vmul", "vdiv", "vand", "vor", "vxor", "vmin", "vmax", "vandnot", "veq", "vlt", "vle", "vne", "vgt", "vge"];
+  let mnems: string[] = ["add", "sub", "mul", "div", "and", "or", "xor", "min", "max", "andn", "cmp", "cmp", "cmp", "cmp", "cmp", "cmp"];
+  let preds: i32[] = [0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0, 1, 2, 4, 1, 2];
+  let rights: boolean[] = [false, false, false, false, false, false, false, true, true, true, false, false, false, false, true, true];
+  let i: i32 = util.index_of_str(names, b);
+  return VBinForm { mnem: mnems[i], pred: preds[i], right: rights[i] };
+}
+
+function ssa_vbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let form: VBinForm = ssa_vbin_form(ssa.lane_base(ins.str));
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  s = ssa_fread(reg_of, ins.args[1], "%xmm2", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let b: string = ssa_fsrc(reg_of, ins.args[1], "%xmm2");
+  if (form.right) {
+    let t: string = a;
+    a = b;
+    b = t;
+  }
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (a != d) {
+    s = s.write("    movapd " + a + ", " + d + "\n");
+  }
+  let imm: string = "";
+  if (form.pred >= 0) {
+    imm = "$" + util.i32_to_string(form.pred) + ", ";
+  }
+  s = s.write("    " + form.mnem + ssa_lane_sfx(ins.imm) + " " + imm + b + ", " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vunary: sqrt and the roundings are one instruction; abs and neg build
+// their mask in %xmm2 from all ones (pcmpeqd) shifted. The result may share
+// the operand's register (a unary's operand dies at it), so nothing writes
+// the destination before the operand is read.
+function ssa_vunary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let b: string = ssa.lane_base(ins.str);
+  let sfx: string = ssa_lane_sfx(ins.imm);
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (b == "vsqrt") {
+    s = s.write("    sqrt" + sfx + " " + a + ", " + d + "\n");
+  } else if (b == "vabs" || b == "vneg") {
+    s = s.write("    pcmpeqd %xmm2, %xmm2\n" + ssa_lane_mask_shift(b, ins.imm, "%xmm2"));
+    let op: string = "and";
+    if (b == "vneg") {
+      op = "xor";
+    }
+    if (a != d) {
+      s = s.write("    movapd " + a + ", " + d + "\n");
+    }
+    s = s.write("    " + op + sfx + " %xmm2, " + d + "\n");
+  } else {
+    let mode: string = "1";
+    if (b == "vceil") {
+      mode = "2";
+    } else if (b == "vtrunc") {
+      mode = "3";
+    }
+    s = s.write("    round" + sfx + " $" + mode + ", " + a + ", " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_lane_mask_shift turns an all-ones register into the sign mask (neg) or
+// the magnitude mask (abs) of the element width.
+function ssa_lane_mask_shift(b: string, width: i32, d: string): string {
+  if (width == 32) {
+    if (b == "vneg") {
+      return "    pslld $31, " + d + "\n";
+    }
+    return "    psrld $1, " + d + "\n";
+  }
+  if (b == "vneg") {
+    return "    psllq $63, " + d + "\n";
+  }
+  return "    psrlq $1, " + d + "\n";
+}
+
+// ssa_vround is round half away from zero: r = trunc(x), then r + copysign(1, x)
+// where |x - r| >= 0.5 (the scalar fround's test, exact because x - r is).
+// %xmm2 holds copysign(1, x) and %xmm1 x, then the mask; 1.0 and 0.5 come
+// from .rodata. The destination may be the operand's register, so x is
+// copied to %xmm1 before it is written.
+function ssa_vround(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let sfx: string = ssa_lane_sfx(ins.imm);
+  let w: string = util.i32_to_string(ins.imm);
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let x: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  s = s.write("    pcmpeqd %xmm2, %xmm2\n" + ssa_lane_mask_shift("vneg", ins.imm, "%xmm2"));
+  s = s.write("    and" + sfx + " " + x + ", %xmm2\n    or" + sfx + " .Lv_one" + w + "(%rip), %xmm2\n");
+  if (x != "%xmm1") {
+    s = s.write("    movapd " + x + ", %xmm1\n");
+  }
+  s = s.write("    round" + sfx + " $3, %xmm1, " + d + "\n");
+  // |x - r|: the sign bit shifted out and back in.
+  let sh: string = "q";
+  if (ins.imm == 32) {
+    sh = "d";
+  }
+  s = s.write("    sub" + sfx + " " + d + ", %xmm1\n    psll" + sh + " $1, %xmm1\n    psrl" + sh + " $1, %xmm1\n");
+  s = s.write("    cmp" + sfx + " $5, .Lv_half" + w + "(%rip), %xmm1\n");
+  s = s.write("    and" + sfx + " %xmm1, %xmm2\n    add" + sfx + " %xmm2, " + d + "\n");
+  s = asmcore.EmitState { ...s, lane_consts: true };
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vfma: a * b + c in one rounding (FMA3), with a copied into the
+// destination, which vfmadd213 multiplies by b and adds c to.
+function ssa_vfma(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[1], "%xmm1", s);
+  s = ssa_fread(reg_of, ins.args[2], "%xmm2", s);
+  let a: string = ssa_fhome(reg_of, ins.args[0]);
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (a == "") {
+    s = ssa_load(reg_of, ins.args[0], d, s);
+  } else if (a != d) {
+    s = s.write("    movapd " + a + ", " + d + "\n");
+  }
+  s = s.write("    vfmadd213" + ssa_lane_sfx(ins.imm) + " " + ssa_fsrc(reg_of, ins.args[2], "%xmm2") + ", " + ssa_fsrc(reg_of, ins.args[1], "%xmm1") + ", " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vselect (args a, b, mask): a where the mask is set, b elsewhere, as
+// (m & a) | (~m & b): m & a in %xmm2, ~m & b in %xmm1 over the mask copied
+// there, b read into the destination when it has no home, since no fourth
+// scratch exists.
+function ssa_vselect(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let sfx: string = ssa_lane_sfx(ins.imm);
+  s = ssa_fread(reg_of, ins.args[2], "%xmm1", s);
+  s = ssa_fread(reg_of, ins.args[0], "%xmm2", s);
+  let m: string = ssa_fsrc(reg_of, ins.args[2], "%xmm1");
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm2");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  let b: string = ssa_fhome(reg_of, ins.args[1]);
+  if (b == "") {
+    s = ssa_load(reg_of, ins.args[1], d, s);
+    b = d;
+  }
+  if (a != "%xmm2") {
+    s = s.write("    movapd " + a + ", %xmm2\n");
+  }
+  s = s.write("    and" + sfx + " " + m + ", %xmm2\n");
+  if (m != "%xmm1") {
+    s = s.write("    movapd " + m + ", %xmm1\n");
+  }
+  s = s.write("    andn" + sfx + " " + b + ", %xmm1\n    or" + sfx + " %xmm2, %xmm1\n");
+  return ssa_store(reg_of, ins.result, "%xmm1", s);
+}
+
+// ssa_vload / ssa_vstore: 16 unaligned bytes at an address in an integer
+// register.
+function ssa_vload(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_read(reg_of, ins.args[0], "%rcx", s);
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  s = s.write("    movupd (" + ssa_src(reg_of, ins.args[0], "%rcx") + "), " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+function ssa_vstore(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_read(reg_of, ins.args[0], "%rcx", s);
+  s = ssa_fread(reg_of, ins.args[1], "%xmm1", s);
+  return s.write("    movupd " + ssa_fsrc(reg_of, ins.args[1], "%xmm1") + ", (" + ssa_src(reg_of, ins.args[0], "%rcx") + ")\n");
+}
+
+// emit_lane_consts lays down the 16-byte constants the lane arms read, once
+// per unit that used one.
+function emit_lane_consts(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.lane_consts) {
+    return s;
+  }
+  s = s.write("    .section .rodata\n    .align 16\n");
+  s = s.write(".Lv_one64:\n    .quad 4607182418800017408\n    .quad 4607182418800017408\n");
+  s = s.write(".Lv_half64:\n    .quad 4602678819172646912\n    .quad 4602678819172646912\n");
+  s = s.write(".Lv_one32:\n    .long 1065353216\n    .long 1065353216\n    .long 1065353216\n    .long 1065353216\n");
+  s = s.write(".Lv_half32:\n    .long 1056964608\n    .long 1056964608\n    .long 1056964608\n    .long 1056964608\n");
+  return s;
 }
 
 function ssa_sse_arith(what: string): string {
@@ -8240,7 +8636,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (k == 44) {
     s = s.need("heap");
     if (ins.imm != 1) {
-      s = ssa_trap_jump(ssa_alu_rm(s, 7, 64, true, b, a, 8), "jae", "__fern_oob_abort");
+      s = ssa_trap_jump(ssa_alu_rm(s, 7, 64, true, b, a, 8), "jae", "__fern_str_oob_abort");
     }
     if (ins.imm == 2) {
       return s;
@@ -8268,10 +8664,12 @@ function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string,
   s = s.need("heap");
   if (ins.imm != 1) {
     let len_at: i32 = 0;
+    let trap: string = "__fern_oob_abort";
     if (k == 44) {
       len_at = 8;
+      trap = "__fern_str_oob_abort";
     }
-    s = ssa_trap_jump(ssa_alu_im(s, 7, 64, c, a, len_at), "jbe", "__fern_oob_abort");
+    s = ssa_trap_jump(ssa_alu_im(s, 7, 64, c, a, len_at), "jbe", trap);
   }
   if (k != 43 && ins.imm == 2) {
     return s;
@@ -9065,7 +9463,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 // SsaFrame is the frame below the values: three words per frame-resident
 // view box after the values. ssa_view_off is the offset of a view's lowest
 // word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32, lanes: boolean[] }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -9515,6 +9913,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (k == 35) {
     return ssa_line_loc(ins, s);
   }
+  if (ssa_lane_arm_at(ins, fr)) {
+    return ssa_lane_arm(ins, reg_of, s);
+  }
   if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
     return s;
   }
@@ -9650,7 +10051,7 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
     while (i < srcs.len()) {
       if (!done[i] && !ssa_move_blocked(srcs, dsts, done, i, parking, parked)) {
         if (parking && srcs[i] == parked) {
-          s = s.write("    movq %r11, " + ssa_loc(dsts[i], s) + "\n");
+          s = ssa_unpark(dsts[i], ssa_vec_loc(parked, s), s);
         } else {
           s = ssa_move(srcs[i], dsts[i], s);
         }
@@ -9665,12 +10066,42 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
       while (done[j]) {
         j = j + 1;
       }
-      s = s.write("    movq " + ssa_loc(srcs[j], s) + ", %r11\n");
+      s = ssa_park(srcs[j], s);
       parking = true;
       parked = srcs[j];
     }
   }
   return ssa_x0_forget(s);
+}
+
+// ssa_vec_loc reports a location of the float class: an xmm register or a
+// lane pair's slot, which a cycle parks in %xmm2 as 16 bytes rather than in
+// %r11.
+function ssa_vec_loc(loc: i32, s: asmcore.EmitState): boolean {
+  if (loc >= 0) {
+    return loc >= ssa_fbase();
+  }
+  return ssa_lane_disp(ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save), s);
+}
+
+function ssa_park(loc: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (!ssa_vec_loc(loc, s)) {
+    return s.write("    movq " + ssa_loc(loc, s) + ", %r11\n");
+  }
+  if (loc >= 0) {
+    return ssa_mov_rr(s, "%xmm2", ssa_reg(loc));
+  }
+  return ssa_mov_slot(s, true, "%xmm2", ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save));
+}
+
+function ssa_unpark(loc: i32, vec: boolean, s: asmcore.EmitState): asmcore.EmitState {
+  if (!vec) {
+    return s.write("    movq %r11, " + ssa_loc(loc, s) + "\n");
+  }
+  if (loc >= 0) {
+    return ssa_mov_rr(s, ssa_reg(loc), "%xmm2");
+  }
+  return ssa_mov_slot(s, false, "%xmm2", ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save));
 }
 
 // A move is blocked while another pending move still reads its destination
@@ -10119,7 +10550,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let fn_label: string = "__fn_" + asmcore.sanitize_label(label_name);
   let dbg: asmcore.DbgVars = asmcore.dbg_vars(fn_label, alloc, r, formed.repl, if (s.var_rows) { seen_vals } else { [] }, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
   let views: i32[] = ssa_view_slots(f);
-  let nspill: i32 = ssa.spill_count(reg_of);
+  let nspill: i32 = ssa_lane_spill(f, ssa.spill_count(reg_of));
   let tails: boolean = s.profile == 0;
   // A function with no frame slots that might make no call but a tail call is
   // emitted into a buffer first, behind placeholders for its exits; its text
@@ -10143,7 +10574,8 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let bp: i32[] = ssa.block_positions(f);
   let lbase: i32 = s.nlab;
   s = s.lab_take(bp.len());
-  let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase };
+  let lanes: boolean[] = ssa.lane_values(f);
+  let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes };
   let fusions: ssaprepare.Fusion[] = [];
   let framed = !leaf;
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
@@ -10162,7 +10594,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   } else {
     s = ssa_frame(s, saved, frame);
   }
-  s = asmcore.EmitState { ...s, ssa_save: save };
+  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: ssa_lane_slot_table(reg_of, lanes) };
   s = ssa_load_params(f, reg_of, s);
   // `pos` numbers the instructions and terminators as the allocator does, so
   // a `-g` variable range's labels land where its home takes and drops it.
@@ -10226,7 +10658,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = s.write(ssa_resolve_tails(ssa_replace_all(leaf_text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)), ssa_leaf_epilogue(saved)));
     }
   }
-  s = asmcore.EmitState { ...s, ssa_save: 0, ssa_trap_suffix: "" };
+  s = asmcore.EmitState { ...s, ssa_save: 0, ssa_trap_suffix: "", ssa_lane_slots: [] };
   s = asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg);
   return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
 }
@@ -11991,6 +12423,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   // .data: one block per static aggregate constant (#6149). After the string
   // pool, because a block's first word is a shape POINTER into it.
   s = asmcore.emit_const_agg_data(s);
+  s = emit_lane_consts(s);
   // Per-module shape pointers: emit each distinct shape name once as a `.weak`
   // global symbol (shape_sym) carrying its name bytes. Every unit referencing the
   // same shape emits the same weak symbol, so the linker merges them to ONE
@@ -12126,7 +12559,7 @@ function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmco
     s = s.write("    leaq 16(%rsp,%rax,8), %rax\n");
     s = s.write("    movq %rax, __fern_envp(%rip)\n");
   }
-  if (asmcore.vdso_wanted(s, "x86_64")) {
+  if (asmcore.vdso_wanted(s, "x86-64-linux")) {
     s = emit_vdso_scan(s);
   }
   // A shared object's host owns the stack and the signal handlers.
@@ -12183,7 +12616,7 @@ function emit_segv_install(own s: asmcore.EmitState): asmcore.EmitState {
 // default action back and returns, so the access faults again and the process
 // dies of SIGSEGV as it would have.
 function emit_stack_overflow_runtime(s: asmcore.EmitState): asmcore.EmitState {
-  let msg: string = asmcore.msg_stack_overflow();
+  let msg: string = aborts.stack_overflow();
   s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
   s = s.write("__fern_segv:\n    movq 16(%rsi), %rax\n    subq 160(%rdx), %rax\n    addq $1048576, %rax\n    cmpq $2097152, %rax\n    jae .Lfern_segv_other\n    movq 168(%rdx), %rax\n    movq 120(%rdx), %rcx\n    subq $16, %rsp\n    movq %rcx, (%rsp)\n    movq %rax, 8(%rsp)\n    movq %rsp, %rbp\n    leaq .Lmsg_stack_overflow(%rip), %rsi\n    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n    movq $134, %rdi\n    jmp __fern_report\n.Lfern_segv_other:\n    subq $32, %rsp\n    movq $0, (%rsp)\n    movq $0x04000000, 8(%rsp)\n");
   s = emit_segv_install(s);
@@ -12335,18 +12768,18 @@ function emit_vdso_scan(s: asmcore.EmitState): asmcore.EmitState {
 // through the vDSO, its lookup, its slot and the __c_call2 shim they call it
 // with unless the module's own calls already brought that in.
 function emit_rt_clocks(s: asmcore.EmitState): asmcore.EmitState {
-  let vdso: boolean = asmcore.vdso_wanted(s, "x86_64");
+  let vdso: boolean = asmcore.vdso_wanted(s, "x86-64-linux");
   if (vdso && !s.has_need("ccall:__c_call2")) {
     s = emit_ccall_shim1(s.write("    .text\n").need("ccall:__c_call2"), "__c_call2", 2);
   }
   for which in ["monotonic_ns", "now_unix_ms", "now_ns"] {
     if (s.has_need(which)) {
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock(which, "x86_64"), s.write("    .text\n"));
+      s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock(which, "x86-64-linux"), s.write("    .text\n"));
     }
   }
   if (vdso) {
     s = s.write("    .section .bss\n    .align 8\n__fern_vdso: .quad 0, 0\n    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_vdso("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_vdso("x86-64-linux"), s);
   }
   return s;
 }
@@ -12408,7 +12841,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // non-atomic counts. The export entries and the __c_call shims keep it.
   if (s.shared) {
     s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n    .text\n");
-    s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", asmcore.msg_busy(), 134);
+    s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", aborts.busy(), 134);
   }
   // The UAF quarantine's fatal report. Self-contained — its own write(2) +
   // exit(124) rather than the hev writer — so FERN_RC_FREE_DEBUG works
@@ -12488,11 +12921,11 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("random_bytes_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes_u8("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes_u8("x86-64-linux"), s);
   }
   if (s.has_need("tcp_recv_into_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into_u8("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into_u8("x86-64-linux"), s);
   }
   // random_bytes — now a Fern runtime function (#2649), lowered through the IR
   // pipeline: fill n scratch bytes from getrandom via the __syscall3 sub-floor,
@@ -12501,7 +12934,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // target); asmcore.sysno picks 318.
   if (s.has_need("random_bytes")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes("x86-64-linux"), s);
   }
   // a[start:end] — a Fern runtime function (#2649) over the __raw_arr_box +
   // __raw_array pair: allocate the fresh box, copy the 8-byte slots, hand it
@@ -12569,7 +13002,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // the heap runtime (a random_i32-only program is heap-free).
   if (s.has_need("random_i32")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_i32("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_i32("x86-64-linux"), s);
   }
   if (s.has_need("map_hash_seed")) {
     s = emit_ir_map_hash_seed(s);
@@ -12577,27 +13010,27 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // fork / wait4 allocate nothing either — same heap-independent gating.
   if (s.has_need("proc_fork")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_fork("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_fork("x86-64-linux"), s);
   }
   if (s.has_need("proc_waitpid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid("x86-64-linux"), s);
   }
   if (s.has_need("proc_waitpid_nohang")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_nohang("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_nohang("x86-64-linux"), s);
   }
   if (s.has_need("proc_waitpid_status")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_status("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_status("x86-64-linux"), s);
   }
   if (s.has_need("proc_exec")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec("x86-64-linux"), s);
   }
   if (s.has_need("proc_exec_as")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec_as("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec_as("x86-64-linux"), s);
   }
   // subprocess (#2649) — the composite: pipes + fork + exec + drain + reap in
   // one bundle with its two local helpers. Heap-dependent (it allocates the
@@ -12605,7 +13038,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // label it builds through is pre-interned in the entry block on the same need.
   if (s.has_need("subprocess")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_subprocess("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_subprocess("x86-64-linux"), s);
   }
   // The fixed static __fern_scratch buffer (#2649): the buffer the syscall-leaf
   // helpers hand the kernel to write structs into (timespec for the clocks,
@@ -12635,7 +13068,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "fd_stat", "raw_scratch",
     "clock_resolution", "clock_set", "ct_mark",
   ])) {
-    s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size("x86_64", s.has_need("statfs"), 256) + "\n    .text\n");
+    s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size("x86-64-linux", s.has_need("statfs"), 256) + "\n    .text\n");
   }
   if (s.any_need(["reader_splice", "raw_splice_pipe"])) {
     s = s.write("    .section .bss\n    .align 8\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
@@ -12651,15 +13084,15 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // prints must still link.
   if (s.has_need("str_print")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str("x86-64-linux"), s);
   }
   if (s.has_need("putchar")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_putchar("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_putchar("x86-64-linux"), s);
   }
   if (s.has_need("eprint")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_eprint_str("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_eprint_str("x86-64-linux"), s);
   }
   s = emit_rt_clocks(s);
   // The fs-syscall leaves (stat / read_file / remove_file / write_file /
@@ -12679,263 +13112,263 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.
   if (needs_fs_runtime(s)) {
     s = s.write("    .text\n");
-    let fs_src: string = asmcore.rt_src_io_error("x86_64");
+    let fs_src: string = asmcore.rt_src_io_error("x86-64-linux");
     if (s.has_need("stat")) {
-      fs_src = fs_src + " " + asmcore.rt_src_stat("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_stat("x86-64-linux");
     }
     if (s.has_need("lstat")) {
-      fs_src = fs_src + " " + asmcore.rt_src_lstat("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_lstat("x86-64-linux");
     }
     if (s.has_need("statfs")) {
-      fs_src = fs_src + " " + asmcore.rt_src_statfs("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_statfs("x86-64-linux");
     }
     if (s.has_need("mounts")) {
-      fs_src = fs_src + " " + asmcore.rt_src_mounts("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_mounts("x86-64-linux");
     }
     if (s.has_need("sysctl")) {
-      fs_src = fs_src + " " + asmcore.rt_src_sysctl("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_sysctl("x86-64-linux");
     }
     if (s.has_need("window_size")) {
-      fs_src = fs_src + " " + asmcore.rt_src_window_size("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_window_size("x86-64-linux");
     }
     if (s.has_need("set_window_size")) {
-      fs_src = fs_src + " " + asmcore.rt_src_set_window_size("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_set_window_size("x86-64-linux");
     }
     if (s.has_need("termios_get")) {
-      fs_src = fs_src + " " + asmcore.rt_src_termios_get("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_termios_get("x86-64-linux");
     }
     if (s.has_need("termios_set")) {
-      fs_src = fs_src + " " + asmcore.rt_src_termios_set("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_termios_set("x86-64-linux");
     }
     if (s.has_need("set_extproc")) {
-      fs_src = fs_src + " " + asmcore.rt_src_set_extproc("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_set_extproc("x86-64-linux");
     }
     if (s.has_need("pipe")) {
-      fs_src = fs_src + " " + asmcore.rt_src_pipe("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_pipe("x86-64-linux");
     }
-    fs_src = fs_src + asmcore.rt_src_dir_leaves("x86_64", s);
+    fs_src = fs_src + asmcore.rt_src_dir_leaves("x86-64-linux", s);
     if (s.has_need("access")) {
-      fs_src = fs_src + " " + asmcore.rt_src_access("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_access("x86-64-linux");
     }
     if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr") || s.has_need("reader")) {
       fs_src = fs_src + " " + asmcore.rt_src_utf8_valid();
     }
     if (s.has_need("read_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_file("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_read_file("x86-64-linux");
     }
     if (s.has_need("read_file_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64", false);
+      fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86-64-linux", false);
     }
     if (s.has_need("read_file_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64", true);
+      fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86-64-linux", true);
     }
     if (s.has_need("remove_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_remove_file("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_remove_file("x86-64-linux");
     }
     if (s.has_need("create_dir_all")) {
-      fs_src = fs_src + " " + asmcore.rt_src_create_dir_all("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_create_dir_all("x86-64-linux");
     }
     if (s.has_need("create_dir")) {
-      fs_src = fs_src + " " + asmcore.rt_src_create_dir("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_create_dir("x86-64-linux");
     }
     if (s.has_need("remove_dir")) {
-      fs_src = fs_src + " " + asmcore.rt_src_remove_dir("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_remove_dir("x86-64-linux");
     }
     if (s.has_need("getcwd")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getcwd("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_getcwd("x86-64-linux");
     }
     if (s.has_need("chdir")) {
-      fs_src = fs_src + " " + asmcore.rt_src_chdir("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_chdir("x86-64-linux");
     }
     if (s.has_need("chroot")) {
-      fs_src = fs_src + " " + asmcore.rt_src_chroot("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_chroot("x86-64-linux");
     }
     if (s.has_need("setuid")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setuid("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_setuid("x86-64-linux");
     }
     if (s.has_need("setgid")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setgid("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_setgid("x86-64-linux");
     }
     if (s.has_need("setgroups")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setgroups("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_setgroups("x86-64-linux");
     }
     if (s.has_need("create_link")) {
-      fs_src = fs_src + " " + asmcore.rt_src_create_link("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_create_link("x86-64-linux");
     }
     if (s.has_need("clone_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_clone_file("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_clone_file("x86-64-linux");
     }
     if (s.has_need("create_symlink")) {
-      fs_src = fs_src + " " + asmcore.rt_src_create_symlink("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_create_symlink("x86-64-linux");
     }
     if (s.has_need("rename")) {
-      fs_src = fs_src + " " + asmcore.rt_src_rename("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_rename("x86-64-linux");
     }
     if (s.has_need("getxattr_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", true, false);
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86-64-linux", true, false);
     }
     if (s.has_need("getxattr_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", true, true);
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86-64-linux", true, true);
     }
     if (s.has_need("lgetxattr_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", false, false);
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86-64-linux", false, false);
     }
     if (s.has_need("lgetxattr_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86_64", false, true);
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86-64-linux", false, true);
     }
     if (s.has_need("setxattr_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", true, false);
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86-64-linux", true, false);
     }
     if (s.has_need("setxattr_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", true, true);
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86-64-linux", true, true);
     }
     if (s.has_need("lsetxattr_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", false, false);
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86-64-linux", false, false);
     }
     if (s.has_need("lsetxattr_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86_64", false, true);
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86-64-linux", false, true);
     }
     if (s.has_need("getxattr")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr("x86_64", true);
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr("x86-64-linux", true);
     }
     if (s.has_need("lgetxattr")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr("x86_64", false);
+      fs_src = fs_src + " " + asmcore.rt_src_getxattr("x86-64-linux", false);
     }
     if (s.has_need("setxattr")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr("x86_64", true);
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr("x86-64-linux", true);
     }
     if (s.has_need("lsetxattr")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr("x86_64", false);
+      fs_src = fs_src + " " + asmcore.rt_src_setxattr("x86-64-linux", false);
     }
     if (s.has_need("rename_noreplace")) {
-      fs_src = fs_src + " " + asmcore.rt_src_rename_noreplace("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_rename_noreplace("x86-64-linux");
     }
     if (s.has_need("rename_exchange")) {
-      fs_src = fs_src + " " + asmcore.rt_src_rename_exchange("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_rename_exchange("x86-64-linux");
     }
     if (s.has_need("chmod")) {
-      fs_src = fs_src + " " + asmcore.rt_src_chmod("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_chmod("x86-64-linux");
     }
     if (s.has_need("chmod_at")) {
-      fs_src = fs_src + " " + asmcore.rt_src_chmod_at("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_chmod_at("x86-64-linux");
     }
     if (s.has_need("signal_send")) {
-      fs_src = fs_src + " " + asmcore.rt_src_signal_send("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_signal_send("x86-64-linux");
     }
     if (s.has_need("set_process_group")) {
-      fs_src = fs_src + " " + asmcore.rt_src_set_process_group("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_set_process_group("x86-64-linux");
     }
     if (s.has_need("set_priority")) {
-      fs_src = fs_src + " " + asmcore.rt_src_set_priority("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_set_priority("x86-64-linux");
     }
     if (s.has_need("clock_set")) {
-      fs_src = fs_src + " " + asmcore.rt_src_clock_set("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_clock_set("x86-64-linux");
     }
     if (s.has_need("truncate")) {
-      fs_src = fs_src + " " + asmcore.rt_src_truncate("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_truncate("x86-64-linux");
     }
-    fs_src = fs_src + asmcore.rt_src_sync_family(s, "x86_64");
+    fs_src = fs_src + asmcore.rt_src_sync_family(s, "x86-64-linux");
     if (s.has_need("mknod")) {
-      fs_src = fs_src + " " + asmcore.rt_src_mknod("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_mknod("x86-64-linux");
     }
     if (s.has_need("chown_at")) {
-      fs_src = fs_src + " " + asmcore.rt_src_chown_at("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_chown_at("x86-64-linux");
     }
     if (s.has_need("set_file_times")) {
-      fs_src = fs_src + " " + asmcore.rt_src_set_file_times("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_set_file_times("x86-64-linux");
     }
     if (s.has_need("read_link")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_link("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_read_link("x86-64-linux");
     }
     if (s.has_need("umask")) {
-      fs_src = fs_src + " " + asmcore.rt_src_umask("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_umask("x86-64-linux");
     }
     if (s.has_need("write_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_write_file("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_write_file("x86-64-linux");
     }
     if (s.has_need("write_file_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_write_file_bytes("x86_64", false);
+      fs_src = fs_src + " " + asmcore.rt_src_write_file_bytes("x86-64-linux", false);
     }
     if (s.has_need("write_file_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_write_file_bytes("x86_64", true);
+      fs_src = fs_src + " " + asmcore.rt_src_write_file_bytes("x86-64-linux", true);
     }
     if (s.has_need("write_file_exec")) {
-      fs_src = fs_src + " " + asmcore.rt_src_write_file_exec("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_write_file_exec("x86-64-linux");
     }
     if (s.has_need("temp_dir")) {
-      fs_src = fs_src + " " + asmcore.rt_src_temp_dir("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_temp_dir("x86-64-linux");
     }
     if (s.has_need("read_dir")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_dir("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_read_dir("x86-64-linux");
     }
     if (s.has_need("read_dir_all")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_dir_all("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_read_dir_all("x86-64-linux");
     }
     if (s.has_need("read_dir_ino")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_dir_ino("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_read_dir_ino("x86-64-linux");
     }
     if (s.has_need("read_dir_ino_all")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_dir_ino_all("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_read_dir_ino_all("x86-64-linux");
     }
     if (s.has_need("remove_dir_all")) {
-      fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all("x86-64-linux");
     }
     if (s.has_need("open_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_open_res("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_open_res("x86-64-linux");
     }
     if (s.has_need("open_with")) {
-      fs_src = fs_src + " " + asmcore.rt_src_open_with("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_open_with("x86-64-linux");
     }
     if (s.has_need("writer_write")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_write("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_writer_write("x86-64-linux");
     }
     if (s.has_need("write_some")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_write_some("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_writer_write_some("x86-64-linux");
     }
     if (s.has_need("splice_forever")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_splice_forever("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_writer_splice_forever("x86-64-linux");
     }
     if (s.has_need("reader")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86_64") + " " + asmcore.rt_src_reader_close("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86-64-linux") + " " + asmcore.rt_src_reader_close("x86-64-linux");
     }
     if (s.has_need("write_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", false, true);
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86-64-linux", false, true);
     }
     if (s.has_need("write_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", true, true);
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86-64-linux", true, true);
     }
     if (s.has_need("write_some_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", false, false);
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86-64-linux", false, false);
     }
     if (s.has_need("write_some_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86_64", true, false);
+      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86-64-linux", true, false);
     }
     if (s.has_need("read_chunk_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes("x86_64", false);
+      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes("x86-64-linux", false);
     }
     if (s.has_need("read_chunk_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes("x86_64", true);
+      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes("x86-64-linux", true);
     }
     if (s.has_need("fd_stat")) {
-      fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86-64-linux");
     }
     if (s.has_need("reader_seek")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_seek("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_reader_seek("x86-64-linux");
     }
     if (s.has_need("reader_splice")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_splice("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_reader_splice("x86-64-linux");
     }
     if (s.has_need("reader_copy_range")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_copy_range("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_reader_copy_range("x86-64-linux");
     }
     if (s.has_need("fd_flags")) {
-      fs_src = fs_src + " " + asmcore.rt_src_fd_flags("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_fd_flags("x86-64-linux");
     }
     if (s.has_need("fd_dup_onto")) {
-      fs_src = fs_src + " " + asmcore.rt_src_fd_dup_onto("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_fd_dup_onto("x86-64-linux");
     }
     if (s.has_need("writer_truncate")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_truncate("x86_64");
+      fs_src = fs_src + " " + asmcore.rt_src_writer_truncate("x86-64-linux");
     }
     s = emit_ir_runtime_fern_fn(fs_src, s);
   }
@@ -12948,27 +13381,27 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("poll")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_poll("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_poll("x86-64-linux"), s);
   }
   if (s.has_need("timer_fd")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd("x86-64-linux"), s);
   }
   if (s.has_need("isatty")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty("x86-64-linux"), s);
   }
   if (s.has_need("process_alive")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_process_alive("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_process_alive("x86-64-linux"), s);
   }
   if (s.has_need("rlimit_nofile")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile("x86-64-linux"), s);
   }
   if (s.has_need("disable_core_dumps")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_disable_core_dumps("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_disable_core_dumps("x86-64-linux"), s);
   }
   if (s.has_need("ct_mark")) {
     s = s.write("    .text\n");
@@ -12976,56 +13409,56 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("clock_resolution")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock_resolution("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock_resolution("x86-64-linux"), s);
   }
   if (s.has_need("priority")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_priority("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_priority("x86-64-linux"), s);
   }
   if (s.has_need("signal_mask")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask("x86-64-linux"), s);
   }
   if (s.has_need("signal_disposition")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition_read("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition_read("x86-64-linux"), s);
   }
   if (s.has_need("signal_ignore")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86_64", "signal_ignore", "1"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86-64-linux", "signal_ignore", "1"), s);
   }
   if (s.has_need("signal_default")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86_64", "signal_default", "0"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86-64-linux", "signal_default", "0"), s);
   }
   if (s.has_need("signal_catch")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_catch("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_catch("x86-64-linux"), s);
   }
   s = emit_rt_signal_flags(s);
   if (s.has_need("signal_raise")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_raise("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_raise("x86-64-linux"), s);
   }
   if (s.has_need("geteuid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "geteuid"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86-64-linux", "geteuid"), s);
   }
   if (s.has_need("getegid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "getegid"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86-64-linux", "getegid"), s);
   }
   if (s.has_need("getuid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "getuid"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86-64-linux", "getuid"), s);
   }
   if (s.has_need("getgid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86_64", "getgid"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86-64-linux", "getgid"), s);
   }
   if (s.has_need("getgroups")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups("x86-64-linux"), s);
   }
   if (s.has_need("environ")) {
     s = s.write("    .text\n");
@@ -13033,156 +13466,156 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("hostname")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_hostname("x86-64-linux"), s);
   }
   if (s.has_need("uname_field")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field("x86-64-linux"), s);
   }
   if (s.has_need("cpu_count")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count("x86-64-linux"), s);
   }
   if (s.has_need("tcp_listen_with")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86_64", false), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86-64-linux", false), s);
   }
   if (s.has_need("tcp_listen_with_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86_64", true), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86-64-linux", true), s);
   }
   if (s.has_need("tcp_socket_ctl")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_socket_ctl("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_socket_ctl("x86-64-linux"), s);
   }
   if (s.has_need("tcp_sendfile")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_sendfile("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_sendfile("x86-64-linux"), s);
   }
   if (s.has_need("tcp_send_buf")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_buf("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_buf("x86-64-linux"), s);
   }
   if (s.has_need("udp_bind")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86_64", false), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86-64-linux", false), s);
   }
   if (s.has_need("udp_bind_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86_64", true), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86-64-linux", true), s);
   }
   if (s.has_need("udp_bind_with")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind_with("x86_64", false), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind_with("x86-64-linux", false), s);
   }
   if (s.has_need("udp_bind_with_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind_with("x86_64", true), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind_with("x86-64-linux", true), s);
   }
   if (s.has_need("udp_connect")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86_64", false), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86-64-linux", false), s);
   }
   if (s.has_need("udp_connect_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86_64", true), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86-64-linux", true), s);
   }
   if (s.has_need("udp_sendto")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86_64", false), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86-64-linux", false), s);
   }
   if (s.has_need("udp_sendto_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86_64", true), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86-64-linux", true), s);
   }
   if (s.has_need("udp_recvfrom")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86_64", false), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86-64-linux", false), s);
   }
   if (s.has_need("udp_recvfrom_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86_64", true), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86-64-linux", true), s);
   }
   if (s.has_need("tcp_connect_with")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86_64", false), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86-64-linux", false), s);
   }
   if (s.has_need("tcp_connect_with_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86_64", true), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86-64-linux", true), s);
   }
   if (s.has_need("unix_listen")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_listen("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_listen("x86-64-linux"), s);
   }
   if (s.has_need("unix_connect")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_connect("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_connect("x86-64-linux"), s);
   }
   if (s.has_need("reactor_new")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_new("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_new("x86-64-linux"), s);
   }
   if (s.has_need("reactor_ctl")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_ctl("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_ctl("x86-64-linux"), s);
   }
   if (s.has_need("reactor_wait")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_wait("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_wait("x86-64-linux"), s);
   }
   if (s.any_need(["ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8"])) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_ring("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_ring("x86-64-linux"), s);
   }
   if (s.has_need("tcp_ktls_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_ktls("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_ktls("x86-64-linux"), s);
   }
   if (s.has_need("task")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_task("x86_64"), asmcore.EmitState { ...s, rt_owned_allocs: true });
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_task("x86-64-linux"), asmcore.EmitState { ...s, rt_owned_allocs: true });
     s = asmcore.EmitState { ...s, rt_owned_allocs: false };
   }
   if (s.has_need("tcp_recv_into")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into("x86-64-linux"), s);
   }
   if (s.has_need("tcp_close")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close("x86-64-linux"), s);
   }
   if (s.has_need("tcp_send_bytes")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86_64", false), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86-64-linux", false), s);
   }
   if (s.has_need("tcp_send_bytes_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86_64", true), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86-64-linux", true), s);
   }
   if (s.has_need("udp_sendto_bytes")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto_bytes("x86_64", false), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto_bytes("x86-64-linux", false), s);
   }
   if (s.has_need("udp_sendto_bytes_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto_bytes("x86_64", true), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto_bytes("x86-64-linux", true), s);
   }
   if (s.has_need("tcp_listen")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen("x86-64-linux"), s);
   }
   if (s.has_need("tcp_accept")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept("x86-64-linux"), s);
   }
   if (s.has_need("tcp_local_port")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_local_port("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_local_port("x86-64-linux"), s);
   }
   if (s.has_need("sleep_ms")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ms("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ms("x86-64-linux"), s);
   }
   if (s.has_need("sleep_ns")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns("x86_64"), s);
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns("x86-64-linux"), s);
   }
   return s;
 }

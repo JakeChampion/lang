@@ -164,17 +164,10 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		if err != nil {
 			t.Fatalf("native interp run: %v\n--- source ---\n%s", err, source)
 		}
-		switch n := v.(type) {
-		case interp.Number:
-			return int(n) & 0xFF
-		case interp.Bool:
-			if n {
-				return 1
-			}
-			return 0
-		default:
-			return 254
+		if status, ok := interp.ExitStatus(v); ok {
+			return status
 		}
+		return 254
 	}
 
 	cases := []struct {
