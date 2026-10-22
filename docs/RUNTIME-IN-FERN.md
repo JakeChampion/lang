@@ -123,6 +123,15 @@ operations. No production lowering emits the old shallow `struct_copy` op.
 Its native runtime bodies, WASI lowering, SSA lift, registrations and
 allocation classifier are retired together. IR id 198 stays reserved.
 
+## Runtime source units use ordinary native call metadata
+
+Both native emitters prepare each runtime source unit's register entries,
+floating-point ABI and small SSA leaves as they do for user units.
+Calls between functions in the same runtime source can use their register entries.
+The compiler can inline eligible leaves.
+Each emitter restores the outer unit's metadata after it emits the runtime source.
+The output, needs and literal pools remain part of the same compilation.
+
 ## The hot core needs better codegen first, not better expressiveness
 
 `__fern_arr_push` was attempted and **backed out** (#6446). It is worth reading

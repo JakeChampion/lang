@@ -7148,16 +7148,22 @@ pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore
   let lowered: physicalbody.Lowered = s.rt_lower(src);
   let bodies: irtables.LowerResult[] = lowered.bodies;
   let physical = physicalbody.collection(lowered);
+  let previous_regs: irtables.SigReg = s.reg_entries;
+  let previous_leaves: ssa.Leaves = s.leaves;
+  let previous_float: asmcore.FloatAbi = asmcore.FloatAbi { names: s.float_abi, masks: s.float_abi_masks };
+  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(m, 0, fns.len(), bodies);
+  let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(m, 0, fns.len(), bodies);
+  s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(m, 0, fns.len(), bodies)), leaves: unit.leaves, float_abi: fabi.names, float_abi_masks: fabi.masks };
   let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   s = asmcore.export_runtime_fns(s, fns);
   let i: i32 = 0;
   while (i < fns.len()) {
-    s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), asmcore.no_prelift(), fns[i], s, vgate);
+    s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), s.prelift(unit.pre, i, bodies[i]), fns[i], s, vgate);
     i = i + 1;
   }
   // Past the declarations: the drop helpers the typed lowering defines.
-  s = emit_named_bodies(bodies, physical, [], fns.len(), s, vgate);
-  return s;
+  s = emit_named_bodies(bodies, physical, unit.pre, fns.len(), s, vgate);
+  return asmcore.EmitState { ...s, reg_entries: previous_regs, leaves: previous_leaves, float_abi: previous_float.names, float_abi_masks: previous_float.masks };
 }
 
 // ======================= IR-PATH RUNTIME =======================
