@@ -28,3 +28,8 @@ The driver build takes 113.514 seconds.
 
 The main-ceb/ directory contains the complete logs, hashes and size report.
 The earlier measurements retain their recorded source scope.
+
+CI found a format error in the archived off-probe.fern fixture.
+The fixture and its reproduction script now use the required format.
+A fresh comparison with the same historical producers and stdlib gives identical binaries on both native targets.
+The original results remain unchanged. The off-format files contain the fresh comparison and its source hash.

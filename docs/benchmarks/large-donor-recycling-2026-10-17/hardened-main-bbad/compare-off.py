@@ -8,7 +8,7 @@ import sys
 baseline, candidate, stdlib, output = map(lambda s: Path(s).resolve(), sys.argv[1:])
 output.mkdir(parents=True, exist_ok=True)
 source = output / 'probe.fern'
-source.write_text('function main(): i32 { let p: usize = __raw_arr_box(1); __fern_rc_dec(p); return 0; }\n')
+source.write_text('function main(): i32 {\n  let p: usize = __raw_arr_box(1);\n  __fern_rc_dec(p);\n  return 0;\n}\n')
 env = {k: v for k, v in os.environ.items() if not k.startswith('FERN_')}
 result = {'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(), 'targets': {}}
 for target in ['x86-64-linux', 'arm64-linux']:
