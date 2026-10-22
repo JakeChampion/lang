@@ -8,7 +8,7 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// An import can include its .fern extension. Both forms name the same module.
+// Suffixed imports resolve local, dependency, and selected standard modules.
 func TestSelfHostImportExtensionX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	oracle := buildLangBinForInterp(t)
