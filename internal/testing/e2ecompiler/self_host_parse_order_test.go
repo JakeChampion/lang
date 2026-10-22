@@ -21,6 +21,27 @@ var diagLabel = regexp.MustCompile(`^(?:at top level: |in fn '[^']*': )`)
 func TestSelfHostFirstParseErrorInSourceOrder(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	progs := []string{
+		"function use(): i32 { return 1; }",
+		"function (): i32 { return 1; }",
+		"struct match { x: i32 }",
+		"struct 123 { x: i32 }",
+		"enum match { A, B }",
+		"trait use { function conv(self: Self): i32; }",
+		"trait 123 { }",
+		"type match = i32;",
+		"const use: i32 = 1;",
+		"function f(x): i32 { return 0; }",
+		"function f(x",
+		"function f(x, y: i32): i32 { return 0; }",
+		"function (x: i32) use(): i32 { return 0; }",
+		"trait Conv { function conv(self): i32; }",
+		"trait Conv { function conv(self): i32 { return 0; } }",
+		"@import(\"demo:pkg\", \"funcs\") function f(x): i32;",
+		"trait Conv { function use(): i32; }",
+		"function outer(): i32 { function use(): i32 { return 0; } return 0; }",
+		"function outer(): i32 { function f(x): i32 { return 0; } return 0; }",
+		"function use(): i32 { return 1; }\nfunction main(): i32 { return @; }",
+		"function f(x): i32 { return 0; }\nfunction main(): i32 { return @; }",
 		// A sentinel before a nameless function.
 		"function main(): i32 { return @; }\nfunction use(): i32 { return 1; }",
 		// A sentinel before an untyped parameter.
@@ -77,5 +98,37 @@ func TestSelfHostFirstParseErrorInSourceOrder(t *testing.T) {
 	out, _ := exec.Command(h.cli, "-check", src, h.stdlib).CombinedOutput()
 	if n := strings.Count(string(out), "error["); n != 1 {
 		t.Errorf("-check on a top-level sentinel raised %d diagnostics, want 1:\n%s", n, out)
+	}
+}
+
+func TestSelfHostMalformedDeclarationsAllFindings(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	programs := []string{
+		"function main(): i32 { return @; }\nfunction use(): i32 { return 1; }\n",
+		"function main(): i32 { return @; }\nfunction f(x): i32 { return 0; }\n",
+		"function f(x): i32 { return 0; }\nfunction use(): i32 { return 1; }\n",
+		"function main(): i32 { return @; }\ntrait Conv { function conv(self): i32 { return 0; } }\nstruct A { }\nimpl Conv for A { }\n",
+	}
+	findings := func(out []byte) []string {
+		var result []string
+		for _, m := range nativeDiagPos.FindAllStringSubmatch(string(out), -1) {
+			result = append(result, m[1]+":"+m[2]+" "+m[3]+" "+diagLabel.ReplaceAllString(m[4], ""))
+		}
+		return result
+	}
+	for i, source := range programs {
+		src := writeTemp(t, t.TempDir(), fmt.Sprintf("all%d.fern", i), []byte(source))
+		native, err := exec.Command(h.native, "-check", src).CombinedOutput()
+		want := findings(native)
+		if err == nil || len(want) < 2 {
+			t.Fatalf("oracle must report at least two parse errors:\n%s", native)
+		}
+		for _, args := range [][]string{{"-check", src, h.stdlib}, {"-fmt", src}} {
+			out, err := exec.Command(h.cli, args...).CombinedOutput()
+			got := findings(out)
+			if err == nil || strings.Join(got, "\n") != strings.Join(want, "\n") {
+				t.Errorf("%s: want %q, got %q:\n%s", args[0], want, got, out)
+			}
+		}
 	}
 }
