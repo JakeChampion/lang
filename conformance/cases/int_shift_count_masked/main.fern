@@ -15,7 +15,7 @@
 // x86-64 backend emits a Fern function's name as its assembly label
 // unmangled, so a function named after a mnemonic produces a `.s` that
 // GNU `as` rejects (`invalid use of operator "shl"`). The in-process
-// assembler that `-target x86-64` uses by default accepts it; only the
+// assembler that `-target x86-64-linux` uses by default accepts it; only the
 // gcc fallback path breaks.
 import "std/i32";
 import "std/i64";

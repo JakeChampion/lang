@@ -1384,7 +1384,7 @@ func TestSelfHostSharedRefusals(t *testing.T) {
 		want string
 	}{
 		{"no_output", []string{"-shared"}, "fern: -shared requires -o OUTPUT.so"},
-		{"wasm", []string{"-shared", "-target", "wasm32-wasi", "-o", so}, `fern: -shared is only supported with -target x86-64, arm64, or arm64-android (got "wasm32-wasi")`},
+		{"wasm", []string{"-shared", "-target", "wasm32-wasi", "-o", so}, `fern: -shared is only supported with -target x86-64-linux, arm64-linux or arm64-android (got "wasm32-wasi")`},
 		{"missing", []string{"-shared", "-export", "answer,nope", "-o", so}, "fern: -export nope: the program has no top-level function nope"},
 		{"generic", []string{"-shared", "-export=id", "-o", so}, "fern: -export id: a generic function has no single body to export"},
 	}
