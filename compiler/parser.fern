@@ -1915,10 +1915,10 @@ function (p: Par) reported_at(line: i32, col: i32): boolean {
   return false;
 }
 
-// missing_close is the sentinel for a construct whose closer, named by `kind`,
-// is absent after `parts`. A part holding a refusal is the earlier error, the
+// missing_close is the sentinel for a construct whose `closer` is absent after
+// `parts`, worded by `kind`. A part holding a refusal is the earlier error, the
 // one native stops at, so it stands in for the construct.
-function missing_close(kind: string, parts: ast.Expr[], p: Par): (ast.Expr, Par) {
+function missing_close(kind: string, closer: string, parts: ast.Expr[], p: Par): (ast.Expr, Par) {
   let at: ast.Expr = e_unknown_at(kind, p.peek_line(), p.peek_col());
   for e in parts {
     if (holds_sentinel(e)) {
@@ -1926,7 +1926,7 @@ function missing_close(kind: string, parts: ast.Expr[], p: Par): (ast.Expr, Par)
       break;
     }
   }
-  return (at, p.skip_to_close(slice_unchecked(kind, 8, 9) + ""));
+  return (at, p.skip_to_close(closer));
 }
 
 // paren_then_in reports whether the `(` at the cursor closes on a `)`
@@ -1946,6 +1946,29 @@ function (p: Par) paren_then_in(): boolean {
     p = p.advance();
   }
   return false;
+}
+
+// skip_to_open finds a `{` ahead of the cursor before a `;` or a closer at
+// the same depth, or leaves the cursor where it is.
+function (p: Par) skip_to_open(): Par {
+  let q: Par = p;
+  let depth: i32 = 0;
+  while (!q.at_end()) {
+    let pc: string = q.peek_punct();
+    if (depth == 0 && pc == "{") {
+      return q;
+    }
+    if (depth == 0 && (pc == ";" || pc == "}" || pc == ")" || pc == "]")) {
+      return p;
+    }
+    if (pc == "(" || pc == "[") {
+      depth = depth + 1;
+    } else if (pc == ")" || pc == "]") {
+      depth = depth - 1;
+    }
+    q = q.advance();
+  }
+  return p;
 }
 
 // skip_to_close steps past the rest of a refused construct: past its own
@@ -2770,7 +2793,7 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
     } else {
       // No overrides — expect the closing brace (pure copy).
       if (p.peek_punct() != "}") {
-        return missing_close("missing } in struct update", [base], p);
+        return missing_close("missing } in struct update", "}", [base], p);
       }
       p = p.advance();
       return (e_struct_update(type_name, fnames, flines, fcols, fvals, base, sline, scol), p);
@@ -2813,7 +2836,7 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
         parts = parts.append(v);
       }
     }
-    return missing_close("missing } in struct lit", parts, p);
+    return missing_close("missing } in struct lit", "}", parts, p);
   }
   p = p.advance();
   if (has_base) {
@@ -3019,7 +3042,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         }
       }
       if (p.peek_punct() != ")") {
-        return missing_close("missing ) in call", args, p);
+        return missing_close("missing ) in call", ")", args, p);
       }
       p = p.advance();
       if (pending_type_args.len() > 0) {
@@ -3050,7 +3073,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         let (shi_expr, shi_p) = parse_expr(p);
         p = shi_p;
         if (p.peek_punct() != "]") {
-          return missing_close("missing ] in slice", [shi_expr], p);
+          return missing_close("missing ] in slice", "]", [shi_expr], p);
         }
         p = p.advance();
         base = e_slice_from_start(base, shi_expr, bline, bcol);
@@ -3181,13 +3204,13 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         let (end_expr, end_p) = parse_expr(p);
         p = end_p;
         if (p.peek_punct() != "]") {
-          return missing_close("missing ] in slice", [idx_expr, end_expr], p);
+          return missing_close("missing ] in slice", "]", [idx_expr, end_expr], p);
         }
         p = p.advance();
         base = e_slice(base, idx_expr, end_expr, bline, bcol);
       } else {
         if (p.peek_punct() != "]") {
-          return missing_close("missing ] in index", [idx_expr], p);
+          return missing_close("missing ] in index", "]", [idx_expr], p);
         }
         p = p.advance();
         base = e_index(base, idx_expr, bline, bcol);
@@ -3519,7 +3542,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       // Map literal `Map { k0: v0, … }` — parsed in a helper
       // (kept out of this arm so it stays small enough for the
       // backend's branch-displacement limits).
-      if (x.name == "Map" && p.peek_punct() == "{") {
+      if (x.name == "Map" && !p.no_struct && p.peek_punct() == "{") {
         return parse_map_lit(p);
       }
       // Struct literal: `Name { f: v, g: w }`. A `{` right after a
@@ -3611,7 +3634,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
           }
         }
         if (p.peek_punct() != "]") {
-          return missing_close("missing ] in array literal", elems, p);
+          return missing_close("missing ] in array literal", "]", elems, p);
         }
         p = p.advance();
         return parse_postfix(p, e_array_at(elems, x.line, x.col));
@@ -5885,8 +5908,19 @@ function parse_let_else_tail(p: Par): (ast.Stmt[], ast.Stmt[], Par) {
 
 function parse_block(p: Par): (ast.Stmt[], Par) {
   if (p.peek_punct() != "{") {
-    let miss: ast.Stmt[] = [s_unknown(p, "missing { in block")];
-    return (miss, p);
+    let kind: string = "missing { in block";
+    if (p.reported_at(p.peek_line(), p.peek_col())) {
+      kind = REPORTED;
+    }
+    let miss: ast.Stmt[] = [s_unknown(p, kind)];
+    // A `{` before the statement ends opens the block the refused tokens
+    // stand in front of: parse past it, so its body does not leak out.
+    let open: Par = p.skip_to_open();
+    if (open.peek_punct() != "{") {
+      return (miss, p);
+    }
+    let (skipped, sp) = parse_block(open);
+    return (miss, sp);
   }
   p = p.advance();
   let (r_body, r_p) = parse_block_body(p, false);
@@ -9502,6 +9536,9 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   let fline: i32 = p.peek_line();
   let fcol: i32 = p.peek_col();
   p = p.advance();
+  // An expectation the signature or the body refuses belongs to this
+  // function, not the top level, so the pre-check names the function.
+  let errs_before: i32 = p.type_errs.len();
   let empty_params: ast.ParamDecl[] = [];
   let empty_body: ast.Stmt[] = [];
   // Bounded type-parameter names collected from a `[T: Bound]` list
@@ -9868,12 +9905,9 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     }
     return (FuncDecl { stdlib: "", no_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, receiver_own: receiver_own, type_params: bounded_tps, params: params, ret_type: ret_type, body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: fn_ret_fn_ret, ret_fn_param_types: fn_ret_fn_ptys, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] }, p);
   }
-  let errs_before: i32 = p.type_errs.len();
   let (blk_body, blk_p) = parse_block(p);
   p = blk_p;
   let fbody: ast.Stmt[] = prepend_param_destrs(blk_body, pd);
-  // An expectation the body refused belongs to this function, not the top
-  // level, so the pre-check names the function it is in.
   if (p.type_errs.len() > errs_before) {
     let kept: ast.Stmt[] = [];
     let tei: i32 = 0;

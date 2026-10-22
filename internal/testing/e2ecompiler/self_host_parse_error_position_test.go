@@ -146,6 +146,10 @@ var parseErrPosCases = []struct {
 	{"struct-lit-colon-missing", "struct P { a: i32 }\nfunction main(): i32 {\n  let p = P { a 1 };\n  return 0;\n}\n"},
 	// `for (` is C-style unless its `)` is followed by `in`.
 	{"for-paren-without-in", "function main(): i32 {\n  for (x of [1]) { }\n  return 0;\n}\n"},
+	// A refused return type stops the signature, and the body after it does
+	// not leak to the top level; `Map {` is no literal where `{` opens a body.
+	{"return-type-refused", "function f(): = {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"map-literal-in-if-let-source", "enum E { A(i32), B }\nfunction main(): i32 {\n  if let A(x) = Map { 1: 10 } { }\n  return 0;\n}\n"},
 	{"for-paren-let-literal", "function main(): i32 {\n  for (let 1 in [1]) { }\n  return 0;\n}\n"},
 }
 
@@ -286,6 +290,9 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// Functions in declaration order, then top-level statements LAST —
 		// parse_unknown_errors_module's own loop order — with a multi-error
 		// function reporting in source order. Count and order both pinned.
+		{"return-type-refused-one-error",
+			"function f(): = {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
+			"error[P001]: in fn 'f': expected a type, got \"=\" (1:15)"},
 		{"multi-error-two-fns-and-toplevel",
 			"let g: i32 = ;\nfunction a(): i32 {\n  let x: i32 = ;\n  let y: i32 = @;\n  return 0;\n}\nfunction b(): i32 {\n  if x > 1) { return 1; }\n  return 1 + ;\n}\nfunction main(): i32 {\n  return a() + b() + g;\n}\n",
 			"error[P001]: in fn 'a': expected an expression, got \";\" (3:16)\n" +
