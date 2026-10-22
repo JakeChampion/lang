@@ -164,14 +164,10 @@ function member_target(p: lspquery.Program, v: checker.QueryView, s: checker.Sco
 }
 
 // method_of is the method a call of `fa` calls: one declared on its
-// receiver's type or on an array receiver. A std/array function an array
-// receiver calls is not a method, and its signature is the empty one.
+// receiver's type or on an array receiver.
 function method_of(s: checker.Scope, fa: ast.ExprFieldAccess): checker.MethodSig {
   let t: typeinfo.Type = checker.expr_type(fa.obj, s);
   if let typeinfo.TypeArray(a) = t {
-    if (lspquery.array_func(s, a, fa.field).name.len() > 0) {
-      return checker.method_sig(s, "", "");
-    }
     return checker.array_method_sig(s, fa.field, a.view);
   }
   return checker.method_sig(s, fa.field, checker.receiver_key(t));

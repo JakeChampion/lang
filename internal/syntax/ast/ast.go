@@ -1445,8 +1445,9 @@ type NumberLit struct {
 	Value int64
 	// Raw is the literal exactly as the source spelled it, suffix
 	// excluded, and is set only when that spelling is not the decimal
-	// rendering of Value: a `0x…` hex literal, or one past u64 max
-	// (ExceedsU64), whose Value holds nothing. The formatter reads it so
+	// rendering of Value: a `0x` / `0o` / `0b` literal, one with `_`
+	// digit separators, or one past u64 max (ExceedsU64), whose Value
+	// holds nothing. The formatter reads it so
 	// a literal's base survives `-fmt`, and diagnostics quote it; every
 	// other consumer works from Value.
 	Raw string
@@ -1696,6 +1697,9 @@ type Index struct {
 	// loads data_ptr first and then offsets into the parent
 	// array's storage.
 	IsSlice bool
+	// IdxUnsigned is set by the checker when the index is of an unsigned
+	// type, so a u64 past i64 max reads as the value it is.
+	IdxUnsigned bool
 	// ElemType is set by the checker for array / slice indexing
 	// once the element type has been resolved. Used by the IR
 	// to pick the right stride + load width (1 byte for u8, 4
@@ -2128,11 +2132,6 @@ type FieldAccess struct {
 	Target   Expr
 	Field    string
 	FieldPos Position
-	// PathSep records that the source used the path separator `::`
-	// (`Type::method`, `mod::func`) rather than `.`. Purely cosmetic — the
-	// checker / modload treat both identically; it only lets the printer
-	// round-trip the separator the author wrote. See #2700.
-	PathSep bool
 }
 
 // Lambda is an anonymous function expression: `(x: i32): i32 => x`. It's
@@ -3278,8 +3277,7 @@ type FuncDecl struct {
 	MethodSimpleName string
 	// ImplTrait names the trait an `impl Trait for Type` block provided
 	// this method (or associated function) through, in its mangled form.
-	// Empty for an inherent method, an inherent `impl Type` block, and a
-	// plain function. The checker uses it to key Info.TraitMethods /
+	// Empty for a receiver method and a plain function. The checker uses it to key Info.TraitMethods /
 	// Info.MethodOwners so two traits offering the same method name for
 	// one type stay distinguishable.
 	ImplTrait string

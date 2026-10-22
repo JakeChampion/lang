@@ -788,27 +788,25 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 	f.b.WriteByte('\n')
 }
 
-// formatImplDecl emits `impl[T] Trait[Args] for Type { … }` (or an
-// inherent `impl Type { … }`), with associated-type bindings first
-// (sorted for a stable, idempotent order) then the methods.
+// formatImplDecl emits `impl[T] Trait[Args] for Type { … }`, with
+// associated-type bindings first (sorted for a stable, idempotent order)
+// then the methods.
 func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 	f.b.WriteString("impl")
 	f.writeTypeParams(id.TypeParams, id.Bounds, id.BoundArgs)
 	f.b.WriteByte(' ')
-	if id.Trait != "" {
-		f.b.WriteString(id.Trait)
-		if len(id.TraitArgs) > 0 {
-			f.b.WriteByte('[')
-			for i, a := range id.TraitArgs {
-				if i > 0 {
-					f.b.WriteString(", ")
-				}
-				f.b.WriteString(formatType(a))
+	f.b.WriteString(id.Trait)
+	if len(id.TraitArgs) > 0 {
+		f.b.WriteByte('[')
+		for i, a := range id.TraitArgs {
+			if i > 0 {
+				f.b.WriteString(", ")
 			}
-			f.b.WriteByte(']')
+			f.b.WriteString(formatType(a))
 		}
-		f.b.WriteString(" for ")
+		f.b.WriteByte(']')
 	}
+	f.b.WriteString(" for ")
 	f.b.WriteString(formatType(id.Type))
 	if len(id.AssocTypeBindings) == 0 && len(id.Methods) == 0 {
 		f.b.WriteString(" {}\n")
@@ -1908,7 +1906,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		// it on round-trip — the format pass runs pre-checker, so
 		// the only source of Width here is user authorship.
 		suffix := ""
-		if x.Width != 0 {
+		if x.Width == ast.WidthPtr {
+			suffix = "usize"
+		} else if x.Width != 0 {
 			if x.IsUnsigned {
 				suffix = fmt.Sprintf("u%d", x.Width)
 			} else {
@@ -2289,11 +2289,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(')')
 	case *ast.FieldAccess:
 		f.formatExpr(x.Target, precPrimary)
-		if x.PathSep {
-			f.b.WriteString("::")
-		} else {
-			f.b.WriteByte('.')
-		}
+		f.b.WriteByte('.')
 		f.b.WriteString(x.Field)
 	case *ast.Lambda:
 		// A lambda: `(p: T): R => …`. Without this case formatExpr fell

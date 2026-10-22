@@ -915,12 +915,6 @@ function integer_literal(text: string): boolean {
 // A literal's width is the suffix it carries, which a byte literal (`b'x'`)
 // has as much as a written `7u8` does. An unsuffixed decimal is an i32 unless
 // its destination names another integer type.
-//
-// `usize` is here although no source can write it: the value-block desugar
-// (checker.fern's vb_zero_of) stamps the tag as the suffix of the placeholder
-// zero it builds, so an if-expression at the pointer width hands this table a
-// `usize`-suffixed literal. Without the arm it typed to unknown and the
-// function was refused for a WIDTH that was never the problem.
 function literal_type(suffix: string): typeinfo.Type {
   if (suffix == "u8") {
     return t_u8();
@@ -1339,12 +1333,13 @@ function index(ix: ast.ExprIndex, s: State): Value {
     return environment_read(ix, container.id, container.s);
   }
   let at: Value = expr(ix.index, container.s, t_i32());
+  if (!at.s.ok) {
+    return at;
+  }
+  at = index_operand(at);
   s = at.s;
   if (!s.ok) {
     return at;
-  }
-  if (!is_i32(s.values[at.id])) {
-    return refused(s, "array projection contract");
   }
   // A string's element is one byte, typed u8 the way the checker types it.
   // Nothing is borrowed, so this is a read of the source rather than a
@@ -1361,6 +1356,36 @@ function index(ix: ast.ExprIndex, s: State): Value {
     return refused(s, "array projection contract");
   }
   return define(s, ssasem.array_get(), [container.id, at.id], unchecked, "", elem);
+}
+
+// An index of another integer type is the i32 it converts to exactly, and -1,
+// outside every bound, when it has no exact i32 conversion; a u8 always has one.
+function index_operand(v: Value): Value {
+  let s: State = v.s;
+  let source: typeinfo.Type = s.values[v.id];
+  if (is_i32(source)) {
+    return v;
+  }
+  if (!ssasem.is_integer(source)) {
+    return refused(s, "array projection contract");
+  }
+  let narrowed: Value = define(s, ssasem.cast(), [v.id], 0, "", t_i32());
+  if (ssasem.is_u8(source)) {
+    return narrowed;
+  }
+  let back: Value = define(narrowed.s, ssasem.cast(), [narrowed.id], 0, "", source);
+  let fits: Value = define(back.s, 9, [back.id, v.id], 0, "==", t_bool());
+  s = fits.s;
+  let pred: i32 = s.cur.id;
+  let hit: i32 = s.next_block;
+  let miss: i32 = hit + 1;
+  let join: i32 = hit + 2;
+  s = State { ...s, next_block: join + 1 };
+  s = terminate(s, t_brif(fits.id, hit, miss));
+  s = terminate(open(s, hit, [pred]), t_br(join));
+  let outside: Value = define(open(s, miss, [pred]), 1, [], 0 - 1, "", t_i32());
+  s = terminate(outside.s, t_br(join));
+  return define(open(s, join, [hit, miss]), 8, [narrowed.id, outside.id], 0, "", t_i32());
 }
 
 // A checked slice's decision tree as it is built: the state, and the blocks
@@ -2624,6 +2649,21 @@ function builtin_concat(c: ast.ExprCall, s: State): Value {
   return define(s, ssasem.arr_concat(), [a.id, b.id], 0, "", t);
 }
 
+// `xs.join(sep)` on a string array, which the parser folds to std/array's
+// `__carrm_string__join(xs, sep)`, is the runtime's one-allocation join rather
+// than std/array's builder-backed body.
+function join_kernel(name: string, c: ast.ExprCall, s: State): boolean {
+  return c.args.len() == 2 && name == parser.concrete_array_method_name("string[]", "join") && is_string_array(checked(c.args[0], s));
+}
+
+function folded_join(c: ast.ExprCall, s: State): Value {
+  let xs: Value = expr(c.args[0], s, checked(c.args[0], s));
+  if (!xs.s.ok) {
+    return xs;
+  }
+  return builtin_join(ast.ExprCall { ...c, args: [c.args[1]] }, xs.id, xs.s);
+}
+
 // `xs.join(sep)` reads the array and the separator and answers a fresh string.
 // A view is a legal separator — the joined bytes are copied out of it — so the
 // element rule an append carries does not apply here.
@@ -2852,28 +2892,6 @@ function map_read(c: ast.ExprCall, recv: i32, s: State, t: typeinfo.Type, kind: 
   return define(s, kind, ids, 0, "", result);
 }
 
-// The same array surface declared the other way round: std/array writes its
-// methods as FREE functions named `__method_Array_<field>` with the receiver
-// as the first parameter, which the checker resolves for `xs.<field>(...)`.
-// The bundler prefixes the module, so the contract's name ENDS with the
-// convention name rather than being it — the suffix match the checker's own
-// `has_array_method` does, for the same reason.
-function array_module_method(contracts: ssasem.Contracts, field: string): i32 {
-  let target: string = "__method_Array_" + field;
-  let i: i32 = 0;
-  while (i < contracts.list.len()) {
-    let nm: string = contracts.list[i].name;
-    if (nm == target) {
-      return i;
-    }
-    if (nm.len() > target.len() && slice_unchecked(nm, nm.len() - target.len(), nm.len()) == target) {
-      return i;
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
-}
-
 // `xs.first()` where `first` is declared `(xs: T[]) first()`: the registration
 // pass folded it into the free generic `__arrm_first[T]`, and this is the call
 // to that template with the receiver at argument 0. `__mapm_` is the map
@@ -2907,9 +2925,6 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: S
   let at: i32 = ssasem.find_contract(s.contracts, parser.concrete_array_method_name(typeinfo.spelling(receiver_type), fa.field));
   if (at < 0) {
     at = ssasem.find_contract(s.contracts, prefix + fa.field);
-  }
-  if (at < 0 && prefix == "__arrm_") {
-    at = array_module_method(s.contracts, fa.field);
   }
   if (at < 0) {
     return primitive_method(c, fa, recv, s, statement);
@@ -3987,6 +4002,9 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   }
   if (concat_kernel(name, c, s)) {
     return builtin_concat(c, s);
+  }
+  if (join_kernel(name, c, s)) {
+    return folded_join(c, s);
   }
   if (name == "cell_new" && c.args.len() == 1) {
     return cell_construction(c, s, expected);

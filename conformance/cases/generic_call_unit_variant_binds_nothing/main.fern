@@ -1,0 +1,14 @@
+// A bare payload-less variant of a generic enum names none of its type
+// arguments, so a call it is the only argument of cannot infer K (#12910).
+import "std/i32";
+enum Tree[K] { Tip, Bin(K, i32) }
+function size[K](t: Tree[K]): i32 {
+  match (t) {
+    Tip => { return 0; },
+    Bin(_, n) => { return n; },
+  }
+}
+function main(): i32 {
+  print(size(Tip).to_string());
+  return 0;
+}

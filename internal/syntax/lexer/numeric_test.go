@@ -1,6 +1,9 @@
 package lexer
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // tokSpec is a (Kind, Text, Suffix) triple for asserting a token
 // sequence; Suffix is only meaningful for Number / Float tokens.
@@ -170,19 +173,58 @@ func TestLexNumericZeroFloatSuffix(t *testing.T) {
 	assertTokens(t, "0f32", []tokSpec{{Float, "0", "f32"}})
 }
 
-// The remaining int-suffix width not already exercised by
-// TestNumericLiteralSuffixes (u64), to pin the full
-// validNumericSuffix accept set on the integer path.
+// The remaining int-suffix widths not already exercised by
+// TestNumericLiteralSuffixes, to pin the full validNumericSuffix accept set
+// on the integer path.
 func TestLexNumericRemainingIntSuffixWidths(t *testing.T) {
 	assertTokens(t, "100u64", []tokSpec{{Number, "100", "u64"}})
+	assertTokens(t, "5usize", []tokSpec{{Number, "5", "usize"}})
+	assertTokens(t, "0xffusize", []tokSpec{{Number, "0xff", "usize"}})
 }
 
-// Underscore digit separators are NOT supported by the lexer — pinning
-// current behavior so a future add is a deliberate, test-visible change.
-// `1_000` lexes as `Number "1"` then `Ident "_000"`.
-func TestLexNumericNoUnderscore(t *testing.T) {
-	assertTokens(t, "1_000", []tokSpec{
+// `_` separates digits in every numeric form. The token keeps the spelling;
+// the parser drops the separators when it reads the value.
+func TestLexNumericDigitSeparators(t *testing.T) {
+	for _, tc := range []struct {
+		src  string
+		want tokSpec
+	}{
+		{"1_000_000", tokSpec{Number, "1_000_000", ""}},
+		{"1_000i64", tokSpec{Number, "1_000", "i64"}},
+		{"0xff_ff", tokSpec{Number, "0xff_ff", ""}},
+		{"0o7_7", tokSpec{Number, "0o7_7", ""}},
+		{"0b1010_0101u8", tokSpec{Number, "0b1010_0101", "u8"}},
+		{"1_000.000_1", tokSpec{Float, "1_000.000_1", ""}},
+		{"1e1_0", tokSpec{Float, "1e1_0", ""}},
+	} {
+		assertTokens(t, tc.src, []tokSpec{tc.want})
+	}
+}
+
+// A separator must sit between two digits.
+func TestLexNumericMisplacedSeparator(t *testing.T) {
+	for _, src := range []string{"1_", "1__0", "1_.5", "1.5_", "1e5_", "0xff_", "0b1_", "1_i32"} {
+		_, _, err := Tokenize(src)
+		if err == nil || !strings.Contains(err.Error(), "a digit separator '_' must sit between two digits") {
+			t.Errorf("%s: err = %v; want the misplaced-separator error", src, err)
+		}
+	}
+	// A separator right after the prefix leaves the numeral without a digit.
+	if _, _, err := Tokenize("0x_1"); err == nil || !strings.Contains(err.Error(), "needs at least one digit after 0x") {
+		t.Errorf("0x_1: err = %v", err)
+	}
+	// A separator before a digit outside the base names that digit.
+	if _, _, err := Tokenize("0b1_2"); err == nil || !strings.Contains(err.Error(), `invalid digit '2' in a 0b literal`) {
+		t.Errorf("0b1_2: err = %v", err)
+	}
+}
+
+// A tuple selector takes no separators: `t.1_0` is `.`, `1`, then the name `_0`.
+func TestLexTupleSelectorTakesNoSeparator(t *testing.T) {
+	assertTokens(t, "t.1_0", []tokSpec{
+		{Ident, "t", ""},
+		{Punct, ".", ""},
 		{Number, "1", ""},
-		{Ident, "_000", ""},
+		{Ident, "_0", ""},
 	})
 }

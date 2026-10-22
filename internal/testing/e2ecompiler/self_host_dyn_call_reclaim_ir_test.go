@@ -65,7 +65,7 @@ function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 struct Factory { base: i32 }
-impl Factory { function make(self: Self, k: i32): Square { return Square { side: k + self.base }; } }
+function (self: Factory) make(k: i32): Square { return Square { side: k + self.base }; }
 function go(k: i32): i32 { let f: Factory = Factory { base: 1 }; let d: dyn Shape = f.make(k); return d.area(); }
 function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
@@ -97,7 +97,7 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 struct Factory { base: i32 }
-impl Factory { function make(self: Self, k: i32): Square { return Square { side: k + self.base }; } }
+function (self: Factory) make(k: i32): Square { return Square { side: k + self.base }; }
 function go(f: Factory, k: i32): i32 { let d: dyn Shape = f.make(k); let a: i32 = d.area(); return a + f.base; }
 function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { let f: Factory = Factory { base: 1 }; if (go(f, 3) != 17) { bad = 96; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},

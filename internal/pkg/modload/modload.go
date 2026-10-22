@@ -1483,8 +1483,6 @@ func resolveReexports(loaded map[string]*module) error {
 // exempt from modload's `<mod>__` prefix mangling. The set covers:
 //
 //   - `__method_<Type>_<Name>` receiver-method hoist targets.
-//     The checker's auto-discovery pass keys off the `__method_`
-//     prefix to register `Type.<Name>` in the Methods map.
 //   - `__map_*` / `__mapiter_*` Map runtime helpers. The codegen
 //     translates `__method_Map_get` etc. to `__map_get_impl` via
 //     a hardcoded `case` switch, so the target name has to live

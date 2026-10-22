@@ -1085,15 +1085,6 @@ return self.item == other.item;
 }
 }
 
-impl Box[i32] {
-function zero(): Box[i32] {
-return Box { item: 0 };
-}
-function get(self: Self): i32 {
-return self.item;
-}
-}
-
 function main(): i32 {
 return 0;
 }
@@ -1502,12 +1493,16 @@ xs: T[],
 trait Maker {
 function make(): Self;
 }
+trait Sized {
+function size(self: Self): i32;
+function same(self: Self, o: Self): Self;
+}
 impl Maker for Box[i32] {
 function make(): Self {
 return Box { xs: [] };
 }
 }
-impl[T] Box[T] {
+impl[T] Sized for Box[T] {
 function size(self: Self): i32 {
 return self.xs.len();
 }

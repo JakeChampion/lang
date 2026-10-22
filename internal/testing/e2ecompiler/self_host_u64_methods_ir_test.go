@@ -46,7 +46,7 @@ function main(): i32 { let n: u64 = 18000000000000000007 as u64; if (n.to_string
 	// #5172 and IIFE cases) so the shift stays unsigned: 0xF9CCD8A1C5080000 >> 57
 	// is 124 unsigned, 252 (sign-extended low byte) signed.
 	{"user-method-u64-shift", `struct P { n: u64 }
-impl P { function big(self: Self): u64 { return self.n; } }
+function (self: P) big(): u64 { return self.n; }
 function main(): i32 { let p: P = P { n: 18000000000000000000 as u64 }; return (p.big() >> 57) as i32; }`},
 }
 
