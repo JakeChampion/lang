@@ -26,7 +26,10 @@ is one frozen copy of main at 2210347.
 |---|--:|--:|
 | `compiler/fern.fern`, the whole compiler | 73.741 G | 73.650 G (−0.12%) |
 
-The whole-compiler binary is byte-identical to the base compiler's.
+The whole-compiler binary is byte-identical to the base compiler's. When
+the compiler compiles `compiler/checker.fern`, it performs 0.5% fewer
+allocations: 26,156,335 against main's 26,298,117 at ddc5b11 on the dev
+container. The allocation lane's baseline re-banks that figure.
 
 ## What is left
 
