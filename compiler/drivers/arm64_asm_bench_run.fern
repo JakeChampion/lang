@@ -65,9 +65,10 @@ function main(): i32 {
   }
   if (dump) {
     // Little-endian bytes back into 32-bit words, so the output is directly
-    // comparable with the native assembler's instruction stream.
+    // comparable with the native assembler's instruction stream. The
+    // read-only constants after the code are not instructions.
     let b: i32 = 0;
-    while (b + 3 < pa2.text.len()) {
+    while (b + 3 < arm64_native.arm64_code_end(p)) {
       let w: i64 = pa2.text[b] as i64 | pa2.text[b + 1] as i64 << 8
         | pa2.text[b + 2] as i64 << 16 | pa2.text[b + 3] as i64 << 24;
       print("word " + (b / 4).to_string() + " " + w.to_string());
