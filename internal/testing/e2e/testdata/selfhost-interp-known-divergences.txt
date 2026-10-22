@@ -13,11 +13,9 @@ defer_binding_siblings #12888 a deferred action does not see its block's binding
 defer_binding_value_block #12888 a deferred action in a value block reads the wrong binding
 derive_default #12888 T.default() through a type parameter reads a struct field
 derive_default_generic_primitive #12888 `+` is not dispatched to a user Add impl
-dyn_dispatch_tells_a_struct_from_its_namesake_variant #12888 the `as?` downcast is not implemented
 generic_assoc_result_self #12888 an associated function through a type parameter is misresolved
 generic_associated_fn #12888 T.one() through a type parameter reads a struct field
 generic_view_methods #12888 a generic array-view method returns the wrong value (exit 6)
-io_error_variant_beside_a_struct_of_its_name #12888 prints the wrong output
 rc_corpus_closure_capture_rebind_alias_not_over_released #12888 a rebound captured binding reads the wrong value (exit 238)
 rc_corpus_closure_capture_rebind_append_in_place_still_released #12888 a rebound captured binding reads the wrong value (exit 206)
 rc_corpus_closure_capture_rebind_churn_free #12888 a rebound captured binding reads the wrong value (exit 243)

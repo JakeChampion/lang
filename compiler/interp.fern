@@ -4753,6 +4753,19 @@ function eval_unary(op: string, ov: Value): Value {
     let none: Value[] = [];
     return v_variant("None", none);
   }
+  // `x as? T` on a `dyn` value: Some(x) when its run-time type is T, the
+  // struct T or a variant of the enum T, else None. A variant's owner tells
+  // it from a struct of its name.
+  if (op.len() > 4 && slice_unchecked(op, 0, 4) == "as?_") {
+    if let VStruct(sv) = ov {
+      let t: string = util.base_type_name(slice_unchecked(op, 4, op.len()) + "");
+      if (sv.owner == t || sv.owner.len() == 0 && sv.type_name == t) {
+        return v_variant("Some", [ov]);
+      }
+      let none: Value[] = [];
+      return v_variant("None", none);
+    }
+  }
   // A non-numeric `as <Type>` (`as_i32[]`, `as_string`, `as_Option[i32]`,
   // …) is a zero-cost type ascription — identity on the runtime value.
   // Pass the operand through unchanged (matching the AST/IR emitters, which
@@ -6084,10 +6097,11 @@ function value_type_name(v: Value): string {
   }
 }
 
-// has_receiver_method reports whether some `(r: recv_type) name(...)` is declared.
+// has_receiver_method reports whether some `(r: recv_type) name(...)` is
+// declared, generic arguments aside.
 function has_receiver_method(funcs: parser.FuncDecl[], recv_type: string, name: string): boolean {
   for fd in funcs {
-    if (fd.name == name && fd.receiver_name.len() > 0 && fd.receiver_type == recv_type) {
+    if (fd.name == name && fd.receiver_name.len() > 0 && util.base_type_name(fd.receiver_type) == recv_type) {
       return true;
     }
   }
@@ -6104,7 +6118,19 @@ function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: pars
   if (traits.len() == 0) {
     return name;
   }
-  return parser.dyn_provider_name(funcs, value_type_name(recv), traits, name);
+  return parser.dyn_provider_name(funcs, dispatch_type_name(recv), traits, name);
+}
+
+// dispatch_type_name is the type a method call on v dispatches on: a variant's
+// enum when it was built as one, so `Shape.Square(3)` does not reach a struct
+// named Square's impl, else value_type_name.
+function dispatch_type_name(v: Value): string {
+  if let VStruct(sv) = v {
+    if (sv.owner.len() > 0) {
+      return sv.owner;
+    }
+  }
+  return value_type_name(v);
 }
 
 // map_key_index is the slot of `m` whose key equals `k`, or -1. A struct or
@@ -6397,14 +6423,15 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
     },
     _ => {}
   }
-  let recv_type: string = value_type_name(recv);
+  let recv_type: string = dispatch_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
   // A byte is an int at runtime: `s[i]` and `b as u8` both evaluate to a
   // VInt, so a `(b: u8)` method is reachable from an i32-named receiver when
   // no i32 method claims the name.
-  let byte_recv: boolean = recv_type == "i32" && !has_receiver_method(funcs, "i32", name);
+  let own_method: boolean = has_receiver_method(funcs, recv_type, name);
+  let byte_recv: boolean = recv_type == "i32" && !own_method;
   let i: i32 = 0;
   while (i < funcs.len()) {
     let fd: parser.FuncDecl = funcs[i];
@@ -6418,8 +6445,10 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
     }
     // Union-receiver methods: a method declared on a union
     // (`function (sh: Shape) area()`) matches when recv's
-    // struct type_name is in the union's variant list.
-    if (!rt_match && variant_of_enum(recv, receiver_base, aliases)) {
+    // struct type_name is in the union's variant list, and its own type
+    // declares no method of the name: a struct named like a variant keeps
+    // its own.
+    if (!rt_match && !own_method && variant_of_enum(recv, receiver_base, aliases)) {
       rt_match = true;
     }
     // Array-receiver methods, all of std/array: every array value answers
