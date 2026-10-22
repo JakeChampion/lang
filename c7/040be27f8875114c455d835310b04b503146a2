@@ -133,3 +133,7 @@ tls/server/go.bulk_mbytes_per_s	229.8
 tls/server/curl.bulk_mbytes_per_s	386.2
 tls/server/handshakes_per_s	811.3
 tls/server/resumed_handshakes_per_s	874.3
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	31070592
+x86_64/checker.cliff_count	259922
