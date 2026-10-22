@@ -16,6 +16,8 @@ import "core/int";
 import "std/crypto/aes_gcm";
 import "std/crypto/chacha20poly1305";
 import "std/tls/keyschedule";
+import "std/error";
+import "core/cmp";
 
 // ContentType — the record types TLS 1.3 defines.
 pub enum ContentType {
@@ -65,6 +67,14 @@ pub enum RecordError {
   // suite.
   BadKeys(i32, i32),
 }
+
+pub function (e: RecordError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for RecordError {}
+
+impl cmp.Display for RecordError {}
 
 pub function (e: RecordError) message(): string {
   match (e) {

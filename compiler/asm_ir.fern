@@ -3919,25 +3919,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jz .Lsarelo_fresh\n");
   s = s.write("    cmpq %rsi, -16(%rax)\n");  // donor cap == wanted slots?
   s = s.write("    je .Lsarelo_ret\n");  // reuse: return token
-  // Mismatch: return the donor block ((cap+3) words at data-16) to its
-  // freelist class, mirroring __fn___fern_arr_dec's free path; an oversize
-  // block (>= 65536 words, outside the freelist range) is left to leak,
-  // matching __fern_alloc's own no-freelist policy for that range.
-  s = s.write("    movq -16(%rax), %rdx\n");  // donor cap
-  s = s.write("    addq $3, %rdx\n");  // block words = cap + 3
-  s = s.write("    leaq -16(%rax), %rcx\n");  // block base
-  s = s.write("    cmpq $65536, %rdx\n");
-  s = s.write("    jae .Lsarelo_fresh\n");
-  // The slots outlive the free, whose event hook and size class may call.
+  // The slots outlive release, including its large-pool and sanitizer paths.
   s = s.write("    pushq %rsi\n");
-  s = hev_free(s, "%rcx", "%rdx");
-  if (s.rc_free_debug) {
-    // Quarantine: the mispaired donor is freed here, so it gets the same
-    // poison-and-decline every other free path applies.
-    s = s.write("    movl $" + rc_poison() + ", -8(%rax)\n");
-  } else {
-    s = freelist_push(s, "%rcx", "%rdx", "%rsi");
-  }
+  s = s.write("    call __fn___fern_arr_dec.r\n");
   s = s.write("    popq %rsi\n");
   s = s.write(".Lsarelo_fresh:\n");
   s = s.write("    movq %rsi, %rdi\n");  // slots = arr_box cap
@@ -5865,12 +5849,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 390) {  // str_hash
     // operand stack [box, seed] (seed on top) -> ir.op_str_hash's hash of
     // the string: a xor and a multiply per 8-byte word, the last word
-    // anchored at the end of the string, a string under 8 bytes assembled
-    // into one zero-padded word a byte at a time.
+    // anchored at the end of the string. A string under 8 bytes is one
+    // zero-padded word: two overlapping 4-byte loads from 4 bytes up, and the
+    // first, middle and last bytes below that.
     //
     // %rax the data, %r8 the length, %rdx the hash, %r9 the prime, %r10 the
-    // cursor, %r11 the last word's offset, %rcx the seed and then the short
-    // word.
+    // cursor, %r11 the last word's offset and then the short word, %rcx the
+    // seed and then a shift count.
     let hlo: asmcore.LabelOut = asmcore.fresh_label(s);
     let h_loop: string = hlo.name;
     let hlo2: asmcore.LabelOut = asmcore.fresh_label(hlo.state);
@@ -5878,10 +5863,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let hlo3: asmcore.LabelOut = asmcore.fresh_label(hlo2.state);
     let h_short: string = hlo3.name;
     let hlo4: asmcore.LabelOut = asmcore.fresh_label(hlo3.state);
-    let h_byte: string = hlo4.name;
+    let h_tiny: string = hlo4.name;
     let hlo5: asmcore.LabelOut = asmcore.fresh_label(hlo4.state);
     let h_fin: string = hlo5.name;
-    s = hlo5.state;
+    let hlo6: asmcore.LabelOut = asmcore.fresh_label(hlo5.state);
+    let h_mix: string = hlo6.name;
+    s = hlo6.state;
     s = s.write("    popq %rcx\n    popq %rax\n");
     s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
     s = s.write("    movslq %ecx, %rcx\n");
@@ -5898,11 +5885,16 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    xorq (%rax,%r11), %rdx\n    imulq %r9, %rdx\n    jmp " + h_fin + "\n");
     s = s.write(h_short + ":\n");
     s = s.write("    testq %r8, %r8\n    jz " + h_fin + "\n");
-    s = s.write("    xorq %rcx, %rcx\n    movq %r8, %r10\n");
-    s = s.write(h_byte + ":\n");
-    s = s.write("    subq $1, %r10\n    shlq $8, %rcx\n    movzbq (%rax,%r10), %r11\n    orq %r11, %rcx\n");
-    s = s.write("    testq %r10, %r10\n    jnz " + h_byte + "\n");
-    s = s.write("    xorq %rcx, %rdx\n    imulq %r9, %rdx\n");
+    s = s.write("    cmpq $4, %r8\n    jb " + h_tiny + "\n");
+    s = s.write("    movl (%rax), %r11d\n    movl -4(%rax,%r8), %r10d\n");
+    s = s.write("    leaq -32(,%r8,8), %rcx\n    shlq %cl, %r10\n    orq %r10, %r11\n    jmp " + h_mix + "\n");
+    s = s.write(h_tiny + ":\n");
+    s = s.write("    movzbq (%rax), %r11\n    movzbq -1(%rax,%r8), %r10\n");
+    s = s.write("    leaq -8(,%r8,8), %rcx\n    shlq %cl, %r10\n    orq %r10, %r11\n");
+    s = s.write("    movq %r8, %rcx\n    shrq $1, %rcx\n    movzbq (%rax,%rcx), %r10\n");
+    s = s.write("    shlq $3, %rcx\n    shlq %cl, %r10\n    orq %r10, %r11\n");
+    s = s.write(h_mix + ":\n");
+    s = s.write("    xorq %r11, %rdx\n    imulq %r9, %rdx\n");
     s = s.write(h_fin + ":\n");
     s = s.write("    movq %rdx, %rcx\n    shrq $32, %rcx\n    xorq %rcx, %rdx\n");
     s = s.write("    movslq %edx, %rdx\n    pushq %rdx\n");
@@ -8512,9 +8504,12 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     return ssa_helper_call(ins, reg_of, s);
   }
   if (ssa_reg_call(ins, s)) {
-    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(ssa_reg_call_emit(ins, reg_of, s)));
+    return ssa_call_result(ins, reg_of, ssa_x0_forget(ssa_reg_call_emit(ins, reg_of, s)));
   }
   let argc: i32 = ins.args.len();
+  if (asmcore.has_lane_param(s.float_mask(asmcore.sanitize_label(ins.str)))) {
+    ssa_lane_refuse("call of " + ins.str);
+  }
   let helper: boolean = ircore.is_fern_helper(ins.str);
   if (helper) {
     s = helper_call_needs(ins.str, s);
@@ -8540,19 +8535,20 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if (argc > 0) {
     s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
   }
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  return ssa_call_result(ins, reg_of, ssa_x0_forget(s));
 }
 
 // ssa_reg_call_emit calls a function through its register entry. Only this
 // call's own arguments can be in the pool's registers here: anything live
 // across it is callee-saved or in a slot.
 function ssa_reg_call_emit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let mask: string = s.float_mask(asmcore.sanitize_label(ins.str));
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   let a: i32 = 0;
   while (a < ins.args.len()) {
     srcs = srcs.append(reg_of[ins.args[a]]);
-    dsts = dsts.append(a);
+    dsts = dsts.append(ssa_arg_loc(mask, a));
     a = a + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, s);
@@ -10335,7 +10331,9 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
   let t: ssa.STerm = blk.term;
   if (t.kind_tag == 1) {
-    if (t.value >= 0 && fr.imm.is_imm[t.value]) {
+    if (t.value >= 0 && t.value < fr.lanes.len() && fr.lanes[t.value]) {
+      s = ssa_move(reg_of[t.value], ssa_lane_ret(), s);
+    } else if (t.value >= 0 && fr.imm.is_imm[t.value]) {
       s = ssa_const_reg(util.i64_to_string(fr.imm.value[t.value]), false, "%rax", s);
     } else {
       s = ssa_load(reg_of, t.value, "%rax", s);
@@ -10371,19 +10369,62 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
   let p: i32 = 0;
   while (p < k) {
     if (reg_of[p] != 0 - 1) {
-      srcs = srcs.append(p);
+      srcs = srcs.append(ssa_param_loc(f, p));
       dsts = dsts.append(reg_of[p]);
     }
     p = p + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, s);
   while (p < f.nparams) {
+    if (ssa.lane_param(f, p)) {
+      ssa_lane_refuse(f.name + ": parameter " + util.i32_to_string(p));
+    }
     // Straight into the home: %rax is an allocatable home now, so staging
     // every parameter through it overwrote whichever parameter had it.
     let d: string = ssa_dst(reg_of, p);
     s = s.write("    movq " + util.i32_to_string(16 + p * 8) + "(%rbp), " + d + "\n");
     s = ssa_store(reg_of, p, d, s);
     p = p + 1;
+  }
+  return s;
+}
+
+// The register ABI passes lane parameter p in the float class's location p
+// (%xmm3 up) and returns a lane result in its first (%xmm3).
+function ssa_param_loc(f: ssa.SFunc, p: i32): i32 {
+  if (ssa.lane_param(f, p)) {
+    return ssa_fbase() + p;
+  }
+  return p;
+}
+
+function ssa_arg_loc(mask: string, a: i32): i32 {
+  if (asmcore.lane_param(mask, a)) {
+    return ssa_fbase() + a;
+  }
+  return a;
+}
+
+function ssa_lane_ret(): i32 {
+  return ssa_fbase();
+}
+
+// ssa_lane_refuse stops a compile in which a lane value would cross a call
+// where no vector register carries it: past the register arguments, through
+// the stack entry or through a function value.
+function ssa_lane_refuse(what: string): void {
+  eprint("error: " + what + ": a lane value crosses a call only as one of the first " + util.i32_to_string(ssa_nargs()) + " arguments of a direct call, or as its result");
+  exit(3);
+}
+
+// ssa_call_result moves a call's result from where the ABI returns it into
+// its home: %rax, or %xmm3 for a lane value.
+function ssa_call_result(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (!ssa.lane_result(ins)) {
+    return ssa_store(reg_of, ins.result, "%rax", s);
+  }
+  if (ins.result >= 0 && reg_of[ins.result] != 0 - 1) {
+    return ssa_move(ssa_lane_ret(), reg_of[ins.result], s);
   }
   return s;
 }
@@ -10443,7 +10484,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
   let pref: i32[] = util.minus_ones(f.nvals);
   let p: i32 = 0;
   while (p < ssa_reg_params(f)) {
-    pref = pref.with(p, p);
+    pref = pref.with(p, ssa_param_loc(f, p));
     p = p + 1;
   }
   for blk in f.blocks {
@@ -10455,7 +10496,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
       let a: i32 = 0;
       while (a < ins.args.len() && (!rt || a < 2)) {
         let v: i32 = ins.args[a];
-        let r: i32 = a;
+        let r: i32 = ssa_arg_loc(s.float_mask(asmcore.sanitize_label(ins.str)), a);
         if (rt) {
           r = ssa_rt_arg_reg(a);
         }
@@ -10836,12 +10877,13 @@ function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: bool
 // ssa_emit_tail_call moves a tail call's arguments into the register entry's
 // registers and leaves through a jump to it.
 function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: sourcepos.SourcePos, s: asmcore.EmitState): asmcore.EmitState {
+  let mask: string = s.float_mask(asmcore.sanitize_label(ins.str));
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   let a: i32 = 0;
   while (a < ins.args.len()) {
     srcs = srcs.append(reg_of[ins.args[a]]);
-    dsts = dsts.append(a);
+    dsts = dsts.append(ssa_arg_loc(mask, a));
     a = a + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, ssa_x0_forget(s));
@@ -12251,6 +12293,8 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   }
   let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: unit.leaves };
+  let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, lo, hh, cache);
+  s = asmcore.EmitState { ...s, float_abi: fabi.names, float_abi_masks: fabi.masks };
   let fi: i32 = lo;
   while (fi < hh) {
     let r: irtables.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);

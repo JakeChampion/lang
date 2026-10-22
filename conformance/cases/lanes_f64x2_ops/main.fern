@@ -1,0 +1,43 @@
+// The f64x2 operators and builtins, lane by lane. `min` and `max` are
+// `b < a ? b : a` and `a < b ? b : a`, so a NaN or an equal pair picks a
+// fixed side, and a sign survives where a division shows it. `round` is half
+// away from zero. `mul_add` rounds the product before the add.
+import "std/f64";
+
+function show(tag: string, v: f64x2): void {
+  print(tag + " " + __f64x2_lane(v, 0).to_string() + " " + __f64x2_lane(v, 1).to_string());
+}
+
+function main(): i32 {
+  let a: f64x2 = __f64x2_of(2.5, -2.5);
+  let b: f64x2 = __f64x2_of(-0.0, 3.0);
+  show("add", a + b);
+  show("sub", a - b);
+  show("mul", a * b);
+  show("div", a / b);
+  show("neg", -a);
+  show("negzero", __f64x2_splat(1.0) / -__f64x2_splat(0.0));
+  show("round", __f64x2_round(a));
+  show("round2", __f64x2_round(__f64x2_of(0.49999999999999994, -1.5)));
+  show("floor", __f64x2_floor(a));
+  show("abs", __f64x2_abs(a));
+  show("abszero", __f64x2_splat(1.0) / __f64x2_abs(b));
+  show("sqrt", __f64x2_sqrt(__f64x2_of(2.0, 0.25)));
+  show("min", __f64x2_min(a, b));
+  show("max", __f64x2_max(a, b));
+  let z: f64x2 = __f64x2_of(0.0, -0.0);
+  let nz: f64x2 = __f64x2_of(-0.0, 0.0);
+  show("minzero", __f64x2_splat(1.0) / __f64x2_min(z, nz));
+  show("maxzero", __f64x2_splat(1.0) / __f64x2_max(z, nz));
+  let nan: f64 = 0.0 / 0.0;
+  let n: f64x2 = __f64x2_of(nan, 1.0);
+  let m: f64x2 = __f64x2_of(1.0, nan);
+  show("minnan", __f64x2_min(n, m));
+  show("maxnan", __f64x2_max(n, m));
+  show("lt", __f64x2_select(__f64x2_splat(1.0), __f64x2_splat(0.0), __f64x2_lt(n, m)));
+  show("ne", __f64x2_select(__f64x2_splat(1.0), __f64x2_splat(0.0), __f64x2_ne(n, m)));
+  show("sel", __f64x2_select(a, b, __f64x2_lt(a, b)));
+  show("fma", __f64x2_mul_add(__f64x2_splat(0.1), __f64x2_splat(10.0), __f64x2_splat(-1.0)));
+  show("splat", __f64x2_splat(-7.25));
+  return 0;
+}

@@ -5,9 +5,32 @@
 // significant bits of EOS, all ones; a decoder refuses EOS itself, padding
 // of eight bits or more, and padding that is not all ones (RFC 7541 §5.2).
 
+import "std/error";
+import "core/cmp";
+
 // HuffmanError — why a coded string was refused: it is not one, or it
 // decodes to more than the room given.
 pub enum HuffmanError { InvalidCode, ExceedsRoom }
+
+pub function (e: HuffmanError) message(): string {
+  match (e) {
+    InvalidCode => {
+      return "invalid HTTP Huffman code";
+    },
+    ExceedsRoom => {
+      return "decoded HTTP Huffman data exceeds its limit";
+    }
+  }
+  return "";
+}
+
+pub function (e: HuffmanError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for HuffmanError {}
+
+impl cmp.Display for HuffmanError {}
 
 // encoded_len is the bytes the coding of `bytes` takes.
 pub function encoded_len(bytes: [u8]): i32 {
