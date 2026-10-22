@@ -5764,17 +5764,14 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
   if (k == "vround") {
     return emit_wasm_lane_round(o.width, sh, vtmp, vtmp2);
   }
-  if (k == "vload" || k == "vstore") {
-    return "    v128." + slice_unchecked(k, 1, k.len()) + "\n";
-  }
   return "    " + wasm_lane_verb(k, sh) + "\n";
 }
 
 // wasm_lane_verb is the wasm instruction of a lane op with the same operand
 // order: the shape's arithmetic, compare or rounding, or a v128 bitwise op.
 function wasm_lane_verb(k: string, sh: string): string {
-  let names: string[] = ["vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "veq", "vne", "vlt", "vle", "vgt", "vge", "vand", "vor", "vxor", "vandnot", "vselect"];
-  let verbs: string[] = ["add", "sub", "mul", "div", "pmin", "pmax", "sqrt", "abs", "neg", "floor", "ceil", "trunc", "eq", "ne", "lt", "le", "gt", "ge", "v128.and", "v128.or", "v128.xor", "v128.andnot", "v128.bitselect"];
+  let names: string[] = ["vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "veq", "vne", "vlt", "vle", "vgt", "vge", "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore"];
+  let verbs: string[] = ["add", "sub", "mul", "div", "pmin", "pmax", "sqrt", "abs", "neg", "floor", "ceil", "trunc", "eq", "ne", "lt", "le", "gt", "ge", "v128.and", "v128.or", "v128.xor", "v128.andnot", "v128.bitselect", "v128.load", "v128.store"];
   let v: string = verbs[util.index_of_str(names, k)];
   if (util.str_has_prefix(v, "v128.")) {
     return v;

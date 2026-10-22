@@ -1118,6 +1118,15 @@ pub function lane_result(ins: SInst): boolean {
 // lane_values marks the lane values: the lane ops' results and the phis that
 // join them. Empty when the function has none.
 pub function lane_values(f: SFunc): boolean[] {
+  let lanes: boolean[] = lane_results(f);
+  if (lanes.len() == 0) {
+    return [];
+  }
+  return lane_phis(f, lanes);
+}
+
+// lane_results marks the lane ops' results, empty when there are none.
+function lane_results(f: SFunc): boolean[] {
   let lanes: boolean[] = __alloc_bool(f.nvals);
   let any: boolean = false;
   for blk in f.blocks {
@@ -1131,6 +1140,12 @@ pub function lane_values(f: SFunc): boolean[] {
   if (!any) {
     return [];
   }
+  return lanes;
+}
+
+// lane_phis adds to `lanes` every phi that joins a lane value, until none is
+// left to add.
+function lane_phis(f: SFunc, lanes: boolean[]): boolean[] {
   let changed: boolean = true;
   while (changed) {
     changed = false;
@@ -2241,6 +2256,30 @@ function index_of_reg(a: i32[], x: i32): i32 {
 // holder is the mate of a value not placed yet: a block's phis start one after
 // another, but every operand arriving from before them dies at the edge, so
 // the first phi would otherwise take the slot a later one wants.
+// marked reports whether `v` is set in `marks`, which may be empty.
+function marked(marks: boolean[], v: i32): boolean {
+  return v < marks.len() && marks[v];
+}
+
+// PairSlots is the slot table assign_spill_slots keeps: each unit's end, its
+// holder and the values in it.
+struct PairSlots { slot_end: i32[], holder: i32[], occupants: i32[][] }
+
+// take_pair gives lane value `v` the units p and p + 1. It shares them with
+// nothing, so both end where `v` does, at `end`.
+function take_pair(t: PairSlots, p: i32, end: i32, v: i32): PairSlots {
+  let u: i32 = p;
+  while (u <= p + 1) {
+    if (u == t.slot_end.len()) {
+      t = PairSlots { slot_end: t.slot_end.append(end), holder: t.holder.append(v), occupants: t.occupants.append([v]) };
+    } else {
+      t = PairSlots { slot_end: t.slot_end.with(u, end), holder: t.holder.with(u, v), occupants: t.occupants.with(u, [v]) };
+    }
+    u = u + 1;
+  }
+  return t;
+}
+
 function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], reg_of: i32[], hints: SlotHints, given: ReadSites): i32[] {
   let def_pos: i32[] = shape.def_pos;
   let from: i32[] = spill_starts(lo, def_pos);
@@ -2256,24 +2295,12 @@ function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], re
     if (hi[v] < 0 || reg_of[v] >= 0) {
       continue;
     }
-    if (lanes.len() > 0 && lanes[v]) {
-      // A lane value takes a pair of slots at an even index and shares
-      // with nothing: both units end where it does.
+    if (marked(lanes, v)) {
       let p: i32 = free_pair(slot_end, holder, wanted_by, reg_of, from[v], v);
-      let pe: i32 = hi[v];
-      let u: i32 = p;
-      while (u <= p + 1) {
-        if (u == slot_end.len()) {
-          slot_end = slot_end.append(pe);
-          holder = holder.append(v);
-          occupants = occupants.append([v]);
-        } else {
-          slot_end = slot_end.with(u, pe);
-          holder = holder.with(u, v);
-          occupants = occupants.with(u, [v]);
-        }
-        u = u + 1;
-      }
+      let pair: PairSlots = take_pair(PairSlots { slot_end: slot_end, holder: holder, occupants: occupants }, p, hi[v], v);
+      slot_end = pair.slot_end;
+      holder = pair.holder;
+      occupants = pair.occupants;
       reg_of = reg_of.with(v, spill_code(p));
       continue;
     }

@@ -326,7 +326,12 @@ pub function is_lane_kind(id: i32): boolean {
   return id >= LANE_KIND_FIRST && id <= LANE_KIND_LAST;
 }
 
+// kind_id_lane is the id of the lane op `name`, 0 for any other name. Only a
+// `v` name of three to eight bytes reaches the table.
 function kind_id_lane(name: string): i32 {
+  if (name.len() < 3 || name.len() > 8 || name[0] != b'v') {
+    return 0;
+  }
   let i: i32 = util.index_of_str(lane_kind_names(), name);
   if (i < 0) {
     return 0;
@@ -3497,11 +3502,9 @@ pub function kind_id(name: string): i32 {
   if (n == 7 && name == "mulhi_u") {
     return 430;
   }
-  if (n >= 3 && n <= 8 && name[0] == b'v') {
-    let lane: i32 = kind_id_lane(name);
-    if (lane > 0) {
-      return lane;
-    }
+  let lane: i32 = kind_id_lane(name);
+  if (lane > 0) {
+    return lane;
   }
   if (n >= 8 && n <= 11 && (name[0] == b'd' || name[0] == b'o')) {
     let dir: i32 = kind_id_dir(name);

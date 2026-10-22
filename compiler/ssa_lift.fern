@@ -334,9 +334,8 @@ pub function kind_table(): KindTable {
     let bin: boolean = bin_sym(k) != "";
     let mem: boolean = (listed & 2) != 0 || n > 0 || h;
     let flt: boolean = (listed & 4) != 0 || fbin_sym(k) != "";
-    let lane: boolean = (listed & 16) != 0;
-    let c: i32 = 0;
-    if (bin || (listed & 1) != 0 || mem || flt || lane) {
+    let c: i32 = listed & 16;
+    if (bin || (listed & 17) != 0 || mem || flt) {
       c = c + 1;
     }
     if (mem) {
@@ -347,9 +346,6 @@ pub function kind_table(): KindTable {
     }
     if (bin) {
       c = c + 8;
-    }
-    if (lane) {
-      c = c + 16;
     }
     names = names.append(k);
     classes = classes.append(c);
