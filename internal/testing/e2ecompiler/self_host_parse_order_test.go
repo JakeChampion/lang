@@ -33,6 +33,7 @@ func TestSelfHostFirstParseErrorInSourceOrder(t *testing.T) {
 		"function f(x): i32 { return 0; }",
 		"function f(x",
 		"function f(x, y: i32): i32 { return 0; }",
+		"function f(: i32 {\n  return 1;\n}\n",
 		"function (x: i32) use(): i32 { return 0; }",
 		"trait Conv { function conv(self): i32; }",
 		"trait Conv { function conv(self): i32 { return 0; } }",

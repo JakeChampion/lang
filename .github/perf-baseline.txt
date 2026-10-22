@@ -57,25 +57,25 @@
 # utf8_ingest_validated.ir -1.1% on aarch64). Values are the perf-x86_64 and
 # perf-aarch64 lanes' measurements of the branch.
 
-x86_64/array_append.text	1058
+x86_64/array_append.text	1045
 x86_64/array_append.ir	13366203
-x86_64/array_index.text	1047
+x86_64/array_index.text	1034
 x86_64/array_index.ir	16315255
-x86_64/array_scale_f64.text	1175
+x86_64/array_scale_f64.text	1162
 x86_64/array_scale_f64.ir	21301529
 x86_64/array_with.ir	37759081
-x86_64/array_with.text	1202
-x86_64/ascii_scan.text	1265
+x86_64/array_with.text	1189
+x86_64/ascii_scan.text	1252
 x86_64/ascii_scan.ir	37213728
-x86_64/byte_copy_append.text	1125
+x86_64/byte_copy_append.text	1112
 x86_64/byte_copy_append.ir	50303080
-x86_64/byte_copy_with.text	1078
+x86_64/byte_copy_with.text	1065
 x86_64/byte_copy_with.ir	49705254
 x86_64/call_overhead.text	233
 x86_64/call_overhead.ir	8250807
-x86_64/closure_call.text	890
+x86_64/closure_call.text	877
 x86_64/closure_call.ir	63018154
-x86_64/enum_match.text	1007
+x86_64/enum_match.text	994
 x86_64/enum_match.ir	50850085
 x86_64/http_hello.text	16110
 x86_64/http_hello.ir	23640438
@@ -94,7 +94,7 @@ x86_64/pmap_insert.ir	56484135
 x86_64/pvec_with.text	2772
 x86_64/pvec_with.ir	56311395
 x86_64/record_update.ir	37759081
-x86_64/record_update.text	1293
+x86_64/record_update.text	1280
 x86_64/sort_inplace.text	1302
 x86_64/sort_inplace.ir	43049023
 x86_64/sort_ints.text	1777
@@ -103,7 +103,7 @@ x86_64/sort_strings.text	3077
 x86_64/sort_strings.ir	105294698
 x86_64/string_build.text	1846
 x86_64/string_build.ir	42429808
-x86_64/string_count_byte.text	1155
+x86_64/string_count_byte.text	1142
 x86_64/string_count_byte.ir	135589342
 x86_64/string_find_byte.text	1522
 x86_64/string_find_byte.ir	43567380
@@ -111,11 +111,11 @@ x86_64/string_rfind_byte.text	1591
 x86_64/string_rfind_byte.ir	43576286
 x86_64/string_scan.text	2092
 x86_64/string_scan.ir	52603745
-x86_64/string_slice.text	816
+x86_64/string_slice.text	803
 x86_64/string_slice.ir	38700086
 x86_64/struct_drop.text	2220
 x86_64/struct_drop.ir	191340574
-x86_64/tokenize.text	1050
+x86_64/tokenize.text	1037
 x86_64/tokenize.ir	36960087
 x86_64/utf8_ingest_unchecked.text	7123
 x86_64/utf8_ingest_unchecked.ir	2786713
@@ -382,5 +382,5 @@ aarch64/perceus_nqueens.text	1709
 aarch64/perceus_nqueens.ir	106188790
 aarch64/perceus_rbtree.text	3044
 aarch64/perceus_rbtree.ir	61408114
-aarch64/perceus_rbtree_ck.text	3306
+aarch64/perceus_rbtree_ck.text	3266
 aarch64/perceus_rbtree_ck.ir	60624651
