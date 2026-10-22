@@ -154,9 +154,8 @@ func TestSelfHostConstExprFoldShape(t *testing.T) {
 	}
 }
 
-// asmFuncBody returns the emitted text between `label:` and the first `ret`
-// after it, so an assertion about one function cannot be satisfied (or
-// defeated) by another's instructions.
+// asmFuncBody stops at the first return or unwind boundary, including a
+// function that leaves only through tail calls.
 func asmFuncBody(t *testing.T, asm, label string) string {
 	t.Helper()
 	start := strings.Index(asm, "\n"+label+":\n")
@@ -165,8 +164,12 @@ func asmFuncBody(t *testing.T, asm, label string) string {
 	}
 	body := asm[start+1:]
 	end := strings.Index(body, "ret\n")
+	unwind := strings.Index(body, ".cfi_endproc")
+	if unwind >= 0 && (end < 0 || unwind < end) {
+		end = unwind
+	}
 	if end < 0 {
-		t.Fatalf("no ret after %s: in emitted asm:\n%s", label, body)
+		t.Fatalf("no return or unwind boundary after %s: in emitted asm:\n%s", label, body)
 	}
 	return body[:end]
 }

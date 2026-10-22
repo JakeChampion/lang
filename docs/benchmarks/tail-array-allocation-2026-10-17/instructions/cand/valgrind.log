@@ -1,0 +1,7 @@
+==263050== Cachegrind, a high-precision tracing profiler
+==263050== Copyright (C) 2002-2024, and GNU GPL'd, by Nicholas Nethercote et al.
+==263050== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==263050== Command: /workspace/scratch/lang-tail-array-allocation/instructions/run/cand/probe
+==263050== 
+==263050== 
+==263050== I refs:        52,001,272

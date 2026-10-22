@@ -352,6 +352,13 @@ pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
   return out;
 }
 
+pub function tail_allocator(ins: ssa.SInst): string {
+  if (ins.kind_tag == 50 && ins.str == "raw_arr_box" && ins.args.len() == 1) {
+    return "__fern_arr_box";
+  }
+  return "";
+}
+
 // FloatAbi is unit_float_abi's answer: the functions with an f64 parameter or
 // result, and the shape of each, one character per parameter (`f` for an f64,
 // `x` for anything else), a `|`, and the result's.

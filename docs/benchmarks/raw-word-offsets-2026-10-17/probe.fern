@@ -1,0 +1,22 @@
+import "std/i64";
+
+@noinline
+function read(p: usize): usize {
+  return __raw_load_ptr(p, 1);
+}
+
+function main(): i32 {
+  let p: usize = __raw_arr_box(2);
+  __store_i64(p + 8, 777i64);
+  __store_i64(p + 16, 999i64);
+  let i: i32 = 0;
+  let n: i32 = args().len() * 1000000;
+  let sum: i64 = 0i64;
+  while (i < n) {
+    sum = sum + read(p + (i & 1) * 8) as i64;
+    i = i + 1;
+  }
+  __fern_rc_dec(p);
+  print(sum.to_string());
+  return 0;
+}
