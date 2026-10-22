@@ -5416,7 +5416,18 @@ var compoundOps = map[string]string{
 	"&=": "&", "|=": "|", "^=": "^", "<<=": "<<", ">>=": ">>",
 }
 
+// chainedCompoundMessage is the P001 for a compound assignment joined to
+// another assignment, reported at the operator that joins them.
+const chainedCompoundMessage = "a compound assignment stands alone: it cannot be part of an assignment chain"
+
 func (p *parser) parseAssign() (ast.Expr, error) {
+	return p.parseAssignChain(false)
+}
+
+// parseAssignChain parses an assignment whose value may be another plain
+// assignment (`a = b = c`). chained is set for a link after a `=`, where a
+// compound operator is refused.
+func (p *parser) parseAssignChain(chained bool) (ast.Expr, error) {
 	if err := p.enter(); err != nil {
 		return nil, err
 	}
@@ -5426,7 +5437,7 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 		return nil, err
 	}
 	if eq, ok := p.accept(lexer.Punct, "="); ok {
-		rhs, err := p.parseAssign()
+		rhs, err := p.parseAssignChain(true)
 		if err != nil {
 			return nil, err
 		}
@@ -5440,10 +5451,18 @@ func (p *parser) parseAssign() (ast.Expr, error) {
 	}
 	if t := p.peek(); t.Kind == lexer.Punct {
 		if op, ok := compoundOps[t.Text]; ok {
+			if chained {
+				return nil, p.errorfCode(t.Pos, "P001", chainedCompoundMessage)
+			}
 			tok := p.advance()
-			rhs, err := p.parseAssign()
+			rhs, err := p.parsePipe()
 			if err != nil {
 				return nil, err
+			}
+			if next := p.peek(); next.Kind == lexer.Punct {
+				if _, compound := compoundOps[next.Text]; compound || next.Text == "=" {
+					return nil, p.errorfCode(next.Pos, "P001", chainedCompoundMessage)
+				}
 			}
 			switch left.(type) {
 			case *ast.Ident, *ast.Index, *ast.FieldAccess:
