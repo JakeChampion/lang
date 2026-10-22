@@ -9720,6 +9720,9 @@ function unknown_error_stmt_at(st: ast.Stmt, own a: UnkScan): UnkScan {
       return a;
     },
     ast.StmtUnknown(u) => {
+      if (u.kind == parser.REPORTED) {
+        return a;
+      }
       return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, "stmt: " + u.kind, u.line, u.col)) };
     },
     ast.StmtDefer(_) => {
