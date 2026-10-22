@@ -72,6 +72,7 @@ pub struct Certificate {
   not_before: i64,
   not_after: i64,
   key: PublicKey,
+  spki: u8[],
   ca: boolean,
   path_len: i32,
   key_usage: i32,
@@ -542,7 +543,7 @@ function __validity(b: [u8], e: der.Element, c: Certificate): Result[Certificate
 
 function __empty(raw: [u8]): Certificate {
   let none: Name = Name { raw: [], common_name: "" };
-  return Certificate { raw: der.bytes(raw, der.Element { tag: 0, start: 0, from: 0, to: raw.len(), next: raw.len() }), tbs: [], version: 1, serial: [], algorithm: OtherAlgorithm(""), issuer: none, subject: none, not_before: 0 as i64, not_after: 0 as i64, key: OtherKey(""), ca: false, path_len: -1, key_usage: -1, ext_key_usage: [], has_ext_key_usage: false, dns_names: [], ip_addresses: [], permitted_dns: [], excluded_dns: [], permitted_ip: [], excluded_ip: [], unknown_critical: [], signature: [] };
+  return Certificate { raw: der.bytes(raw, der.Element { tag: 0, start: 0, from: 0, to: raw.len(), next: raw.len() }), tbs: [], version: 1, serial: [], algorithm: OtherAlgorithm(""), issuer: none, subject: none, not_before: 0 as i64, not_after: 0 as i64, key: OtherKey(""), spki: [], ca: false, path_len: -1, key_usage: -1, ext_key_usage: [], has_ext_key_usage: false, dns_names: [], ip_addresses: [], permitted_dns: [], excluded_dns: [], permitted_ip: [], excluded_ip: [], unknown_critical: [], signature: [] };
 }
 
 // __tbs reads the TBSCertificate's fields into c: the version, which a
@@ -563,7 +564,7 @@ function __tbs(b: [u8], tbs: der.Element, c: Certificate): Result[Certificate, X
 function __tbs_fields(b: [u8], parts: der.Element[], i: i32, c: Certificate): Result[Certificate, X509Error] {
   let cert: Certificate = Certificate { ...c, serial: der.bytes(b, parts[i]), algorithm: __algorithm(b, parts[i + 1])?, issuer: __name(b, parts[i + 2])? };
   cert = __validity(b, parts[i + 3], cert)?;
-  return Ok(Certificate { ...cert, subject: __name(b, parts[i + 4])?, key: __key(b, parts[i + 5])? });
+  return Ok(Certificate { ...cert, subject: __name(b, parts[i + 4])?, key: __key(b, parts[i + 5])?, spki: der.whole(b, parts[i + 5]) });
 }
 
 // After the key: the optional unique identifiers [1] and [2], then the
