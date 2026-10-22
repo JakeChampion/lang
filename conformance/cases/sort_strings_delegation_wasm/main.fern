@@ -3,7 +3,7 @@
 // `string_cmp_ci` BOTH a direct-call target (here) AND a closure value passed
 // to `sort_by`. The closure-target ABI appends an env_ptr param to such a
 // function's wasm signature, but the direct-call sites supplied only the
-// natural args — a stack underflow that failed `-target wasm` validation
+// natural args — a stack underflow that failed `-target wasm32-wasi` validation
 // ("expected i32 but nothing on stack") while interp / x86-64 / arm64 all
 // passed. The fix pushes a dummy env_ptr at direct calls to env-appended
 // closure targets (see calleeEnvAppended in wasmbin).

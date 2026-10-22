@@ -94,7 +94,7 @@ function wrapper(src: string, exiting: boolean, state: asmcore.EmitState): void 
 pub function run(src: string, exiting: boolean): void {
   // The application has no runtime declarations or record metadata to borrow.
   // Carry the installed callback through Sub and EmitState, as native emit does.
-  let application = semlower.driven(parser.parse_module(lexer.tokenize("")), "x86_64-linux");
+  let application = semlower.driven(parser.parse_module(lexer.tokenize("")), "x86-64-linux");
   let state = asmcore.EmitState { ...asmcore.new_state(), rt_lower: application.sub.rt_lower };
   wrapper(src, exiting, state);
   let raw = asmcore.rt_src_str_cmp();

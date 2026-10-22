@@ -166,8 +166,8 @@ function main(): i32 {
   let do_decide: boolean = false;
   // `-target` selects the emit backend: x86-64-linux, arm64-linux,
   // arm64-darwin (#4398 part 1: the fold that retired the
-  // asm_arm64_load_run mirror) or wasm32-wasi. Default x86_64 keeps every
-  // pre-fold caller byte-identical. Loading, treeshake and the immutability
+  // asm_arm64_load_run mirror) or wasm32-wasi; a caller that names none gets
+  // x86-64-linux. Loading, treeshake and the immutability
   // gate are target-agnostic, and -decide / -ir-probe lower for the target;
   // the per-module modes remain x86-64-only (the mirror never had them).
   let target: string = "x86-64-linux";
