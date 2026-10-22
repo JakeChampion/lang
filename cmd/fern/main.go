@@ -346,7 +346,7 @@ func (e entry) format(err error) error {
 	}
 	if es, ok := err.(diag.Errors); ok {
 		var b strings.Builder
-		for i, one := range es {
+		for i, one := range es.SortedByPosition(e.entryAbs) {
 			if i > 0 {
 				b.WriteByte('\n')
 			}
@@ -443,7 +443,7 @@ func main() {
 	var lintOpts repeatedString
 	flag.Var(&lintOpts, "lint-opt", "with -lint: set one rule option, `RULE.OPTION=VALUE` (e.g. cyclomatic-complexity.max=20). Repeatable; wins over the manifest's [lint.options] table.")
 	lintCover := flag.String("lint-cover", "", "with -lint: score the change-risk rule from `FILE`, a saved -cover run's stderr.")
-	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; prints formatted diagnostics and exits 1 on the first error.")
+	doCheck := flag.Bool("check", false, "type-check FILE.fern (or `-` for stdin) and its transitive imports. No codegen, no link, no binary. Silent on success; otherwise prints every diagnostic, ordered by file and position, and exits 1.")
 	doCapabilities := flag.Bool("capabilities", false, "print the per-package capability usage of FILE.fern and its transitive imports — one line per package (fern.toml package name, or `(root)` when no manifest governs the program): the v1 capabilities (net, fs, env, subprocess, time, random) its declared functions can reach by call-graph reachability, with an example call chain down to the tagged runtime builtin. Stdlib usage is attributed to the calling package. The report itself enforces nothing; manifests' `capabilities` grants are enforced (E070) on the compile/-check/-interp paths (docs/PACKAGE-CAPABILITIES-BRIEF.md). No codegen.")
 
 	doEffects := flag.Bool("effects", false, "print the per-FUNCTION effect row of FILE.fern and its transitive imports — the effects (net, fs, env, subprocess, time, random) each declared function can reach by call-graph reachability, with an example call chain, and which effects it is charged only because it calls through a function value whose target is not statically known. Ends with the row-size distribution and the split between functions that call a tagged builtin themselves and those that only inherit. `-capabilities` answers the same question per PACKAGE; this one is per function. Report mode; nothing here enforces. No codegen. (docs/EFFECT-ROWS-BRIEF.md)")
