@@ -496,6 +496,26 @@ func TestSelfHostIntrinsicNamesAreInternal(t *testing.T) {
 	}
 }
 
+// TestSelfHostBuiltinRowsAreSorted pins the order builtin_row's binary search
+// needs: builtin_sigs() rows in byte order, each name once. A row out of place
+// is not found, so its builtin would type unknown with no other sign.
+func TestSelfHostBuiltinRowsAreSorted(t *testing.T) {
+	body := selfHostSection(t, "checker.fern",
+		regexp.MustCompile(`(?s)function builtin_sigs\(\): string\[\] \{.*?\n\}`))
+	var rows []string
+	for _, m := range regexp.MustCompile(`(?m)^\s*"([^"]*)",$`).FindAllStringSubmatch(body, -1) {
+		rows = append(rows, m[1])
+	}
+	if len(rows) < 100 {
+		t.Fatalf("read only %d rows — the pattern has drifted, so this test proves nothing", len(rows))
+	}
+	for i := 1; i < len(rows); i++ {
+		if rows[i-1] >= rows[i] {
+			t.Errorf("builtin_sigs() row %d %q does not sort after %q", i, rows[i], rows[i-1])
+		}
+	}
+}
+
 // rawFloorTableNames is the `name: "..."` rows of the table function whose header
 // matches `header`, up to its closing brace.
 func rawFloorTableNames(t *testing.T, src, header string) map[string]bool {
