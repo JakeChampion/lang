@@ -695,27 +695,47 @@ function leaf(f: ssasem.Func): boolean {
 // the update that keeps the array together, which is where an element's
 // take is decided.
 function updater(f: ssasem.Func): boolean {
-  if (!straight(f) || f.graph.takes_env || lends_view(f) || !record(f.result)) {
+  if (!updater_shape(f)) {
     return false;
   }
   let b: ssa.SBlock = f.graph.blocks[0];
   let built: i32 = 0 - 1;
   let n: i32 = 0;
   for ins in b.insts {
-    let k: i32 = ins.kind_tag;
-    if (k == ssasem.param() || line_mark(k)) {
-      continue;
-    }
-    n = n + 1;
-    if (literal_kind(k) || k == 7 || k == ssasem.record_get() || k == ssasem.with() || k == ssasem.append()) {
-      continue;
-    }
-    if (k != ssasem.record_new() || built >= 0 || !record_param(f, ssasem.update_base(ins))) {
+    let role: i32 = updater_role(f, ins);
+    if (role < 0 || role == 2 && built >= 0) {
       return false;
     }
-    built = ins.result;
+    if (role == 2) {
+      built = ins.result;
+    }
+    if (role > 0) {
+      n = n + 1;
+    }
   }
   return built >= 0 && b.term.value == built && n <= max_leaf_insts();
+}
+
+// One block returning a record, with no environment and no view.
+function updater_shape(f: ssasem.Func): boolean {
+  return straight(f) && !f.graph.takes_env && !lends_view(f) && record(f.result);
+}
+
+// What `ins` is in an updater's body: 0 a parameter or a line mark, 1 a
+// literal, copy, field read or array update, 2 the record update of a
+// record parameter, -1 anything else.
+function updater_role(f: ssasem.Func, ins: ssa.SInst): i32 {
+  let k: i32 = ins.kind_tag;
+  if (k == ssasem.param() || line_mark(k)) {
+    return 0;
+  }
+  if (literal_kind(k) || k == 7 || k == ssasem.record_get() || k == ssasem.with() || k == ssasem.append()) {
+    return 1;
+  }
+  if (k == ssasem.record_new() && record_param(f, ssasem.update_base(ins))) {
+    return 2;
+  }
+  return 0 - 1;
 }
 
 // Whether `v` is a record parameter of `f`.

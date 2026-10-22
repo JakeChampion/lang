@@ -52,20 +52,8 @@ function reuse(f: ssasem.Func): Sunk {
   if (!rd.flow.ok) {
     return Sunk { f: f, reread: 0 };
   }
-  let reads: ssa.SInst[] = [];
-  for b in g.blocks {
-    for ins in b.insts {
-      if (counted_projection(ins, f.values)) {
-        reads = reads.append(ins);
-      }
-    }
-  }
-  let same: i32[] = __alloc_i32(f.values.len());
-  let k: i32 = 0;
-  while (k < same.len()) {
-    same = same.with(k, k);
-    k = k + 1;
-  }
+  let reads: ssa.SInst[] = counted_reads(g, f.values);
+  let same: i32[] = identity(f.values.len());
   let n: i32 = 0;
   for r in reads {
     let bi: i32 = rd.at[r.result];
@@ -79,6 +67,30 @@ function reuse(f: ssasem.Func): Sunk {
     return Sunk { f: f, reread: 0 };
   }
   return Sunk { f: semcse.replaced(f, same), reread: n };
+}
+
+// The counted projections of `g`, in block order.
+function counted_reads(g: ssa.SFunc, values: typeinfo.Type[]): ssa.SInst[] {
+  let reads: ssa.SInst[] = [];
+  for b in g.blocks {
+    for ins in b.insts {
+      if (counted_projection(ins, values)) {
+        reads = reads.append(ins);
+      }
+    }
+  }
+  return reads;
+}
+
+// Each of `n` values standing for itself.
+function identity(n: i32): i32[] {
+  let out: i32[] = __alloc_i32(n);
+  let k: i32 = 0;
+  while (k < n) {
+    out = out.with(k, k);
+    k = k + 1;
+  }
+  return out;
 }
 
 // The read in a block strictly dominating the one at `bi` that `r` repeats
@@ -296,19 +308,28 @@ function repeated_across(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): bool
   while (by.len() < values.len()) {
     by = by.append([]);
   }
-  let reads: ssa.SInst[] = [];
-  for b in g.blocks {
-    for ins in b.insts {
-      if (counted_projection(ins, values) && ins.args[0] >= 0 && ins.args[0] < by.len()) {
-        for k in by[ins.args[0]] {
-          let r: ssa.SInst = reads[k];
-          if (r.kind_tag == ins.kind_tag && r.imm == ins.imm && r.str == ins.str && at[r.result] != at[ins.result]) {
-            return true;
-          }
-        }
-        by = by.with(ins.args[0], by[ins.args[0]].append(reads.len()));
-        reads = reads.append(ins);
+  let reads: ssa.SInst[] = counted_reads(g, values);
+  let k: i32 = 0;
+  for ins in reads {
+    let p: i32 = ins.args[0];
+    if (p >= 0 && p < by.len()) {
+      if (repeats_one(reads, by[p], ins, at)) {
+        return true;
       }
+      by = by.with(p, by[p].append(k));
+    }
+    k = k + 1;
+  }
+  return false;
+}
+
+// Whether `ins` reads the slot one of the reads `seen` names reads, in
+// another block.
+function repeats_one(reads: ssa.SInst[], seen: i32[], ins: ssa.SInst, at: i32[]): boolean {
+  for k in seen {
+    let r: ssa.SInst = reads[k];
+    if (r.kind_tag == ins.kind_tag && r.imm == ins.imm && r.str == ins.str && at[r.result] != at[ins.result]) {
+      return true;
     }
   }
   return false;

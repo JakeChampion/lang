@@ -1,7 +1,7 @@
 # 2026-10-22 — an updater is spliced, and a repeated read is reused
 
 `seminline.updater`, `semsink.reuse`, `semsink.child_used_above`,
-`semcse.replaced`. Refs #12887.
+`semcse.replaced`, `semdead.dead_cycles`. Refs #12887.
 
 ## The shape
 
@@ -57,6 +57,13 @@ things still stopped it here.
   that nothing defines. No program showed it, but the reuse merges reads
   that are donors.
 
+- **`semdead.dead_cycles`.** The splice puts an updater's record update in
+  the caller's loop. The leaf inliner splits the record into one phi a
+  field, but the update stays, read only by the record's own phi. Each
+  round then built a record that nothing read. A cycle of phis and
+  constructions that read only one another is now unread, and semdead drops
+  it. A value whose type has a finalizer stays, so each drop still runs.
+
 ## Measured
 
 | Row | Before | After |
@@ -76,6 +83,15 @@ stream whose buffer is its own.
 |---|---|---|
 | `element-take-across-a-branch`, 200 updates | 403 | 12 |
 | `element-take-through-a-reused-donor`, 100 updates | 203 | 11 |
+
+`bench/record_update` threads a record through `Blk { ...b, buf:
+b.buf.with(i, v) }` in a method. Its `.ir` row on x86-64 reads 37,759,081,
+from 109,849,111, the same count as `array_with`: the record costs nothing
+a byte. Without `dead_cycles` it read 195,075,845.
+
+`TestSelfHostDeadConstruction` gains `loop-carried-unread`, a record two
+loops carry and read field by field (28 boxes while the cycle stood, 2 now),
+and `loop-carried-finalizer-kept`, its twin with a finalizer.
 
 `TestSelfHostInlineUpdater` pins the splice: an updater called from three
 places is spliced into each, and the same body marked `@noinline` stays a
