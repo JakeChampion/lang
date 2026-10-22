@@ -49,8 +49,9 @@ func TestSelfHostCheckerPrintsFixes(t *testing.T) {
 			for i, l := range lines {
 				if title, found := strings.CutPrefix(l, "    help: "); found {
 					help = append(help, title)
-					// The help line follows the caret under the source line.
-					if i < 2 || !strings.HasSuffix(strings.TrimSpace(lines[i-1]), "^") {
+					// The help line follows the caret, or the `^~~~` span, under
+					// the source line.
+					if i < 2 || !strings.HasPrefix(strings.TrimSpace(lines[i-1]), "^") {
 						t.Errorf("help line %q does not follow a caret:\n%s", l, out)
 					}
 				}
