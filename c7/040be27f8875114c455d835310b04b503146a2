@@ -330,3 +330,8 @@ x86_64/utf8_ingest_unchecked.text	7213
 x86_64/utf8_ingest_unchecked.ir	2800917
 x86_64/utf8_ingest_validated.text	7461
 x86_64/utf8_ingest_validated.ir	5883519
+
+# lane: net-h2spec
+h2spec/passed	146
+h2spec/failed	0
+h2spec/skipped	0
