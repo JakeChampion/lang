@@ -5,7 +5,7 @@
 // trapped — a three-way divergence the cross-area differential sweep
 // found. The codegen backends now abort with exit code 134 (the same
 // trap the string-slice helper uses and what wasm's `unreachable`
-// produces); the interpreter reports a diagnostic and exits non-zero.
+// produces); both interpreters print the natives' cause line and exit 134.
 //
 // The string half arrived later (#8454) and is the reason these
 // cases index all three string forms: the SSO-inline form carries

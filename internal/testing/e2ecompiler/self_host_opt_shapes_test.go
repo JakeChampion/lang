@@ -42,7 +42,7 @@ function main(): i32 { return (pack(1u64, 2u64, 3u64) % 251u64) as i32; }
 }
 function main(): i32 { return sum_while([3, 5, 7, 11, 13]); }
 `,
-		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
+		forbid: map[string][]string{"x86-64-linux": {`__fern_(str_)?oob_abort`}, "arm64-linux": {`__fern_(str_)?oob_abort`}}},
 	// A for-in loop's index is below the length by construction.
 	{name: "bce_for_in", fn: "sum_for", exit: 39, src: `
 @noinline function sum_for(xs: i64[]): i64 {
@@ -52,7 +52,7 @@ function main(): i32 { return sum_while([3, 5, 7, 11, 13]); }
 }
 function main(): i32 { return sum_for([3, 5, 7, 11, 13]) as i32; }
 `,
-		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
+		forbid: map[string][]string{"x86-64-linux": {`__fern_(str_)?oob_abort`}, "arm64-linux": {`__fern_(str_)?oob_abort`}}},
 	// The same two shapes over a string's bytes.
 	{name: "bce_string", fn: "count_a", exit: 5, src: `
 @noinline function count_a(s: string): i32 {
@@ -64,7 +64,7 @@ function main(): i32 { return sum_for([3, 5, 7, 11, 13]) as i32; }
 }
 function main(): i32 { return count_a("banana") - 1; }
 `,
-		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
+		forbid: map[string][]string{"x86-64-linux": {`__fern_(str_)?oob_abort`}, "arm64-linux": {`__fern_(str_)?oob_abort`}}},
 	// A loop is rotated: the back edge re-runs the header's test and branches
 	// to the body, so no unconditional branch is left in the loop.
 	{name: "loop_rotation", fn: "sum_to", exit: 45, src: `
@@ -188,7 +188,7 @@ function main(): i32 {
 }
 `,
 		want:   map[string][]string{"x86-64-linux": {`call \*8\(%rax\)`}, "arm64-linux": {`blr x\d+`}},
-		forbid: map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}},
+		forbid: map[string][]string{"x86-64-linux": {`__fern_(str_)?oob_abort`}, "arm64-linux": {`__fern_(str_)?oob_abort`}}},
 	// A variant box's drop tests its variants as one chain: the first that
 	// matches ends it, so the shape is loaded once and compared until a
 	// variant holds.
@@ -319,16 +319,16 @@ function main(): i32 {
 		want:   oneCheck,
 		forbid: wordForbid},
 	{name: "be_word_owned_u32", fn: "bigend", exit: 5, src: wordLoadSrc,
-		want:   map[string][]string{"x86-64-linux": {`\bbswapl %e\w+`, `__fern_oob_abort`}, "arm64-linux": {`\brev w\d+, w\d+`, `__fern_oob_abort`}},
+		want:   map[string][]string{"x86-64-linux": {`\bbswapl %e\w+`, `__fern_(str_)?oob_abort`}, "arm64-linux": {`\brev w\d+, w\d+`, `__fern_(str_)?oob_abort`}},
 		forbid: wordForbid},
 	{name: "be_word_view_u64", fn: "bigend64", exit: 5, src: wordLoadSrc,
-		want:   map[string][]string{"x86-64-linux": {`\bbswapq %r\w+`, `__fern_oob_abort`}, "arm64-linux": {`\brev x\d+, x\d+`, `__fern_oob_abort`}},
+		want:   map[string][]string{"x86-64-linux": {`\bbswapq %r\w+`, `__fern_(str_)?oob_abort`}, "arm64-linux": {`\brev x\d+, x\d+`, `__fern_(str_)?oob_abort`}},
 		forbid: wordForbid},
 	{name: "le_word_bytes_scrambled", fn: "scrambled", exit: 5, src: wordLoadSrc,
 		want:   oneCheck,
 		forbid: wordForbid},
 	{name: "be_word_constant_indexes", fn: "header", exit: 5, src: wordLoadSrc,
-		want:   map[string][]string{"x86-64-linux": {`\bbswapl %e\w+`, `__fern_oob_abort`}, "arm64-linux": {`\brev w\d+, w\d+`, `__fern_oob_abort`}},
+		want:   map[string][]string{"x86-64-linux": {`\bbswapl %e\w+`, `__fern_(str_)?oob_abort`}, "arm64-linux": {`\brev w\d+, w\d+`, `__fern_(str_)?oob_abort`}},
 		forbid: wordForbid},
 	// The same words read from a string's bytes, as core/map's string hash
 	// reads them.
@@ -336,7 +336,7 @@ function main(): i32 {
 		want:   oneCheck,
 		forbid: wordForbid},
 	{name: "be_word_string_u64", fn: "sbigend64", exit: 110, src: stringWordSrc,
-		want:   map[string][]string{"x86-64-linux": {`\bbswapq %r\w+`, `__fern_oob_abort`}, "arm64-linux": {`\brev x\d+, x\d+`, `__fern_oob_abort`}},
+		want:   map[string][]string{"x86-64-linux": {`\bbswapq %r\w+`, `__fern_(str_)?oob_abort`}, "arm64-linux": {`\brev x\d+, x\d+`, `__fern_(str_)?oob_abort`}},
 		forbid: wordForbid},
 	{name: "le_word_string_constant_indexes", fn: "sheader", exit: 110, src: stringWordSrc,
 		want:   oneCheck,
@@ -628,11 +628,11 @@ func TestSelfHostOptimisationShapes(t *testing.T) {
 
 // oneCheck and wordForbid pin a fused word: a bounds check, and no shift,
 // byte load or second check left over from its bytes.
-var oneCheck = map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}
+var oneCheck = map[string][]string{"x86-64-linux": {`__fern_(str_)?oob_abort`}, "arm64-linux": {`__fern_(str_)?oob_abort`}}
 
 var wordForbid = map[string][]string{
-	"x86-64-linux": {`\bshl`, `\bmovzb`, `(?s)__fern_oob_abort.*__fern_oob_abort`},
-	"arm64-linux":  {`\blsl\b`, `\bldrb\b`, `(?s)__fern_oob_abort.*__fern_oob_abort`},
+	"x86-64-linux": {`\bshl`, `\bmovzb`, `(?s)__fern_(str_)?oob_abort.*__fern_(str_)?oob_abort`},
+	"arm64-linux":  {`\blsl\b`, `\bldrb\b`, `(?s)__fern_(str_)?oob_abort.*__fern_(str_)?oob_abort`},
 }
 
 const wordLoadSrc = `
