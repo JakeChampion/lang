@@ -1254,14 +1254,14 @@ pub function retained_column(elem: typeinfo.Type): boolean {
 }
 
 function narrow_column(t: typeinfo.Type): boolean {
-  return is_i32(t) || is_char(t) || is_u8(t) || is_u32(t) || is_bool(t) || is_usize(t);
+  return semtypes.is_never(t) || is_i32(t) || is_char(t) || is_u8(t) || is_u32(t) || is_bool(t) || is_usize(t);
 }
 
 // A key or value column held in the slot itself, which the map releases by
 // freeing the buffer alone: a boolean, a char, or an integer up to pointer
-// width.
+// width. A never column holds no values and uses the same scalar storage.
 pub function narrow_map_value(v: typeinfo.Type): boolean {
-  return is_bool(v) || is_char(v) || is_integer(v) && !is_wide(v);
+  return semtypes.is_never(v) || is_bool(v) || is_char(v) || is_integer(v) && !is_wide(v);
 }
 
 // A value column the map owns a unit of per entry, released with the map: a
