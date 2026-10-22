@@ -61,3 +61,32 @@ func TestBareEnumAnnotationSurvivesRecheck(t *testing.T) {
 		}
 	}
 }
+
+// A bare recursive enum keeps its uninhabited parameters beside concrete instances.
+func TestBareRecursiveEnumSurvivesOtherInstantiations(t *testing.T) {
+	const decls = "enum Tree[T] { Leaf, Node(Tree[T], T, Tree[T]) }\n" +
+		"function id[T](x: T): T { return x; }\n"
+	for _, tc := range []struct{ name, decl, body string }{
+		{"inferred", "", "let c = Leaf;"},
+		{"annotated", "", "let c: Tree = Leaf;"},
+		{"array", "", "let c: Tree[] = [Leaf];"},
+		{"tuple", "", "let c: (Tree, i32) = (Leaf, 0);"},
+		{"field", "struct Holder { value: Tree }\n", "let c = Holder { value: Leaf };"},
+		{"return", "function empty(): Tree { return Leaf; }\n", "let c = empty();"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := decls + tc.decl + "function main(): i32 { let a: Tree[string] = Leaf; let b: Tree[i32] = Leaf; " + tc.body + " return 0; }\n"
+			prog, err := parser.Parse(src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
+			}
+		})
+	}
+}

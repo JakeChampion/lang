@@ -801,7 +801,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   }
   if let typeinfo.TypeUnion(_) = t {
     for v in variants_of(t, f) {
-      if (fields_have_children(v.fields)) {
+      if (semrecords.inhabited(v) && fields_have_children(v.fields)) {
         return true;
       }
     }
@@ -1090,7 +1090,7 @@ function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
     return false;
   }
   for v in e.variants {
-    if (self_tail_field(v, t) >= 0) {
+    if (semrecords.inhabited(v) && self_tail_field(v, t) >= 0) {
       return true;
     }
   }

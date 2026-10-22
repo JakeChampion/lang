@@ -21180,9 +21180,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		return ast.StructType{Name: sd.Name}
 	case *ast.TupleLit:
+		hint, _ := c.expectedType.(ast.TupleType)
+		c.expectedType = nil
 		elems := make([]ast.Type, len(n.Elems))
 		for i, e := range n.Elems {
+			if i < len(hint.Elems) {
+				c.expectedType = hint.Elems[i]
+			}
 			t := c.checkExpr(e, s)
+			c.expectedType = nil
 			if t == nil {
 				return nil
 			}
