@@ -348,6 +348,24 @@ of them. No PR leaves a type on main that a backend refuses.
     `%xmm3` / `q0`. A lane value never takes a callee-saved float register,
     because AAPCS64 saves only the low 64 bits of `v8`-`v15`.
 
+### Array fusion (slice 5b)
+
+`xs.map(k)` over an `f64[]` or an `f32[]` runs `k` on whole groups of lanes
+when `k` is a lane kernel. The monomorphiser finds the call where it folds an
+array method (`lane_map_key` in `compiler/parser.fern`). A lane kernel is a
+generic function `[T: …](x: T): T`. Each bound of `T` is a trait the lane
+type implements, as the entry module spells it (`MFns.lane_bounds`). The
+kernel and each generic function it calls read no `lane` and no `LANES`
+(`lane_blind`), because a lane value and a scalar differ only there.
+
+The call becomes `__lanes_map__<k>__<element>(xs)`, which the worklist builds
+(`lane_map_decl`). It runs `k` at `f64x2` / `f32x4` over each whole group
+through `load` and `with`, then `k` at the element type over the rest. Each
+element is read before it is written, so a uniquely owned `xs` is written
+in place. The answer is the scalar map's answer, so the interpreters do not
+fuse. `TestSelfHostLaneMapFusion` pins which maps of the conformance case
+`lanes_map_fusion` are fused.
+
 ### Lane memory (slice 5c)
 
 A lane `load` is the IR op `vget` and a lane `with` is `vset`. Each checks
@@ -359,6 +377,19 @@ An `f32[]` keeps each element in an 8-byte slot as an f64, so its group is
 two f64 pairs. A read narrows each pair (`cvtpd2ps`, `fcvtn`,
 `f32x4.demote_f64x2_zero`) and joins them, and a write widens each half.
 
+The benchmark is 200 maps of a 1,000,000-element `f64[]` with a degree-4
+polynomial by `mul_add`, on x86-64. The best of five runs on one machine is
+0.60 s fused with 5c and 0.81 s fused with one access per lane. The same
+kernel through a lambda takes 1.0 s.
+
+The fused loop still does four things for each group that a hand-written
+loop does once. It builds each `splat` constant again, because the compiler
+has no loop-invariant hoist. It checks indexes that the loop guard already
+proved, because `ssabounds` proves only the first index of a group. It
+spills the result across the slow path of the `with`, and it tests the
+array for a second holder. A hoist in the IR and a bounds proof for the
+whole group are the next steps.
+
 ## 7. Slices
 
 | # | Slice | State |
@@ -369,8 +400,8 @@ two f64 pairs. A read narrows each pair (`cvtpd2ps`, `fcvtn`,
 | 4a | Lane types: the instruction vocabulary on x86-64, arm64 and wasm | done (#12945) |
 | 4b | Lane types: IR ops, the 128-bit register class and spill slot, emission on every backend | done (#12961) |
 | 4c | Lane types: `f64x2` / `f32x4` in both front ends, the builtins, the lowering and its call ABI, both interpreters | done (#13004) |
-| 5a | A lane type as a method receiver and a type argument; `impl Lanes` / `impl Math` and the `std/num` traits for `f64x2` / `f32x4` | receivers this PR, impls next |
-| 5b | Array fusion: `xs.map(k)` runs a lane kernel on whole groups of lanes | next |
-| 5c | Lane memory: one 16-byte load and one 16-byte store per group | this PR |
+| 5a | A lane type as a method receiver and a type argument; `impl Lanes` / `impl Math` and the `std/num` traits for `f64x2` / `f32x4` | receivers done (#13026), impls this PR |
+| 5b | Array fusion: `xs.map(k)` runs a lane kernel on whole groups of lanes | this PR |
+| 5c | Lane memory: one 16-byte load and one 16-byte store per group | done (#13026) |
 | 6 | Const generics; `Vec[N, T]` | follow-on project, `docs/CONST-GENERICS.md` |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |

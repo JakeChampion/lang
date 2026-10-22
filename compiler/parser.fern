@@ -11257,6 +11257,9 @@ pub struct MFns {
   // The receiver types with a method or associated function a claim renamed
   // (`P.B.scale`): only a bounded variable taken at one of these can call one.
   renamed: string[],
+  // Each bound spelling the entry module gives a trait a lane type implements,
+  // as "<lane type> <spelling>" (`f64x2 n.Num`): lane_kernel's bound test.
+  lane_bounds: string[],
 }
 
 // mfns_buckets is the bucket count of the generic index. Prime, and far larger
@@ -11327,7 +11330,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, pix: util.name_index(pnames), pat: pat, smm: smm, array_concrete: array_concrete, structs: structs, snames: util.name_index(struct_names(structs)), enums: enums, impls: impls, keep_vars: false, on_call: [], renamed: renamed_receivers(decls) };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, pix: util.name_index(pnames), pat: pat, smm: smm, array_concrete: array_concrete, structs: structs, snames: util.name_index(struct_names(structs)), enums: enums, impls: impls, keep_vars: false, on_call: [], renamed: renamed_receivers(decls), lane_bounds: [] };
 }
 
 function renamed_receivers(decls: FuncDecl[]): string[] {
@@ -14050,14 +14053,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
               }
               let ct3: string = infer_folded_inst(funcs.decls[amg], raw, c.type_args, env, funcs);
               if (ct3.len() > 0) {
-                // The arguments meet the folded function's parameters, so a
-                // generic function passed as one takes its type arguments
-                // from them.
-                let fcall = ast.ExprCall { callee: ast.ExprIdent { name: amn, line: fac.line, col: fac.col, ty: "" }, args: raw, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
-                let (folded, fins) = mono_call_args(fcall, env, funcs, ins);
-                cur = fins;
-                cur = cur.iadd(amn, ct3);
-                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: amn + "__" + sanitize_key(ct3), line: fac.line, col: fac.col, ty: "" }, args: folded, line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: cur };
+                return folded_array_call(amn, ct3, c, fac, raw, env, funcs, ins);
               }
             }
           }
@@ -16599,7 +16595,7 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
   }
 
   let ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-  let fns: MFns = mfns_of(funcs, mod.structs, mod.enums, mod.impls);
+  let fns: MFns = MFns { ...mfns_of(funcs, mod.structs, mod.enums, mod.impls), lane_bounds: lane_bound_spellings(mod) };
   // Rewrite call sites in every NON-generic function body. A bounded
   // generic's body is rewritten per clone instead; the template itself is
   // passed through so monomorphize_structs can still clone it from a
@@ -16653,7 +16649,197 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
     wi = wi + 1;
   }
 
-  return Module { ...mod, funcs: rewritten, top_stmts: tr.rstmts };
+  return Module { ...mod, funcs: util.append_all(rewritten, lane_map_decls(done)), top_stmts: tr.rstmts };
+}
+
+// folded_array_call is the array method call `c` folded to `amn` at element
+// `elem`: the arguments, receiver first, meet the folded function's
+// parameters, so a generic function passed as one takes its type arguments
+// from them. A map of a lane kernel becomes its lane map instead.
+function folded_array_call(amn: string, elem: string, c: ast.ExprCall, fac: ast.ExprFieldAccess, raw: ast.Expr[], env: MEnv, funcs: MFns, ins: Insts): RExpr {
+  let lkey: string = lane_map_key(amn, elem, c, env, funcs);
+  if (lkey.len() > 0) {
+    let lr: RExpr = mono_expr(fac.obj, env, funcs, ins);
+    let kernel: string = split_inst_key(lkey)[0];
+    let lins: Insts = lr.rins.iadd("__lanes_map", lkey).iadd(kernel, lane_type_of(elem)).iadd(kernel, elem);
+    return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: "__lanes_map__" + sanitize_key(lkey), line: fac.line, col: fac.col, ty: "" }, args: [lr.rexpr], line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: lins };
+  }
+  let fcall = ast.ExprCall { callee: ast.ExprIdent { name: amn, line: fac.line, col: fac.col, ty: "" }, args: raw, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
+  let (folded, fins) = mono_call_args(fcall, env, funcs, ins);
+  return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: amn + "__" + sanitize_key(elem), line: fac.line, col: fac.col, ty: "" }, args: folded, line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: fins.iadd(amn, elem) };
+}
+
+// ---- array fusion onto the lane types (docs/SIMD-GENERIC-KERNELS.md §6) ----
+// `xs.map(k)` over an `f64[]` or an `f32[]`, with `k` a generic kernel
+// `[T: …](x: T): T` the lane type can instantiate, runs `k` at `f64x2` /
+// `f32x4` over each whole group of lanes and at the element type over the
+// rest. Each lane computes what the scalar computes, so the answer is the
+// same; a kernel that reads `lane` or `LANES` sees a difference, and is not
+// taken.
+
+// lane_bound_spellings is MFns.lane_bounds for `mod`: each trait a lane type
+// implements, as a bound in the entry module spells it. A trait of a module
+// the entry does not import, other than std/num and std/simd, is left out.
+function lane_bound_spellings(mod: Module): string[] {
+  let out: string[] = [];
+  for im in mod.impls {
+    if (im.impl_type != "f64x2" && im.impl_type != "f32x4") {
+      continue;
+    }
+    if (im.trait_module.len() == 0) {
+      out = out.append(im.impl_type + " " + im.trait_name);
+    } else if (im.trait_module == "num" || im.trait_module == "simd") {
+      let q: string = std_qualifier(mod, im.trait_module);
+      if (q.len() > 0) {
+        out = out.append(im.impl_type + " " + q + "." + im.trait_name);
+      }
+    }
+  }
+  return out;
+}
+
+// lane_map_key is the `__lanes_map` instantiation key, `<kernel>;<element>`,
+// for the folded array call `amn` at element `elem`, or "" when the call is
+// not a map of a lane kernel over f64 or f32.
+function lane_map_key(amn: string, elem: string, c: ast.ExprCall, env: MEnv, funcs: MFns): string {
+  if (amn != "__arrm_map" || c.args.len() != 1 || elem != "f64" && elem != "f32") {
+    return "";
+  }
+  let ast.ExprIdent(kid) = c.args[0] else {
+    return "";
+  };
+  let kn: string = generic_fn_value_name(c.args[0], env, funcs);
+  if (kn.len() == 0 || kn != kid.name) {
+    return "";
+  }
+  if (!lane_kernel(funcs.decls[bg_find(funcs, kn)], lane_type_of(elem), funcs)) {
+    return "";
+  }
+  return kn + ";" + elem;
+}
+
+function lane_type_of(elem: string): string {
+  if (elem == "f32") {
+    return "f32x4";
+  }
+  return "f64x2";
+}
+
+// lane_kernel reports whether `fd` is `[T: …](x: T): T`, every bound of `T`
+// a trait `lanes` implements, and no function it reaches reads the lane
+// structure.
+function lane_kernel(fd: FuncDecl, lanes: string, funcs: MFns): boolean {
+  if (fd.type_params.len() != 1 || fd.params.len() != 1 || fd.receiver_name.len() > 0) {
+    return false;
+  }
+  let tp: string = fd.type_params[0];
+  if (fd.params[0].type_name != tp || fd.ret_type != tp) {
+    return false;
+  }
+  if (fd.bound_traits.len() > 0 && fd.bound_traits[0].len() > 0) {
+    for entry in split_plus_bounds(fd.bound_traits[0]) {
+      if (!util.has_str(funcs.lane_bounds, lanes + " " + entry)) {
+        return false;
+      }
+    }
+  }
+  return lane_blind(fd.name, funcs, []);
+}
+
+// lane_blind reports whether the generic function `name`, and every generic
+// function its body calls, leaves `lane` and `LANES` unread: a lane value
+// and a scalar differ there.
+function lane_blind(name: string, funcs: MFns, seen: string[]): boolean {
+  let gi: i32 = bg_find(funcs, name);
+  if (gi < 0 || util.has_str(seen, name)) {
+    return true;
+  }
+  let reached: string[] = [];
+  for st in funcs.decls[gi].body {
+    reached = astwalk.fold_stmt(st, reached, lane_reach);
+  }
+  let next: string[] = seen.append(name);
+  for r in reached {
+    if (r.len() == 0 || !lane_blind(r, funcs, next)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// lane_reach adds to `acc` the name `e` reads, "" for a read of `lane` or
+// `LANES`.
+function lane_reach(e: ast.Expr, own acc: string[]): string[] {
+  if let ast.ExprFieldAccess(fa) = e {
+    if (fa.field == "lane" || fa.field == "LANES") {
+      return acc.append("");
+    }
+    if let ast.ExprIdent(m) = fa.obj {
+      return acc.append(m.name + "." + fa.field);
+    }
+  }
+  if let ast.ExprIdent(id) = e {
+    return acc.append(id.name);
+  }
+  return acc;
+}
+
+// lane_map_decls is the function each `__lanes_map` instantiation in `done`
+// asks for; the rewrite that asked queued the kernel instances it calls.
+function lane_map_decls(done: Insts): FuncDecl[] {
+  let out: FuncDecl[] = [];
+  let i: i32 = 0;
+  while (i < done.inames.len()) {
+    if (done.inames[i] == "__lanes_map") {
+      out = out.append(lane_map_decl(done.itypes[i]));
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// lane_map_decl builds `__lanes_map__<kernel>__<element>(xs)`:
+//
+//     let out = xs;
+//     let i = 0;
+//     while (i + W <= out.len()) { out = __<lanes>_with(out, i, k__<lanes>(__<lanes>_load(out, i))); i = i + W; }
+//     while (i < out.len()) { out = out.with(i, k__<element>(out[i])); i = i + 1; }
+//     return out;
+//
+// Each element is read before it is written, so `out` serves as the source
+// too, and a uniquely owned `xs` is written in place.
+function lane_map_decl(key: string): FuncDecl {
+  let parts: string[] = split_inst_key(key);
+  let kernel: string = parts[0];
+  let elem: string = parts[1];
+  let lanes: string = lane_type_of(elem);
+  let width: string = "2";
+  if (lanes == "f32x4") {
+    width = "4";
+  }
+  let arr: string = elem + "[]";
+  let out: ast.Expr = e_ident("out");
+  let i: ast.Expr = e_ident("i");
+  let len: ast.Expr = e_call(e_field_access(out, "len"), []);
+  let lane_call: ast.Expr = e_call(e_ident(kernel + "__" + sanitize_key(lanes)), [e_call(e_ident("__" + lanes + "_load"), [out, i])]);
+  let wide: ast.Stmt[] = [
+    s_assign("out", e_call(e_ident("__" + lanes + "_with"), [out, i, lane_call])),
+    s_assign("i", e_binary("+", i, e_number(width, "", false))),
+  ];
+  let one_call: ast.Expr = e_call(e_ident(kernel + "__" + sanitize_key(elem)), [e_index(out, i, 0, 0)]);
+  let tail: ast.Stmt[] = [
+    s_assign("out", e_call(e_field_access(out, "with"), [i, one_call])),
+    s_assign("i", e_binary("+", i, e_number("1", "", false))),
+  ];
+  let body: ast.Stmt[] = [
+    s_var("out", arr, e_ident("xs")),
+    s_var("i", "i32", e_number("0", "", false)),
+    s_while(e_binary("<=", e_binary("+", i, e_number(width, "", false)), len), wide),
+    s_while(e_binary("<", i, len), tail),
+    s_return(out),
+  ];
+  let param: ast.ParamDecl = ast.ParamDecl { name: "xs", type_name: arr, own: false, has_default: false, default_value: e_number("0", "", false), fn_ret: "", fn_param_types: "" };
+  return FuncDecl { stdlib: "", no_inline: false, name: "__lanes_map__" + sanitize_key(key), receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [param], ret_type: arr, body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] };
 }
 
 // is_bg_template: a bounded-generic free function — the template the

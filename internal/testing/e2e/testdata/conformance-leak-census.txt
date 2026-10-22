@@ -381,6 +381,7 @@ lanes_calls                                          0
 lanes_f32x4_ops                                      0
 lanes_f64x2_ops                                      0
 lanes_generic_instances                              0
+lanes_map_fusion                                     0
 lanes_methods                                        0
 lanes_receivers                                      0
 lanes_spill_pressure                                 0
