@@ -39,6 +39,15 @@ var abortReportCases = []struct{ name, src, cause string }{
 	{"buf_push_range_past_end", bufPushRangeSrc("1", "args().len() + 8"), "fern: slice range out of bounds"},
 	{"buf_push_range_negative", bufPushRangeSrc("args().len() - 3", "2"), "fern: slice range out of bounds"},
 	{"buf_push_range_inverted", bufPushRangeSrc("args().len() + 2", "1"), "fern: slice range out of bounds"},
+	// A map cursor past its last entry has no key or value to read (#12962).
+	{"map_cursor_key_past_end", mapCursorPastEndSrc("key"), "fern: array index out of range"},
+	{"map_cursor_value_past_end", mapCursorPastEndSrc("value"), "fern: array index out of range"},
+}
+
+// mapCursorPastEndSrc reads `read` from a cursor advanced past a one-entry map.
+func mapCursorPastEndSrc(read string) string {
+	return `import "core/map";
+function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 5); let it = m.iter(); it.advance(); return it.` + read + `(); }`
 }
 
 // bufPushRangeSrc appends "abc"[lo:hi] to a buffer; args() keeps the bounds
@@ -92,6 +101,18 @@ func checkAbortReports(t *testing.T, cli *selfHostCLI, target string) {
 
 func TestSelfHostAbortReportsX86_64(t *testing.T) {
 	checkAbortReports(t, buildSelfHostCLI(t), "x86-64-linux")
+}
+
+// wasm prints no cause line yet (#12956), but every case still traps.
+func TestSelfHostAbortsTrapWasm(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, tc := range abortReportCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if stderr, code := cli.exitOf(t, tc.src, "wasm32-wasi"); code != 134 {
+				t.Errorf("exit %d, want 134\nstderr:\n%s", code, stderr)
+			}
+		})
+	}
 }
 
 func TestSelfHostAbortReportsArm64(t *testing.T) {

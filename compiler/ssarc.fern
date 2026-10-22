@@ -3263,6 +3263,9 @@ function routed_map_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
     return routed_insert(r, f, ins);
   }
   if (ssasem.is_map_iter_op(k)) {
+    if (k == ssasem.mapiter_key() || k == ssasem.mapiter_value()) {
+      r = cursor_in_range(r, ins.args[0]);
+    }
     r = emit(r, ir.op_load_local(ins.args[0]));
     return routed_cursor(r, f, ins);
   }
@@ -3456,6 +3459,19 @@ function routed_column_read(own r: irtables.LowerResult, elem: typeinfo.Type, of
     return emit(r, ir.op_call_direct("__map_box_column", 3));
   }
   return emit(r, ir.op_call_direct("__map_i32_column", 2));
+}
+
+// A cursor past the last entry has no key or value to read: reading one is the
+// array index abort, as it is in both interpreters.
+function cursor_in_range(own r: irtables.LowerResult, cursor: i32): irtables.LowerResult {
+  r = emit(r, ir.op_load_local(cursor));
+  r = emit(r, ir.op_call_direct("__mapiter_has_next_impl", 1));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("eq", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_call_direct("__fern_oob_abort", 0));
+  r = emit(r, ir.op_drop());
+  return emit(r, ir.op_end());
 }
 
 // The cursor holds the map's buffer and, beside it, the unit of the map that
