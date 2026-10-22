@@ -1477,12 +1477,40 @@ function ssa_farg(p: i32): i32 {
 }
 
 // ssa_arg_loc is where the register ABI passes parameter p of a function of
-// shape `mask`: x<p>, or d<p> for an f64.
+// shape `mask`: x<p>, or d<p> for an f64, or q<p> for a lane value.
 function ssa_arg_loc(mask: string, p: i32): i32 {
-  if (asmcore.float_param(mask, p)) {
+  if (asmcore.float_param(mask, p) || asmcore.lane_param(mask, p)) {
     return ssa_farg(p);
   }
   return p;
+}
+
+// ssa_lane_refuse stops a compile in which a lane value would cross a call
+// where no vector register carries it: past the register arguments, through
+// the stack entry or through a function value.
+function ssa_lane_refuse(what: string): void {
+  eprint("error: " + what + ": a lane value crosses a call only as one of the first " + util.i32_to_string(ssa_nargs()) + " arguments of a direct call, or as its result");
+  exit(3);
+}
+
+// ssa_lane_ret moves a lane result into q0, where the register ABI returns it.
+function ssa_lane_ret(fr: SsaFrame, reg_of: i32[], v: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.lane_result(fr.fmask) || v < 0) {
+    return s;
+  }
+  return ssa_move(reg_of[v], ssa_farg(0), s);
+}
+
+// ssa_call_result moves a call's result from where the ABI returns it into
+// its home: `rr`, or q0 for a lane value.
+function ssa_call_result(ins: ssa.SInst, reg_of: i32[], rr: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (!ssa.lane_result(ins)) {
+    return ssa_store(reg_of, ins.result, rr, s);
+  }
+  if (ins.result >= 0 && reg_of[ins.result] != 0 - 1) {
+    return ssa_move(ssa_farg(0), reg_of[ins.result], s);
+  }
+  return s;
 }
 
 // ssa_is_d reports a register name of the float class.
@@ -3383,9 +3411,12 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     rr = "d0";
   }
   if (ssa_reg_call(ins, s)) {
-    return ssa_store(reg_of, ins.result, rr, ssa_x0_forget(ssa_reg_call_emit(ins, reg_of, s)));
+    return ssa_call_result(ins, reg_of, rr, ssa_x0_forget(ssa_reg_call_emit(ins, reg_of, s)));
   }
   let argc: i32 = ins.args.len();
+  if (asmcore.has_lane_param(s.float_mask(asmcore.sanitize_label(ins.str)))) {
+    ssa_lane_refuse("call of " + ins.str);
+  }
   let helper: boolean = ircore.is_fern_helper(ins.str);
   if (helper) {
     s = helper_call_needs(ins.str, s);
@@ -3411,7 +3442,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if (argc > 0) {
     s = ssa_addsub_imm(s, false, "sp", "sp", argc * 16);
   }
-  return ssa_store(reg_of, ins.result, rr, ssa_x0_forget(s));
+  return ssa_call_result(ins, reg_of, rr, ssa_x0_forget(s));
 }
 
 // ssa_reg_call_emit calls a function through its register entry. Only this
@@ -4958,6 +4989,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     } else {
       s = ssa_load(reg_of, t.value, "x0", s);
     }
+    s = ssa_lane_ret(fr, reg_of, t.value, s);
     // An f64 result goes back in d0 too, for a register-ABI caller.
     if (asmcore.float_result(fr.fmask)) {
       let h: string = "x0";
@@ -5005,6 +5037,9 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], mask: string, s: asmcore.E
   }
   s = ssa_parallel_moves(srcs, dsts, s);
   while (p < f.nparams) {
+    if (ssa.lane_param(f, p)) {
+      ssa_lane_refuse(f.name + ": parameter " + util.i32_to_string(p));
+    }
     // Straight into the home, not through a scratch: x0 is an allocatable
     // home now, so staging every parameter through it overwrote whichever
     // parameter had been given it.
@@ -5104,7 +5139,9 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
   let pref: i32[] = util.minus_ones(f.nvals);
   let p: i32 = 0;
   while (p < ssa_reg_params(f)) {
-    pref = pref.with(p, p);
+    if (!ssa.lane_param(f, p)) {
+      pref = pref.with(p, p);
+    }
     p = p + 1;
   }
   for blk in f.blocks {
@@ -5112,10 +5149,11 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
       if (!ssa_reg_call(ins, s)) {
         continue;
       }
+      let mask: string = s.float_mask(asmcore.sanitize_label(ins.str));
       let a: i32 = 0;
       while (a < ins.args.len()) {
         let v: i32 = ins.args[a];
-        if (v >= 0 && v < pref.len() && pref[v] < 0) {
+        if (v >= 0 && v < pref.len() && pref[v] < 0 && !asmcore.lane_param(mask, a)) {
           pref = pref.with(v, a);
         }
         a = a + 1;

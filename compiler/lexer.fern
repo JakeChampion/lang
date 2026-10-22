@@ -134,7 +134,7 @@ function is_keyword(name: string): boolean {
   }
   let c: u8 = name[0];
   if (c == b'f') {
-    return name == "function" || name == "for" || name == "false" || name == "f32" || name == "f64";
+    return name == "function" || name == "for" || name == "false" || name == "f32" || name == "f64" || name == "f32x4" || name == "f64x2";
   }
   if (c == b'i') {
     return name == "if" || name == "i32" || name == "i64" || name == "import" || name == "impl";
@@ -186,7 +186,7 @@ function is_keyword(name: string): boolean {
 
 // keywords is every name is_keyword accepts, in byte order.
 pub function keywords(): string[] {
-  return ["as", "boolean", "break", "const", "continue", "defer", "dyn", "else", "enum", "errdefer", "f32", "f64", "false", "for", "function", "i32", "i64", "if", "impl", "import", "let", "loop", "match", "pub", "return", "string", "struct", "trait", "true", "type", "u32", "u64", "u8", "use", "usize", "void", "when", "while"];
+  return ["as", "boolean", "break", "const", "continue", "defer", "dyn", "else", "enum", "errdefer", "f32", "f32x4", "f64", "f64x2", "false", "for", "function", "i32", "i64", "if", "impl", "import", "let", "loop", "match", "pub", "return", "string", "struct", "trait", "true", "type", "u32", "u64", "u8", "use", "usize", "void", "when", "while"];
 }
 
 function is_valid_numeric_suffix(s: string): boolean {

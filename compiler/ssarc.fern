@@ -250,6 +250,9 @@ function rc_shape(t: typeinfo.Type, f: ssasem.Func, lookup: boolean): boolean {
   if let typeinfo.TypeFloat(_) = t {
     return ssasem.is_float(t);
   }
+  if (ssasem.is_lanes(t)) {
+    return true;
+  }
   if let typeinfo.TypeArray(a) = t {
     return rc_shape(a.elem, f, lookup);
   }
@@ -2495,6 +2498,9 @@ function result_kind(t: typeinfo.Type): i32 {
   if (ssasem.is_float(t)) {
     return irtables.result_f64();
   }
+  if (ssasem.is_lanes(t)) {
+    return irtables.result_v128();
+  }
   return irtables.result_i32();
 }
 
@@ -2526,6 +2532,9 @@ function frame(f: ssasem.Func): irtables.LowerResult {
     }
     if (ssasem.is_float(f.values[vi])) {
       r = irtables.LowerResult { ...r, f64_slots: r.f64_slots.append(vi) };
+    }
+    if (ssasem.is_lanes(f.values[vi])) {
+      r = irtables.LowerResult { ...r, v128_slots: r.v128_slots.append(vi) };
     }
     vi = vi + 1;
   }
@@ -2910,6 +2919,9 @@ function scalar(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): ir
   }
   if (ssasem.is_float(f.values[ins.args[0]])) {
     return float_scalar(r, f, ins);
+  }
+  if let typeinfo.TypeLanes(l) = f.values[ins.args[0]] {
+    return emit(r, ir.op_lane(irtables.lane_operator(ins.kind_tag, ins.str), l.width));
   }
   let w: i32 = operand_width(f, ins);
   if (ins.kind_tag == 9) {
@@ -3870,7 +3882,7 @@ function constant(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
 // the operand's own width or the two sides of the subtraction disagree; a
 // float has its own sign-flip opcode and pushes nothing.
 function negation_zero(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
-  if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_float(f.values[ins.args[0]])) {
+  if (ins.kind_tag == 10 && ins.str == "-" && !ssasem.is_float(f.values[ins.args[0]]) && !ssasem.is_lanes(f.values[ins.args[0]])) {
     return emit(r, zero(f.values[ins.args[0]]));
   }
   return r;
@@ -4072,6 +4084,7 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
     r = call_site(r, f, ins);
     r = scan_set_members(r, f, p, ins);
     r = mark_reference_result(r, f, ins, !paired_op(ins.str));
+    r = mark_lane_result(r, f, ins);
   }
   // A verified copy already has its single operand on the stack.
   r = emit(r, ir.op_store_local(ins.result));
@@ -5269,6 +5282,20 @@ function mark_reference_result(own r: irtables.LowerResult, f: ssasem.Func, ins:
   return counted_result(r);
 }
 
+// A direct call returning a lane value is marked so (ir.lane_call): the lift
+// classes its result a lane value. A lane builtin's last op is a lane op, and
+// keeps no mark.
+function mark_lane_result(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let last: i32 = r.ops.len() - 1;
+  if (last < 0 || ins.result < 0 || ins.result >= f.values.len() || !ssasem.is_lanes(f.values[ins.result])) {
+    return r;
+  }
+  if (r.ops[last].kind_tag != ir.op_call_direct("", 0).kind_tag) {
+    return r;
+  }
+  return irtables.LowerResult { ...r, ops: r.ops.with(last, ir.lane_call(r.ops[last])) };
+}
+
 function counted_result(own r: irtables.LowerResult): irtables.LowerResult {
   let last: i32 = r.ops.len() - 1;
   if (last < 0) {
@@ -5298,6 +5325,9 @@ function lent_result(own r: irtables.LowerResult): irtables.LowerResult {
 function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   if (paired_op(ins.str)) {
     return pair_site(r, f, ins);
+  }
+  if (typeinfo.lane_builtin_width(ins.str) > 0) {
+    return lane_site(r, f, ins);
   }
   if (util.index_of_str(f.shadows, ins.str) >= 0) {
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
@@ -6193,6 +6223,40 @@ function builder_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
     return Lowered { found: true, r: emit(r, ir.op_buf_clear()) };
   }
   return Lowered { found: false, r: r };
+}
+
+// A lane builtin (docs/SIMD-GENERIC-KERNELS.md §6) is the lane op of its verb
+// over the operands on the stack. `lane` reads its index from the constant the
+// checker requires. `of` and the unfused `mul_add` reload their operands.
+function lane_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+  let w: i32 = typeinfo.lane_builtin_width(ins.str);
+  let verb: string = typeinfo.lane_builtin_verb(ins.str);
+  let op: string = irtables.lane_builtin_op(verb);
+  if (op != "") {
+    return emit(r, ir.op_lane(op, w));
+  }
+  if (verb == "lane") {
+    r = emit(r, ir.op_drop());
+    return emit(r, ir.op_lane_at("vextract", w, definition(f, ins.args[1]).imm));
+  }
+  for a in ins.args {
+    r = emit(r, ir.op_drop());
+  }
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  if (verb == "mul_add") {
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_lane("vmul", w));
+    r = emit(r, ir.op_load_local(ins.args[2]));
+    return emit(r, ir.op_lane("vadd", w));
+  }
+  r = emit(r, ir.op_lane("vsplat", w));
+  let k: i32 = 1;
+  while (k < ins.args.len()) {
+    r = emit(r, ir.op_load_local(ins.args[k]));
+    r = emit(r, ir.op_lane_at("vreplace", w, k));
+    k = k + 1;
+  }
+  return r;
 }
 
 // The runtime intrinsics: each is the stack IR op the AST lowering emits for
