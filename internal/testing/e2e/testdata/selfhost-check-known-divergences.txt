@@ -12,7 +12,6 @@ diag_e031 #12889 E002 beside E031, which reads "match/if-expression arms have in
 diag_e049 #12889 drops "string" and the reference-cycle clause
 diag_e055 #12889 drops the `let _ = …` advice
 diag_e058 #12889 drops the label name
-diag_e059 #12889 quotes `as?` and `dyn Trait` with backticks
 diag_e061 #12889 the short message, and no E003 for the void initialiser
 diag_e074 #12889 names the traits in the other order, and their positions without the file
 diag_p005 #12889 "input nests too deeply" rather than "deeper than N levels"

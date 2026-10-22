@@ -15246,7 +15246,7 @@ function async_lower_imports(mod: parser.Module): string {
 }
 
 // is_stream_slot reports whether slot `i` of async import `f` was a
-// `stream[T]` (-1 the result, else a parameter).
+// `Stream[T]` (-1 the result, else a parameter).
 function is_stream_slot(f: parser.FuncDecl, i: i32): boolean {
   for k in f.streams {
     if (k == i) {

@@ -5019,7 +5019,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// docs/TRAITS.md.
 	c.synthesizeTraitDefaults(prog)
 
-	// Colorless stream result: an `@import async function f(): stream[T]` is
+	// Colorless stream result: an `@import async function f(): Stream[T]` is
 	// delivered incrementally over the wire but, under the colorless model,
 	// yields the fully-collected `T[]` at the call site (docs/STREAM-TYPE-SURFACE.md).
 	// Rewrite the effective return type to `T[]` here, before FuncSigs and every
@@ -5030,8 +5030,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				fn.ReturnType = ast.ArrayType{Elem: st.Elem}
 			}
 			// Colorless stream PARAMETER (the mirror of the result transform): an
-			// `@import async function f(s: stream[T])` accepts an eager `T[]` at the
-			// call site. Rewrite each `stream[T]` param to `T[]`.
+			// `@import async function f(s: Stream[T])` accepts an eager `T[]` at the
+			// call site. Rewrite each `Stream[T]` param to `T[]`.
 			for i := range fn.Params {
 				if st, ok := fn.Params[i].Type.(ast.StreamType); ok && st.Elem != nil {
 					fn.Params[i].Type = ast.ArrayType{Elem: st.Elem}
@@ -5710,6 +5710,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		// Error-converting `?` → its block-expr desugar (#3234).
 		if t, ok := e.(*ast.TryOp); ok && t.Lowered != nil {
 			return t.Lowered
+		}
+		// Checked integer conversion → its block-expr desugar (#12708).
+		if d, ok := e.(*ast.DowncastExpr); ok && d.Lowered != nil {
+			return d.Lowered
 		}
 		// Composite unary minus: `-v` → `v.neg()`.
 		if u, ok := e.(*ast.Unary); ok {
@@ -10161,6 +10165,41 @@ func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope)
 	}, Tail: &ast.IfExpr{P: p, Cond: overflow,
 		Then: id("None"),
 		Else: &ast.Call{P: p, Callee: id("Some"), Args: []ast.Expr{id(sN)}},
+	}}
+	if c.checkExpr(block, s) == nil {
+		return nil
+	}
+	return block
+}
+
+// buildCheckedCast lowers `x as? T` between integers to
+//
+//	{ let v: S = x; let t: T = v as T; if (t as S == v) { Some(t) } else { None } }
+//
+// The value converts when converting back gives it again; across a change of
+// signedness it must also not be negative, which the round trip alone misses
+// (-1 as u32 as i32 is -1 again).
+func (c *checker) buildCheckedCast(n *ast.DowncastExpr, src, dst ast.NumberType, s *scope) ast.Expr {
+	c.checkedN++
+	p := n.P
+	vN := fmt.Sprintf("__cvt_v_%d", c.checkedN)
+	tN := fmt.Sprintf("__cvt_t_%d", c.checkedN)
+	id := func(name string) ast.Expr { return &ast.Ident{P: p, Name: name} }
+	bin := func(op string, l, r ast.Expr) ast.Expr { return &ast.Binary{P: p, Op: op, Left: l, Right: r} }
+	zero := func() ast.Expr { return &ast.NumberLit{P: p, Value: 0} }
+	fits := bin("==", &ast.CastExpr{P: p, Inner: id(tN), Target: src}, id(vN))
+	if src.IsSigned() && !dst.IsSigned() {
+		fits = bin("&&", bin(">=", id(vN), zero()), fits)
+	}
+	if !src.IsSigned() && dst.IsSigned() {
+		fits = bin("&&", bin(">=", id(tN), zero()), fits)
+	}
+	block := &ast.BlockExpr{P: p, Stmts: []ast.Stmt{
+		&ast.Var{P: p, Name: vN, Type: src, Init: n.Inner},
+		&ast.Var{P: p, Name: tN, Type: dst, Init: &ast.CastExpr{P: p, Inner: id(vN), Target: dst}},
+	}, Tail: &ast.IfExpr{P: p, Cond: fits,
+		Then: &ast.Call{P: p, Callee: id("Some"), Args: []ast.Expr{id(tN)}},
+		Else: id("None"),
 	}}
 	if c.checkExpr(block, s) == nil {
 		return nil
@@ -18244,9 +18283,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.Target = ast.EnumType{Name: st.Name}
 			}
 		}
+		if src, ok := inner.(ast.NumberType); ok {
+			dst, ok := n.Target.(ast.NumberType)
+			if !ok {
+				c.errfCode(n.P, "E060", "'as?' from %s converts only to an integer type, got %s", inner, n.Target)
+				return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
+			}
+			if src.Polymorphic {
+				src = ast.NumberType{Width: 64, Signed: true}
+				c.settleNumeric(n.Inner, src)
+			}
+			n.Lowered = c.buildCheckedCast(n, src, dst, s)
+			return ast.EnumType{Name: "Option", Args: []ast.Type{dst}}
+		}
 		dt, ok := inner.(ast.DynTraitType)
 		if !ok {
-			c.errfCode(n.P, "E059", "'as?' downcast requires a 'dyn Trait' value on the left, got %s", inner)
+			c.errfCode(n.P, "E059", "'as?' requires a 'dyn Trait' value or an integer on the left, got %s", inner)
 			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 		}
 		// Trait records the PRIMARY trait (the bare single-trait vtable

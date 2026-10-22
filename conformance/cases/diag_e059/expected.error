@@ -1,1 +1,1 @@
-'as?' downcast requires a 'dyn Trait' value on the left, got i32
+'as?' requires a 'dyn Trait' value or an integer on the left, got string
