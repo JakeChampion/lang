@@ -240,6 +240,28 @@ function main(): i32 {
     if (b5[264] != 95 || b5[265] != 95 || b5[266] != 68) { return 62; }
     if (b5[289] != 64 || b5[288] != 0) { return 63; }
     if (b5[304] != 0 || b5[305] != 0 || b5[306] != 0) { return 64; }
+
+    // ---- read-only constants after the code ----
+    // 16 code bytes then 16 of constants: __text spans only the code and a
+    // __const section (@256, after __text's header @176) the rest, both in
+    // __TEXT, whose header space text_off already reserved.
+    let t6: u8[] = [];
+    while (t6.len() < 32) { t6 = t6.append(7 as u8); }
+    let ns: string[] = [];
+    let nd: i32[][] = [];
+    let b6: i32[] = macho_executable_binds(t6, 16, none, none, "fern", 0, 0, none, none, ns, ns, none, nd);
+    // sizeofcmds = 680 (0x2a8), __TEXT nsects @168 = 2.
+    if (b6[20] != 168 || b6[21] != 2) { return 65; }
+    if (b6[168] != 2) { return 66; }
+    // __text size @216 = 16.
+    if (b6[216] != 16 || b6[217] != 0) { return 67; }
+    // "__const" @256, segment "__TEXT" @272, size @296 = 16, offset @304 = 1168 (0x490).
+    if (b6[256] != 95 || b6[258] != 99 || b6[259] != 111) { return 68; }
+    if (b6[274] != 84) { return 69; }
+    if (b6[296] != 16 || b6[297] != 0) { return 70; }
+    if (b6[304] != 144 || b6[305] != 4) { return 71; }
+    // The code still starts at the reserved text_off.
+    if (b6[1152] != 7 || b6[1184] != 0) { return 72; }
     return 0;
 }
 `
