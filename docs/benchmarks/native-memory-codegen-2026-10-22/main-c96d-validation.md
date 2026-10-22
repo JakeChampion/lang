@@ -13,3 +13,9 @@ include main's new never map column cases.
 The main-c96d directory contains the log and command. The earlier complete
 bootstrap, eleven strict size checks, and broader suite retain their recorded
 main-12625 source scope.
+
+Bootstrap stages two and three match at 14,147,424 bytes, SHA-256
+c6d5443f09a81f9f8fa186f30b24d252a5e4d6d0328fe309c65196643e332a28.
+All eleven strict size rows pass with the recorded baselines. The driver builds
+take 184.117 seconds. The adjacent manifest records all stage hashes and the
+compiler source fingerprint.
