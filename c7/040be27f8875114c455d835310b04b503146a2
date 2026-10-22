@@ -110,3 +110,14 @@ grpc/special_status_message	1
 grpc/custom_metadata	1
 grpc/unimplemented_method	1
 grpc/unimplemented_service	1
+
+# lane: bootstrap-x86-64-linux
+bootstrap/x86-64-linux/stage1.wall_s	21
+bootstrap/x86-64-linux/stage1.peak_rss_mb	2083
+bootstrap/x86-64-linux/stage1.size_bytes	13192608
+bootstrap/x86-64-linux/stage2.wall_s	24
+bootstrap/x86-64-linux/stage2.peak_rss_mb	2068
+bootstrap/x86-64-linux/stage2.size_bytes	13197328
+bootstrap/x86-64-linux/stage3.wall_s	21
+bootstrap/x86-64-linux/stage3.peak_rss_mb	2066
+bootstrap/x86-64-linux/stage3.size_bytes	13197328
