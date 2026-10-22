@@ -939,7 +939,9 @@ func (p *parser) parsePubUse(pubPos ast.Position) (*ast.PubUse, error) {
 
 // importLocalName returns the binding name a qualified call uses
 // for an imported module — `import "./math/vec";` → `vec`. Drops
-// any directory prefix and a trailing `.fern` extension.
+// any directory prefix and a trailing `.fern` extension. A `-`,
+// legal in a file or package name and not in an identifier, becomes
+// `_`: `import "my-h";` → `my_h`.
 func importLocalName(path string) string {
 	base := path
 	if i := strings.LastIndex(base, "/"); i >= 0 {
@@ -948,7 +950,7 @@ func importLocalName(path string) string {
 	if strings.HasSuffix(base, ".fern") {
 		base = base[:len(base)-len(".fern")]
 	}
-	return base
+	return strings.ReplaceAll(base, "-", "_")
 }
 
 // syncToTopLevel advances tokens until the next `function`, `struct`,

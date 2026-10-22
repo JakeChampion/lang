@@ -436,6 +436,29 @@ _start:
     bsl v0.8b, v1.8b, v2.8b
     bit v23.16b, v9.16b, v28.16b
     bif v3.16b, v4.16b, v5.16b
+    // The lane arms' moves: a q register to and from memory, a lane to and
+    // from a general register, a splat from a lane, and a vector copy.
+    ldr q17, [x4]
+    str q3, [x9]
+    ldr q1, [sp, #32]
+    str q20, [sp, #16]
+    ldr q0, [x16]
+    umov x16, v1.d[1]
+    umov x16, v17.d[0]
+    umov w16, v1.s[3]
+    ins v17.d[1], x16
+    ins v0.s[2], w16
+    dup v17.2d, v1.d[0]
+    dup v3.4s, v0.s[0]
+    fcvt s0, d1
+    fcvt d17, s0
+    fmov s0, w16
+    fmov x16, d2
+    fmov d17, x16
+    not v0.16b, v1.16b
+    mov v0.16b, v1.16b
+    fcmgt v23.2d, v9.2d, v28.2d
+    fcmgt v3.4s, v4.4s, v5.4s
     fcmeq v23.4s, v9.4s, #0.0
     fcmle v23.4s, v9.4s, #0.0
     fcmlt v23.2d, v9.2d, #0.0

@@ -550,6 +550,11 @@
 # driver report are recorded in docs/rc-log/2026-10-17-scalar-record-returns.md.
 # The other ten baselines and the 5% tolerance are unchanged.
 
+# 2026-10-22 — fern.fern 12630080 -> 13273088 (+5.1%), measured by the
+# driver-sizes lane on #12961 (lane types 4b: the thirty lane ops on every
+# backend, the lane register class and its spill pairs), merged with main
+# at 826a5d0. The other ten baselines and the 5% tolerance are unchanged.
+
 # 2026-10-22 (#12969) — every row from driver-sizes' report on run
 # 39765430491. fern.fern/stage2 12672208 -> 13913088 (+9.8%) and fern.fern
 # 12630080 -> 13200800 (+4.5%). The other nine drivers moved +0.7% to +4.7%.
