@@ -207,9 +207,15 @@ func checkAbortBacktrace(t *testing.T, frames []string, stderr string) {
 // environment, returning the binary.
 func compileDeep(t *testing.T, cli *selfHostCLI, target string, flags []string, env ...string) string {
 	t.Helper()
+	return compileAbortSrc(t, cli, deepAbortSrc, target, flags, env...)
+}
+
+// compileAbortSrc is compileDeep for any source.
+func compileAbortSrc(t *testing.T, cli *selfHostCLI, text, target string, flags []string, env ...string) string {
+	t.Helper()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "deep.fern")
-	if err := os.WriteFile(src, []byte(deepAbortSrc), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(dir, "deep")
@@ -238,6 +244,39 @@ func TestSelfHostAbortBacktraceArm64(t *testing.T) {
 	bin := compileDeep(t, cli, "arm64-linux", nil)
 	frames, stderr := abortFrames(t, bin, runArm64Bin(qemu, bin))
 	checkAbortBacktrace(t, frames, stderr)
+}
+
+// helperTrapSrc makes a request the runtime helper refuses before it builds a
+// frame of its own; args() keeps the size from folding.
+const helperTrapSrc = `@noinline function mk(n: i32): i32 { let b: u8[] = __alloc_u8(n); return b.len() + 1; }
+function main(): i32 { return mk(args().len() - 6) + 1; }
+`
+
+// A size abort in a runtime helper lists the function that made the request
+// first, on both targets (#12981). mk and main keep no frame pointer on
+// x86-64, so its walk ends at mk; on arm64 a function that calls keeps a
+// frame record, so main follows.
+func TestSelfHostAbortHelperFrameAgrees(t *testing.T) {
+	_, qemu := arm64Tooling(t)
+	cli := buildSelfHostCLI(t)
+	x86 := compileAbortSrc(t, cli, helperTrapSrc, "x86-64-linux", nil)
+	x86Frames, x86Stderr := abortFrames(t, x86, runX86_64Bin(cli.runner, x86))
+	arm := compileAbortSrc(t, cli, helperTrapSrc, "arm64-linux", nil)
+	armFrames, armStderr := abortFrames(t, arm, runArm64Bin(qemu, arm))
+	for _, leg := range []struct {
+		name, stderr string
+		frames, want []string
+	}{
+		{"x86-64", x86Stderr, x86Frames, []string{"mk"}},
+		{"arm64", armStderr, armFrames, []string{"mk", "main", "_start"}},
+	} {
+		if !strings.HasPrefix(leg.stderr, "fern: allocation size out of range\n") {
+			t.Errorf("%s: stderr does not open with the size cause:\n%s", leg.name, leg.stderr)
+		}
+		if len(leg.frames) < len(leg.want) || strings.Join(leg.frames[:len(leg.want)], " ") != strings.Join(leg.want, " ") {
+			t.Errorf("%s: frames %v, want %v first\nstderr:\n%s", leg.name, leg.frames, leg.want, leg.stderr)
+		}
+	}
 }
 
 // bareTrapSrc traps in cut, which keeps no frame pointer outside -g: it
