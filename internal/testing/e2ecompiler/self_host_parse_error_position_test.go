@@ -141,6 +141,12 @@ var parseErrPosCases = []struct {
 	{"field-name-missing-after-dot", "function main(): i32 {\n  let a = 1;\n  a.;\n  return 0;\n}\n"},
 	{"let-name-without-equals", "function main(): i32 {\n  let x 1;\n  return 0;\n}\n"},
 	{"let-annotated-without-equals", "function main(): i32 {\n  let x: i32 1;\n  return 0;\n}\n"},
+	// `Name {` opens a struct literal wherever one may stand, whatever follows.
+	{"struct-lit-field-name-missing", "struct P { a: i32 }\nfunction main(): i32 {\n  let p = P { 1 };\n  return 0;\n}\n"},
+	{"struct-lit-colon-missing", "struct P { a: i32 }\nfunction main(): i32 {\n  let p = P { a 1 };\n  return 0;\n}\n"},
+	// `for (` is C-style unless its `)` is followed by `in`.
+	{"for-paren-without-in", "function main(): i32 {\n  for (x of [1]) { }\n  return 0;\n}\n"},
+	{"for-paren-let-literal", "function main(): i32 {\n  for (let 1 in [1]) { }\n  return 0;\n}\n"},
 }
 
 // TestSelfHostParseErrorPositions pins SH-041 (tracking #2849): a
@@ -199,7 +205,7 @@ func TestSelfHostParseErrorPositions(t *testing.T) {
 
 // earliestSelfHostDiag is the submatch of the diagnostic in out that comes
 // first in the source, the one native stops at and the CLI prints first. The
-// pre-check lists function bodies before the expectations recorded at top level.
+// pre-check lists a function's expectations after its body's sentinels.
 func earliestSelfHostDiag(out string) []string {
 	var best []string
 	bl, bc := 0, 0
@@ -285,8 +291,8 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 			"error[P001]: in fn 'a': expected an expression, got \";\" (3:16)\n" +
 				"error[P001]: in fn 'a': expected an expression, got \"@\" (4:16)\n" +
 				"error[P001]: in fn 'b': expected an expression, got \";\" (9:14)\n" +
-				"error[P001]: at top level: expected an expression, got \";\" (1:14)\n" +
-				"error[P001]: at top level: expected \"(\", got \"x\" (8:6)"},
+				"error[P001]: in fn 'b': expected \"(\", got \"x\" (8:6)\n" +
+				"error[P001]: at top level: expected an expression, got \";\" (1:14)"},
 		// A `pub use` that stops early reports where it stops and nothing more.
 		{"pub-use-empty-list-without-semicolon",
 			"pub use \"./m\".{}",
@@ -376,14 +382,14 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// rather than being dropped with the placeholder's sub-parse.
 		{"fstring-placeholder-type-error",
 			"function main(): i32 {\n  let x = 5;\n  let s = f\"{x as}\";\n  return 0;\n}\n",
-			"error[P001]: at top level: expected a type, got the end of the file (3:18)"},
+			"error[P001]: in fn 'main': expected a type, got the end of the file (3:18)"},
 		// A placeholder that fails by a type error or by a sentinel inside it
 		// also ends the f-string: its own error is the f-string's one
 		// diagnostic, and a later bad placeholder adds nothing.
 		{"fstring-type-error-placeholder-ends-fstring",
 			"function main(): i32 {\n  let x = 5;\n  let s = f\"{x as} {x as}\";\n  let t = f\"{x as} {x y}\";\n  return 0;\n}\n",
-			"error[P001]: at top level: expected a type, got the end of the file (3:18)\n" +
-				"error[P001]: at top level: expected a type, got the end of the file (4:18)"},
+			"error[P001]: in fn 'main': expected a type, got the end of the file (3:18)\n" +
+				"error[P001]: in fn 'main': expected a type, got the end of the file (4:18)"},
 		{"fstring-nested-sentinel-placeholder-ends-fstring",
 			"function main(): i32 {\n  let x = 5;\n  let s = f\"{x + @} {x y}\";\n  return 0;\n}\n",
 			"error[P001]: in fn 'main': expected an expression, got \"@\" (3:18)"},
@@ -496,38 +502,38 @@ func TestSelfHostStatementTerminators(t *testing.T) {
 		want string
 	}{
 		{"break-with-value", "function main(): i32 { while (true) { break 5; } return 0; }\n",
-			`error[P001]: at top level: expected ";", got "5" (1:45)`},
+			`error[P001]: in fn 'main': expected ";", got "5" (1:45)`},
 		{"continue-with-value", "function main(): i32 { while (false) { continue 5; } return 0; }\n",
-			`error[P001]: at top level: expected ";", got "5" (1:49)`},
+			`error[P001]: in fn 'main': expected ";", got "5" (1:49)`},
 		{"break-before-brace", "function main(): i32 { while (true) { break } return 0; }\n",
-			`error[P001]: at top level: expected ";", got "}" (1:45)`},
+			`error[P001]: in fn 'main': expected ";", got "}" (1:45)`},
 		{"return-before-brace", "function main(): i32 { return 0 }\n",
-			`error[P001]: at top level: expected ";", got "}" (1:33)`},
+			`error[P001]: in fn 'main': expected ";", got "}" (1:33)`},
 		{"let", "function main(): i32 { let x: i32 = 1 return x; }\n",
-			`error[P001]: at top level: expected ";", got "return" (1:39)`},
+			`error[P001]: in fn 'main': expected ";", got "return" (1:39)`},
 		{"assign", "function main(): i32 { let x: i32 = 1; x = 2 return x; }\n",
-			`error[P001]: at top level: expected ";", got "return" (1:46)`},
+			`error[P001]: in fn 'main': expected ";", got "return" (1:46)`},
 		{"compound-assign", "function main(): i32 { let x: i32 = 1; x += 2 return x; }\n",
-			`error[P001]: at top level: expected ";", got "return" (1:47)`},
+			`error[P001]: in fn 'main': expected ";", got "return" (1:47)`},
 		{"compound-in-chain", "function main(): i32 { let a = 0; let b = 0; a = b += (1; 2); return a; }\n",
 			`error[P001]: in fn 'main': a compound assignment stands alone: it cannot be part of an assignment chain (1:52)`},
 		{"expression-statement", "function f(): void { }\nfunction main(): i32 { f() return 0; }\n",
-			`error[P001]: at top level: expected ";", got "return" (2:28)`},
+			`error[P001]: in fn 'main': expected ";", got "return" (2:28)`},
 		{"tuple-destructure", "function main(): i32 { let (a, b) = (1, 2) return a + b; }\n",
-			`error[P001]: at top level: expected ";", got "return" (1:44)`},
+			`error[P001]: in fn 'main': expected ";", got "return" (1:44)`},
 		{"const", "const K: i32 = 1\nfunction main(): i32 { return K; }\n",
 			`error[P001]: at top level: expected ";", got "function" (2:1)`},
 		{"import", "import \"std/i32\"\nfunction main(): i32 { return 0; }\n",
 			`error[P001]: at top level: expected ";", got "function" (2:1)`},
 		{"tuple-type-trailing-comma", "function main(): i32 { let o: Option[(i32, i32,)] = None; return 0; }\n",
-			`error[P001]: at top level: expected a type, got ")" (1:48)`},
+			`error[P001]: in fn 'main': expected a type, got ")" (1:48)`},
 		// A defer block is a block of statements like any other: each ends
 		// with `;`, and a statement match needs no arm values.
 		{"defer-block-trailing-assign", "function main(): i32 { let r: i32 = 0; defer { r = 2 } return r; }\n",
-			`error[P001]: at top level: expected ";", got "}" (1:54)`},
+			`error[P001]: in fn 'main': expected ";", got "}" (1:54)`},
 		{"defer-block-match-statement-clean", "function main(): i32 { let r: i32 = 0; let c: i32 = 1; defer { match (c) { 1 => { r = 2; }, _ => {} } } return r; }\n", ""},
 		{"defer-block-trailing-let", "function main(): i32 { defer { let z: i32 = 1 } return 0; }\n",
-			`error[P001]: at top level: expected ";", got "}" (1:47)`},
+			`error[P001]: in fn 'main': expected ";", got "}" (1:47)`},
 		{"bare-return-clean", "function f(): void { return; }\nfunction main(): i32 { f(); return 0; }\n", ""},
 		{"c-for-step-clean", "function main(): i32 { let t: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { t = t + i; } return t; }\n", ""},
 		{"refused-expression-one-error", "function main(): i32 { let x: i32 = 1; return x +; }\n",
