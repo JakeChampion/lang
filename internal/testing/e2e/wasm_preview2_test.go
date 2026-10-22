@@ -71,7 +71,7 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 	emit.Stdout = &obuf
 	emit.Stderr = &ebuf
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
+		t.Fatalf("fern -target wasm32-wasi: %v\nstdout:\n%s\nstderr:\n%s", err, obuf.String(), ebuf.String())
 	}
 
 	// The output should be a Component Model component, recognised
@@ -151,7 +151,7 @@ function main(): i32 {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm32-wasi: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	input := "alpha\nbeta\ngamma\n"
@@ -229,7 +229,7 @@ function main(): i32 {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm32-wasi: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	// `wasmtime run --dir DIR` preopens DIR as the working
@@ -301,7 +301,7 @@ func TestWasmPreview2FileReadWriteAdapterFree(t *testing.T) {
 	}
 	componentPath := filepath.Join(dir, "rw.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (read+write, no adapter): %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (read+write, no adapter): %v\n%s", err, out)
 	}
 	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
 	if err != nil {
@@ -360,7 +360,7 @@ func TestWasmPreview2FileCloseAdapterFree(t *testing.T) {
 		comp := filepath.Join(dir, name+".wasm")
 		emit := exec.Command(bin, "-target", "wasm32-wasi", "-o", comp, srcPath)
 		if out, err := emit.CombinedOutput(); err != nil {
-			t.Fatalf("fern -target wasm (%s, no adapter): %v\n%s", name, err, out)
+			t.Fatalf("fern -target wasm32-wasi (%s, no adapter): %v\n%s", name, err, out)
 		}
 		// Adapter-free: no preview-1 fd_close — the close drops the stream.
 		printed, err := exec.Command("wasm-tools", "print", comp).CombinedOutput()
@@ -475,7 +475,7 @@ func TestWasmPreview2ReadWriteFile(t *testing.T) {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm32-wasi: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	run := exec.Command("wasmtime", "run", "--dir", dir, componentPath)
@@ -563,7 +563,7 @@ function main(): i32 {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasm: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm32-wasi: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	// Spawn the server. `-S inherit-network` lets the guest
@@ -710,7 +710,7 @@ function main(): i32 {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasm (tcp+stdout): %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm32-wasi (tcp+stdout): %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
 	if err != nil {
@@ -841,7 +841,7 @@ func TestWasmPreview2UdpSendStdoutAdapterFree(t *testing.T) {
 	}
 	componentPath := filepath.Join(dir, "send.component.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (udp+print, no adapter): %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (udp+print, no adapter): %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
 		t.Fatalf("validate: %v\n%s", err, out)
@@ -896,7 +896,7 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 	componentPath := filepath.Join(dir, "send.component.wasm")
 	emit := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath)
 	if out, err := emit.CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (udp send, no adapter): %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (udp send, no adapter): %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -984,7 +984,7 @@ func TestWasmPreview2TcpUdpAdapterFree(t *testing.T) {
 	}
 	componentPath := filepath.Join(dir, "both.component.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (tcp+udp, no adapter): %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (tcp+udp, no adapter): %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
 		t.Fatalf("validate: %v\n%s", err, out)
@@ -1064,7 +1064,7 @@ func TestWasmPreview2UdpFileAdapterFree(t *testing.T) {
 	}
 	componentPath := filepath.Join(dir, "ship.component.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (udp+files, no adapter): %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (udp+files, no adapter): %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
 		t.Fatalf("validate: %v\n%s", err, out)
@@ -1152,7 +1152,7 @@ func TestWasmPreview2TcpFileServerAdapterFree(t *testing.T) {
 	}
 	componentPath := filepath.Join(dir, "srv.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (tcp file server, no adapter): %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (tcp file server, no adapter): %v\n%s", err, out)
 	}
 	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
 	if err != nil {
@@ -1241,7 +1241,7 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 		}
 		comp := filepath.Join(dir, name+".wasm")
 		if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", comp, sp).CombinedOutput(); err != nil {
-			t.Fatalf("fern -target wasm (%s, no adapter): %v\n%s", name, err, out)
+			t.Fatalf("fern -target wasm32-wasi (%s, no adapter): %v\n%s", name, err, out)
 		}
 		if out, err := exec.Command("wasm-tools", "validate", comp).CombinedOutput(); err != nil {
 			t.Fatalf("validate (%s): %v\n%s", name, err, out)
@@ -1326,7 +1326,7 @@ function main(): i32 {
 	}
 	componentPath := filepath.Join(dir, "stdin.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (tcp+stdin, no adapter): %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (tcp+stdin, no adapter): %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
 		t.Fatalf("validate: %v\n%s", err, out)
@@ -1372,7 +1372,7 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
 		}
 		comp := filepath.Join(dir, name+".wasm")
 		if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", comp, sp).CombinedOutput(); err != nil {
-			t.Fatalf("fern -target wasm (%s, no adapter): %v\n%s", name, err, out)
+			t.Fatalf("fern -target wasm32-wasi (%s, no adapter): %v\n%s", name, err, out)
 		}
 		if out, err := exec.Command("wasm-tools", "validate", comp).CombinedOutput(); err != nil {
 			t.Fatalf("validate (%s): %v\n%s", name, err, out)
@@ -1477,7 +1477,7 @@ func itoa(n int) string {
 }
 
 // TestWasmPreview2HttpHandler exercises step 5: the
-// `fern -target wasi-http` build mode emits a component that
+// `fern -target wasm32-wasi-http` build mode emits a component that
 // implements `wasi:http/incoming-handler.handle`. We compile a
 // tiny router (path == /hello → 200 "world"; POST any path
 // echoes the body), spawn `wasmtime serve`, drive it with curl
@@ -1544,7 +1544,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm32-wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	addr := net.JoinHostPort("127.0.0.1", itoa(port))
@@ -1672,7 +1672,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm32-wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	addr := net.JoinHostPort("127.0.0.1", itoa(port))
@@ -1770,7 +1770,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm32-wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	addr := net.JoinHostPort("127.0.0.1", itoa(port))
@@ -1872,7 +1872,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasi-http (logging, no adapter): %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm32-wasi-http (logging, no adapter): %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
 	if err != nil {
@@ -1979,7 +1979,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	}
 	componentPath := filepath.Join(dir, "clock.component.wasm")
 	if out, err := exec.Command(bin, "-target", "wasm32-wasi-http", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasi-http (clock handler, no adapter): %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi-http (clock handler, no adapter): %v\n%s", err, out)
 	}
 	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
 	if err != nil {
@@ -2053,7 +2053,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 
 // TestWasmPreview2HttpHandlerAdapterFree is TestWasmPreview2HttpHandler
-// without the preview-1 adapter: `-target wasi-http` (no -wasi-adapter)
+// without the preview-1 adapter: `-target wasm32-wasi-http` (no -wasi-adapter)
 // composes the wasi:http/incoming-handler component natively through
 // the Go-side ComposeHttpHandler — importing wasi:http/types +
 // wasi:io/streams and exporting wasi:http/incoming-handler. It needs no
@@ -2110,7 +2110,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasi-http (no adapter): %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm32-wasi-http (no adapter): %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -2243,7 +2243,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 	emit.Stdout = &emitOut
 	emit.Stderr = &emitErr
 	if err := emit.Run(); err != nil {
-		t.Fatalf("fern -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+		t.Fatalf("fern -target wasm32-wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
 	}
 
 	addr := net.JoinHostPort("127.0.0.1", itoa(port))

@@ -85,7 +85,7 @@ function main(): i32 {
 		t.Run(tc.name, func(t *testing.T) {
 			asm, _ := compileSourceModload(t, runner, driverBin, tc.src, "-target", "arm64-linux")
 			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes for -target arm64")
+				t.Fatal("self-host compiler emitted 0 bytes for -target arm64-linux")
 			}
 			if !strings.Contains(asm, ".Lssa_") {
 				t.Error("did not lower through the arm64 IR path, which an " +
