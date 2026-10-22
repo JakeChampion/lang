@@ -58,69 +58,69 @@
 # perf-aarch64 lanes' measurements of the branch.
 
 x86_64/array_append.text	1058
-x86_64/array_append.ir	13383435
+x86_64/array_append.ir	13366203
 x86_64/array_index.text	1047
-x86_64/array_index.ir	16315639
+x86_64/array_index.ir	16315255
 x86_64/array_scale_f64.text	1175
-x86_64/array_scale_f64.ir	21301811
-x86_64/array_with.ir	37759033
+x86_64/array_scale_f64.ir	21301529
+x86_64/array_with.ir	37759081
 x86_64/array_with.text	1202
 x86_64/ascii_scan.text	1259
-x86_64/ascii_scan.ir	37213680
+x86_64/ascii_scan.ir	37213728
 x86_64/byte_copy_append.text	1122
-x86_64/byte_copy_append.ir	50303032
+x86_64/byte_copy_append.ir	50303080
 x86_64/byte_copy_with.text	1075
-x86_64/byte_copy_with.ir	49705206
+x86_64/byte_copy_with.ir	49705254
 x86_64/call_overhead.text	233
-x86_64/call_overhead.ir	8250759
+x86_64/call_overhead.ir	8250807
 x86_64/closure_call.text	890
-x86_64/closure_call.ir	63018106
+x86_64/closure_call.ir	63018154
 x86_64/enum_match.text	1007
-x86_64/enum_match.ir	50850037
-x86_64/http_hello.text	15722
-x86_64/http_hello.ir	24268390
+x86_64/enum_match.ir	50850085
+x86_64/http_hello.text	16099
+x86_64/http_hello.ir	23640438
 x86_64/int_loop.text	178
-x86_64/int_loop.ir	12000022
+x86_64/int_loop.ir	12000070
 x86_64/map_int.text	5754
-x86_64/map_int.ir	38013213
+x86_64/map_int.ir	37644884
 x86_64/map_probe_chain.text	5761
-x86_64/map_probe_chain.ir	354691233
+x86_64/map_probe_chain.ir	353681009
 x86_64/map_string.text	6681
-x86_64/map_string.ir	62112069	2
+x86_64/map_string.ir	61563966	2
 x86_64/ordmap_insert.text	2828
-x86_64/ordmap_insert.ir	105979300
+x86_64/ordmap_insert.ir	105979348
 x86_64/pmap_insert.text	2600
-x86_64/pmap_insert.ir	56484087
-x86_64/pvec_with.text	2778
+x86_64/pmap_insert.ir	56484135
+x86_64/pvec_with.text	2772
 x86_64/pvec_with.ir	56311395
-x86_64/record_update.ir	109849111
-x86_64/record_update.text	1513
+x86_64/record_update.ir	37759081
+x86_64/record_update.text	1293
 x86_64/sort_inplace.text	1302
-x86_64/sort_inplace.ir	43386475
+x86_64/sort_inplace.ir	43049023
 x86_64/sort_ints.text	1777
-x86_64/sort_ints.ir	31486513
+x86_64/sort_ints.ir	31264495
 x86_64/sort_strings.text	3070
-x86_64/sort_strings.ir	105209600
+x86_64/sort_strings.ir	105294698
 x86_64/string_build.text	1839
-x86_64/string_build.ir	42789760
+x86_64/string_build.ir	42429808
 x86_64/string_count_byte.text	1149
-x86_64/string_count_byte.ir	135589294
+x86_64/string_count_byte.ir	135589342
 x86_64/string_find_byte.text	1516
-x86_64/string_find_byte.ir	43567332
+x86_64/string_find_byte.ir	43567380
 x86_64/string_rfind_byte.text	1585
-x86_64/string_rfind_byte.ir	43576238
+x86_64/string_rfind_byte.ir	43576286
 x86_64/string_scan.text	2085
-x86_64/string_scan.ir	53025531
+x86_64/string_scan.ir	52603745
 x86_64/string_slice.text	816
-x86_64/string_slice.ir	38700038
+x86_64/string_slice.ir	38700086
 x86_64/struct_drop.text	2213
-x86_64/struct_drop.ir	191340526
+x86_64/struct_drop.ir	191340574
 x86_64/tokenize.text	1050
-x86_64/tokenize.ir	36960039
-x86_64/utf8_ingest_unchecked.text	7216
-x86_64/utf8_ingest_unchecked.ir	2801108
-x86_64/utf8_ingest_validated.text	7464
-x86_64/utf8_ingest_validated.ir	5916089
+x86_64/tokenize.ir	36960087
+x86_64/utf8_ingest_unchecked.text	7116
+x86_64/utf8_ingest_unchecked.ir	2786713
+x86_64/utf8_ingest_validated.text	7364
+x86_64/utf8_ingest_validated.ir	5869315
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -269,6 +269,14 @@ x86_64/utf8_ingest_validated.ir	5916089
 # records. The x86_64 figure is a local callgrind count on the merged
 # tree. The aarch64 figure is the perf lane's at the earlier head.
 #
+# Re-pinned 2026-10-22 (#12969) on every x86_64 row from a local
+# perf-bench run. A record updater is spliced into its callers, and
+# semdead drops a record cycle that nothing reads. The rows that moved by
+# 1% or more: record_update.ir -65.63% and .text -14.54%,
+# perceus_rbtree_ck.ir -14.51%, http_hello.ir -2.59% and .text +2.40%.
+# utf8_ingest_unchecked.text moved -1.39% and utf8_ingest_validated.text
+# -1.34%. Every other row moved by less than 1%.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -342,15 +350,15 @@ aarch64/utf8_ingest_validated.ir	6278000
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	1799
-x86_64/perceus_cfold.ir	54667240
+x86_64/perceus_cfold.ir	54667288
 x86_64/perceus_deriv.text	2593
-x86_64/perceus_deriv.ir	66901954
+x86_64/perceus_deriv.ir	66902002
 x86_64/perceus_nqueens.text	1473
-x86_64/perceus_nqueens.ir	93164028
+x86_64/perceus_nqueens.ir	93164076
 x86_64/perceus_rbtree.text	2778
-x86_64/perceus_rbtree.ir	56980847
-x86_64/perceus_rbtree_ck.text	3022
-x86_64/perceus_rbtree_ck.ir	65400121
+x86_64/perceus_rbtree.ir	56730015
+x86_64/perceus_rbtree_ck.text	2994
+x86_64/perceus_rbtree_ck.ir	55908895
 aarch64/perceus_cfold.text	2046
 aarch64/perceus_cfold.ir	61163070
 aarch64/perceus_deriv.text	2878
