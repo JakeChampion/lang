@@ -9454,12 +9454,14 @@ pub function escape_for_ascii(s: string): string {
 }
 
 pub function has_main(mod: parser.Module): boolean {
-  let i: i32 = 0;
-  while (i < mod.funcs.len()) {
-    if (mod.funcs[i].name == "main") {
+  return declares_main(mod.funcs);
+}
+
+pub function declares_main(funcs: parser.FuncDecl[]): boolean {
+  for fd in funcs {
+    if (fd.name == "main") {
       return true;
     }
-    i = i + 1;
   }
   return false;
 }
