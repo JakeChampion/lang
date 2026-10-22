@@ -158,6 +158,18 @@ type FloatType struct {
 	// the same way NumberType.Polymorphic works for ints.
 	Polymorphic bool
 }
+
+// LanesType is a 128-bit vector of floats: `f64x2` (Width 64, two lanes) or
+// `f32x4` (Width 32, four lanes). A lane value lives in a local, a parameter
+// or a result, never in a field or an element.
+type LanesType struct {
+	Width    int
+	Spelling string
+}
+
+// Lanes is how many elements the vector holds.
+func (l LanesType) Lanes() int { return 128 / l.Width }
+
 type ArrayType struct{ Elem Type }
 
 // StreamType is the WASI Preview-3 async data channel `Stream[T]` — a sequence
@@ -502,6 +514,7 @@ func (StringType) isType()   {}
 func (StrType) isType()      {}
 func (CharType) isType()     {}
 func (FloatType) isType()    {}
+func (LanesType) isType()    {}
 func (ArrayType) isType()    {}
 func (StreamType) isType()   {}
 func (SliceType) isType()    {}
@@ -531,6 +544,9 @@ func (StrType) String() string    { return "str" }
 func (CharType) String() string   { return "char" }
 func (f FloatType) String() string {
 	return fmt.Sprintf("f%d", f.NormalWidth())
+}
+func (l LanesType) String() string {
+	return fmt.Sprintf("f%dx%d", l.Width, l.Lanes())
 }
 
 // typeString renders t as a postfix `[]` element. Only a FuncType needs
@@ -1289,6 +1305,8 @@ func ReceiverTypeName(t Type) (string, bool) {
 			return "f64", true
 		}
 		return "f32", true
+	case LanesType:
+		return rt.String(), true
 	case BoolType:
 		return "boolean", true
 	default:
@@ -1323,6 +1341,9 @@ func Equal(a, b Type) bool {
 	case FloatType:
 		y, ok := b.(FloatType)
 		return ok && x.NormalWidth() == y.NormalWidth()
+	case LanesType:
+		y, ok := b.(LanesType)
+		return ok && x.Width == y.Width
 	case ArrayType:
 		y, ok := b.(ArrayType)
 		return ok && Equal(x.Elem, y.Elem)
@@ -1885,6 +1906,9 @@ type Binary struct {
 	// IsFloat is set by the checker when both operands are floats,
 	// so codegen knows to emit f32 instructions instead of i32.
 	IsFloat bool
+	// IsLanes is set by the checker when both operands are one lane type
+	// (`f64x2` / `f32x4`), so no integer or float width applies.
+	IsLanes bool
 	// FloatWidth is set by the checker for float binary ops: 32 for
 	// f32 (the default), 64 for f64. Codegen uses it to pick
 	// f32.* vs f64.* instructions.

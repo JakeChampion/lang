@@ -1,0 +1,5 @@
+function main(): i32 {
+  let p: usize = __raw_arr_box(1);
+  __fern_rc_dec(p);
+  return 0;
+}

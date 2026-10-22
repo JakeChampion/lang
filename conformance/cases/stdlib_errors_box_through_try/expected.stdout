@@ -1,0 +1,16 @@
+brotli: malformed: code
+malformed compressed data: code
+zstd: malformed: code
+2:3: bad value
+Bad Request: bad body
+body is not valid UTF-8
+outgoing HTTP request has an invalid field: host
+outgoing HTTP request failed with code 7
+outgoing HTTP response body exceeds its limit
+outgoing HTTP response body ended early
+outgoing HTTP response is unavailable
+expected application/json, got text/plain
+missing name
+expected application/x-www-form-urlencoded, got text/plain
+invalid HTTP Huffman code
+decoded HTTP Huffman data exceeds its limit

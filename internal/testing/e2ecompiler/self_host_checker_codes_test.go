@@ -1602,6 +1602,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e082-array-slice", "function f(xs: i32[]): i32 { let w: [i32] = xs[0:2]; let g = (): i32 => w.len(); return g(); }\nfunction main(): i32 { return f([1, 2, 3]); }\n", []string{"E082"}},
 		{"e082-record-merged-past-its-source", "struct P { a: str }\nstruct Holder { f: () => i32, n: i32 }\nfunction mk(n: i32): string { let s: string = \"ab\"; let i: i32 = 0; while (i < n) { s = s + \"c\"; i = i + 1; } return s; }\nfunction g(n: i32): i32 {\n    let h: Holder = Holder { f: () => 0, n: 0 };\n    if (n != 0) {\n        let s: string = mk(n);\n        let p: P = P { a: slice_unchecked(s, 1, 4) };\n        h = Holder { f: () => p.a.len() * 10 + (p.a[0] as i32) - 97, n: n };\n    }\n    return h.f() * 10 + h.n;\n}\nfunction main(): i32 { return g(3) + g(0); }\n", []string{"E082"}},
 		{"e082-tuple", "function f(s: string): i32 { let t: (str, i32) = (slice_unchecked(s, 0, 1), 1); let g = (): i32 => t.1; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		// E085: a lane value lives only in a local, a parameter or a result,
+		// so a container, a field, a function value and a lambda holding one
+		// are each refused; a lane builtin's index is a literal (E038), and a
+		// lane value has no comparison (E041) or mixed arithmetic (E009).
+		{"e085-lane-array", "function main(): i32 { let xs: f64x2[] = []; return xs.len(); }\n", []string{"E085"}},
+		{"e085-lane-field", "struct H { v: f64x2 }\nfunction main(): i32 { return 0; }\n", []string{"E085"}},
+		{"e085-lane-function-value", "function t(v: f64x2): f64x2 { return v + v; }\nfunction main(): i32 { let f = t; return 0; }\n", []string{"E085"}},
+		{"e085-lane-lambda", "function main(): i32 { let g = (v: f64x2): f64x2 => v; return 0; }\n", []string{"E085"}},
+		{"e085-lane-capture", "function main(): i32 { let c: f64x2 = __f64x2_splat(1.0); let g = (x: f64): f64 => x + __f64x2_lane(c, 0); return 0; }\n", []string{"E085"}},
+		{"e038-lane-index", "function main(): i32 { let v: f64x2 = __f64x2_splat(1.0); let i: i32 = 1; let x: f64 = __f64x2_lane(v, i); return 0; }\n", []string{"E038"}},
+		{"e041-lane-compare", "function main(): i32 { let v: f64x2 = __f64x2_splat(1.0); if (v == v) { return 1; } return 0; }\n", []string{"E041"}},
+		{"e009-lane-scalar", "function main(): i32 { let v: f64x2 = __f64x2_splat(1.0); let w = v + 1.0; return 0; }\n", []string{"E009"}},
 		{"e082-enum-payload", "enum Tok { Word(str), Num(i32) }\nfunction f(s: string): i32 { let t: Tok = Word(slice_unchecked(s, 0, 1)); let g = (): i32 => match (t) { Word(w) => w.len(), Num(n) => n }; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
 		{"e082-option", "function f(s: string): i32 { let o: Option[str] = Some(slice_unchecked(s, 0, 1)); let g = (): i32 => match (o) { Some(x) => x.len(), None => 0 }; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
 		{"e082-nested-function", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); function inner(): i32 { return v.len(); } return inner(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},

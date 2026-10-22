@@ -11,8 +11,8 @@ import (
 // caller takes the variant apart, returns its tag and the payload beside it
 // (sempair). The program covers a declared enum, Option and Result; returns
 // of constructions, of a parameter, of another paired call and of a recursive
-// one; and functions that stay boxed: one a caller keeps the variant of, one
-// used as a value and one with an i64 payload.
+// one; and functions that stay boxed: one a caller keeps the variant of, and
+// one used as a value. `wide`'s i64 payload returns in the scalar lanes.
 //
 // The exit code: 1 for a wrong value, 2 for an allocation in the loop, which
 // only matches on what the paired functions return, 99 for a count that went
@@ -583,9 +583,156 @@ function main(): i32 {
 }
 `
 
+// A variant whose payloads are all scalars, one of them wider than a word or
+// a tuple of up to three scalars, returns its position as a word and its
+// payload in the scalar lanes (semscalarreturn). The program covers Option of
+// i64 and of f64, Option and Result of a tuple, a declared enum with a
+// three-element tuple, a return of another such call, and a return of a
+// variable rather than a construction. None of them allocates in the loop.
+const pairLanesProg = `import "std/bench";
+
+enum Step { Go((i32, i64, i32)), Stop, Skip(f64) }
+
+@noinline function wide(n: i32): Option[i64] {
+  if (n % 4 == 3) {
+    return None;
+  }
+  return Some(n as i64 * 4000000000 as i64);
+}
+
+@noinline function forward(n: i32): Option[i64] {
+  return wide(n + 1);
+}
+
+@noinline function held(n: i32): Option[i64] {
+  let r: Option[i64] = None;
+  if (n % 2 == 0) {
+    r = Some(n as i64 + 9000000000 as i64);
+  }
+  return r;
+}
+
+@noinline function half(n: i32): Option[f64] {
+  if (n % 5 == 0) {
+    return None;
+  }
+  return Some(n as f64 / 2.0);
+}
+
+@noinline function find(xs: i64[], want: i64): Option[(i32, i64)] {
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (xs[i] == want) {
+      return Some((i, xs[i] * 3000000000 as i64));
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+@noinline function decode(buf: [u8], at: i32): Result[(i64, i32), i32] {
+  if (at >= buf.len()) {
+    return Err(1);
+  }
+  let v: i64 = buf[at] as i64;
+  if (v > 200) {
+    return Err(2);
+  }
+  return Ok((v * 3000000000 as i64, at + 1));
+}
+
+@noinline function step(n: i32): Step {
+  if (n % 3 == 0) {
+    return Go((n, n as i64 * 5000000000 as i64, 0 - n));
+  }
+  if (n % 3 == 1) {
+    return Stop;
+  }
+  return Skip(n as f64 * 0.25);
+}
+
+function main(): i32 {
+  let xs: i64[] = [5 as i64, 6 as i64, 7 as i64];
+  let buf: u8[] = [3 as u8, 250 as u8, 7 as u8];
+  let total: i64 = 0;
+  let i: i32 = 0;
+  let a0: i64 = bench.alloc_count();
+  while (i < 12) {
+    match (wide(i)) {
+      Some(w) => {
+        total = total + w;
+      },
+      None => {
+        total = total + 1;
+      }
+    }
+    match (forward(i)) {
+      Some(w) => {
+        total = total + w / 2;
+      },
+      None => {}
+    }
+    match (held(i)) {
+      Some(w) => {
+        total = total + w;
+      },
+      None => {
+        total = total + 3;
+      }
+    }
+    match (half(i)) {
+      Some(h) => {
+        total = total + (h * 4.0) as i64;
+      },
+      None => {}
+    }
+    match (find(xs, (i % 4 + 5) as i64)) {
+      Some(p) => {
+        total = total + p.1 + p.0 as i64;
+      },
+      None => {
+        total = total + 11;
+      }
+    }
+    match (decode(buf, i % 4)) {
+      Ok(r) => {
+        total = total + r.0 + r.1 as i64;
+      },
+      Err(e) => {
+        total = total + e as i64 * 100;
+      }
+    }
+    match (step(i)) {
+      Go(g) => {
+        total = total + g.1 + (g.0 * g.2) as i64;
+      },
+      Stop => {
+        total = total + 7;
+      },
+      Skip(f) => {
+        total = total + (f * 8.0) as i64;
+      }
+    }
+    i = i + 1;
+  }
+  let allocated: i64 = bench.alloc_count() - a0;
+  print(total.to_string() + " " + allocated.to_string());
+  if (total != 690000001061 as i64) {
+    return 1;
+  }
+  if (allocated != 0) {
+    return 2;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
+`
+
 func TestSelfHostPairReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}}
+	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}}
 	for _, prog := range progs {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(prog.name+"/"+target, func(t *testing.T) {

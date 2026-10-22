@@ -1,0 +1,29 @@
+// E085: a lane value lives only in a local, a parameter or a result. An
+// array, a tuple, a map, a field, a payload or a function type that holds
+// one is refused, and so is a function value that would carry one: a
+// function with a lane parameter named as a value, a lambda that takes or
+// returns one, and a lambda that captures one. `ok` shows what is accepted.
+import "std/f64";
+
+struct Holder { v: f64x2 }
+
+enum Maybe { Some2(f64x2), None2 }
+
+function twice(v: f64x2): f64x2 {
+  return v + v;
+}
+
+function ok(v: f64x2): f64x2 {
+  let w: f64x2 = twice(v);
+  return w;
+}
+
+function main(): i32 {
+  let xs: f64x2[] = [];
+  let t: (f64x2, i32) = (__f64x2_splat(1.0), 2);
+  let f = twice;
+  let g = (v: f64x2): f64 => __f64x2_lane(v, 0);
+  let c: f64x2 = ok(__f64x2_splat(1.0));
+  let h = (x: f64): f64 => x + __f64x2_lane(c, 1);
+  return 0;
+}

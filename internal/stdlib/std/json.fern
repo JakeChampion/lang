@@ -35,6 +35,8 @@ import "std/u32";
 import "std/u64";
 // Float `to_string` for the `impl Json for f32 / f64` serialisers.
 import "std/f64";
+import "std/error";
+import "core/cmp";
 
 // JsonValue is a JSON document. A number keeps its text, since JSON fixes no
 // precision; `s.parse_int()` / `s.parse_float()` read it.
@@ -1017,6 +1019,14 @@ pub struct JsonError {
   line: i32,
   col: i32,
 }
+
+pub function (e: JsonError) message(): string {
+  return e.to_string();
+}
+
+impl error.Error for JsonError {}
+
+impl cmp.Display for JsonError {}
 
 pub function (e: JsonError) to_string(): string {
   return e.line.to_string() + ":" + e.col.to_string() + ": " + e.message;
