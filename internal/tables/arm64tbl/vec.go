@@ -73,6 +73,7 @@ var VecLogical3 = VecTable{
 	Ops: []VecOp{
 		{"and", false, 0, ArrB}, {"bic", false, 1, ArrB}, {"orr", false, 2, ArrB},
 		{"orn", false, 3, ArrB}, {"eor", true, 0, ArrB},
+		{"bsl", true, 1, ArrB}, {"bit", true, 2, ArrB}, {"bif", true, 3, ArrB},
 	},
 }
 
@@ -113,6 +114,7 @@ var VecFP3 = VecTable{
 		{"fadd", false, 0x1A, 0}, {"fsub", false, 0x1A, 1}, {"fmul", true, 0x1B, 0},
 		{"fdiv", true, 0x1F, 0}, {"fmax", false, 0x1E, 0}, {"fmin", false, 0x1E, 1},
 		{"fcmeq", false, 0x1C, 0}, {"fcmge", true, 0x1C, 0}, {"fcmgt", true, 0x1C, 1},
+		{"fmla", false, 0x19, 0}, {"fmls", false, 0x19, 1},
 	},
 }
 
@@ -125,6 +127,9 @@ var VecFP2Misc = VecTable{
 		{"fneg", true, 0x0F, 1}, {"fabs", false, 0x0F, 1}, {"fsqrt", true, 0x1F, 1},
 		{"scvtf", false, 0x1D, 0}, {"ucvtf", true, 0x1D, 0},
 		{"fcvtzs", false, 0x1B, 1}, {"fcvtzu", true, 0x1B, 1},
+		{"frintn", false, 0x18, 0}, {"frintm", false, 0x19, 0},
+		{"frintp", false, 0x18, 1}, {"frintz", false, 0x19, 1},
+		{"frinta", true, 0x18, 0}, {"frintx", true, 0x19, 0}, {"frinti", true, 0x19, 1},
 	},
 }
 

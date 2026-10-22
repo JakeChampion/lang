@@ -3531,6 +3531,12 @@ function x86_gas_imm3a_op(mnem: string): i32 {
     "roundsd" => {
       return 11;
     },
+    "roundps" => {
+      return 8;
+    },
+    "roundpd" => {
+      return 9;
+    },
     "pcmpestri" => {
       return 97;
     },
@@ -3552,7 +3558,7 @@ function x86_gas_imm3a_op(mnem: string): i32 {
   }
 }
 
-// x86_gas_shuf_op: the [Prefix] 0F Op /r ib shuffles; packed as pfx*256 + op.
+// x86_gas_shuf_op: the [Prefix] 0F Op /r ib shuffles and the packed compares, whose imm8 is the predicate; packed as pfx*256 + op.
 function x86_gas_shuf_op(mnem: string): i32 {
   match (mnem) {
     "pshufd" => {
@@ -3563,6 +3569,12 @@ function x86_gas_shuf_op(mnem: string): i32 {
     },
     "shufpd" => {
       return 26310;
+    },
+    "cmpps" => {
+      return 194;
+    },
+    "cmppd" => {
+      return 26306;
     },
     _ => {
       return 0 - 1;
@@ -4452,8 +4464,9 @@ function x86_vex(own buf: i32[], rex_r: boolean, rex_x: boolean, rex_b: boolean,
 
 // x86_gas_vex_rm emits one VEX instruction whose ModRM.rm is a memory
 // operand or a vector register: the prefix from the operand's REX bits, the
-// opcode, then the ModRM (+SIB+disp). l is VEX.L, set for the 256-bit form.
-function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string, l: boolean): X86Asm {
+// opcode, then the ModRM (+SIB+disp). l is VEX.L, set for the 256-bit form;
+// w is VEX.W, which the FMA forms read as the element width.
+function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: i32, op: i32, reg: i32, rm: string, l: boolean, w: boolean): X86Asm {
   if (x86_gas_has_paren(rm)) {
     let m: GasMem = x86_gas_parse_mem(rm);
     if (!x86_gas_mem_ok(m)) {
@@ -4467,7 +4480,7 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
       }
       bs = m.base >= 8;
     }
-    x86_push_arr(a.code, x86_vex([], reg >= 8, ix, bs, mmmmm, false, vvvv, l, pp));
+    x86_push_arr(a.code, x86_vex([], reg >= 8, ix, bs, mmmmm, w, vvvv, l, pp));
     buf_push_byte(a.code, op);
     return x86_gas_membytes(a, reg, m, 0);
   }
@@ -4476,7 +4489,7 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
     return x86_gas_bad(a, mnem + " " + rm);
   }
   let rr: i32 = rv & 15;
-  x86_push_arr(a.code, x86_vex([], reg >= 8, false, rr >= 8, mmmmm, false, vvvv, l, pp));
+  x86_push_arr(a.code, x86_vex([], reg >= 8, false, rr >= 8, mmmmm, w, vvvv, l, pp));
   buf_push_byte(a.code, op);
   buf_push_byte(a.code, x86_modrm(3, reg, rr));
   return a;
@@ -4499,14 +4512,14 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     if (id < 0 || !x86_gas_has_paren(src)) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    return x86_gas_vex_rm(a, mnem, 2, 1, 0, 90, id, src, true);
+    return x86_gas_vex_rm(a, mnem, 2, 1, 0, 90, id, src, true, false);
   }
   if (mnem == "vpbroadcastb" && x86_gas_has_paren(src)) {
     let md: i32 = x86_gas_ymm(dst);
     if (md < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
-    return x86_gas_vex_rm(a, mnem, 2, 1, 0, 120, md, src, true);
+    return x86_gas_vex_rm(a, mnem, 2, 1, 0, 120, md, src, true, false);
   }
   if (mnem == "vpbroadcastb" || mnem == "vbroadcastsd") {
     let bd: i32 = x86_gas_ymm(dst);
@@ -4553,9 +4566,9 @@ function x86_gas_vex_move(own a: X86Asm, mnem: string, src: string, dst: string)
     op = 16;
   }
   if (store) {
-    return x86_gas_vex_rm(a, mnem, 1, pp, 0, op + x86_vex_store_delta(mnem), v & 15, dst, v >= 16);
+    return x86_gas_vex_rm(a, mnem, 1, pp, 0, op + x86_vex_store_delta(mnem), v & 15, dst, v >= 16, false);
   }
-  return x86_gas_vex_rm(a, mnem, 1, pp, 0, op, v & 15, src, v >= 16);
+  return x86_gas_vex_rm(a, mnem, 1, pp, 0, op, v & 15, src, v >= 16, false);
 }
 
 // x86_vex_store_delta is how far a move's store opcode sits above its load:
@@ -4575,9 +4588,16 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 // map * 256 + opcode, or -1: vpcmpeqb (0F 74), vmulpd (0F 59), vpsubusb (0F
 // D8), vpminub (0F DA), vpand (0F DB), vpaddusb (0F DC), vpor (0F EB), vpxor
 // (0F EF), vpsubb
-// (0F F8) and vpshufb (0F38 00).
+// (0F F8), vpshufb (0F38 00) and the fused multiply-adds vfmadd213ps /
+// vfmadd213pd (0F38 A8, W0 / W1).
 function x86_vex_three_op(mnem: string): i32 {
   match (mnem) {
+    "vfmadd213ps" => {
+      return 512 + 168;
+    },
+    "vfmadd213pd" => {
+      return 512 + 168;
+    },
     "vpcmpeqb" => {
       return 256 + 116;
     },
@@ -4636,7 +4656,7 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
     return a;
   }
   let mo: i32 = x86_vex_three_op(mnem);
-  return x86_gas_vex_rm(a, mnem, mo / 256, 1, v1 & 15, mo & 255, vd & 15, ops[0], vd >= 16);
+  return x86_gas_vex_rm(a, mnem, mo / 256, 1, v1 & 15, mo & 255, vd & 15, ops[0], vd >= 16, mnem == "vfmadd213pd");
 }
 
 // BMI1 ANDN: AT&T `other, inverted, dst`, or dst = ~inverted & other.

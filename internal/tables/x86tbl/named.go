@@ -176,16 +176,20 @@ var Named = []NamedFamily{
 	{Name: "imm3a", Doc: "the 66 0F 3A Op /r ib three-operand forms with an xmm destination. pclmulqdq's imm8 picks a 64-bit half of each source, which gas disassembles under a per-value alias name; the encoding is one row", FernFn: "x86_gas_imm3a_op", Pack: opOnly, Ops: []NamedOp{
 		{ATT: "roundss", Op: 0x0A, ATTProbe: "roundss $0, %xmm1, %xmm0"},
 		{ATT: "roundsd", Op: 0x0B, ATTProbe: "roundsd $0, %xmm1, %xmm0"},
+		{ATT: "roundps", Op: 0x08, ATTProbe: "roundps $1, %xmm1, %xmm0"},
+		{ATT: "roundpd", Op: 0x09, ATTProbe: "roundpd $1, %xmm1, %xmm0"},
 		{ATT: "pcmpestri", Op: 0x61, ATTProbe: "pcmpestri $0, %xmm1, %xmm0"},
 		{ATT: "pcmpistri", Op: 0x63, ATTProbe: "pcmpistri $0, %xmm1, %xmm0"},
 		{ATT: "pclmulqdq", Op: 0x44, ATTProbe: "pclmulqdq $0, %xmm1, %xmm0"},
 		{ATT: "aeskeygenassist", Op: 0xDF, ATTProbe: "aeskeygenassist $1, %xmm1, %xmm0"},
 		{ATT: "palignr", Op: 0x0F, ATTProbe: "palignr $4, %xmm1, %xmm0"},
 	}},
-	{Name: "shuf", Doc: "the [Prefix] 0F Op /r ib shuffles; packed as pfx*256 + op", FernFn: "x86_gas_shuf_op", Pack: pfxOp, Ops: []NamedOp{
+	{Name: "shuf", Doc: "the [Prefix] 0F Op /r ib shuffles and the packed compares, whose imm8 is the predicate; packed as pfx*256 + op", FernFn: "x86_gas_shuf_op", Pack: pfxOp, Ops: []NamedOp{
 		{ATT: "pshufd", Prefix: 0x66, Op: 0x70, ATTProbe: "pshufd $0, %xmm2, %xmm1"},
 		{ATT: "shufps", Prefix: 0x00, Op: 0xC6, ATTProbe: "shufps $0, %xmm2, %xmm1"},
 		{ATT: "shufpd", Prefix: 0x66, Op: 0xC6, ATTProbe: "shufpd $1, %xmm2, %xmm1"},
+		{ATT: "cmpps", Prefix: 0x00, Op: 0xC2, ATTProbe: "cmpps $1, %xmm2, %xmm1"},
+		{ATT: "cmppd", Prefix: 0x66, Op: 0xC2, ATTProbe: "cmppd $4, %xmm2, %xmm1"},
 	}},
 	{Name: "pextr", Doc: "lane extract into a GPR or memory", Ops: []NamedOp{
 		{ATT: "pextrb", ATTProbe: "pextrb $0, %xmm1, %eax"},
