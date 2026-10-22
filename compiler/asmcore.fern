@@ -1138,9 +1138,11 @@ pub function rt_src_u64_to_string(): string {
 }
 
 // sysno is the ONE table of syscall numbers the Fern runtime leaves are
-// generated against (#2649). `t` is the emitting backend's target — "x86_64",
-// "arm64-linux" or "arm64-darwin" — and the returned decimal string is spliced
-// straight into the helper source, so a single rt_src_* body serves all three.
+// generated against (#2649). `t` is the runtime key, the target whose kernel
+// ABI the body is built for: "x86-64-linux", "arm64-linux" (arm64-android too,
+// whose kernel ABI it is) or "arm64-darwin". The returned decimal string is
+// spliced straight into the helper source, so a single rt_src_* body serves all
+// three.
 //
 // Why the number is baked in rather than translated later: on the Mach-O path
 // `darwinize` remaps a syscall by matching a literal `mov x8, #N`, which the
@@ -1157,12 +1159,14 @@ pub function rt_src_u64_to_string(): string {
 // child still asked for).
 pub function sysno(t: string, name: string): string {
   let n: string = "-1";
-  if (t == "x86_64") {
+  if (t == "x86-64-linux") {
     n = sysno_x86_64(name);
   } else if (t == "arm64-darwin") {
     n = sysno_arm64_darwin(name);
-  } else {
+  } else if (t == "arm64-linux") {
     n = sysno_arm64_linux(name);
+  } else {
+    unknown_rt_key(t);
   }
   if (n == "-1") {
     eprint("error: internal: a runtime body asks for the " + t + " syscall number of " + name + ", which the sysno table has no row for");
@@ -2341,10 +2345,20 @@ pub function oflag(t: string, name: string): string {
   if (t == "arm64-darwin") {
     return oflag_darwin(name);
   }
-  if (t == "x86_64") {
+  if (t == "x86-64-linux") {
     return oflag_x86_64(name);
   }
-  return oflag_arm64(name);
+  if (t == "arm64-linux") {
+    return oflag_arm64(name);
+  }
+  unknown_rt_key(t);
+  return "";
+}
+
+// unknown_rt_key stops the compile at a runtime key no table has, a compiler bug.
+function unknown_rt_key(t: string): void {
+  eprint("error: internal: a runtime body is built for \"" + t + "\", which is not a runtime key (x86-64-linux, arm64-linux, arm64-darwin)");
+  exit(3);
 }
 
 function oflag_darwin(name: string): string {
@@ -2629,9 +2643,9 @@ pub function rt_src_random_i32(t: string): string {
 pub function rt_src_open_res(t: string): string {
   let xlate: string = "";
   if (t == "arm64-darwin") {
-    xlate = "if (f == " + oflag("x86_64", "wr_creat_trunc") + ") { f = " + oflag(t, "wr_creat_trunc") + "; } "
-      + "if (f == " + oflag("x86_64", "wr_creat_append") + ") { f = " + oflag(t, "wr_creat_append") + "; } "
-      + "if (f == " + oflag("x86_64", "wr_creat_excl") + ") { f = " + oflag(t, "wr_creat_excl") + "; } ";
+    xlate = "if (f == " + oflag("x86-64-linux", "wr_creat_trunc") + ") { f = " + oflag(t, "wr_creat_trunc") + "; } "
+      + "if (f == " + oflag("x86-64-linux", "wr_creat_append") + ") { f = " + oflag(t, "wr_creat_append") + "; } "
+      + "if (f == " + oflag("x86-64-linux", "wr_creat_excl") + ") { f = " + oflag(t, "wr_creat_excl") + "; } ";
   }
   return "function __fern_open_res(path: string, flags: i32, mode: i32): Result[i32, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let f: i32 = flags; " + xlate + "let pathz_own: string = __raw_string(pathz, plen + 1); " + slash_write_refusal(t, " && (f & " + oflag(t, "slash_write") + ") != 0") + "let fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, f as i64, mode as i64) as i32; if (fd >= 0 && fd < 3) { let moved: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd as i64, 0, 3) as i32; __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); fd = moved; } if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } " + slash_dir_check(t) + "return Ok(fd); }";
 }
@@ -2805,7 +2819,7 @@ pub function rt_src_poll(t: string): string {
   if (t == "arm64-darwin") {
     return rt_src_poll_kqueue(t);
   }
-  if (t == "x86_64") {
+  if (t == "x86-64-linux") {
     call = "__syscall3(" + sysno(t, "poll") + ", buf as i64, n as i64, timeout_ms as i64);";
   } else {
     call = "let tmo: usize = 0 as usize; if (timeout_ms >= 0) { let ts: usize = __raw_scratch(16); __raw_store_ptr(ts, 0, (timeout_ms / 1000) as usize); __raw_store_ptr(ts, 1, ((timeout_ms % 1000) * 1000000) as usize); tmo = ts; } __syscall5(" + sysno(t, "ppoll") + ", buf as i64, n as i64, tmo as i64, 0, 0);";
@@ -3089,7 +3103,7 @@ pub function rt_src_proc_fork(t: string): string {
 // fork at all and spells it clone(SIGCHLD, 0, 0, 0, 0). Never called for
 // arm64-darwin, for the reason above.
 function fork_expr(t: string): string {
-  if (t == "x86_64") {
+  if (t == "x86-64-linux") {
     return "__syscall3(" + sysno(t, "fork") + ", 0, 0, 0)";
   }
   return "__syscall5(" + sysno(t, "clone") + ", 17, 0, 0, 0, 0)";
@@ -3812,7 +3826,7 @@ function signal_watch_src(t: string): string {
       + "let act2: usize = __raw_scratch(32); let z2: i32 = 0; while (z2 < 32) { __raw_store8(act2, z2, 0); z2 = z2 + 1; } return __syscall4(" + sysno(t, "sigaction") + ", fd as i64, act2 as i64, 0, 8) as i32; } ";
   }
   let data_at: string = "8";
-  if (t == "x86_64") {
+  if (t == "x86-64-linux") {
     data_at = "4";
   }
   return "if (op == 4 || op == 5) { if (fd <= 0 || fd > 64) { return 0 - 22; } let set: usize = __raw_scratch(8); let w: i32 = 0; while (w < 8) { __raw_store8(set, w, 0); w = w + 1; } let bit: i32 = fd - 1; let bit_off: i32 = 0; if (fd > 32) { bit = fd - 33; bit_off = 4; } __raw_store8(set, bit_off + bit / 8, 1 << (bit % 8)); "
@@ -3860,14 +3874,14 @@ pub function rt_src_reactor_ctl(t: string): string {
 // An epoll_event is packed on x86-64, its data word at byte 4 of 12; on
 // arm64 it is aligned, at byte 8 of 16.
 function epoll_ev_size(t: string): string {
-  if (t == "x86_64") {
+  if (t == "x86-64-linux") {
     return "12";
   }
   return "16";
 }
 
 function epoll_ev_data(t: string): string {
-  if (t == "x86_64") {
+  if (t == "x86-64-linux") {
     return "4";
   }
   return "8";
@@ -5381,7 +5395,7 @@ pub function vdso_wanted(s: EmitState, t: string): boolean {
 // heap-free program needs no string box.
 pub function rt_src_vdso(t: string): string {
   let name: string = "__kernel_clock_gettime";
-  if (t == "x86_64") {
+  if (t == "x86-64-linux") {
     name = "__vdso_clock_gettime";
   }
   let matched: string = "";
