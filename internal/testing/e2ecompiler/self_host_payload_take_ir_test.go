@@ -37,6 +37,67 @@ var payloadTakeIRCases = []struct {
 	src       string
 	maxAllocs int64
 }{
+	// A buffer in a record held in a list, read through `list[i]`, joined onto,
+	// and put back with `.with(i, ...)` after an update of the holder that
+	// keeps the list — `std/quic/streams.write`'s shape. The element's take
+	// survives the update, so the three rebuilds and the join run in place:
+	// 200 updates cost a handful of boxes where they cost three each.
+	{"element-take-survives-a-keeping-update", `import "std/array";
+struct Send { buf: u8[], fin: boolean }
+struct St { id: i64, send: Send }
+struct Streams { list: St[], n: i32, refused: string }
+function refuse(own s: Streams, why: string): Streams {
+    return Streams { ...s, refused: why };
+}
+function put(own s: Streams, i: i32, st: St): Streams {
+    return Streams { ...s, list: s.list.with(i, st) };
+}
+@noinline
+function write_at(own s: Streams, i: i32, data: u8[]): Streams {
+    let st: St = s.list[i];
+    let buf: u8[] = st.send.buf.concat(data);
+    return put(refuse(s, ""), i, St { ...st, send: Send { ...st.send, buf: buf } });
+}
+function main(): i32 {
+    let chunk: u8[] = [1 as u8, 2 as u8, 3 as u8, 4 as u8];
+    let s: Streams = Streams { list: [St { id: 0, send: Send { buf: [], fin: false } }, St { id: 4, send: Send { buf: [], fin: false } }], n: 2, refused: "" };
+    
+    let i: i32 = 0;
+    while (i < 200) { s = write_at(s, 1, chunk); i = i + 1; }
+    if (s.list[1].send.buf.len() != 800 || s.list[0].send.buf.len() != 0 || s.list[1].id != 4) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 20},
+	// The same with borrowed receivers, which the leaf inliner splices and
+	// takes the intermediate record apart: the copies it leaves unread are
+	// dropped, so the store-back is on the array the element was read out of.
+	// `keep` shares the first holder, which the take leaves as it was.
+	{"element-take-through-spliced-update", `import "std/array";
+struct Send { buf: u8[], fin: boolean }
+struct St { id: i64, send: Send }
+struct Streams { list: St[], n: i32, refused: string }
+function refuse(s: Streams, why: string): Streams {
+    return Streams { ...s, refused: why };
+}
+function put(s: Streams, i: i32, st: St): Streams {
+    return Streams { ...s, list: s.list.with(i, st) };
+}
+@noinline
+function write_at(s: Streams, i: i32, data: u8[]): Streams {
+    let st: St = s.list[i];
+    let buf: u8[] = st.send.buf.concat(data);
+    return put(refuse(s, ""), i, St { ...st, send: Send { ...st.send, buf: buf } });
+}
+function main(): i32 {
+    let chunk: u8[] = [1 as u8, 2 as u8, 3 as u8, 4 as u8];
+    let s: Streams = Streams { list: [St { id: 0, send: Send { buf: [], fin: false } }, St { id: 4, send: Send { buf: [], fin: false } }], n: 2, refused: "" };
+    let keep: Streams = s;
+    let i: i32 = 0;
+    while (i < 200) { s = write_at(s, 1, chunk); i = i + 1; }
+    if (s.list[1].send.buf.len() != 800 || s.list[0].send.buf.len() != 0 || s.list[1].id != 4 || keep.list[1].send.buf.len() != 0) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 20},
 	// The headline: an owned box destructured and rebuilt every round. Thirty
 	// updates used to clone thirty buffers.
 	{"owned-box-updates-in-place", `enum Box { Full(i32[]), Empty }

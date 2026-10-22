@@ -93,6 +93,12 @@ function main(): i32 {
 // that OUTLIVES the append, so the in-place grow would be observable through
 // `keep` and the copy is mandatory. The paired case: the relaxation above must
 // not reach a binding that can hold the container.
+//
+// The read of `keep` after the append indexes with a value the append
+// produced. The planner moves a read the append does not feed before the
+// append. It then drops a name with no read left (semdead). The alias dies
+// before the append and the copy is gone. The same holds for the shared twins
+// below.
 const arrPushCliffFieldAliasSrc = `struct Asm { code: i32[], labels: i32[] }
 function grown(): i32[] {
     let c: i32[] = [];
@@ -103,7 +109,7 @@ function grown(): i32[] {
 function emit(a: Asm, v: i32): i32 {
     let keep: Asm = a;
     a = Asm { ...a, code: a.code.append(v) };
-    return a.code.len() - keep.code.len();
+    return a.code.len() - keep.code.len() + keep.code[a.code.len() - 6];
 }
 function main(): i32 {
     let a: Asm = Asm { code: grown(), labels: [] };
@@ -148,10 +154,11 @@ function main(): i32 {
         let d: Bld = with_tag(c, i);
         c = step(c, i);
         sink = sink + d.tag + d.xs.len();
+        if (i > 0) { sink = sink + d.xs[c.xs.len() - 2].v; }
         i = i + 1;
     }
     if (c.xs.len() != 50) { return 254; }
-    if (sink != 2450) { return 253; }
+    if (sink != 3626) { return 253; }
     return __arr_push_shared_count();
 }`
 
@@ -179,6 +186,7 @@ function main(): i32 {
         let d: Names = with_tag(c, i);
         c = step(c, i);
         sink = sink + d.tag + d.xs.len();
+        if (i > 0 && d.xs[c.xs.len() - 2] != "item") { return 251; }
         i = i + 1;
     }
     if (c.xs.len() != 50) { return 254; }
