@@ -7929,9 +7929,8 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     if (p.peek_is_pat_literal() || p.peek_at_literal()) {
       let (lel_at, lel_atp) = take_at_binding(p);
       let (lel_lits, lel_his, lel_hrs, lel_incs, lel_p) = parse_lit_alts(lel_atp);
-      let lel_saved: boolean = lel_p.no_struct;
-      let (lel_init, lel_ip0) = parse_expr(lel_p.expect("=").with_no_struct(true));
-      let lel_ip: Par = lel_ip0.with_no_struct(lel_saved);
+      let (lel_init, lel_ip) = parse_expr(lel_p.expect("=").with_no_struct(true));
+      lel_ip = lel_ip.with_no_struct(p.no_struct);
       let (lel_else, lel_rest, lel_restp) = parse_let_else_tail(lel_ip);
       p = lel_restp;
       let lel_arms: ast.LitArm[] = [];
@@ -7975,9 +7974,8 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         lsp_p = lsp_ap;
         lsp_pats = lsp_pats.append(lsp_alt);
       }
-      let lsp_saved: boolean = lsp_p.no_struct;
-      let (lsp_init, lsp_ip0) = parse_expr(lsp_p.expect("=").with_no_struct(true));
-      let lsp_ip: Par = lsp_ip0.with_no_struct(lsp_saved);
+      let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("=").with_no_struct(true));
+      lsp_ip = lsp_ip.with_no_struct(p.no_struct);
       let (lsp_else, lsp_rest, lsp_restp) = parse_let_else_tail(lsp_ip);
       p = lsp_restp;
       let lsp_arms: ast.MatchArm[] = [];
@@ -9342,10 +9340,11 @@ pub function is_struct_destr_marker(type_name: string): boolean {
 }
 
 pub function is_destr_marker(type_name: string): boolean {
-  return util.str_has_prefix(type_name, "@pp;")
+  return type_name.len() > 0 && type_name[0] == b'@'
+    && (util.str_has_prefix(type_name, "@pp;")
     || util.str_has_prefix(type_name, "@at:")
     || util.str_has_prefix(type_name, "@rest;")
-    || util.str_has_prefix(type_name, "@sd:");
+    || util.str_has_prefix(type_name, "@sd:"));
 }
 
 // parse_pattern_param consumes a destructuring parameter — `(a, b): (T, U)`

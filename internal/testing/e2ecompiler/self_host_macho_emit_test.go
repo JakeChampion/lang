@@ -57,10 +57,10 @@ func TestSelfHostMachO(t *testing.T) {
 // Mach-O plus the SHA-256 test vectors that back the ad-hoc code signature.
 // Each `return N` is a distinct failing-check id (0 = all pass).
 //
-// For the no-data case, text_off = 32 + 648 + 80 + 392 = 1152. The 80 and
-// 392 bytes reserve the optional __const header and DWARF commands;
-// sizeofcmds remains 600, excluding those reservations and the 48-byte
-// layout slack. text_vmsize rounds 1156 up to one 16 KiB page
+// For the no-data case, text_off = 32 + 648 + 392 + 80 = 1152. The 392 bytes
+// reserve the optional DWARF commands and the 80 the optional __const
+// section header; sizeofcmds remains 600, excluding those reservations and
+// the 48-byte layout slack. text_vmsize rounds 1156 up to one 16 KiB page
 // = 16384 = code_limit; ident "fern" (len 4) gives sig_len = 20 + (88+5) +
 // 4*32 = 241, so total = 16625.
 //
@@ -167,7 +167,7 @@ function main(): i32 {
     if (he[31] != 85) { return 39; }
 
     // ---- data variant: text (5 bytes) + data (2 bytes) ----
-    // __DATA adds a 152-byte segment+section, so text_off = 32 + 800 + 472 = 1304.
+    // __DATA adds a 152-byte segment+section, so text_off = 32 + 800 + 392 + 80 = 1304.
     let t2: u8[] = [1, 2, 3, 4, 5];
     let d2: i32[] = [9, 9];
     let b2: i32[] = macho_executable(t2, none, d2, "fern", 0, 0, none);
