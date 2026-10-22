@@ -10,13 +10,17 @@ import (
 	"github.com/jakechampion/lang/internal/pkg/pkgcache"
 )
 
-// runAdd implements `fern -add NAME SPEC [-manifest DIR]`: append a
-// declared dependency to the nearest fern.toml. SPEC selects the source:
+// runAdd implements `fern -add NAME SPEC [DIR]`: append a declared
+// dependency to the nearest fern.toml. SPEC selects the source:
 //
 //	path:../helper                          → { path = "../helper" }
 //	url:https://example.com/pkg.tar.gz      → fetch, compute the sha256,
 //	                                          { url = "…", hash = "sha256:…" }
 //	workspace                               → { workspace = true }
+//	version:1.2.0                           → "1.2.0"
+//
+// grant, from -grant, adds a `capabilities` list: "" writes none, "none" an
+// empty one.
 //
 // The url form is the ergonomic benefit: the user never hand-computes a
 // hash — `add` downloads the archive, records the hash it observed (the
@@ -24,22 +28,22 @@ import (
 // in the content-addressed store. The manifest is edited textually so
 // existing formatting and comments survive, and the result is re-parsed
 // before it is written so a bad edit can never leave a broken manifest.
-func runAdd(name, spec, dir string) error {
+func runAdd(name, spec, grant, dir string) error {
 	if !validDepNameCLI(name) {
-		return fmt.Errorf("add: invalid dependency name %q (letters, digits, `_`, `-`; must not start with a digit)", name)
+		return fmt.Errorf("fern-oracle: -add: invalid dependency name %q (letters, digits, `_`, `-`; must not start with a digit)", name)
 	}
 	man, err := manifest.FindForDir(dir)
 	if err != nil {
 		return err
 	}
 	if man == nil {
-		return fmt.Errorf("add: no %s governs %s — create one with a [package] table first", manifest.FileName, dir)
+		return fmt.Errorf("fern-oracle: -add: no %s governs %s — create one with a [package] table first", manifest.FileName, dir)
 	}
 	if _, exists := man.Deps[name]; exists {
-		return fmt.Errorf("add: %q is already a dependency in %s (edit it by hand to change its source)", name, filepath.Join(man.Dir, manifest.FileName))
+		return fmt.Errorf("fern-oracle: -add: %q is already a dependency in %s (edit it by hand to change its source)", name, filepath.Join(man.Dir, manifest.FileName))
 	}
 
-	line, err := depLineFor(name, spec)
+	line, err := depLineFor(name, spec, grant)
 	if err != nil {
 		return err
 	}
@@ -51,41 +55,88 @@ func runAdd(name, spec, dir string) error {
 	updated := insertDependency(string(orig), line)
 	// Re-parse before committing: never leave a broken manifest on disk.
 	if _, perr := manifest.Parse(updated); perr != nil {
-		return fmt.Errorf("add: the edit would produce an invalid manifest (%w) — no change written", perr)
+		return fmt.Errorf("fern-oracle: -add: the edit would produce an invalid manifest (%w) — no change written", perr)
 	}
 	if err := os.WriteFile(manPath, []byte(updated), 0o644); err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "add: %s\n", strings.TrimSpace(line))
+	fmt.Fprintf(os.Stderr, "fern-oracle: added %s\n", strings.TrimSpace(line))
 	return nil
 }
 
-// depLineFor builds the `NAME = { … }` manifest line for a SPEC,
-// fetching + hashing a url source along the way.
-func depLineFor(name, spec string) (string, error) {
+// depLineFor builds the manifest line declaring name from SPEC and grant,
+// fetching + hashing a url source along the way. A version with no grant
+// takes the bare form, `name = "1.2.0"`.
+func depLineFor(name, spec, grant string) (string, error) {
+	fields, err := depSource(spec)
+	if err != nil {
+		return "", err
+	}
+	if grant == "" {
+		if v, ok := strings.CutPrefix(spec, "version:"); ok {
+			return fmt.Sprintf("%s = %q\n", name, v), nil
+		}
+		return fmt.Sprintf("%s = { %s }\n", name, fields), nil
+	}
+	granted, err := grantList(grant)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s = { %s, capabilities = %s }\n", name, fields, granted), nil
+}
+
+// depSource is the inline-table fields naming SPEC's source.
+func depSource(spec string) (string, error) {
 	switch {
 	case spec == "workspace":
-		return fmt.Sprintf("%s = { workspace = true }\n", name), nil
+		return "workspace = true", nil
 	case strings.HasPrefix(spec, "path:"):
 		p := strings.TrimPrefix(spec, "path:")
 		if p == "" {
-			return "", fmt.Errorf("add: empty path in %q", spec)
+			return "", fmt.Errorf("fern-oracle: -add: empty path in %q", spec)
 		}
-		return fmt.Sprintf("%s = { path = %q }\n", name, filepath.ToSlash(p)), nil
+		return fmt.Sprintf("path = %q", filepath.ToSlash(p)), nil
+	case strings.HasPrefix(spec, "version:"):
+		v := strings.TrimPrefix(spec, "version:")
+		if !manifest.IsVersion(v) {
+			return "", fmt.Errorf("fern-oracle: -add: version must be MAJOR.MINOR.PATCH digits, got %q", v)
+		}
+		return fmt.Sprintf("version = %q", v), nil
 	case strings.HasPrefix(spec, "url:"):
 		u := strings.TrimPrefix(spec, "url:")
 		if !strings.HasPrefix(u, "https://") && !strings.HasPrefix(u, "http://") {
-			return "", fmt.Errorf("add: url must be http(s), got %q", u)
+			return "", fmt.Errorf("fern-oracle: -add: url must be http(s), got %q", u)
 		}
 		fmt.Fprintf(os.Stderr, "fetching %s to compute its hash…\n", u)
 		hash, _, err := pkgcache.FetchUnverified(u)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("fern-oracle: -add: %w", err)
 		}
-		return fmt.Sprintf("%s = { url = %q, hash = %q }\n", name, u, hash), nil
+		return fmt.Sprintf("url = %q, hash = %q", u, hash), nil
 	default:
-		return "", fmt.Errorf("add: unrecognised source %q — use path:DIR, url:HTTPS_URL, or workspace", spec)
+		return "", fmt.Errorf("fern-oracle: -add: unrecognised source %q — use path:DIR, url:HTTPS_URL, workspace or version:X.Y.Z", spec)
 	}
+}
+
+// grantList is -grant's comma-separated capabilities as a manifest array, in
+// the manifest's order, "[]" for none.
+func grantList(grant string) (string, error) {
+	if grant == "none" {
+		return "[]", nil
+	}
+	quoted := []string{}
+	for _, n := range strings.Split(grant, ",") {
+		quoted = append(quoted, fmt.Sprintf("%q", n))
+	}
+	names, err := manifest.ParseCapabilities("[" + strings.Join(quoted, ", ") + "]")
+	if err != nil {
+		return "", fmt.Errorf("fern-oracle: -add: -grant: %w", err)
+	}
+	quoted = quoted[:0]
+	for _, n := range names {
+		quoted = append(quoted, fmt.Sprintf("%q", n))
+	}
+	return "[" + strings.Join(quoted, ", ") + "]", nil
 }
 
 // insertDependency splices a dependency line into a manifest's

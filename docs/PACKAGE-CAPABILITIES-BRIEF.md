@@ -119,7 +119,7 @@ Rules:
    **Status: shipped (#5361).** Dependency entries accept
    `capabilities = ["net", …]` on every form (path / url / workspace /
    version); an unknown name is a manifest error naming the vocabulary
-   (`internal/pkg/manifest.parseCapabilities`). modload records each
+   (`internal/pkg/manifest.ParseCapabilities`). modload records each
    governed dependency's grant on `ast.Program.CapGrants` (keyed by
    the dep's resolved directory — `declaredDepDir` is shared with
    import resolution so the two can't disagree), and cmd/fern's

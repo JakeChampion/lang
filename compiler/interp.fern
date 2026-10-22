@@ -118,10 +118,10 @@ pub struct VErr { msg: string, abort: boolean }
 // is a supported feature), while reference-typed captures are read-only (E049)
 // precisely so a write-back cannot close an RC cycle — the same no-cycles model
 // Roc uses. Env is persistent (bind/update return fresh copies), so there is no
-// shared mutable state to write through; a cell supplies exactly that, and only
-// for the scalar cases the language allows. A Value can hold a closure, so
-// E057 rejects a Cell[Value] for the same cycle reason, which is why this needs
-// two scalar-shaped variants. A program's own cells are VCell below.
+// shared mutable state to write through; a cell supplies exactly that. A Value
+// can hold a closure, so E057 rejects a Cell[Value] for the same cycle reason:
+// a scalar has a cell of its own shape here, and any other value VCellV below.
+// A program's own cells are VCell below.
 pub struct VCellI { c: Cell[i32], is_char: boolean, is_bool: boolean }
 
 pub struct VCellF { c: Cell[f64] }
@@ -164,7 +164,13 @@ pub struct VHandle { r: Option[Reader], w: Option[Writer], d: Option[Dir] }
 // an Env slot, and lookup reads through it.
 pub struct VCellA { c: Cell[i64[]], elem: string }
 
-pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VType | VHandle | VCellA;
+// VCellV is the capture cell for any other value a closure reads and its
+// enclosing body reassigns: a string, an array, a map, a struct. E057 keeps a
+// Value out of a Cell, so it holds the value as the program cell's text
+// encoding (cell_any_text), read back on every lookup.
+pub struct VCellV { c: Cell[string] }
+
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VType | VHandle | VCellA | VCellV;
 
 function v_int(n: i32): Value {
   return VInt { v: n, is_char: false };
@@ -1048,7 +1054,10 @@ function interp_char_boundary(s: string, i: i32): boolean {
 // untyped, so a static type — which `dyn Trait` dispatch needs and no runtime
 // value carries — can only enter through the annotation a binding was made
 // under; this is the slot the checker's Scope holds a Type in.
-pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable }
+// `ret` is the declared result of the function whose body this is, "" outside
+// one: a `return f()` pins f's type parameters from it, as a `let`'s
+// annotation does.
+pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable, ret: string }
 
 // new_env seeds a declaration-free scope: the bare-statement driver
 // (eval_program) has no module around it, so the only declarations in reach are
@@ -1060,14 +1069,14 @@ function new_env(): Env {
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), outs: builtin_outs() };
+  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), outs: builtin_outs(), ret: "" };
 }
 
 function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[], outs: OutTable): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
-  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, outs: outs };
+  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, outs: outs, ret: "" };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
@@ -1216,7 +1225,7 @@ function (e: Env) lookup(name: string): Value {
   return v_err("undefined identifier: " + name);
 }
 
-// deref_cell reads through a mutable-scalar-capture cell (SH-057). Every read
+// deref_cell reads through a capture cell (SH-057). Every read
 // path goes via lookup, so a VCell* is never observed by the rest of the
 // interpreter — it exists only in the Env slot and in the closure snapshot that
 // shares it. Non-cell values pass straight through.
@@ -1237,6 +1246,9 @@ function deref_cell(v: Value): Value {
         els = els.append(v_int(x as i32));
       }
       return v_arr_of(els, ca.elem);
+    },
+    VCellV(cv) => {
+      return cell_any_value(cv.c.get(), cell_new(0));
     },
     _ => {
       return v;
@@ -1278,6 +1290,13 @@ function cell_slot_set(slot: Value, v: Value): boolean {
           return false;
         }
       }
+    },
+    VCellV(cv) => {
+      let (ok, text) = encoded_text(v);
+      if (ok) {
+        cv.c.set(text);
+      }
+      return ok;
     },
     _ => {
       return false;
@@ -1494,7 +1513,7 @@ function (e: Env) raw_slot(name: string): i32 {
   return 0 - 1;
 }
 
-// cellify_env converts each named scalar binding into a shared cell, so the
+// cellify_env converts each named binding into a shared cell, so the
 // closure about to be built and the enclosing scope write through the same one.
 function cellify_env(e: Env, names: string[]): Env {
   let out: Env = e;
@@ -1504,9 +1523,9 @@ function cellify_env(e: Env, names: string[]): Env {
     if (idx >= 0) {
       let cur: Value = out.values[idx];
       let boxed: Value = cell_for(cur);
-      // cell_for returns its argument unchanged for a non-scalar (E049
-      // keeps those read-only) and for an already-celled slot, so this
-      // is idempotent and never re-seeds a live cell.
+      // cell_for returns its argument unchanged for a value with no cell
+      // (a function) and for an already-celled slot, so this is idempotent
+      // and never re-seeds a live cell.
       if (!is_cell(cur)) {
         out = out.update(names[i], boxed);
       }
@@ -1742,15 +1761,18 @@ function is_cell(v: Value): boolean {
     VCellF(_) => {
       return true;
     },
+    VCellV(_) => {
+      return true;
+    },
     _ => {
       return false;
     }
   }
 }
 
-// cell_for makes the by-reference binding for a mutable scalar capture, or
-// returns `v` unchanged when it is not a scalar the language lets a closure
-// write (E049 keeps reference captures read-only).
+// cell_for makes the by-reference binding for a capture: a scalar's own cell,
+// VCellV for any other value the cell encoding holds, or `v` unchanged for one
+// it does not (a function).
 function cell_for(v: Value): Value {
   match (v) {
     VInt(n) => {
@@ -1765,7 +1787,14 @@ function cell_for(v: Value): Value {
     VFloat(f) => {
       return VCellF { c: cell_new(f.v) };
     },
+    VFunc(_) => {
+      return v;
+    },
     _ => {
+      let (ok, text) = encoded_text(v);
+      if (ok) {
+        return VCellV { c: cell_new(text) };
+      }
       return v;
     }
   }
@@ -1929,8 +1958,15 @@ function cell_any_text(h: usize, v: Value): boolean {
       return cell_parts_text(h, m.keys) && cell_parts_text(h, m.values);
     },
     VStruct(st) => {
+      // The enum a variant was built as and the type arguments a struct was
+      // built at travel with it: dispatch and tyarg_of_value read them.
       buf_push_byte(h, 83);
       cell_name_text(h, st.type_name);
+      cell_name_text(h, st.owner);
+      cell_hex_text(h, st.targs.len() as i64);
+      for ta in st.targs {
+        cell_name_text(h, ta);
+      }
       cell_hex_text(h, st.field_names.len() as i64);
       for name in st.field_names {
         cell_name_text(h, name);
@@ -1943,15 +1979,25 @@ function cell_any_text(h: usize, v: Value): boolean {
   }
 }
 
-function cell_value_text(v: Value): Value {
+// encoded_text is v in the program cell's text encoding, and whether it has one:
+// a function or a cell inside it has none.
+function encoded_text(v: Value): (boolean, string) {
   let h: usize = buf_new(64);
   if (!cell_any_text(h, v)) {
     buf_free(h);
+    return (false, "");
+  }
+  let text: string = buf_take(h);
+  buf_free(h);
+  return (true, text);
+}
+
+function cell_value_text(v: Value): Value {
+  let (ok, text) = encoded_text(v);
+  if (!ok) {
     return v_err("Cell: the value holds a function or a cell, which E057 rejects");
   }
-  let encoded: string = buf_take(h);
-  buf_free(h);
-  return v_string(encoded);
+  return v_string(text);
 }
 
 function cell_scalar_value(tag: i32, bits: i64): Value {
@@ -2033,12 +2079,18 @@ function cell_any_value(s: string, at: Cell[i32]): Value {
   }
   if (tag == 83) {
     let type_name: string = cell_name_value(s, at);
+    let owner: string = cell_name_value(s, at);
+    let nt: i32 = cell_hex_value(s, at) as i32;
+    let targs: string[] = [];
+    while (targs.len() < nt) {
+      targs = targs.append(cell_name_value(s, at));
+    }
     let n: i32 = cell_hex_value(s, at) as i32;
     let names: string[] = [];
     while (names.len() < n) {
       names = names.append(cell_name_value(s, at));
     }
-    return v_struct(type_name, names, cell_parts_value(s, at));
+    return VStruct { type_name: type_name, field_names: names, field_values: cell_parts_value(s, at), owner: owner, targs: targs };
   }
   return cell_scalar_value(tag, cell_hex_value(s, at));
 }
@@ -5247,9 +5299,12 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
           is_method = true;
           if (static_type.len() > 0) {
             // The binding's annotation applies the type the call is made on
-            // (`let s: G[f64] = G.splat(2.5)` reads `T.LANES` at T = f64).
-            if (expect.len() > 0 && util.base_type_name(expect) == static_type) {
-              static_type = expect;
+            // (`let s: G[f64] = G.splat(2.5)` reads `T.LANES` at T = f64), as
+            // itself or inside the result it is returned in (`Result[G[f64],
+            // string]`).
+            let applied: string = applied_type_in(expect, static_type);
+            if (applied.len() > 0) {
+              static_type = applied;
             }
             recv = v_type(static_type);
           } else {
@@ -5831,7 +5886,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
   }
-  let env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, outs: outs };
+  let env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, outs: outs, ret: "" };
   let j: i32 = 0;
   while (j < fv.params.len()) {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
@@ -5869,6 +5924,39 @@ function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string):
   return 0 - 1;
 }
 
+// applied_type_in is the first application of `base` in the type spelling
+// `t`, `t` itself included, or "" when `t` names none.
+function applied_type_in(t: string, base: string): string {
+  if (t.len() == 0) {
+    return "";
+  }
+  return applied_in_ref(parser.parse_type_ref(t), base);
+}
+
+function applied_in_ref(r: parser.TypeRef, base: string): string {
+  if (r.base == base) {
+    return parser.render_type_ref(r);
+  }
+  for a in r.args {
+    let hit: string = applied_in_ref(a, base);
+    if (hit.len() > 0) {
+      return hit;
+    }
+  }
+  return "";
+}
+
+// struct_type_params is the declared type parameters of struct `name`.
+function struct_type_params(decls: parser.StructDecl[], name: string): string[] {
+  for d in decls {
+    if (d.name == name) {
+      return d.type_params;
+    }
+  }
+  let none: string[] = [];
+  return none;
+}
+
 // call_assoc runs `<type_name>.<name>(args)`. The declared return type is the
 // impl type (`Self` was rewritten to it at parse time), so coercing the result
 // to it gives `i64.zero()` a 64-bit zero rather than the i32 its `return 0`
@@ -5882,13 +5970,18 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
-  let env: Env = new_module_env(funcs, aliases, type_decls, outs);
+  let env: Env = Env { ...new_module_env(funcs, aliases, type_decls, outs), ret: fd.ret_type };
   // The applied type's arguments bind a parametric impl's type parameters
-  // (`Dual[f64].LANES()` reads `T.LANES` at T = f64).
+  // (`Dual[f64].LANES()` reads `T.LANES` at T = f64), or the struct's own
+  // where the function declares none, as a derived `default()` does.
   let targs: parser.TypeRef[] = parser.parse_type_ref(type_name).args;
+  let tps: string[] = fd.type_params;
+  if (tps.len() == 0) {
+    tps = struct_type_params(type_decls, util.base_type_name(type_name));
+  }
   let t: i32 = 0;
-  while (t < fd.type_params.len() && t < targs.len()) {
-    env = env.bind(fd.type_params[t], v_type(parser.render_type_ref(targs[t])));
+  while (t < tps.len() && t < targs.len()) {
+    env = env.bind(tps[t], v_type(parser.render_type_ref(targs[t])));
     t = t + 1;
   }
   let j: i32 = 0;
@@ -6462,7 +6555,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling method `" + name + "`");
       }
-      let env: Env = new_module_env(funcs, aliases, type_decls, outs);
+      let env: Env = Env { ...new_module_env(funcs, aliases, type_decls, outs), ret: fd.ret_type };
       env = bind_tyargs(env, fd, true, recv, args, type_args, "");
       // No declared type on the receiver: an array receiver is always the
       // abstract `T[]`, whose element spelling would self-pin an empty
@@ -8044,7 +8137,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
-      let env: Env = new_module_env(funcs, aliases, type_decls, outs);
+      let env: Env = Env { ...new_module_env(funcs, aliases, type_decls, outs), ret: fd.ret_type };
       let no_recv: Value = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
       let j: i32 = 0;
@@ -8255,6 +8348,9 @@ function value_eq(a: Value, b: Value): boolean {
       return false;
     },
     VCellF(_) => {
+      return false;
+    },
+    VCellV(_) => {
       return false;
     },
     VCell(_) => {
@@ -8601,6 +8697,9 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
     ast.StmtReturn(r) => {
       if (parser.bare_return(r.value)) {
         return step_stop(env, v_void());
+      }
+      if let ast.ExprCall(rc) = r.value {
+        return step_stop(env, eval_expr_call_expect(rc, env, bound_type_spelling(env.ret, env)));
       }
       let val: Value = eval_expr(r.value, env);
       return step_stop(env, val);
