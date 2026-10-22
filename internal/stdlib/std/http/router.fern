@@ -44,6 +44,8 @@
 import "std/http";
 import "std/string";
 import "core/int";
+import "std/error";
+import "core/cmp";
 
 // Params — the path parameters a pattern bound, in the pattern's order, as
 // the request's path holds them: decoded once already, by the serve loop or
@@ -120,6 +122,14 @@ pub enum RouteError {
   BadPattern(string, string),
   PatternConflict(string, string),
 }
+
+pub function (e: RouteError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for RouteError {}
+
+impl cmp.Display for RouteError {}
 
 pub function (e: RouteError) message(): string {
   match (e) {

@@ -20,6 +20,8 @@ import "std/url";
 import "std/time";
 import "std/publicsuffix";
 import "core/int";
+import "std/error";
+import "core/cmp";
 
 // SameSite — the attribute's value; `Unset` leaves it out (a browser then
 // reads Lax), `CrossSite` is `SameSite=None` on the wire.
@@ -64,6 +66,14 @@ pub enum CookieError {
   Lifetime(i32),
   Prefix(string),
 }
+
+pub function (e: CookieError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for CookieError {}
+
+impl cmp.Display for CookieError {}
 
 pub function (e: CookieError) message(): string {
   match (e) {

@@ -1,0 +1,28 @@
+{
+  "source_git": "457382f7af98fa731ae77aa9acac0f1b8f75083e",
+  "source_sha256": "c6e04ae13edfb1d3979fdab36c7b6de14532d9090cacfe9da3ba9e40e9aeae14",
+  "stages": [
+    {
+      "stage": "stage1",
+      "producer_sha256": "1a4a0d84c8904ec9fa8af2b250a4240d22c3137ae5167b14ffb5199c0b77f2b2",
+      "seconds": 17.906616564003343,
+      "bytes": 12693936,
+      "sha256": "d82c25fdedf5c353c4564112ffded3e9b8b021ac90d2f6bb6a0e618cacdba0f0"
+    },
+    {
+      "stage": "stage2",
+      "producer_sha256": "d82c25fdedf5c353c4564112ffded3e9b8b021ac90d2f6bb6a0e618cacdba0f0",
+      "seconds": 18.04134183399583,
+      "bytes": 12693936,
+      "sha256": "f80d5b3c0de1a56a97f3089a0cc98bf3bced4a66ca95c04fd39c1b7e2f415d3f"
+    },
+    {
+      "stage": "stage3",
+      "producer_sha256": "f80d5b3c0de1a56a97f3089a0cc98bf3bced4a66ca95c04fd39c1b7e2f415d3f",
+      "seconds": 18.293448168995383,
+      "bytes": 12693936,
+      "sha256": "f80d5b3c0de1a56a97f3089a0cc98bf3bced4a66ca95c04fd39c1b7e2f415d3f"
+    }
+  ],
+  "fixedpoint": true
+}

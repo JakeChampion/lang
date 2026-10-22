@@ -225,6 +225,7 @@ pub function with_stdlib_origin(mod: Module, path: string): Module {
   if (!util.is_stdlib_path(path)) {
     return mod;
   }
+  path = util.without_fern_ext(path);
   let funcs: FuncDecl[] = [];
   for f in mod.funcs {
     funcs = funcs.append(FuncDecl { ...f, stdlib: path });
@@ -2997,7 +2998,7 @@ function is_type_keyword_tok(p: Par, k: i32): boolean {
     return false;
   }
   if let lexer.TokKeyword(kw) = p.toks[p.pos + k] {
-    return kw.name == "i32" || kw.name == "i64" || kw.name == "u8" || kw.name == "u32" || kw.name == "u64" || kw.name == "usize" || kw.name == "f32" || kw.name == "f64" || kw.name == "string" || kw.name == "boolean" || kw.name == "void";
+    return kw.name == "i32" || kw.name == "i64" || kw.name == "u8" || kw.name == "u32" || kw.name == "u64" || kw.name == "usize" || kw.name == "f32" || kw.name == "f64" || typeinfo.lanes_width(kw.name) > 0 || kw.name == "string" || kw.name == "boolean" || kw.name == "void";
   }
   return false;
 }
@@ -3563,7 +3564,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       let is_tykw: boolean = x.name == "string" || x.name == "boolean" || x.name == "void"
         || x.name == "i32" || x.name == "i64"
         || x.name == "u8" || x.name == "u32" || x.name == "u64"
-        || x.name == "usize" || x.name == "f32" || x.name == "f64";
+        || x.name == "usize" || x.name == "f32" || x.name == "f64" || x.name == "f64x2" || x.name == "f32x4";
       if (is_tykw) {
         let kwline: i32 = p.peek_line();
         let kwcol: i32 = p.peek_col();

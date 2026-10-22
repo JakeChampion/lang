@@ -1,0 +1,17 @@
+--- FAIL: TestSelfHostAllocReuseLargeDonor (1.38s)
+    --- FAIL: TestSelfHostAllocReuseLargeDonor/arm64-linux (0.02s)
+        --- FAIL: TestSelfHostAllocReuseLargeDonor/arm64-linux/hardened (0.02s)
+            self_host_alloc_reuse_large_test.go:78: unprotected mismatch return-address frame:
+                __fn___fern_alloc_reuse:
+                    ldr x0, [sp, #16]
+                    cbz x0, .Lsarelo_fresh
+                    ldr x1, [sp]
+                    ldur x2, [x0, #-16]
+                    cmp x2, x1
+                    beq .Lsarelo_ret
+                    stp x29, x30, [sp, #-16]!
+                    bl __fn___fern_arr_dec.r
+                    ldp x29, x30, [sp], #16
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	1.388s
+FAIL

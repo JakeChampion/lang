@@ -109,6 +109,7 @@ audit_std_time                                       0
 audit_std_uuid                                       0
 audit_strings_arrays_maps                            0
 audit_types_match                                    0
+bare_variant_beside_enum_instantiations               0
 base64_roundtrip                                     0
 binding_site_pattern_grammar                         0
 bool_in_tuple_with_i64                               0
@@ -369,6 +370,12 @@ json_object                                          0
 labeled_loops                                        0
 lambda_returning_a_capturing_lambda                  0
 lambda_tuple_return                                  0
+lanes_array_memory                                   0
+lanes_calls                                          0
+lanes_f32x4_ops                                      0
+lanes_f64x2_ops                                      0
+lanes_generic_instances                              0
+lanes_spill_pressure                                 0
 len_on_empty_u8                                      0
 let_else_at_binding                                  0
 let_else_chained                                     0
@@ -929,6 +936,7 @@ sso_triple_concat_via_inline                         0
 static_variant_of_an_unsettled_generic_enum          0
 stdin_double                                         0
 stdin_line                                           0
+stdlib_errors_box_through_try                        0
 str_to_owned_into_own_param                          0
 strarrarr_struct_field                               0
 strconcat                                            0

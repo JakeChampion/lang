@@ -92,9 +92,9 @@ function res_none(): Resolved {
   return Resolved { src: "", ok: false, err: "", err_path: "", shown: "", map: util.no_line_map() };
 }
 
-// res_read reads `<dir><rel>.fern`, from its buffer when `ov` holds one.
+// res_read reads a module with one .fern extension, from its buffer when present.
 function res_read(ov: Overlay, dir: string, rel: string): Resolved {
-  return read_module(ov.files, dir + rel + ".fern");
+  return read_module(ov.files, dir + util.without_fern_ext(rel) + ".fern");
 }
 
 // Buffers is the text of the files an editor holds open, keyed by file path,
