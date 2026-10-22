@@ -275,10 +275,12 @@ x86_64/utf8_ingest_validated.ir	5869315
 # 1% or more: record_update.ir -65.63% and .text -14.54%,
 # perceus_rbtree_ck.ir -14.51%, http_hello.ir -2.59% and .text +2.40%.
 # utf8_ingest_unchecked.text moved -1.39% and utf8_ingest_validated.text
-# -1.34%. Every other row moved by less than 1%. The aarch64 rows are the
-# perf lane's: record_update.ir -70.25% and .text -12.29%,
-# perceus_rbtree_ck.ir -15.91%, http_hello.ir -2.20% and .text +2.42%, and
-# the two utf8_ingest .text rows -1.2%.
+# -1.34%. Every other row moved by less than 1%.
+#
+# The aarch64 rows for #12969 are the perf lane's. record_update.ir moved
+# -70.25% and .text -12.29%. perceus_rbtree_ck.ir moved -15.91%.
+# http_hello.ir moved -2.20% and .text +2.42%. The two utf8_ingest .text
+# rows moved -1.2%.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
