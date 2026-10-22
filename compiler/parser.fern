@@ -1735,9 +1735,9 @@ function keep_flag(e: ast.Expr, own acc: boolean): boolean {
 // the flat `fn` tag (#6773). Only `-fmt` sets it: those canonicalisations are
 // what every downstream `== "fn"` dispatch site reads, and the formatter is
 // the one consumer that parses without compiling.
-// type_errs holds a `decl:` sentinel for each type position whose token
-// starts no type (native's P001 "expected a type"); parse_module_flagged reports
-// them with the top-level statements.
+// type_errs holds positioned declaration diagnostics, including invalid types,
+// missing names, and missing punctuation. parse_module_flagged reports those
+// that a function body does not hold with the top-level statements.
 // todos is the position of every `todo` stub parsed so far (Module.todo_sites).
 // tail_at and tail_is remember nested_block_tail's answer per token position,
 // so a chain of nested value blocks is read once rather than once per level.
@@ -7592,17 +7592,21 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     // are captured by the lambda machinery. Mirrors the Go parser
     // marking it IsLocal + the closureconv hoist; ast.var_binds_itself
     // is what lets it call itself.
+    let errors_before: i32 = p.type_errs.len();
     let (fr_func, fr_p) = parse_func_decl(p);
     p = fr_p;
-    // The FuncDecl is discarded below, so check_decl_names never sees it;
-    // what that gate would refuse is reported through a `decl:` sentinel.
     if (fr_func.name.len() == 0) {
-      return (s_unknown_at("decl:" + malformed_fn_decl_message(), fr_func.line, fr_func.col), p);
-    }
-    for prm in fr_func.params {
-      if (prm.type_name.len() == 0) {
-        return (s_unknown_at("decl:parameter \"" + prm.name + "\" of \"" + fr_func.name + "\" has no type: expected \":\" after its name", fr_func.line, fr_func.col), p);
+      if (p.type_errs.len() > errors_before) {
+        let last: i32 = p.type_errs.len() - 1;
+        let kept: ast.Stmt[] = [];
+        let i: i32 = 0;
+        while (i < last) {
+          kept = kept.append(p.type_errs[i]);
+          i = i + 1;
+        }
+        return (p.type_errs[last], Par { ...p, type_errs: kept });
       }
+      return (s_unknown_at("decl:" + malformed_fn_decl_message(), fr_func.line, fr_func.col), p);
     }
     let lam: ast.Expr = e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types);
     // `-fmt` records which of the two spellings was written, the way a
@@ -9465,7 +9469,7 @@ function parse_param(p: Par, nth: i32): (ast.ParamDecl, Par) {
   name = discard_name(name, p.peek_line(), p.peek_col(), nth);
   p = p.advance();
   if (p.peek_punct() != ":") {
-    return (ast.ParamDecl { name: name, type_name: "", own: is_own, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }, p);
+    return (ast.ParamDecl { name: name, type_name: "", own: is_own, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }, p.refused_type("expected \":\", got " + tok_desc(p.peek())));
   }
   p = p.advance();
   let (tr, tr_p) = parse_decl_type(p);
@@ -9601,6 +9605,39 @@ function parse_type_param_list(p: Par): (TpList, Par) {
   return (TpList { tnames: names, tbounds: bounds }, p);
 }
 
+// A receiver has a typed name and a method name after its closing parenthesis.
+function receiver_clause(p: Par): boolean {
+  if (p.peek_punct() != "(") {
+    return false;
+  }
+  let q: Par = p.advance();
+  if (q.peek_ident() == "own" && q.peek_ident_at(1).len() > 0) {
+    q = q.advance();
+  }
+  if (q.peek_ident().len() == 0) {
+    return false;
+  }
+  q = q.advance();
+  if (q.peek_punct() != ":") {
+    return false;
+  }
+  let depth: i32 = 0;
+  while (!q.at_end()) {
+    if (q.peek_punct() == "(") {
+      depth = depth + 1;
+    }
+    if (q.peek_punct() == ")") {
+      if (depth == 0) {
+        q = q.advance();
+        return q.peek_ident().len() > 0 && (q.peek_punct_at(1) == "(" || q.peek_punct_at(1) == "[");
+      }
+      depth = depth - 1;
+    }
+    q = q.advance();
+  }
+  return false;
+}
+
 function parse_func_decl(p: Par): (FuncDecl, Par) {
   // Caller has already peeked the `function` keyword. Consume.
   let fline: i32 = p.peek_line();
@@ -9659,7 +9696,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   let receiver_name: string = "";
   let receiver_type: string = "";
   let receiver_own: boolean = false;
-  if (p.peek_punct() == "(") {
+  if (receiver_clause(p)) {
     p = p.advance();
     receiver_name = p.peek_ident();
     // `function (own s: T) name(…)`: `own` is the modifier only when another
@@ -9687,6 +9724,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   }
   let name: string = p.peek_ident();
   if (name.len() == 0) {
+    p = p.refused_type("expected a name, got " + tok_desc(p.peek()));
     return (FuncDecl { stdlib: "", no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, receiver_own: receiver_own, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] }, p);
   }
   p = p.advance();
@@ -29345,11 +29383,23 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         let (fr_func, fr_p) = parse_func_decl(p);
         p = fr_p;
         trait_bad = required_own_tps(trait_bad, fn_at, fr_func);
-        // check_decl_names reports the nameless method; the rest of its
-        // signature is skipped so it does not read as stray tokens.
+        // A nameless method has a parser diagnostic. Skip its remaining tokens.
         if (fr_func.name.len() == 0) {
           p = skip_body_item(p);
+          continue;
         }
+        // Signature diagnostics must survive even when no impl uses this default.
+        let method_body: ast.Stmt[] = [];
+        for st in fr_func.body {
+          if let ast.StmtUnknown(u) = st {
+            if (util.str_has_prefix(u.kind, "decl:")) {
+              trait_bad = trait_bad.append(st);
+              continue;
+            }
+          }
+          method_body = method_body.append(st);
+        }
+        fr_func = FuncDecl { ...fr_func, body: method_body };
         decl_methods = decl_methods.append(fr_func);
         provided = provided.append(fr_func.name);
         if (fr_func.params.len() == 0 || fr_func.params[0].name != "self") {
@@ -30471,13 +30521,23 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       p = skip_failed_decl(p, decl_start);
       continue;
     }
+    if (util.has_str(["struct", "enum", "trait", "type", "const"], kw) && p.advance().peek_ident().len() == 0) {
+      for bad in expected_here(p.advance(), "a name") {
+        top_stmts = top_stmts.append(bad);
+      }
+      p = skip_failed_decl(p.advance(), decl_start);
+      continue;
+    }
     if (kw == "function") {
+      let errors_before: i32 = p.type_errs.len();
       let (fr_func, fr_p) = parse_func_decl(p);
       p = fr_p;
-      // The nameless declaration is still recorded for the declaration gate to
-      // report; the tokens it could not read are skipped.
       if (fr_func.name.len() == 0) {
+        if (p.type_errs.len() == errors_before) {
+          top_stmts = top_stmts.append(s_unknown_at("decl:" + malformed_fn_decl_message(), fr_func.line, fr_func.col));
+        }
         p = sync_to_top_level(p);
+        continue;
       }
       let inline_hint: boolean = attr.name == "inline" || attr.name == "noinline";
       if (verbatim && inline_hint) {
