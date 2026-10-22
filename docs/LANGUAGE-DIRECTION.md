@@ -786,7 +786,7 @@ Deferred to a follow-up:
   a fresh owned `string`; (b) slices of a parameter or receiver,
   whose backing array the caller owns and outlives the call; and
   (c) returning the owned array (`T[]`) itself, which is a move.
-  The rule lives in both checkers — `checkSliceEscape` in
+  The rule lives in both checkers — `checkSliceEscapes` in
   `internal/check/checker/checker.go` and `slc_walk` /
   `slice_escape_diags` in `compiler/checker.fern` —
   and the self-host port is held to byte-for-byte code parity

@@ -10,7 +10,7 @@ follow-up issue). The old coarse tracker #2857 is closed.
 
 Goal: grow `compiler/checker.fern` to parity with the Go
 checker (`internal/check/checker`) so the Go checker can be retired as the
-strict gate. It has been: `checker.fern` (31,682 lines) gates every compile,
+strict gate. It has been: `checker.fern` (about 31,700 lines) gates every compile,
 and the Go checker is the oracle's, held to it by the differentials under
 "Differential testing" below.
 

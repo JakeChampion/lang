@@ -199,7 +199,7 @@ of unspecified behaviour this corpus exists to pin down.
 
 | Runner | What it does |
 | --- | --- |
-| `TestFernFixtures` (`internal/testing/e2e`) | Every case through the oracle: the run cases on the interpreter, the compile-error cases through its checker, and the lowering-error cases through `fern -target` at both pointer widths. |
+| `TestFernFixtures` (`internal/testing/e2e`) | Every case through the oracle: the run cases on the interpreter, and the compile-error cases through its checker; the lowering-error cases go through the self-host compiler (`fern -target`) at both pointer widths. |
 | `TestFernFixturesSelfHost{Wasm,X86_64,Arm64,Interp,Check}` (`internal/testing/e2e`) | The same cases through `fern`, on each target, its interpreter and its checker, against per-leg divergence lists. Env-gated by `FERN_SELFHOST_FIXTURES=1`. |
 | `TestConformanceCorpusFormat` (`internal/testing/e2e`) | Validates this document's format rules. Fast; no compilation. |
 | `scripts/selfhost-emit-hashes` | Hashes self-host emit output per case, for byte-identity comparison. |
