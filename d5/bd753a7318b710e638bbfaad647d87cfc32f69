@@ -266,3 +266,7 @@ selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	7423
 selfhost/x86-64-linux/utf8_ingest_validated.emit	7461
 selfhost/arm64-linux/utf8_ingest_validated.emit	7868
 selfhost/wasm32-wasi/utf8_ingest_validated.emit	8182
+
+# lane: selfhost-alloc-x86_64
+x86_64/checker.allocs	25557161
+x86_64/checker.frees	25557161
