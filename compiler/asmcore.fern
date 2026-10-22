@@ -8734,6 +8734,9 @@ function infer_expr_binary_type(b: ast.ExprBinary, s: EmitState): Ty {
 
 pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
   match (e) {
+    ast.ExprBytes(_) => {
+      return ty_array_i32();
+    },
     ast.ExprNumber(n) => {
       if (n.is_float) {
         return ty_f64();
@@ -9783,6 +9786,9 @@ function unknown_error_stmt_at(st: ast.Stmt, own a: UnkScan): UnkScan {
 
 function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
   match (e) {
+    ast.ExprBytes(_) => {
+      return a;
+    },
     ast.ExprUnknown(u) => {
       // A bare `return;`'s placeholder value is not an error, and a
       // REPORTED token's error is already in the list.

@@ -133,7 +133,7 @@ function all_true(n: i32): boolean[] {
 // out with it — the receiver does not, which is why those two are read operand
 // by operand below rather than whole.
 function builds_out(kind: i32): boolean {
-  return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new()
+  return kind == ssasem.array_new() || kind == ssasem.bytes_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new()
     || kind == ssasem.variant_new() || kind == ssasem.closure_new() || kind == ssasem.cell_new()
     || kind == ssasem.cell_set() || kind == ssasem.map_insert() || kind == ssasem.dyn_box()
     || kind == ssasem.hole_fill();

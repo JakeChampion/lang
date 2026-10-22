@@ -7168,6 +7168,9 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
     ast.ExprArray(a) => {
       return check_array_expr(a, s);
     },
+    ast.ExprBytes(_) => {
+      return t_array(t_u8());
+    },
     ast.ExprIndex(x) => {
       return check_index_expr(x, s);
     },
@@ -10172,6 +10175,9 @@ function merge_view_names(a: string[], b: string[]): string[] {
 // `id_sl(a)[0:1]` needs this arm to see `a`.
 function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   match (e) {
+    ast.ExprBytes(_) => {
+      return ViewRoots { local: true, params: [] };
+    },
     ast.ExprArray(_) => {
       let none: string[] = [];
       return ViewRoots { local: true, params: none };
@@ -10279,6 +10285,9 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
     match (st) {
       ast.StmtVar(v) => {
         match (v.init) {
+          ast.ExprBytes(_) => {
+            localarr = localarr.append(v.name);
+          },
           ast.ExprArray(_) => {
             localarr = localarr.append(v.name);
           },
@@ -13925,6 +13934,9 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
             }
           }
           return true;
+        },
+        ast.ExprBytes(_) => {
+          return type_eq(wa.elem, t_u8());
         },
         _ => {
           return false;
@@ -18904,6 +18916,9 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
 // than folded into the generic one.
 function const_expr_err(e: ast.Expr, earlier: string[]): string {
   match (e) {
+    ast.ExprBytes(_) => {
+      return "";
+    },
     ast.ExprNumber(_) => {
       return "";
     },
@@ -21831,6 +21846,9 @@ function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
 // path this walk follows is assumed to be able to.
 function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   match (e) {
+    ast.ExprBytes(_) => {
+      return false;
+    },
     ast.ExprNumber(_) => {
       return false;
     },

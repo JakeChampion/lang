@@ -757,6 +757,16 @@ pub function op_arr_slice(width: i32): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 96, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
+// A copy that initializes an array literal is a constructor allocation.
+// Its immediate distinguishes it from a conditional copy in a based operation.
+pub function op_array_literal_copy(width: i32): Op {
+  return Op { ...op_arr_slice(width), i32_imm: 2 };
+}
+
+pub function is_array_literal_copy(o: Op): boolean {
+  return o.kind_tag == 96 && o.i32_imm == 2;
+}
+
 // Raw-memory intrinsics (issue #2649, Tier-2 floor — see docs/RUNTIME-INTRINSICS.md).
 // Unsafe, unchecked, `__`-prefixed; only the audited Tier-2 runtime helpers use
 // them. Each lowers to a SINGLE instruction (or one __fern_alloc call), so they
