@@ -20,6 +20,7 @@ import "./parser";
 import "./astwalk";
 import "./util";
 import "./ssafixed";
+import "./ir";
 
 // digits_to_i32 parses a decimal literal's text (non-negative; unary minus
 // is a separate ExprUnary). Mirrors the private helper in the emitters.
@@ -195,7 +196,7 @@ pub function kind_name(id: i32): string {
   if (id >= 28 && id <= 34) {
     return buf_kind_name(id);
   }
-  if (id >= 40 && id <= 60) {
+  if (id >= 40 && id <= 62) {
     return prod_kind_name(id);
   }
   return "invalid";
@@ -250,7 +251,7 @@ function shows_imm(ins: SInst): boolean {
 }
 
 function shows_str(ins: SInst): boolean {
-  return carries_str(ins.kind_tag) || ins.kind_tag >= 40 && ins.kind_tag <= 60 && ins.str != "";
+  return carries_str(ins.kind_tag) || ins.kind_tag >= 40 && ins.kind_tag <= 62 && ins.str != "";
 }
 
 function inst_detail(ins: SInst): string {
@@ -330,7 +331,7 @@ pub function print_func(f: SFunc): string {
 function prod_kind_name(id: i32): string {
   let names: string[] = [
     "ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box", "str_call", "rt_call", "str_view",
-    "ld_idx", "st_idx", "ld_byte", "st_byte", "call_ind", "agg_lit", "sym_addr", "flat_op", "dyn_dispatch",
+    "ld_idx", "st_idx", "ld_byte", "st_byte", "call_ind", "agg_lit", "sym_addr", "flat_op", "dyn_dispatch", "lane3", "lane_store",
   ];
   return names[id - 40];
 }
@@ -1070,6 +1071,96 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 // variable's location from it (#11410).
 pub struct Alloc { reg_of: i32[], def_pos: i32[], hi: i32[] }
 
+// ---- lane values (docs/SIMD-GENERIC-KERNELS.md §6) ---------------------------
+//
+// A lane op (ir.lane_kind_names) lifts to kind 10, 9 or 61 by operand count,
+// a store to 62, with the op name in `str`, an extract or replace carrying its
+// lane index after a colon, and the element width in `imm`. Its 128-bit
+// result lives in the float register class (xmm / V), takes a 16-byte spill
+// pair, and never leaves the class: nothing but a lane op reads it.
+
+// lane_base is a lane op's name without its lane suffix: "vextract" of
+// "vextract:1".
+pub function lane_base(op: string): string {
+  let k: i32 = 0;
+  while (k < op.len()) {
+    if (op[k] == b':') {
+      return slice_unchecked(op, 0, k) + "";
+    }
+    k = k + 1;
+  }
+  return op;
+}
+
+// lane_op reports an instruction name that is a lane op.
+pub function lane_op(op: string): boolean {
+  return op.len() > 1 && op[0] == b'v' && ir.is_lane_kind(ir.kind_id(lane_base(op)));
+}
+
+// lane_inst reports a lane instruction: one of the operator kinds or the
+// lane store naming a lane op (a string literal or a call may carry the same
+// text).
+pub function lane_inst(ins: SInst): boolean {
+  let k: i32 = ins.kind_tag;
+  return (k == 9 || k == 10 || k == 61 || k == 62) && lane_op(ins.str);
+}
+
+// lane_result reports an instruction whose result is a lane value: a lane op
+// other than vextract (an f64) and vstore (a dead result).
+pub function lane_result(ins: SInst): boolean {
+  if (!lane_inst(ins)) {
+    return false;
+  }
+  let b: string = lane_base(ins.str);
+  return b != "vextract" && b != "vstore";
+}
+
+// lane_values marks the lane values: the lane ops' results and the phis that
+// join them. Empty when the function has none.
+pub function lane_values(f: SFunc): boolean[] {
+  let lanes: boolean[] = __alloc_bool(f.nvals);
+  let any: boolean = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.result >= 0 && ins.result < f.nvals && lane_result(ins)) {
+        lanes = lanes.with(ins.result, true);
+        any = true;
+      }
+    }
+  }
+  if (!any) {
+    return [];
+  }
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for blk in f.blocks {
+      for ins in blk.insts {
+        if (ins.kind_tag == 8 && ins.result >= 0 && !lanes[ins.result] && phi_joins_lane(ins, lanes)) {
+          lanes = lanes.with(ins.result, true);
+          changed = true;
+        }
+      }
+    }
+  }
+  return lanes;
+}
+
+function phi_joins_lane(ins: SInst, lanes: boolean[]): boolean {
+  for a in ins.args {
+    if (a >= 0 && a < lanes.len() && lanes[a]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// has_lanes reports a function with a lane value, whose frame rounds its
+// spill slots up to a whole number of 16-byte pairs.
+pub function has_lanes(f: SFunc): boolean {
+  return lane_values(f).len() > 0;
+}
+
 // float_values marks the values that live in the float register class: an
 // f64 an f64 operation defines (or a parameter, phi, word load, or the result
 // of a call `fcalls` marks) that f64 operations (the reinterpret to
@@ -1099,7 +1190,7 @@ pub function float_values(f: SFunc, fcalls: boolean[], tolerant: boolean): boole
     }
   }
   if (!seeded) {
-    return [];
+    return with_lanes(f, []);
   }
   // A value leaves the class when anything outside it reads it, which can
   // take a phi out and with it the values only that phi read.
@@ -1132,12 +1223,26 @@ pub function float_values(f: SFunc, fcalls: boolean[], tolerant: boolean): boole
       v = v + 1;
     }
   }
+  fl = with_lanes(f, fl);
   for x in fl {
     if (x) {
       return fl;
     }
   }
   return [];
+}
+
+// with_lanes adds the lane values to the float class, whatever read them.
+function with_lanes(f: SFunc, fl: boolean[]): boolean[] {
+  let lanes: boolean[] = lane_values(f);
+  let v: i32 = 0;
+  while (v < lanes.len()) {
+    if (lanes[v]) {
+      fl = fl.with(v, true);
+    }
+    v = v + 1;
+  }
+  return fl;
 }
 
 // float_strong marks the derived values (parameters, phis, call results) a
@@ -1190,7 +1295,7 @@ function float_def(ins: SInst): boolean {
     return float_arith(ins.str);
   }
   if (k == 10) {
-    return float_math(ins.str) || util.str_has_prefix(ins.str, "i32_to_f64:") || ins.str == "f64_from_bits";
+    return float_math(ins.str) || util.str_has_prefix(ins.str, "i32_to_f64:") || ins.str == "f64_from_bits" || lane_base(ins.str) == "vextract";
   }
   return false;
 }
@@ -1210,9 +1315,9 @@ function float_use(ins: SInst): boolean {
     return float_arith(ins.str) || float_cmp(ins.str);
   }
   if (k == 10) {
-    return float_math(ins.str) || ins.str == "f64_to_i32" || ins.str == "f64_to_i64" || ins.str == "f64_bits";
+    return float_math(ins.str) || ins.str == "f64_to_i32" || ins.str == "f64_to_i64" || ins.str == "f64_bits" || ins.str == "vsplat";
   }
-  return false;
+  return k == 9 && lane_base(ins.str) == "vreplace";
 }
 
 pub function float_arith(op: string): boolean {
@@ -2140,6 +2245,7 @@ function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], re
   let def_pos: i32[] = shape.def_pos;
   let from: i32[] = spill_starts(lo, def_pos);
   let wanted_by: i32[] = mates_wanted(hi, reg_of, hints.hint);
+  let lanes: boolean[] = lane_values(f);
   let slot_end: i32[] = [];
   let holder: i32[] = [];
   let occupants: i32[][] = [];
@@ -2148,6 +2254,27 @@ function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], re
   let live: SpillLive = no_spill_live();
   for v in order_by_lo(reg_of.len(), from) {
     if (hi[v] < 0 || reg_of[v] >= 0) {
+      continue;
+    }
+    if (lanes.len() > 0 && lanes[v]) {
+      // A lane value takes a pair of slots at an even index and shares
+      // with nothing: both units end where it does.
+      let p: i32 = free_pair(slot_end, holder, wanted_by, reg_of, from[v], v);
+      let pe: i32 = hi[v];
+      let u: i32 = p;
+      while (u <= p + 1) {
+        if (u == slot_end.len()) {
+          slot_end = slot_end.append(pe);
+          holder = holder.append(v);
+          occupants = occupants.append([v]);
+        } else {
+          slot_end = slot_end.with(u, pe);
+          holder = holder.with(u, v);
+          occupants = occupants.with(u, [v]);
+        }
+        u = u + 1;
+      }
+      reg_of = reg_of.with(v, spill_code(p));
       continue;
     }
     let h: i32 = hints.hint[v];
@@ -2593,6 +2720,26 @@ function free_slot(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32
     s = s + 1;
   }
   return s;
+}
+
+// free_pair is the first even slot whose unit and the next are both free at
+// `from`, for a lane value; past the end when none is.
+function free_pair(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32[], from: i32, v: i32): i32 {
+  let s: i32 = 0;
+  while (s + 1 < slot_end.len()) {
+    if (slot_free_at(slot_end, holder, wanted_by, reg_of, from, v, s) && slot_free_at(slot_end, holder, wanted_by, reg_of, from, v, s + 1)) {
+      return s;
+    }
+    s = s + 2;
+  }
+  if (s < slot_end.len() && !slot_free_at(slot_end, holder, wanted_by, reg_of, from, v, s)) {
+    return s + 1;
+  }
+  return s;
+}
+
+function slot_free_at(slot_end: i32[], holder: i32[], wanted_by: i32[], reg_of: i32[], from: i32, v: i32, s: i32): boolean {
+  return slot_end[s] < from && !kept_for_mate(wanted_by, reg_of, holder[s], v);
 }
 
 // Imms marks the integer constants an emitter reads as immediate operands and
@@ -5385,7 +5532,7 @@ function inst_has_effect(k: i32): boolean {
   if (k < 19) {
     return k == 6 || k == 11 || k == 12 || k == 14 || k == 16 || k == 17;
   }
-  return k != 36 && k != 40 && k != 45 && k != 46 && k != 47 && k != 52 && k != 54 && k != 57 && k != 58;
+  return k != 36 && k != 40 && k != 45 && k != 46 && k != 47 && k != 52 && k != 54 && k != 57 && k != 58 && k != 61;
 }
 
 // prune_roots is every value an effectful instruction or a terminator reads.

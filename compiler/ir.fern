@@ -289,6 +289,60 @@ pub function op_f32_from_bits(): Op {
   return op0(15);
 }
 
+// ---- lane ops (docs/SIMD-GENERIC-KERNELS.md §6, slice 4b) -----------------
+//
+// A lane value is 128 bits in a vector register: two f64 lanes (`width` 64)
+// or four f32 lanes (`width` 32). The ops take and give lane values except
+// where named: `vsplat` takes an f64 (an f32 lane rounds it), `vextract`
+// gives one, `vreplace` takes a lane value and an f64, `vload` takes an
+// address and `vstore` an address and a lane value. A compare gives the lane
+// mask, all ones where it holds; `vselect` takes a, b and then that mask (the
+// order wasm's bitselect reads), giving a where it is set. `vmin` / `vmax`
+// are `b < a ? b : a` / `a < b ? b : a`, as wasm's pmin / pmax, and `vround`
+// is round half away from zero, as `fround`. `vfma` is `a * b + c` in one
+// rounding where the target has the instruction. The lane index of
+// `vextract` / `vreplace` rides in i32_imm.
+
+pub const LANE_KIND_FIRST: i32 = 447;
+
+pub const LANE_KIND_LAST: i32 = 476;
+
+pub function lane_kind_names(): string[] {
+  return [
+    "vsplat", "vextract", "vreplace",
+    "vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vfma",
+    "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround",
+    "veq", "vne", "vlt", "vle", "vgt", "vge",
+    "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
+  ];
+}
+
+// lane_kind_pops parallels lane_kind_names: each op's operand count.
+function lane_kind_pops(): i32[] {
+  return [1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 1, 2];
+}
+
+pub function is_lane_kind(id: i32): boolean {
+  return id >= LANE_KIND_FIRST && id <= LANE_KIND_LAST;
+}
+
+function kind_id_lane(name: string): i32 {
+  let i: i32 = util.index_of_str(lane_kind_names(), name);
+  if (i < 0) {
+    return 0;
+  }
+  return LANE_KIND_FIRST + i;
+}
+
+pub function op_lane(kind: string, width: i32): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+
+// op_lane_at is `vextract` / `vreplace` of lane `lane`.
+pub function op_lane_at(kind: string, width: i32, lane: i32): Op {
+  return Op { source: 0, decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: lane, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+
 // op_const_f64_text carries the float literal's SOURCE TEXT (in `str`) so the
 // backends can hand it straight to the assembler (`.double TEXT` in .rodata /
 // `f64.const TEXT`) without a float parse+format round-trip — mirroring
@@ -3443,6 +3497,12 @@ pub function kind_id(name: string): i32 {
   if (n == 7 && name == "mulhi_u") {
     return 430;
   }
+  if (n >= 3 && n <= 8 && name[0] == b'v') {
+    let lane: i32 = kind_id_lane(name);
+    if (lane > 0) {
+      return lane;
+    }
+  }
   if (n >= 8 && n <= 11 && (name[0] == b'd' || name[0] == b'o')) {
     let dir: i32 = kind_id_dir(name);
     if (dir > 0) {
@@ -5917,6 +5977,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (store_i64=199 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (is_lane_kind(id)) {
+    return lane_kind_names()[id - LANE_KIND_FIRST];
+  }
   if (id == 411) {
     return "bswap";
   }
@@ -6447,6 +6510,9 @@ function pops_of(fixed: i32, o: Op): i32 {
 // kind_pops is how many operand slots an op of kind `t` consumes when that
 // does not depend on the op, else -1.
 function kind_pops(t: i32): i32 {
+  if (is_lane_kind(t)) {
+    return lane_kind_pops()[t - LANE_KIND_FIRST];
+  }
   let bufn: i32 = pops_buf(t);
   if (bufn >= 0) {
     return bufn;
@@ -6532,7 +6598,7 @@ pub function pure_value_op(o: Op): boolean {
 
 pub function op_pushes(o: Op): i32 {
   let t: i32 = o.kind_tag;
-  if (t == 19 || t == 159) {  // store_local, drop
+  if (t == 19 || t == 159 || t == LANE_KIND_LAST) {  // store_local, drop, vstore
     return 0;
   }
   if (t == 288) {  // line: a marker, nothing in and nothing out

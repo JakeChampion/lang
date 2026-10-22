@@ -1199,7 +1199,7 @@ pub function lowered_digest(cache: irtables.LowerResult[]): string {
         d = util.roll_wide(d, o.source);
       }
     }
-    d = util.roll_words(util.roll_words(util.roll_words(util.roll_words(d, r.arr_slots), r.i64_slots), r.f64_slots), r.str_slots);
+    d = util.roll_words(util.roll_words(util.roll_words(util.roll_words(util.roll_words(d, r.arr_slots), r.i64_slots), r.f64_slots), r.v128_slots), r.str_slots);
     d = source_digest(d, r.source_positions);
   }
   return util.digest_text(d);

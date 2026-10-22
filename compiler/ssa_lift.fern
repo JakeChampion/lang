@@ -334,8 +334,9 @@ pub function kind_table(): KindTable {
     let bin: boolean = bin_sym(k) != "";
     let mem: boolean = (listed & 2) != 0 || n > 0 || h;
     let flt: boolean = (listed & 4) != 0 || fbin_sym(k) != "";
+    let lane: boolean = (listed & 16) != 0;
     let c: i32 = 0;
-    if (bin || (listed & 1) != 0 || mem || flt) {
+    if (bin || (listed & 1) != 0 || mem || flt || lane) {
       c = c + 1;
     }
     if (mem) {
@@ -346,6 +347,9 @@ pub function kind_table(): KindTable {
     }
     if (bin) {
       c = c + 8;
+    }
+    if (lane) {
+      c = c + 16;
     }
     names = names.append(k);
     classes = classes.append(c);
@@ -413,7 +417,11 @@ function kind_facts(): KindFacts {
   f = listed(f, three, 0, 3, false);
   f = listed(f, two_io, 0, 2, false);
   f = listed(f, host, 0, 0, true);
-  return listed(f, f64_un, 4, 0, false);
+  f = listed(f, f64_un, 4, 0, false);
+  // The lane ops (ir.lane_kind_names) are their own class: lift_lane_prod
+  // lifts each as one instruction, and the allocator's float class holds the
+  // results (ssa.lane_values).
+  return listed(f, ir.lane_kind_names(), 16, 0, false);
 }
 
 // listed records `bit`, `argc` and `host` for each of `names`. A name listed
@@ -436,6 +444,45 @@ function listed(own f: KindFacts, names: string[], bit: i32, argc: i32, host: bo
 
 pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): LResult {
   return lift_impl(kt, name, nparams, nslots, ops, track_slots);
+}
+
+// lift_lane_prod lifts one lane op (ir.is_lane_kind) as one instruction:
+// kind 10 with one operand, 9 with two, 61 with three, and 62 for the store,
+// whose effect keeps it where the pure kinds may be pruned. The operands come
+// off the stack in order, the element width rides in `imm`, and an extract
+// or replace carries its lane index after the name ("vextract:1"). A store's
+// result is dead, as lift_store's is.
+function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: ssa.SInst[]): LiftVals {
+  let argc: i32 = ir.op_pops(op);
+  if (stack.len() < argc) {
+    return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: false };
+  }
+  let args: i32[] = [];
+  let i: i32 = stack.len() - argc;
+  while (i < stack.len()) {
+    args = args.append(stack[i]);
+    i = i + 1;
+  }
+  stack = drop_n(stack, argc);
+  let what: string = k;
+  if (k == "vextract" || k == "vreplace") {
+    what = k + ":" + util.i32_to_string(op.i32_imm);
+  }
+  let kind: i32 = 10;
+  if (k == "vstore") {
+    kind = 62;
+  } else if (argc == 2) {
+    kind = 9;
+  } else if (argc == 3) {
+    kind = 61;
+  }
+  let v: i32 = nvals;
+  nvals = nvals + 1;
+  insts = insts.append(ssa.SInst { kind_tag: kind, result: v, args: args, imm: op.width, str: what });
+  if (k != "vstore") {
+    stack = stack.append(v);
+  }
+  return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: true };
 }
 
 // lift_float_prod lifts one f64 op: a binary carries its kind name and width
@@ -1275,6 +1322,12 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       ok = lv.ok;
     } else if ((cls & 2) != 0) {
       let lv: LiftVals = lift_prod_mem(kt, tag, k, op, nvals, stack, []);
+      nvals = lv.nvals;
+      stack = lv.stack;
+      cur_insts = splice(cur_insts, lv.insts);
+      ok = lv.ok;
+    } else if ((cls & 16) != 0) {
+      let lv: LiftVals = lift_lane_prod(k, op, nvals, stack, []);
       nvals = lv.nvals;
       stack = lv.stack;
       cur_insts = splice(cur_insts, lv.insts);

@@ -428,6 +428,35 @@ not register pressure. The order to take that in:
    for 20-22% more compile time
    (`docs/ssa-log/2026-09-17-the-optimiser-costs-more-than-it-saves.md`).
 
+### Lane values
+
+A lane op (`ir.lane_kind_names`, `docs/SIMD-GENERIC-KERNELS.md` §6) lifts
+to one instruction. The kind is 10 with one operand, 9 with two, 61 with
+three and 62 for the store. The op name is in `str` and the element width
+(64 or 32) in `imm`. Its 128-bit result is a lane value (`ssa.lane_values`).
+
+A lane value lives in the float class, `%xmm3`-`%xmm15` or `v16`-`v31` and
+`v8`-`v15`, and never leaves it. `float_values` adds the lane values after
+its pruning, because no instruction outside the class reads one. A spilled
+lane value takes a pair of slots at an even index (`free_pair`), and nothing
+shares them. The frame rounds the spill count up to whole pairs when the
+function has a lane value.
+
+The emitters record the pair's units per function (`ssa_lane_slots`). A
+slot move of the pair is `movupd` or `ldr q` / `str q` at the pair's low
+unit. A cycle in the parallel moves parks a float-class location in
+`%xmm2` / `d1` rather than in `%r11` / `x4`. A register copy inside the class
+is `movapd` / `mov v.16b`, all 128 bits, on both natives.
+
+The arms read an operand from its home or from a scratch (`%xmm1` /
+`%xmm2`, `d1`-`d3`). They write the result into its home or into `%xmm0` /
+`d0` for `ssa_fput`. A unary's result can share its operand's register, so
+no arm writes the destination before it reads the operand. The wasm
+emitter declares a lane slot `(local v128)` from `LowerResult.v128_slots`,
+and takes two `v128` scratch locals in a body with a lane op.
+`TestSelfHostLaneIR` runs a program built from the IR constructors over
+every op on all three targets.
+
 ## Gates
 
 - `internal/testing/e2ecompiler/self_host_ssa_lift_admits_test.go` runs
