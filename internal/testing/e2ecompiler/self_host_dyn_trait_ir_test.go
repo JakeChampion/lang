@@ -163,7 +163,7 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 	// `__fern_strcat` over the i32 result (a trap on wasm, a fault or hang on
 	// x86). 9 + 3 = 12.
 	{name: "dyn-i32-vs-unrelated-string",
-		src: `trait Foo { function bar(self: Self): i32; } struct A { n: i32 } impl Foo for A { function bar(self: Self): i32 { return self.n; } } struct S { s: string } impl S { function bar(self: Self): string { return self.s; } } function ids(s: string): string { return s; } function main(): i32 { let a: A = A { n: 9 }; let d: dyn Foo = a; let sv: S = S { s: ids("xyz") }; return d.bar() + sv.bar().len(); }`, expected: 12},
+		src: `trait Foo { function bar(self: Self): i32; } struct A { n: i32 } impl Foo for A { function bar(self: Self): i32 { return self.n; } } struct S { s: string } function (self: S) bar(): string { return self.s; } function ids(s: string): string { return s; } function main(): i32 { let a: A = A { n: 9 }; let d: dyn Foo = a; let sv: S = S { s: ids("xyz") }; return d.bar() + sv.bar().len(); }`, expected: 12},
 
 	// --- NUMERIC-returning `dyn Trait` methods, chained in arithmetic. Same
 	// class as the string cases above: a 64-bit / float value returned by the

@@ -1417,26 +1417,9 @@ function main(): i32 {
 	}
 }
 
-// "Manually hoisted" methods — top-level `pub function
-// __method_<Type>_<Name>(...)` decls without a receiver block
-// — must NOT pick up the `<mod>__` prefix during cross-module
-// load. The checker's auto-discovery pass keys off the
-// `__method_` prefix to register them as `Type.<Name>` in the
-// Methods map; if modload renamed them to `mod____method_…`
-// dispatch would fail.
-//
-// Repro: explicit `import "std/array";` from a user file. Under
-// the buggy prefix every `(arr).avg()` / `.gcd_all()` / etc. method
-// call surfaces as "field access on non-struct value of type
-// i32[]" because the renamed function never registers as
-// `Array.avg` / `Array.gcd_all`.
-//
-// `avg` is used because it is one of the survivors of the #2663 collapse:
-// the element-polymorphic verbs (`sum` / `max` / `count` / …) are now
-// written with a real `(xs: T[])` receiver, which the checker hoists
-// itself, so they never exercise this path. What still needs it is a
-// concrete-receiver `__method_Array_<name>` helper.
-func TestLoadPreservesManuallyHoistedMethodNames(t *testing.T) {
+// A pinned array receiver from an imported module (std/array's
+// `(arr: i32[]) avg()`) dispatches from the importing module.
+func TestLoadArrayReceiverMethodDispatchesAcrossModules(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"main.fern": `import "std/array";
 function main(): i32 {
@@ -1447,12 +1430,6 @@ function main(): i32 {
 	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if findFunc(prog, "__method_Array_avg") == nil {
-		t.Fatalf("__method_Array_avg should keep its bare name under modload; got: %v", funcNames(prog))
-	}
-	if findFunc(prog, "array____method_Array_avg") != nil {
-		t.Errorf("modload should not prefix __method_ names with the module prefix")
 	}
 	if _, err := checker.Check(prog); err != nil {
 		t.Fatalf("expected check to succeed (Array.avg dispatch resolves), got %v", err)

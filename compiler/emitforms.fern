@@ -257,7 +257,7 @@ function async_plan(full: parser.Module): AsyncPlan {
   return AsyncPlan { asy: watbin.AsyncSurface { lifts: lifts, lowers: lowers }, refused: "" };
 }
 
-// with_streams retypes the slots of `f` that were `stream[T]`, which
+// with_streams retypes the slots of `f` that were `Stream[T]`, which
 // async_sig saw as `T[]`: each is a `stream<T>` (0x66), one handle wide.
 function with_streams(f: parser.FuncDecl, sg: AsyncSig): AsyncSig {
   if (sg.refused.len() > 0) {

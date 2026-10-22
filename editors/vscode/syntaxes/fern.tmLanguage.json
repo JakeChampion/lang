@@ -44,7 +44,7 @@
       "patterns": [
         {
           "name": "keyword.control.fern",
-          "match": "\\b(if|else|while|for|loop|break|continue|return|match|when|default|defer|errdefer)\\b"
+          "match": "\\b(if|else|while|for|loop|break|continue|return|match|when|defer|errdefer)\\b"
         },
         {
           "name": "storage.type.fern",
@@ -76,7 +76,7 @@
       "patterns": [
         {
           "name": "constant.numeric.fern",
-          "match": "\\b[0-9]+(\\.[0-9]+)?(i32|i64|u8|u32|u64|f32|f64)?\\b"
+          "match": "\\b(0[xX][0-9a-fA-F](_?[0-9a-fA-F])*|0[oO][0-7](_?[0-7])*|0[bB][01](_?[01])*|[0-9](_?[0-9])*(\\.[0-9](_?[0-9])*)?([eE][+-]?[0-9](_?[0-9])*)?)(i32|i64|u8|u32|u64|usize|f32|f64)?\\b"
         }
       ]
     },

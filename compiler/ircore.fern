@@ -234,8 +234,9 @@ function is_text_helper(name: string): boolean {
     // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT
     // (wasm.arr_str_join_helper).
     || name == "__fern_arr_str_join"
-    // xs.concat(ys) over scalar elements (asmcore.rt_src_arr_concat): one
-    // sized box and two copies; wasm's $__fern_arr_concat is hand-written.
+    // xs.concat(ys) over scalar elements (asmcore.rt_src_arr_concat): onto
+    // the receiver's block when it is sole with room, else a box of both;
+    // wasm's $__fern_arr_concat is hand-written.
     || name == "__fern_arr_concat"
     // __bytes_owned(b): a byte view copied into a fresh packed u8[]
     // (asmcore.rt_src_bytes_owned; wasm's $__fern_bytes_owned).
@@ -1457,7 +1458,7 @@ function splice_leaves(r: irtables.LowerResult, self: string, reg: irtables.SigR
 }
 
 function captured_leaf_word(o: ir.Op, word: i32, scalar_words: i32[]): i32 {
-  if (o.kind_tag != ir.op_call_word().kind_tag) {
+  if (o.kind_tag != ir.K_CALL_WORD) {
     return 0 - 1;
   }
   if (o.width == 64) {
@@ -1480,7 +1481,7 @@ struct SpliceBody { ops: ir.Op[], word: i32, scalar_words: i32[] }
 
 function splice_leaf_body(leaf: irtables.LowerResult, base: i32, ret: i32, word: i32, scalar_words: i32[]): SpliceBody {
   let out: ir.Op[] = [];
-  let k_ret_word: i32 = ir.op_ret_word().kind_tag;
+  let k_ret_word: i32 = ir.K_RET_WORD;
   let depth: i32 = 0;
   for b in leaf.ops {
     let k: i32 = b.kind_tag;

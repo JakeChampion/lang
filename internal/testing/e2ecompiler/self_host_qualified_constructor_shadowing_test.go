@@ -16,7 +16,7 @@ enum GenericState[T] { Missing, Present(T) }
 struct Factory {}
 struct ValueFactory { Packed: Box[string] }
 enum Holder { Held(ValueFactory) }
-impl Factory { function Packed(self: Self, n: i32): i32 { return n + 3; } }
+function (self: Factory) Packed(n: i32): i32 { return n + 3; }
 function Idle(): i32 { return 11; }
 function Ok(n: i32): Result[u8, string] { assert(n == 300); return Result.Ok(1u8); }
 function Packed(n: i32): i32 { return n + 1; }

@@ -11704,20 +11704,38 @@ function bytes_copy_out(len: string, src: string, empty: i32): string {
 }
 
 // arr_concat_helper emits $__fern_arr_concat, `xs.concat(ys)` over scalar
-// elements: one box sized for both and two copies. `width` is the element's
-// bits, so its stride is width / 8 bytes, a u8[] packed a byte an element.
-// The parameters are in push order, the reverse of the native signature.
+// elements: onto xs's own block when xs is sole (rc 1; a constant's negative
+// rc is never sole, as $__fern_rc_is_unique answers) with room — cap counts
+// elements — else a fresh box of both, with room to grow
+// (twice xs's length or what the join needs) when xs was sole and outgrew
+// its block, exactly sized when xs is shared. xs is never freed. An empty ys
+// hands a sole xs back; a shared xs is copied even then, so a caller that
+// moves the buffer out of a record's field on identity never touches a
+// shared record.
+// `width` is the element's bits, so its stride is width / 8 bytes, a u8[]
+// packed a byte an element. The parameters are in push order, the reverse of
+// the native signature.
 pub function arr_concat_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_arr_concat (param $width i32) (param $b i32) (param $a i32) (result i32)\n";
-  o = o + "    (local $na i32) (local $nb i32) (local $n i32) (local $stride i32) (local $r i32)\n";
+  o = o + "    (local $na i32) (local $nb i32) (local $n i32) (local $stride i32) (local $cap i32) (local $rc i32) (local $ncap i32) (local $r i32) (local $sole i32)\n";
   o = o + "    (local.set $stride (i32.shr_u (local.get $width) (i32.const 3)))\n";
   o = o + "    (local.set $na (i32.load (local.get $a)))\n";
   o = o + "    (local.set $nb (i32.load (local.get $b)))\n";
   o = o + "    (local.set $n (i32.add (local.get $na) (local.get $nb)))\n";
-  o = o + "    (local.set $r (call $__fern_arr_elems (local.get $n) (local.get $stride)))\n";
+  o = o + "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
+  o = o + "    (local.set $rc (i32.load (i32.sub (local.get $a) (i32.const 8))))\n";
+  o = o + "    (local.set $sole (i32.eq (local.get $rc) (i32.const 1)))\n";
+  o = o + "    (if (i32.and (local.get $sole) (i32.le_s (local.get $n) (local.get $cap))) (then\n";
+  o = o + "      (memory.copy (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $nb) (local.get $stride)))\n";
+  o = o + "      (i32.store (local.get $a) (local.get $n))\n";
+  o = o + "      (return (local.get $a))))\n";
+  o = o + "    (local.set $ncap (local.get $n))\n";
+  o = o + "    (if (local.get $sole) (then\n";
+  o = o + "      (if (i32.gt_s (i32.mul (local.get $na) (i32.const 2)) (local.get $n)) (then (local.set $ncap (i32.mul (local.get $na) (i32.const 2)))))))\n";
+  o = o + "    (local.set $r (call $__fern_arr_elems (local.get $ncap) (local.get $stride)))\n";
   o = o + "    (i32.store (local.get $r) (local.get $n))\n";
-  o = o + "    (i32.store offset=4 (local.get $r) (local.get $n))\n";
+  o = o + "    (i32.store offset=4 (local.get $r) (local.get $ncap))\n";
   o = o + "    (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride)))\n";
   o = o + "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $nb) (local.get $stride)))\n";
   o = o + "    (local.get $r))\n";
@@ -15228,7 +15246,7 @@ function async_lower_imports(mod: parser.Module): string {
 }
 
 // is_stream_slot reports whether slot `i` of async import `f` was a
-// `stream[T]` (-1 the result, else a parameter).
+// `Stream[T]` (-1 the result, else a parameter).
 function is_stream_slot(f: parser.FuncDecl, i: i32): boolean {
   for k in f.streams {
     if (k == i) {

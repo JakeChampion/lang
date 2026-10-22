@@ -1,6 +1,6 @@
 ---
 title: Traits
-description: Traits and impls, bounded generics, supertraits, associated types, derive, methods, operators, Drop, and dyn Trait.
+description: Traits and impls, bounded generics, supertraits, associated types and constants, derive, methods, operators, Drop, and dyn Trait.
 sidebar:
   order: 3
 ---
@@ -142,9 +142,8 @@ function main(): i32 {
 
 The impl's parameters can also appear in the trait's own arguments:
 `impl[I: Iterator[T], T, U] Iterator[U] for Mapped[I, T, U]` is how
-`core/iter`'s adapters are written. Inherent impls take parameters the
-same way (`impl[T] Boxed[T] { … }`), and `@derive` on a generic struct
-produces this kind of impl.
+`core/iter`'s adapters are written. `@derive` on a generic struct produces
+this kind of impl.
 
 Bounds belong on the impl, not on the type: `struct W[T: Describe]` is a
 parse error that points you at `impl[T: Describe] … for W[T]`. A type
@@ -215,6 +214,40 @@ function main(): i32 {
     return 0;
 }
 ```
+
+### Associated constants
+
+A trait can declare a constant each impl fixes, read as `Self.NAME`
+inside the impl, `T.NAME` through a bound, or `f64.NAME` on a concrete
+type. A trait may give it a default:
+
+```fern
+import "std/i32";
+
+trait Lanes {
+    const LANES: i32;
+    const NAME: string = "lanes";
+}
+
+struct Pair { a: f64, b: f64 }
+
+impl Lanes for Pair { const LANES: i32 = 2; }
+impl Lanes for f64 { const LANES: i32 = 1; }
+
+function chunks[T: Lanes](n: i32): i32 {
+    return n / T.LANES;
+}
+
+function main(): i32 {
+    print(chunks[Pair](8).to_string());   // 4
+    print(Pair.NAME);                    // lanes
+    return 0;
+}
+```
+
+A constant is bound with `const`, never with a `function` of the same
+name, and read without an argument list: `T.LANES()` is `E043`, as is
+`T.zero` on an associated function.
 
 ### Associated functions
 
@@ -367,19 +400,19 @@ hand-write the interesting one. Deriving `Eq` also gives the type `==`
 and `!=`, and `Ord` gives `<` `<=` `>` `>=` (see
 [operators](#operators-on-your-own-types)).
 
-## Methods and inherent impls
+## Methods without a trait
 
-A method needs no trait. Either spelling declares one:
+A method needs no trait: a receiver clause declares one, and a constructor
+is a plain function.
 
 ```fern
 import "std/i32";
 
 struct Point { x: i32, y: i32 }
 
-impl Point {
-    function origin(): Point { return Point { x: 0, y: 0 }; }   // no self
-    function sum(self: Self): i32 { return self.x + self.y; }
-}
+function origin(): Point { return Point { x: 0, y: 0 }; }
+
+function (p: Point) sum(): i32 { return p.x + p.y; }
 
 function (p: Point) scaled(k: i32): Point {
     return Point { x: p.x * k, y: p.y * k };
@@ -389,14 +422,15 @@ function main(): i32 {
     let p: Point = Point { x: 3, y: 4 };
     print(p.sum().to_string());               // 7
     print(p.scaled(2).sum().to_string());     // 14
-    print(Point.origin().sum().to_string());  // 0
+    print(origin().sum().to_string());        // 0
     return 0;
 }
 ```
 
 The receiver clause `function (p: Point) name(…)` works on any type,
 primitives included — that is how `std/i32` gives `i32` its
-`to_string`.
+`to_string`. Every `impl` names a trait; `impl Point { … }` is an error that
+shows the receiver spelling.
 
 ## Operators on your own types
 
@@ -509,7 +543,8 @@ function main(): i32 {
 }
 ```
 
-`as?` applies only to a `dyn` value (`E059`). Bounded generics stay the better choice when the type IS
+As a downcast, `as?` applies only to a `dyn` value; its other use is the
+checked integer conversion, and any other operand is `E059`. Bounded generics stay the better choice when the type IS
 known at each call site — they monomorphise, so there is no box and no
 indirect call. See [`docs/DYN-TRAITS.md`][dyn] for the design, the
 representation per backend, and the remaining gaps.

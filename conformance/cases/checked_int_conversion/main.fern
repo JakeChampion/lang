@@ -1,0 +1,23 @@
+// `x as? T` between integers is Some(x as T) when the value fits T, and None
+// when it does not: out of range, or negative going to an unsigned type (#12708).
+import "std/i32";
+import "std/i64";
+import "std/u64";
+function show(o: Option[u8]): string { match (o) { Some(v) => { return (v as i32).to_string(); }, None => { return "none"; } } }
+function main(): i32 {
+  let a: i32 = 200;
+  let b: i32 = 300;
+  let c: i32 = -1;
+  print(show(a as? u8) + " " + show(b as? u8) + " " + show(c as? u8));
+  let big: u64 = 4294967296;
+  match (big as? u32) { Some(v) => { print("some"); }, None => { print("u64 none"); } }
+  let neg: i64 = -5;
+  match (neg as? u64) { Some(v) => { print("some"); }, None => { print("neg none"); } }
+  let ok: i64 = 2147483647;
+  match (ok as? i32) { Some(v) => { print(v.to_string()); }, None => { print("none"); } }
+  let hi: u32 = 3000000000;
+  match (hi as? i32) { Some(v) => { print("some"); }, None => { print("u32 none"); } }
+  match (hi as? i64) { Some(v) => { print(v.to_string()); }, None => { print("none"); } }
+  match (300 as? u8) { Some(v) => { print("some"); }, None => { print("lit none"); } }
+  return 0;
+}

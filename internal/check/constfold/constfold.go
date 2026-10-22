@@ -156,23 +156,12 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 		if body := fn.BodyModule(); body != "" && body != prog.EntryModule {
 			sub.values = libValues
 		}
-		// A parameter DEFAULT is not part of the body and sees none of the
-		// parameters: it is pasted into the CALL site. Walk it at top-level
-		// scope, before the body's binders go in. Without this a default was
-		// never folded at all, so `= SOME_CONST` reached defaultargs still
-		// spelled as a name and was refused by E076 as reading one — the
-		// diagnostic telling the author a const is not a constant expression.
-		for i := range fn.Params {
-			if fn.Params[i].Default != nil {
-				sub.walkExpr(&fn.Params[i].Default)
-			}
-		}
-		sub.pushScope()
-		for _, p := range fn.Params {
-			sub.bind(p.Name)
-		}
-		sub.walkBlock(fn.Body)
-		sub.popScope()
+		// A parameter DEFAULT is pasted into the CALL site, so the walker
+		// visits it at top-level scope, before the body's binders go in;
+		// a default left unfolded reached defaultargs spelled as a name and
+		// was refused by E076 as reading one.
+		w := ast.ScopeWalker{Visit: sub.visit, AfterStmt: foldIfCond}
+		w.WalkFunc(fn)
 	}
 	prog.Consts = nil
 	if len(sub.errs) > 0 {
@@ -727,36 +716,13 @@ type substituter struct {
 	errs       []error
 	// module is the module of the body being walked, for its diagnostics.
 	module string
-	// bound is the scope stack of names a BINDER has introduced — params,
-	// var / destructure declarations, match and for-each bindings, lambda
-	// params. A const is a module-level name, so any of these shadows it,
-	// and substituting through the shadow rewrites a local's reads with the
-	// const's value (#8443). The pass runs before the checker, which is what
-	// makes the substituter responsible for scope itself: Fold clears
-	// prog.Consts, so the checker never sees the const and cannot diagnose
-	// the collision either.
-	bound []map[string]bool
 }
 
-func (s *substituter) pushScope() { s.bound = append(s.bound, map[string]bool{}) }
-
-func (s *substituter) popScope() { s.bound = s.bound[:len(s.bound)-1] }
-
-func (s *substituter) bind(name string) {
-	if name == "" || len(s.bound) == 0 {
-		return
+// foldIfCond folds an `if` whose condition substitution made literal.
+func foldIfCond(st ast.Stmt) {
+	if x, ok := st.(*ast.If); ok {
+		x.Cond = foldLiteralCond(x.Cond)
 	}
-	s.bound[len(s.bound)-1][name] = true
-}
-
-// isBound reports whether name is currently shadowed by a binder.
-func (s *substituter) isBound(name string) bool {
-	for i := len(s.bound) - 1; i >= 0; i-- {
-		if s.bound[i][name] {
-			return true
-		}
-	}
-	return false
 }
 
 // isTargetCall reports whether c is a zero-argument call of the named
@@ -969,279 +935,58 @@ func pruneLiteralIf(x *ast.If) {
 	x.Else = nil
 }
 
-func (s *substituter) walkBlock(b *ast.Block) {
-	if b == nil {
-		return
-	}
-	s.pushScope()
-	for _, st := range b.Stmts {
-		s.walkStmt(st)
-	}
-	s.popScope()
-}
-
-func (s *substituter) walkStmt(st ast.Stmt) {
-	switch x := st.(type) {
-	case *ast.Block:
-		s.walkBlock(x)
-	case *ast.If:
-		s.walkExpr(&x.Cond)
-		x.Cond = foldLiteralCond(x.Cond)
-		s.walkStmt(x.Then)
-		if x.Else != nil {
-			s.walkStmt(x.Else)
-		}
-	case *ast.While:
-		s.walkExpr(&x.Cond)
-		s.walkStmt(x.Body)
-	case *ast.Loop:
-		s.walkStmt(x.Body)
-	case *ast.For:
-		// The init's binding is in scope for the cond, the step and the
-		// body, so the frame wraps all four rather than the body alone.
-		s.pushScope()
-		if x.Init != nil {
-			s.walkStmt(x.Init)
-		}
-		s.walkExpr(&x.Cond)
-		if x.Step != nil {
-			s.walkStmt(x.Step)
-		}
-		s.walkStmt(x.Body)
-		s.popScope()
-	case *ast.ForEach:
-		s.walkExpr(&x.Iter)
-		s.walkExpr(&x.RangeHigh)
-		s.pushScope()
-		// A destructuring header carries its real binders on Pattern —
-		// `for (a, b) in xs` — with Var only the synthetic element holder.
-		// The checker lowers these loops away, so this pass is the only one
-		// positioned to see the pattern's names at all.
-		s.bind(x.Var)
-		if x.Pattern != nil {
-			s.walkStmt(x.Pattern)
-		}
-		s.walkStmt(x.Body)
-		s.popScope()
-	case *ast.Return:
-		if x.Value != nil {
-			s.walkExpr(&x.Value)
-		}
-	case *ast.Var:
-		// The init is walked BEFORE the name binds: `let N = N;` reads the
-		// const on its right-hand side and shadows it only afterwards.
-		s.walkExpr(&x.Init)
-		s.bind(x.Name)
-	case *ast.Destructure:
-		s.walkExpr(&x.Init)
-		s.bind(x.AtName)
-		s.bind(x.TempName)
-		for _, n := range x.Names {
-			s.bind(n)
-		}
-		// A nested level's binders live on Nested[i].Names, and its Init
-		// reads Names[i] — so recurse after this level binds, exactly as
-		// the Destructure doc comment requires of any pass that cares about
-		// declared names.
-		for _, nd := range x.Nested {
-			if nd != nil {
-				s.walkStmt(nd)
-			}
-		}
-	case *ast.ExprStmt:
-		s.walkExpr(&x.Expr)
-	case *ast.FuncDecl:
-		s.pushScope()
-		for _, p := range x.Params {
-			s.bind(p.Name)
-		}
-		s.walkBlock(x.Body)
-		s.popScope()
-	// Same hole the expression switch below already had patched (#5477): a
-	// const referenced from one of these was never substituted and reached
-	// the checker as a bare Ident, so `parser.ORIGIN_ASSERT` inside a match
-	// arm was "E001: undefined identifier" for a const plainly in scope.
-	// MatchExpr is handled in walkExpr; the STATEMENT match was not.
-	case *ast.Match:
-		s.walkExpr(&x.Tag)
-		for _, arm := range x.Arms {
-			// A literal or range pattern is a VALUE position, so a const
-			// still substitutes there; the pattern's binders — every name
-			// ast.Binders reaches, not just the payload list — shadow only
-			// the guard and the body.
-			if arm.Literal != nil {
-				s.walkExpr(&arm.Literal)
-			}
-			if arm.RangeHi != nil {
-				s.walkExpr(&arm.RangeHi)
-			}
-			s.pushScope()
-			for _, b := range arm.Binders() {
-				s.bind(b)
-			}
-			if arm.Guard != nil {
-				s.walkExpr(&arm.Guard)
-			}
-			s.walkBlock(arm.Body)
-			s.popScope()
-		}
-	case *ast.Defer:
-		s.walkExpr(&x.Expr)
-	}
-}
-
-func (s *substituter) walkExpr(slot *ast.Expr) {
-	if slot == nil || *slot == nil {
-		return
-	}
+// visit is the ScopeWalker hook: a const read not shadowed by a binder
+// (#8443) becomes its literal, a target or asset builtin its value, and an
+// assignment to a const is the only pass left to say so, since Fold clears
+// prog.Consts before the checker runs. It returns whether the walker should
+// descend into the expression's children.
+func (s *substituter) visit(slot *ast.Expr, w *ast.ScopeWalker) bool {
 	switch x := (*slot).(type) {
 	case *ast.Ident:
-		if v, ok := s.values[x.Name]; ok && !s.isBound(x.Name) {
+		if v, ok := s.values[x.Name]; ok && !w.IsBound(x.Name) {
 			*slot = cloneLit(v, x.P)
 		}
+		return false
 	case *ast.Call:
 		if s.targetOS != "" && isTargetCall(x, targetOSBuiltin) {
 			*slot = &ast.StringLit{P: x.P, Value: s.targetOS}
-			return
+			return false
 		}
 		if s.targetArch != "" && isTargetCall(x, targetArchBuiltin) {
 			*slot = &ast.StringLit{P: x.P, Value: s.targetArch}
-			return
+			return false
 		}
 		if isAssetCall(x) {
 			lit, err := resolveAsset(x, s.assets)
 			if err != nil {
 				s.errs = append(s.errs, err)
-				return
+				return false
 			}
 			*slot = lit
-			return
+			return false
 		}
 		if isAssetsCall(x) {
 			arr, err := resolveAssets(x, s.assets)
 			if err != nil {
 				s.errs = append(s.errs, err)
-				return
+				return false
 			}
 			*slot = arr
-			return
-		}
-		s.walkExpr(&x.Callee)
-		for i := range x.Args {
-			s.walkExpr(&x.Args[i])
-		}
-	case *ast.Binary:
-		s.walkExpr(&x.Left)
-		s.walkExpr(&x.Right)
-	case *ast.Unary:
-		s.walkExpr(&x.Operand)
-	case *ast.Index:
-		s.walkExpr(&x.Array)
-		s.walkExpr(&x.Idx)
-	case *ast.ArrayLit:
-		for i := range x.Elems {
-			s.walkExpr(&x.Elems[i])
+			return false
 		}
 	case *ast.Assign:
 		// An assignment target is an lvalue, so a const named there is not a
-		// value to substitute — it is a program assigning to a const, and the
-		// substituter is the only pass that can still say so: Fold clears
-		// prog.Consts, so by the time the checker runs the name is gone.
-		// Rewriting it instead produced `assignment target *ast.NumberLit is
-		// not an lvalue the parser can produce (compiler bug)` (#8443).
+		// value to substitute; rewriting it produced `assignment target
+		// *ast.NumberLit is not an lvalue the parser can produce` (#8443).
 		if id, ok := x.Target.(*ast.Ident); ok {
-			if _, isConst := s.values[id.Name]; isConst && !s.isBound(id.Name) {
+			if _, isConst := s.values[id.Name]; isConst && !w.IsBound(id.Name) {
 				s.errs = append(s.errs, &Error{Pos: id.P, Path: s.module, Msg: "cannot assign to const " + id.Name})
-				s.walkExpr(&x.Value)
-				return
+				w.WalkExpr(&x.Value)
+				return false
 			}
 		}
-		s.walkExpr(&x.Target)
-		s.walkExpr(&x.Value)
-	case *ast.IfExpr:
-		s.walkExpr(&x.Cond)
-		s.walkExpr(&x.Then)
-		s.walkExpr(&x.Else)
-	case *ast.TryOp:
-		s.walkExpr(&x.Inner)
-	case *ast.MatchExpr:
-		s.walkExpr(&x.Tag)
-		for _, arm := range x.Arms {
-			s.pushScope()
-			for _, b := range arm.Binders() {
-				s.bind(b)
-			}
-			if arm.Guard != nil {
-				s.walkExpr(&arm.Guard)
-			}
-			s.walkExpr(&arm.Body)
-			s.popScope()
-		}
-	case *ast.BlockExpr:
-		s.pushScope()
-		for _, st := range x.Stmts {
-			s.walkStmt(st)
-		}
-		if x.Tail != nil {
-			s.walkExpr(&x.Tail)
-		}
-		s.popScope()
-	case *ast.StructLit:
-		if x.Base != nil {
-			s.walkExpr(&x.Base)
-		}
-		for i := range x.Fields {
-			s.walkExpr(&x.Fields[i].Value)
-		}
-	case *ast.FieldAccess:
-		s.walkExpr(&x.Target)
-	// The forms below were missing, so a const referenced inside any of them
-	// was never substituted and reached the checker as a bare Ident — "E001:
-	// undefined identifier" for a const that is plainly in scope. `N as i32`
-	// was the common one (#5477); the rest are the same hole in the other
-	// compound expressions.
-	case *ast.CastExpr:
-		s.walkExpr(&x.Inner)
-	case *ast.DowncastExpr:
-		s.walkExpr(&x.Inner)
-	case *ast.SliceExpr:
-		s.walkExpr(&x.Source)
-		if x.Low != nil {
-			s.walkExpr(&x.Low)
-		}
-		if x.High != nil {
-			s.walkExpr(&x.High)
-		}
-	case *ast.TupleLit:
-		for i := range x.Elems {
-			s.walkExpr(&x.Elems[i])
-		}
-	case *ast.MapLit:
-		for i := range x.Entries {
-			s.walkExpr(&x.Entries[i].Key)
-			s.walkExpr(&x.Entries[i].Value)
-		}
-	case *ast.EnumLit:
-		for i := range x.Args {
-			s.walkExpr(&x.Args[i])
-		}
-	case *ast.FString:
-		for i := range x.Parts {
-			if x.Parts[i].Expr != nil {
-				s.walkExpr(&x.Parts[i].Expr)
-			}
-		}
-		if x.Desugared != nil {
-			s.walkExpr(&x.Desugared)
-		}
-	case *ast.Lambda:
-		s.pushScope()
-		for _, p := range x.Params {
-			s.bind(p.Name)
-		}
-		s.walkBlock(x.Body)
-		s.popScope()
 	}
+	return true
 }
 
 // cloneLit returns a fresh literal carrying the same value as src but a

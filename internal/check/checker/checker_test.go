@@ -4410,12 +4410,10 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// The `__method_Array_<name>` naming convention still registers a method:
-// std/array's concrete-element verbs reach dispatch through it, and they
-// cannot move onto receivers until the self-hosted compiler lowers that form.
-// A receiver method and a convention-named function claim the same
-// `Array.<name>` key, so this asserts the route rather than endorsing it.
-func TestArrayMethodNamePatternStillDispatches(t *testing.T) {
+// A free function named like the mangled symbol (`__method_Array_<name>`) is
+// only a function: array methods are receiver declarations, and nothing is
+// discovered from a name pattern.
+func TestArrayMethodNamePatternDoesNotDispatch(t *testing.T) {
 	prog, err := parser.Parse(`function __method_Array_ghost(xs: i32[]): i32 { return 0; }
 function main(): i32 { return 0; }`)
 	if err != nil {
@@ -4425,8 +4423,8 @@ function main(): i32 { return 0; }`)
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	if got := info.Methods["Array.ghost"]; got != "__method_Array_ghost" {
-		t.Errorf("Methods[\"Array.ghost\"] = %q, want %q", got, "__method_Array_ghost")
+	if got, ok := info.Methods["Array.ghost"]; ok {
+		t.Errorf("Methods[\"Array.ghost\"] = %q, want no entry", got)
 	}
 }
 
@@ -7202,8 +7200,11 @@ function main(): i32 { return 0; }`)
 
 	cases := []struct{ name, src, want string }{
 		{"non-dyn LHS",
+			prelude + `function main(): i32 { let c: string = "1"; let d: Option[Circle] = c as? Circle; return 0; }`,
+			"requires a 'dyn Trait' value or an integer on the left"},
+		{"integer to a non-integer",
 			prelude + `function main(): i32 { let c: i32 = 1; let d: Option[Circle] = c as? Circle; return 0; }`,
-			"requires a 'dyn Trait' value on the left"},
+			"'as?' from i32 converts only to an integer type, got Circle"},
 		{"target does not implement trait",
 			prelude + `struct NoShape { z: i32 }
 function describe(s: dyn Shape): i32 { let c: Option[NoShape] = s as? NoShape; return 0; }

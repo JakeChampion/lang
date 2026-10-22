@@ -3978,8 +3978,12 @@ function instruction_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssauni
     r = function_site(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  if (ssasem.is_arr_helper_op(ins.kind_tag)) {
-    r = array_helper_call(r, f, ins);
+  if (ins.kind_tag == ssasem.arr_concat()) {
+    r = concat_push(r, f, p, ins, defer0, link);
+    return emit(r, ir.op_store_local(ins.result));
+  }
+  if (ins.kind_tag == ssasem.arr_join()) {
+    r = join_call(r, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
   if (ins.kind_tag == ssasem.append()) {
@@ -4122,37 +4126,138 @@ function held(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): ir
   return helper(r, ins.result, "__fern_rc_inc");
 }
 
-// A tuple read the plan admitted as a TAKE nulls the slot it read. The source
-// dies at this instruction, so its drop runs in this same step, after this —
-// and the release helpers are null-guarded, so the walk goes past the slot the
-// frame now owns rather than freeing it twice (ssaunits.tuple_take_field).
 // __fern_arr_str_join reads the array as parameter 0, and a direct call takes
 // its last parameter from the top of the stack, so the separator is pushed
 // first. The instruction spells the receiver first, as every other operation
 // here does, which is why this loads the two in reverse rather than leaving
 // them to the generic push.
-function array_helper_call(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
-  if (ins.kind_tag == ssasem.arr_concat()) {
-    return concat_call(r, f, ins);
-  }
-  return join_call(r, ins);
-}
-
 function join_call(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[0]));
   return emit(r, ir.op_call_direct("__fern_arr_str_join", 2));
 }
 
-// The element width tells the runtime how the boxes store their elements.
-// Arguments go on in reverse, the last parameter first, as join's do.
-function concat_call(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
+// The scalar concat's runtime call: arguments go on in reverse, the last
+// parameter first, as join's do, with the element width telling the runtime
+// how the boxes store their elements. The runtime grows the receiver's block
+// in place when it holds the block's only count and the block has room, else
+// hands back a fresh box of both, and frees nothing either way: the caller
+// settles the receiver's unit by comparing addresses. `counted` marks the
+// result a unit of the frame's own, for the certifier, where the frame holds
+// the receiver's unit.
+function concat_call(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, counted: boolean): irtables.LowerResult {
   r = emit(r, ir.op_const_i32(elem_width(elem_type(f.values[ins.result]))));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[0]));
-  return emit(r, ir.op_call_direct("__fern_arr_concat", 3));
+  let call: ir.Op = ir.op_call_direct("__fern_arr_concat", 3);
+  if (counted) {
+    call = ir.counted(call);
+  }
+  return emit(r, call);
 }
 
+// The concat onto a receiver this frame holds a unit of, into `res`, that
+// unit released when the join moved to a fresh box: in place, the result
+// carries it on; a shared receiver always moves, and the release is the
+// frame's count going.
+function concat_owned(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, res: i32): irtables.LowerResult {
+  r = concat_call(r, f, ins, true);
+  r = emit(r, ir.op_store_local(res));
+  r = emit(r, ir.op_load_local(res));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
+  r = emit(r, ir.op_if(0));
+  r = release(r, ins.args[0], f.values[ins.args[0]], f);
+  return emit(r, ir.op_end());
+}
+
+// The concat onto a box the frame holds no unit of, into `scratch`, as
+// `borrowed_push`: the receiver's own block, grown in place where the caller
+// bracketed it as done with (ssaunits.grow_rows), is retained as the result
+// unless `out` defers that to where the chain of links ends; a fresh box is
+// the frame's own already. Scalar elements, so no count moves with them.
+function concat_borrowed(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irtables.LowerResult {
+  r = concat_call(r, f, ins, false);
+  r = emit(r, ir.op_store_local(scratch));
+  if (out) {
+    return r;
+  }
+  r = emit(r, ir.op_load_local(scratch));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
+  r = emit(r, ir.op_if(0));
+  r = helper(r, scratch, "__fern_rc_inc");
+  return emit(r, ir.op_end());
+}
+
+// A scalar concat is an append of many elements and takes `append_push`'s
+// forms: onto a link, onto a field of a record this frame owns, onto a
+// receiver the frame holds no unit of, and otherwise onto one it does.
+function concat_push(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irtables.LowerResult {
+  if (link.root >= 0) {
+    return concat_linked(r, f, ins, link);
+  }
+  if (defer0 && p.grows[ins.result] >= 0) {
+    return concat_field(r, f, p, ins);
+  }
+  let res: i32 = scratch_base(f);
+  r = reserve(r, res + 1);
+  if (defer0) {
+    r = concat_borrowed(r, f, ins, res, link.out);
+  } else {
+    r = concat_owned(r, f, ins, res);
+  }
+  return emit(r, ir.op_load_local(res));
+}
+
+// The concat onto a FIELD buffer of a record this frame reads no further
+// through that field, as `append_field`: a sole-owned record lets the join
+// run in place, and the identity arm moves the buffer out of the field; a
+// shared record holds a second count on the buffer across it, so the join
+// takes a fresh box and the field stays for the record's release.
+function concat_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
+  let root: i32 = p.grows[ins.result];
+  let unique: i32 = scratch_base(f);
+  let res: i32 = unique + 1;
+  r = reserve(r, res + 1);
+  r = emit(r, ir.op_load_local(root));
+  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = emit(r, ir.op_store_local(unique));
+  r = unless_unique(r, unique, ins.args[0], "__fern_arr_share_inc");
+  r = concat_call(r, f, ins, true);
+  r = emit(r, ir.op_store_local(res));
+  r = unless_unique(r, unique, ins.args[0], "__fern_arr_share_dec");
+  r = emit(r, ir.op_load_local(res));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(root));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_struct_set(p.grow_fields[ins.result], 0));
+  r = emit(r, ir.op_end());
+  return emit(r, ir.op_load_local(res));
+}
+
+// A concat onto a link, as `append_linked`: still the parameter's box, the
+// borrowed form; a box of the frame's own, the owned one.
+function concat_linked(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, link: Link): irtables.LowerResult {
+  let scratch: i32 = scratch_base(f);
+  r = reserve(r, scratch + 1);
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_load_local(link.root));
+  r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
+  r = emit(r, ir.op_if(0));
+  r = concat_borrowed(r, f, ins, scratch, link.out);
+  r = emit(r, ir.op_else());
+  r = concat_owned(r, f, ins, scratch);
+  r = emit(r, ir.op_end());
+  return emit(r, ir.op_load_local(scratch));
+}
+
+// A tuple read the plan admitted as a TAKE nulls the slot it read. The source
+// dies at this instruction, so its drop runs in this same step, after this —
+// and the release helpers are null-guarded, so the walk goes past the slot the
+// frame now owns rather than freeing it twice (ssaunits.tuple_take_field).
 function took(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
   if (ins.result >= p.takes.len() || p.takes[ins.result] < 0) {
     return r;
@@ -4350,10 +4455,10 @@ function append_linked(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return emit(r, ir.op_load_local(scratch));
 }
 
-// An append's or a with's view of the links: the root its receiver is a link
-// of, and whether its own result is one.
+// An append's, a with's or a scalar concat's view of the links: the root its
+// receiver is a link of, and whether its own result is one.
 function link_at(f: ssasem.Func, links: i32[], ins: ssa.SInst): Link {
-  if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
+  if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with() && ins.kind_tag != ssasem.arr_concat()) {
     return Link { root: 0 - 1, out: false };
   }
   let root: i32 = 0 - 1;

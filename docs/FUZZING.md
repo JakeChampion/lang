@@ -215,7 +215,7 @@ regression test where the bug lived:
   review of #12627). `TestSelfHostDynTraitArgsCheck`.
 - **An associated call's arguments went unchecked** (#12693, self-host
   checker). `T.mk(true)` through a bound, and `S.mk(true)` through a trait
-  or an inherent impl in a local function. Rows in
+  or a derive in a local function. Rows in
   `TestSelfHostCheckerCodesX86_64`.
 - **An impl's signature was compared with its trait's only partly** (#12694,
   self-host checker). An associated function, a `self` not typed `Self`, an

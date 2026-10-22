@@ -111,11 +111,9 @@ unify it against the concrete base.
 The self-host implements the feature too, in a different shape because its
 declared types are SPELLINGS rather than a tree:
 
-- `::` is its own token. In expression position it is a path separator
-  equivalent to `.` (`at_path_sep` accepts either); in TYPE position the two
-  are not interchangeable — `mod.Type` is a module qualifier and `Base::Name`
-  a projection — so the lexer's old fold of `::` into `.` left them
-  indistinguishable.
+- `::` is its own token and means a projection only: in type position
+  `mod.Type` is a module qualifier and `Base::Name` a projection, and in
+  expression position `::` is a P001.
 - A projection is the string `Base::Name`, and
   `parser.resolve_assoc_projections` rewrites every one to the impl's binding
   as a module pass. The base carries its type arguments (`Box[i32]::Ok`), so
@@ -147,6 +145,57 @@ no binding, native also reports a cascading `E002 return type mismatch` against
 the unresolved type and the self-host does not. It declines that E002 for any
 unknown nominal return (`function f(): Nope { return 1; }`) — its documented
 zero-false-positive conservatism, and a separate convergence item.
+
+## Associated constants
+
+A trait may also declare a **constant** each implementer fixes, read as a
+projection in expression position:
+
+```fern
+trait Lanes {
+    const LANES: i32;                  // every impl binds it
+    const NAME: string = "lanes";      // a default an impl may omit
+    function width(self: Self): i32;
+}
+impl Lanes for f64 {
+    const LANES: i32 = 1;
+    function width(self: Self): i32 { return Self.LANES; }
+}
+function chunk[T: Lanes](n: i32): i32 { return n / T.LANES; }
+```
+
+- `Self.LANES` inside an impl or a trait default, `T.LANES` through a bound
+  and `f64.LANES` on a concrete type all read the binding. The separator is
+  `.`, as it is for `T.zero()`.
+- An impl binds every abstract constant with `const NAME: T = expr;`, with the
+  trait's type (`Self` substituted). A `const` bound by a `function`, or a
+  function by a `const`, is E021, as is a missing one (`missing associated
+  constant "LANES"`) or a wrong type (the signature mismatch, as `() => T`).
+- `T.f` on an associated function and `T.NAME()` on a constant are both
+  E043, each naming the other spelling. A name neither declares is E043
+  `T has no associated constant "X"`, on an unbounded parameter too (its
+  associated functions come from its instantiation, which a read cannot
+  resolve).
+
+Implementation, both compilers: an associated constant is an associated
+function with no parameters marked `const` (`TraitMethod.Const` /
+`FuncDecl.AssocConst` natively; `FuncDecl.is_const` on the self-host, as a
+module `const` already is), so conformance, `T.f()` dispatch through a bound,
+monomorphisation and the interpreters need no new case. A read is a field
+access on a TYPE name, which has no value-level fields: a scope-aware pass
+(`checker.rewriteAssocConstReads` over `ast.ScopeWalker`;
+`parser.rewrite_assoc_const_reads` over `astwalk`'s const-substitution walker,
+on the parsed module and again on the flattened bundle) turns it into the
+argument-less call marked as a read (`Call.AssocConst`;
+`ExprFieldAccess.const_read`), which is how the checker tells `T.NAME` from
+`T.NAME()`. An enum's field is a variant unless an impl gives the enum an
+associated function of that name. The self-host interpreter binds a call's
+explicit type arguments (`chunk[V2](8)`) in `bind_tyargs`, which an argument
+value could not pin; `T.zero()` under an explicit instantiation reached the
+same gap.
+
+`TestSelfHostAssocConstsDifferential` holds the rules above to native's exact
+diagnostics.
 
 ## Scope / follow-ups
 

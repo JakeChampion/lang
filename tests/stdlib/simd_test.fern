@@ -1,0 +1,349 @@
+import "std/test";
+import "std/simd" as simd;
+import "std/float";
+import "std/num" as num;
+
+// tests/stdlib/simd_test.fern — one kernel, several evaluators
+// (docs/SIMD-GENERIC-KERNELS.md): the same generic body on f64, on
+// Dual (its derivative) and on DoubleDouble (about 106 bits).
+//
+// Run:
+//   fern -interp tests/stdlib/simd_test.fern
+
+// A kernel written once against the traits.
+function cubic[T: simd.Lanes](x: T): T {
+  return simd.horner(x, [0.0, -2.0, 0.0, 1.0]);  // x^3 - 2x
+}
+
+function clamp_sum[T: simd.Lanes](x: T): T {
+  let y: T = x * x + T.splat(2.0) * x;
+  let m: T = y.lt(T.splat(5.0));
+  return T.select(m, y, T.splat(5.0));
+}
+
+function sigmoid[T: simd.Math](x: T): T {
+  return T.splat(1.0) / (T.splat(1.0) + (-x).exp());
+}
+
+function lanes_of[T: simd.Lanes](x: T): i32 {
+  return T.LANES;
+}
+
+function test_kernel_on_f64(): test.TestOutcome {
+  if (cubic(2.0) != 4.0) {
+    return test.fail("cubic(2) = " + cubic(2.0).to_string());
+  }
+  if (clamp_sum(1.0) != 3.0 || clamp_sum(3.0) != 5.0) {
+    return test.fail("clamp_sum");
+  }
+  return test.assert_eq_f64_rel(sigmoid(0.5), 0.6224593312018546, 1.0e-15);
+}
+
+function test_kernel_on_f32(): test.TestOutcome {
+  let y: f32 = cubic(2.0 as f32);
+  return test.assert_eq_f32_near(y, 4.0 as f32, 1.0e-6 as f32);
+}
+
+function test_lanes_const(): test.TestOutcome {
+  let d: simd.Dual[f64] = simd.seed(1.0);
+  let q: simd.DoubleDouble[f64] = simd.dd_splat(1.0);
+  if (lanes_of(2.0) != 1 || lanes_of(d) != 1 || lanes_of(q) != 1) {
+    return test.fail("LANES through the bound");
+  }
+  return test.pass();
+}
+
+// d/dx (x^3 - 2x) at 2 is 3 * 4 - 2 = 10.
+function test_dual_polynomial(): test.TestOutcome {
+  let x: simd.Dual[f64] = simd.seed(2.0);
+  let y: simd.Dual[f64] = cubic(x);
+  if (y.v != 4.0) {
+    return test.fail("value " + y.v.to_string());
+  }
+  return test.assert_eq_f64_near(y.d, 10.0, 1.0e-12);
+}
+
+// The derivative of a select follows the chosen lane: y = x^2 + 2x has
+// slope 4 at x = 1 and the clamped 5 has slope 0 at x = 3.
+function test_dual_select(): test.TestOutcome {
+  let x1: simd.Dual[f64] = simd.seed(1.0);
+  let x3: simd.Dual[f64] = simd.seed(3.0);
+  let a: simd.Dual[f64] = clamp_sum(x1);
+  let b: simd.Dual[f64] = clamp_sum(x3);
+  if (a.v != 3.0 || a.d != 4.0) {
+    return test.fail("unclamped " + a.v.to_string() + " " + a.d.to_string());
+  }
+  if (b.v != 5.0 || b.d != 0.0) {
+    return test.fail("clamped " + b.v.to_string() + " " + b.d.to_string());
+  }
+  return test.pass();
+}
+
+// sigmoid'(x) = s (1 - s), against the analytic form and a central
+// difference.
+function test_dual_sigmoid(): test.TestOutcome {
+  let x: simd.Dual[f64] = simd.seed(0.5);
+  let y: simd.Dual[f64] = sigmoid(x);
+  let s: f64 = sigmoid(0.5);
+  let h: f64 = 1.0e-6;
+  let fd: f64 = (sigmoid(0.5 + h) - sigmoid(0.5 - h)) / (2.0 * h);
+  if ((y.d - s * (1.0 - s)).abs() > 1.0e-14) {
+    return test.fail("analytic " + y.d.to_string());
+  }
+  return test.assert_eq_f64_rel(y.d, fd, 1.0e-8);
+}
+
+function test_dual_chain_rules(): test.TestOutcome {
+  let x: simd.Dual[f64] = simd.seed(0.7);
+  let checks: f64[] = [
+    x.sin().d - 0.7.cos(),
+    x.cos().d + 0.7.sin(),
+    x.log().d - 1.0 / 0.7,
+    x.tan().d - 1.0 / (0.7.cos() * 0.7.cos()),
+    x.tanh().d - (1.0 - 0.7.tanh() * 0.7.tanh()),
+    x.atan().d - 1.0 / (1.0 + 0.49),
+    x.expm1().d - 0.7.exp(),
+    x.log1p().d - 1.0 / 1.7,
+    x.sqrt().d - 0.5 / 0.7.sqrt(),
+    x.abs().d - 1.0,
+    (-x).abs().d - 1.0,
+  ];
+  let i: i32 = 0;
+  while (i < checks.len()) {
+    if (checks[i].abs() > 1.0e-13) {
+      return test.fail("chain rule " + i.to_string() + ": " + checks[i].to_string());
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
+
+// d/dx x^y at (2, 3) is 3 * 2^2 = 12; d/dy is 8 ln 2.
+function test_dual_pow(): test.TestOutcome {
+  let x: simd.Dual[f64] = simd.seed(2.0);
+  let y: simd.Dual[f64] = simd.dual(3.0, 0.0);
+  let p: simd.Dual[f64] = x.pow(y);
+  let q: simd.Dual[f64] = simd.dual(2.0, 0.0).pow(simd.seed(3.0));
+  if ((p.v - 8.0).abs() > 1.0e-12 || (p.d - 12.0).abs() > 1.0e-12) {
+    return test.fail("d/dx " + p.d.to_string());
+  }
+  return test.assert_eq_f64_near(q.d, 8.0 * 2.0.log(), 1.0e-12);
+}
+
+// A double-double keeps the bit a double drops: (1 + 2^-60) - 1 is
+// exactly 2^-60.
+function test_dd_keeps_low_bits(): test.TestOutcome {
+  let one: simd.DoubleDouble[f64] = simd.dd_splat(1.0);
+  let tiny: simd.DoubleDouble[f64] = simd.dd_splat(8.673617379884035e-19);
+  let back: simd.DoubleDouble[f64] = one + tiny - one;
+  if (back.hi != 8.673617379884035e-19 || back.lo != 0.0) {
+    return test.fail("got " + back.hi.to_string() + " + " + back.lo.to_string());
+  }
+  return test.pass();
+}
+
+// sqrt(2)^2 - 2 vanishes to about 1e-32; a double's own root leaves 4e-16.
+function test_dd_sqrt(): test.TestOutcome {
+  let two: simd.DoubleDouble[f64] = simd.dd_splat(2.0);
+  let r: simd.DoubleDouble[f64] = two.sqrt();
+  let err: simd.DoubleDouble[f64] = r * r - two;
+  if (r.hi != 1.4142135623730951 || err.hi.abs() > 1.0e-31) {
+    return test.fail("hi " + r.hi.to_string() + " residual " + err.hi.to_string());
+  }
+  return test.pass();
+}
+
+// e = 2.718281828459045 + 1.4456468917292502e-16, ln 2 =
+// 0.6931471805599453 + 2.3190468138462996e-17: the low words carry the
+// digits past f64.
+function test_dd_exp_log(): test.TestOutcome {
+  let one: simd.DoubleDouble[f64] = simd.dd_splat(1.0);
+  let e: simd.DoubleDouble[f64] = one.exp();
+  if (e.hi != 2.718281828459045 || (e.lo - 1.4456468917292502e-16).abs() > 1.0e-30) {
+    return test.fail("e = " + e.hi.to_string() + " + " + e.lo.to_string());
+  }
+  let two: simd.DoubleDouble[f64] = simd.dd_splat(2.0);
+  let l2: simd.DoubleDouble[f64] = two.log();
+  if (l2.hi != 0.6931471805599453 || (l2.lo - 2.3190468138462996e-17).abs() > 1.0e-30) {
+    return test.fail("ln 2 = " + l2.hi.to_string() + " + " + l2.lo.to_string());
+  }
+  let x: simd.DoubleDouble[f64] = simd.dd_splat(7.25);
+  let rt: simd.DoubleDouble[f64] = x.log().exp() - x;
+  return test.assert_true(rt.hi.abs() < 1.0e-30);
+}
+
+function test_dd_trig(): test.TestOutcome {
+  let x: simd.DoubleDouble[f64] = simd.dd_splat(1.0);
+  let s: simd.DoubleDouble[f64] = x.sin();
+  let c: simd.DoubleDouble[f64] = x.cos();
+  // sin 1 = 0.8414709848078965 + 1.776845092935536e-18.
+  if (s.hi != 0.8414709848078965 || (s.lo - 1.776845092935536e-18).abs() > 1.0e-30) {
+    return test.fail("sin 1 = " + s.hi.to_string() + " + " + s.lo.to_string());
+  }
+  let unit: simd.DoubleDouble[f64] = simd.dd_splat(1.0);
+  let one: simd.DoubleDouble[f64] = s * s + c * c - unit;
+  if (one.hi.abs() > 1.0e-31) {
+    return test.fail("sin^2 + cos^2 - 1 = " + one.hi.to_string());
+  }
+  // Quadrants: sin and cos of 2, 4 and -5 against the doubles.
+  let xs: f64[] = [2.0, 4.0, -5.0, 100.0];
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    let d: simd.DoubleDouble[f64] = simd.dd_splat(xs[i]);
+    if ((d.sin().hi - xs[i].sin()).abs() > 4.0e-16 || (d.cos().hi - xs[i].cos()).abs() > 4.0e-16) {
+      return test.fail("quadrant at " + xs[i].to_string());
+    }
+    i = i + 1;
+  }
+  let p7: simd.DoubleDouble[f64] = simd.dd_splat(0.7);
+  let t: simd.DoubleDouble[f64] = p7.tan().atan() - p7;
+  return test.assert_true(t.hi.abs() < 1.0e-30);
+}
+
+function test_dd_small_arguments(): test.TestOutcome {
+  let x: simd.DoubleDouble[f64] = simd.dd_splat(1.0e-10);
+  let em: simd.DoubleDouble[f64] = x.expm1();
+  // For the double nearest 1e-10, expm1 is 1.00000000005e-10 +
+  // 3.3900133221217734e-27 and log1p is 9.999999999500001e-11 -
+  // 3.389513322121794e-27: the x^2 / 2 term and the rounding of the high
+  // word both live in lo.
+  if (em.hi != 1.00000000005e-10 || (em.lo - 3.3900133221217734e-27).abs() > 1.0e-33) {
+    return test.fail("expm1 = " + em.hi.to_string() + " + " + em.lo.to_string());
+  }
+  let l1: simd.DoubleDouble[f64] = x.log1p();
+  if (l1.hi != 9.999999999500001e-11 || (l1.lo + 3.389513322121794e-27).abs() > 1.0e-33) {
+    return test.fail("log1p = " + l1.hi.to_string() + " + " + l1.lo.to_string());
+  }
+  return test.pass();
+}
+
+function test_dd_generic_kernel(): test.TestOutcome {
+  let x: simd.DoubleDouble[f64] = simd.dd_splat(0.5);
+  let s: simd.DoubleDouble[f64] = sigmoid(x);
+  // sigmoid(0.5) = 0.6224593312018546 - 2.855738705812305e-17.
+  if (s.hi != 0.6224593312018546 || (s.lo + 2.855738705812305e-17).abs() > 1.0e-30) {
+    return test.fail("sigmoid = " + s.hi.to_string() + " + " + s.lo.to_string());
+  }
+  let three: simd.DoubleDouble[f64] = simd.dd_splat(3.0);
+  let c: simd.DoubleDouble[f64] = clamp_sum(three);
+  return test.assert_true(c.hi == 5.0 && c.lo == 0.0);
+}
+
+// Dual over DoubleDouble: the chain rule at the higher precision.
+function test_dual_of_dd(): test.TestOutcome {
+  let x: simd.Dual[simd.DoubleDouble[f64]] = simd.seed(3.0);
+  let y: simd.Dual[simd.DoubleDouble[f64]] = cubic(x);
+  if (y.v.hi != 21.0 || y.d.hi != 25.0) {
+    return test.fail("value " + y.v.hi.to_string() + " slope " + y.d.hi.to_string());
+  }
+  let s: simd.Dual[simd.DoubleDouble[f64]] = sigmoid(x);
+  let expect: f64 = sigmoid(3.0) * (1.0 - sigmoid(3.0));
+  // The f64 reference is the less accurate side.
+  return test.assert_eq_f64_rel(s.d.hi, expect, 1.0e-14);
+}
+
+function test_dd_f32(): test.TestOutcome {
+  let x: simd.DoubleDouble[f32] = simd.dd_splat(2.0);
+  let r: simd.DoubleDouble[f32] = x.sqrt();
+  let err: simd.DoubleDouble[f32] = r * r - x;
+  return test.assert_true((err.hi as f64).abs() < 1.0e-13);
+}
+
+// `ne` and `eq` are IEEE: a NaN operand compares unequal to everything,
+// itself included, and the double-double `lt` tie-break on `hi` follows.
+function test_eq_nan(): test.TestOutcome {
+  let z: f64 = 0.0;
+  let nan: f64 = z / z;
+  if (nan.ne(5.0) != 1.0 || simd.eq(nan, 5.0) != 0.0 || simd.eq(nan, nan) != 0.0 || simd.eq(5.0, nan) != 0.0 || simd.eq(5.0, 5.0) != 1.0) {
+    return test.fail("f64 eq with NaN");
+  }
+  let d: simd.Dual[f64] = simd.seed(nan);
+  if (simd.eq(d, d).v != 0.0) {
+    return test.fail("dual eq with NaN");
+  }
+  let a: simd.DoubleDouble[f64] = simd.dd(5.0, 0.0);
+  let b: simd.DoubleDouble[f64] = simd.dd(nan, 1.0);
+  if (simd.eq(a, b).hi != 0.0 || simd.eq(b, b).hi != 0.0 || a.ne(b).hi != 1.0 || a.lt(b).hi != 0.0 || b.lt(a).hi != 0.0) {
+    return test.fail("double-double eq and lt with NaN");
+  }
+  if (simd.eq(a, a).hi != 1.0 || simd.eq(a, simd.dd(5.0, 1.0)).hi != 0.0) {
+    return test.fail("double-double eq reads both halves");
+  }
+  return test.pass();
+}
+
+function close_rel(a: f64, b: f64, tol: f64): boolean {
+  let m: f64 = b.abs();
+  if (m < 1.0e-300) {
+    m = 1.0e-300;
+  }
+  return (a - b).abs() <= tol * m;
+}
+
+// Every Math function on DoubleDouble and every Dual derivative against
+// std/float over a range of arguments: the double-double value within a few
+// ulp of the f64 result (the f64 side is the less accurate one), and the
+// derivative against the analytic form built from std/float.
+function test_sweep_against_float(): test.TestOutcome {
+  let names: string[] = ["exp", "log", "sin", "cos", "tan", "tanh", "atan", "expm1", "log1p", "pow"];
+  let i: i32 = 0;
+  while (i < 30) {
+    let x: f64 = -2.9 + 0.2 * (i as f64);
+    let p: f64 = 0.1 + 0.2 * (i as f64);
+    let q: simd.DoubleDouble[f64] = simd.dd_splat(x);
+    let qp: simd.DoubleDouble[f64] = simd.dd_splat(p);
+    let d: simd.Dual[f64] = simd.seed(x);
+    let dp: simd.Dual[f64] = simd.seed(p);
+    let got: f64[] = [
+      simd.dd_value(q.exp()), simd.dd_value(qp.log()), simd.dd_value(q.sin()), simd.dd_value(q.cos()),
+      simd.dd_value(q.tan()), simd.dd_value(q.tanh()), simd.dd_value(q.atan()), simd.dd_value(q.expm1()),
+      simd.dd_value(qp.log1p()), simd.dd_value(qp.pow(simd.dd_splat(1.7))),
+    ];
+    let want: f64[] = [x.exp(), p.log(), x.sin(), x.cos(), x.tan(), x.tanh(), x.atan(), x.expm1(), p.log1p(), p.pow(1.7)];
+    let slope: f64[] = [
+      d.exp().d, dp.log().d, d.sin().d, d.cos().d, d.tan().d, d.tanh().d, d.atan().d, d.expm1().d,
+      dp.log1p().d, dp.pow(simd.dual(1.7, 0.0)).d,
+    ];
+    let t: f64 = x.tan();
+    let th: f64 = x.tanh();
+    let want_slope: f64[] = [
+      x.exp(), 1.0 / p, x.cos(), -x.sin(), 1.0 + t * t, 1.0 - th * th, 1.0 / (1.0 + x * x), x.exp(),
+      1.0 / (1.0 + p), 1.7 * p.pow(0.7),
+    ];
+    let k: i32 = 0;
+    while (k < 10) {
+      if (!close_rel(got[k], want[k], 1.0e-15)) {
+        return test.fail(names[k] + " at " + x.to_string() + ": " + got[k].to_string() + " vs " + want[k].to_string());
+      }
+      if (!close_rel(slope[k], want_slope[k], 1.0e-15)) {
+        return test.fail("d/dx " + names[k] + " at " + x.to_string() + ": " + slope[k].to_string() + " vs " + want_slope[k].to_string());
+      }
+      k = k + 1;
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("simd");
+  r = r.it("kernel on f64", test_kernel_on_f64);
+  r = r.it("kernel on f32", test_kernel_on_f32);
+  r = r.it("LANES through a bound", test_lanes_const);
+  r = r.it("dual polynomial", test_dual_polynomial);
+  r = r.it("dual select", test_dual_select);
+  r = r.it("dual sigmoid", test_dual_sigmoid);
+  r = r.it("dual chain rules", test_dual_chain_rules);
+  r = r.it("dual pow", test_dual_pow);
+  r = r.it("double-double keeps low bits", test_dd_keeps_low_bits);
+  r = r.it("double-double sqrt", test_dd_sqrt);
+  r = r.it("double-double exp and log", test_dd_exp_log);
+  r = r.it("double-double trig", test_dd_trig);
+  r = r.it("double-double small arguments", test_dd_small_arguments);
+  r = r.it("double-double generic kernel", test_dd_generic_kernel);
+  r = r.it("dual of double-double", test_dual_of_dd);
+  r = r.it("double-double over f32", test_dd_f32);
+  r = r.it("eq is IEEE for NaN", test_eq_nan);
+  r = r.it("sweep against std/float", test_sweep_against_float);
+  return r.finish();
+}

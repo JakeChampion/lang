@@ -38,12 +38,8 @@ Visibility  = 'pub' [ '(' IDENT ')' ] ;
 # `fip` / `fbip` are contextual: identifiers everywhere but here.
 FuncMod     = 'fip' [ NUMBER ] | 'fbip' [ NUMBER ] | 'async' ;
 
-FuncDecl    = { FuncMod } 'function' [ Receiver ] DeclName [ TypeParams ]
+FuncDecl    = { FuncMod } 'function' [ Receiver ] IDENT [ TypeParams ]
               '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' ) ;
-# `default` is a keyword but is admitted as a declared name, so a type
-# can implement core/cmp's Default trait.
-DeclName    = IDENT | 'default' ;
-
 # A method is written `function (self: T) name(...)`.
 Receiver    = '(' [ 'own' ] IDENT ':' Type ')' ;
 
@@ -95,11 +91,11 @@ TypeDecl    = 'type' IDENT [ TypeParams ] '=' Type '|' Type { '|' Type } ';' ;
 
 TraitDecl   = 'trait' IDENT [ TypeParams ] [ ':' Bounds ] '{' { TraitItem } '}' [ ';' ] ;
 TraitItem   = 'type' IDENT [ ':' Bounds ] ';'
-            | { FuncMod } 'function' [ Receiver ] DeclName [ TypeParams ]
+            | { FuncMod } 'function' [ Receiver ] IDENT [ TypeParams ]
               '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' )
             ;
 
-ImplDecl    = 'impl' [ TypeParams ] Type [ 'for' Type ] '{' { ImplItem } '}' [ ';' ] ;
+ImplDecl    = 'impl' [ TypeParams ] Type 'for' Type '{' { ImplItem } '}' [ ';' ] ;
 ImplItem    = 'type' IDENT '=' Type ';' | Attribute | FuncDecl ;
 
 ConstDecl   = 'const' IDENT [ ':' Type ] '=' Expr ';' ;
@@ -222,12 +218,14 @@ LocalFunc   = 'function' IDENT [ TypeParams ] '(' [ ParamList ] ')' [ ':' Type ]
 
 # Assignment is a statement, not an expression: it yields no value, so
 # `let a = b = 1;` and `while ((n = n - 1) > 0)` do not derive. It is
-# right-associative, so `a = b = 1;` assigns both. The grammar is a
+# right-associative, so `a = b = 1;` assigns both. A compound assignment
+# stands alone: it neither joins a chain nor carries one. The grammar is a
 # SUPERSET here: `1 = 2;` derives, and the parser rejects it as P003.
 # Assignability is a static rule, not a syntactic one: see spec/README.md.
 ExprStmt    = Assign ';' ;
-Assign      = Expr [ AssignOp Assign ] ;
-AssignOp    = '=' | '+=' | '-=' | '*=' | '/=' | '%='
+Assign      = Expr [ '=' AssignChain | CompoundOp Expr ] ;
+AssignChain = Expr [ '=' AssignChain ] ;
+CompoundOp  = '+=' | '-=' | '*=' | '/=' | '%='
             | '&=' | '|=' | '^=' | '<<=' | '>>='
             ;
 
@@ -302,10 +300,9 @@ PostfixOp   = '(' [ CallArgs ] ')'
             | '[' Expr ']'
             | '[' TypeArgList ']'
             | '.' MemberName [ TypeArgs ]
-            | '::' MemberName
             | '?'
             ;
-MemberName  = IDENT | NUMBER | 'default' ;
+MemberName  = IDENT | NUMBER ;
 CallArgs    = CallArg { ',' CallArg } [ ',' ] ;
 CallArg     = IDENT '=' Expr | Expr ;
 # `f[i32](x)` — explicit generic instantiation. A lone name (`f[Box](x)`)
@@ -426,4 +423,4 @@ MapLit      = 'Map' '{' [ MapEntry { ',' MapEntry } [ ',' ] ] '}' ;
 MapEntry    = Expr ':' Expr ;
 StructLit   = QualName [ TypeArgs ] '{' [ LitField { ',' LitField } [ ',' ] ] '}' ;
 LitField    = '...' Expr | IDENT ':' Expr ;
-Name        = QualName [ '::' IDENT ] | '_' ;
+Name        = QualName | '_' ;

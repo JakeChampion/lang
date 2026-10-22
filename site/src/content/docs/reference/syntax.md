@@ -18,7 +18,6 @@ function let use as
 if else while for loop break continue return
 true false boolean void string
 i32 i64 u8 u32 u64 usize f32 f64
-default
 struct enum type
 import pub const
 match when
@@ -46,9 +45,9 @@ identifiers everywhere else:
 
 | Form | Examples | Type |
 | ---- | -------- | ---- |
-| Integer | `42`, `0xff`, `0b1010`, `0o17` | whatever integer type the context needs, else `i32` |
-| Suffixed integer | `7i64`, `3u32`, `255u8` | the suffix (`i32` `i64` `u8` `u32` `u64`) |
-| Float | `2.5`, `1e3`, `2.5f32` | `f64`, or `f32` with the suffix |
+| Integer | `42`, `1_000_000`, `0xff`, `0b1010`, `0o17` | whatever integer type the context needs, else `i32` |
+| Suffixed integer | `7i64`, `3u32`, `255u8`, `8usize` | the suffix (`i32` `i64` `u8` `u32` `u64` `usize`) |
+| Float | `2.5`, `1e3`, `2.5f32`, `1_000.25` | `f64`, or `f32` with the suffix |
 | Character | `'x'`, `'é'`, `'\u{1F600}'` | `char`, one Unicode scalar value |
 | Byte | `b'x'`, `b'\n'` | `u8` |
 | String | `"tab\there"` | `string` |
@@ -56,7 +55,8 @@ identifiers everywhere else:
 | Boolean | `true`, `false` | `boolean` |
 | Unit | `()` | `void` |
 
-There are no digit separators. An integer literal that does not fit its
+An `_` between two digits separates them and is otherwise ignored, in every
+numeric form: `0xffff_0000`, `0b1010_0101u8`, `6.022_140e23`. An integer literal that does not fit its
 type is a compile error (`E047`), so `let b: u8 = 300;` is rejected rather
 than wrapped. A character literal and a byte literal never convert into
 each other or into an integer without an `as` cast: `s[i] == b'['`
@@ -128,8 +128,10 @@ bits are shifted out). Both families are
 integer-only and otherwise behave exactly like their wrapping
 counterparts — see [Integer arithmetic](../types/#integer-arithmetic).
 
-`e as? T` is the checked downcast from a `dyn Trait` value to a concrete
-type, giving `Option[T]` — see [Traits](../traits/#runtime-dispatch--dyn-trait).
+`e as? T` gives `Option[T]`. From a `dyn Trait` value it is the checked
+downcast to a concrete type — see [Traits](../traits/#runtime-dispatch--dyn-trait).
+From an integer it is the checked conversion to another integer type:
+`Some` when the value fits `T`, so `300 as? u8` is `None`.
 
 ## Trailing commas
 
@@ -196,6 +198,10 @@ isn't significant.
 - **`let name: T = expr;`** / **`let name = expr;`** — a binding, with or
   without a type annotation. `let` is the only binding keyword, and every
   binding can be reassigned with `=`.
+- **`a = b = expr;`** / **`a += expr;`** — assignment is a statement, and
+  a chain of `=` assigns every target the one value. A compound assignment
+  (`+=`, `-=`, `<<=`, …) stands alone: it neither joins a chain nor
+  carries one.
 - **`let Pat = expr;`** — irrefutable destructure, the third site taking
   that same pattern. A refutable head belongs to the `let … else` form
   above, which has a branch for the miss.
@@ -242,9 +248,8 @@ function main(): i32 {
   leave those trailing arguments out.
 - **Named arguments** (`area(3, h = 4)`) may follow the positional ones.
 - **Methods** are functions with a receiver clause:
-  `function (p: Point) norm(): f64 { … }`, called as `p.norm()`. An
-  `impl Type { … }` block is the other spelling — see
-  [Traits](../traits/#methods-and-inherent-impls).
+  `function (p: Point) norm(): f64 { … }`, called as `p.norm()`. See
+  [Traits](../traits/#methods-without-a-trait).
 - **Generic** functions take type parameters in `[...]` after the name;
   see [Generics](../types/#generics).
 - **`const NAME: T = expr;`** declares a top-level constant. It may be

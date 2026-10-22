@@ -185,7 +185,7 @@ function main(): i32 { return f("a").len(); }
 `, 1},
 	// Only string concatenation makes `+` an owned argument (#10382).
 	{"overload-plus-into-own", `struct V { x: i32 }
-impl V { function add(self: V, other: V): V { return V { x: self.x + other.x }; } }
+function (self: V) add(other: V): V { return V { x: self.x + other.x }; }
 function g(own s: V): i32 { return s.x; }
 function main(): i32 { let a = V { x: 1 }; let b = V { x: 2 }; return g(a + b); }
 `, 1},
