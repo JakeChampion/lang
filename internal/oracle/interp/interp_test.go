@@ -2,9 +2,9 @@ package interp
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/check/checker"
@@ -830,10 +830,10 @@ func TestArraySliceOutOfRangeStillErrors(t *testing.T) {
 	for _, fn := range prog.Funcs {
 		i.Register(fn)
 	}
-	if _, err := i.CallByName("main", nil); err == nil {
-		t.Fatal("an out-of-range ARRAY slice must still be an error")
-	} else if !strings.Contains(err.Error(), "out of range") {
-		t.Errorf("got %v, want an out-of-range error", err)
+	_, err = i.CallByName("main", nil)
+	var abort *Abort
+	if !errors.As(err, &abort) || abort.Cause != CauseSliceRange {
+		t.Errorf("got %v, want the slice-range abort", err)
 	}
 }
 

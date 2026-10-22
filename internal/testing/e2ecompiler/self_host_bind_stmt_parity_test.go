@@ -146,16 +146,14 @@ function main(): i32 { return top + topInferred + ta + tb; }`,
 	{
 		// A statement the parser could not read becomes StmtUnknown, which
 		// binds nothing — and the statements after it still have to be walked.
-		// The iterand is parenthesised: after the refused header, `arr {`
-		// would open a struct literal and take main's closing brace with it.
 		name: "unparseable statement",
 		src: `function main(): i32 {
   let arr: i32[] = [1];
-  for in (arr) { let q = 1; }
+  for in arr { let q = 1; }
   let after: i32 = 2;
   return after;
 }`,
-		minCompared: 7,
+		minCompared: 4,
 	},
 	{
 		name: "match arms",

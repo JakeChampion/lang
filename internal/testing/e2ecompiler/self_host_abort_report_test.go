@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/tables/symname"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // A fatal abort names its cause on stderr and walks the frame-pointer chain
@@ -19,10 +20,17 @@ import (
 // `0x<16 hex>` line per frame. FERN_BACKTRACE=0 on the compiler, or its
 // -backtrace=false flag, keeps the cause line and the exit code and drops the
 // walk at compile time.
+//
+// Both interpreters stop at the same places with the same cause line and exit
+// 134, and print their own detail line under it where a compiled program
+// prints its backtrace (#12691).
 
 var abortReportCases = []struct{ name, src, cause string }{
 	{"array_oob", `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[7]; }`, "fern: array index out of range"},
 	{"string_slice_oob", `function main(): i32 { let s: string = "hi"; let t: str = slice_unchecked(s, 1, 9); return t.len(); }`, "fern: string index out of range"},
+	{"string_index_oob", `function main(): i32 { let s: string = "abc"; return s[7] as i32; }`, "fern: string index out of range"},
+	{"string_index_oob_runtime", `function main(): i32 { let s: string = "abc"; return s[args().len() + 6] as i32; }`, "fern: string index out of range"},
+	{"alloc_size_negative", `function main(): i32 { let b: u8[] = __alloc_u8(args().len() - 6); return b.len(); }`, "fern: allocation size out of range"},
 	{"slice_range_oob", `function main(): i32 { let xs: i32[] = [1, 2, 3]; let ys: [i32] = xs[1:9]; return ys.len(); }`, "fern: slice range out of bounds"},
 	// A byte view's read is one unsigned compare, so both ends must still trap.
 	{"byte_view_negative_oob", byteViewReadSrc("args().len() - 2"), "fern: array index out of range"},
@@ -317,4 +325,35 @@ func TestSelfHostAbortBacktraceOffArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
 	checkAbortBacktraceOff(t, cli, "arm64-linux", func(bin string) *exec.Cmd { return runArm64Bin(qemu, bin) })
+}
+
+func TestAbortCauseLineInterpreters(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	oracle := e2eharness.BuildLangBinForInterp(t)
+	for _, tc := range abortReportCases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(src, []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runs := []struct {
+				name string
+				cmd  *exec.Cmd
+			}{
+				{"self-host", runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib)},
+				{"oracle", exec.Command(oracle, "-interp", src)},
+			}
+			for _, run := range runs {
+				var stderr bytes.Buffer
+				run.cmd.Stderr = &stderr
+				_ = run.cmd.Run()
+				if code := run.cmd.ProcessState.ExitCode(); code != 134 {
+					t.Errorf("%s: exit %d, want 134\nstderr:\n%s", run.name, code, stderr.String())
+				}
+				if !strings.HasPrefix(stderr.String(), tc.cause+"\n  ") {
+					t.Errorf("%s: stderr does not open with the cause line and a detail line:\n%s", run.name, stderr.String())
+				}
+			}
+		})
+	}
 }
