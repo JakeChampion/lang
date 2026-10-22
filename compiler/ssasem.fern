@@ -3047,9 +3047,8 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
   if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) {
     return typeinfo.TypeBool { tag: 0 };
   }
-  // A codepoint is compared, never ordered or added: native answers E009 to
-  // every operator on char but the two equalities.
-  if (is_char(left) && is_char(right) && (op == "==" || op == "!=")) {
+  // Characters support equality and ordering by Unicode scalar value.
+  if (is_char(left) && is_char(right) && comparison(op)) {
     return typeinfo.TypeBool { tag: 0 };
   }
   if (is_text(left) && is_text(right)) {

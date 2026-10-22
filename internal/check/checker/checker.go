@@ -20393,9 +20393,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				n.ParamCmp = true
 				return ast.BoolType{}
 			}
-			if _, isChar := lt.(ast.CharType); isChar && n.ParamCmp && ast.Equal(lt, rt) {
-				n.CmpCall = &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "cmp"}, Args: []ast.Expr{n.Right}}
-				c.checkExpr(n.CmpCall, s)
+			if _, isChar := lt.(ast.CharType); isChar && ast.Equal(lt, rt) {
 				return ast.BoolType{}
 			}
 			// Composite-type ordering. `<` / `<=` / `>` / `>=` on a

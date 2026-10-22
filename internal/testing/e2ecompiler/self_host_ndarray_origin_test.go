@@ -81,6 +81,7 @@ func TestSelfHostNdarrayModuleOrigin(t *testing.T) {
 		{"custom-only", `import "./ndarray" as custom;`, customNdarrayChecks},
 		{"custom-first", "import \"./ndarray\" as custom;\nimport \"std/ndarray\" as standard;", customNdarrayChecks + standardNdarrayChecks},
 		{"standard-first", "import \"std/ndarray\" as standard;\nimport \"./ndarray\" as custom;", customNdarrayChecks + standardNdarrayChecks},
+		{"standard-suffixed", "import \"std/ndarray.fern\" as standard;\nimport \"./ndarray.fern\" as custom;", customNdarrayChecks + standardNdarrayChecks},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -93,7 +94,7 @@ func TestSelfHostNdarrayModuleOrigin(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if tc.name == "standard-first" {
+			if tc.name == "standard-first" || tc.name == "standard-suffixed" {
 				asm := filepath.Join(dir, "report.s")
 				cmd := runX86_64Bin(compiler.runner, compiler.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", asm, filepath.Join(dir, "main.fern"), compiler.stdlib)
 				cmd.Env = append(os.Environ(), "FERN_ARRAY_REPORT=1", "FERN_NO_SCALE_KERNEL=0", "FERN_NO_PRODUCT_KERNEL=0")
