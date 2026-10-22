@@ -3441,7 +3441,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let kwline: i32 = p.peek_line();
         let kwcol: i32 = p.peek_col();
         let look: Par = p.advance();
-        if (look.peek_punct() == ".") {
+        if (look.peek_punct() == "." || look.peek_punct() == "::") {
           return parse_postfix(look, e_ident_at(x.name, kwline, kwcol));
         }
       }
