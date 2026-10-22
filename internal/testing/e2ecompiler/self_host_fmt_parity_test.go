@@ -1490,12 +1490,16 @@ xs: T[],
 trait Maker {
 function make(): Self;
 }
+trait Sized {
+function size(self: Self): i32;
+function same(self: Self, o: Self): Self;
+}
 impl Maker for Box[i32] {
 function make(): Self {
 return Box { xs: [] };
 }
 }
-impl[T] Box[T] {
+impl[T] Sized for Box[T] {
 function size(self: Self): i32 {
 return self.xs.len();
 }

@@ -1385,14 +1385,16 @@ function decl_sentinel(p: Par, text: string): ast.Stmt {
 // raises no diagnostics of its own.
 function sync_to_top_level(p: Par): Par {
   let q: Par = p;
-  while (!q.at_end()) {
-    let kw: string = q.peek_keyword();
-    if (kw == "function" || kw == "struct" || kw == "enum" || kw == "import" || kw == "const" || kw == "trait" || kw == "impl" || kw == "pub") {
-      return q;
-    }
+  while (!q.at_end() && !at_top_level_decl(q)) {
     q = q.advance();
   }
   return q;
+}
+
+// at_top_level_decl reports whether the cursor sits on a keyword that can open
+// a top-level declaration.
+function at_top_level_decl(p: Par): boolean {
+  return util.has_str(["function", "struct", "enum", "import", "const", "trait", "impl", "pub"], p.peek_keyword());
 }
 
 // skip_body_item steps past the rest of a malformed trait or impl body item: to
@@ -9442,6 +9444,13 @@ function parse_type_param_list(p: Par): (TpList, Par) {
     bounds = bounds.append(this_bounds);
     if (p.peek_punct() == ",") {
       p = p.advance();
+    } else if (p.peek_punct() != "]" && !p.at_end()) {
+      // Native expects `,` or `]` after a parameter; anything else ends the
+      // list with its diagnostic rather than reading on as another parameter.
+      p = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \"]\", got " + tok_desc(p.peek()))) };
+      while (!p.at_end() && p.peek_punct() != "]") {
+        p = p.advance();
+      }
     }
   }
   if (p.peek_punct() == "]") {
@@ -28943,6 +28952,14 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
       } else {
         go_sup = false;
       }
+    }
+  }
+  // Anything between the header and the body is refused once, and the body
+  // still parses unless a declaration starts first.
+  if (p.peek_punct() != "{") {
+    trait_bad = trait_bad.append(decl_sentinel(p, "expected \"{\", got " + tok_desc(p.peek())));
+    while (!p.at_end() && p.peek_punct() != "{" && !at_top_level_decl(p)) {
+      p = p.advance();
     }
   }
   if (p.peek_punct() == "{") {

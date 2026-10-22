@@ -123,6 +123,12 @@ var parseErrPosCases = []struct {
 	// An impl names a trait; `impl Type { … }` is a P001 at the type (#12699).
 	{"inherent-impl", "struct P { x: i32 }\nimpl P {\n  function get(self: Self): i32 { return self.x; }\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"generic-inherent-impl", "struct B[T] { v: T }\nimpl[T] B[T] {\n  function get(self: Self): T { return self.v; }\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	// A type-parameter list ends at `,` or `]`, and a supertrait clause at the
+	// trait's `{`: a `::` or any other token there is refused, not read on.
+	{"bound-path-sep", "import \"core/cmp\";\nfunction f[T: cmp::Ord](x: T): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"type-param-stray-token", "function f[T x](x: T): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"supertrait-path-sep", "import \"core/cmp\";\ntrait A : cmp::Ord {\n  function f(self: Self): i32;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"trait-stray-token", "trait A x {\n  function f(self: Self): i32;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 }
 
 // TestSelfHostParseErrorPositions pins SH-041 (tracking #2849): a
@@ -263,6 +269,10 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"inherent-impl-alone",
 			"struct P { x: i32 }\nimpl P {\n  function get(self: Self): i32 { return self.x; }\n}\nfunction main(): i32 {\n  return 0;\n}\n",
 			"error[P001]: at top level: `impl P` needs a trait, as in `impl cmp.Eq for P`; declare a method as `function (self: P) name(…)` and a constructor as a plain function (2:6)"},
+		// A generic type is named with its arguments, as written.
+		{"generic-inherent-impl-message",
+			"struct B[T] { v: T }\nimpl[T] B[T] {\n  function get(self: B[T]): T { return self.v; }\n}\nfunction main(): i32 {\n  return 0;\n}\n",
+			"error[P001]: at top level: `impl B[T]` needs a trait, as in `impl cmp.Eq for B[T]`; declare a method as `function (self: B[T]) name(…)` and a constructor as a plain function (2:9)"},
 		// A sentinel inside a defer's action: the walk descends StmtDefer.
 		{"defer-action-sentinel",
 			"function main(): i32 {\n  defer print(;);\n  return 0;\n}\n",

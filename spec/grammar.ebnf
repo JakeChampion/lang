@@ -99,7 +99,7 @@ TraitItem   = 'type' IDENT [ ':' Bounds ] ';'
               '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' )
             ;
 
-ImplDecl    = 'impl' [ TypeParams ] Type [ 'for' Type ] '{' { ImplItem } '}' [ ';' ] ;
+ImplDecl    = 'impl' [ TypeParams ] Type 'for' Type '{' { ImplItem } '}' [ ';' ] ;
 ImplItem    = 'type' IDENT '=' Type ';' | Attribute | FuncDecl ;
 
 ConstDecl   = 'const' IDENT [ ':' Type ] '=' Expr ';' ;
@@ -425,4 +425,4 @@ MapLit      = 'Map' '{' [ MapEntry { ',' MapEntry } [ ',' ] ] '}' ;
 MapEntry    = Expr ':' Expr ;
 StructLit   = QualName [ TypeArgs ] '{' [ LitField { ',' LitField } [ ',' ] ] '}' ;
 LitField    = '...' Expr | IDENT ':' Expr ;
-Name        = QualName [ '::' IDENT ] | '_' ;
+Name        = QualName | '_' ;

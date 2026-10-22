@@ -4304,7 +4304,8 @@ function map_receiver_type(rt: string): boolean {
 
 // namespace_is_exact: every method on `ns` declares a concrete receiver, so
 // this checker's set is the one native would list. An array namespace with any
-// module-supplied method fails it — that is the element-polymorphic case.
+// module-supplied method fails it: a pinned or element-polymorphic array
+// receiver.
 function (s: Scope) namespace_is_exact(ns: string): boolean {
   if (ns != "Array") {
     return true;
