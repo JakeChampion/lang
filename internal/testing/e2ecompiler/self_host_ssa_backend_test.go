@@ -1515,12 +1515,14 @@ function main(): i32 { return (step(40i64, 2i64) + step(1i64, 2i64) + first_over
 // rendered at their call sites, not called: put tests uniqueness twice and
 // retains once, so its listing carries three guard chains and calls neither
 // stub. `__fern_rc_dec` is not one of them — in the self-host it maps to the
-// array release, which frees — so the slice call put also makes stays.
+// array release, which frees — so the slice call put also makes stays. put
+// is an updater, which callers splice, so it is kept as a call.
 func TestSelfHostSSARcPrimitivesAreInline(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "blk.fern")
 	prog := `struct Blk { buf: i32[], note: string, n: i32 }
+@noinline
 function (b: Blk) put(i: i32, v: i32): Blk { return Blk { ...b, buf: b.buf.with(i, v) }; }
 function main(): i32 {
     let b: Blk = Blk { buf: [0, 0, 0, 0], note: "a refcounted field the update carries", n: 0 };
