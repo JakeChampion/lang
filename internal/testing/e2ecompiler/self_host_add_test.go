@@ -117,4 +117,14 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 			}
 		})
 	}
+	// Too few arguments is a usage refusal: exit 2, as an unknown flag is.
+	t.Run("missing-spec", func(t *testing.T) {
+		for _, bin := range []string{nativeBin, driverBin} {
+			cmd := exec.Command(bin, "-add", "helper")
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 2 {
+				t.Errorf("%s -add helper exited %d, want 2", filepath.Base(bin), code)
+			}
+		}
+	})
 }

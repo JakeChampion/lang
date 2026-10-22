@@ -114,8 +114,9 @@ target has one. Three capabilities.
 the case for gating it is real. It is core anyway because *every* target can define
 "stop": a freestanding artifact traps, resets, or returns to its embedder. Gating it
 would mean a program that cannot terminate, which is not a useful thing to be able to
-express. This is the one entry in `coreBuiltins` that is a decision rather than an
-observation, which is why it is called out in the table's comment as well as here.
+express. It and `isatty`, below, are the two entries in `coreBuiltins` that are
+decisions rather than observations, which is why the table's comment calls out both
+as well as here.
 
 **`isatty` is core.** Same shape as `exit`, and the same argument. It is
 host-shaped — a hosted process asks the kernel, with a terminal-attribute ioctl on
