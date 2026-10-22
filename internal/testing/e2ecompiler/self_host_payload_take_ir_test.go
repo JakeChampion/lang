@@ -98,6 +98,61 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 20},
+	// `std/http/h3.__on_request`'s shape: the element read, a branch between
+	// the read and the store-back (`r.fin || fin`), and the store-back made by
+	// an updater. The updater is spliced (seminline.updater), its read of the
+	// list is the first read (semsink.reuse), and the join block does not read
+	// the element again, since the join under it updates a buffer of it in
+	// place (child_used_above).
+	{"element-take-across-a-branch", `import "std/array";
+struct Frames { buf: u8[], left: i64 }
+struct Req { id: i64, frames: Frames, fin: boolean }
+struct Sess { reqs: Req[], n: i32, tag: string }
+function put(s: Sess, i: i32, r: Req): Sess {
+    return Sess { ...s, reqs: s.reqs.with(i, r) };
+}
+@noinline
+function on_bytes(s: Sess, i: i32, bytes: u8[], fin: boolean): Sess {
+    let r: Req = s.reqs[i];
+    r = Req { ...r, frames: Frames { ...r.frames, buf: r.frames.buf.concat(bytes) }, fin: r.fin || fin };
+    return put(s, i, r);
+}
+function main(): i32 {
+    let chunk: u8[] = [1 as u8, 2 as u8, 3 as u8, 4 as u8];
+    let s: Sess = Sess { reqs: [Req { id: 0, frames: Frames { buf: [], left: 0 }, fin: false }, Req { id: 4, frames: Frames { buf: [], left: 0 }, fin: false }], n: 2, tag: "" };
+    let keep: Sess = s;
+    let i: i32 = 0;
+    while (i < 200) { s = on_bytes(s, 1, chunk, i == 199); i = i + 1; }
+    if (s.reqs[1].frames.buf.len() != 800 || !s.reqs[1].fin || s.reqs[0].fin || s.reqs[1].id != 4 || keep.reqs[1].frames.buf.len() != 0 || keep.reqs[1].fin) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 20},
+	// The same across a branch with the list one record deeper: the join
+	// block reads `h.st` again as the donor of the update that stores the
+	// element back. That read is the first read (semsink.reuse), the donor
+	// named through it, so the buffer joins in place.
+	{"element-take-through-a-reused-donor", `import "std/array";
+struct Req { buf: u8[], fin: boolean }
+struct St { reqs: Req[], n: i32 }
+struct H { st: St, tag: i32 }
+@noinline
+function feed(h: H, i: i32, data: u8[], fin: boolean): H {
+    let r: Req = h.st.reqs[i];
+    let buf: u8[] = r.buf.concat(data);
+    let done: boolean = r.fin || fin;
+    let st: St = St { ...h.st, reqs: h.st.reqs.with(i, Req { ...r, buf: buf, fin: done }) };
+    return H { ...h, st: st };
+}
+function main(): i32 {
+    let chunk: u8[] = [1 as u8, 2 as u8, 3 as u8];
+    let h: H = H { st: St { reqs: [Req { buf: [], fin: false }, Req { buf: [], fin: false }], n: 2 }, tag: 7 };
+    let keep: H = h;
+    let i: i32 = 0;
+    while (i < 100) { h = feed(h, 1, chunk, i == 99); i = i + 1; }
+    if (h.st.reqs[1].buf.len() != 300 || !h.st.reqs[1].fin || h.st.reqs[0].fin || h.st.n != 2 || h.tag != 7 || keep.st.reqs[1].buf.len() != 0) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 20},
 	// The headline: an owned box destructured and rebuilt every round. Thirty
 	// updates used to clone thirty buffers.
 	{"owned-box-updates-in-place", `enum Box { Full(i32[]), Empty }

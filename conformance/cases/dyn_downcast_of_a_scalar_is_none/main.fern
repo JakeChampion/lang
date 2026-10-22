@@ -1,0 +1,40 @@
+// A downcast of a `dyn` value holding a scalar to a struct or enum type is
+// None, whatever the scalar's type.
+trait Named {
+  function name(self: Self): string;
+}
+
+enum Shape { Square(i32), Empty }
+
+impl Named for i32 {
+  function name(self: Self): string {
+    return "int";
+  }
+}
+
+impl Named for string {
+  function name(self: Self): string {
+    return "string";
+  }
+}
+
+impl Named for Shape {
+  function name(self: Self): string {
+    return "shape";
+  }
+}
+
+function is_shape(d: dyn Named): i32 {
+  match (d as? Shape) {
+    Some(_) => {
+      return 1;
+    },
+    None => {
+      return 0;
+    }
+  }
+}
+
+function main(): i32 {
+  return is_shape(3) + 2 * is_shape("x") + 4 * is_shape(Shape.Square(1)) + 8 * is_shape(Shape.Empty);
+}
