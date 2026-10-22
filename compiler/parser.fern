@@ -3433,6 +3433,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       // this the keyword fell through to e_unknown and the call never lowered
       // (the native parser already accepts this form). Guarded by the
       // following `.` so a type keyword in any other position is unaffected.
+      // A following `::` takes the same path, so the P001 names the `::`.
       let is_tykw: boolean = x.name == "string" || x.name == "boolean" || x.name == "void"
         || x.name == "i32" || x.name == "i64"
         || x.name == "u8" || x.name == "u32" || x.name == "u64"
@@ -3441,7 +3442,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let kwline: i32 = p.peek_line();
         let kwcol: i32 = p.peek_col();
         let look: Par = p.advance();
-        if (look.peek_punct() == ".") {
+        if (look.peek_punct() == "." || look.peek_punct() == "::") {
           return parse_postfix(look, e_ident_at(x.name, kwline, kwcol));
         }
       }
