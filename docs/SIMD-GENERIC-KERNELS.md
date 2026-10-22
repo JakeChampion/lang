@@ -68,7 +68,7 @@ impl Lanes for f64 {
     const LANES: i32 = 1;
     …
 }
-function chunk[T: Lanes](n: i32): i32 { return n / T::LANES; }
+function chunk[T: Lanes](n: i32): i32 { return n / T.LANES; }
 ```
 
 - A trait declares `const NAME: Type;` (abstract) or `const NAME: Type =
@@ -76,17 +76,16 @@ function chunk[T: Lanes](n: i32): i32 { return n / T::LANES; }
   expr;`. The impl must bind every abstract constant, may not bind one the
   trait does not declare, and the type must match the trait's with `Self`
   substituted. Those are the associated-type rules, applied to a value.
-- A constant is read as **`Base::NAME`** in expression position: `Self::NAME`
-  inside an impl or a trait default, `T::NAME` through a bound, `f64::NAME`
-  on a concrete type. `Base::NAME` with no argument list is the only
-  expression form that `::` introduces; `Base::f(…)` keeps meaning the
-  associated call `Base.f(…)`.
+- A constant is read as **`Base.NAME`** in expression position: `Self.NAME`
+  inside an impl or a trait default, `T.NAME` through a bound, `f64.NAME`
+  on a concrete type. `Base.NAME` with no argument list is the read.
+  `Base.f(…)` is the associated call.
 - Implementation, in both compilers: an associated constant is a nullary
   associated function marked `const`. The self-host already desugars a
   module-level `const` that way (`parser.fern` ▸ `parse_const_decl`), so the
   conformance check, the `T.f()` dispatch through a bound, the monomorphiser
   and the interpreter all already handle the shape; the parser adds the
-  `const` forms in trait and impl bodies and the `Base::NAME` read, the
+  `const` forms in trait and impl bodies and the `Base.NAME` read, the
   checker refuses a `const` bound by a `function` or vice versa, and the
   formatter prints the written forms back. After monomorphisation the read is
   a call to a one-literal body, which the inliner folds.
@@ -119,7 +118,7 @@ Thermite tunes each special function with a `Policy` (precision versus speed,
 whether to handle every edge case). Fern has no associated constants with
 default values on type parameters and no const generics, so a policy is a
 **second type parameter** bounded by a small trait whose members are
-associated constants: `exp[T: Lanes, P: Policy](x: T): T` with `P::PRECISE:
+associated constants: `exp[T: Lanes, P: Policy](x: T): T` with `P.PRECISE:
 boolean` and friends. `std/simd` ships `Precise` and `Fast`.
 
 ## 4. Revising `ATLAS-PLATFORM-PLAN.md` §1.2

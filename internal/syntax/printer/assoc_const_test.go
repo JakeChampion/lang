@@ -13,17 +13,17 @@ const assocConstSrc = `trait Lanes {
 struct V2 { a: f64 }
 impl Lanes for V2 {
     const LANES: i32 = 2;
-    function width(self: Self): i32 { return Self::LANES; }
+    function width(self: Self): i32 { return Self.LANES; }
 }
-function chunk[T: Lanes](n: i32): i32 { return n / T::LANES + f64::LANES; }
+function chunk[T: Lanes](n: i32): i32 { return n / T.LANES + f64.LANES; }
 function main(): i32 { return 0; }
 `
 
 // An associated constant survives formatting in both bodies, and its reads
-// keep the `::` they were written with.
+// stay field accesses on the type name.
 func TestFormatKeepsAssocConsts(t *testing.T) {
 	got := formatSrc(t, assocConstSrc)
-	for _, want := range []string{"  const LANES: i32;\n", "  const NAME: string = \"lanes\";\n", "  const LANES: i32 = 2;\n", "Self::LANES", "T::LANES", "f64::LANES"} {
+	for _, want := range []string{"  const LANES: i32;\n", "  const NAME: string = \"lanes\";\n", "  const LANES: i32 = 2;\n", "Self.LANES", "T.LANES", "f64.LANES"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("formatted output lacks %q:\n%s", want, got)
 		}

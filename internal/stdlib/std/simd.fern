@@ -222,8 +222,8 @@ impl[T: Lanes] num.Neg for Dual[T] {
 impl[T: Lanes] num.Num for Dual[T] {}
 
 impl[T: Lanes] Lanes for Dual[T] {
-  const LANES: i32 = T::LANES;
-  const SPLIT: f64 = T::SPLIT;
+  const LANES: i32 = T.LANES;
+  const SPLIT: f64 = T.SPLIT;
   function splat(x: f64): Dual[T] {
     return Dual { v: T.splat(x), d: T.splat(0.0) };
   }
@@ -336,7 +336,7 @@ function quick_two_sum[T: Lanes](a: T, b: T): DoubleDouble[T] {
 // split is a as a high half and a low half whose product with another
 // half is exact.
 function split[T: Lanes](a: T): DoubleDouble[T] {
-  let t: T = T.splat(T::SPLIT) * a;
+  let t: T = T.splat(T.SPLIT) * a;
   let hi: T = t - (t - a);
   return DoubleDouble { hi: hi, lo: a - hi };
 }
@@ -412,8 +412,8 @@ function dd_select[T: Lanes](m: T, a: DoubleDouble[T], b: DoubleDouble[T]): Doub
 }
 
 impl[T: Lanes] Lanes for DoubleDouble[T] {
-  const LANES: i32 = T::LANES;
-  const SPLIT: f64 = T::SPLIT;
+  const LANES: i32 = T.LANES;
+  const SPLIT: f64 = T.SPLIT;
   function splat(x: f64): DoubleDouble[T] {
     return DoubleDouble { hi: T.splat(x), lo: T.splat(0.0) };
   }

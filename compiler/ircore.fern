@@ -234,8 +234,9 @@ function is_text_helper(name: string): boolean {
     // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT
     // (wasm.arr_str_join_helper).
     || name == "__fern_arr_str_join"
-    // xs.concat(ys) over scalar elements (asmcore.rt_src_arr_concat): one
-    // sized box and two copies; wasm's $__fern_arr_concat is hand-written.
+    // xs.concat(ys) over scalar elements (asmcore.rt_src_arr_concat): onto
+    // the receiver's block when it is sole with room, else a box of both;
+    // wasm's $__fern_arr_concat is hand-written.
     || name == "__fern_arr_concat"
     // __bytes_owned(b): a byte view copied into a fresh packed u8[]
     // (asmcore.rt_src_bytes_owned; wasm's $__fern_bytes_owned).
