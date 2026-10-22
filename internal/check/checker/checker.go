@@ -18434,7 +18434,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// The cast converts the local's value; the local's own uses
 			// decide its width, and settleLitLocals re-stamps InnerType.
 		} else if ft, innerIsFloat := inner.(ast.FloatType); innerIsFloat {
-			if _, tgtIsInt := n.Target.(ast.NumberType); tgtIsInt {
+			// A concrete float keeps its own width across a cast.
+			if _, tgtIsInt := n.Target.(ast.NumberType); tgtIsInt || !ft.Polymorphic {
 				floatHint := ast.FloatType(ft)
 				if ft.Polymorphic {
 					floatHint = ast.FloatType{Width: 64}

@@ -894,12 +894,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 390) {  // str_hash
     // operand stack [box, seed] (seed on top) -> ir.op_str_hash's hash of
     // the string: a xor and a multiply per 8-byte word, the last word
-    // anchored at the end of the string, a string under 8 bytes assembled
-    // into one zero-padded word a byte at a time.
+    // anchored at the end of the string. A string under 8 bytes is one
+    // zero-padded word: two overlapping 4-byte loads from 4 bytes up, and the
+    // first, middle and last bytes below that.
     //
-    // x0 the data, x3 the length, x2 the hash, x4 the prime, x5 the cursor,
-    // x6 the last word's offset, x1 the seed and then the short word, x7 a
-    // loaded word.
+    // x0 the data, x3 the length, x2 the hash, x4 the prime, x5 the cursor
+    // and then an offset, x6 the last word's offset, x1 the seed and then the
+    // short word, x7 a loaded word.
     let hlo: asmcore.LabelOut = asmcore.fresh_label(s);
     let h_loop: string = hlo.name;
     let hlo2: asmcore.LabelOut = asmcore.fresh_label(hlo.state);
@@ -907,10 +908,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let hlo3: asmcore.LabelOut = asmcore.fresh_label(hlo2.state);
     let h_short: string = hlo3.name;
     let hlo4: asmcore.LabelOut = asmcore.fresh_label(hlo3.state);
-    let h_byte: string = hlo4.name;
+    let h_tiny: string = hlo4.name;
     let hlo5: asmcore.LabelOut = asmcore.fresh_label(hlo4.state);
     let h_fin: string = hlo5.name;
-    s = hlo5.state;
+    let hlo6: asmcore.LabelOut = asmcore.fresh_label(hlo5.state);
+    let h_mix: string = hlo6.name;
+    s = hlo6.state;
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
     s = s.write("    sxtw x1, w1\n");
@@ -929,10 +932,15 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x7, [x0, x6]\n    eor x2, x2, x7\n    mul x2, x2, x4\n    b " + h_fin + "\n");
     s = s.write(h_short + ":\n");
     s = s.write("    cbz x3, " + h_fin + "\n");
-    s = s.write("    mov x1, #0\n    mov x5, x3\n");
-    s = s.write(h_byte + ":\n");
-    s = s.write("    sub x5, x5, #1\n    lsl x1, x1, #8\n    ldrb w7, [x0, x5]\n    orr x1, x1, x7\n");
-    s = s.write("    cbnz x5, " + h_byte + "\n");
+    s = s.write("    cmp x3, #4\n    b.lo " + h_tiny + "\n");
+    s = s.write("    ldr w1, [x0]\n    sub x5, x3, #4\n    ldr w7, [x0, x5]\n");
+    s = s.write("    lsl x5, x5, #3\n    lsl x7, x7, x5\n    orr x1, x1, x7\n    b " + h_mix + "\n");
+    s = s.write(h_tiny + ":\n");
+    s = s.write("    ldrb w1, [x0]\n    sub x5, x3, #1\n    ldrb w7, [x0, x5]\n");
+    s = s.write("    lsl x5, x5, #3\n    lsl x7, x7, x5\n    orr x1, x1, x7\n");
+    s = s.write("    lsr x5, x3, #1\n    ldrb w7, [x0, x5]\n");
+    s = s.write("    lsl x5, x5, #3\n    lsl x7, x7, x5\n    orr x1, x1, x7\n");
+    s = s.write(h_mix + ":\n");
     s = s.write("    eor x2, x2, x1\n    mul x2, x2, x4\n");
     s = s.write(h_fin + ":\n");
     s = s.write("    lsr x7, x2, #32\n    eor x2, x2, x7\n");
@@ -10009,13 +10017,8 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // __fern_alloc_reuse(token@[sp,#16], slots@[sp]) -> x0 = data — the
   // FBIP reuse-degrade primitive (#4350), arm64 mirror of the x86
   // __fn___fern_alloc_reuse. Same arr-box layout (cap@data-16, rc@data-8):
-  // null token -> fresh __fern_arr_box(slots); cap match -> hand the SAME
-  // block back (rc stays 1 — the caller's __fern_rc_is_unique gate
-  // guaranteed sole ownership; the caller overwrites the shape slot before
-  // any read); cap mismatch -> return the donor block to its word-indexed
-  // freelist class (clear rc,
-  // *base = head, freelist[cap+3] = base; >= 65536 words leaks, matching
-  // __fern_alloc's no-freelist tier) and alloc fresh. Clobbers x0..x6, x9.
+  // null token -> fresh allocation; matching capacity keeps the sole-owned
+  // donor; a mismatch releases it through the ordinary array release path.
   s = s.write("__fn___fern_alloc_reuse:\n");
   s = s.write("    ldr x0, [sp, #16]\n");  // token (donor data ptr, or 0)
   s = s.write("    cbz x0, .Lsarelo_fresh\n");
@@ -10023,17 +10026,14 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    ldur x2, [x0, #-16]\n");  // donor cap
   s = s.write("    cmp x2, x1\n");
   s = s.write("    beq .Lsarelo_ret\n");  // reuse: return token in x0
-  s = s.write("    add x3, x2, #3\n");  // block words = donor cap + 3
-  s = s.write("    mov x9, #0x10000\n");
-  s = s.write("    cmp x3, x9\n");
-  s = s.write("    bhs .Lsarelo_fresh\n");  // oversize tier: leak
-  // Quarantine (rc_free_debug_on): the mispaired donor is freed here, so it
-  // gets the same poison-and-decline every other free path applies.
-  s = s.write(quarantine_rc("[x0, #-8]", "w6", s.rc_free_debug));  // release the rc word
-  s = s.write("    sub x4, x0, #16\n");  // block base
-  s = lc_bump_free_words(s, "x3", "x2", "x9");
-  if (!s.rc_free_debug) {
-    s = freelist_push(s, "x4", "x3", "x5", "x6");
+  if (s.harden) {
+    s = s.write("    paciasp\n");
+  }
+  s = s.write("    stp x29, x30, [sp, #-16]!\n");
+  s = s.write("    bl __fn___fern_arr_dec.r\n");
+  s = s.write("    ldp x29, x30, [sp], #16\n");
+  if (s.harden) {
+    s = s.write("    autiasp\n");
   }
   s = s.write(".Lsarelo_fresh:\n");
   s = s.write("    ldr x0, [sp]\n");  // slots = arr_box cap
