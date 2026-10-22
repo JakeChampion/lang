@@ -14,6 +14,7 @@ import "./astwalk";
 import "./checker";
 import "./aesref";
 import "./platforms";
+import "./typeinfo";
 import "std/io_outcome";
 import "std/utf8";
 
@@ -164,7 +165,13 @@ pub struct VHandle { r: Option[Reader], w: Option[Writer], d: Option[Dir] }
 // an Env slot, and lookup reads through it.
 pub struct VCellA { c: Cell[i64[]], elem: string }
 
-pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VType | VHandle | VCellA;
+// VLanes is a value of a lane type: `f64x2` (width 64) or `f32x4` (width 32).
+// Each lane is held as its bits, because a comparison gives a mask of all-ones
+// lanes and `select` combines masks bit by bit. An f32 lane holds its bits in
+// the low 32 of the word.
+pub struct VLanes { width: i32, bits: i64[] }
+
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VLanes | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VType | VHandle | VCellA;
 
 function v_int(n: i32): Value {
   return VInt { v: n, is_char: false };
@@ -2707,6 +2714,9 @@ function is_raw_floor(name: string): boolean {
 // so the task primitives give the blocking fallback's answers; and the f64
 // primitives and the map seed are this process's own.
 function call_runtime_intrinsic(name: string, args: Value[]): Value {
+  if (typeinfo.lane_builtin_width(name) > 0) {
+    return call_lane_builtin(name, typeinfo.lane_builtin_width(name), args);
+  }
   if (util.has_str(["__rc_underflow_count", "__arr_push_shared_count", "__arr_push_shared_bytes", "__heap_alloc_count", "__heap_bump_bytes"], name)) {
     return v_int(0);
   }
@@ -2735,6 +2745,284 @@ function call_runtime_intrinsic(name: string, args: Value[]): Value {
     return v_arr([]);
   }
   return v_err("not a runtime intrinsic");
+}
+
+// ---- lane values (docs/SIMD-GENERIC-KERNELS.md §6) ----
+
+// lane_bits is the bits of `x` as a lane of `width`: an f32 lane rounds to
+// single precision and keeps its bits in the low 32.
+function lane_bits(width: i32, x: f64): i64 {
+  if (width == 32) {
+    return f32_bits(x as f32) as i64 & 4294967295;
+  }
+  return f64_bits(x);
+}
+
+// lane_at reads lane `i` of `l` as a float.
+function lane_at(l: VLanes, i: i32): f64 {
+  if (l.width == 32) {
+    return f32_from_bits(l.bits[i] as i32) as f64;
+  }
+  return f64_from_bits(l.bits[i]);
+}
+
+// lane_round is `x` at the lane width.
+function lane_round(width: i32, x: f64): f64 {
+  if (width == 32) {
+    return (x as f32) as f64;
+  }
+  return x;
+}
+
+function lane_sign(width: i32): i64 {
+  if (width == 32) {
+    return 2147483648;
+  }
+  return 0 - 9223372036854775807 - 1;
+}
+
+function lanes_splat(width: i32, x: f64): Value {
+  let bits: i64[] = [];
+  while (bits.len() < 128 / width) {
+    bits = bits.append(lane_bits(width, x));
+  }
+  return VLanes { width: width, bits: bits };
+}
+
+// lanes_map_bits gives each lane's bits flipped by `flip` and with `clear`
+// cleared: negation flips the sign bit, and abs clears it.
+function lanes_map_bits(l: VLanes, flip: i64, clear: i64): Value {
+  let bits: i64[] = [];
+  for b in l.bits {
+    bits = bits.append((b ^ flip) & (clear ^ 0 - 1));
+  }
+  return VLanes { width: l.width, bits: bits };
+}
+
+// lane_arith is one lane of `+ - * /`. Both operands are exact at the lane
+// width, so the f64 operation rounded once to an f32 lane is the single
+// precision result.
+function lane_arith(op: string, x: f64, y: f64): f64 {
+  if (op == "+") {
+    return x + y;
+  }
+  if (op == "-") {
+    return x - y;
+  }
+  if (op == "*") {
+    return x * y;
+  }
+  return x / y;
+}
+
+// lanes_binary evaluates `+ - * /` over two values of one lane type.
+function lanes_binary(op: string, a: VLanes, rv: Value): Value {
+  if let VLanes(b) = rv {
+    if (util.has_str(["+", "-", "*", "/"], op)) {
+      let bits: i64[] = [];
+      let i: i32 = 0;
+      while (i < a.bits.len()) {
+        bits = bits.append(lane_bits(a.width, lane_arith(op, lane_at(a, i), lane_at(b, i))));
+        i = i + 1;
+      }
+      return VLanes { width: a.width, bits: bits };
+    }
+  }
+  return v_err("operator `" + op + "` on lane values");
+}
+
+// lane_value is lane `i` of `l` as a float value of the lane width.
+function lane_value(l: VLanes, i: i32): Value {
+  if (l.width == 32) {
+    return v_float32(lane_at(l, i));
+  }
+  return v_float(lane_at(l, i));
+}
+
+// lane_args is `args` as lane values, empty when one is not.
+function lane_args(args: Value[]): VLanes[] {
+  let out: VLanes[] = [];
+  for a in args {
+    if let VLanes(l) = a {
+      out = out.append(l);
+    } else {
+      return [];
+    }
+  }
+  return out;
+}
+
+// lane_fn is one lane of a lane builtin over lane operands: `xs` holds each
+// operand's lane. `min` and `max` are `b < a ? b : a` and `a < b ? b : a`,
+// the order the IR's vmin and vmax define, and `mul_add` is unfused, as the
+// scalar mul_add: the product rounds before the add.
+function lane_fn(verb: string, width: i32, xs: f64[]): f64 {
+  if (verb == "sqrt" || verb == "floor" || verb == "round") {
+    return f64_primitive("__" + verb + "_f64", xs[0]);
+  }
+  if (verb == "mul_add") {
+    return lane_round(width, lane_round(width, xs[0] * xs[1]) + xs[2]);
+  }
+  if (verb == "min" && xs[1] < xs[0] || verb == "max" && xs[0] < xs[1]) {
+    return xs[1];
+  }
+  return xs[0];
+}
+
+// lanes_apply maps lane_fn over the lanes of `ls`.
+function lanes_apply(verb: string, ls: VLanes[]): Value {
+  let w: i32 = ls[0].width;
+  let bits: i64[] = [];
+  let i: i32 = 0;
+  while (i < ls[0].bits.len()) {
+    let xs: f64[] = [];
+    for l in ls {
+      xs = xs.append(lane_at(l, i));
+    }
+    bits = bits.append(lane_bits(w, lane_fn(verb, w, xs)));
+    i = i + 1;
+  }
+  return VLanes { width: w, bits: bits };
+}
+
+// lanes_mask is the lt or ne mask of `a` and `b`: all ones where it holds.
+function lanes_mask(verb: string, a: VLanes, b: VLanes): Value {
+  let ones: i64 = 0 - 1;
+  if (a.width == 32) {
+    ones = 4294967295;
+  }
+  let bits: i64[] = [];
+  let i: i32 = 0;
+  while (i < a.bits.len()) {
+    let x: f64 = lane_at(a, i);
+    let y: f64 = lane_at(b, i);
+    let hold: boolean = verb == "lt" && x < y || verb == "ne" && x != y;
+    bits = bits.append(if (hold) { ones } else { 0 });
+    i = i + 1;
+  }
+  return VLanes { width: a.width, bits: bits };
+}
+
+// lanes_select takes a's bits where the mask is set and b's elsewhere.
+function lanes_select(ls: VLanes[]): Value {
+  let bits: i64[] = [];
+  let i: i32 = 0;
+  while (i < ls[0].bits.len()) {
+    let m: i64 = ls[2].bits[i];
+    bits = bits.append(ls[0].bits[i] & m | ls[1].bits[i] & (m ^ 0 - 1));
+    i = i + 1;
+  }
+  return VLanes { width: ls[0].width, bits: bits };
+}
+
+// lanes_of builds a lane value from one float per lane.
+function lanes_of(width: i32, args: Value[]): Value {
+  if (args.len() != 128 / width) {
+    return v_err("lane builtin: expected one float per lane");
+  }
+  let bits: i64[] = [];
+  for a in args {
+    bits = bits.append(lane_bits(width, vfloat_as_f64(a)));
+  }
+  return VLanes { width: width, bits: bits };
+}
+
+// lane_window is the first index of the lanes a `load` or `with` at args[1]
+// covers in the array args[0], or -1 when the array does not hold them all.
+function lane_window(width: i32, args: Value[]): i32 {
+  if let VArr(a) = args[0] {
+    let at: i32 = vint_as_i64(args[1]) as i32;
+    if (at >= 0 && at + 128 / width <= a.elements.len()) {
+      return at;
+    }
+  }
+  return 0 - 1;
+}
+
+// lanes_load reads the lanes from the array at the index.
+function lanes_load(width: i32, args: Value[]): Value {
+  let at: i32 = lane_window(width, args);
+  if (at < 0) {
+    return v_err("lane load out of bounds");
+  }
+  if let VArr(a) = args[0] {
+    let xs: Value[] = [];
+    while (xs.len() < 128 / width) {
+      xs = xs.append(a.elements[at + xs.len()]);
+    }
+    return lanes_of(width, xs);
+  }
+  return v_err("lane load: expected an array");
+}
+
+// lanes_with is the array with the lanes written at the index.
+function lanes_with(width: i32, args: Value[]): Value {
+  let at: i32 = lane_window(width, args);
+  let ls: VLanes[] = lane_args([args[2]]);
+  if (at < 0 || ls.len() != 1) {
+    return v_err("lane with out of bounds");
+  }
+  if let VArr(a) = args[0] {
+    let out: Value[] = a.elements;
+    let i: i32 = 0;
+    while (i < ls[0].bits.len()) {
+      out = out.with(at + i, lane_value(ls[0], i));
+      i = i + 1;
+    }
+    return VArr { ...a, elements: out };
+  }
+  return v_err("lane with: expected an array");
+}
+
+// call_lane_builtin evaluates the lane builtin `name` of element width
+// `width` (typeinfo.lane_builtin_params has the signatures).
+function call_lane_builtin(name: string, width: i32, args: Value[]): Value {
+  let verb: string = typeinfo.lane_builtin_verb(name);
+  if (verb == "splat" && args.len() == 1) {
+    return lanes_splat(width, vfloat_as_f64(args[0]));
+  }
+  if (verb == "of") {
+    return lanes_of(width, args);
+  }
+  if (verb == "load" && args.len() == 2) {
+    return lanes_load(width, args);
+  }
+  if (verb == "with" && args.len() == 3) {
+    return lanes_with(width, args);
+  }
+  return call_lane_op(verb, width, args);
+}
+
+// call_lane_read is `lane`: lane args[1] of the lane value args[0].
+function call_lane_read(width: i32, args: Value[]): Value {
+  let ls: VLanes[] = lane_args([args[0]]);
+  let i: i32 = vint_as_i64(args[1]) as i32;
+  if (ls.len() == 1 && i >= 0 && i < 128 / width) {
+    return lane_value(ls[0], i);
+  }
+  return v_err("lane: expected a lane value and an index below the lane count");
+}
+
+// call_lane_op evaluates a lane builtin whose operands are lane values, and
+// `lane` through call_lane_read.
+function call_lane_op(verb: string, width: i32, args: Value[]): Value {
+  if (verb == "lane" && args.len() == 2) {
+    return call_lane_read(width, args);
+  }
+  let ls: VLanes[] = lane_args(args);
+  if (ls.len() == 0 || ls.len() != args.len()) {
+    return v_err("lane builtin: expected lane operands");
+  }
+  if (verb == "abs") {
+    return lanes_map_bits(ls[0], 0, lane_sign(width));
+  }
+  if ((verb == "lt" || verb == "ne") && ls.len() == 2) {
+    return lanes_mask(verb, ls[0], ls[1]);
+  }
+  if (verb == "select" && ls.len() == 3) {
+    return lanes_select(ls);
+  }
+  return lanes_apply(verb, ls);
 }
 
 function f64_primitive(name: string, x: f64): f64 {
@@ -4021,6 +4309,9 @@ function eval_typed_binary(op: string, lv: Value, rv: Value, ty: string): Value 
 }
 
 function eval_binary(op: string, lv: Value, rv: Value): Value {
+  if let VLanes(a) = lv {
+    return lanes_binary(op, a, rv);
+  }
   // 64-bit integer arithmetic: when either operand is a VInt64, widen
   // both to i64, compute in 64 bits, then box back (narrowing to a VInt
   // when the result fits i32). The pure VInt (i32) path below is left
@@ -4321,6 +4612,12 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
       }
     }
   }
+  return eval_binary_arith(op, lv, rv);
+}
+
+// eval_binary_arith continues eval_binary: the arithmetic, comparison, logic
+// and bitwise operators on scalar operands.
+function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
   if (op == "-" || op == "*" || op == "/" || op == "%") {
     match (lv) {
       VInt(li) => {
@@ -4548,10 +4845,13 @@ function eval_unary(op: string, ov: Value): Value {
         return v_uint(0 - u.v);
       },
       VFloat(f) => {
-        return v_float(0.0 - f.v);
+        return v_float(-f.v);
       },
       VFloat32(f) => {
-        return v_float32(0.0 - f.v);
+        return v_float32(-f.v);
+      },
+      VLanes(l) => {
+        return lanes_map_bits(l, lane_sign(l.width), 0);
       },
       _ => {
         return v_err("unary `-` operand not i32 or f64");
@@ -6071,6 +6371,9 @@ function value_type_name(v: Value): string {
     },
     VFloat32(_) => {
       return "f32";
+    },
+    VLanes(l) => {
+      return typeinfo.lanes_spelling(l.width);
     },
     VArr(_) => {
       return "Array";
@@ -8167,6 +8470,9 @@ function value_eq(a: Value, b: Value): boolean {
     VFunc(_) => {
       return false;
     },
+    VLanes(_) => {
+      return false;
+    },
     VMap(_) => {
       return false;
     },
@@ -10059,11 +10365,11 @@ function check_floats(): i32 {
     }
   }
 
-  // Unary minus on a float: `-3.5` → -3.5.
-  let r57: Value = run_source("return 0.0 - 3.5;");
+  // Unary minus on a float flips the sign of zero: `1.0 / -0.0` is -Inf.
+  let r57: Value = run_source("let z = 0.0; return 1.0 / -z;");
   match (r57) {
     VFloat(f) => {
-      if (f.v > 0.0 - 3.49 || f.v < 0.0 - 3.51) {
+      if (f.v > 0.0 - 1.0e300) {
         return 570;
       }
     },

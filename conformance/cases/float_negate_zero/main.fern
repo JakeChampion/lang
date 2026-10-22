@@ -1,0 +1,11 @@
+import "std/f64";
+
+// Unary minus flips the sign bit, so the negation of 0.0 is -0.0.
+function main(): i32 {
+  let z: f64 = 0.0;
+  print((1.0 / -z).to_string());
+  let w: f32 = 0.0;
+  print(((1.0 as f32) / -w).to_string());
+  print((1.0 / -(-z)).to_string());
+  return 0;
+}

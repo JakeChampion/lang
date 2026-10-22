@@ -2371,6 +2371,12 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 	case t.Kind == lexer.Keyword && t.Text == "f32":
 		p.advance()
 		base = ast.FloatType{Spelling: t.Text}
+	case t.Kind == lexer.Keyword && t.Text == "f64x2":
+		p.advance()
+		base = ast.LanesType{Width: 64, Spelling: t.Text}
+	case t.Kind == lexer.Keyword && t.Text == "f32x4":
+		p.advance()
+		base = ast.LanesType{Width: 32, Spelling: t.Text}
 	case t.Kind == lexer.Keyword && t.Text == "boolean":
 		p.advance()
 		base = ast.BoolType{}
@@ -3818,7 +3824,7 @@ func (p *parser) peekTypeArgs(opener string) bool {
 
 func isTypeKeyword(s string) bool {
 	switch s {
-	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "string", "boolean", "void":
+	case "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "f64x2", "f32x4", "string", "boolean", "void":
 		return true
 	}
 	return false
@@ -6262,6 +6268,8 @@ var keywordModuleQualifier = map[string]bool{
 	"u8":     true,
 	"f32":    true,
 	"f64":    true,
+	"f64x2":  true,
+	"f32x4":  true,
 	"usize":  true,
 }
 

@@ -190,11 +190,12 @@ The bit-level primitives the vector kernels need (`to_bits`, lane-wise
 shifts) arrive with the lane type in slice 5, where there is a type to test
 them on; until then `ldexp` and `round` cover the argument reductions.
 
-`mul_add` is `self * b + c` with two roundings on every type built so far.
-There is no fused multiply-add builtin or IR op yet, so `horner` and the
-double-double two-product do not get the single rounding the hardware has.
-The fused form (`vfma` in §4, and a scalar `fma` beside it) is part of the
-lane-type slice, where both baselines have the instruction.
+`mul_add` is `self * b + c` with two roundings on every type, the lane
+types included, so every engine gives the same answer. The IR has the fused
+form (`vfma`, slice 4b), and both baselines have the instruction. No builtin
+reaches it yet. So `horner` and the double-double two-product do not get the
+single rounding of the hardware. A fused builtin, scalar and lane, is a
+separate change to the contract of `Math`.
 
 - **Scalar impls**: `impl Lanes for f64` and `impl Lanes for f32`, one lane,
   delegating to `std/f64`. Every generic kernel runs today through these.
@@ -267,21 +268,23 @@ file, so the slice starts from facts rather than from §4's table:
 - **Memory.** Every array element and struct field is 1, 4 or 8 bytes wide;
   a lane value in a field or an element is a 16-byte width the layout code
   does not have. The first slice keeps lanes out of fields and elements and
-  reaches memory through `__f64x2_load(xs, i)` / `__f64x2_store`, which is
-  how a SIMD kernel reads an `f64[]` anyway.
+  reaches memory through `__f64x2_load(xs, i)` and `__f64x2_with(xs, i, v)`,
+  which answers the array with the lanes written at `i`. That is how a SIMD
+  kernel reads and writes an `f64[]` anyway.
 - **wasm** is the stack machine over `i64` locals with `v128` used only inside
   the byte kernels; a lane value needs a `v128` local class of its own, so it
   is not the cheap backend §4 took it for.
 - **The front ends.** `f64x2` and `f32x4` are type keywords in both lexers; a
   `TypeLanes` variant joins `typeinfo.Type` and every exhaustive match over it
   (27 arms in `checker.fern`, about 15 across the lowering); the Go side is
-  `ast.LanesType` beside `FloatType` (70 arms in `checker.go`). The fourteen
+  `ast.LanesType` beside `FloatType` (70 arms in `checker.go`). The thirteen
   operations `Lanes` needs beyond the operators (`splat`, `of`, `lane`,
   `mul_add`, `sqrt`, `abs`, `floor`, `round`, `min`, `max`, `lt`, `ne`,
-  `select`, `ldexp`) and the two memory ops are `__f64x2_*` / `__f32x4_*` builtins:
-  each is a signature in both checkers, an arm in both interpreters, an IR
-  op, a lift arm per native, a `v128` emission, and an entry in the four
-  capability tables.
+  `select`) and the two memory ops (`load`, `with`) are `__f64x2_*` /
+  `__f32x4_*` builtins: each is a signature in both checkers, an arm in both
+  interpreters and one or more IR ops. A `__` builtin is outside the four
+  capability tables. `ldexp` needs the bit-level lane operations, so it
+  arrives with them in slice 5.
 - **The interpreters** take a `VLanes` / `Lanes` value kind with the element
   width and the lane values; `tyarg_of_value` names it `f64x2`.
 
@@ -317,9 +320,22 @@ of them. No PR leaves a type on main that a backend refuses.
   and the wasm emitter a `v128` local class. Each backend emits every op,
   gated by IR-level programs on all three targets.
 - **4c, the type.** `f64x2` / `f32x4` in both lexers and checkers, the
-  `__f64x2_*` / `__f32x4_*` builtins through the contracts, the lowering, the
-  four capability tables and both interpreters, with the differential
-  against the scalar reference.
+  `__f64x2_*` / `__f32x4_*` builtins through the contracts and the lowering,
+  and both interpreters. The rules:
+  - `+ - * /` and unary `-` take two values of one lane type. A comparison
+    is E041: `lt` and `ne` give a mask, and `select` reads it.
+  - `mul_add` is unfused on every engine, as the scalar one is: the product
+    rounds before the add. An f32 lane computes in single precision.
+  - `lane(v, i)` takes an integer literal below the lane count (E038).
+  - `load` and `with` are the element reads and `with`s of their lanes, so
+    each keeps its bounds check and the array its ownership.
+  - A lane value lives only in a local, a parameter or a result (E084). A
+    function value and a lambda carry none, since an indirect call has no
+    vector register for one.
+  - A direct call passes lane parameter p in the float class's location p
+    (`%xmm3` up on x86-64, `q<p>` on arm64) and returns a lane result in
+    `%xmm3` / `q0`. A lane value never takes a callee-saved float register,
+    because AAPCS64 saves only the low 64 bits of `v8`-`v15`.
 
 ## 7. Slices
 
@@ -329,8 +345,8 @@ of them. No PR leaves a type on main that a backend refuses.
 | 2 | Associated constants, both compilers | this PR |
 | 3 | `std/simd`: `Lanes`, `Math`, scalar impls, `Dual`, `DoubleDouble`, benchmark | this PR |
 | 4a | Lane types: the instruction vocabulary on x86-64, arm64 and wasm | done (#12945) |
-| 4b | Lane types: IR ops, the 128-bit register class and spill slot, emission on every backend | this PR (§6 has the file-level plan) |
-| 4c | Lane types: `f64x2` / `f32x4` in both front ends, the builtins, the capability tables, both interpreters | after 4b |
+| 4b | Lane types: IR ops, the 128-bit register class and spill slot, emission on every backend | done (#12961) |
+| 4c | Lane types: `f64x2` / `f32x4` in both front ends, the builtins, the lowering and its call ABI, both interpreters | this PR |
 | 5 | `impl Lanes` / `impl Math` for `f64x2` / `f32x4`; array fusion picks the lane instance for a packed `f64[]` map | after 4 |
 | 6 | Const generics; `Vec[N, T]` | follow-on project |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |
