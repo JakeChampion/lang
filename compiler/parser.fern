@@ -7276,10 +7276,10 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     let (kvnames, kvcount, kvok, kvnames_p) = parse_destructure_names(kv_open);
     p = kvnames_p;
     if (!kvok || kvcount < 2) {
-      return (s_unknown(p, "for pattern needs at least 2 binders"), p);
+      return for_refused(p, "for pattern needs at least 2 binders");
     }
     if (p.peek_ident() != "in") {
-      return (s_unknown(p, "missing `in` in for"), p);
+      return for_refused(p, "missing `in` in for");
     }
     p = p.advance();
     // Suppress trailing struct-literal parsing — the `{` that
@@ -7321,7 +7321,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
       let (fpnames, fpcount, fpok, fpnames_p) = parse_destructure_names(p);
       p = fpnames_p;
       if (!fpok || fpcount < 2) {
-        return (s_unknown(p, "for pattern needs at least 2 binders"), p);
+        return for_refused(p, "for pattern needs at least 2 binders");
       }
       fpre = [s_var_at(fpnames, destr_marker(fp_at, false, ""), fp_init, fp_line, fp_col)];
     } else {
@@ -7338,12 +7338,12 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
   } else {
     fvar = p.peek_ident();
     if (fvar.len() == 0) {
-      return (s_unknown(p, "missing for-let name"), p);
+      return for_refused(p, "missing for-let name");
     }
     p = p.advance();
   }
   if (p.peek_ident() != "in") {
-    return (s_unknown(p, "missing `in` in for"), p);
+    return for_refused(p, "missing `in` in for");
   }
   p = p.advance();  // consume `in`
   // Suppress trailing struct-literal parsing on the iter so that
@@ -7388,6 +7388,17 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     fbi = fbi + 1;
   }
   return (s_for(fvar, iter_expr, fpre), p);
+}
+
+// for_refused is a `for` whose header was refused at `p`. The loop's body
+// is parsed past, so it is not re-read as statements after the refusal.
+function for_refused(p: Par, kind: string): (ast.Stmt, Par) {
+  let open: Par = p.skip_to_open();
+  if (open.peek_punct() != "{") {
+    return (s_unknown(p, kind), p);
+  }
+  let (skipped, sp) = parse_block(open);
+  return (s_unknown(p, kind), sp);
 }
 
 // with_stmt_line stamps the source line a statement STARTS on. Five Stmt kinds

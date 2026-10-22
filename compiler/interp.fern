@@ -9,6 +9,7 @@ import "./ast";
 import "./lexer";
 import "./parser";
 import "./util";
+import "./aborts";
 import "./astwalk";
 import "./checker";
 import "./aesref";
@@ -760,20 +761,22 @@ function v_err(msg: string): Value {
   return VErr { msg: msg, abort: false };
 }
 
-function v_abort(msg: string): Value {
-  return VErr { msg: msg, abort: true };
+// v_abort is a fatal stop. `cause` is the line a compiled program prints for
+// it, and `detail` is the interpreter's own line under it, where a compiled
+// program prints its backtrace.
+function v_abort(cause: string, detail: string): Value {
+  return VErr { msg: cause + "\n  " + detail, abort: true };
 }
 
-// index_abort is the out-of-range stop for an index into a `what` ("array"
-// or "string") of length n.
-function index_abort(what: string, i: string, n: i32): Value {
-  return v_abort(what + " index " + i + " out of range [0, " + util.i32_to_string(n) + ")");
+// index_abort is the stop for index i into a container of length n.
+function index_abort(cause: string, i: string, n: i32): Value {
+  return v_abort(cause, "index " + i + ", length " + util.i32_to_string(n));
 }
 
-// slice_abort is the stop for a slice [lo:hi] that does not fit a source of
+// slice_abort is the stop for a range [lo:hi] that does not fit a source of
 // length n.
-function slice_abort(lo: i32, hi: i32, n: i32): Value {
-  return v_abort("slice [" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "] out of range for length " + util.i32_to_string(n));
+function slice_abort(cause: string, what: string, lo: i32, hi: i32, n: i32): Value {
+  return v_abort(cause, what + " [" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "], length " + util.i32_to_string(n));
 }
 
 // v_void is the result of an expression that produces no value — a call to a
@@ -5422,14 +5425,14 @@ function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
     VArr(arr) => {
       let i: i32 = index_in(iv, arr.elements.len());
       if (i < 0) {
-        return index_abort("array", value_text(iv), arr.elements.len());
+        return index_abort(aborts.arr_oob(), value_text(iv), arr.elements.len());
       }
       return arr.elements[i];
     },
     VString(s) => {
       let si: i32 = index_in(iv, s.v.len());
       if (si < 0) {
-        return index_abort("string", value_text(iv), s.v.len());
+        return index_abort(aborts.str_oob(), value_text(iv), s.v.len());
       }
       return v_int(s.v[si] as i32);
     },
@@ -5504,7 +5507,7 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
     },
     VArr(a) => {
       if (sb < 0 || eb > a.elements.len() || sb > eb) {
-        return slice_abort(sb, eb, a.elements.len());
+        return slice_abort(aborts.slice_range(), "slice", sb, eb, a.elements.len());
       }
       let out: Value[] = [];
       let i: i32 = sb;
@@ -6208,7 +6211,7 @@ function map_iter_method(it: VStruct, name: string): Value {
     return v_bool(pos < col.len());
   }
   if (pos >= col.len()) {
-    return index_abort("map iterator", util.i32_to_string(pos), col.len());
+    return index_abort(aborts.arr_oob(), util.i32_to_string(pos), col.len());
   }
   return col[pos];
 }
@@ -6298,7 +6301,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         }
         let wi: i32 = vint_bits(args[0]);
         if (wi < 0 || wi >= av.elements.len()) {
-          return index_abort("array", util.i32_to_string(wi), av.elements.len());
+          return index_abort(aborts.arr_oob(), util.i32_to_string(wi), av.elements.len());
         }
         let wout: Value[] = [];
         let wj: i32 = 0;
@@ -7149,7 +7152,7 @@ function call_buf_push_range(h: usize, args: Value[]): Value {
   let lo: i32 = int_arg_i32(args[2]);
   let hi: i32 = int_arg_i32(args[3]);
   if (lo < 0 || hi > s.len() || lo > hi) {
-    return v_abort("buf_push_range [" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "] out of range for length " + util.i32_to_string(s.len()));
+    return slice_abort(aborts.slice_range(), "buf_push_range", lo, hi, s.len());
   }
   buf_push_range(h, s, lo, hi);
   return v_void();
@@ -7475,7 +7478,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
     }
     let an: i32 = vint_bits(args[0]);
     if (an < 0) {
-      return v_abort(name + ": negative length " + util.i32_to_string(an));
+      return v_abort(aborts.alloc_size(), name + " length " + util.i32_to_string(an));
     }
     let zero: Value = v_int(0);
     if (name == "__alloc_i64") {
@@ -7556,7 +7559,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
         let sua: i32 = vint_bits(args[1]);
         let sub: i32 = vint_bits(args[2]);
         if (sua < 0 || sub > s.v.len() || sua > sub) {
-          return slice_abort(sua, sub, s.v.len());
+          return slice_abort(aborts.str_oob(), "slice_unchecked", sua, sub, s.v.len());
         }
         return v_string(slice_unchecked(s.v, sua, sub));
       },
