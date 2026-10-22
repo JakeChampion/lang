@@ -19165,6 +19165,106 @@ function declares_nominal(mod: parser.Module, name: string): boolean {
   return false;
 }
 
+// main_signature_diags appends E084 for the entry point `main`: every runner
+// calls it with no arguments and turns its result into the exit status, which
+// an integer or a boolean can be and nothing else can. Mirrors the Go
+// checker's checkMainSignature.
+function main_signature_diags(fd: parser.FuncDecl, out: util.Diag[]): util.Diag[] {
+  if (fd.params.len() > 0) {
+    out = out.append(dg_at("E084", "main takes no parameters; read the command line with args()", fd.line, fd.col));
+  }
+  if (fd.ret_type != "" && !main_result_ty(fd.ret_type)) {
+    out = out.append(dg_at("E084", "main returns an integer, a boolean or void, not " + fd.ret_type, fd.line, fd.col));
+  }
+  return out;
+}
+
+// E006: a resource redeclared, or named like a struct, enum or union alias.
+// registered_resources leaves it out, so the name keeps its other meaning.
+function resource_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let rn: i32 = 0;
+  while (rn < mod.resources.len()) {
+    let rclash: string = parser.resource_collision(mod, rn);
+    let rdecl: parser.ResourceDecl = mod.resources[rn];
+    if (rclash == "resource") {
+      out = out.append(dg_at("E006", "resource \"" + rdecl.name + "\" redeclared", rdecl.line, rdecl.col));
+    } else if (rclash.len() > 0) {
+      let article: string = "a ";
+      if (rclash == "enum") {
+        article = "an ";
+      }
+      out = out.append(dg_at("E006", "resource \"" + rdecl.name + "\" conflicts with " + article + rclash + " of the same name", rdecl.line, rdecl.col));
+    }
+    rn = rn + 1;
+  }
+  return out;
+}
+
+// E081: a named function that declares no return type. Every function
+// writes its return type — `: void` when it returns nothing — so an
+// omitted one is an error, not an inference request, and an empty body
+// is no exception. `@import` externs are exempt (they carry a signature,
+// not a definition). Mirrors the Go checker's checkFunction rule.
+function return_type_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  for func in mod.funcs {
+    if (func.ret_type == "" && func.body.len() > 0 && func.is_const) {
+      out = out.append(dg_at("E081", "cannot infer the type of const \"" + func.name + "\"; declare it explicitly", func.line, func.col));
+    } else if (func.ret_type == "" && func.import_iface == "" && !func.is_const) {
+      out = out.append(dg_at("E081", "missing return type on function \"" + func.name + "\"; declare it explicitly (use `: void` if it returns nothing)", func.line, func.col));
+    }
+  }
+  for func in mod.funcs {
+    if (func.name == "main" && func.receiver_type == "" && func.import_iface == "") {
+      out = main_signature_diags(func, out);
+    }
+  }
+  return out;
+}
+
+// E016: a `type X = …` union alias the Go checker refuses to desugar, and
+// E006: one that desugars into an enum whose name is taken. Both are reported
+// at the alias's `type` keyword, and the alias is then not an enum.
+function alias_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let ak: i32 = 0;
+  while (ak < mod.aliases.len()) {
+    let alias: parser.TypeAlias = mod.aliases[ak];
+    for msg in parser.union_alias_errors(mod, alias) {
+      out = out.append(dg_at("E016", msg, alias.line, alias.col));
+    }
+    if (parser.alias_redeclares_enum(mod, ak)) {
+      out = out.append(dg_at("E006", "enum \"" + alias.name + "\" redeclared", alias.line, alias.col));
+    }
+    ak = ak + 1;
+  }
+  return out;
+}
+
+// E054: an `@export(...)` function bound to a WIT world export cannot be
+// generic (a world export is lifted with a single concrete canonical
+// ABI) and cannot be a method (the export surface is for top-level
+// functions). The binding is recorded on mod.exports by func name; we
+// look the function up to read its type-param count + receiver.
+function export_shape_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  for export in mod.exports {
+    let ename: string = export.func_name;
+    for xfd in mod.funcs {
+      if (xfd.name == ename) {
+        if (xfd.all_type_params.len() > 0) {
+          out = out.append(dg_at("E054", "@export function \"" + xfd.name + "\" cannot be generic (a world export has a single concrete ABI)", xfd.line, xfd.col));
+        }
+        if (xfd.receiver_name.len() > 0) {
+          out = out.append(dg_at("E054", "@export cannot be applied to a method (\"" + xfd.name + "\"); use a top-level function", xfd.line, xfd.col));
+        }
+      }
+    }
+  }
+  return out;
+}
+
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = util.append_diags([], const_grammar_diags(mod));
   out = util.append_diags(out, handler_state_diags(mod));
@@ -19288,80 +19388,10 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
     en = en + 1;
   }
-  // E006: a resource redeclared, or named like a struct, enum or union alias.
-  // registered_resources leaves it out, so the name keeps its other meaning.
-  let rn: i32 = 0;
-  while (rn < mod.resources.len()) {
-    let rclash: string = parser.resource_collision(mod, rn);
-    let rdecl: parser.ResourceDecl = mod.resources[rn];
-    if (rclash == "resource") {
-      out = out.append(dg_at("E006", "resource \"" + rdecl.name + "\" redeclared", rdecl.line, rdecl.col));
-    } else if (rclash.len() > 0) {
-      let article: string = "a ";
-      if (rclash == "enum") {
-        article = "an ";
-      }
-      out = out.append(dg_at("E006", "resource \"" + rdecl.name + "\" conflicts with " + article + rclash + " of the same name", rdecl.line, rdecl.col));
-    }
-    rn = rn + 1;
-  }
-  // E081: a named function that declares no return type. Every function
-  // writes its return type — `: void` when it returns nothing — so an
-  // omitted one is an error, not an inference request, and an empty body
-  // is no exception. `@import` externs are exempt (they carry a signature,
-  // not a definition). Mirrors the native checkFunction rule.
-  for func in mod.funcs {
-    if (func.ret_type == "" && func.body.len() > 0 && func.is_const) {
-      out = out.append(dg_at("E081", "cannot infer the type of const \"" + func.name + "\"; declare it explicitly", func.line, func.col));
-    } else if (func.ret_type == "" && func.import_iface == "" && !func.is_const) {
-      out = out.append(dg_at("E081", "missing return type on function \"" + func.name + "\"; declare it explicitly (use `: void` if it returns nothing)", func.line, func.col));
-    }
-  }
-  // E084: every runner calls `main` with no arguments and turns its result
-  // into the exit status, which an integer or a boolean can be and nothing
-  // else can. Mirrors the native checkMainSignature.
-  for func in mod.funcs {
-    if (func.name == "main" && func.receiver_type == "" && func.import_iface == "") {
-      if (func.params.len() > 0) {
-        out = out.append(dg_at("E084", "main takes no parameters; read the command line with args()", func.line, func.col));
-      }
-      if (func.ret_type != "" && !main_result_ty(func.ret_type)) {
-        out = out.append(dg_at("E084", "main returns an integer, a boolean or void, not " + func.ret_type, func.line, func.col));
-      }
-    }
-  }
-  // E016: a `type X = …` union alias the Go checker refuses to desugar, and
-  // E006: one that desugars into an enum whose name is taken. Both are reported
-  // at the alias's `type` keyword, and the alias is then not an enum.
-  let ak: i32 = 0;
-  while (ak < mod.aliases.len()) {
-    let alias: parser.TypeAlias = mod.aliases[ak];
-    for msg in parser.union_alias_errors(mod, alias) {
-      out = out.append(dg_at("E016", msg, alias.line, alias.col));
-    }
-    if (parser.alias_redeclares_enum(mod, ak)) {
-      out = out.append(dg_at("E006", "enum \"" + alias.name + "\" redeclared", alias.line, alias.col));
-    }
-    ak = ak + 1;
-  }
-  // E054: an `@export(...)` function bound to a WIT world export cannot be
-  // generic (a world export is lifted with a single concrete canonical
-  // ABI) and cannot be a method (the export surface is for top-level
-  // functions). The binding is recorded on mod.exports by func name; we
-  // look the function up to read its type-param count + receiver.
-  for export in mod.exports {
-    let ename: string = export.func_name;
-    for xfd in mod.funcs {
-      if (xfd.name == ename) {
-        if (xfd.all_type_params.len() > 0) {
-          out = out.append(dg_at("E054", "@export function \"" + xfd.name + "\" cannot be generic (a world export has a single concrete ABI)", xfd.line, xfd.col));
-        }
-        if (xfd.receiver_name.len() > 0) {
-          out = out.append(dg_at("E054", "@export cannot be applied to a method (\"" + xfd.name + "\"); use a top-level function", xfd.line, xfd.col));
-        }
-      }
-    }
-  }
+  out = util.append_diags(out, resource_diags(mod));
+  out = util.append_diags(out, return_type_diags(mod));
+  out = util.append_diags(out, alias_diags(mod));
+  out = util.append_diags(out, export_shape_diags(mod));
   return out;
 }
 

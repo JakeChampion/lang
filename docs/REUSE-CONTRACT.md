@@ -2,6 +2,8 @@
 
 Status: [policy] the reuse and move shapes Fern guarantees, their taints and guards, and the tests that lock each one.
 
+> The shapes were first written against the Go compiler, deleted since (`docs/NATIVE-RETIREMENT.md`): Go function names below such as `consumingMatchReuse` name where a shape came from, and the compiler's counterparts are in `docs/SELFHOST-PERCEUS-REUSE.md`.
+
 Plan item **B1** of `docs/NICHE-BORROWS-PLAN.md`, from the
 niche-language research (`NICHE-LANGUAGE-RESEARCH.md`): Koka's
 verified design stance is that reuse is a **specified,
@@ -9,7 +11,7 @@ programmer-visible behavior** — "the reuse optimization is
 guaranteed and a programmer can see when the optimization
 applies" — not an opaque best-effort compiler heuristic. This doc
 is Fern's version of that stance: it names each reuse/move shape
-the native compiler performs, what statically qualifies and
+the compiler performs, what statically qualifies and
 taints a site, the runtime guard semantics, and the test that
 locks each shape. It is the reference for (a) users writing
 allocation-sensitive hot loops, (b) the self-host port
@@ -114,14 +116,12 @@ into the arm bindings, so the construction must NOT drop old
 fields (`consumingMatchReuse` tells `emitEnumNew` to skip the
 release). This is the true `map`-over-unique-list shape: on
 unique data the loop allocates nothing (#4475).
-The two compilers take different preconditions. Native pairs only
-when every payloadful variant of the enum has one box size
-(`uniformEnumBoxSize`). The self-host pairs per arm: it reads the
+The compiler pairs per arm: it reads the
 donor's slot count off the variant the arm's payload reads name
 (`ssaunits.donor_slots`, #11073), which is sound because the donor and
 the construction are the same variant there. So a ragged enum such as
 `Tree { Tip(i32), Fork(Tree, Tree) }` compiles under `fbip` and runs
-allocation-free on the self-host, while native's E068 refuses it.
+allocation-free.
 Locked by: `internal/testing/e2e/rc_c2_consuming_reuse_test.go`,
 `internal/testing/e2ecompiler/self_host_fip_inplace_reuse_test.go` (its
 `fbip-ragged-enum-rebuilt-per-arm` case pins the self-host's answer).

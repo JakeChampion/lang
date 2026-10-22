@@ -229,19 +229,14 @@ owned counted array; `[T]` (`ast.SliceType`) is a non-owning
 (`ast.StrType`) is the borrowed view of `string`
 (docs/OWNERSHIP-TYPES-PLAN.md Phase A).
 
-Native analysis: `checkSliceEscape`
-(`internal/check/checker/checker.go:7084`) — reject `return` of a
-slice provably viewing function-local storage: a cycle-guarded
-binding chase (`sliceBorrowsLocal` 7112,
-`sourceIsLocalStorage` 7139) bottoming out at an array literal
-or locally-declared owned array; params are caller-owned and
-safe; anything unprovable (call result, global, field read) is
-assumed safe. Report: E063 (checker.go:7102). `checkStrEscape`
-(checker.go:7183) is the `str` sibling: `strViewsLocal`
-(7217) chases ident/slice chains to a local owned `string`;
-literals are immortal; E065 at checker.go:7204. Both are
-intra-procedural with a documented laundering hole (a view
-returned through a callee is not chased — checker.go:7180).
+Analysis: `slice_escape_diags` in `compiler/checker.fern`, and
+`checkSliceEscapes` / `checkStrEscapes` in the Go oracle's checker —
+reject `return` of a view provably reaching function-local storage: an
+array literal or a locally-declared owned array for a `[T]` (E063), a
+local owned `string` for a `str` (E065). Params and receivers are
+caller-owned and safe; literals are immortal. The chase runs through
+calls: a callee that returns a view of one of its parameters views what
+the caller passed there (`returnViewSummaries`).
 
 Guarantee: a borrowed view never outlives the frame that owns
 its backing store — the one place Fern needs a locality-style
@@ -439,7 +434,7 @@ E050, E051, E053's walk, E063, E065, E067, E049 — is one
 traversal reading and updating `state(binding)`.
 
 Today, natively, that "one traversal" is four-and-a-half:
-`checkOwnedParams`, `checkSliceEscape`, `checkStrEscape`,
+`checkOwnedParams`, `checkSliceEscapes`, `checkStrEscapes`,
 `checkMustConsume` run back-to-back per function
 (checker.go:7055-7058) and `checkFipFunctions` runs
 program-level; the self-host mirrors the split (`own_diags`,
