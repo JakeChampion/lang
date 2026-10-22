@@ -506,7 +506,7 @@ function sites_expr(e: ast.Expr, own f: Sites): Sites {
 }
 
 function no_access(): ast.ExprFieldAccess {
-  return ast.ExprFieldAccess { obj: ast.ExprUnknown { kind: "", line: 0, col: 0 }, field: "", line: 0, col: 0, ty: "", path_sep: false, const_read: false };
+  return ast.ExprFieldAccess { obj: ast.ExprUnknown { kind: "", line: 0, col: 0 }, field: "", line: 0, col: 0, ty: "", const_read: false };
 }
 
 // called_at reports whether the last site recorded is the call `fa` is the
