@@ -1,0 +1,53 @@
+// A generic enum's methods reach generic helpers the way std/ordmap's do
+// (#12904): `has` matches on a generic function's result, `below` binds a
+// generic struct holding the enum, and `pick` matches on that struct's field
+// inside a bounded helper the method calls.
+import "core/cmp";
+import "std/i32";
+
+enum Tree[K] { Tip, Bin(Tree[K], K, i32) }
+
+struct Split[K] { lt: Tree[K], hit: Tree[K] }
+
+function find[K](t: Tree[K], k: K): Tree[K] {
+  return t;
+}
+
+function split[K](t: Tree[K], k: K): Split[K] {
+  return Split { lt: t, hit: t };
+}
+
+function pick[K: cmp.Ord](t: Tree[K], k: K): i32 {
+  let sp: Split[K] = split(t, k);
+  match (sp.hit) {
+    Tip => { return 0; },
+    Bin(_, _, n) => { return n; },
+  }
+}
+
+function (t: Tree[K]) has(k: K): boolean {
+  match (find(t, k)) {
+    Tip => { return false; },
+    Bin(_, _, _) => { return true; },
+  }
+}
+
+function (t: Tree[K]) below(k: K): Tree[K] {
+  let sp: Split[K] = split(t, k);
+  return sp.lt;
+}
+
+function (t: Tree[K]) rank[K: cmp.Ord](k: K): i32 {
+  return pick(t, k);
+}
+
+function main(): i32 {
+  let a: Tree[i32] = Bin(Tip, 1, 3);
+  let b: Tree[string] = Tip;
+  if (a.has(1)) { print("has"); }
+  if (!b.has("x")) { print("empty"); }
+  match (a.below(1)) { Tip => { print("tip"); }, Bin(_, _, n) => { print(n.to_string()); } }
+  print(a.rank(1).to_string());
+  print(b.rank("x").to_string());
+  return 0;
+}

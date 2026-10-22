@@ -21,7 +21,7 @@ import "std/i32";
 import "std/i64";
 import "std/u32";
 import "std/u64";
-import "std/float";
+import "std/f64";
 import "std/string";
 import "core/bigint";
 import "std/error";

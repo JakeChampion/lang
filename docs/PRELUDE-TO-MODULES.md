@@ -275,7 +275,7 @@ Tasks:
       slice / generic-arg positions didn't get the `<mod>__`
       prefix); three stdlib modules missing dependency imports
       the prelude had masked (`std/time` → `std/string`,
-      `std/test` → `std/float`, `std/fuzz` → `std/test` +
+      `std/test` → `std/f64`, `std/fuzz` → `std/test` +
       qualified `math.random_int`); and the in-memory compile
       paths (stdin / REPL / playground / the wasm bundle) which
       now load through the new `modload.LoadSource`. A checker

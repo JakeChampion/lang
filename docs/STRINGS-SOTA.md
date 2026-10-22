@@ -879,7 +879,7 @@ recognisers, example programs and test fixtures. By category:
 
 | Category | Examples | Can the bytes be invalid? |
 |---|---|---|
-| Digit assembly | `core/int`, `std/i32`, `std/i64`, `std/float` | No — ASCII it just built |
+| Digit assembly | `core/int`, `std/i32`, `std/i64`, `std/f64` | No — ASCII it just built |
 | Encoder output | base64/base32/hex **encode**, `url` percent-encode | No: ASCII by construction |
 | Regex output | replacements, splits and captures | Yes: byte matches can split UTF-8 scalars. Text APIs return `Option`; `_bytes` variants preserve raw output. |
 | PEG captures | committed named byte ranges | Yes: byte matches can split UTF-8 scalars. Final capture validation returns `ok=false` and an empty map when any nonempty range splits a character. Empty ranges remain valid. |

@@ -28,7 +28,7 @@
 // every policy, so there is one copy of it.
 import "std/string";
 import "std/i64";
-import "std/float";
+import "std/f64";
 import "./ast";
 import "./value";
 import "./vars";
@@ -887,7 +887,7 @@ function backend_list(env: Env): string {
 // runtime modules, a relative path otherwise.
 pub function compile(decls: ast.Decl[], prefix: string): Result[string, string] {
   let env: Env = env_of(decls);
-  let out: string = "// Generated from VCL by examples/vcl/compile.fern. Do not edit.\n" + "//\n" + "// Variable reads are struct field accesses: the scoping check ran at\n" + "// compile time, so none of it survives here.\n" + "import \"std/string\";\nimport \"std/i64\";\nimport \"std/float\";\nimport \"std/regex\";\n" + "import " + quote(prefix + "value") + ";\n" + "import " + quote(prefix + "runtime") + ";\n" + "import " + quote(prefix + "vars") + ";\n" + "import " + quote(prefix + "eval") + ";\n" + "import " + quote(prefix + "machine") + ";\n" + "import " + quote(prefix + "report") + ";\n\n";
+  let out: string = "// Generated from VCL by examples/vcl/compile.fern. Do not edit.\n" + "//\n" + "// Variable reads are struct field accesses: the scoping check ran at\n" + "// compile time, so none of it survives here.\n" + "import \"std/string\";\nimport \"std/i64\";\nimport \"std/f64\";\nimport \"std/regex\";\n" + "import " + quote(prefix + "value") + ";\n" + "import " + quote(prefix + "runtime") + ";\n" + "import " + quote(prefix + "vars") + ";\n" + "import " + quote(prefix + "eval") + ";\n" + "import " + quote(prefix + "machine") + ";\n" + "import " + quote(prefix + "report") + ";\n\n";
   let i: i32 = 0;
   while (i < decls.len()) {
     match (decls[i]) {

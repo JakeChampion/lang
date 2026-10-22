@@ -40,7 +40,7 @@ func f32ElemTagCases() []f32ElemTagCase {
 		{
 			// THE REPRO, as a length: the tuple ELEMENT spelling. Was 17.
 			name: "tuple_elem_f32_renders_at_f32",
-			src: `import "std/float";
+			src: `import "std/f64";
 function main(): i32 {
   let t = (3.14159 as f32 * 2.5 as f32, 1);
   return t.0.to_string().len();
@@ -52,7 +52,7 @@ function main(): i32 {
 			// the payload admission list, which dropped an f32 outright rather than
 			// widening it — losing the payload type, not just its width.
 			name: "inferred_option_f32_payload",
-			src: `import "std/float";
+			src: `import "std/f64";
 function main(): i32 {
   let o = Some(3.14159 as f32 * 2.5 as f32);
   match (o) { Some(v) => { return v.to_string().len(); }, None => {} }
@@ -64,7 +64,7 @@ function main(): i32 {
 			// The ANNOTATED spelling of the same: the payload type comes from
 			// `Option[f32]` rather than from the constructor.
 			name: "annotated_option_f32_payload",
-			src: `import "std/float";
+			src: `import "std/f64";
 function main(): i32 {
   let o: Option[f32] = Some(3.14159 as f32 * 2.5 as f32);
   match (o) { Some(v) => { return v.to_string().len(); }, None => {} }
@@ -77,7 +77,7 @@ function main(): i32 {
 			// collapse in either direction: 9 characters for the f32 and 8 for the
 			// f64, encoded as 9*10+8. A compiler that tags both "f64" returns 178.
 			name: "tuple_mixes_f32_and_f64_elems",
-			src: `import "std/float";
+			src: `import "std/f64";
 function main(): i32 {
   let t = (3.14159 as f32 * 2.5 as f32, 3.14159 as f64 * 2.5 as f64, 3);
   return t.0.to_string().len() * 10 + t.1.to_string().len();
@@ -89,7 +89,7 @@ function main(): i32 {
 			// correct all along (expr_scalar_type has the f32-before-f64 arm this
 			// change ports). Here so a regression on the working path fails too.
 			name: "plain_f32_local_unchanged",
-			src: `import "std/float";
+			src: `import "std/f64";
 function main(): i32 {
   let v = 3.14159 as f32 * 2.5 as f32;
   return v.to_string().len();
@@ -100,7 +100,7 @@ function main(): i32 {
 }
 
 // The three legs share one CLI-driver build: these programs `import
-// "std/float"` for `to_string`, and the single-source `*_run.fern` shims parse
+// "std/f64"` for `to_string`, and the single-source `*_run.fern` shims parse
 // raw source with no module loader, so the import never resolves there. The
 // unified fern.fern driver takes a source path plus the stdlib root and
 // resolves it for every target.
