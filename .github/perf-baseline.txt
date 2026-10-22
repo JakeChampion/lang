@@ -300,9 +300,9 @@ aarch64/map_probe_chain.ir	353848242
 aarch64/map_string.text	7170
 aarch64/map_string.ir	63502584	2
 aarch64/ordmap_insert.text	3159
-aarch64/ordmap_insert.ir	115601873
+aarch64/ordmap_insert.ir	114061180
 aarch64/pmap_insert.text	2834
-aarch64/pmap_insert.ir	69269531
+aarch64/pmap_insert.ir	66572386
 aarch64/pvec_with.text	3007
 aarch64/pvec_with.ir	60838467
 aarch64/record_update.text	1658
