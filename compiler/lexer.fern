@@ -146,7 +146,7 @@ function is_keyword(name: string): boolean {
     return name == "else" || name == "enum" || name == "errdefer";
   }
   if (c == b'd') {
-    return name == "default" || name == "defer" || name == "dyn";
+    return name == "defer" || name == "dyn";
   }
   if (c == b't') {
     return name == "true" || name == "type" || name == "trait";
@@ -186,7 +186,7 @@ function is_keyword(name: string): boolean {
 
 // keywords is every name is_keyword accepts, in byte order.
 pub function keywords(): string[] {
-  return ["as", "boolean", "break", "const", "continue", "default", "defer", "dyn", "else", "enum", "errdefer", "f32", "f64", "false", "for", "function", "i32", "i64", "if", "impl", "import", "let", "loop", "match", "pub", "return", "string", "struct", "trait", "true", "type", "u32", "u64", "u8", "use", "usize", "void", "when", "while"];
+  return ["as", "boolean", "break", "const", "continue", "defer", "dyn", "else", "enum", "errdefer", "f32", "f64", "false", "for", "function", "i32", "i64", "if", "impl", "import", "let", "loop", "match", "pub", "return", "string", "struct", "trait", "true", "type", "u32", "u64", "u8", "use", "usize", "void", "when", "while"];
 }
 
 function is_valid_numeric_suffix(s: string): boolean {
@@ -599,6 +599,11 @@ pub function string_tok(value: string, line: i32, col: i32): Token {
 }
 
 pub function ident_tok(name: string, line: i32, col: i32): Token {
+  // `ByteStream` is the builtin byte stream's new name; it reads as `Stream`
+  // until the stage0 pin knows it and the stdlib moves over (#12708).
+  if (name == "ByteStream") {
+    return TokIdent { name: "Stream", line: line, col: col };
+  }
   return TokIdent { name: name, line: line, col: col };
 }
 

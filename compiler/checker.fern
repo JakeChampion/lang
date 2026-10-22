@@ -15990,12 +15990,18 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
     }
     out = util.append_diags(out, cast_diags(u, tgt, check_expr(u.operand, s), s));
   }
-  // E059: an `as?` downcast (`x as? T`, parsed as the unary op
-  // `as?_T`) requires a `dyn Trait` value on the left.
+  // `x as? T` (the unary op `as?_T`) downcasts a `dyn Trait` value, or converts
+  // an integer to an integer type: E059 for any other operand, E060 for an
+  // integer's non-integer target.
   if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
     let aot: typeinfo.Type = check_expr(u.operand, s);
-    if (!downcast_operand_ok(aot)) {
-      out = out.append(dg_at("E059", "`as?` downcast requires a `dyn Trait` value on the left, got " + type_label(aot), u.line, u.col));
+    let target: string = slice_unchecked(u.op, 4, u.op.len()) + "";
+    if (is_integer(aot)) {
+      if (!is_integer(s.resolve_type(target))) {
+        out = out.append(dg_at("E060", "'as?' from " + type_label(aot) + " converts only to an integer type, got " + target, u.line, u.col));
+      }
+    } else if (!downcast_operand_ok(aot)) {
+      out = out.append(dg_at("E059", "'as?' requires a 'dyn Trait' value or an integer on the left, got " + type_label(aot), u.line, u.col));
     }
   }
   // E042: the `?` try operator (parsed as the unary op `try_`)

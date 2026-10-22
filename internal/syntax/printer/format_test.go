@@ -48,11 +48,11 @@ func TestFormatKeepsFunctionModifiers(t *testing.T) {
 	}
 }
 
-// A `stream[T]` in an async import's signature is a type of its own; the
+// A `Stream[T]` in an async import's signature is a type of its own; the
 // formatter used to print it as nothing, leaving `body(): ;`.
 func TestFormatKeepsStreamType(t *testing.T) {
-	in := "@import(\"test:dep/d\", \"prod\") async function body(): stream[u8];\n@import(\"test:dep/d\", \"sink\") async function sink(s: stream[i32]): i32;\n"
-	want := "@import(\"test:dep/d\", \"prod\")\nasync function body(): stream[u8];\n\n@import(\"test:dep/d\", \"sink\")\nasync function sink(s: stream[i32]): i32;\n"
+	in := "@import(\"test:dep/d\", \"prod\") async function body(): Stream[u8];\n@import(\"test:dep/d\", \"sink\") async function sink(s: Stream[i32]): i32;\n"
+	want := "@import(\"test:dep/d\", \"prod\")\nasync function body(): Stream[u8];\n\n@import(\"test:dep/d\", \"sink\")\nasync function sink(s: Stream[i32]): i32;\n"
 	if got := formatSrc(t, in); got != want {
 		t.Errorf("format:\ngot  %q\nwant %q", got, want)
 	}

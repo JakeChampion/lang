@@ -1266,9 +1266,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// the tail) draws no E061 from either checker.
 		{"if-branch-tail-ok", "function main(): i32 { let x = if (true) { 1 } else { 2 }; return x; }\n", nil},
 		{"if-branch-leading-then-tail-ok", "function main(): i32 { let x = if (true) { let k = 1; k + 1 } else { 0 }; return x; }\n", nil},
-		// E059: the operand of `x as? T` must be a `dyn Trait` value (#2857).
+		// E059: the operand of `x as? T` must be a `dyn Trait` value (#2857) or
+		// an integer, whose target must be an integer type (#12708).
 		// The regular `as` cast is unaffected (it's the `as_` op, not `as?_`).
-		{"as-downcast-i32-left", "struct P { x: i32 }\nfunction main(): i32 { let a = 5; let b = a as? P; return 0; }\n", []string{"E059"}},
+		{"as-int-to-struct", "struct P { x: i32 }\nfunction main(): i32 { let a = 5; let b = a as? P; return 0; }\n", []string{"E060"}},
+		{"as-int-to-int", "function main(): i32 { let a = 5; let b: Option[u8] = a as? u8; return 0; }\n", nil},
 		{"as-downcast-string-left", "struct P { x: i32 }\nfunction main(): i32 { let s = \"hi\"; let b = s as? P; return 0; }\n", []string{"E059"}},
 		{"as-downcast-struct-left", "trait Tr { function m(self: Self): i32; }\nstruct P { x: i32 }\nimpl Tr for P { function m(self: Self): i32 { return self.x; } }\nfunction main(): i32 { let p = P { x: 1 }; let b = p as? P; return 0; }\n", []string{"E059"}},
 		{"as-downcast-dyn-left-ok", "trait Tr { function m(self: Self): i32; }\nstruct P { x: i32 }\nimpl Tr for P { function m(self: Self): i32 { return self.x; } }\nfunction main(): i32 { let d: dyn Tr = P { x: 1 }; let b = d as? P; return 0; }\n", nil},

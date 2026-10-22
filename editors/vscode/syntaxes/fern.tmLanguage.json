@@ -44,7 +44,7 @@
       "patterns": [
         {
           "name": "keyword.control.fern",
-          "match": "\\b(if|else|while|for|loop|break|continue|return|match|when|default|defer|errdefer)\\b"
+          "match": "\\b(if|else|while|for|loop|break|continue|return|match|when|defer|errdefer)\\b"
         },
         {
           "name": "storage.type.fern",

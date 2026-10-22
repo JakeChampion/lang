@@ -81,7 +81,7 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 // name, whose `dyn` dispatch or bounded call on this method's receiver type
 // reaches this method or associated function (resolve_dyn_traits);
 // dyn_arm_matches and trait_provider_name select by it. streams lists the
-// slots of an async import that were `stream[T]` before
+// slots of an async import that were `Stream[T]` before
 // lower_stream_signatures rewrote them to `T[]`: -1 for the result, else a
 // parameter index. stdlib is the canonical standard-library import supplied
 // by the loader, or "" for user and synthetic declarations. It survives
@@ -2202,24 +2202,6 @@ function (p: Par) peek_is_pat_literal(): boolean {
   return false;
 }
 
-// peek_member_name returns the identifier at the cursor, OR a reserved
-// keyword that is nonetheless allowed in MEMBER position — currently only
-// `default` (a reserved keyword that doubles as the `Default` trait's
-// method name `Type.default()`). Returns "" otherwise. Mirrors the Go
-// parser's expectMemberName; used for function/method names and field
-// access so `function default()` and `obj.default()` parse while the
-// keyword stays reserved everywhere else.
-function (p: Par) peek_member_name(): string {
-  let nm: string = p.peek_ident();
-  if (nm.len() > 0) {
-    return nm;
-  }
-  if (p.peek_keyword() == "default") {
-    return "default";
-  }
-  return "";
-}
-
 // punct_at returns the punctuation text of the token at absolute index
 // `idx` ("" when out of range or not a punct token). Used by the
 // arrow-lambda lookahead, which must peek several tokens ahead of the
@@ -3163,7 +3145,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
       let dline: i32 = p.peek_line();
       let dcol: i32 = p.peek_col();
       p = p.advance();
-      let fname: string = p.peek_member_name();
+      let fname: string = p.peek_ident();
       if (fname.len() == 0) {
         match (p.peek()) {
           lexer.TokNumber(n) => {
@@ -9540,7 +9522,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
       p = p.advance();
     }
   }
-  let name: string = p.peek_member_name();
+  let name: string = p.peek_ident();
   if (name.len() == 0) {
     return (FuncDecl { stdlib: "", no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, receiver_own: receiver_own, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] }, p);
   }
@@ -10265,7 +10247,7 @@ function parse_pubuse(p: Par, pu_line: i32, pu_col: i32): (Import, ast.Stmt[], P
   // Each name is followed by `,` or the closing `}`, as the Go parser reads it.
   let names: string[] = [];
   while (p.peek_punct() != "}") {
-    let nm: string = p.peek_member_name();
+    let nm: string = p.peek_ident();
     if (nm.len() == 0) {
       bad = bad.append(decl_sentinel(p, "expected a name, got " + tok_desc(p.peek())));
       return (none, bad, sync_to_top_level(p));
@@ -24136,7 +24118,7 @@ function fda_fill(mod: Module): (Module, util.Diag[]) {
   return (Module { ...mod, funcs: funcs, top_stmts: tops }, util.append_diags(diags, tdiags));
 }
 
-// lower_stream_signatures rewrites each async import's `stream[T]` result and
+// lower_stream_signatures rewrites each async import's `Stream[T]` result and
 // parameters to `T[]`, which is what its callers see: the import collects a
 // result stream into an array and writes an array argument out as a stream.
 // The rewritten slots are recorded in `streams` for the wasm emitter.
@@ -24173,9 +24155,9 @@ function lower_stream_signature(f: FuncDecl): FuncDecl {
   return FuncDecl { ...f, ret_type: ret, params: params, streams: slots };
 }
 
-// stream_elem is T for a `stream[T]` spelling, else "".
+// stream_elem is T for a `Stream[T]` spelling, else "".
 pub function stream_elem(t: string): string {
-  let pre: string = "stream[";
+  let pre: string = "Stream[";
   if (t.len() <= pre.len() + 1 || slice_unchecked(t, 0, pre.len()) != pre || t[t.len() - 1] != b']') {
     return "";
   }

@@ -7201,8 +7201,11 @@ function main(): i32 { return 0; }`)
 
 	cases := []struct{ name, src, want string }{
 		{"non-dyn LHS",
+			prelude + `function main(): i32 { let c: string = "1"; let d: Option[Circle] = c as? Circle; return 0; }`,
+			"requires a 'dyn Trait' value or an integer on the left"},
+		{"integer to a non-integer",
 			prelude + `function main(): i32 { let c: i32 = 1; let d: Option[Circle] = c as? Circle; return 0; }`,
-			"requires a 'dyn Trait' value on the left"},
+			"'as?' from i32 converts only to an integer type, got Circle"},
 		{"target does not implement trait",
 			prelude + `struct NoShape { z: i32 }
 function describe(s: dyn Shape): i32 { let c: Option[NoShape] = s as? NoShape; return 0; }

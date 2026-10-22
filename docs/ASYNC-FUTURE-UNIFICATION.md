@@ -17,7 +17,7 @@ After PR4 the surface is unified (`Future[T]` everywhere), but the
    `gather`/`race` over real I/O only overlap on native today.
 2. **Two async mechanisms on wasm.** Real wasm async currently goes
    through the *separate* `@import(...) async function` path
-   (`ExternFunc.Async`, `canon lower async`, `stream[T]` — see
+   (`ExternFunc.Async`, `canon lower async`, `Stream[T]` — see
    `docs/WASI-PREVIEW3-ASYNC-PLAN.md`), which is IR-level and
    host-scheduled but is a **different surface** than `Future[T]`.
 3. **Three reactor modules linger.** `std/task` (in-memory + native-fd),
@@ -74,7 +74,7 @@ ordinary library code, consistent with the whole redesign's thesis
 (concurrency is library combinators, not compiler machinery).
 
 > Note on `@import async function`: that path stays for *direct*
-> host-async imports and `stream[T]`. Where it overlaps `Future[T]`
+> host-async imports and `Stream[T]`. Where it overlaps `Future[T]`
 > (a host call you want to `gather`), the bridge is a stdlib
 > constructor that returns `Pending(pollable, resume)` wrapping the
 > import's pollable — not a compiler change. Fully folding

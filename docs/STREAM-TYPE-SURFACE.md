@@ -1,4 +1,4 @@
-# `stream[T]` (and why not `future[T]`) in the Fern language surface
+# `Stream[T]` (and why not `future[T]`) in the Fern language surface
 
 Status: [record] decision shipped: `stream[T]` is in the self-host surface (#11530) and `future[T]` stays internal.
 
@@ -11,7 +11,7 @@ remaining piece — exposing them (or not) in the **Fern language surface**
 decided position. It is the surface-side analogue of the encoder/mechanics
 checkpoints that preceded each runnable async slice.
 
-## Decision: expose `stream[T]`, keep `future[T]` internal
+## Decision: expose `Stream[T]`, keep `future[T]` internal
 
 Fern's async model is **colorless**: an `@import async function f(): T` is
 auto-awaited and the call site yields a plain `T` — there is no `await` keyword
@@ -25,19 +25,19 @@ and no "deferred value" surface object (`docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
   stays an **internal ABI detail** (the lowering already handles a deferred
   single value via the pending-await loop); it is never written in Fern source.
 
-- **`stream[T]` is a genuinely distinct shape** — a *sequence* delivered
+- **`Stream[T]` is a genuinely distinct shape** — a *sequence* delivered
   incrementally — so it earns a surface type. The coherent way to deliver it
   under the colorless model is the **same rule, generalised**: where an async
   import declared `: T` yields `T` (the awaited value), an async import declared
-  `: stream[T]` yields **`T[]`** at the call site — the fully-collected
-  sequence. The `stream[T]` annotation tells the compiler "this result arrives
+  `: Stream[T]` yields **`T[]`** at the call site — the fully-collected
+  sequence. The `Stream[T]` annotation tells the compiler "this result arrives
   incrementally over the wire (drive `stream.read` + the await loop until EOF),
   then hand the caller the materialised array." The user still writes
   straight-line, colorless code:
 
   ```fern
   @import("wasi:http/types", "body-stream")
-  async function body(): stream[u8];
+  async function body(): Stream[u8];
 
   async function handle(): i32 {
       let bytes: u8[] = body();   // colorless: reads the whole stream into u8[]
@@ -46,17 +46,17 @@ and no "deferred value" surface object (`docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
   ```
 
   This is coherent with (a) the colorless model (you get a value, not an
-  iterator/await), (b) the existing list-result lowering (a `stream[u8]` result
+  iterator/await), (b) the existing list-result lowering (a `Stream[u8]` result
   materialises as `u8[]` exactly like a `list[u8]` result does — the *only*
   difference is the wire ABI: incremental `stream.read` vs a single `(ptr,len)`
   copy), and (c) Fern's bracket generic syntax (`Pair[T]`, `dyn C[i32]`), so the
-  spelling is **`stream[T]`**, not `stream<T>` (angle brackets are not a lexer
+  spelling is **`Stream[T]`**, not `stream<T>` (angle brackets are not a lexer
   token — see recon §2).
 
 ### `for x in stream` — works EAGERLY, by construction; not colored-lazy
 
 `for x in body() { … }` over a stream-returning call **already works**, for free
-and consistently with the colorless model: the checker rewrites the `stream[T]`
+and consistently with the colorless model: the checker rewrites the `Stream[T]`
 result to `T[]` (the eager collected array), so the ordinary parse-time array
 `for-in` desugar (`.len()` + index) iterates it after the collect-wrapper drains
 the stream to EOF — no intermediate `let b: u8[] = …` and no for-in rework
@@ -126,13 +126,13 @@ normal Fern loop calling codegen helpers, so IR/codegen only ever see ordinary
 constructs):
 
 - *Parser* (done in attempt, ~30 LOC): `desugarForEachProgram` builds a set of
-  module-local `@import async … : stream[T]` names; a `for x in f(args)` over one
+  module-local `@import async … : Stream[T]` names; a `for x in f(args)` over one
   is **left as `ast.ForEach`** (the array case still lowers via
   `ast.DesugarForEachArray`). modload/constfold/walk already traverse ForEach
   (L1), so it reaches the checker.
 - *Checker* (~60 LOC): a pre-pass after the slice-2 stream rewrite (so
   `StreamResultElem` is set) desugars each stream `ast.ForEach` into a Fern block,
-  and registers the helper FuncSigs. For `for x in body()` with `stream[u8]`:
+  and registers the helper FuncSigs. For `for x in body()` with `Stream[u8]`:
   ```
   let __h: i32 = body$open();              // per-import: raw lower → readable handle
   while (true) {
@@ -159,7 +159,7 @@ constructs):
     `count=rs>>4` ≥1 → return `load8_u(buf)`, else `-1`. (Needs `InstElse` +
     `BlocktypeI32`.)
   - `__stream_drop` (generic): `stream.drop-readable(h)`.
-  Scan: a `stream[T]` import still emits the collect-wrapper for value context AND
+  Scan: a `Stream[T]` import still emits the collect-wrapper for value context AND
   `body$open`; register `__stream_next_u8`/`__stream_drop` once; reuse the
   `stream.read`/`drop-readable`/waitable intrinsics.
 - *Composer + e2e*: **reuse `BuildAsyncStreamImportComponent` unchanged** — it
@@ -175,14 +175,14 @@ together (no half-step, since it flips the working eager behavior).
 ## Implementation slices (recon-grounded; file anchors in the recon)
 
 1. **AST + parser foundation.** Add `ast.StreamType{ Elem Type }`
-   (`internal/syntax/ast/ast.go`: `isType`, `String` → `"stream[" + Elem + "]"`,
+   (`internal/syntax/ast/ast.go`: `isType`, `String` → `"Stream[" + Elem + "]"`,
    `Equal`, `SubstSelf`; left out of `IsPointerType` — it's transformed to `T[]`
-   before codegen, never a materialised value). Parse `stream[T]` **contextually**
+   before codegen, never a materialised value). Parse `Stream[T]` **contextually**
    in `parser.parseType`: the existing `Ident[args]` generic-instantiation path
    yields `StreamType` when the name is `stream` with one arg, else `EnumType` —
    no reserved keyword, so `stream` stays a usable identifier. Tests: parser
    round-trip.
-   **DONE** (PR #3916): `ast.StreamType` + contextual `stream[T]` parse
+   **DONE** (PR #3916): `ast.StreamType` + contextual `Stream[T]` parse
    (`Ident[args]` with name `stream`, one arg → `StreamType`, else `EnumType`),
    `TestStreamTypeParse`.
 
@@ -197,7 +197,7 @@ together (no half-step, since it flips the working eager behavior).
    monomorph subst plumbing needed for the result path (slice 1's `Equal`/
    `SubstSelf` cover the rare param/let use). `ir.go` (`ExternFunc` build,
    ~L2608) copies `StreamResultElem` onto a new `ExternFunc.StreamResultElem`.
-   Test: checker accepts `@import async function body(): stream[u8]` and types
+   Test: checker accepts `@import async function body(): Stream[u8]` and types
    `let b: u8[] = body()`.
 3. **wasmbin collect-wrapper + composer.** In `scanExternImports`
    (`internal/codegen/wasmbin/wasi.go`), when `ex.StreamResultElem != nil` the
@@ -256,19 +256,19 @@ together (no half-step, since it flips the working eager behavior).
      then drops. For the e2e (slice 4), the bundled producer scaffolding gets
      this write-await; the consumer collect-wrapper (slice 3, the wasmbin
      deliverable) is the read side.
-4. **e2e.** Real Fern `@import async function body(): stream[u8]` +
+4. **e2e.** Real Fern `@import async function body(): Stream[u8]` +
    `let b: u8[] = body();` collect, composed against the stream producer, run
    under wasmtime → the collected bytes (mirrors `TestWasmP3StreamExportImport`,
    from Fern source). The runnable payoff.
 
-## `stream[T]` as an async-import PARAMETER (the produce side)
+## `Stream[T]` as an async-import PARAMETER (the produce side)
 
-The mirror of the result side: an `@import async function sink(s: stream[u8])`
+The mirror of the result side: an `@import async function sink(s: Stream[u8])`
 accepts an eager `u8[]` and the wrapper streams its elements OUT over the wire
-(useful exactly as a `stream[u8]` result collects an eager `u8[]` from a
+(useful exactly as a `Stream[u8]` result collects an eager `u8[]` from a
 streaming wire — the wire is incremental, the Fern surface is eager).
 
-- **P1 — DONE** (#3934): checker rewrites a `stream[T]` param to `T[]` and records
+- **P1 — DONE** (#3934): checker rewrites a `Stream[T]` param to `T[]` and records
   `FuncDecl.StreamParamElems[i]` → `ir.ExternFunc.StreamParamElems`; wasmbin guards
   it pending the produce-wrapper.
 - **P2 mechanics — PINNED & runnable** (wasmtime-37 spike → 42). The produce
@@ -287,7 +287,7 @@ streaming wire — the wire is incremental, the Fern surface is eager).
   - **await the lowered call** (the host sink subtask) via the normal
     `emitAsyncAwaitLoop` (status low-nibble != RETURNED(2) → subtask = status>>4,
     join+wait+`subtask.drop`), then read the scalar result at retptr.
-  - The host scaffolding is a provider `sink: async func(s: stream[u8]) -> u32`
+  - The host scaffolding is a provider `sink: async func(s: Stream[u8]) -> u32`
     whose core collect-reads the param (the read loop above) and task-returns the
     sum.
   - Remaining P2 build: the wasmbin produce-wrapper (`buildExternAsyncStreamParamWrapper`)
@@ -297,7 +297,7 @@ streaming wire — the wire is incremental, the Fern surface is eager).
 
 ## Status — DONE in the self-host (#11530)
 
-On `-target wasm32-wasi` the self-host compiler takes `stream[T]` in an async
+On `-target wasm32-wasi` the self-host compiler takes `Stream[T]` in an async
 `@import`'s signature, for the scalar elements `boolean`, `u8`, `i32`, `u32`,
 `i64`, `u64`, `f32` and `f64`.
 
@@ -320,9 +320,9 @@ The rest of this section records the native backend's history.
 
 - Channels at the ABI/composer level: **DONE** (see
   `docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
-- `stream[T]` Fern surface — all slices **DONE**:
+- `Stream[T]` Fern surface — all slices **DONE**:
   - slice 1 (`ast.StreamType` + parser, #3916),
-  - slice 2 (checker colorless `: stream[T]` → `T[]` transform + guard, #3920),
+  - slice 2 (checker colorless `: Stream[T]` → `T[]` transform + guard, #3920),
   - slice 3a (wasmbin `stream.read`+await collect-wrapper, #3926),
   - slice 3b (runnable composer collect proof → 42, #3929),
   - slice 4 (real-Fern from-source e2e → 42, #3931:
@@ -330,7 +330,7 @@ The rest of this section records the native backend's history.
 - `future[T]` Fern surface: **intentionally not exposed** (colorless auto-await
   subsumes a single deferred value).
 
-Done since: `stream[T]` **parameters** (produce side from Fern source — P1/P2,
+Done since: `Stream[T]` **parameters** (produce side from Fern source — P1/P2,
 `TestWasmP3StreamParamFromFern`); `u8`+`i32` **stride** coverage in both
 directions; `for x in stream` **eager** iteration (`TestWasmP3StreamForIn`); and
 the **CLI auto-bundle** — `fern -target wasm32-wasi -emit core-module -async-provider PATH` (or
