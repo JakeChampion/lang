@@ -1220,9 +1220,10 @@ pub function str_join_chunks(parts: string[]): string {
 // available yet). Positions are being threaded through the AST node by
 // node; a diagnostic emitted from a node that already carries a position
 // renders `line:col: error[E0XX]: …` like the Go checker, the rest still
-// render `error[E0XX]: …`. See docs/SELFHOST-CHECKER-PORT.md. `fix` is a
-// machine-applicable fix, when there is one.
-pub struct Diag { code: string, message: string, line: i32, col: i32, fix: Option[Fix], related: Related[] }
+// render `error[E0XX]: …`. See docs/SELFHOST-CHECKER-PORT.md. `length` is
+// the byte count of the span under the caret, or zero for a single caret;
+// `fix` is a machine-applicable fix, when there is one.
+pub struct Diag { code: string, message: string, line: i32, col: i32, length: i32, fix: Option[Fix], related: Related[] }
 
 // Related adds context at another source position. Lines carry the same module
 // index as a diagnostic's primary position; length is a byte count, or zero
@@ -1246,7 +1247,7 @@ pub function violation_diag(code: string, msg: string, fn_module: string, line: 
   if (fn_module.len() > 0) {
     line = 0;
   }
-  return Diag { related: [], code: code, message: msg, line: line, col: col, fix: None };
+  return Diag { related: [], length: 0, code: code, message: msg, line: line, col: col, fix: None };
 }
 
 // is_diagnostic_code reports whether `code` is a real diagnostic code: `E` or
@@ -1397,6 +1398,46 @@ pub function format_diags_in(diags: Diag[], files: string[]): string {
       out = out + "\n    note: " + r.message + " (" + pos_str("", files, r.line, r.col) + ")";
     }
     i = i + 1;
+  }
+  return out;
+}
+
+// diag_after reports whether `a` belongs after `b` in position order: by
+// module, line and column, with one that has no position first.
+pub function diag_after(a: Diag, b: Diag): boolean {
+  if (b.line <= 0) {
+    return a.line > 0;
+  }
+  if (a.line <= 0) {
+    return false;
+  }
+  if (a.line != b.line) {
+    return a.line > b.line;
+  }
+  return a.col > b.col;
+}
+
+// sorted_by is `xs` in the order `after` gives, where `after(a, b)` is whether
+// `a` belongs after `b`; elements that tie keep the order they came in.
+pub function sorted_by[T](xs: T[], after: (T, T) => boolean): T[] {
+  let out: T[] = [];
+  for x in xs {
+    let at: i32 = out.len();
+    while (at > 0 && after(out[at - 1], x)) {
+      at = at - 1;
+    }
+    let next: T[] = [];
+    let i: i32 = 0;
+    while (i <= out.len()) {
+      if (i == at) {
+        next = next.append(x);
+      }
+      if (i < out.len()) {
+        next = next.append(out[i]);
+      }
+      i = i + 1;
+    }
+    out = next;
   }
   return out;
 }
