@@ -15,11 +15,10 @@ three targets (x86-64, arm64, wasm).
 
 It used to be `internal/testing/e2e/testdata/cases` — inside one implementation,
 which made it look like that implementation's test suite rather than the
-language's definition. That framing is about to stop being harmless.
+language's definition.
 
-The native compiler that once defined Fern by its behaviour is gone
-(`docs/NATIVE-RETIREMENT.md`); new surface lands in `compiler/` first, and
-the Go oracle learns it so the differentials can check it. This corpus is
+New surface lands in `compiler/` first, and the Go oracle learns it so the
+differentials can check it (`docs/NATIVE-RETIREMENT.md`). This corpus is
 what carries the definition between them, so it is positioned as a peer of
 the implementations rather than as a component of one.
 
@@ -124,7 +123,7 @@ program is precisely what these cases pin, and it cannot be two.
 An abort on wasm is a trap, and the wasm leg fails any case that traps,
 since a trap is also how a miscompile shows there. The abort family
 (`oob_index_read` and its siblings) therefore restricts `backends` to the
-interpreter and the natives and carries a `harness-limit` waiver. This is a property of how
+interpreter, x86-64 and arm64 and carries a `harness-limit` waiver. This is a property of how
 the leg reads a run, not of the wasm target, which traps exactly as
 intended.
 
@@ -200,10 +199,9 @@ of unspecified behaviour this corpus exists to pin down.
 
 | Runner | What it does |
 | --- | --- |
-| `TestFernFixtures` (`internal/testing/e2e`) | Every case across every backend it opts into. The primary gate. |
-| `TestFernFixturesSelfHost{Wasm,X86_64,Arm64}` (`internal/testing/e2e`) | The same cases through the self-host compiler, against per-target divergence lists. Env-gated by `FERN_SELFHOST_FIXTURES=1`. |
+| `TestFernFixtures` (`internal/testing/e2e`) | Every case through the oracle: the run cases on the interpreter, and the compile-error cases through its checker; the lowering-error cases go through the self-host compiler (`fern -target`) at both pointer widths. |
+| `TestFernFixturesSelfHost{Wasm,X86_64,Arm64,Interp,Check}` (`internal/testing/e2e`) | The same cases through `fern`, on each target, its interpreter and its checker, against per-leg divergence lists. Env-gated by `FERN_SELFHOST_FIXTURES=1`. |
 | `TestConformanceCorpusFormat` (`internal/testing/e2e`) | Validates this document's format rules. Fast; no compilation. |
-| `forEachRunnableFixture` (`internal/testing/e2e/rc_freelist_test.go`) | Re-runs the corpus with the rc freelist flag off and on. |
 | `scripts/selfhost-emit-hashes` | Hashes self-host emit output per case, for byte-identity comparison. |
 
 The corpus root is a single constant, `e2eharness.ConformanceCases`.

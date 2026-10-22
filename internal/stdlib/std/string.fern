@@ -2002,8 +2002,8 @@ pub function (s: string) bytes(): u8[] {
       i = i + 1;
     }
   } else {
-    // Native layout: a native `u8[]` value is its packed data pointer. The
-    // self-host never compiles this body; `.bytes()` is an intrinsic there.
+    // Assumes a `u8[]` value is its packed data pointer. The compiler never
+    // compiles this body: `.bytes()` is an intrinsic there.
     __memcpy(out as usize, data, n);
   }
   return out;

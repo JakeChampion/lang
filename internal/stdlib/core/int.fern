@@ -93,9 +93,8 @@ function __int_u32_digits(u: u32): i32 {
 //
 // Digits are written backwards into the buffer with slot-aware array ops
 // (`.with` / index), not a raw `__memcpy`: a byte copy assumes a PACKED
-// `u8[]`, which holds on native / wasm but not on the self-hosted runtime
-// (8-byte-slotted `u8[]`). The element-wise form is layout-agnostic, so it is
-// correct on every backend and lowers on the self-host IR path.
+// `u8[]`, and the runtime's `u8[]` holds one word per element. The
+// element-wise form is layout-agnostic, so it is correct on every backend.
 pub function int_to_string(n: i32): string {
   if (n >= 0 && n < 100) {
     return SMALL_INTS[n];

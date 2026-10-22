@@ -378,19 +378,20 @@ nobody had changed. The warning is still the prompt to delete the line.
 
 ### The self-host leg
 
-`TestSelfHostCoreutilsParity` compiles every utility a second time with the
-SELF-HOST compiler (`compiler/fern.fern`) under `FERN_STRICT_IR=1`,
-runs the same corpus against those binaries, and requires them to agree with
-the native build. Comparing against native rather than GNU is deliberate:
-native is already held to GNU by the corpus above, so a failure here says the
-two COMPILERS disagree instead of re-reporting a parity bug in both.
+`TestSelfHostCoreutilsParity` builds the compiler from the current
+`compiler/fern.fern` with the `fern` launcher, compiles every utility a
+second time with that build under `FERN_STRICT_IR=1`, runs the same corpus
+against those binaries, and requires them to agree with the launcher's
+build. Comparing against that build rather than GNU is deliberate: it is
+already held to GNU by the corpus above, so a failure here says the two
+builds disagree instead of re-reporting a parity bug in both.
 
-It exists because nothing else compiles this tree with the self-host compiler,
-and the gap that hid behind that was not small: the getopt cursor returns
-`(Option[OptMatch], Getopt)`, which the self-host tuple lowering refused, so
-every utility declaring an option bailed the module (#8407). The first green
-run of the leg then found `Writer.close()` answering None to a failing close
-on all three self-host backends, which is the whole of `close_stdout`'s
+It was written when nothing else compiled this tree with the self-host
+compiler, and the gap that hid behind that was not small: the getopt cursor
+returns `(Option[OptMatch], Getopt)`, which the self-host tuple lowering
+refused, so every utility declaring an option bailed the module (#8407). The
+first green run of the leg then found `Writer.close()` answering None to a
+failing close on all three backends, which is the whole of `close_stdout`'s
 decision (#8569). `TestSelfHostCoreutilsCoverage` fails when a utility has no
 corpus registered, so a new one cannot join the tree without joining this
 leg. Each `<util>_test.go` registers its own cases from an `init`, rather
@@ -432,7 +433,7 @@ self-host leg.
 ### The wasm leg
 
 `TestWasmSmoke` compiles a handful of utilities for `wasm32-wasi`, runs them
-under wasmtime and holds them to the native build of the same source. It is
+under wasmtime and holds them to the host-target build of the same source. It is
 not a parity gate — a dozen invocations, not a corpus — but before it nothing
 ran the tree on the wasm target, and the first run found three faults in the
 runtime rather than in any utility (#9070): `exit(n)` for `n > 1` trapped the
@@ -795,7 +796,8 @@ Under its own name with no utility after it, the binary answers for
 itself: `--list` prints the catalogue, `--help` and `--version` do the
 usual.
 
-Size, Linux x86-64, all 106 utilities, 2026-09-18:
+Size, Linux x86-64, all 106 utilities, 2026-09-18, when `bin/fern` was the
+Go compiler:
 
 | built by | wall | size |
 |---|---|---|
@@ -803,9 +805,8 @@ Size, Linux x86-64, all 106 utilities, 2026-09-18:
 | `bin/fern-selfhost` | 38.1 s | 3,367,952 B |
 
 Against 106 standalone binaries at roughly 120 KB each, one binary is
-about a quarter of the bytes. Both are published per platform by
-`.github/workflows/release.yml` while the self-host compiler is on its way
-to becoming the default.
+about a quarter of the bytes. `.github/workflows/release.yml` publishes it
+per platform, built by `bin/fern`.
 
 ## Performance
 
@@ -1296,8 +1297,9 @@ comparable within one run on one machine.
 
 The Fern column is `bin/fern-selfhost`'s build, the only compiler since the
 native backends were retired (`docs/NATIVE-RETIREMENT.md`). The dated
-sections below that carry a `fern` and a `fern-sh` column predate that: there
-`fern` was the native compiler's build and `fern-sh` the self-host's.
+sections of this chapter that carry a `fern` and a `fern-sh` column, or name the
+"native compiler" or a "native build", predate that: there `fern`, `bin/fern`
+and "native" mean the Go compiler's build, and `fern-sh` the self-host's.
 
 A compiler regression can be slower by a factor that turns a benchmark into
 a hang — #8688 had `seq` roughly 400x slower and growing to 11 GB — so the
@@ -3592,11 +3594,9 @@ surrenders no number:
     r.set_window_size(rows, cols) r.termios_set(when, words)
 
 `r.isatty()` is the precedent and the rule: a descriptor question asked of a
-handle becomes a method on the handle. Each is a two-instruction stub on the
-natives — the fd out of the box, a jump into the helper the free form already
-emits — and in the self-host compiler it costs nothing at all, because a
-handle IS its fd there and the method lowers to the same op with the receiver
-as its first operand. Measured: the open is `O_RDONLY | O_NONBLOCK`, since
+handle becomes a method on the handle. It costs nothing at all, because a
+handle IS its fd and the method lowers to the same op with the receiver as
+its first operand. Measured: the open is `O_RDONLY | O_NONBLOCK`, since
 `stty -F` on a FIFO with no writer answers `Inappropriate ioctl for device` at
 once rather than waiting for a peer.
 
@@ -4345,8 +4345,8 @@ first — so rm.fern does not have it.
 
 
 **No portable byte address for a `u8[]` (#8799).** `x as usize` is an
-identity cast, and a self-host `u8[]` holds one word per element, so there is
-no address both compilers could hand out for its bytes
+identity cast, and a `u8[]` holds one word per element, so there is no byte
+address to hand out for its bytes
 (`docs/RUNTIME-INTRINSICS.md`, "Addresses of counted values"). `base64`
 wanted raw scratch buffers, which run the encode at 165 ms against the
 460 ms that `u8[]` with `.with()` costs, and ships without them.
@@ -4462,7 +4462,7 @@ of mostly NUL — and the interpreter disagreed, since Go's `os.ReadFile` grows.
 Four readers were silently wrong on that: `id`'s selinuxfs probe always answered
 false, `id`'s own context came back empty, `logname` never saw
 `/proc/self/loginuid`, and `nproc`'s `/proc/cpuinfo` fallback always counted
-zero CPUs. Fixed in all four backends and the self-host, so a caller needs
+zero CPUs. Fixed in every backend, so a caller needs
 nothing between it and the kernel. A regular file still allocates once.
 
 ## Staging
@@ -4739,8 +4739,8 @@ groups are the order of work. Each sub-issue names its group.
   measure, since a preopen is a capability handle rather than a mount, so
   it reports neither a size nor a name-length limit. On arm64-darwin
   `set_file_times` issues
-  `setattrlist(2)` where native issues `setattrlistat(2)`: the
-  self-host's syscall floor stops at five arguments and `setattrlistat`
+  `setattrlist(2)` where the interpreter issues `setattrlistat(2)`: the
+  compiler's syscall floor stops at five arguments and `setattrlistat`
   takes six, and the two are the same call for a path resolved against
   the process's own directory, which is what `AT_FDCWD` means.
 

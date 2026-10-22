@@ -280,7 +280,7 @@ precompute shape.
 - **A2 (#4814, LANDED).** Dangling rule — **E065**, the `str` sibling of
   E063: a `str` view may not escape via `return` unless its source is a
   parameter (caller-owned) or a string literal (`'static` / immortal); a view
-  of a function-LOCAL owned `string` is rejected (`checkStrEscape` /
+  of a function-LOCAL owned `string` is rejected (`checkStrEscapes` /
   `strViewsLocal` in the checker — the cycle-guarded binding-chase mirroring
   `sliceBorrowsLocal`). Call results are not chased (today every callee
   returns an owned `string`, a move — the same documented intraprocedural

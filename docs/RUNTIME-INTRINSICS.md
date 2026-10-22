@@ -393,17 +393,15 @@ symbol) wrapped the same way, or stays on the `.append()` path that `str_bytes`
 
 `x as usize` on a string or an array is an identity cast: it answers the
 value's own pointer and nothing more. What that pointer points at is the
-representation's business, and the two compilers differ (#8799). A native
-array value is its data pointer, so native reads element bytes there. A
-self-host array is a box whose word 0 is the length, with one word per
-element after it, even for `u8[]`. So code that does arithmetic on the cast
-and reads or writes through the result is layout code, and is correct under
-one compiler only.
+representation's business (#8799): an array is a box whose word 0 is the
+length, with one word per element after it, even for `u8[]`. So code that
+does arithmetic on the cast and reads or writes through the result is
+layout code, tied to that representation.
 
-The address of a string's bytes has its own spelling on both compilers,
+The address of a string's bytes has its own spelling,
 `__str_bytes(s, scratch)`; `TestSelfHostBytesFloorX86_64`,
 `TestSelfHostBytesFloorArm64` and `TestSelfHostStrBytesEveryTarget` gate it. A `u8[]` has no
-portable byte address, because the self-host does not pack it.
+byte address, because the runtime does not pack it.
 
 ## Worked example — `str_concat`
 
