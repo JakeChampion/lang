@@ -440,7 +440,7 @@ function test_largest_integer(): test.TestOutcome {
       cancelled = error_text(e);
     }
   }
-  return test.assert_eq(capacity + " " + short + " " + cancelled, "ok 512 qpack: truncated ok");
+  return test.assert_eq(capacity + " " + short + " " + cancelled, "ok 512 qpack: a field section larger than allowed ok");
 }
 
 function test_cancellation(): test.TestOutcome {
@@ -458,6 +458,20 @@ function test_cancellation(): test.TestOutcome {
   }
 }
 
+// An encoder-stream literal too long to fit the table is refused at its
+// length, before its bytes arrive, so the decoder never holds them. The
+// table holds 220 bytes, so a name takes at most 188 and a value 188 less
+// its name; a Huffman code of at most 30 bits a byte gives 705 coded bytes.
+function test_oversized_literal(): test.TestOutcome {
+  let cases: string[] = ["5f808080808010", "3fbd015f9e01", "3fbd015f9d01", "3fbd017fa305", "3fbd017fa205", "3fbd01c07f34", "3fbd01c07f33"];
+  let out: string = "";
+  for c in cases {
+    out = out + result_text_d(fed(qpack.decoder(220 as i64, 2, 16384 as i64), c)) + "; ";
+  }
+  let e: string = "513 qpack: encoder stream: an entry larger than the table's capacity";
+  return test.assert_eq(out, e + "; " + e + "; ok; " + e + "; ok; " + e + "; ok; ");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/qpack");
   r = r.it("B.1: a literal with a static name reference", test_b1);
@@ -470,5 +484,6 @@ function main(): i32 {
   r = r.it("oversized integers are typed errors rather than wrapped values", test_integer_overflow);
   r = r.it("the largest 62-bit integer is still supported", test_largest_integer);
   r = r.it("stream cancellation encoding and blocked-slot release", test_cancellation);
+  r = r.it("an encoder-stream literal too long for the table is refused at its length", test_oversized_literal);
   return r.finish();
 }

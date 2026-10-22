@@ -226,6 +226,15 @@ pub function (s: Session) goaway_received(): i64 {
   return s.goaway;
 }
 
+// waiting reports whether request stream `id` has a field section that
+// waits on QPACK inserts. The transport must leave the stream's later
+// bytes unread until it does not, so that the stream's flow control
+// limits them (RFC 9204 §2.1.2): the session holds all it is given.
+pub function (s: Session) waiting(id: i64): boolean {
+  let i: i32 = s.__find(id);
+  return i >= 0 && s.reqs[i].blocked;
+}
+
 // === sending ================================================================
 
 // send_headers sends a field section on a request stream: a client's

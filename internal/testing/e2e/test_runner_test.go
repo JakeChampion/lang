@@ -1256,9 +1256,10 @@ func TestRunnerHTTPHpackExamplePasses(t *testing.T) {
 
 // `tests/stdlib/http_qpack_test.fern` decodes RFC 9204 Appendix B's
 // examples byte for byte, a trace ls-qpack's encoder wrote, and refuses
-// what the advertised limits rule out.
+// what the advertised limits rule out, an encoder-stream literal too long
+// for the table as soon as its length arrives.
 func TestRunnerHTTPQPACKExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_qpack", "std/http/qpack", 10)
+	runnerSuitePasses(t, "http_qpack", "std/http/qpack", 11)
 }
 
 // `tests/stdlib/http_h3_test.fern` joins an HTTP/3 client and server
@@ -1271,9 +1272,10 @@ func TestRunnerHTTPH3ExamplePasses(t *testing.T) {
 
 // `tests/stdlib/http_h3q_test.fern` runs HTTP/3 over std/quic connections
 // in memory: a GET, an upload through loss and reordering answered with a
-// trailer, requests answered out of order, and a graceful shutdown.
+// trailer, requests answered out of order, a graceful shutdown, and a
+// stream waiting on QPACK left unread so its window holds its body back.
 func TestRunnerHTTPH3QExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h3q", "std/http/h3q", 7)
+	runnerSuitePasses(t, "http_h3q", "std/http/h3q", 8)
 }
 
 // `tests/stdlib/http_h2_frame_test.fern` writes and reads back every HTTP/2

@@ -293,7 +293,8 @@ function test_goaway(): test.TestOutcome {
 }
 
 // A request whose field section refers to inserts the encoder stream has
-// not yet delivered waits for them, then arrives whole.
+// not yet delivered waits for them, then arrives whole; `waiting` reports
+// it meanwhile.
 function test_qpack_blocked(): test.TestOutcome {
   let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64);
   let step6: h3.Session = s;
@@ -314,7 +315,8 @@ function test_qpack_blocked(): test.TestOutcome {
       written = written + id.to_string() + ":" + hex.hex_encode(bytes) + " ";
     }
   }
-  return test.assert_eq(int_text(acts1.len()) + " " + int_text(evs1.len()) + " | " + noted("server", evs2) + "| " + written, "0 0 | server headers 0 [:authority=www.example.com :path=/sample/path :method=GET :scheme=https ]; server end 0; | 11:02 11:80 ");
+  let waits: string = s0.waiting(0 as i64).to_string() + " " + s1.waiting(0 as i64).to_string() + " " + step8.waiting(0 as i64).to_string();
+  return test.assert_eq(waits + " | " + int_text(acts1.len()) + " " + int_text(evs1.len()) + " | " + noted("server", evs2) + "| " + written, "false true false | 0 0 | server headers 0 [:authority=www.example.com :path=/sample/path :method=GET :scheme=https ]; server end 0; | 11:02 11:80 ");
 }
 
 function int_text(n: i32): string {
