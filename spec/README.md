@@ -28,8 +28,13 @@ are tokens, not characters. The **lexical** grammar is
 | Kind | Written in `grammar.ebnf` as |
 | --- | --- |
 | `Ident` | `IDENT`, or a quoted literal where a name is contextual |
-| `Number` | `NUMBER` — decimal, `0x` hex, `0b` binary or `0o` octal, optional `i32`/`i64`/`u8`/`u32`/`u64` suffix |
+| `Number` | `NUMBER` — decimal, `0x` hex, `0b` binary or `0o` octal, optional `i32`/`i64`/`u8`/`u32`/`u64`/`usize` suffix |
 | `Float` | `FLOAT` — optional `f32`/`f64` suffix |
+
+In either, an `_` between two digits is ignored (`1_000`, `0xffff_0000`,
+`1_000.5e1_0`). One that follows a digit and is not followed by one — `1_`,
+`1__0`, `1_.5`, `1_i32` — is a lexical error. A tuple selector (`t.1`) is not
+a literal and takes none.
 | `String` | `STRING` |
 | `Char` | `CHAR` — `'x'`, one Unicode scalar value |
 | `Byte` | `BYTE` — `b'x'`, one byte |

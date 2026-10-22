@@ -8,8 +8,8 @@ import (
 // `xs.join(sep)` has to be LINEAR in the joined length, and nothing asserted
 // that for the self-host. `__fern_arr_str_join` built its answer with
 // `r = r + xs[i]`, which recopies the whole prefix per element — O(total²),
-// the hazard native's own `__method_Array_join` comment names and the reason
-// that one sizes an exact buffer first.
+// the hazard std/array's own `join` comment names and the reason that one
+// sizes an exact buffer first.
 //
 // It hid because every existing gate was blind to it. The answer is CORRECT
 // either way, so the corpus could not see it. The allocation-differential

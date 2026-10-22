@@ -106,7 +106,9 @@ function main(): i32 {
 
 ## Arrays and slices
 
-`T[]` is an array. Its elements are **read-only after construction**:
+`T[]` is an array. `xs[i]` takes an index of any integer type, and an index
+outside the array aborts whatever its width. Its elements are **read-only
+after construction**:
 `xs[i] = v` is a compile error (`E056`). The update methods return a new
 array, and you rebind the name to it:
 
@@ -237,7 +239,8 @@ match (stock.get("frond")) {
 
 Keys are integers, strings, or a type that implements `cmp.Eq` and
 `cmp.Hash` (`@derive(cmp.Eq, cmp.Hash)` is enough). Iteration order is
-insertion order and is part of the contract, not an accident — see the
+insertion order, except that removing a key moves the last entry into its
+place, and is part of the contract, not an accident — see the
 [`for (k, v) in m` form](../language-features/#iteration--for--in).
 Forget the `core/map` import and the checker says so directly rather than
 failing on an unknown method.

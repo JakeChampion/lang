@@ -1,0 +1,28 @@
+// An index of any integer type reads the element it names (#12707). A u8
+// widens to i32; every other width reaches the same element through the
+// i32 it converts to exactly.
+import "std/i32";
+
+function by_u64(xs: i32[], i: u64): i32 {
+    return xs[i];
+}
+
+function by_i64(xs: i32[], i: i64): i32 {
+    return xs[i];
+}
+
+function main(): i32 {
+    let xs: i32[] = [10, 20, 30, 40];
+    let a: usize = 3usize;
+    let b: u8 = 2u8;
+    let c: u32 = 1u32;
+    print(xs[a].to_string());
+    print(xs[b].to_string());
+    print(xs[c].to_string());
+    print(by_i64(xs, 0i64).to_string());
+    print(by_u64(xs, 2u64).to_string());
+    let s: string = "fern";
+    let byte: u8 = s[a];
+    print((byte as i32).to_string());
+    return 0;
+}

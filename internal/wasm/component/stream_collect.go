@@ -2,7 +2,7 @@ package component
 
 // stream_collect.go assembles a runnable WASI Preview-3 component that delivers a
 // `stream<elem>` ACROSS a component boundary and COLLECTS it to completion — the
-// composer half of the colorless `stream[T]` surface (docs/STREAM-TYPE-SURFACE.md).
+// composer half of the colorless `Stream[T]` surface (docs/STREAM-TYPE-SURFACE.md).
 // A nested producer exports `prod: async func() -> stream<elem>` and writes its
 // elements then drops the writable end (EOF); the consumer lowers that import,
 // reads the returned readable handle in a collect loop (stream.read + the await

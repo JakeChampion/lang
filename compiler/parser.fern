@@ -81,7 +81,7 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 // name, whose `dyn` dispatch or bounded call on this method's receiver type
 // reaches this method or associated function (resolve_dyn_traits);
 // dyn_arm_matches and trait_provider_name select by it. streams lists the
-// slots of an async import that were `stream[T]` before
+// slots of an async import that were `Stream[T]` before
 // lower_stream_signatures rewrote them to `T[]`: -1 for the result, else a
 // parameter index. stdlib is the canonical standard-library import supplied
 // by the loader, or "" for user and synthetic declarations. It survives
@@ -272,8 +272,7 @@ pub struct TraitDecl { name: string, type_params: string[], supertraits: string[
 //
 // `methods` holds the DESUGARED forms, which is what native prints too: `Self`
 // already reads as the concrete impl type there, and a method's `self` receiver
-// is re-inserted as its first parameter at print time. `trait_ref` is "" for an
-// inherent `impl Type { … }`.
+// is re-inserted as its first parameter at print time.
 pub struct ImplDecl { trait_ref: string, type_ref: string, type_params: string[], bounds: string[], methods: FuncDecl[], line: i32, col: i32, assoc_names: string[], assoc_values: string[] }
 
 // FieldLines records the source line of each FIELD of one struct, or of each
@@ -464,12 +463,11 @@ function e_number(text: string, suffix: string, is_float: boolean): ast.Expr {
   return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: is_float, line: 0, col: 0 };
 }
 
-function e_number_at(text: string, suffix: string, is_float: boolean, line: i32, col: i32): ast.Expr {
-  return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: is_float, line: line, col: col };
-}
-
-function e_quoted_at(text: string, suffix: string, raw: string, line: i32, col: i32): ast.Expr {
-  return ast.ExprNumber { text: text, suffix: suffix, raw: raw, is_float: false, line: line, col: col };
+// e_spelled_at is a number token's literal: `raw` is its spelling when that
+// is not `text`, a quoted character, a `0o` / `0b` numeral or one with `_`
+// separators.
+function e_spelled_at(text: string, suffix: string, raw: string, is_float: boolean, line: i32, col: i32): ast.Expr {
+  return ast.ExprNumber { text: text, suffix: suffix, raw: raw, is_float: is_float, line: line, col: col };
 }
 
 // e_unit_at builds the unit value `()`. Its payload is the constant 0 the
@@ -643,11 +641,11 @@ function e_struct_update(type_name: string, field_names: string[], field_lines: 
 }
 
 function e_field_access(obj: ast.Expr, field: string): ast.Expr {
-  return ast.ExprFieldAccess { obj: obj, field: field, line: 0, col: 0, ty: "" };
+  return ast.ExprFieldAccess { obj: obj, field: field, line: 0, col: 0, ty: "", path_sep: false, const_read: false };
 }
 
 function e_field_access_at(obj: ast.Expr, field: string, line: i32, col: i32): ast.Expr {
-  return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "" };
+  return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "", path_sep: false, const_read: false };
 }
 
 // e_lambda_at is the one place the ExprLambda literal is written; e_lambda_fn
@@ -679,6 +677,12 @@ function e_lambda_origin(params: ast.ParamDecl[], ret_type: string, body: ast.St
 
 pub function e_unknown(kind: string): ast.Expr {
   return ast.ExprUnknown { kind: kind, line: 0, col: 0 };
+}
+
+// path_sep_message is the P001 for `::` in expression position; `::` is only
+// an associated-type projection (`Self::Item`).
+pub function path_sep_message(): string {
+  return "`::` is not a path separator; write `.`";
 }
 
 pub function e_unknown_at(kind: string, line: i32, col: i32): ast.Expr {
@@ -1380,14 +1384,16 @@ function decl_sentinel(p: Par, text: string): ast.Stmt {
 // raises no diagnostics of its own.
 function sync_to_top_level(p: Par): Par {
   let q: Par = p;
-  while (!q.at_end()) {
-    let kw: string = q.peek_keyword();
-    if (kw == "function" || kw == "struct" || kw == "enum" || kw == "import" || kw == "const" || kw == "trait" || kw == "impl" || kw == "pub") {
-      return q;
-    }
+  while (!q.at_end() && !at_top_level_decl(q)) {
     q = q.advance();
   }
   return q;
+}
+
+// at_top_level_decl reports whether the cursor sits on a keyword that can open
+// a top-level declaration.
+function at_top_level_decl(p: Par): boolean {
+  return util.has_str(["function", "struct", "enum", "import", "const", "trait", "impl", "pub"], p.peek_keyword());
 }
 
 // skip_body_item steps past the rest of a malformed trait or impl body item: to
@@ -2010,16 +2016,6 @@ function consume_pub_package(p: Par): (boolean, Par) {
   return (true, q.advance());
 }
 
-// at_path_sep reports whether the cursor is on a path separator. `.` and `::`
-// are interchangeable in EXPRESSION position (`mod.f` / `mod::f`), so every
-// site that walks a dotted name accepts either. Type position is the
-// exception and does NOT use this: there `::` means an associated-type
-// projection and `.` a module-qualified name (docs/ASSOCIATED-TYPES.md).
-function (p: Par) at_path_sep(): boolean {
-  let pk: string = p.peek_punct();
-  return pk == "." || pk == "::";
-}
-
 function (p: Par) peek_keyword(): string {
   let t: lexer.Token = p.peek();
   match (t) {
@@ -2203,24 +2199,6 @@ function (p: Par) peek_is_pat_literal(): boolean {
     }
   }
   return false;
-}
-
-// peek_member_name returns the identifier at the cursor, OR a reserved
-// keyword that is nonetheless allowed in MEMBER position — currently only
-// `default` (a reserved keyword that doubles as the `Default` trait's
-// method name `Type.default()`). Returns "" otherwise. Mirrors the Go
-// parser's expectMemberName; used for function/method names and field
-// access so `function default()` and `obj.default()` parse while the
-// keyword stays reserved everywhere else.
-function (p: Par) peek_member_name(): string {
-  let nm: string = p.peek_ident();
-  if (nm.len() > 0) {
-    return nm;
-  }
-  if (p.peek_keyword() == "default") {
-    return "default";
-  }
-  return "";
 }
 
 // punct_at returns the punctuation text of the token at absolute index
@@ -2907,7 +2885,7 @@ function with_written_type_args(callee: ast.Expr, args: string): ast.Expr {
       return ast.ExprIdent { name: id.name + "[" + args + "]", line: id.line, col: id.col, ty: id.ty };
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { obj: fa.obj, field: fa.field + "[" + args + "]", line: fa.line, col: fa.col, ty: fa.ty };
+      return ast.ExprFieldAccess { ...fa, field: fa.field + "[" + args + "]" };
     },
     _ => {
       return callee;
@@ -2928,6 +2906,10 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
   // for. Attached to the callee's written name rather than to a new ExprCall
   // field, the way parse_type_name carries a bound's args on the type name.
   let pending_type_args: string = "";
+  // The first `::` written as a path: the chain parses as if it were `.`, so
+  // the P001 is the only diagnostic it draws.
+  let path_sep_line: i32 = 0;
+  let path_sep_col: i32 = 0;
   while (true) {
     let pk: string = p.peek_punct();
     if (pk == "(") {
@@ -3149,6 +3131,10 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         base = e_index(base, idx_expr, bline, bcol);
       }
     } else if (pk == "." || pk == "::") {
+      if (pk == "::" && path_sep_line == 0) {
+        path_sep_line = p.peek_line();
+        path_sep_col = p.peek_col();
+      }
       // Field access `obj.field`. Field is either an
       // ident (struct field) or a numeric literal
       // (tuple index — `.0`, `.1`, …). Both shapes
@@ -3158,7 +3144,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
       let dline: i32 = p.peek_line();
       let dcol: i32 = p.peek_col();
       p = p.advance();
-      let fname: string = p.peek_member_name();
+      let fname: string = p.peek_ident();
       if (fname.len() == 0) {
         match (p.peek()) {
           lexer.TokNumber(n) => {
@@ -3214,7 +3200,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         p = qr_p;
         base = qr_expr;
       } else {
-        base = e_field_access_at(base, fname, dline, dcol);
+        base = ast.ExprFieldAccess { obj: base, field: fname, line: dline, col: dcol, ty: "", path_sep: pk == "::", const_read: false };
       }
     } else if (p.peek_keyword() == "as") {
       // `expr as Type` cast. Desugar to a unary op
@@ -3278,6 +3264,9 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
     } else {
       break;
     }
+  }
+  if (path_sep_line > 0) {
+    return (e_unknown_at(path_sep_message(), path_sep_line, path_sep_col), p);
   }
   return (base, p);
 }
@@ -3361,10 +3350,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       }
       // Route through parse_postfix so a numeric primary can
       // carry a trailing `as Type` cast (e.g. `15 as u8`).
-      if (x.raw.len() > 0) {
-        return parse_postfix(p, e_quoted_at(x.text, x.suffix, x.raw, nline, ncol));
-      }
-      return parse_postfix(p, e_number_at(x.text, x.suffix, x.is_float, nline, ncol));
+      return parse_postfix(p, e_spelled_at(x.text, x.suffix, x.raw, x.is_float, nline, ncol));
     },
     lexer.TokString(x) => {
       let sline: i32 = p.peek_line();
@@ -3455,7 +3441,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let kwline: i32 = p.peek_line();
         let kwcol: i32 = p.peek_col();
         let look: Par = p.advance();
-        if (look.at_path_sep()) {
+        if (look.peek_punct() == ".") {
           return parse_postfix(look, e_ident_at(x.name, kwline, kwcol));
         }
       }
@@ -4304,7 +4290,7 @@ function parse_tuple_arm_pattern_nested(p: Par): (i32[], string[], ast.Expr[], a
       binds = binds.append("");
       lits = lits.append(e_bool(true));
       pats = pats.append(p_tuple_carrier(ne_kinds, ne_binds, ne_lits, ne_pats));
-    } else if (n.len() > 0 && (p.peek_punct_at(1) == "(" || p.peek_punct_at(1) == "." || p.peek_punct_at(1) == "::")) {
+    } else if (n.len() > 0 && (p.peek_punct_at(1) == "(" || p.peek_punct_at(1) == ".")) {
       // Variant sub-pattern: a binder is followed by `,` or `)`, so `(`
       // (payload list, empty for a payload-less variant) and `.` (a
       // `mod.` qualifier) both say variant unambiguously. The payload
@@ -4671,7 +4657,7 @@ function struct_field_variant_start(p: Par): boolean {
   let n: string = p.peek_ident();
   if (n.len() > 0 && n != "_") {
     let nx: string = p.peek_punct_at(1);
-    if (nx == "(" || nx == "." || nx == "::") {
+    if (nx == "(" || nx == ".") {
       return true;
     }
   }
@@ -6087,7 +6073,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
   // matches use `lexer.TokX(...)` throughout, so this is required
   // for the self-host parser to parse its own source. Same gap as
   // parse_type_name's qualified-name handling.
-  while (p.at_path_sep()) {
+  while (p.peek_punct() == ".") {
     p = p.advance();  // consume `.`
     let seg: string = p.peek_ident();
     if (seg.len() == 0) {
@@ -6120,7 +6106,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
     let bn: i32 = 0;
     while (p.peek_punct() != ")" && !p.at_end()) {
       if (p.peek_ident().len() > 0
-        && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == "." || p.peek2_punct() == "::")) {
+        && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == ".")) {
         // The slot binds a synthetic temp and `nested` records the
         // pattern the temp is matched against — the same shape the
         // literal slot below uses, so a sub-pattern works at ANY
@@ -7860,7 +7846,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     // or-patterns, the same forms `if let` and the match arms accept. A head
     // spelled `NAME(`, `NAME@`, `NAME|` or `NAME.` (a qualified variant,
     // `Color.Red(n)`) is never a plain binding, so it requires the `= E else`.
-    if (p.peek_punct() == "(" || p.peek_punct() == "@" || p.peek_punct() == "|" || p.at_path_sep()) {
+    if (p.peek_punct() == "(" || p.peek_punct() == "@" || p.peek_punct() == "|" || p.peek_punct() == ".") {
       let (lsp_pat, lsp_p) = parse_pattern(le_pat_start);
       let lsp_pats: ast.Pattern[] = [lsp_pat];
       while (lsp_p.peek_punct() == "|") {
@@ -8805,7 +8791,7 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
   // process is OOM-killed. parser.fern itself is full of
   // `lexer.Token` field / param types, so this is required for the
   // self-host parser to parse its own source.
-  while (p.at_path_sep()) {
+  while (p.peek_punct() == "." || p.peek_punct() == "::") {
     // The separator is KEPT: in type position `.` and `::` are not
     // interchangeable. `mod.Type` is a module qualifier, stripped to the
     // bare name downstream; `Base::Name` is an associated-type projection
@@ -9372,7 +9358,7 @@ function parse_type_param_list(p: Par): (TpList, Par) {
           tname = p.peek_ident();
           p = p.advance();
         }
-        if (p.at_path_sep()) {
+        if (p.peek_punct() == ".") {
           p = p.advance();
           if (p.peek_ident().len() > 0) {
             tname = tname + "." + p.peek_ident();
@@ -9436,6 +9422,13 @@ function parse_type_param_list(p: Par): (TpList, Par) {
     bounds = bounds.append(this_bounds);
     if (p.peek_punct() == ",") {
       p = p.advance();
+    } else if (p.peek_punct() != "]" && !p.at_end()) {
+      // Native expects `,` or `]` after a parameter; anything else ends the
+      // list with its diagnostic rather than reading on as another parameter.
+      p = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \"]\", got " + tok_desc(p.peek()))) };
+      while (!p.at_end() && p.peek_punct() != "]") {
+        p = p.advance();
+      }
     }
   }
   if (p.peek_punct() == "]") {
@@ -9525,7 +9518,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
       p = p.advance();
     }
   }
-  let name: string = p.peek_member_name();
+  let name: string = p.peek_ident();
   if (name.len() == 0) {
     return (FuncDecl { stdlib: "", no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, receiver_own: receiver_own, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] }, p);
   }
@@ -10250,7 +10243,7 @@ function parse_pubuse(p: Par, pu_line: i32, pu_col: i32): (Import, ast.Stmt[], P
   // Each name is followed by `,` or the closing `}`, as the Go parser reads it.
   let names: string[] = [];
   while (p.peek_punct() != "}") {
-    let nm: string = p.peek_member_name();
+    let nm: string = p.peek_ident();
     if (nm.len() == 0) {
       bad = bad.append(decl_sentinel(p, "expected a name, got " + tok_desc(p.peek())));
       return (none, bad, sync_to_top_level(p));
@@ -10313,6 +10306,35 @@ function parse_const_decl(p: Par): (FuncDecl, Par) {
   let noparams: ast.ParamDecl[] = [];
   let notp: string[] = [];
   return (FuncDecl { stdlib: "", no_inline: false, name: name, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: noparams, ret_type: ty, body: body, line: cline, col: ccol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: true, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] }, p);
+}
+
+// parse_assoc_const_decl consumes an associated constant in a trait or impl
+// body, `const NAME: T;` or `const NAME: T = EXPR;` (cursor on `const`), as
+// the receiver-less, parameter-less FuncDecl parse_const_decl gives a module
+// const. An impl's binding needs its value; a trait's may omit it.
+function parse_assoc_const_decl(p: Par, require_value: boolean): (FuncDecl, Par) {
+  let cline: i32 = p.peek_line();
+  let ccol: i32 = p.peek_col();
+  p = p.advance();  // consume `const`
+  let name: string = p.peek_ident();
+  if (name.len() > 0) {
+    p = p.advance();
+  }
+  p = p.expect(":");
+  let (tr_name, tr_fn_ret, tr_p) = parse_type_name(p);
+  p = tr_p;
+  let body: ast.Stmt[] = [];
+  if (require_value || p.peek_punct() == "=") {
+    p = p.expect("=");
+    let (er_expr, er_p) = parse_expr(p);
+    p = er_p;
+    p = p.end_of(er_expr);
+    body = body.append(s_return(er_expr));
+  }
+  p = p.expect_semi();
+  let noparams: ast.ParamDecl[] = [];
+  let notp: string[] = [];
+  return (FuncDecl { stdlib: "", no_inline: false, name: name, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: noparams, ret_type: tr_name, body: body, line: cline, col: ccol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: true, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] }, p);
 }
 
 // struct_declared reports whether `structs` already contains a struct
@@ -13695,7 +13717,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
                 }
                 if (ct2.len() > 0) {
                   cur = cur.iadd(qn, ct2);
-                  return RExpr { rexpr: ast.ExprCall { callee: ast.ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + sanitize_key(ct2), line: fac.line, col: fac.col, ty: fac.ty }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
+                  return RExpr { rexpr: ast.ExprCall { callee: ast.ExprFieldAccess { ...fac, field: fac.field + "__" + sanitize_key(ct2) }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
                 }
               }
             },
@@ -13898,7 +13920,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
     },
     ast.ExprFieldAccess(fa) => {
       let o: RExpr = mono_expr(fa.obj, env, funcs, ins);
-      return RExpr { rexpr: ast.ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: o.rins };
+      return RExpr { rexpr: ast.ExprFieldAccess { ...fa, obj: o.rexpr }, rins: o.rins };
     },
     ast.ExprStructLit(s) => {
       let vals: ast.Expr[] = [];
@@ -13990,7 +14012,7 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
                   if (qkey.len() > 0) {
                     let (qargs, qcur) = mono_call_args(c, env, funcs, ins);
                     qcur = qcur.iadd(qn, qkey);
-                    return RExpr { rexpr: ast.ExprCall { callee: ast.ExprFieldAccess { obj: fac.obj, field: fac.field + "__" + sanitize_key(qkey), line: fac.line, col: fac.col, ty: fac.ty }, args: qargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: qcur };
+                    return RExpr { rexpr: ast.ExprCall { callee: ast.ExprFieldAccess { ...fac, field: fac.field + "__" + sanitize_key(qkey) }, args: qargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: qcur };
                   }
                 }
               },
@@ -14629,7 +14651,7 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
       return e;
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { obj: subst_expr(fa.obj, tparams, cts), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
+      return ast.ExprFieldAccess { ...fa, obj: subst_expr(fa.obj, tparams, cts) };
     },
     ast.ExprCall(c) => {
       // A defaulted generic field `T.default()` where `T` substitutes to a
@@ -16784,7 +16806,7 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
     },
     ast.ExprFieldAccess(fa) => {
       let o: RExpr = ms_expr(fa.obj, env, gstructs, funcs, ins);
-      return RExpr { rexpr: ast.ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: on_call_request(fa, env, gstructs, funcs, o.rins) };
+      return RExpr { rexpr: ast.ExprFieldAccess { ...fa, obj: o.rexpr }, rins: on_call_request(fa, env, gstructs, funcs, o.rins) };
     },
     ast.ExprIdent(id) => {
       // A type parameter substituted into an associated call's object
@@ -18922,7 +18944,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
         _ => {}
       }
       let ob: RExpr = me_expr(fa.obj, "", env, enums, structs, funcs, ins);
-      return RExpr { rexpr: ast.ExprFieldAccess { obj: ob.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: ob.rins };
+      return RExpr { rexpr: ast.ExprFieldAccess { ...fa, obj: ob.rexpr }, rins: ob.rins };
     },
     ast.ExprLambda(lm) => {
       let lb: RStmts = me_stmts(lm.body, bind_params(env, lm.params), lm.ret_type, enums, structs, funcs, ins);
@@ -20469,7 +20491,7 @@ function dl_expr_with_kids(e: ast.Expr, kids: ast.Expr[]): ast.Expr {
       return ast.ExprStructLit { ...s, field_values: vals, base: kids[0] };
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { obj: kids[0], field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
+      return ast.ExprFieldAccess { ...fa, obj: kids[0] };
     },
     ast.ExprMapLit(m) => {
       let ks: ast.Expr[] = [];
@@ -23278,7 +23300,7 @@ function rvf_expr(e: ast.Expr, structs: StructDecl[]): ast.Expr {
       return ast.ExprStructLit { ...st, field_values: vals, base: nbase };
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { obj: rvf_expr(fa.obj, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
+      return ast.ExprFieldAccess { ...fa, obj: rvf_expr(fa.obj, structs) };
     },
     ast.ExprLambda(lm) => {
       return ast.ExprLambda { ...lm, body: rvf_block(lm.body, structs) };
@@ -24105,10 +24127,11 @@ function retag_type_arg_indexes(mod: Module): Module {
     types = types.append(rd.name);
   }
   // A module const is a value in the bracket, as native's const folding
-  // makes it before the retag (#10427).
+  // makes it before the retag (#10427). An associated constant is read off a
+  // type and names nothing bare.
   let consts: string[] = [];
   for fd in mod.funcs {
-    if (fd.is_const) {
+    if (fd.is_const && fd.receiver_type.len() == 0) {
       consts = consts.append(fd.name);
     }
   }
@@ -24125,13 +24148,18 @@ function retag_type_arg_indexes(mod: Module): Module {
       shadow = shadow.append(pd.name);
     }
     // Unbounded type parameters are erased from the decl, but every name
-    // the signature's types mention is a type or one of them.
+    // the signature's types mention is a type or one of them. An impl
+    // method carries the impl's parameters in type_params and its receiver
+    // spells them (`impl[T] Zero for W[T]`), so `zero_of[T]()` in its body
+    // is an instantiation there too.
     let ftypes: string[] = types;
-    if (fd.all_type_params.len() > 0) {
+    if (fd.all_type_params.len() > 0 || fd.type_params.len() > 0) {
+      ftypes = util.append_all(util.append_all(ftypes, fd.all_type_params), fd.type_params);
       for pd in fd.params {
         ftypes = rta_type_names(pd.type_name, ftypes);
       }
       ftypes = rta_type_names(fd.ret_type, ftypes);
+      ftypes = rta_type_names(fd.receiver_type, ftypes);
     }
     function rw(x: ast.Expr): ast.Expr {
       return rta_call_of(x, generics, ftypes, shadow);
@@ -24265,7 +24293,7 @@ function fda_fill(mod: Module): (Module, util.Diag[]) {
   return (Module { ...mod, funcs: funcs, top_stmts: tops }, util.append_diags(diags, tdiags));
 }
 
-// lower_stream_signatures rewrites each async import's `stream[T]` result and
+// lower_stream_signatures rewrites each async import's `Stream[T]` result and
 // parameters to `T[]`, which is what its callers see: the import collects a
 // result stream into an array and writes an array argument out as a stream.
 // The rewritten slots are recorded in `streams` for the wasm emitter.
@@ -24302,9 +24330,9 @@ function lower_stream_signature(f: FuncDecl): FuncDecl {
   return FuncDecl { ...f, ret_type: ret, params: params, streams: slots };
 }
 
-// stream_elem is T for a `stream[T]` spelling, else "".
+// stream_elem is T for a `Stream[T]` spelling, else "".
 pub function stream_elem(t: string): string {
-  let pre: string = "stream[";
+  let pre: string = "Stream[";
   if (t.len() <= pre.len() + 1 || slice_unchecked(t, 0, pre.len()) != pre || t[t.len() - 1] != b']') {
     return "";
   }
@@ -25503,7 +25531,7 @@ function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
       return ast.ExprStructLit { ...sl, field_values: nv, base: nbase };
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { obj: elb_mark_expr(fa.obj, idx, arr), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
+      return ast.ExprFieldAccess { ...fa, obj: elb_mark_expr(fa.obj, idx, arr) };
     },
     _ => {
       return e;
@@ -26472,7 +26500,7 @@ pub struct TraitDefault { trait_name: string, trait_params: string[], method: Fu
 // (`async.Driver`). `trait_name` is the resolved simple name, which is what
 // parse_module matches against the trait's default methods and what the
 // emitter needs — so the spelling is kept beside it rather than replacing it.
-// Empty for an inherent impl, which has no trait.
+// Empty in the entries checker.assoc_func_impls adds for derived functions.
 // bounds runs PARALLEL to type_params: both halves reach the synthesised
 // default through finalize_impl_method, so the bound cannot be left behind
 // as a local of the parse (#7224).
@@ -27878,6 +27906,11 @@ function no_decl_attr(): DeclAttr {
   return DeclAttr { name: "", derives: [], iface: "", wit: "" };
 }
 
+// inherent_impl_message is native's P001 for an `impl Type { … }` with no trait.
+pub function inherent_impl_message(typ: string): string {
+  return "`impl " + typ + "` needs a trait, as in `impl cmp.Eq for " + typ + "`; declare a method as `function (self: " + typ + ") name(…)` and a constructor as a plain function";
+}
+
 // expected_here is native's P001 "expected WHAT, got X" at the cursor.
 function expected_here(p: Par, what: string): ast.Stmt[] {
   return [decl_sentinel(p, "expected " + what + ", got " + tok_desc(p.peek()))];
@@ -28091,15 +28124,12 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     }
     itpi = itpi + 1;
   }
-  // First name after `impl` (possibly `mod.Name`). For a trait impl
-  // (`impl Trait for Type`) it's the trait; for an inherent impl
-  // (`impl Type { … }`, #2700) there is no `for` and this name IS the
-  // impl type, with no trait.
+  // First name after `impl` (possibly `mod.Name`): the trait.
   // parse_type_name resolves `mod.Name` to the bare `Name`, which is right
   // for everything downstream and wrong for anyone reporting what the source
   // said. Read the qualifier off the tokens BEFORE it is consumed.
   let first_spelling: string = "";
-  if (p.peek_ident().len() > 0 && (p.peek_punct_at(1) == "." || p.peek_punct_at(1) == "::") && p.peek_ident_at(2).len() > 0) {
+  if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "." && p.peek_ident_at(2).len() > 0) {
     first_spelling = p.peek_ident() + p.peek_punct_at(1) + p.peek_ident_at(2);
   }
   // parse_type_name admits a keyword, which a built-in type name is; a trait
@@ -28125,9 +28155,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     p = ity_p;
     impl_type = ity_name;
   } else {
-    // Inherent impl: the first name is the type; receiver-less methods
-    // are associated functions (`Type.f(args)`), `self`-taking ones are
-    // ordinary methods.
+    impl_bad = impl_bad.append(decl_sentinel(first_at, inherent_impl_message(first_name)));
     impl_type = first_name;
   }
   if (p.peek_punct() == "{") {
@@ -28165,8 +28193,19 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
       }
       continue;
     }
+    if (kw == "const") {
+      let (ic_func, ic_p) = parse_assoc_const_decl(p, true);
+      p = ic_p;
+      if (p.verbatim) {
+        out = out.append(ic_func);
+      } else {
+        out = out.append(finalize_impl_method(ic_func, impl_type, impl_tps, impl_tbs));
+      }
+      method_names = method_names.append(ic_func.name);
+      continue;
+    }
     if (kw != "function") {
-      impl_bad = impl_bad.append(decl_sentinel(p, "unexpected token in an impl body: expected `function` or `type`"));
+      impl_bad = impl_bad.append(decl_sentinel(p, "unexpected token in an impl body: expected `function`, `type` or `const`"));
       p = skip_body_item(p.advance());
       continue;
     }
@@ -29064,7 +29103,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         sup_written = sup_name;
         p = p.advance();
       }
-      if (p.at_path_sep()) {
+      if (p.peek_punct() == ".") {
         p = p.advance();
         if (p.peek_ident().len() > 0) {
           sup_name = p.peek_ident();
@@ -29083,6 +29122,14 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
       }
     }
   }
+  // Anything between the header and the body is refused once, and the body
+  // still parses unless a declaration starts first.
+  if (p.peek_punct() != "{") {
+    trait_bad = trait_bad.append(decl_sentinel(p, "expected \"{\", got " + tok_desc(p.peek())));
+    while (!p.at_end() && p.peek_punct() != "{" && !at_top_level_decl(p)) {
+      p = p.advance();
+    }
+  }
   if (p.peek_punct() == "{") {
     p = p.advance();
     while (!p.at_end()) {
@@ -29099,6 +29146,24 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
           trait_bad = trait_bad.append(decl_sentinel(p, "malformed associated type declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name)"));
         }
         p = p.expect_semi();
+        continue;
+      }
+      // An associated constant: `const NAME: T;` is required of every impl,
+      // `const NAME: T = expr;` is a default. Both are receiver-less
+      // functions with no parameters, read as `Base::NAME`.
+      if (p.peek_keyword() == "const") {
+        let (ac_func, ac_p) = parse_assoc_const_decl(p, false);
+        p = ac_p;
+        decl_methods = decl_methods.append(ac_func);
+        provided = provided.append(ac_func.name);
+        assoc_sigs = assoc_sigs.append(ac_func);
+        if (ac_func.body.len() > 0) {
+          defaults = defaults.append(TraitDefault { trait_name: simple, trait_params: trait_tps.tnames, method: ac_func });
+          default_sigs = default_sigs.append(FuncDecl { ...ac_func, body: [] });
+        } else {
+          required = required.append(ac_func.name);
+          required_sigs = required_sigs.append(ac_func);
+        }
         continue;
       }
       if (p.peek_keyword() == "function") {
@@ -29132,7 +29197,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
           required_sigs = required_sigs.append(fr_func);
         }
       } else {
-        trait_bad = trait_bad.append(decl_sentinel(p, "unexpected token in a trait body: expected `function` or `type`"));
+        trait_bad = trait_bad.append(decl_sentinel(p, "unexpected token in a trait body: expected `function`, `type` or `const`"));
         p = skip_body_item(p.advance());
       }
     }
@@ -29796,7 +29861,7 @@ function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleF
       return ast.ExprStructLit { ...sl, field_values: vals, base: base };
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { obj: settle_expr(fa.obj, names, types, fns, structs), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
+      return ast.ExprFieldAccess { ...fa, obj: settle_expr(fa.obj, names, types, fns, structs) };
     },
     ast.ExprLambda(lm) => {
       // The body sees the enclosing annotated locals plus the lambda's
@@ -29974,6 +30039,51 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
     funcs = funcs.append(FuncDecl { ...fd, params: params, body: astwalk.substitute_consts(fd.body, bound, t.names, t.values) });
   }
   return Module { ...mod, funcs: funcs, top_stmts: astwalk.substitute_consts(mod.top_stmts, [], t.names, t.values) };
+}
+
+// rewrite_assoc_const_reads turns every `Base::NAME` read — a field access
+// whose object names a type rather than a value — into the argument-less
+// associated call it is, its callee marked const_read so the checker holds it
+// to a constant. The object is a struct, an enum (when an impl gives it an
+// associated function of that name), a primitive, a type parameter of the
+// function, or `Self`;
+// a local shadowing the name keeps the field access. Runs on a parsed module
+// and again on the flattened bundle, where an imported type has its mangled
+// name; a read already rewritten is a call and is left alone.
+pub function rewrite_assoc_const_reads(mod: Module): Module {
+  let types: string[] = ["Self", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "boolean", "string", "char"];
+  for sd in mod.structs {
+    types = types.append(sd.name);
+  }
+  let enums: string[] = [];
+  for ed in mod.enums {
+    types = types.append(ed.name);
+    enums = enums.append(ed.name);
+  }
+  // An enum's field is a variant unless an impl gives the enum an associated
+  // function of that name, so a misspelt variant stays E036.
+  let enum_assoc: string[] = [];
+  for im in mod.impls {
+    let im_base: string = util.base_type_name(im.impl_type);
+    if (util.has_str(enums, im_base)) {
+      for mn in im.method_names {
+        enum_assoc = enum_assoc.append(im_base + "." + mn);
+      }
+    }
+  }
+  let funcs: FuncDecl[] = [];
+  for fd in mod.funcs {
+    let bound: string[] = [];
+    for p in fd.params {
+      bound = astwalk.append_bound_name(bound, p.name);
+    }
+    if (fd.receiver_name.len() > 0) {
+      bound = bound.append(fd.receiver_name);
+    }
+    let fn_types: string[] = util.append_all(util.append_all(types, fd.type_params), fd.all_type_params);
+    funcs = funcs.append(FuncDecl { ...fd, body: astwalk.rewrite_assoc_const_reads(fd.body, bound, fn_types, enums, enum_assoc) });
+  }
+  return Module { ...mod, funcs: funcs, top_stmts: astwalk.rewrite_assoc_const_reads(mod.top_stmts, [], types, enums, enum_assoc) };
 }
 
 // const_table_within keeps the entries of `t` named in `names`.
@@ -30403,6 +30513,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     let inferred: string[] = unannotated_const_names(funcs);
     let nothing: string[] = [];
     parsed = substitute_const_refs(parsed, inferred_const_table(funcs, inferred, ConstTable { names: nothing, values: [] }));
+    parsed = rewrite_assoc_const_reads(parsed);
     parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), inferred_consts: inferred };
     parsed = desugar_union_aliases(desugar_trait_params(parsed, trait_decl_names(traits), false));
   }

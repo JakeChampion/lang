@@ -230,6 +230,15 @@ function main(): i32 {
     if (b4[456] != 161 || b4[457] != 1) { return 59; }   // 417 = 16 + 401
     // code_limit 32784 spans 9 signed pages, not 8: sig_len 401, total 33185.
     if (b4.len() != 33185) { return 60; }
+
+    // ---- bss with no data ----
+    // Zero-init bss alone needs a __DATA segment, or every .bss symbol
+    // resolves outside any mapped one: no file bytes, one page of vmsize.
+    let b5: i32[] = macho_executable(t2, none, none, "fern", 0, 256, none);
+    if (b5[16] != 12) { return 61; }
+    if (b5[264] != 95 || b5[265] != 95 || b5[266] != 68) { return 62; }
+    if (b5[289] != 64 || b5[288] != 0) { return 63; }
+    if (b5[304] != 0 || b5[305] != 0 || b5[306] != 0) { return 64; }
     return 0;
 }
 `

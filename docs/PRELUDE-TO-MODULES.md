@@ -96,6 +96,9 @@ Tasks:
 
 ### Phase 2 — Auto-discover `Array.X` registrations
 
+Retired by #12699: std/array's methods are receiver functions, and nothing is
+discovered from a name.
+
 Goal: stop hardcoding `c.info.Methods["Array.X"] = "__method_Array_X"`
 in `checker.go`. Discover the mapping from the function-name
 convention so modules can ship Array methods without checker

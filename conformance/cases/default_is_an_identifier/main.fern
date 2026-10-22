@@ -1,0 +1,21 @@
+import "std/i32";
+
+// `default` is an ordinary identifier: a variable, a parameter, a field, a
+// function and a method may all be called it (#12708).
+struct Opts { default: i32 }
+
+function default(): i32 { return 7; }
+
+function (o: Opts) default_or(default: i32): i32 {
+    if (o.default > 0) {
+        return o.default;
+    }
+    return default;
+}
+
+function main(): i32 {
+    let default: i32 = default();
+    let o: Opts = Opts { default: 0 };
+    print((default + o.default_or(5)).to_string());
+    return 0;
+}

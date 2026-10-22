@@ -135,16 +135,15 @@ var keywords = map[string]bool{
 	// Backed by `ast.NumberType{Width: WidthPtr}` so the
 	// checker and codegen route it through the same machinery
 	// that already sizes OpStore / OpLoad of heap pointer values.
-	"usize":   true,
-	"f32":     true,
-	"f64":     true,
-	"as":      true,
-	"default": true,
-	"struct":  true,
-	"import":  true,
-	"pub":     true,
-	"const":   true,
-	"enum":    true,
+	"usize":  true,
+	"f32":    true,
+	"f64":    true,
+	"as":     true,
+	"struct": true,
+	"import": true,
+	"pub":    true,
+	"const":  true,
+	"enum":   true,
 	// `type X = A | B | C;` declares a union of struct types —
 	// see UnionDecl in internal/syntax/ast. The checker desugars these
 	// to synthetic enums (`enum X { A(A), B(B), C(C) }`) so the
@@ -238,11 +237,40 @@ var (
 func validNumericSuffix(s string) bool {
 	switch s {
 	case "i32", "i64",
-		"u8", "u32", "u64",
+		"u8", "u32", "u64", "usize",
 		"f32", "f64":
 		return true
 	}
 	return false
+}
+
+// scanDigits consumes a run of base-`base` digits, each `_` in it sitting
+// between two digits. A `0o` / `0b` run stops at a decimal digit outside the
+// base so the caller can name it. A tuple selector after a `.` takes no
+// separators.
+func (l *lexer) scanDigits(start ast.Position, base int) error {
+	digit := func(c byte) bool {
+		if base == 16 {
+			return isHexDigit(rune(c))
+		}
+		return asciiDigit(rune(c)) && int(c-'0') < base
+	}
+	begin := l.i
+	for l.i < len(l.src) {
+		c := l.src[l.i]
+		if digit(c) {
+			l.advance()
+			continue
+		}
+		if c != '_' || l.i == begin || l.afterDot {
+			return nil
+		}
+		if l.i+1 >= len(l.src) || !(digit(l.src[l.i+1]) || base < 10 && asciiDigit(rune(l.src[l.i+1]))) {
+			return &Error{Pos: start, Msg: "a digit separator '_' must sit between two digits", Numeric: true}
+		}
+		l.advance()
+	}
+	return nil
 }
 
 // radixPrefix is 8 for a `0o` / `0O` literal at src[i], 2 for a `0b` / `0B`
@@ -501,8 +529,8 @@ func (l *lexer) next() (Token, error) {
 			l.advance() // '0'
 			l.advance() // 'x' / 'X'
 			hexDigits := l.i
-			for l.i < len(l.src) && isHexDigit(rune(l.src[l.i])) {
-				l.advance()
+			if err := l.scanDigits(start, 16); err != nil {
+				return Token{}, err
 			}
 			if l.i == hexDigits {
 				return Token{}, &Error{Pos: start, Msg: "hex literal needs at least one digit after 0x", Numeric: true}
@@ -515,8 +543,8 @@ func (l *lexer) next() (Token, error) {
 			l.advance() // '0'
 			l.advance() // 'o' / 'b'
 			digits := l.i
-			for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) && int(l.src[l.i]-'0') < base {
-				l.advance()
+			if err := l.scanDigits(start, base); err != nil {
+				return Token{}, err
 			}
 			if l.i == digits {
 				return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("integer literal needs at least one digit after %s", prefix), Numeric: true}
@@ -524,10 +552,8 @@ func (l *lexer) next() (Token, error) {
 			if l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
 				return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("invalid digit %q in a %s literal", l.src[l.i], prefix), Numeric: true}
 			}
-		} else {
-			for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
-				l.advance()
-			}
+		} else if err := l.scanDigits(start, 10); err != nil {
+			return Token{}, err
 		}
 		isFloat := false
 		// When the previous emitted token was a `.`, we're parsing
@@ -539,8 +565,8 @@ func (l *lexer) next() (Token, error) {
 		if !prefixed && !l.afterDot && l.i+1 < len(l.src) && l.src[l.i] == '.' && asciiDigit(rune(l.src[l.i+1])) {
 			isFloat = true
 			l.advance() // '.'
-			for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
-				l.advance()
+			if err := l.scanDigits(start, 10); err != nil {
+				return Token{}, err
 			}
 		}
 		// Scientific-notation exponent: `[eE][+-]?[0-9]+`, valid on
@@ -561,13 +587,13 @@ func (l *lexer) next() (Token, error) {
 				if l.src[l.i] == '+' || l.src[l.i] == '-' {
 					l.advance()
 				}
-				for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
-					l.advance()
+				if err := l.scanDigits(start, 10); err != nil {
+					return Token{}, err
 				}
 			}
 		}
 		text := l.src[begin:l.i]
-		// Optional typed suffix: i32/i64/u8/u32/u64/f32/f64.
+		// Optional typed suffix: i32/i64/u8/u32/u64/usize/f32/f64.
 		// Recognised greedily — the suffix character set is a
 		// closed list so misspellings like `42i33` fail later
 		// rather than partially consuming. A float-literal text
@@ -580,6 +606,11 @@ func (l *lexer) next() (Token, error) {
 			if ch == 'i' || ch == 'u' || ch == 'f' {
 				sBegin := l.i
 				l.advance()
+				if strings.HasPrefix(l.src[sBegin:], "usize") {
+					for l.i < sBegin+len("usize") {
+						l.advance()
+					}
+				}
 				for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
 					l.advance()
 				}

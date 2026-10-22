@@ -956,7 +956,11 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
     },
     ast.ExprFieldAccess(fa) => {
       let (fo, ff) = print_expr_c(fa.obj, prec_primary(), depth, f);
-      return (fo + "." + fa.field, ff);
+      let sep: string = ".";
+      if (fa.path_sep) {
+        sep = "::";
+      }
+      return (fo + sep + fa.field, ff);
     },
     ast.ExprLambda(lm) => {
       // Every lambda is an arrow: `(p: T): R => body`. The return type
@@ -2329,7 +2333,7 @@ function assign_parts(st: ast.Stmt): AssignParts {
           }
           if (c.args.len() == 3 && callee.name == "__set_field") {
             if let ast.ExprString(field) = c.args[1] {
-              return AssignParts { place: ast.ExprFieldAccess { obj: c.args[0], field: field.value, line: 0, col: 0, ty: "" }, value: c.args[2], ok: true };
+              return AssignParts { place: ast.ExprFieldAccess { obj: c.args[0], field: field.value, line: 0, col: 0, ty: "", path_sep: false, const_read: false }, value: c.args[2], ok: true };
             }
           }
         }
@@ -3544,8 +3548,43 @@ function print_enum_variant(ed: parser.EnumDecl, structs: parser.StructDecl[], v
   return out;
 }
 
-// print_impl_decl reconstructs `impl[T: Bound] Trait for Type { … }` (or an
-// inherent `impl Type { … }`) from the written form parse_impl_decl retains.
+// print_type_params_except renders a decl's type parameters minus `skip`, or ""
+// when nothing is left.
+function print_type_params_except(fd: parser.FuncDecl, skip: string[]): string {
+  let names: string[] = [];
+  let bounds: string[] = [];
+  let i: i32 = 0;
+  while (i < fd.type_params.len()) {
+    if (!util.has_str(skip, fd.type_params[i])) {
+      names = names.append(fd.type_params[i]);
+      if (i < fd.bound_traits.len()) {
+        bounds = bounds.append(fd.bound_traits[i]);
+      } else {
+        bounds = bounds.append("");
+      }
+    }
+    i = i + 1;
+  }
+  if (names.len() == 0) {
+    return "";
+  }
+  let out: string = "[";
+  let j: i32 = 0;
+  while (j < names.len()) {
+    if (j > 0) {
+      out = out + ", ";
+    }
+    out = out + names[j];
+    if (bounds[j].len() > 0) {
+      out = out + ": " + join_plus(bounds[j]);
+    }
+    j = j + 1;
+  }
+  return out + "]";
+}
+
+// print_impl_decl reconstructs `impl[T: Bound] Trait for Type { … }` from the
+// written form parse_impl_decl retains.
 function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
   let out: string = "impl";
   if (id.type_params.len() > 0) {
@@ -3563,11 +3602,7 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
     }
     out = out + "]";
   }
-  out = out + " ";
-  if (id.trait_ref.len() > 0) {
-    out = out + id.trait_ref + " for ";
-  }
-  out = out + id.type_ref;
+  out = out + " " + id.trait_ref + " for " + id.type_ref;
   // Same for an impl whose only members are associated-type bindings.
   if (id.methods.len() == 0 && id.assoc_names.len() == 0) {
     return (out + " {}\n", f);
@@ -3607,7 +3642,24 @@ function receiver_mode(fd: parser.FuncDecl): string {
 
 // print_impl_method emits one method at one indent level, as written: an
 // impl block states `self` as an ordinary first parameter.
+// print_const_member prints an associated constant of a trait or impl:
+// `const NAME: T;` or `const NAME: T = value;`.
+function print_const_member(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
+  let out: string = indent_str(1) + "const " + m.name + ": " + m.ret_type;
+  if (m.body.len() > 0) {
+    if let ast.StmtReturn(r) = m.body[0] {
+      let (cv, cf) = print_expr_c(r.value, prec_lowest(), 0, f);
+      return (out + " = " + cv + ";\n", cf);
+    }
+  }
+  let (tr, g0) = emit_trailing(f, m.line);
+  return (out + ";" + tr + "\n", g0);
+}
+
 function print_impl_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
+  if (m.is_const) {
+    return print_const_member(m, f);
+  }
   let out: string = indent_str(1) + "function " + m.name + print_type_params(m) + "(";
   let first: boolean = true;
   let i: i32 = 0;
@@ -3702,6 +3754,9 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
 // print_trait_method emits one signature at one indent level: `;`-terminated
 // when it was written abstract, else with its default body.
 function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
+  if (m.is_const) {
+    return print_const_member(m, f);
+  }
   let out: string = indent_str(1) + "function " + m.name + print_type_params(m) + "(";
   let i: i32 = 0;
   while (i < m.params.len()) {
@@ -5395,24 +5450,6 @@ function check_traits_and_impls(): i32 {
   let rtIm: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(outIm));
   if (rtIm.pimpls.len() != 2) {
     return 323;
-  }
-
-  // An inherent `impl Type { … }` has no trait, and an associated function
-  // (no `self`) keeps its parameter list exactly as written.
-  let pfIn: parser.ParsedFmt = parser.parse_module_verbatim(lexer.tokenize(
-    "struct Box { item: i32 } impl Box { function zero(): Box { return Box { item: 0 }; } } function main(): i32 { return 0; }",
-  ));
-  if (pfIn.pimpls.len() != 1) {
-    return 324;
-  }
-  if (pfIn.pimpls[0].trait_ref.len() != 0) {
-    return 325;
-  }
-  if (!util.contains(format_module(pfIn.pmod, pfIn.ptraits, pfIn.pimpls, pfIn.pflines, [], []), "impl Box {")) {
-    return 326;
-  }
-  if (!util.contains(format_module(pfIn.pmod, pfIn.ptraits, pfIn.pimpls, pfIn.pflines, [], []), "function zero(): Box {")) {
-    return 327;
   }
 
   // A parametric impl states its bounds once, on the block: restating them on

@@ -3,8 +3,8 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 function main(): i32 {
-let x: i32 = 5;
-let y = x as? Circle;        // error[E059]: left of `as?` is i32, not a `dyn Trait`
+let x: string = "5";
+let y = x as? Circle;        // error[E059]: left of `as?` is string, neither a `dyn Trait` nor an integer
 
     return 0;
 }

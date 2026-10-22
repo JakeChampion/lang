@@ -7,11 +7,8 @@ import (
 )
 
 // arrayMethodSyntaxCases exercise std/array methods via METHOD syntax
-// (`xs.sum_squared()`) rather than the explicit free-call form
-// (`array.__method_Array_sum_squared(xs)`). Method syntax must desugar to the
-// same `__method_Array_<name>` helper; before that dispatch existed, a
-// non-codegen-intercepted array method fell through to the -1 sentinel and the
-// program exited 255. [5,3,8,1]: sum_squared = 25+9+64+1 = 99.
+// (`xs.sum_squared()`). Before that dispatch existed, a non-codegen-intercepted
+// array method fell through to the -1 sentinel and the program exited 255. [5,3,8,1]: sum_squared = 25+9+64+1 = 99.
 var arrayMethodSyntaxCases = []struct {
 	name string
 	src  string
@@ -51,8 +48,8 @@ func TestSelfHostArrayMethodSyntaxX86_64(t *testing.T) {
 }
 
 // TestSelfHostArrayMethodSyntaxArm64 is the arm64 counterpart: the self-host
-// arm64 backend (asm_arm64_ir.fern) must lower array method syntax to the same
-// __method_Array_ helper. Built by the x86 self-host compiler (the arm64 bundle
+// arm64 backend (asm_arm64_ir.fern) must lower array method syntax the same
+// way. Built by the x86 self-host compiler (the arm64 bundle
 // driver), linked + run under qemu.
 func TestSelfHostArrayMethodSyntaxArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

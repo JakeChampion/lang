@@ -162,10 +162,10 @@ type FloatType struct {
 }
 type ArrayType struct{ Elem Type }
 
-// StreamType is the WASI Preview-3 async data channel `stream[T]` — a sequence
+// StreamType is the WASI Preview-3 async data channel `Stream[T]` — a sequence
 // of `T` delivered incrementally over the wire. It appears in Fern source only
 // as the result type of an async `@import` (e.g. `async function body():
-// stream[u8]`); under the colorless model the call site yields the fully
+// Stream[u8]`); under the colorless model the call site yields the fully
 // collected `T[]` (the compiler drives `stream.read` + the await loop to EOF —
 // see docs/STREAM-TYPE-SURFACE.md). `future[T]` is intentionally NOT a surface
 // type (colorless auto-await subsumes a single deferred value).
@@ -563,7 +563,7 @@ func (s StreamType) String() string {
 	if s.Elem == nil {
 		return "stream"
 	}
-	return "stream[" + s.Elem.String() + "]"
+	return "Stream[" + s.Elem.String() + "]"
 }
 func (t TupleType) String() string {
 	out := "("
@@ -1445,8 +1445,9 @@ type NumberLit struct {
 	Value int64
 	// Raw is the literal exactly as the source spelled it, suffix
 	// excluded, and is set only when that spelling is not the decimal
-	// rendering of Value: a `0x…` hex literal, or one past u64 max
-	// (ExceedsU64), whose Value holds nothing. The formatter reads it so
+	// rendering of Value: a `0x` / `0o` / `0b` literal, one with `_`
+	// digit separators, or one past u64 max (ExceedsU64), whose Value
+	// holds nothing. The formatter reads it so
 	// a literal's base survives `-fmt`, and diagnostics quote it; every
 	// other consumer works from Value.
 	Raw string
@@ -1530,6 +1531,10 @@ type DowncastExpr struct {
 	// compare is exact for any trait set (docs/DYN-TRAITS.md §10). The
 	// interpreter handles any set by runtime concrete-type tag.
 	Traits []string
+	// Lowered is set by the checker when `Inner` is an integer and Target
+	// an integer type: the checked conversion's block-expr, which the
+	// post-check rewrite puts in the node's place (#12708).
+	Lowered Expr
 }
 
 // BlockExpr is a block used in value position: `{ stmt; stmt; …; tailExpr }`.
@@ -1692,6 +1697,9 @@ type Index struct {
 	// loads data_ptr first and then offsets into the parent
 	// array's storage.
 	IsSlice bool
+	// IdxUnsigned is set by the checker when the index is of an unsigned
+	// type, so a u64 past i64 max reads as the value it is.
+	IdxUnsigned bool
 	// ElemType is set by the checker for array / slice indexing
 	// once the element type has been resolved. Used by the IR
 	// to pick the right stride + load width (1 byte for u8, 4
@@ -1748,6 +1756,10 @@ type Call struct {
 	P      Position
 	Callee Expr
 	Args   []Expr
+	// AssocConst marks a read of an associated constant, `Base::NAME`: the
+	// checker rewrites the field access to this argument-less call of the
+	// impl's `__assoc_<Base>_NAME`, and only such a call may name a constant.
+	AssocConst bool
 	// SourceCallee preserves the written builtin name when target adaptation
 	// rewrites Callee. It is diagnostic metadata, not the resolved call target.
 	SourceCallee string
@@ -2120,11 +2132,6 @@ type FieldAccess struct {
 	Target   Expr
 	Field    string
 	FieldPos Position
-	// PathSep records that the source used the path separator `::`
-	// (`Type::method`, `mod::func`) rather than `.`. Purely cosmetic — the
-	// checker / modload treat both identically; it only lets the printer
-	// round-trip the separator the author wrote. See #2700.
-	PathSep bool
 }
 
 // Lambda is an anonymous function expression: `(x: i32): i32 => x`. It's
@@ -3270,8 +3277,7 @@ type FuncDecl struct {
 	MethodSimpleName string
 	// ImplTrait names the trait an `impl Trait for Type` block provided
 	// this method (or associated function) through, in its mangled form.
-	// Empty for an inherent method, an inherent `impl Type` block, and a
-	// plain function. The checker uses it to key Info.TraitMethods /
+	// Empty for a receiver method and a plain function. The checker uses it to key Info.TraitMethods /
 	// Info.MethodOwners so two traits offering the same method name for
 	// one type stay distinguishable.
 	ImplTrait string
@@ -3290,6 +3296,10 @@ type FuncDecl struct {
 	// signature is substituted to the impl type at parse time, exactly
 	// like an ordinary impl method.
 	AssocType string
+	// AssocConst marks an impl's `const NAME: T = expr;` — an associated
+	// function (AssocType set, no parameters) whose body returns expr and
+	// whose reads are spelled `Base::NAME`.
+	AssocConst bool
 	// ImplWritten is an impl method's signature as written, before `Self`
 	// became the impl type and `self` the receiver, for the formatter.
 	// Nil outside an impl block.
@@ -3699,6 +3709,10 @@ type TraitMethod struct {
 	Params []Param
 	Result Type
 	Assoc  bool
+	// Const marks an associated constant — `const NAME: T;` or, with a
+	// Body holding its default, `const NAME: T = expr;`. It is an
+	// associated function with no parameters, read as `Base::NAME`.
+	Const bool
 	// Body, when non-nil, is a default implementation: the trait method
 	// was written `function f(self: Self): T { … }` rather than ending
 	// at a `;`. An `impl` that omits a defaulted method inherits a copy
