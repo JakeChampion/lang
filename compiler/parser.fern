@@ -23896,7 +23896,7 @@ function fda_call(c: ast.ExprCall, w: FdaWalk): (ast.Expr, FdaWalk) {
   if (fda_args_have_named(c.args)) {
     let (code, msg) = fda_call_error(c, w.funcs, w.local);
     if (code.len() > 0) {
-      return (c, FdaWalk { ...w, diags: w.diags.append(util.Diag { related: [], code: code, message: msg, line: c.line, col: c.col, fix: None }) });
+      return (c, FdaWalk { ...w, diags: w.diags.append(util.Diag { related: [], length: 0, code: code, message: msg, line: c.line, col: c.col, fix: None }) });
     }
   }
   if let ast.ExprIdent(id) = c.callee {
@@ -24168,7 +24168,7 @@ function fda_decl_diags(mod: Module): util.Diag[] {
       if (param.has_default) {
         let (why, bad) = default_nonconst_reason(param.default_value);
         if (bad) {
-          out = out.append(util.Diag { related: [], code: "E076", message: "default value for parameter \"" + param.name + "\" " + why + ": a default must be a constant expression, because it is evaluated at each call site rather than inside " + fd.name, line: ast.expr_line(param.default_value), col: ast.expr_col(param.default_value), fix: None });
+          out = out.append(util.Diag { related: [], length: 0, code: "E076", message: "default value for parameter \"" + param.name + "\" " + why + ": a default must be a constant expression, because it is evaluated at each call site rather than inside " + fd.name, line: ast.expr_line(param.default_value), col: ast.expr_col(param.default_value), fix: None });
         }
       }
     }

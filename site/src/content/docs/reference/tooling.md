@@ -108,7 +108,7 @@ silently.
 
 | Command | What it does |
 | --- | --- |
-| `fern -check FILE` | Type-check `FILE` and its imports. Silent on success; prints diagnostics and exits 1 on the first error. `-` reads stdin. Given a package directory it checks the package; given a workspace root it checks every member. |
+| `fern -check FILE` | Type-check `FILE` and its imports. Silent on success; otherwise prints every diagnostic, ordered by file and position, and exits 1. `-` reads stdin. Given a package directory it checks the package; given a workspace root it checks every member. |
 | `fern -interp FILE` | Run through the interpreter: no codegen, no binary. `main()`'s return value is the exit code. `-` reads stdin. |
 | `fern -repl` | Interactive session; see [REPL](#repl). |
 | `fern -explain E030` | Print the long-form explanation of an error code. A bare `fern -explain` lists the codes, and an unknown code prints the list too. |

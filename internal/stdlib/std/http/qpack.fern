@@ -95,6 +95,8 @@ const BAD_HUFFMAN: i32 = 2;
 
 const TOO_LONG: i32 = 3;
 
+const ENTRY_TOO_BIG: string = "an entry larger than the table's capacity";
+
 // __int reads an integer with an N-bit prefix (RFC 7541 §5.1) at `at`,
 // answering it and the offset past it; at most 2^62 - 1.
 function __int(buf: [u8], at: i32, prefix: i32): Result[(i64, i32), i32] {
@@ -135,14 +137,14 @@ function __str(buf: [u8], at: i32, prefix: i32, room: i64): Result[(string, i32)
   }
   let coded: boolean = (buf[at] as i32 & 1 << prefix) != 0;
   let (n, from) = __int(buf, at, prefix)?;
+  if (n > __most_coded(room, coded)) {
+    return Err(TOO_LONG);
+  }
   if (n > (buf.len() - from) as i64) {
     return Err(SHORT);
   }
   let end: i32 = from + n as i32;
   if (!coded) {
-    if (n > room) {
-      return Err(TOO_LONG);
-    }
     return Ok((string_from_bytes_unchecked(__bytes_range(buf, from, end)), end));
   }
   let cap: i32 = 2147483647;
@@ -160,6 +162,19 @@ function __str(buf: [u8], at: i32, prefix: i32, room: i64): Result[(string, i32)
       return Err(BAD_HUFFMAN);
     }
   }
+}
+
+// __most_coded is the longest literal that can decode into `room` bytes:
+// a Huffman code takes at most 30 bits a byte, and its padding fewer than
+// 8 (RFC 7541 §5.2).
+function __most_coded(room: i64, coded: boolean): i64 {
+  if (!coded) {
+    return room;
+  }
+  if (room >= 1 << 56) {
+    return 4611686018427387903 as i64;
+  }
+  return (30 * room + 7) / 8;
 }
 
 function __why(code: i32): string {
@@ -206,7 +221,7 @@ function (t: Table) __evicted(room: i64): Table {
 function (t: Table) __insert(name: string, value: string): Result[Table, QpackError] {
   let n: i64 = __entry_size(name, value);
   if (n > t.capacity) {
-    return Err(EncoderStreamError("an entry larger than the table's capacity"));
+    return Err(EncoderStreamError(ENTRY_TOO_BIG));
   }
   let room: Table = t.__evicted(n);
   return Ok(Table { ...room, names: room.names.append(name), values: room.values.append(value), size: room.size + n });
@@ -331,14 +346,20 @@ function __insert_named(t: Table, buf: [u8], at: i32): Result[(Table, i32), Opti
   } else {
     name = __enc_entry(t, t.__inserted() - 1 - i)?.name;
   }
-  let (value, end) = __enc_str(buf, next, 7)?;
+  let (value, end) = __enc_str(buf, next, 7, t.__room(name))?;
   return Ok((__enc_insert(t, name, value)?, end));
 }
 
 function __insert_literal(t: Table, buf: [u8], at: i32): Result[(Table, i32), Option[QpackError]] {
-  let (name, next) = __enc_str(buf, at, 5)?;
-  let (value, end) = __enc_str(buf, next, 7)?;
+  let (name, next) = __enc_str(buf, at, 5, t.__room(""))?;
+  let (value, end) = __enc_str(buf, next, 7, t.__room(name))?;
   return Ok((__enc_insert(t, name, value)?, end));
+}
+
+// __room is the most an entry named `name` can hold in its value and still
+// fit the table, so a literal too long to fit is refused from its length.
+function (t: Table) __room(name: string): i64 {
+  return t.capacity - __entry_size(name, "");
 }
 
 // The encoder stream's reads, a short read Err(None) and anything else
@@ -354,8 +375,8 @@ function __enc_int(buf: [u8], at: i32, prefix: i32): Result[(i64, i32), Option[Q
   }
 }
 
-function __enc_str(buf: [u8], at: i32, prefix: i32): Result[(string, i32), Option[QpackError]] {
-  match (__str(buf, at, prefix, 2147483647 as i64)) {
+function __enc_str(buf: [u8], at: i32, prefix: i32, room: i64): Result[(string, i32), Option[QpackError]] {
+  match (__str(buf, at, prefix, room)) {
     Ok(r) => {
       return Ok(r);
     },
@@ -368,6 +389,9 @@ function __enc_str(buf: [u8], at: i32, prefix: i32): Result[(string, i32), Optio
 function __enc_error(code: i32): Option[QpackError] {
   if (code == SHORT) {
     return None;
+  }
+  if (code == TOO_LONG) {
+    return Some(EncoderStreamError(ENTRY_TOO_BIG));
   }
   return Some(EncoderStreamError(__why(code)));
 }

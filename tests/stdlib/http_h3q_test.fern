@@ -4,6 +4,7 @@ import "std/http/h3";
 import "std/http/qpack";
 import "std/quic/conn";
 import "std/quic/packet";
+import "std/quic/frames";
 import "std/tls/identity";
 import "std/tls/verify";
 import "std/headers";
@@ -63,13 +64,16 @@ function entropy(seed: i32, n: i32): u8[] {
 
 // Ends — the client, the server once its first datagram has made it, the
 // clock, what each reported, and every `lose_every`-th datagram lost and
-// each batch reversed when `reorder`.
-struct Ends { client: h3q.Conn, server: Option[h3q.Conn], now: i64, log: string, lose_every: i32, carried: i32, reorder: boolean, requests: HttpRequest[], ids: i64[], responses: string }
+// each batch reversed when `reorder`. A `window` above 0 is the server's
+// per-stream window in place of h3q's. With `raw` the client's datagrams
+// and clock reach its QUIC connection alone, for a client that writes
+// HTTP/3 by hand and must not be held to what its own session sent.
+struct Ends { client: h3q.Conn, server: Option[h3q.Conn], now: i64, log: string, lose_every: i32, carried: i32, reorder: boolean, requests: HttpRequest[], ids: i64[], responses: string, window: i64, raw: boolean }
 
 function begin(): Result[Ends, string] {
   let cc: conn.Config = client_config();
   let q: conn.Conn = conn.client(cc, entropy(1, conn.client_entropy(cc)), 0 as i64, WALL_MS)?;
-  return Ok(Ends { client: h3q.client(q, h3.config()), server: None, now: 0 as i64, log: "", lose_every: 0, carried: 0, reorder: false, requests: [], ids: [], responses: "" });
+  return Ok(Ends { client: h3q.client(q, h3.config()), server: None, now: 0 as i64, log: "", lose_every: 0, carried: 0, reorder: false, requests: [], ids: [], responses: "", window: 0 as i64, raw: false });
 }
 
 function to_server(e: Ends, d: u8[]): Ends {
@@ -77,6 +81,9 @@ function to_server(e: Ends, d: u8[]): Ends {
     return Ends { ...e, server: Some(s.receive(d, e.now)) };
   }
   let sc: conn.Config = server_config();
+  if (e.window > 0) {
+    sc = sc.with_streams(100 as i64, 8 as i64, e.window, 16777216 as i64);
+  }
   let Ok(h) = packet.parse(d, 0, 8) else {
     return e;
   };
@@ -128,12 +135,19 @@ function round(e: Ends): (Ends, boolean) {
       let (next, lost) = carried(cur);
       cur = next;
       if (!lost) {
-        cur = Ends { ...cur, client: cur.client.receive(d, cur.now) };
+        cur = Ends { ...cur, client: client_received(cur, d) };
       }
     }
     moved = moved || sout.len() > 0;
   }
   return (noticed(cur), moved);
+}
+
+function client_received(e: Ends, d: u8[]): h3q.Conn {
+  if (e.raw) {
+    return h3q.Conn { ...e.client, quic: e.client.quic.receive(d, e.now) };
+  }
+  return e.client.receive(d, e.now);
 }
 
 // noticed takes each side's events: the server keeps the requests, the
@@ -211,7 +225,11 @@ function ticked(e: Ends): Ends {
   if (now < e.now) {
     now = e.now;
   }
-  let cur: Ends = Ends { ...e, now: now, client: e.client.tick(now) };
+  let c: h3q.Conn = e.client.tick(now);
+  if (e.raw) {
+    c = h3q.Conn { ...e.client, quic: e.client.quic.tick(now) };
+  }
+  let cur: Ends = Ends { ...e, now: now, client: c };
   if let Some(s) = cur.server {
     cur = Ends { ...cur, server: Some(s.tick(now)) };
   }
@@ -460,6 +478,31 @@ function test_limit(): test.TestOutcome {
   }
 }
 
+// A request whose field section waits on a QPACK insert is left unread at
+// the server, so its stream window holds the body back at the client
+// rather than the server holding it all. Once the insert arrives the
+// request is read whole. The client writes the request and the insert by
+// hand, as h3q's own encoder never inserts.
+function test_blocked_backpressure(): test.TestOutcome {
+  let Ok(e0) = begin() else {
+    return test.fail("no client");
+  };
+  let e: Ends = Ends { ...settled(Ends { ...e0, window: 16384 as i64 }, 12), log: "", raw: true };
+  let Ok(opened) = e.client.quic.open_stream(false) else {
+    return test.fail("no stream");
+  };
+  let (q, id) = opened;
+  let section: u8[] = hex.hex_decode("0200" + "80" + "c1" + "d7" + "500b746c732e6578616d706c65");
+  let request: u8[] = frames.put_varint(frames.put_varint([], 1 as i64), section.len() as i64).concat(section);
+  request = frames.put_varint(frames.put_varint(request, 0 as i64), 49152 as i64).concat(big(49152));
+  e = settled(Ends { ...e, client: h3q.Conn { ...e.client, quic: q.written(id, request, true) } }, 20);
+  let held: i64 = e.client.quic.buffered(id);
+  let before: string = e.log;
+  let insert: u8[] = hex.hex_decode("3fe11f" + "d4" + "04504f5354");
+  e = settled(Ends { ...e, client: h3q.Conn { ...e.client, quic: e.client.quic.written(6 as i64, insert, false) } }, 20);
+  return test.assert_eq(before + e.log + "held " + (held >= 32768 as i64).to_string() + ", then " + e.client.quic.buffered(id).to_string(), "server request 0 POST / 49152b host=tls.example; held true, then 0");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/h3q");
   r = r.it("a GET and its response", test_get);
@@ -469,5 +512,6 @@ function main(): i32 {
   r = r.it("a graceful close", test_close);
   r = r.it("shutdown finishes a request whose body is still arriving", test_shutdown_inflight);
   r = r.it("shutdown refuses an in-flight request above its boundary", test_shutdown_late);
+  r = r.it("a stream waiting on QPACK is left unread, so its window holds its body back", test_blocked_backpressure);
   return r.finish();
 }
