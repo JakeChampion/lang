@@ -6203,9 +6203,8 @@ func (c *checker) setElemHintFor(e ast.Expr, dst ast.Type) {
 	case ast.ArrayType:
 		c.elemHint = at.Elem
 	case ast.SliceType:
-		// A literal at a `[T]` parameter is lent as a view of itself
-		// (#6798), so its elements settle against T exactly as they would
-		// at a `T[]` parameter.
+		// A literal at a [T] parameter or local initializer takes its
+		// element type from T before the checker creates the view.
 		c.elemHint = at.Elem
 	}
 }
@@ -11867,12 +11866,9 @@ func isArrayViewLend(want, got ast.Type) bool {
 	return isView && isArray && arr.Elem != nil && ast.Equal(sl.Elem, arr.Elem)
 }
 
-// lendArrayAsView rewrites an accepted owned-array argument into the
-// full-range slice `xs[:]` — the spelling the caller previously had to write
-// by hand. `[T]` is a `{data_ptr, len}` pair while `T[]` is the array itself,
-// so the view has to be materialised somewhere; doing it here means every
-// backend, the interpreter, and the rc passes see the same shape they already
-// handle for an explicit slice.
+// lendArrayAsView converts an owned array to the full-range view xs[:].
+// Arguments and local initializers use this conversion. The explicit slice
+// shape gives the interpreter, backends, and RC passes the correct view ABI.
 func (c *checker) lendArrayAsView(arg *ast.Expr, want, got ast.Type, own bool) {
 	if own || arg == nil || *arg == nil || !isArrayViewLend(want, got) {
 		return
@@ -15819,6 +15815,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				return
 			}
 		} else if got != nil {
+			if isArrayViewLend(n.Type, got) {
+				c.lendArrayAsView(&n.Init, n.Type, got, false)
+				got = n.Type
+			}
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
 			if got != nil && !c.assignable(n.Type, got) {
 				c.errfCode(n.P, "E003", "variable %q: expected %s, got %s%s", n.Name, n.Type, got, assignHint(n.Type, got))

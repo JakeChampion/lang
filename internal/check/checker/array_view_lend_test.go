@@ -38,12 +38,27 @@ function main(): i32 { let owned: u8[] = [1]; let s = Sink { n: 0 }; return s.ta
 	}
 }
 
-// The lend is one-directional and parameter-only. A view never promotes back
-// to an owned array (the callee would free storage it does not own), an `own`
-// parameter consumes its argument so lending to it is the #4294 corruption
-// shape, and an owning sink outside an argument position keeps the strict
-// rule — the source array's lifetime is not tied to the binding.
-func TestArrayViewLendIsParameterOnlyAndOneWay(t *testing.T) {
+func TestOwnedArrayLendsIntoLocalView(t *testing.T) {
+	cases := []struct{ name, src string }{
+		{"local owner", `function main(): i32 { let owned: u8[] = [1, 2]; let v: [u8] = owned; return v.len(); }`},
+		{"array literal", `function main(): i32 { let v: [u8] = [3 as u8, 250 as u8, 7 as u8]; return v[0] as i32; }`},
+		{"literal element inference", `function main(): i32 { let v: [u8] = [3, 250, 7]; return v.len(); }`},
+		{"empty literal", `function main(): i32 { let v: [u8] = []; return v.len(); }`},
+		{"temporary owner", `function make(): u8[] { return [1, 2]; } function main(): i32 { let v: [u8] = make(); return v.len(); }`},
+		{"generic element", `function count[T](owned: T[]): i32 { let v: [T] = owned; return v.len(); } function main(): i32 { return count([1, 2]); }`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := checkSource(t, tc.src); err != nil {
+				t.Fatalf("check: %v", err)
+			}
+		})
+	}
+}
+
+// A view cannot promote to an owned array. The element types must match.
+// An own parameter consumes its argument, so it cannot receive a loan.
+func TestArrayViewLendIsOneWayAndNonConsuming(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
@@ -55,11 +70,13 @@ function main(): i32 { let owned: u8[] = [1, 2]; let v: [u8] = owned[:]; return 
 		{"own parameter consumes, so no lend", `function consume(own bs: [u8]): i32 { return bs.len(); }
 function main(): i32 { let owned: u8[] = [1, 2]; return consume(owned); }`,
 			"expected [u8], got u8[]"},
-		{"let initialiser is an owning sink", `function main(): i32 { let owned: u8[] = [1, 2]; let v: [u8] = owned; return v.len(); }`,
-			"expected [u8], got u8[]"},
+		{"local element types must match", `function main(): i32 { let owned: i32[] = [1, 2]; let v: [i64] = owned; return v.len(); }`,
+			"expected [i64], got i32[]"},
 		{"element types must match exactly", `function total(bs: [i64]): i32 { return bs.len(); }
 function main(): i32 { let owned: i32[] = [1, 2]; return total(owned); }`,
 			"expected [i64], got i32[]"},
+		{"local storage cannot escape", `function bad(): [u8] { let owner: u8[] = [1]; let v: [u8] = owner; return v; } function main(): i32 { return 0; }`,
+			"function-local storage"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

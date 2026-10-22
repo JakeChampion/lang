@@ -4900,9 +4900,8 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   if (promotes_view(from, to)) {
     return false;
   }
-  // `[T]` (#9944): an array view and an owned `T[]` convert in neither
-  // direction, except the owned-into-view lend at an argument
-  // (view_arg_borrow).
+  // Array loans need a direct conversion site. Argument checks and local
+  // initializer checks admit the loan before this general assignment rule.
   if (is_arr_view(from) && is_owned_array(to) || is_owned_array(from) && is_arr_view(to)) {
     return false;
   }
@@ -10278,6 +10277,11 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
+        if (is_arr_view(var_declared_type(v, cur)) && is_owned_array(check_expr(v.init, cur))) {
+          if (slc_src_roots(v.init, cur, params, localarr, tainted, sums, vix).local) {
+            tainted = tainted.append(v.name);
+          }
+        }
         match (v.init) {
           ast.ExprArray(_) => {
             localarr = localarr.append(v.name);
@@ -18554,7 +18558,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           out = util.append_diags(out, ctor_payload_diags(v.init, declared, cur));
           let vbound: util.Diag[] = dest_bound_diags(v.init, declared, cur);
           out = util.append_diags(out, vbound);
-          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
+          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !semtypes.lends_array(initt, declared) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
             out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + type_label(initt) + str_copy_hint(initt, declared), v.line, v.col));
           }
           // An annotation naming no declared type (the E064 case) is a type

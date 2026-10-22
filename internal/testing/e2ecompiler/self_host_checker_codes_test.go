@@ -3729,6 +3729,19 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"local-array-view-literal", `function first(b: [u8]): u8 { return b[0]; }
+function main(): i32 { let buf: [u8] = [3 as u8, 250 as u8, 7 as u8]; return first(buf) as i32; }`},
+		{"local-array-view-owner", `function main(): i32 { let xs: u8[] = [3, 250, 7]; let view: [u8] = xs; return view.len(); }`},
+		{"local-array-view-generic", `function count[T](xs: T[]): i32 { let view: [T] = xs; return view.len(); }
+function main(): i32 { return count([1, 2]); }`},
+		{"local-array-view-wrong-element", `function main(): i32 { let xs: i32[] = [3]; let view: [i64] = xs; return view.len(); }`},
+		{"local-array-view-owner-escape", `function bad(): [u8] { let xs: u8[] = [3]; let view: [u8] = xs; return view; }
+function main(): i32 { return 0; }`},
+		{"local-array-view-literal-escape", `function bad(): [u8] { let view: [u8] = [3]; return view; }
+function main(): i32 { return 0; }`},
+		{"local-array-view-temporary-escape", `function make(): u8[] { return [3]; }
+function bad(): [u8] { let view: [u8] = make(); return view; }
+function main(): i32 { return 0; }`},
 		{"record-variant-rename-and-rest", `enum S { Rect { w: i32, h: i32 }, Tag { name: string, n: i32 } }
 function f(s: S): i32 { match (s) { Rect { h: hh, w } => { return w - hh; }, Tag { n: count, .. } => { return count; } } }
 function g(o: Option[S]): i32 { return match (o) { Some(Rect { w: ww, .. }) => ww, Some(Tag { .. }) => 1, None => 0 }; }
