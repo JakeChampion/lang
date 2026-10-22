@@ -16,7 +16,7 @@
 
 import "./ir";
 
-pub struct Frame { ops: ir.Op[], n_locals: i32, i64_slots: i32[], f64_slots: i32[] }
+pub struct Frame { ops: ir.Op[], n_locals: i32, i64_slots: i32[], f64_slots: i32[], v128_slots: i32[] }
 
 // Scopes is the scope tree the structured control flow opens: scope 0 is the
 // body, each block, loop and if arm another. scope_of is the scope each op
@@ -28,14 +28,14 @@ struct Scopes { scope_of: i32[], parent: i32[], depth: i32[], loop_start: i32[],
 // may share a local.
 struct Slots { first: i32[], last: i32[], share: boolean[], pinned: boolean[] }
 
-pub function coalesce(ops: ir.Op[], n_params: i32, n_locals: i32, i64_slots: i32[], f64_slots: i32[]): Frame {
+pub function coalesce(ops: ir.Op[], n_params: i32, n_locals: i32, i64_slots: i32[], f64_slots: i32[], v128_slots: i32[]): Frame {
   let sc: Scopes = scopes(ops);
   let sl: Slots = slots(ops, n_params, n_locals, sc);
   let last: i32[] = extend_over_loops(sl, sc);
-  let types: i32[] = slot_types(n_locals, i64_slots, f64_slots);
+  let types: i32[] = slot_types(n_locals, i64_slots, f64_slots, v128_slots);
   let map: i32[] = assign(ops, n_params, Slots { ...sl, last: last }, types);
   let new_types: i32[] = remapped_types(map, types);
-  return Frame { ops: rewrite(ops, map), n_locals: new_types.len(), i64_slots: slots_of_type(new_types, 1), f64_slots: slots_of_type(new_types, 2) };
+  return Frame { ops: rewrite(ops, map), n_locals: new_types.len(), i64_slots: slots_of_type(new_types, 1), f64_slots: slots_of_type(new_types, 2), v128_slots: slots_of_type(new_types, 3) };
 }
 
 function scopes(ops: ir.Op[]): Scopes {
@@ -188,14 +188,17 @@ function extend_over_loops(sl: Slots, sc: Scopes): i32[] {
   return last;
 }
 
-// slot_types is each slot's wasm type: 0 i32, 1 i64, 2 f64.
-function slot_types(n_locals: i32, i64_slots: i32[], f64_slots: i32[]): i32[] {
+// slot_types is each slot's wasm type: 0 i32, 1 i64, 2 f64, 3 v128.
+function slot_types(n_locals: i32, i64_slots: i32[], f64_slots: i32[], v128_slots: i32[]): i32[] {
   let types: i32[] = filled_i32(n_locals, 0);
   for s in i64_slots {
     types = types.with(s, 1);
   }
   for s in f64_slots {
     types = types.with(s, 2);
+  }
+  for s in v128_slots {
+    types = types.with(s, 3);
   }
   return types;
 }

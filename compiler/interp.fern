@@ -8863,6 +8863,33 @@ function eval_program(prog: ast.Stmt[]): Value {
   return v_err("program reached end without `return`");
 }
 
+// exit_status is the process status `main`'s result maps to, and whether it
+// is one: an integer of any width is its status (the kernel keeps the low
+// byte), a boolean 1 or 0, as every compiled backend has it.
+pub function exit_status(v: Value): (boolean, i32) {
+  match (v) {
+    VInt(iv) => {
+      return (true, iv.v);
+    },
+    VInt64(lv) => {
+      return (true, lv.lo);
+    },
+    VUint(uv) => {
+      return (true, uv.v);
+    },
+    VBool(bv) => {
+      if (bv.v) {
+        return (true, 1);
+      }
+      return (true, 0);
+    },
+    _ => {
+      return (false, 0);
+    }
+  }
+  return (false, 0);
+}
+
 // eval_module is the main entry for sources that declare
 // functions. If `main` exists, call it with no args. Otherwise
 // fall back to running the top-level stmts in a fresh env that

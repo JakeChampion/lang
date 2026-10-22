@@ -980,7 +980,7 @@ function main(): i32 {
 	// A loop label and the `break` / `continue` naming it are one fact written
 	// twice: dropping either half retargets the jump at the innermost loop, so
 	// the reformatted program leaves a different loop than the one written.
-	{"loop-labels", `function main(a: i32[]): i32 {
+	{"loop-labels", `function walk(a: i32[]): i32 {
   let t: i32 = 0;
   outer: while (t < 10) {
     inner: for (let i: i32 = 0; i < 3; i = i + 1) {
@@ -995,6 +995,9 @@ function main(): i32 {
     break each;
   }
   return t;
+}
+function main(): i32 {
+  return walk([1, 2]);
 }
 `},
 	// #6773 item 3: a `trait` block reached the printer only as the two DERIVED
