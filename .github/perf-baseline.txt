@@ -77,7 +77,7 @@ x86_64/closure_call.text	890
 x86_64/closure_call.ir	63018106
 x86_64/enum_match.text	1007
 x86_64/enum_match.ir	50850037
-x86_64/http_hello.text	15582
+x86_64/http_hello.text	15722
 x86_64/http_hello.ir	24268390
 x86_64/int_loop.text	178
 x86_64/int_loop.ir	12000022
@@ -256,6 +256,13 @@ x86_64/utf8_ingest_validated.ir	5916089
 # perf-bench run; the aarch64 rows (ordmap_insert.ir -2.48%, pmap_insert.ir
 # -2.81%, pvec_with.text -3.26%, pvec_with.ir -3.80%) are the perf lane's.
 #
+# Re-pinned 2026-10-22 (#12926) on http_hello.text (x86_64 +0.90%, aarch64
+# +0.93%, inside the tolerance but moved on purpose): the scalar concat's
+# runtime body grows a sole receiver's block in place and doubles on a sole
+# receiver that outgrew it, so the body the server's module carries is
+# longer; `.ir` moved +0.05% on x86_64. Both figures are the static count of
+# the cross-emitted assembly, which is what the lanes count.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -282,7 +289,7 @@ aarch64/closure_call.text	1090
 aarch64/closure_call.ir	72624111
 aarch64/enum_match.text	1210
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	16133
+aarch64/http_hello.text	16282
 aarch64/http_hello.ir	26308603
 aarch64/int_loop.text	246
 aarch64/int_loop.ir	18000025

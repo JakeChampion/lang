@@ -21,18 +21,18 @@ trait Lanes {
 struct V2 { a: f64, b: f64 }
 impl Lanes for V2 {
     const LANES: i32 = 2;
-    function width(self: Self): i32 { return Self::LANES * 10; }
+    function width(self: Self): i32 { return Self.LANES * 10; }
 }
 impl Lanes for f64 {
     const LANES: i32 = 1;
-    function width(self: Self): i32 { return Self::LANES; }
+    function width(self: Self): i32 { return Self.LANES; }
 }
-function chunk[T: Lanes](n: i32): i32 { return n / T::LANES; }
+function chunk[T: Lanes](n: i32): i32 { return n / T.LANES; }
 function main(): i32 {
     let v: V2 = V2 { a: 1.0, b: 2.0 };
     let LANES: i32 = 100;
-    let x: i32 = V2::LANES + f64::LANES + chunk[V2](8) + chunk[f64](3) + v.width() + (1.5).width() + V2.LANES;
-    print(V2::NAME);
+    let x: i32 = V2.LANES + f64.LANES + chunk[V2](8) + chunk[f64](3) + v.width() + (1.5).width() + V2.LANES;
+    print(V2.NAME);
     print(x.to_string());
     return x - 33;
 }

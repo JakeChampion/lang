@@ -27,16 +27,16 @@ var assocConstCases = []struct {
 struct V2 { a: f64 }
 impl Lanes for V2 {
     const LANES: i32 = 2;
-    function width(self: Self): i32 { return Self::LANES; }
+    function width(self: Self): i32 { return Self.LANES; }
 }
 impl Lanes for f64 {
     const LANES: i32 = 1;
-    function width(self: Self): i32 { return Self::LANES; }
+    function width(self: Self): i32 { return Self.LANES; }
 }
-function chunk[T: Lanes](n: i32): i32 { return n / T::LANES; }
+function chunk[T: Lanes](n: i32): i32 { return n / T.LANES; }
 function main(): i32 {
-    let s: string = V2::NAME;
-    return V2::LANES + f64::LANES + chunk[V2](8) + s.len();
+    let s: string = V2.NAME;
+    return V2.LANES + f64.LANES + chunk[V2](8) + s.len();
 }`,
 	},
 	{
@@ -47,7 +47,7 @@ function main(): i32 {
 struct V2 { a: f64 }
 impl Lanes for V2 { const LANES: i32 = 2; }
 function main(): i32 {
-    let s: string = V2::LANES;
+    let s: string = V2.LANES;
     return 0;
 }`,
 	},
@@ -84,30 +84,30 @@ function main(): i32 { return 0; }`,
 		src: `trait Lanes { function lanes(): i32; }
 struct V2 { a: f64 }
 impl Lanes for V2 { function lanes(): i32 { return 2; } }
-function f[T: Lanes](): i32 { return T::lanes; }
-function main(): i32 { return V2::lanes + f[V2](); }`,
+function f[T: Lanes](): i32 { return T.lanes; }
+function main(): i32 { return V2.lanes + f[V2](); }`,
 	},
 	{
 		name: "a call names a function, not a constant",
 		src: `trait Lanes { const LANES: i32; }
 struct V2 { a: f64 }
 impl Lanes for V2 { const LANES: i32 = 2; }
-function f[T: Lanes](): i32 { return T::LANES(); }
-function main(): i32 { return V2::LANES() + f[V2](); }`,
+function f[T: Lanes](): i32 { return T.LANES(); }
+function main(): i32 { return V2.LANES() + f[V2](); }`,
 	},
 	{
 		name: "a name neither declares",
 		src: `trait Lanes { const LANES: i32; }
 struct V2 { a: f64 }
 impl Lanes for V2 { const LANES: i32 = 2; }
-function f[T: Lanes](): i32 { return T::WIDTH; }
-function main(): i32 { return V2::WIDTH + f[V2](); }`,
+function f[T: Lanes](): i32 { return T.WIDTH; }
+function main(): i32 { return V2.WIDTH + f[V2](); }`,
 	},
 	{
 		// An unbounded parameter's associated functions come from its
 		// instantiation; a constant read has no declaration to resolve.
 		name: "an unbounded parameter declares no constant",
-		src: `function f[T](x: T): i32 { return T::NOPE; }
+		src: `function f[T](x: T): i32 { return T.NOPE; }
 function main(): i32 { return f(1); }`,
 	},
 	{
@@ -116,7 +116,7 @@ function main(): i32 { return f(1); }`,
 		name: "an enum's unknown field is a missing variant",
 		src: `enum Kind { A, B }
 function main(): i32 {
-    let k: Kind = Kind::C;
+    let k: Kind = Kind.C;
     return 0;
 }`,
 	},
@@ -126,8 +126,8 @@ function main(): i32 {
 enum Kind { A, B }
 impl Lanes for Kind { const LANES: i32 = 3; }
 function main(): i32 {
-    let k: Kind = Kind::A;
-    return Kind::LANES;
+    let k: Kind = Kind.A;
+    return Kind.LANES;
 }`,
 	},
 }

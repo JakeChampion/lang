@@ -1568,15 +1568,39 @@ function scalar_field(read: ssa.SInst, ty: typeinfo.Type): boolean {
 // each projection keeps the test that guards it.
 function kept_values(g: ssa.SFunc): boolean[] {
   let kept: boolean[] = used_whole(g);
-  let moved: boolean = true;
-  while (moved) {
-    // Mark what each kept copy or phi copies, until nothing new is marked.
-    moved = false;
-    for b in g.blocks {
-      for ins in b.insts {
-        if ((ins.kind_tag == 7 || ins.kind_tag == 8) && marked(kept, ins.result) && !all_marked(kept, ins.args)) {
-          kept = all_kept(kept, ins.args);
-          moved = true;
+  // A kept copy or phi keeps what it copies, and a copy or phi that keeps
+  // follows from a work list: copy_b and copy_k locate each copy or phi by
+  // its result, block plus one and instruction, and each is listed once,
+  // when its result is first marked.
+  let copy_b: i32[] = __alloc_i32(g.nvals);
+  let copy_k: i32[] = __alloc_i32(g.nvals);
+  let work: i32[] = [];
+  let bi: i32 = 0;
+  while (bi < g.blocks.len()) {
+    let insts: ssa.SInst[] = g.blocks[bi].insts;
+    let k: i32 = 0;
+    while (k < insts.len()) {
+      let ins: ssa.SInst = insts[k];
+      if ((ins.kind_tag == 7 || ins.kind_tag == 8) && ins.result >= 0 && ins.result < g.nvals) {
+        copy_b = copy_b.with(ins.result, bi + 1);
+        copy_k = copy_k.with(ins.result, k);
+        if (kept[ins.result]) {
+          work = work.append(ins.result);
+        }
+      }
+      k = k + 1;
+    }
+    bi = bi + 1;
+  }
+  let at: i32 = 0;
+  while (at < work.len()) {
+    let v: i32 = work[at];
+    at = at + 1;
+    for a in g.blocks[copy_b[v] - 1].insts[copy_k[v]].args {
+      if (a >= 0 && a < g.nvals && !kept[a]) {
+        kept = kept.with(a, true);
+        if (copy_b[a] != 0) {
+          work = work.append(a);
         }
       }
     }
@@ -1600,15 +1624,6 @@ function used_whole(g: ssa.SFunc): boolean[] {
     }
   }
   return kept;
-}
-
-function all_marked(flags: boolean[], vs: i32[]): boolean {
-  for v in vs {
-    if (v >= 0 && v < flags.len() && !flags[v]) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function marked(flags: boolean[], v: i32): boolean {
