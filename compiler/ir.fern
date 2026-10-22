@@ -3345,6 +3345,10 @@ pub const K_LINE: i32 = 288;
 
 pub const K_STR_DATA: i32 = 345;
 
+pub const K_RET_WORD: i32 = 384;
+
+pub const K_CALL_WORD: i32 = 385;
+
 pub const K_BSWAP: i32 = 411;
 
 // ---- integer op-kind registry (issue #4394 lever 2) --------------------

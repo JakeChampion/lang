@@ -18,7 +18,8 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:fern"
+    "onLanguage:fern",
+    "onLanguage:fern-markdown"
   ],
   "contributes": {
     "languages": [
@@ -31,6 +32,15 @@
           ".fern"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "fern-markdown",
+        "aliases": [
+          "Literate Fern"
+        ],
+        "extensions": [
+          ".fern.md"
+        ]
       }
     ],
     "grammars": [
@@ -38,6 +48,14 @@
         "language": "fern",
         "scopeName": "source.fern",
         "path": "./syntaxes/fern.tmLanguage.json"
+      },
+      {
+        "language": "fern-markdown",
+        "scopeName": "text.html.markdown.fern",
+        "path": "./syntaxes/fern-markdown.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.fern": "fern"
+        }
       }
     ],
     "configuration": {

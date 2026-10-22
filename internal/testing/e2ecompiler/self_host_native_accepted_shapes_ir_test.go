@@ -124,14 +124,6 @@ function main(): i32 {
     match (mk_nullary(5)) { Some(v) => { return v; }, None => { return 99; } }
 }
 `, 5, ""},
-	// An associated function of `impl[T] Box[T]`, its T bound from the argument.
-	{"generic-inherent-impl", `struct Box[T] { v: T }
-impl[T] Box[T] {
-	function of(v: T): Box[T] { return Box { v: v }; }
-	function get(self: Self): T { return self.v; }
-}
-function main(): i32 { let b: Box[i32] = Box.of(42); return b.get(); }
-`, 42, ""},
 	// A `?` inside a match value and an f-string returns from the function around it.
 	{"try-inside-match-values", `import "std/i32";
 function pick(p: Result[i32, i32]): Option[i32] {

@@ -42,6 +42,7 @@ which ones.
 | `NAMED-FIELD-VARIANTS.md` | [reference] | Named-field enum variants: declaring, constructing and destructuring them. |
 | `TRAITS.md` | [reference] | Traits: static ad-hoc polymorphism, bounded generics and cross-module coherence; phases 1–3 shipped. |
 | `TRY.md` | [reference] | The `?` operator on any enum marked `@try`, and the shape rule the checker enforces (E078). |
+| `SIMD-GENERIC-KERNELS.md` | [plan] | One numeric kernel over a `Lanes` trait: scalar, `f64x2` / `f32x4`, `Dual` autodiff, `DoubleDouble`; associated constants now, const generics after the lane type. Revises `ATLAS-PLATFORM-PLAN.md` §1.2. |
 | `COMPTIME-BRIEF.md` | [research] | Rules (from Zig) and architecture (from Lean 4) any future comptime must follow; comptime remains deferred. |
 | `EFFECT-SYSTEMS-PRIOR-ART.md` | [research] | Prior-art survey of effect systems (Koka, Effekt, Unison, Scala CC, OCaml 5, Roc, Flix, Haskell, Rust, WASI); input to #5320. |
 | `NICHE-LANGUAGE-RESEARCH.md` | [research] | 2026-07 survey of niche and research languages for mechanisms Fern could borrow, with a ranked shortlist. |
@@ -213,9 +214,9 @@ which ones.
 | `ASYNC-REDESIGN.md` | [record] | The decision to replace the concurrent/await/race surface with `Future[T]` plus gather/race/with_deadline; shipped as std/async. |
 | `ASYNC-SELFHOST-IR.md` | [record] | The plan to compile std/async through the self-host IR path; done, `async_combinators_test.fern` runs 6/6. |
 | `NET-P3-SUSPENSION-PLAN.md` | [record] | Networking P3: inferred suspension of handlers as resumable state machines, cancellation and streamed bodies; landed (#9857). |
-| `STREAM-TYPE-SURFACE.md` | [record] | The design checkpoint that exposed `stream[T]` and kept `future[T]` internal; shipped (#11530). |
+| `STREAM-TYPE-SURFACE.md` | [record] | The design checkpoint that exposed the stream type (now `Stream[T]`) and kept `future[T]` internal; shipped (#11530). |
 | `WASI-PREVIEW2.md` | [record] | The WASI Preview 1 to 2 component migration; complete, with components composed in-tree. |
-| `WASI-PREVIEW3-ASYNC-PLAN.md` | [record] | Preview-3 component-model async; async exports, async imports and `stream[T]` shipped for scalar types. |
+| `WASI-PREVIEW3-ASYNC-PLAN.md` | [record] | Preview-3 component-model async; async exports, async imports and `Stream[T]` shipped for scalar types. |
 | `WASM-COMPONENT-GENERATOR.md` | [record] | A generated wasm component envelope in the self-host; complete. |
 | `WASM-REACTOR-PLAN.md` | [record] | The wasm reactor on Preview-2 pollables and the composition blocker it hit; shipped. |
 | `WIT-BRING-YOUR-OWN.md` | [record] | Compiling against a user-supplied WIT world; P1–P6 shipped in both compilers. |

@@ -197,8 +197,7 @@ function main(): i32 {
 	// The whole of std/array, which an array receiver type name puts in reach
 	// (#6809): the issue's own repro first, then the closure-taking generics —
 	// dispatch resolving is only half of it, the bodies have to run — then the
-	// concrete-element `__method_Array_<name>` helpers, which the bundler
-	// mangles on the way in.
+	// receivers pinned to one element type.
 	{"array-sorted-asc", "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [3, 1, 2];\n  let ys: i32[] = xs.sorted_asc();\n  if (ys[0] == 1) { return 7; }\n  return 1;\n}\n"},
 	{"array-closure-methods", "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [3, 1, 2];\n  let ys: i32[] = xs.map((v: i32): i32 => { return v * 2; });\n  if (ys.len() != 3 || ys[0] != 6) { return 1; }\n  let big: i32[] = ys.filter((v: i32): boolean => { return v > 3; });\n  if (big.len() != 2) { return 2; }\n  let total: i32 = xs.fold(0, (acc: i32, v: i32): i32 => { return acc + v; });\n  if (total != 6) { return 3; }\n  return 7;\n}\n"},
 	{"array-predicate-methods", "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [3, 1, 2];\n  if (xs.is_empty()) { return 1; }\n  if (!xs.any((v: i32): boolean => { return v == 2; })) { return 2; }\n  if (xs.all((v: i32): boolean => { return v > 2; })) { return 3; }\n  if (xs.count_where((v: i32): boolean => { return v > 1; }) != 2) { return 4; }\n  match (xs.first()) { Some(v) => { if (v != 3) { return 5; } }, None => { return 6; } }\n  match (xs.find((v: i32): boolean => { return v == 1; })) { Some(v) => { if (v != 1) { return 8; } }, None => { return 9; } }\n  return 7;\n}\n"},

@@ -617,7 +617,7 @@ function trait_named(mod: parser.Module, name: string, line: i32): parser.TraitD
 // self-host has no array-of-arrays to group into.
 // trait_label is the trait as the source wrote it, qualifier included. parse_type_name resolves `async.Driver` to
 // `Driver`, so the spelling is stored beside the resolved name on ImplInfo; an
-// inherent impl has no trait and no spelling.
+// unqualified trait has no separate spelling.
 function trait_label(im: parser.ImplInfo): string {
   if (im.trait_spelling.len() > 0) {
     return im.trait_spelling;

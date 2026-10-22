@@ -121,7 +121,6 @@ var parseErrPosCases = []struct {
 	{"unit-bound-arg", "function f[T: Iterator[()]](x: T): T {\n  return x;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"unit-return-type", "function f(): () {\n  return;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"unit-generic-arg", "function f(): Result[(), i32] {\n  return Ok(0);\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
-	{"unit-lambda-return", "function main(): i32 {\n  let f = (x: i32): () => x;\n  return 0;\n}\n"},
 	// `+` continues a `dyn` type only; a bound takes no associated-type pin.
 	{"plus-outside-dyn-in-generic-arg", "trait A {}\nfunction f(x: Map[A + float, i32]): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"bound-assoc-pin", "trait Holder {\n  type Item;\n}\nfunction f[T: Holder[Item = i32]](x: T): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
@@ -129,6 +128,20 @@ var parseErrPosCases = []struct {
 	// A lambda's return annotation is followed by the lambda's own arrow, so
 	// `() =>` there is the refused unit type, not a function type.
 	{"lambda-return-unit-p001", "function main(): i32 {\n  let f = (x: i32): () => x;\n  return 0;\n}\n"},
+	// `::` is only an associated-type projection; as a path it is a P001 (#12698).
+	{"path-sep-call", "function main(): i32 {\n  return helpers::add5(10);\n}\n"},
+	{"path-sep-const", "function main(): i32 {\n  let c = helpers::BONUS;\n  return c;\n}\n"},
+	{"path-sep-type-keyword", "function main(): i32 {\n  let m = i32::MAX;\n  return 0;\n}\n"},
+	{"path-sep-struct-literal", "function main(): i32 {\n  let b = m::Box { v: 1 };\n  return 0;\n}\n"},
+	// An impl names a trait; `impl Type { … }` is a P001 at the type (#12699).
+	{"inherent-impl", "struct P { x: i32 }\nimpl P {\n  function get(self: Self): i32 { return self.x; }\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"generic-inherent-impl", "struct B[T] { v: T }\nimpl[T] B[T] {\n  function get(self: Self): T { return self.v; }\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	// A type-parameter list ends at `,` or `]`, and a supertrait clause at the
+	// trait's `{`: a `::` or any other token there is refused, not read on.
+	{"bound-path-sep", "function f[T: cmp::Ord](x: T): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"type-param-stray-token", "function f[T x](x: T): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"supertrait-path-sep", "trait A : cmp::Ord {\n  function f(self: Self): i32;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"trait-stray-token", "trait A x {\n  function f(self: Self): i32;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 }
 
 // TestSelfHostParseErrorPositions pins SH-041 (tracking #2849): a
@@ -260,6 +273,19 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"pub-use-empty-list-without-semicolon",
 			"pub use \"./m\".{}",
 			"error[P001]: at top level: expected \";\", got the end of the file (1:17)"},
+		// A `::` path parses through as a `.` chain, so its P001 is the only
+		// diagnostic it draws (#12698).
+		{"path-sep-chain",
+			"function main(): i32 {\n  return helpers::add5(10).x;\n}\n",
+			"error[P001]: in fn 'main': `::` is not a path separator; write `.` (2:17)"},
+		// The refused impl's members draw nothing of their own.
+		{"inherent-impl-alone",
+			"struct P { x: i32 }\nimpl P {\n  function get(self: Self): i32 { return self.x; }\n}\nfunction main(): i32 {\n  return 0;\n}\n",
+			"error[P001]: at top level: `impl P` needs a trait, as in `impl cmp.Eq for P`; declare a method as `function (self: P) name(…)` and a constructor as a plain function (2:6)"},
+		// A generic type is named with its arguments, as written.
+		{"generic-inherent-impl-message",
+			"struct B[T] { v: T }\nimpl[T] B[T] {\n  function get(self: B[T]): T { return self.v; }\n}\nfunction main(): i32 {\n  return 0;\n}\n",
+			"error[P001]: at top level: `impl B[T]` needs a trait, as in `impl cmp.Eq for B[T]`; declare a method as `function (self: B[T]) name(…)` and a constructor as a plain function (2:9)"},
 		// A sentinel inside a defer's action: the walk descends StmtDefer.
 		{"defer-action-sentinel",
 			"function main(): i32 {\n  defer print(;);\n  return 0;\n}\n",

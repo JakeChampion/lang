@@ -38,12 +38,8 @@ Visibility  = 'pub' [ '(' IDENT ')' ] ;
 # `fip` / `fbip` are contextual: identifiers everywhere but here.
 FuncMod     = 'fip' [ NUMBER ] | 'fbip' [ NUMBER ] | 'async' ;
 
-FuncDecl    = { FuncMod } 'function' [ Receiver ] DeclName [ TypeParams ]
+FuncDecl    = { FuncMod } 'function' [ Receiver ] IDENT [ TypeParams ]
               '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' ) ;
-# `default` is a keyword but is admitted as a declared name, so a type
-# can implement core/cmp's Default trait.
-DeclName    = IDENT | 'default' ;
-
 # A method is written `function (self: T) name(...)`.
 Receiver    = '(' [ 'own' ] IDENT ':' Type ')' ;
 
@@ -95,11 +91,11 @@ TypeDecl    = 'type' IDENT [ TypeParams ] '=' Type '|' Type { '|' Type } ';' ;
 
 TraitDecl   = 'trait' IDENT [ TypeParams ] [ ':' Bounds ] '{' { TraitItem } '}' [ ';' ] ;
 TraitItem   = 'type' IDENT [ ':' Bounds ] ';'
-            | { FuncMod } 'function' [ Receiver ] DeclName [ TypeParams ]
+            | { FuncMod } 'function' [ Receiver ] IDENT [ TypeParams ]
               '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' )
             ;
 
-ImplDecl    = 'impl' [ TypeParams ] Type [ 'for' Type ] '{' { ImplItem } '}' [ ';' ] ;
+ImplDecl    = 'impl' [ TypeParams ] Type 'for' Type '{' { ImplItem } '}' [ ';' ] ;
 ImplItem    = 'type' IDENT '=' Type ';' | Attribute | FuncDecl ;
 
 ConstDecl   = 'const' IDENT [ ':' Type ] '=' Expr ';' ;
@@ -302,10 +298,9 @@ PostfixOp   = '(' [ CallArgs ] ')'
             | '[' Expr ']'
             | '[' TypeArgList ']'
             | '.' MemberName [ TypeArgs ]
-            | '::' MemberName
             | '?'
             ;
-MemberName  = IDENT | NUMBER | 'default' ;
+MemberName  = IDENT | NUMBER ;
 CallArgs    = CallArg { ',' CallArg } [ ',' ] ;
 CallArg     = IDENT '=' Expr | Expr ;
 # `f[i32](x)` — explicit generic instantiation. A lone name (`f[Box](x)`)
@@ -426,4 +421,4 @@ MapLit      = 'Map' '{' [ MapEntry { ',' MapEntry } [ ',' ] ] '}' ;
 MapEntry    = Expr ':' Expr ;
 StructLit   = QualName [ TypeArgs ] '{' [ LitField { ',' LitField } [ ',' ] ] '}' ;
 LitField    = '...' Expr | IDENT ':' Expr ;
-Name        = QualName [ '::' IDENT ] | '_' ;
+Name        = QualName | '_' ;

@@ -428,7 +428,7 @@ cooperative, readiness-based, and — unusually — a pure library:
 - Combinators are ordinary functions: `gather` (join-all), `race`,
   `with_deadline` — a structured-concurrency shape without unstructured
   spawn.
-- `stream[T]` is the one async surface type, consumed with plain
+- `Stream[T]` is the one async surface type, consumed with plain
   `for x in stream`.
 
 A previous keyword-based design (`concurrent {}` / `await`, implemented as

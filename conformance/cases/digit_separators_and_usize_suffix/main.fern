@@ -1,0 +1,22 @@
+// `_` separates digits in every numeric form, and `usize` is a literal
+// suffix like the other integer types (#12707).
+import "std/i32";
+import "std/i64";
+import "std/u64";
+import "std/f64";
+
+function main(): i32 {
+    print(1_000_000.to_string());
+    print(0xff_ff.to_string());
+    print(0o7_7.to_string());
+    print((0b1010_0101u8 as i32).to_string());
+    let big: i64 = 4_294_967_297i64;
+    print(big.to_string());
+    let wide: u64 = 0xffff_ffff_ffff_ffffu64;
+    print(wide.to_string());
+    let f: f64 = 1_000.5e0_1;
+    print(f.to_string());
+    let n: usize = 1_024usize;
+    print((n as i32).to_string());
+    return 0;
+}

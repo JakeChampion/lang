@@ -477,6 +477,26 @@ reason it has not been done — the import-free component core (mode 1 of
 to it puts a WASI import into every allocating module. Scope: small in the
 emitter, wide in what it perturbs.
 
+### Stack: 1 GiB on the natives, and an overflow is reported
+
+A native executable runs main on a stack of its own: 1 GiB of address space
+mapped without reserve, so a page costs memory only once a call reaches it,
+with a 1 MiB guard at its foot (`emit_stack_switch` in `asm_ir.fern` and
+`asm_arm64_ir.fern`; the sizes are `asmcore.stack_size` and
+`stack_guard`). A recursion a million calls deep runs. Where the system
+refuses the mapping, the process stays on the stack it started with.
+
+Running into the guard, or below the starting stack, is reported rather
+than dying of a bare SIGSEGV: `fern: stack overflow` and the backtrace, from
+the faulting instruction, then exit 134 like the other fatal aborts. A
+handler on an alternate stack tells the two apart by the fault address: one
+within 1 MiB of the interrupted stack pointer is the stack running out, and
+any other fault is left to kill the process as it did. On wasm the engine
+owns the stack, and wasmtime reports its exhaustion as a trap.
+
+`fern -interp` gets the same stack, being a native program itself, once the
+`fern` running it was built by a compiler with this runtime.
+
 ### Tail-call optimisation — every target
 
 The typed lowering turns a self-recursive call in tail position, and a tail

@@ -15,7 +15,7 @@ pub function cell_name(name: string): string {
 
 function cell_read(name: string, line: i32, col: i32): ast.Expr {
   let cell: ast.Expr = ast.ExprIdent { name: cell_name(name), line: line, col: col, ty: "" };
-  return ast.ExprCall { callee: ast.ExprFieldAccess { obj: cell, field: "get", line: line, col: col, ty: "" }, args: [], line: line, col: col, type_args: [], ty: "" };
+  return ast.ExprCall { callee: ast.ExprFieldAccess { obj: cell, field: "get", line: line, col: col, ty: "", path_sep: false, const_read: false }, args: [], line: line, col: col, type_args: [], ty: "" };
 }
 
 // cell_decl builds `let $cell$name: Cell[ty] = cell_new(init);`.
@@ -90,7 +90,7 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
       return ast.ExprStructLit { ...sl, field_values: nv, base: nbase };
     },
     ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { obj: box_rewrite_expr(fa.obj, boxed, btypes, bsites, bound), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
+      return ast.ExprFieldAccess { ...fa, obj: box_rewrite_expr(fa.obj, boxed, btypes, bsites, bound) };
     },
     ast.ExprLambda(lm) => {
       // A lambda PARAMETER of a boxed name is a different variable: inside
@@ -186,7 +186,7 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
       if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {
         // x = v  ->  $cell$x.set(v)
         let recv: ast.Expr = ast.ExprIdent { name: cell_name(a.target), line: a.target_line, col: a.target_col, ty: "" };
-        let scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "" }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_args: [], ty: "" };
+        let scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "", path_sep: false, const_read: false }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_args: [], ty: "" };
         return ast.StmtExpr { value: scall, line: a.line };
       }
       return ast.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed, btypes, bsites, bound), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };

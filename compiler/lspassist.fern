@@ -313,7 +313,7 @@ function type_members(s: checker.Scope, t: typeinfo.Type): Item[] {
 }
 
 function array_members(s: checker.Scope, a: typeinfo.TypeArray, own out: Item[]): Item[] {
-  for name in checker.array_method_names(s) {
+  for name in checker.array_method_names(s, a.view) {
     out = out.append(method_item(name, lspquery.array_parts(s, a, name)));
   }
   return out.append(method_item("len", lspquery.array_parts(s, a, "len")));

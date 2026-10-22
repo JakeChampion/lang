@@ -18,6 +18,8 @@ var streamIRCases = []struct {
 }{
 	// .len() reports the backing buffer length independent of the cursor.
 	{"len", `let b: Stream = stream.stream_from_bytes([1 as u8, 2 as u8, 3 as u8]); return b.len();`, 3},
+	// `ByteStream` names the same builtin while the stdlib still says `Stream` (#12708).
+	{"bytestream-name", `let b: ByteStream = stream.stream_from_bytes([1 as u8, 2 as u8]); let c: Stream = b; return c.len();`, 2},
 	// read_n advances the cursor; remaining() on the returned Stream = 4 - 1 = 3.
 	{"remaining", `let b: Stream = stream.stream_from_bytes([1 as u8, 2 as u8, 3 as u8, 4 as u8]); let (out, b2) = b.read_n(1); return b2.remaining();`, 3},
 	// read_byte yields Some('A'=65) at the cursor.

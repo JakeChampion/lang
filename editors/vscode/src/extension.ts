@@ -37,12 +37,15 @@ export async function activate(context: ExtensionContext): Promise<void> {
   };
 
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "fern" }],
+    documentSelector: [
+      { scheme: "file", language: "fern" },
+      { scheme: "file", language: "fern-markdown" },
+    ],
     synchronize: {
       // Re-load watched files on disk changes so external edits
       // (git checkout, formatter run from a script) flow through
       // to the open buffers.
-      fileEvents: workspace.createFileSystemWatcher("**/*.fern"),
+      fileEvents: workspace.createFileSystemWatcher("**/*.{fern,fern.md}"),
     },
   };
 

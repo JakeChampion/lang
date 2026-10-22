@@ -265,23 +265,13 @@ Grouped by family:
 Receiver methods on arrays. `Array.push` stays a built-in IR primitive
 (intercepted by codegen) and is registered by the checker.
 
-Two spellings reach the same `arr.<name>(…)` dispatch, and which one a verb
-uses is now a statement about the verb rather than about the compiler.
-Anything usable at more than one element type is written with a real
-element-polymorphic receiver, `pub function (xs: T[]) name(…)`. The older
-`__method_Array_<name>(arr: i32[], …)` form, auto-discovered from the naming
-convention, pins a concrete element type and is reserved for verbs that are
-genuinely specific to it. The namespace keys on the method NAME, so the two
-forms cannot both claim one name.
-
-A concrete element type is legal on a receiver as well — `pub function
-(arr: i32[]) gcd_all(…)`, the form that would retire the naming convention
-entirely — and any program can declare one. std/array cannot use it yet: the
-self-hosted compiler resolves such a method but does not lower it, and a single
-declaration costs an unrelated generic its type-parameter substitution, so the
-convention stays until that is fixed. A receiver whose element is itself an
-array or slice (`T[][]`) is rejected by E021 on both forms — dispatch binds the
-element in one step and would resolve a level too deep.
+Every array method is a receiver function. Anything usable at more than one
+element type is written with an element-polymorphic receiver, `pub function
+(xs: T[]) name(…)`; a verb genuinely specific to one element type pins it,
+`pub function (arr: i32[]) gcd_all(…)`. The namespace keys on the method NAME,
+so the two cannot both claim one name. A receiver whose element is itself an
+array or slice (`T[][]`) is rejected by E021 — dispatch binds the element in
+one step and would resolve a level too deep.
 
 - **Element-polymorphic reductions** (one bounded generic each, so the same
   call works for i32 / i64 / u32 / u64 / f32 / f64 / string and
@@ -801,6 +791,23 @@ rule; `docs/ARRAY-ALGEBRA.md` §4 is why a wrong shape aborts.
   frame extent is 0 — `f` never runs and the result is the empty handle of
   shape `frame`, which is the one place the result's rank depends on the
   input's extents rather than on its shape alone.
+
+### `std/simd`
+
+One numeric kernel, several evaluators (`docs/SIMD-GENERIC-KERNELS.md`).
+`Lanes` is the arithmetic a kernel composes — `num.Num + num.Neg`, `splat(x:
+f64)`, `lane(i)`, `mul_add`, `sqrt`, `abs`, `floor`, `round`, `min`, `max`,
+`lt` and `ne` (a lane mask in the type itself, `ne` 1.0 for a NaN operand)
+and `select`, `ldexp`, and the associated constants `LANES` and `SPLIT` — and
+`Math` adds `exp`, `log`, `sin`, `cos`,
+`tan`, `tanh`, `atan`, `expm1`, `log1p`, `pow`. `f64` and `f32` implement both
+from `std/f64`. `Dual[T]` (`seed(x)`, `dual(v, d)`) carries a derivative by
+the chain rule; `DoubleDouble[T]` (`dd_splat(x)`, `dd_of(v)`, `dd_value`)
+carries about twice the lanes' precision by Dekker and Bailey arithmetic and
+its own argument reduction and series. `horner(x, coeffs)` and `eq(a, b)`
+(0.0 for a NaN operand) are the generic helpers. Gate: `tests/stdlib/simd_test.fern`, which also holds every `Math`
+function on `DoubleDouble` and the `Dual` derivative to `std/f64` over a
+sweep of arguments.
 
 ### `std/pvec`
 
@@ -4996,7 +5003,8 @@ element), so calling either inside a loop — or re-evaluating
 `for k in m.keys()` per iteration — re-snapshots every time. For the
 common "visit every entry" case prefer **`for (k, v) in m`**, which
 desugars to the `MapIter` cursor (`m.iter()` / `has_next()` / `key()` /
-`value()` / `advance()`) and walks entries in insertion order **without
+`value()` / `advance()`) and walks entries in insertion order — except
+that removing a key moves the last entry into its place — **without
 per-iteration allocation**. Reach for `keys()` / `values()` only when
 you genuinely need a materialised `K[]` / `V[]` (to sort, index, or
 retain past the map's lifetime). A snapshot-free `entries()`-style

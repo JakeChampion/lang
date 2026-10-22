@@ -85,6 +85,24 @@ func TestRunnerArithmeticExamplePasses(t *testing.T) {
 	}
 }
 
+// `tests/stdlib/simd_test.fern` is std/simd: one generic kernel evaluated on
+// f64 and f32, on Dual for its derivative, and on DoubleDouble for the bits
+// past f64 (docs/SIMD-GENERIC-KERNELS.md). TestSimdModule runs the same file
+// on the self-host interpreter, x86-64 and wasm.
+func TestRunnerSimdExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/simd_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: simd", "ok 18 - sweep against std/float", "1..18", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `tests/stdlib/tz_test.fern` is std/tz without a clock or the host's
 // zoneinfo: POSIX rules evaluated across their transitions, a TZif v2
 // file built byte by byte (whose v1 block disagrees, so a reader on the

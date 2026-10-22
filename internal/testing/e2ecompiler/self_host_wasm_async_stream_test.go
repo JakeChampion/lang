@@ -154,7 +154,7 @@ const asyncStreamProvider = `(component
   (export "test:dep/s" (instance $x)))
 `
 
-// TestSelfHostWasmAsyncStream pins `stream[T]` in an async import's
+// TestSelfHostWasmAsyncStream pins `Stream[T]` in an async import's
 // signature. A stream result is read to EOF into the T[] the call returns,
 // and a T[] argument is written out through a stream the import reads. The
 // provider writes and reads two elements at a time, so both sides wait on
@@ -163,11 +163,11 @@ func TestSelfHostWasmAsyncStream(t *testing.T) {
 	requireWasmTools(t)
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
-	consumer, printed := buildAsyncComponent(t, cli, dir, `@import("test:dep/s", "prod") async function body(): stream[u8];
-@import("test:dep/s", "prodi") async function nums(): stream[i32];
-@import("test:dep/s", "prodf") async function reals(): stream[f64];
-@import("test:dep/s", "sink") async function sink(s: stream[u8]): i32;
-@import("test:dep/s", "sinki") async function sinki(s: stream[i32]): i32;
+	consumer, printed := buildAsyncComponent(t, cli, dir, `@import("test:dep/s", "prod") async function body(): Stream[u8];
+@import("test:dep/s", "prodi") async function nums(): Stream[i32];
+@import("test:dep/s", "prodf") async function reals(): Stream[f64];
+@import("test:dep/s", "sink") async function sink(s: Stream[u8]): i32;
+@import("test:dep/s", "sinki") async function sinki(s: Stream[i32]): i32;
 async function t_bytes(): i32 { let b: u8[] = body(); return (b[0] as i32) + (b[1] as i32) + (b[2] as i32); }
 async function t_count(): i32 { let xs: i32[] = nums(); return xs.len(); }
 async function t_sum(): i32 { let sum: i32 = 0; for x in nums() { sum = sum + x; } return sum; }

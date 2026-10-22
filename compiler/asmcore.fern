@@ -614,6 +614,21 @@ pub function msg_slice_range(): string {
   return "fern: slice range out of bounds";
 }
 
+pub function msg_stack_overflow(): string {
+  return "fern: stack overflow";
+}
+
+// The stack a hosted executable runs main on: 1 GiB of address space mapped
+// without reserve, so a page costs memory only once it is touched, with a
+// 1 MiB guard at its foot that no single frame steps over.
+pub function stack_size(): i32 {
+  return 1073741824;
+}
+
+pub function stack_guard(): i32 {
+  return 1048576;
+}
+
 // Two threads inside a -shared build's code at once: its counts and freelists
 // are not atomic.
 pub function msg_busy(): string {
@@ -6339,7 +6354,7 @@ pub function rt_src_str_cmp(): string {
 }
 
 // rt_src_arr_str_join backs `xs.join(sep)` on string arrays (#2649). TWO PASSES
-// OVER AN EXACT-SIZE BUFFER, which is native's `__method_Array_join` algorithm:
+// OVER AN EXACT-SIZE BUFFER, which is std/array's `join` algorithm:
 // sum the lengths, allocate once, memcpy each piece in. The result is a fresh
 // __raw_string, so it is still a normal owned value with clean Perceus RC and
 // still does not alias xs[0] — the property the accumulator form was written
@@ -9439,12 +9454,14 @@ pub function escape_for_ascii(s: string): string {
 }
 
 pub function has_main(mod: parser.Module): boolean {
-  let i: i32 = 0;
-  while (i < mod.funcs.len()) {
-    if (mod.funcs[i].name == "main") {
+  return declares_main(mod.funcs);
+}
+
+pub function declares_main(funcs: parser.FuncDecl[]): boolean {
+  for fd in funcs {
+    if (fd.name == "main") {
       return true;
     }
-    i = i + 1;
   }
   return false;
 }
@@ -10829,7 +10846,7 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
 // The self-host parser is deliberately permissive — `Par` carries no error
 // channel, so a token it cannot use is skipped and the drivers' gates catch the
 // consequences. For a declaration NAME that leaves no consequence to catch:
-// `peek_member_name` returns "" for a keyword, and parse_func_decl then returns
+// `peek_ident` returns "" for a keyword, and parse_func_decl then returns
 // a FuncDecl with an empty name. The module parses "successfully" and the
 // nameless function is simply carried through the whole pipeline.
 //

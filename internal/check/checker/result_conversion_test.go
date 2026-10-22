@@ -17,7 +17,7 @@ func TestResultConstructorIntegerConversion(t *testing.T) {
 		{"nested-literal-overflow", `function f(): Result[Result[u8, string], string] { return Ok(Ok(300)); }`, "E047"},
 		{"option-literal-overflow", `function f(): Option[u8] { return Some(300); }`, "E047"},
 		{"qualified-option-narrow", `function f(n: i64): Option[i32] { return Option.Some(n); }`, "E002"},
-		{"same-name-method", `struct Factory {} impl Factory { function Ok(self: Self, n: i32): Result[u8, string] { return Result.Ok(1u8); } } function f(): Result[u8, string] { let x = Factory {}; return x.Ok(300); }`, ""},
+		{"same-name-method", `struct Factory {} function (self: Factory) Ok(n: i32): Result[u8, string] { return Result.Ok(1u8); } function f(): Result[u8, string] { let x = Factory {}; return x.Ok(300); }`, ""},
 		{"same-name-function", `function Ok(n: i32): Result[u8, string] { return Err("unused"); } function f(): Result[u8, string] { return Ok(300); }`, ""},
 		{"unsigned-small-widen", `function f(n: u8): Result[u32, string] { return Ok(n); }`, ""},
 		{"unsigned-small-narrow", `function f(n: u32): Result[string, u8] { return Err(n); }`, "E002"},
