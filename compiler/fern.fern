@@ -1882,12 +1882,18 @@ function write_output(out_path: string, data: string, t: string, emit: string): 
 // enforceTargetCapabilities); the cheap pre-pass is only about not shaking a
 // module whose answer cannot change. An empty shaken answer is an accept: the
 // pre-pass fired on a builtin only unreachable code reaches.
+//
+// The module is judged as built for `target`, its `target_os()` /
+// `target_arch()` branches folded and pruned as native's are, so `-check`
+// accepts what the build does.
 pub function capability_diags(merged: parser.Module, target: string): util.Diag[] {
   let out: util.Diag[] = [];
   if (platforms.enforce(merged, target).len() == 0) {
     return out;
   }
-  for v in platforms.enforce(treeshake.treeshake(merged), target) {
+  let desc: platforms.Descriptor = platforms.for_target(target);
+  let built: parser.Module = constfold.prune_literal_branches(constfold.fold_target_name(merged, desc.environment, desc.isa));
+  for v in platforms.enforce(treeshake.treeshake(built), target) {
     out = out.append(platforms.violation_diag(v));
   }
   return out;

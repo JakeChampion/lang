@@ -257,11 +257,16 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     block layout and its static slots (`__raw_alloc`, `__raw_environ`,
 	//     …). Wasm serves the runtime helpers written on it with
 	//     hand-written WAT and lowers none of it.
-	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor"},
+	//   - `uring` — an io_uring (`ring_*`), Linux's submission and
+	//     completion rings, which std/async waits on in place of epoll.
+	//   - `ktls` — the kernel's TLS record layer under a socket
+	//     (`tcp_ktls`), Linux's `tls` ULP.
+	"hosted-linux": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "uring", "ktls"},
 
-	// hosted-native plus `sysctl` — the kernel's named variables by MIB
-	// (load averages, boot time). Linux removed sysctl(2) and keeps the
-	// same facts in /proc, so only Darwin grants it.
+	// The Linux profile without its two Linux-only capabilities, plus
+	// `sysctl` — the kernel's named variables by MIB (load averages, boot
+	// time). Linux removed sysctl(2) and keeps the same facts in /proc, so
+	// only Darwin grants it.
 	"hosted-darwin": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
@@ -311,9 +316,9 @@ type environment struct {
 // targets and what a `scheduled` / `alarm` kind (Rec §5) would be added
 // after.
 var environments = map[string]environment{
-	"linux":   {profile: "hosted-native", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
+	"linux":   {profile: "hosted-linux", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
 	"darwin":  {profile: "hosted-darwin", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
-	"android": {profile: "hosted-native", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
+	"android": {profile: "hosted-linux", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
 	"wasi":    {profile: "wasi-cli", handlerKinds: []string{"main", "handle"}, entry: EntryProcess},
 
 	"wasi-http": {

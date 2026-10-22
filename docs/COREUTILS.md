@@ -4711,12 +4711,9 @@ groups are the order of work. Each sub-issue names its group.
   rather than inventing one.
 
   The third primitive #9089 asked for, `sync`, is NOT landed and its
-  shape is disputed. `syncfs` has no XNU equivalent, and
-  `internal/pkg/platforms` grants capabilities per PROFILE with linux,
-  darwin and android all naming `hosted-native` — so the first
-  Linux-only capability needs a per-environment split, which is a
-  platform-layer decision rather than something a primitive should
-  decide on its way past. And `fsync` / `fdatasync` are fd operations:
+  shape is disputed. `syncfs` has no XNU equivalent; a Linux-only
+  capability now has a home, the `hosted-linux` profile that `uring` and
+  `ktls` live in (#12729). And `fsync` / `fdatasync` are fd operations:
   this codebase's own rule is that authority lives on the constructor
   and not the method, which is why `Reader.stat` is a method and takes
   no capability, so those two belong on `Reader` / `Writer` beside it
