@@ -9327,10 +9327,11 @@ pub function is_struct_destr_marker(type_name: string): boolean {
 }
 
 pub function is_destr_marker(type_name: string): boolean {
-  return util.str_has_prefix(type_name, "@pp;")
+  return type_name.len() > 0 && type_name[0] == b'@'
+    && (util.str_has_prefix(type_name, "@pp;")
     || util.str_has_prefix(type_name, "@at:")
     || util.str_has_prefix(type_name, "@rest;")
-    || util.str_has_prefix(type_name, "@sd:");
+    || util.str_has_prefix(type_name, "@sd:"));
 }
 
 // parse_pattern_param consumes a destructuring parameter — `(a, b): (T, U)`

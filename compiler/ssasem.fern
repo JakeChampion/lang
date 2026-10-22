@@ -1062,7 +1062,7 @@ pub function dyn_call_name(method: string, traits: string[], arms: string[]): st
 }
 
 pub function is_dyn_call(name: string): boolean {
-  return name.len() > 4 && slice_unchecked(name, 0, 4) == "dyn ";
+  return name.len() > 4 && name[0] == b'd' && name[1] == b'y' && name[2] == b'n' && name[3] == b' ';
 }
 
 // The arms of a dyn call name: the list after its last `|`, which no trait
