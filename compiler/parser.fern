@@ -9495,7 +9495,7 @@ function parse_param(p: Par, nth: i32): (ast.ParamDecl, Par) {
   }
   let name: string = p.peek_ident();
   if (name.len() == 0) {
-    return (ast.ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }, p);
+    return (ast.ParamDecl { name: "__invalid_param", type_name: "", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }, p.refused_type("expected a name, got " + tok_desc(p.peek())));
   }
   // `own NAME: TYPE` — the affine-ownership modifier (move-checked by
   // the checker's E050/E051). `own` is a plain ident to the lexer, so it
