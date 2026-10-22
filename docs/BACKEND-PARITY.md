@@ -45,6 +45,11 @@ what separates them: a `wasi:cli/run` component reports ok or err and nothing
 wider, so `return 42` reaches the host as 1. A `main` that returns nothing
 exits 0 (#9233, `internal/testing/e2e/void_main_exit_test.go`).
 
+The core module's value is still bounded: WASI's `proc_exit` takes a status in
+0..125, and wasmtime turns 126 or more into its own error and exit 1. So a
+core module exits with main's value only when that value is below 126. A trap,
+an abort included, is wasmtime's 134 either way.
+
 `fern` is the self-host driver (`compiler/fern_main.fern`), and the Go
 oracle `cmd/fern` passes `-target`, `-emit` and `-backend` through to it
 unchanged (`cmd/fern/selfhost.go`). `fern -targets` lists the
@@ -446,7 +451,7 @@ and its report are written on the raw-memory floor (`__raw_cover`,
 `__raw_alloc`, `__raw_load_ptr`, …), which the wasm emitter does not lower.
 
 The driver refuses `-cover` for every target but x86-64-linux and
-arm64-linux rather than producing an uninstrumented binary. A coverage run
+arm64-linux, with exit 2, rather than producing an uninstrumented binary. A coverage run
 that silently measures zero is the failure mode that refusal exists to
 prevent.
 
@@ -455,10 +460,27 @@ the way wasm serves the other raw-floor runtime helpers (`wasm_ir.fern`).
 Scope: the report loop is the work — the counter bump itself is `i64.load` /
 `add` / `store`.
 
+### Shared objects (`-shared`) are Linux and Android only
+
+`-shared` builds an ELF shared object for x86-64-linux, arm64-linux and
+arm64-android, and every other target refuses it with exit 2. Darwin has no
+writer for a Mach-O dylib, and wasm has no shared-object form; a wasm library
+is a component's exports.
+
+Fix plan for Darwin: an `MH_DYLIB` image from the Mach-O writer, with the
+`-export` functions in its export trie.
+
+### Profiling (`FERN_PROFILE`) is native executables on Linux and arm64-darwin only
+
+The sampler installs a signal handler and an interval timer, and writes its
+report through raw syscalls at exit, so it needs a native executable with a
+host. Android, wasm and `-shared` builds refuse it with exit 2.
+
 ### Binary hardening (`-harden`) is arm64-linux executables only
 
 `-harden` adds BTI landing pads, the GNU property note that enforces them, and
-return-address signing. Every other target, and `-shared`, refuses the flag.
+return-address signing. Every other target, and `-shared`, refuses the flag
+with exit 2.
 What is left (x86-64 CET, the shared and Android images, the runtime's
 hand-written frames) is listed in `docs/HARDENING.md`.
 

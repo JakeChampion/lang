@@ -2128,7 +2128,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
 function run_add(pos: string[], fetcher: Fetcher): i32 {
   if (pos.len() < 2) {
     eprint("usage: fern -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)");
-    return 1;
+    return 2;
   }
   let name: string = pos[0];
   let spec: string = pos[1];
@@ -4737,10 +4737,6 @@ function exec_and_wait(path: string, argv: string[]): i32 {
 function run_built(target: string, out: string, prog_args: string[], qemu: string): i32 {
   let desc: platforms.Descriptor = platforms.for_target(target);
   if (desc.isa == "wasm32") {
-    if (target == "wasm32-wasi-http") {
-      eprint("fern: -run cannot serve -target wasm32-wasi-http; build it with -o OUT.wasm and run `wasmtime serve OUT.wasm`");
-      return 1;
-    }
     let wt: string = find_on_path("wasmtime");
     if (wt.len() == 0) {
       eprint("fern: -run: wasmtime is not on PATH");
@@ -5100,6 +5096,10 @@ pub function core_form(emit: string): string {
 function run_output(target: string, emit: string, shared: boolean, out_path: string): (string, string, i32) {
   if (emit == "asm" || shared) {
     eprint("fern: -run executes the built program; it cannot be combined with -emit asm or -shared");
+    return ("", "", 2);
+  }
+  if (target == "wasm32-wasi-http") {
+    eprint("fern: -run cannot serve -target wasm32-wasi-http; build it with -o OUT.wasm and run `wasmtime serve OUT.wasm`");
     return ("", "", 2);
   }
   if (out_path.len() > 0) {
@@ -5897,22 +5897,22 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   if (shared) {
     if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android") {
       eprint("fern: -shared is only supported with -target x86-64, arm64, or arm64-android (got \"" + target + "\")");
-      return 1;
+      return 2;
     }
     if (out_path.len() == 0 && emit != "asm") {
       eprint("fern: -shared requires -o OUTPUT.so");
-      return 1;
+      return 2;
     }
   }
   let profile_mode: i32 = rtprofile.mode();
   let profile_error: string = rtprofile.error(profile_mode, target, shared);
   if (profile_error.len() > 0) {
     eprint(profile_error);
-    return 1;
+    return 2;
   }
   emit_syms = rtprofile.symbols(emit_syms, profile_mode);
   if (harden_refused(harden, target, shared)) {
-    return 1;
+    return 2;
   }
   if (backend != "" && backend != "ssa" && backend != "flat") {
     eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)");
@@ -6113,7 +6113,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     let bad: string = shared_export_refusal(merged, shared_roots);
     if (bad.len() > 0) {
       eprint("fern: " + bad);
-      return 1;
+      return 2;
     }
     for n in shared_roots {
       merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true }) };

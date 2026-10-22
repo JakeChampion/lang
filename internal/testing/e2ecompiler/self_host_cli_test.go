@@ -2826,6 +2826,36 @@ function main(): i32 {
 		}
 	})
 
+	// A flag the target or the other flags rule out is a usage refusal, exit
+	// 2 like an unknown flag, whether it is caught before the program is read
+	// or, as -export is, after.
+	t.Run("flag-refusals-exit-2", func(t *testing.T) {
+		tmp := t.TempDir()
+		src := filepath.Join(tmp, "main.fern")
+		if err := os.WriteFile(src, []byte("function main(): i32 { return 42; }\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		so := filepath.Join(tmp, "x.so")
+		for _, args := range [][]string{
+			{"-target", "wasm32-wasi", "-shared", "-o", so, src},
+			{"-target", "x86-64-linux", "-shared", src},
+			{"-target", "x86-64-linux", "-shared", "-export", "nope", "-o", so, src},
+			{"-target", "x86-64-linux", "-harden", "-o", so, src},
+			{"-target", "wasm32-wasi-http", "-run", src},
+			{"-target", "wasm32-wasi", "-cover", src},
+		} {
+			if _, code := runDriver(t, args...); code != 2 {
+				t.Errorf("fern %s exited %d, want 2", strings.Join(args, " "), code)
+			}
+		}
+		cmd := exec.Command(fernBin, "-target", "x86-64-linux", "-o", so, src)
+		cmd.Env = append(os.Environ(), "FERN_PROFILE=bogus")
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 2 {
+			t.Errorf("FERN_PROFILE=bogus exited %d, want 2", code)
+		}
+	})
+
 	t.Run("missing-file-exits-1", func(t *testing.T) {
 		_, code := runDriver(t, filepath.Join(dir, "does-not-exist.fern"))
 		if code != 1 {
