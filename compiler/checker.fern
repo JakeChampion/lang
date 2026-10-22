@@ -2682,7 +2682,7 @@ function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
   while (i < names.len()) {
     let ft: typeinfo.Type = t_unknown("binding");
     if (i < fields.len()) {
-      ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "", path_sep: false, const_read: false }, s);
+      ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "", const_read: false }, s);
     }
     out = out.bind(names[i], ft);
     i = i + 1;
@@ -15007,7 +15007,7 @@ function display_rewrite(c: ast.ExprCall, nargs: ast.Expr[], s: Scope): ast.Expr
   }
   let ln: i32 = expr_line(c.args[0]);
   let cl: i32 = expr_col(c.args[0]);
-  let callee: ast.Expr = ast.ExprFieldAccess { obj: nargs[0], field: "to_string", line: ln, col: cl, ty: "", path_sep: false, const_read: false };
+  let callee: ast.Expr = ast.ExprFieldAccess { obj: nargs[0], field: "to_string", line: ln, col: cl, ty: "", const_read: false };
   return [ast.ExprCall { callee: callee, args: [], line: ln, col: cl, type_args: [], ty: "string" }];
 }
 
@@ -17281,7 +17281,7 @@ function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
   let col: i32 = expr_col(fr.iter);
   let subject: ast.Expr = fr.iter;
   if (sub.via_iter) {
-    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "", path_sep: false, const_read: false }, args: [], line: line, col: col, type_args: [], ty: "" };
+    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "", const_read: false }, args: [], line: line, col: col, type_args: [], ty: "" };
   }
   return Some(parser.iterator_loop(fr, subject, col));
 }
@@ -17290,7 +17290,7 @@ function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
 // of type `t`; unknown when `t` has no such method.
 function probe_method(t: typeinfo.Type, name: string, s: Scope): typeinfo.Type {
   let recv: ast.Expr = ast.ExprIdent { name: "__for_iter", line: 0, col: 0, ty: "" };
-  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "", path_sep: false, const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   return check_expr(call, s.bind("__for_iter", t));
 }
 
@@ -31354,7 +31354,7 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
     let elems: ast.Expr[] = [];
     let i: i32 = 0;
     while (i < want.args.len()) {
-      let part: ast.Expr = ast.ExprFieldAccess { obj: e, field: util.i32_to_string(i), line: expr_line(e), col: expr_col(e), ty: "", path_sep: false, const_read: false };
+      let part: ast.Expr = ast.ExprFieldAccess { obj: e, field: util.i32_to_string(i), line: expr_line(e), col: expr_col(e), ty: "", const_read: false };
       elems = elems.append(lit_float_read(part, want.args[i]));
       i = i + 1;
     }

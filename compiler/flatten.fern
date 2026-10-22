@@ -862,7 +862,7 @@ function serve_ref(qual: string, name: string): ast.Expr {
   if (qual.len() == 0) {
     return ast.ExprIdent { name: name, line: 0, col: 0, ty: "" };
   }
-  return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "" }, field: name, line: 0, col: 0, ty: "", path_sep: false, const_read: false };
+  return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "" }, field: name, line: 0, col: 0, ty: "", const_read: false };
 }
 
 // index_of_str returns the position of `want` in `list`, or -1.

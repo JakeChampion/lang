@@ -8720,7 +8720,7 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, env: Env): StepResult {
     if (!receiver_has_method(env.funcs, iv, "iter")) {
       return step_stop(env, v_err("for-in iter is not iterable"));
     }
-    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: held, field: "iter", line: 0, col: 0, ty: "", path_sep: false, const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: held, field: "iter", line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   }
   let base: i32 = env.names.len();
   let step: StepResult = eval_stmt(parser.iterator_loop(f, subject, 0), env.bind("$for_subject", iv));
