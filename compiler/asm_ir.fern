@@ -3919,25 +3919,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jz .Lsarelo_fresh\n");
   s = s.write("    cmpq %rsi, -16(%rax)\n");  // donor cap == wanted slots?
   s = s.write("    je .Lsarelo_ret\n");  // reuse: return token
-  // Mismatch: return the donor block ((cap+3) words at data-16) to its
-  // freelist class, mirroring __fn___fern_arr_dec's free path; an oversize
-  // block (>= 65536 words, outside the freelist range) is left to leak,
-  // matching __fern_alloc's own no-freelist policy for that range.
-  s = s.write("    movq -16(%rax), %rdx\n");  // donor cap
-  s = s.write("    addq $3, %rdx\n");  // block words = cap + 3
-  s = s.write("    leaq -16(%rax), %rcx\n");  // block base
-  s = s.write("    cmpq $65536, %rdx\n");
-  s = s.write("    jae .Lsarelo_fresh\n");
-  // The slots outlive the free, whose event hook and size class may call.
+  // The slots outlive release, including its large-pool and sanitizer paths.
   s = s.write("    pushq %rsi\n");
-  s = hev_free(s, "%rcx", "%rdx");
-  if (s.rc_free_debug) {
-    // Quarantine: the mispaired donor is freed here, so it gets the same
-    // poison-and-decline every other free path applies.
-    s = s.write("    movl $" + rc_poison() + ", -8(%rax)\n");
-  } else {
-    s = freelist_push(s, "%rcx", "%rdx", "%rsi");
-  }
+  s = s.write("    call __fn___fern_arr_dec.r\n");
   s = s.write("    popq %rsi\n");
   s = s.write(".Lsarelo_fresh:\n");
   s = s.write("    movq %rsi, %rdi\n");  // slots = arr_box cap
