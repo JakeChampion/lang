@@ -8961,16 +8961,27 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    b __fern_buf_push_range\n");
     s = s.write(".size __fern_buf_push, .-__fern_buf_push\n");
     // __fern_buf_push_range(x0 = H, x1 = box, x2 = lo, x3 = hi): append
-    // s[lo:hi] with no intermediate string. An empty or inverted range is a
-    // no-op; the bounds are the caller's, as with slice_unchecked. A push
-    // that fits is a leaf with no frame; only a growth saves the operands
-    // across the reserve.
+    // s[lo:hi] with no intermediate string, or trap on a range outside s, as
+    // the interpreters do. A push that fits is a leaf with no frame; only a
+    // growth saves the operands across the reserve.
     s = s.write(".globl __fern_buf_push_range\n");
     s = s.write(".type __fern_buf_push_range, %function\n");
     s = s.write("__fern_buf_push_range:\n");
-    s = s.write("    sub x3, x3, x2\n");
-    s = s.write("    cmp x3, #0\n");
-    s = s.write("    b.le .Lbufrange_done\n");
+    s = s.write("    sxtw x2, w2\n");
+    s = s.write("    sxtw x3, w3\n");
+    s = s.write("    tbz x2, #63, .Lbufrange_lo\n");
+    s = s.write("    b __fern_slice_abort\n");
+    s = s.write(".Lbufrange_lo:\n");
+    s = s.write("    ldr x4, [x1, #8]\n");
+    s = s.write("    cmp x3, x4\n");
+    s = s.write("    b.le .Lbufrange_hi\n");
+    s = s.write("    b __fern_slice_abort\n");
+    s = s.write(".Lbufrange_hi:\n");
+    s = s.write("    subs x3, x3, x2\n");
+    s = s.write("    b.ge .Lbufrange_range\n");
+    s = s.write("    b __fern_slice_abort\n");
+    s = s.write(".Lbufrange_range:\n");
+    s = s.write("    b.eq .Lbufrange_done\n");
     s = s.write("    ldr x4, [x0, #8]\n");
     s = s.write("    add x5, x4, x3\n");
     s = s.write("    ldr x6, [x0, #16]\n");

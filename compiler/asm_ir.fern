@@ -3053,7 +3053,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("alloc_u8") || s.has_need("alloc_bytes") || s.has_need("str_grow")) {
     s = s.need("__fern_alloc_size_abort.c");
   }
-  if (s.has_need("str_grow")) {
+  if (s.has_need("str_grow") || s.has_need("buf")) {
     s = s.need("__fern_slice_abort.c");
   }
   s = emit_trap_stubs(s);
@@ -4225,14 +4225,20 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    xorl %edx, %edx\n");
     s = s.write("    jmp __fern_buf_push_range\n");
     // __fern_buf_push_range(%rdi = H, %rsi = box, %rdx = lo, %rcx = hi):
-    // append s[lo:hi] with no intermediate string. An empty or inverted
-    // range is a no-op; the bounds are the caller's, as with
-    // slice_unchecked. A push that fits keeps no frame: it sets the new
-    // length and tail-calls the copy. Only a growth saves the operands
+    // append s[lo:hi] with no intermediate string, or trap on a range outside
+    // s, as the interpreters do. A push that fits keeps no frame: it sets the
+    // new length and tail-calls the copy. Only a growth saves the operands
     // across the reserve.
     s = s.write("__fern_buf_push_range:\n");
+    s = s.write("    movslq %edx, %rdx\n");
+    s = s.write("    movslq %ecx, %rcx\n");
+    s = s.write("    testq %rdx, %rdx\n");
+    s = s.write("    js __fern_slice_abort.c\n");
+    s = s.write("    cmpq 8(%rsi), %rcx\n");
+    s = s.write("    jg __fern_slice_abort.c\n");
     s = s.write("    subq %rdx, %rcx\n");
-    s = s.write("    jle .Lbufrange_done\n");
+    s = s.write("    js __fern_slice_abort.c\n");
+    s = s.write("    jz .Lbufrange_done\n");
     s = s.write("    movq 8(%rdi), %rax\n");
     s = s.write("    leaq (%rax,%rcx), %r8\n");
     s = s.write("    cmpq 16(%rdi), %r8\n");

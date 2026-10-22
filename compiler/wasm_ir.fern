@@ -9763,14 +9763,14 @@ pub function buf_helpers(needs: string[]): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $al)))\n";
     o = o + "    (i32.store (i32.add (local.get $h) (i32.const 4)) (i32.add (local.get $len) (local.get $sl))))\n";
   }
-  // push_range(H, s, lo, hi): append s[lo:hi] with no intermediate string. An
-  // empty or inverted range is a no-op; the bounds are the caller's, as with
-  // slice_unchecked.
+  // push_range(H, s, lo, hi): append s[lo:hi] with no intermediate string, or
+  // trap on a range outside s, as the interpreters do.
   if (need(needs, "buf_push_range")) {
     o = o + "  (func $__fern_buf_push_range (param $h i32) (param $s i32) (param $lo i32) (param $hi i32)\n";
     o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32)\n";
+    o = o + "    (if (i32.or (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.gt_s (local.get $hi) (i32.load (local.get $s)))) (i32.gt_s (local.get $lo) (local.get $hi))) (then (unreachable)))\n";
     o = o + "    (local.set $n (i32.sub (local.get $hi) (local.get $lo)))\n";
-    o = o + "    (if (i32.le_s (local.get $n) (i32.const 0)) (then (return)))\n";
+    o = o + "    (if (i32.eqz (local.get $n)) (then (return)))\n";
     o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
     o = o + "    (if (i32.gt_u (i32.add (local.get $len) (local.get $n)) (i32.load (i32.add (local.get $h) (i32.const 8))))\n";
     o = o + "      (then (call $__fern_buf_reserve (local.get $h) (i32.add (local.get $len) (local.get $n)))))\n";

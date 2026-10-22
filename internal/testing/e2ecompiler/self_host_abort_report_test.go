@@ -35,6 +35,16 @@ var abortReportCases = []struct{ name, src, cause string }{
 	// A byte view's read is one unsigned compare, so both ends must still trap.
 	{"byte_view_negative_oob", byteViewReadSrc("args().len() - 2"), "fern: array index out of range"},
 	{"byte_view_past_end_oob", byteViewReadSrc("args().len() + 2"), "fern: array index out of range"},
+	// buf_push_range checks its range against the string as a slice does (#12962).
+	{"buf_push_range_past_end", bufPushRangeSrc("1", "args().len() + 8"), "fern: slice range out of bounds"},
+	{"buf_push_range_negative", bufPushRangeSrc("args().len() - 3", "2"), "fern: slice range out of bounds"},
+	{"buf_push_range_inverted", bufPushRangeSrc("args().len() + 2", "1"), "fern: slice range out of bounds"},
+}
+
+// bufPushRangeSrc appends "abc"[lo:hi] to a buffer; args() keeps the bounds
+// from folding.
+func bufPushRangeSrc(lo, hi string) string {
+	return `function main(): i32 { let b: usize = buf_new(8); buf_push_range(b, "abc", ` + lo + `, ` + hi + `); return buf_take(b).len(); }`
 }
 
 const abortInBoundsSrc = `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[1]; }`
