@@ -26,6 +26,8 @@ import "std/array";
 import "std/hex";
 import "std/utf8" as utf8;
 import "core/int";
+import "std/error";
+import "core/cmp";
 
 // Limits — the caps: parts in a body, bytes of one part's content, bytes
 // of the whole body read, and bytes of one part's header block.
@@ -52,6 +54,14 @@ pub enum MultipartError {
   PartHeadersTooLarge(i32),
   MultipartBody(http.BodyError),
 }
+
+pub function (e: MultipartError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for MultipartError {}
+
+impl cmp.Display for MultipartError {}
 
 pub function (e: MultipartError) message(): string {
   match (e) {

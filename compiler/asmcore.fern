@@ -10871,34 +10871,8 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
   });
 }
 
-// check_decl_names rejects a module holding a NAMELESS function, const, trait,
-// trait requirement, struct, enum or type alias, or a parameter written with no
-// type.
-// mod.resources is not walked: parse_module records a resource only when a name
-// follows `resource`, and refuses an `@import` with neither form through a
-// sentinel.
-//
-// The self-host parser is deliberately permissive — `Par` carries no error
-// channel, so a token it cannot use is skipped and the drivers' gates catch the
-// consequences. For a declaration NAME that leaves no consequence to catch:
-// `peek_ident` returns "" for a keyword, and parse_func_decl then returns
-// a FuncDecl with an empty name. The module parses "successfully" and the
-// nameless function is simply carried through the whole pipeline.
-//
-// That is not hypothetical. `function use()` — `use` is in the lexer's keyword
-// set — produced exactly this, and the empty-named function it left behind cost
-// two sessions of #3457 a confidently WRONG bisection: probe programs that were
-// silently malformed were read as evidence about the IR subset, and the
-// conclusion was written into docs/SELFHOST-AST-RETIREMENT.md before anyone
-// noticed the eligibility report listing a function called "". The native
-// parser rejects the same source properly (`expected "Ident", got "use"`), so
-// this is a self-host-only blind spot, and the divergence is what made it
-// survive: every native oracle agreed the program was invalid while the
-// self-host pipeline reported verdicts about it.
-//
-// A gate rather than a parser error because the parser has nowhere to put one;
-// this is the same shape as check_call_arity / check_undefined_calls, and it
-// runs in the same place.
+// The parser reports malformed source at the token that failed.
+// This fallback refuses nameless declarations in modules from other producers.
 pub function check_decl_names(mod: parser.Module): util.Diag[] {
   let errs: util.Diag[] = [];
   let i: i32 = 0;
@@ -10921,7 +10895,6 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         fix: None,
       });
     }
-    errs = untyped_param_errs(mod.funcs[i], errs);
     i = i + 1;
   }
   for td in mod.trait_decls {
@@ -10932,7 +10905,6 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
       if (tm.name.len() == 0) {
         errs = errs.append(util.Diag { related: [], length: 0, code: "P001", message: parser.malformed_fn_decl_message(), line: tm.line, col: tm.col, fix: None });
       }
-      errs = untyped_param_errs(tm, errs);
     }
   }
   let si: i32 = 0;
@@ -10965,7 +10937,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
 // order, so the first is the earliest mistake, as on native (#12773):
 //
 // - The parser's ExprUnknown / StmtUnknown sentinels.
-// - Nameless declarations and untyped parameters (check_decl_names).
+// - Nameless declarations from other module producers (check_decl_names).
 // - Statements outside any declaration in a module that declares `main`
 //   (check_top_level_stmts).
 //
@@ -11023,24 +10995,6 @@ pub function refuse_parse_errors(mods: parser.Module[]): boolean {
 // parser.malformed_fn_decl_message does.
 function malformed_type_decl_message(kw: string): string {
   return "malformed " + kw + " declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name)";
-}
-
-// untyped_param_errs reports each parameter of `fd` written without `: TYPE`,
-// which parse_param records with an empty type.
-function untyped_param_errs(fd: parser.FuncDecl, errs: util.Diag[]): util.Diag[] {
-  let out: util.Diag[] = errs;
-  for param in fd.params {
-    if (param.type_name.len() == 0) {
-      out = out.append(util.Diag {
-        length: 0,
-        related: [],
-        code: "P001", message: "parameter \"" + param.name + "\" of \"" + fd.name + "\" has no type: expected \":\" after its name",
-        line: fd.line, col: fd.col,
-        fix: None,
-      });
-    }
-  }
-  return out;
 }
 
 // check_top_level_stmts refuses a statement written at module level in a module

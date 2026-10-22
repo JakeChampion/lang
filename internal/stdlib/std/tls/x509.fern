@@ -13,6 +13,8 @@
 import "core/int";
 import "std/crypto/ecdsa";
 import "std/tls/der";
+import "std/error";
+import "core/cmp";
 
 // Algorithm — a signature algorithm a certificate is signed with.
 pub enum Algorithm {
@@ -94,6 +96,14 @@ pub enum X509Error {
   Der(der.DerError),
   Malformed(string),
 }
+
+pub function (e: X509Error) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for X509Error {}
+
+impl cmp.Display for X509Error {}
 
 pub function (e: X509Error) message(): string {
   match (e) {
