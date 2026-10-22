@@ -1,2 +1,8 @@
-@noinline function asset(): u8[] { return __fern_asset_bytes("large.bin"); }
-function main(): i32 { return asset().len() % 7; }
+@noinline
+function asset(): u8[] {
+  return __fern_asset_bytes("large.bin");
+}
+
+function main(): i32 {
+  return asset().len() % 7;
+}

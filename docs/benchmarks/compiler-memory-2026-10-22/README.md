@@ -15,3 +15,21 @@ registries, and complexity gate also pass.
 
 The native-memory-codegen and packed-byte-constants archives retain their
 separate source scopes, profiles, output hashes, and complete validation records.
+
+The combined bootstrap's stages two and three match at 14,159,904 bytes, SHA-256
+4cc1b892988e595ae827f952ed4701b4c5a3d48bbf33315ec6df14d31c4fd4f2.
+The broad runtime, profiler, constant-data, and call-ABI checks pass in 143.701
+seconds. All eleven strict size rows pass with the recorded baselines. The
+report combines the bootstrap size and ten stock-driver builds. The workspace
+restart interrupted the stock-driver run after seven rows. The last three builds
+pass in 27.690 seconds.
+
+The combined profiling compiler uses the same frozen producer as the byte-array
+control. A 1 MB byte asset uses 46,480 KiB peak RSS and takes 0.194 seconds.
+The text asset uses 29,824 KiB and takes 0.135 seconds. All four assembly outputs
+match the byte-array control exactly. The profile directory contains the raw
+profiles, commands, measurements, and hashes.
+
+The `.fern` files are formatted copies. Their `.fern.input.gz` neighbors retain
+the exact measured inputs. Decompress those inputs over the copies to reproduce
+a run. `measured-inputs.json` records the SHA-256 of each version.

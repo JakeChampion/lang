@@ -48,6 +48,11 @@ behavior separately.
 
 ## Reproduce
 
+The `.fern` files are formatted copies for inspection. The `.fern.input.gz`
+files preserve the exact measured sources. Decompress them over the copies to
+reproduce each run. The combined record's `measured-inputs.json` identifies both
+versions by SHA-256.
+
 The assets and profiles use gzip. Decompress the assets into an `assets`
 directory beside the source fixtures. Decompress each `.pprof.gz` before use
 with `go tool pprof`. The assembly control files are compressed copies of the
