@@ -2170,22 +2170,17 @@ impl Json for string {
 
 // Array serialiser: a `T[]` whose element type is `Json` renders as a JSON
 // array `[e0,e1,…]`. Element-polymorphic + method-level bounded, so it works
-// for arrays of scalars, strings, and `@derive(Json)` structs/enums. On the
-// native compiler the monomorphiser substitutes `T` and re-checks the clone;
-// `xs[i].to_json()` then dispatches to the element type's impl (the
-// cross-module trait-method visibility this relies on landed in #2774). On
-// the self-hosted compiler the call site is intercepted (the IR/AST emit
-// special-cases `arr.to_json()` on a known array element type) so the erased
-// generic body never has to dispatch on `T`.
+// for arrays of scalars, strings, and `@derive(Json)` structs/enums. The
+// monomorphiser folds the method into a free generic and clones it once per
+// element type (`__arrm_`, compiler/parser.fern); `xs[i].to_json()` then
+// dispatches to the element type's impl (the cross-module trait-method
+// visibility this relies on landed in #2774).
 pub function (xs: T[]) to_json[T: Json](): string {
   // Local growable u8[] accumulation (#4379), like json_encode's JArray arm:
   // the old `out = out + xs[i].to_json()` recopied the whole encoded-so-far
   // prefix on every element — O(array²). Every append targets the local `out`,
   // so it grows in place (amortized O(1)); the per-element bytes are inlined.
-  // (On the self-hosted compiler this body is dead — `arr.to_json()` call sites
-  // are intercepted by lower_array_to_json, whose codegen carries the matching
-  // rewrite — but the native monomorphiser compiles it, so it must stay O(n)
-  // and lower cleanly.) Byte-for-byte identical output.
+  // Byte-for-byte identical output.
   let out: u8[] = [];
   out = out.append(91 as u8);  // '['
   let i: i32 = 0;

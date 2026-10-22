@@ -79,8 +79,9 @@ gated by every socket, serve and fetch test that was already on the
 builtins, on every backend.
 
 The per-request gates of #9853's exit criterion A: `TestBumpPerRequest`
-(the Go compiler, x86-64 and arm64) and `TestSelfHostBumpPerRequest` (the
-self-host compiler, x86-64) send 100k requests on one keep-alive connection
+(built through the `fern` launcher, x86-64 and arm64) and
+`TestSelfHostBumpPerRequest` (the self-host CLI under `FERN_STRICT_IR=1`,
+x86-64) send 100k requests on one keep-alive connection
 to a handler that answers `__heap_bump_bytes()`, and the figure a tenth of
 the way in must be the figure at the last request (under qemu the arm64 leg
 sends 10k). They hold the bump high-water mark still; they do not count
@@ -175,12 +176,13 @@ handlers, and the platform is found by type in any position.
 `TestCheckRefusesAmbientEffectInHandler` / `TestCheckAllowsEffectsThroughTheBag`
 in `cmd/fern` pin that a bare `-check` runs it (it is target-independent) and
 what the message carries: the chain and the platform method to call.
-`TestSelfHostAmbientEffectDifferentialX86_64` runs both compilers over the same
-programs and wants the same verdict, site, handler, builtin and capability from
-each; the chain is not compared, since the two walks order callees differently.
-What nothing gates: a lambda that takes a `Platform` is not a handler on either
-compiler, and the self-host resolves a method call by name alone, so a
-same-named method on another type is followed there and not by native.
+`TestSelfHostAmbientEffectDifferentialX86_64` runs the self-host checker and
+the Go oracle's `-check` over the same programs and wants the same verdict,
+site, handler, builtin and capability from each; the chain is not compared,
+since the two walks order callees differently.
+What nothing gates: a lambda that takes a `Platform` is not a handler in either
+checker, and the self-host resolves a method call by name alone, so a
+same-named method on another type is followed there and not by the oracle.
 
 ### Experiment 3: the HTTP codec as a `fip` plane
 
@@ -346,7 +348,7 @@ hello on a second connection is answered inside the upstream's delay, two
 such handlers on two connections finish inside one delay, two requests
 pipelined on one connection are answered in order, and a client that goes
 away mid-wait leaves the worker serving before and after its upstream
-answers. The Go compiler keeps the blocking fallback, so only the self-host
+answers. The interpreter keeps the blocking fallback, so only the compiled
 build is held to it.
 `TestSelfHostServeStreamBodies` (x86-64, and `…Arm64`) is the streamed
 request body's gate (`e2eharness.StreamBodiesServerSource`,
@@ -356,8 +358,8 @@ and then the sequential checks: a chunked upload with a request pipelined
 behind it answered in order, a stalled body answered 408, a chunk past the
 cap answered 413, `Expect: 100-continue` invited only when the handler
 reads and never by one that refuses, a client gone mid-body leaving the
-worker serving. `TestServeStreamBodiesSequentialInterp` holds the Go
-compiler's blocking fallback to the sequential checks alone.
+worker serving. `TestServeStreamBodiesSequentialInterp` holds the
+interpreter's blocking fallback to the sequential checks alone.
 `TestSelfHostTaskScheduler` is the suspension pass's gate
 (`docs/NET-P3-SUSPENSION-PLAN.md` §4, slice 2): `e2eharness.TaskSchedulerProgram`
 parks a task twice, three calls deep, inside a loop and a branch, with a
@@ -423,16 +425,16 @@ opened, so they say nothing about what a primitive reports at runtime.
 exercise the public request parser against an unbounded decimal oracle.
 The corpus includes lengths that wrap to zero or small positive i32 values,
 leading zeros, incomplete bodies, duplicate Content-Length, Transfer-Encoding,
-and acceptance/rejection at the body limit. It runs in the interpreter,
-both native compiler families and WebAssembly; the self-host legs require
+and acceptance/rejection at the body limit. It runs in the interpreter, on
+x86-64, arm64 and arm64 Darwin, and on WebAssembly; the self-host legs require
 complete semantic lowering. The decimal parser must reject overflow before
 multiplication, so the later body limit never sees a wrapped length.
 
 ## Native compatibility poll storage
 
-`TestPollScratchReclaimed` checks the Go bootstrap compiler's flat and SSA
-poll helpers on x86-64 Linux and ARM64 Linux.
-`TestArm64DarwinNativePollScratch` covers the flat Darwin helper on Apple
+`TestPollScratchReclaimed` checks the poll helpers, built through the `fern`
+launcher, on x86-64 Linux and ARM64 Linux.
+`TestArm64DarwinNativePollScratch` covers the Darwin helper on Apple
 Silicon. Each exercises empty, negative and invalid descriptors, a timeout,
 readiness and first-index selection. Duplicate descriptors must return the
 lowest index. A failed registration must not hide a ready descriptor or block
@@ -446,7 +448,7 @@ HTTP server.
 `TestWasmPollGuestStorage` and `TestSelfHostWasmPollGuestStorage` exercise
 32 calls per host case through the production poll helpers and allocator.
 Cases include empty results, first-ready indices zero and one, multiple
-returned indices, and timeout-only readiness. Both compilers' finite-wait
+returned indices, and timeout-only readiness. Both legs' finite-wait
 cases require exactly one drop of the created timer, including handle zero;
 caller pollables remain borrowed. Repeated calls must stop growing the heap.
 `TestWasmPollLifecycleCensus` and `TestSelfHostWasmPollLifecycleCensus` also
@@ -467,9 +469,9 @@ the compiler to produce every reachable declaration through semantic lowering,
 and require equal allocations/frees with zero live bytes. Linux x86-64, ARM64
 and native Darwin run the same fixture; QEMU is permitted for correctness.
 `TestHTTPHandlerCensus`, `TestArm64DarwinHTTPHandlerCensus` and
-`TestWasmHTTPHandlerCensus` are the Go compiler's twins over the same fixture
-(x86-64 and arm64, native Darwin, and real
-wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
+`TestWasmHTTPHandlerCensus` run the same fixture built through the `fern`
+launcher (x86-64 and arm64, native Darwin, and real wasi:sockets), the
+bounded-serve exit criterion of #9853.
 
 `TestSelfHostServeShutdownDrainsAndExitsClean`,
 `TestSelfHostServeShutdownAbortsAtDrainDeadline`,
@@ -504,9 +506,9 @@ and a client-side check, driven by the tests in
 `internal/testing/e2ecompiler/self_host_serve_test.go`; `internal/testing/e2e` keeps only
 the interpreter legs.
 `TestSelfHostServeInitProvidedState`, with `TestSelfHostServeHandleOnly`,
-pin the `main` both compilers synthesise for a handler program that
-writes none (`flatten.with_handler_main` in the self-host, the checker
-in native): it serves on `PORT` and threads `init`'s state.
+pin the `main` the compiler synthesises for a handler program that
+writes none (`flatten.with_handler_main`; the Go checker synthesises the
+same for the interpreter): it serves on `PORT` and threads `init`'s state.
 `TestSelfHostServeResultHandler` and
 `TestSelfHostServeStatefulResultHandler` pin the handler that answers a Result: the
 compilers wrap it so `?` fails into an RFC 9457 problem and the state
@@ -517,14 +519,14 @@ hook: after two requests and SIGTERM the hook reports "sigterm" and the
 count; `TestSynthesisedHandleMainWiresShutdown` and
 `TestSynthesisedHandleMainTakesInitOptions` (`internal/check/checker`) and
 `TestSelfHostHandlerStateX86_64` pin the wiring, the `init(plat)` and
-`(serve.Config, S)` shapes, and the E075 pairing on both compilers. The
+`(serve.Config, S)` shapes, and the E075 pairing in both checkers. The
 synthesised main serves under the supervisor, so every handler-program
 server test above runs its workers through `serve.supervise*`; the
 stateful ones answer `workers: 1` from `init` so the count each request
 sees is deterministic. On wasm32-wasi, which has no processes, the
 synthesis serves single-process: `TestSynthesisedHandleMainFollowsTargetProcesses`
 (`internal/check/checker`), `TestHandlerKindsMatchWhatTheCompilerAccepts` and
-`TestSelfHostWasiCliHandlerProgramBuilds` pin that on both compilers.
+`TestSelfHostWasiCliHandlerProgramBuilds` pin that in both front ends.
 `TestServeStreamingBodyInterp` and `TestSelfHostServeStreamingBody` pin
 the produced bodies: a three-million-byte
 file streamed whole under its length on a keep-alive connection, a chunk
@@ -596,11 +598,10 @@ read as a leak. Blind to the idle timeout, which no client here waits out.
 `TestReactorFloorWasm` runs `e2eharness.ReactorProbe` under the leak
 census: its would-block and end-of-stream reads are the empty lists the
 host lowers through `cabi_realloc`, and a zero-size request answered with
-a block from the allocator was a count nothing gave back, on both
-compilers' wasm runtimes (#10608). The natives take no such list and
-their legs stay count-free.
+a block from the allocator was a count nothing gave back (#10608). x86-64
+and arm64 take no such list and their legs stay count-free.
 `TestLeakCheckPairPayloadBorrowedArgX86_64` and its arm64 twin run std/http's
-header-loop shape under the natives' leak census: a pair-form match payload
+header-loop shape under the x86-64 and arm64 leak census: a pair-form match payload
 handed to a callee that only borrows it (`HeaderMap.append`, which retains
 the value it keeps) must still be released by the arm (#10669).
 `TestWasmClockCensus` runs each clock builtin, and the date formatter
@@ -615,10 +616,9 @@ ephemeral port and the same response and ownership assertions. External
 Preview 1 adapter stacks use separate memory pages, outside the Fern heap
 census; this does not claim zero live WebAssembly linear memory.
 
-The native handler fixture catches missing builtin contracts or ambiguous
-deadline operand widths that otherwise move the handler back to AST ownership.
-It does not establish bootstrap compiler leak freedom, zero allocations per
-request or throughput.
+The x86-64 and arm64 handler fixture catches missing builtin contracts or
+ambiguous deadline operand widths, which the semantic lowering refuses. It
+does not establish zero allocations per request or throughput.
 
 ## WASI socket lifecycles
 
@@ -714,7 +714,7 @@ measurements. Listen failure cleanup is not fault-injected by these probes.
 TCP socket, shut down its write half, and require 32 consecutive sends to
 return `-EPIPE` without terminating the process. Their Darwin counterparts
 run on native Apple Silicon. Linux covers x86-64 and ARM64, including QEMU,
-with bootstrap flat/SSA and the strict-IR self-host production driver.
+through the `fern` launcher and the strict-IR self-host production driver.
 Empty, inline, heap, and 4097-byte payloads also cover successful sends,
 exact received bytes, and invalid-descriptor errno. These tests do not yet
 exercise pending-write buffers or nonblocking backpressure.
@@ -727,9 +727,9 @@ empty, 1-byte, 7-byte and 4097-byte messages. The same corpus checks failed
 receives and nonpositive receive limits. Every case requires exactly one
 allocator report, equal allocation and free counts, and zero live bytes.
 
-Linux x86-64 and ARM64 run through bootstrap flat/SSA and strict-IR
-self-host compilation, including QEMU. `Arm64DarwinTCPLifecycleCensus`
-tests cover native Darwin with both compilers. These tests measure primitive
+Linux x86-64 and ARM64 run through the `fern` launcher and the strict-IR
+self-host driver, including QEMU. The `Arm64DarwinTCPLifecycleCensus`
+tests cover native Darwin through both. These tests measure primitive
 ownership; they do not prove bounded HTTP handlers, zero-allocation framing,
 or native throughput. The Wasm lifecycle census is a separate gate.
 
@@ -858,8 +858,8 @@ what caught it.
 Since 2026-09-29 the drivers those suites run are built by the pinned
 stage0 self-host compiler (`bootstrap/stage0.lock`, resolved through
 `bootstrap/bootstrap.sh stage0`; `internal/testing/e2eharness/self_host_compiler.go`),
-not by the Go x86-64 backend, so the suites need no native backend to build
-what they run. A driver is the current source compiled by the pin, the way
+not by Go, so the suites need no Go-built compiler to build what they run.
+A driver is the current source compiled by the pin, the way
 stage1 is under `make bootstrap`, so every driver is held to what the pin can
 compile — a driver using a newer construct fails to build here, and the answer
 is the pin refresh `docs/BOOTSTRAP.md` describes. What these runs prove is the
@@ -893,15 +893,15 @@ rather than the IR path.
 
 | Gate | Proves | Blind to |
 |---|---|---|
-| `make check-sources` (lint job on every PR; check-sources.yml on every push to main) | The self-host sources and every stdlib module (each as a standalone import — `scripts/stdlib_check.sh`, the CLI twin of `TestStdlibModulesImportStandalone`) type-check under the native `fern -check`. Every self-host lane needs this but asks it only implicitly, by building a driver, so a type error surfaced as a build-step failure in a job named for something else — and a merge race landed an unbuildable main with every contributing PR green (#7317). The main-push leg reports that against the merge that caused it | Whether anything RUNS — no codegen, no link, no execution. The SELF-HOST checker's verdict: this is native's, and the self-host build path filters through `filter_build_gate`, so the two can disagree by design (#7273 / #4346) |
+| `make check-sources` (lint job on every PR; check-sources.yml on every push to main) | The self-host sources and every stdlib module (each as a standalone import — `scripts/stdlib_check.sh`, the CLI twin of `TestStdlibModulesImportStandalone`) type-check under `bin/fern -check`. Every self-host lane needs this but asks it only implicitly, by building a driver, so a type error surfaced as a build-step failure in a job named for something else — and a merge race landed an unbuildable main with every contributing PR green (#7317). The main-push leg reports that against the merge that caused it | Whether anything RUNS — no codegen, no link, no execution |
 | `TestSelfHostFixtureSourcesCheck` (rides `make check-sources`) | The Fern fixtures `internal/testing/e2ecompiler` embeds in Go string literals still type-check. They are assembled at test time and live in no `.fern` file, so the line above cannot see them: a field added to a struct they name -- `ssasem.Func`, `ssa.SFunc`, `ssa.SBlock`, `ssa.SInst`, `semrecords.Record` -- was clean locally and E005 on every self-host shard, a CI round per attempt on the longest lane (#9805). 9 s, and the failure names the Go function that built the fixture | Whether a fixture ASSERTS the right thing. It compiles them and stops; the owning test still owns the behaviour |
 | `scripts/selfhost_driver_check.sh` (rides `make check-sources`) | That every one of the 46 drivers (`compiler/playground_run.fern` and `compiler/drivers/*_run.fern`) type-checks, not just the compiler whose modules they import. They are outside `fern.fern`'s import tree, so a deleted or renamed function one of them still calls is clean under `-check compiler/fern.fern` and red only where a test builds that driver — #9969 deleted `semsource.modes_differ` with `semsource_census_run` still calling it, and four `internal/testing/e2ecompiler` tests failed for it forty minutes into a CI round. Whole-program per driver, seconds in total. `playground_run` and `semsource_census_run` get `-embed internal/stdlib` because they call `__fern_assets()`, which is otherwise an error for a reason that is not a type error — a gate that cries wolf gets switched off. The driver COUNT is asserted, not printed: a glob that matched nothing would otherwise report success | Whether a driver RUNS or measures the right thing, which is its own test's. And the same class of gap outside this glob: a `.fern` file that is neither in `fern.fern`'s tree nor named `*_run.fern` is still invisible here |
 | `internal/testing/e2e` fixtures (`TestFernFixtures`) | The interpreter gives each case its expected answer, the checker rejects each `expected.error` case and lowering each `expected.lowering-error` one | Any compiled target: the `TestFernFixturesSelfHost*` legs run the corpus through the self-host compiler. Anything about *how much* a program allocated |
 | `TestFernFixturesSelfHost{Wasm,X86_64,Arm64}` (`FERN_SELFHOST_FIXTURES=1`) | The self-host compiler gives each case the fixture's expected exit and output, on all three emitted targets. Both Linux legs produce the finished binary by themselves (emit + assemble + link in-process), so they are also the gates on `arm64_native.fern` and `x86_native.fern`. NOTE what that does NOT gate: an assembler that DROPS an instruction still emits a plausible binary, so a green leg is not evidence the assembler is complete — `rep stosq` was silently ignored at 63,637 sites and this leg stayed green on the programs that did not depend on zeroed memory. The gate for THAT is a decoded-instruction differential against the same program built via `-target x86-64-linux -emit asm` and linked by gcc | Values >= 126 on the wasm leg, which WASI cannot express — the x86-64 and arm64 legs check those. Each leg's `testdata/selfhost-<target>-known-divergences.txt` rows, which are listed rather than fixed |
 | `internal/testing/e2ecompiler` | The self-host compiler is right on programs outside its own sources | Whole-program self-compilation; memory |
 | `fern -lsp` (`internal/testing/e2ecompiler/self_host_lsp_test.go`, `self_host_lsp_workspace_test.go`, `self_host_lsp_hover_test.go`, `self_host_lsp_complete_test.go`, `self_host_lsp_refs_test.go`; the playground's `-lsp` mode in `self_host_playground_overlay_test.go`, the shim suite and the playground Playwright suite) | That the language server publishes exactly `-check`'s findings for a document — every one in the document, at its position in UTF-16 units, with its code, severity and message, and nothing else — over every `expected.error` conformance case (`TestSelfHostLSPPublishesCheckFindingsX86_64`, one long-running server for the whole corpus). That on a curated corpus it places diagnostics, follows an editing session (publishing only on change, clearing on close) and answers formatting exactly as written out as data. That in workspace mode an open document stands in for its file wherever an import reaches it (a sibling, a manifest dependency), and a check publishes what it found in every open module it loaded, at that module's positions, leaving an open document outside its imports alone. That hover and definition answer their hover, definition and workspace cases — written out as data, in UTF-16 units, through a literate document's line map, into another module's file, and never out of a sibling module at the same position. That completion, signature help, document symbols and inlay hints answer their cases, written out as data, plus members after a `.`, a call that does not parse, a literate document and an import. That references, rename, semantic tokens and code actions answer their cases — a variant's references staying in its enum and semantic tokens covering only the requested file among them — written out as data, across modules, inside nested patterns, in a literate document and in UTF-16 units, and that each fix the checker attaches is published and applied. That its lifecycle, error answers, exit codes and framing are the spec's. And that the playground driver's `-lsp` serves the same sessions from its embedded stdlib, byte for byte the same hosted in wasm with no preopens as natively, and that the page shows its diagnostics, hover and completion in Chromium. Mutating the UTF-16 conversion or the per-file attribution fails the subtests that should catch them | Whether the findings are RIGHT: they are the self-host checker's, so its gaps reach the server unchanged, and the checker differentials own them. Anything an editor sends that the tests do not: incremental sync (the server advertises full). An open module whose own imports changed is refreshed only by the next check that loads both, not when the import changes. Hover on a shape the cases leave out (a trait method, a type reached through a `pub use` re-export). Which completion bindings are in scope at the cursor: every binding of the enclosing function is offered |
-| `TestSharedVariantNameEmitIsDeterministic`, `TestCrossModuleVariantOrdinalEmitIsDeterministic` (`internal/testing/e2e`) | That a variant name two enums or two modules share resolves the same way on every compile: the self-host's assembly for each program is byte-identical across 32 compiler processes. An arm resolves against its scrutinee and a constructor within its own module, never by a program-wide scan whose order can vary; native's map-ordered scan answered 79 or 69 between compiles of identical source (#6944), and a single compile-and-run agrees with the oracle often enough to look green | Whether the resolution is RIGHT, which the answer tests beside them check. Order dependence in any other shape |
-| `internal/testing/coreutils` (lane: `test-coreutils`, four shards) | That `coreutils/*.fern` matches GNU coreutils 9.x byte for byte — stdout, stderr, exit status or signal — over a corpus of invocations, with GNU as the ORACLE rather than golden files, so a case cannot record a wrong expectation. Its `TestSelfHostCoreutils*` leg then compiles every utility with the SELF-HOST compiler under `FERN_STRICT_IR=1` and runs the same corpus against those binaries, requiring them to agree with the native build: the only gate that compiles this tree both ways, and the one that found `Writer.close()` swallowing its error (#8569) and the getopt cursor's tuple refusing to lower (#8407) | `--help` / `--version` TEXT and `cksum --debug` for the CRC, which are ours by design (`docs/COREUTILS.md`): the harness gates the first two's exit status, stream and shape instead, and the corpus holds everything about the third but the one line only the CRC prints. Anything not in the corpus — a case is one invocation, so an option nobody wrote a case for is untested. Missing GNU coreutils is a FAILURE, not a skip, so a green run means the oracle really ran. Until #9645 it ran on LINUX ONLY: the `macos-15` lane now runs the same corpus there against a from-source 9.12, minus the `TestSelfHost*` leg, which is what the thirteen `target_os() == "darwin"` branches and the hundred utilities with no Darwin branch at all had no oracle for |
+| `TestSharedVariantNameEmitIsDeterministic`, `TestCrossModuleVariantOrdinalEmitIsDeterministic` (`internal/testing/e2e`) | That a variant name two enums or two modules share resolves the same way on every compile: the self-host's assembly for each program is byte-identical across 32 compiler processes. An arm resolves against its scrutinee and a constructor within its own module, never by a program-wide scan whose order can vary; the Go compiler's map-ordered scan answered 79 or 69 between compiles of identical source (#6944), and a single compile-and-run agrees with the oracle often enough to look green | Whether the resolution is RIGHT, which the answer tests beside them check. Order dependence in any other shape |
+| `internal/testing/coreutils` (lane: `test-coreutils`, four shards) | That `coreutils/*.fern` matches GNU coreutils 9.x byte for byte — stdout, stderr, exit status or signal — over a corpus of invocations, with GNU as the ORACLE rather than golden files, so a case cannot record a wrong expectation. Its `TestSelfHostCoreutils*` leg then compiles every utility with the SELF-HOST compiler under `FERN_STRICT_IR=1` and runs the same corpus against those binaries, requiring them to agree with the `fern` launcher's build: the only gate that compiles this tree both ways, and the one that found `Writer.close()` swallowing its error (#8569) and the getopt cursor's tuple refusing to lower (#8407) | `--help` / `--version` TEXT and `cksum --debug` for the CRC, which are ours by design (`docs/COREUTILS.md`): the harness gates the first two's exit status, stream and shape instead, and the corpus holds everything about the third but the one line only the CRC prints. Anything not in the corpus — a case is one invocation, so an option nobody wrote a case for is untested. Missing GNU coreutils is a FAILURE, not a skip, so a green run means the oracle really ran. Until #9645 it ran on LINUX ONLY: the `macos-15` lane now runs the same corpus there against a from-source 9.12, minus the `TestSelfHost*` leg, which is what the thirteen `target_os() == "darwin"` branches and the hundred utilities with no Darwin branch at all had no oracle for |
 | Formatter corpus properties (`internal/syntax/printer/corpus_test.go`, plus `TestSelfHostFmtCorpusParityX86_64`) | That `-fmt` does not rewrite the program. Five properties over all 425 `.fern` files under examples/ + internal/stdlib rather than a fixture list: the formatted output still TYPE-CHECKS (where the input did), it re-parses to the same AST modulo position (the structural one — the only property that sees data loss whose output still compiles, e.g. `Box[i64]` dropping to `Box[i32]`), formatting is idempotent, every comment stays above the same line of code (`TestFormatCorpusPreservesCommentAnchor`), and a blank line between two comments survives (`TestFormatCorpusPreservesCommentBlanks`). The self-host leg adds byte-parity with native over the same corpus, against an allowlist that is exact in both directions. `TestSelfHostFmtWrittenFormViaInterp` states the structural + byte-parity + type-check properties for the SELF-HOST formatter over the fixture cases without a cross toolchain, by driving `fern.fern` through the native `-interp` — every other self-host `-fmt` gate is suffixed `X86_64` and skips on any other host, so the #6802 shapes were unreachable from a dev machine while being reproducible there in ~0.35 s | A comment shape the corpus has no instance of: the two comment properties hold over what the corpus contains, so a placement rule for a shape nobody wrote yet is pinned only by its fixture row in `comment_attachment_test.go` and `fmtParityCases` |
 | Self-host IR verifiers (`TestSelfHostIRVerify{Structure,Stack,Fip,Rc}`, the compile-path gate, and `TestSelfHostIRVerifyProvidedCorpusClean`'s sweep) | The op stream the self-host backends are handed is WELL-FORMED: local indices inside the frame, balanced scopes, in-range branch depths, call arity (`irverify.fern`), and that every op finds its operands, every scope leaves the stack where it found it, and nothing is left dangling at the function's end (`irverifystack.fern`). Its distinguishing value is that it is not self-referential — it does not care whether the compiler reproduces itself, only whether what it emitted can be lowered at all. It runs on the compile path under `FERN_IR_VERIFY=1` or `=quiet` (`irverifygate.fern`), which is where the arity half gets a real signature index; the test harness sets `quiet` for every self-host compile, and a plain compile skips it | Whether the ops MEAN the program: a perfectly well-formed stream can compute the wrong answer. Operand KINDS and widths, which the IR does not carry. Any function that did not lower, which has no IR to verify. Any op outside the stack pass's arity table, which the compile-path gate skips without a word and `-verifyprovided`'s corpus sweep COUNTS — it holds coverage of the typed lowering's bodies at 100%, so a new op shows up there rather than as an unchecked function. The ownership half (`irverifyrc.fern`) checks two things: that a reuse site's uniqueness gate, allocation token and decline release all name ONE donor, and that no donor's box is claimed by two sites reachable from each other without a rebind between (sibling `if` arms are exclusive and are deliberately not reported). It says nothing about whether the counts around a site balance, which needs callee ownership signatures (#7786). |
 | Emitted-RC certifier (`compiler/rccertify.fern`; `TestSelfHostRcCertifyCases`, the physical-RC driver's `certifier-refuses-missing-retain`, `TestSelfHostRcCertifyMemo`, and every self-host compile) | That the reference counting the physical lowering EMITS balances, read off the lifted SSA of each function with nothing of the plan: every fresh unit (an allocation, an owned call result, a counted parameter, a child read off a box the frame proved unique) is released, moved, stored or returned exactly once on every path, and nothing releases a borrow. It is the check `ssaunits.verify_planned` cannot be: the replay proves the abstract plan, this proves what ssarc made of it, so an omitted retain, a release on the wrong arm or a child released outside its unique region is a compile refusal (exit 5) naming the function and the value. `FERN_RC_CERTIFY=report` prints every finding and a per-function census (tracked and unproved values) instead of refusing; `FERN_RC_CERTIFY_DUMP=<fn>` prints the SSA it read, under the report mode and with a refusal, and a trailing `*` (`semsource__*`) prints every function with that prefix. Runs in EVERY compile, through a memo (`compiler/rcmemo.fern`) of the functions each target has certified clean, keyed by a digest of the function's ops, its contract and its callees', kept under `$FERN_CACHE_DIR`, `$XDG_CACHE_HOME/fern` or `~/.cache/fern` in `certified/`; a function the memo knows is not certified again, so a steady-state compile pays the digest and nothing else. `FERN_RC_CERTIFY_MEMO=0` turns the memo off, `FERN_RC_CERTIFY_MEMO=DIR` moves it, and `FERN_IR_VERIFY=1` adds a `memo hits=… misses=…` line. Record: `docs/rc-log/2026-10-11-emitted-rc-certifier.md` | A count the paths DISAGREE on where no reuse token the function branches on decides it: a join a token decides is walked under each of the token's values (the function pruned to the paths that value selects, from the token's block on, seeded with the rows the walk without an assumption settled; `docs/rc-log/2026-10-13-d-the-certifier-walks-under-each-tokens-value.md`), and what no tested token decides is left UNPROVED (the census counts it), not reported, and a leak of exactly that shape is only visible to `FERN_LEAKCHECK`. Whether a value's TYPE is what the lowering thinks: it reads the lowering's own marks (`ir.counted` on the loads and producers of references) and a producer left unmarked is a word it does not count, caught only when something releases it ("spent a word nothing counts"). Runtime helpers' bodies are certified by name-derived contracts (`rcsigs.fern`, `rccertify.Abis.lookup`), so a helper that consumes an argument the table calls borrowed is a false finding there, and the reverse a hole. An async body that re-enters through the task stack (`__fern_task_mode`) is skipped outright, census-visibly: its tokens come back as popped words. A deliberately broken program (the sanitizer tests' planted double frees) must opt out with `FERN_RC_CERTIFY=0` to reach the runtime at all. A COLD compile pays the certifier in full (the walks under each token's value are most of it: 30 s against 20 s for the compiler compiling itself on the 4-core container), and a memo written by an older certifier is read by a newer one unless `rcmemo.version` was bumped with the change: a model change that does not bump it is checked only against functions whose lowering also changed, until the file is deleted. The memo is one file per target rewritten whole, so two compiles writing it at once can lose each other's additions (never a wrong verdict: a torn line matches nothing) |
@@ -911,14 +911,14 @@ rather than the IR path.
 | `TestSharedLibX86BusyFlag` | That a `-shared` object's busy flag aborts two threads inside its code at once (status 134 and the report, which takes the whole process down), and lets threads that take turns, and a C callback entering an export on the same thread, run | The arm64 entries at run time: only their structure is checked on an x86-64 host |
 | conformance leak census (`TestConformanceLeakCensusX86_64`) | That no conformance fixture leaks MORE than its pinned count of unpaired allocations (`internal/testing/e2e/testdata/conformance-leak-census.txt`): every runnable fixture is compiled by the self-host with the heap tracer on, run, and its `rctrace` records paired by pointer, so an alloc with no matching free is memory the program never gave back on the path it took. **Run it on any change to the self-host's rc lowering** (`ssaunits`, `ssarc`): it is the only gate that measures leaks over the whole conformance corpus. It also holds a crash floor: a fixture killed by a signal fails | WHERE the leak is: it pins counts, not sites, because a site is a return address that moves with any codegen change (the top sites print on failure). An over-RELEASE, which reads as a clean 0 — that is the underflow counter's half. Anything a fixture's own path does not execute, and anything outside `conformance/cases` (`examples/` whole programs are not in it). x86-64 only, like the tracer |
 | Per-module / emit-all fixpoint | The compiler reproduces itself, deterministically | Any *stable* miscompile, including one affecting every program it sees |
-| `make bootstrap` (bootstrap.yml `verify`, all three hosts) / `make distcheck` | That a checkout with NO Go and NO native backend reaches a working compiler: the pinned stage0 compiles the whole compiler, and the result compiles and runs a program. `distcheck` is the whole-program fixpoint — the compiler stage1 built recompiling the compiler, and the result doing it once more, byte-identically (stage2 == stage3) — the configuration no per-module fixpoint runs. Green since 2026-09-28 at 5.7 GB peak, in the same CI job (`docs/BOOTSTRAP.md`). Each stage's wall time and peak resident set are measured by `bootstrap.sh` and, on main, recorded to the commit's note under `refs/notes/perf` as lane `bootstrap-<host>` (`scripts/perf-history show bootstrap/x86-64-linux/stage2.peak_rss_mb`), so a regression in the compiler's own memory or speed on any host is a step in that trend. stage1 is left out of the comparison: its code was generated by the pin, which predates any codegen change since | `bootstrap` says nothing about what stage1 emits beyond the smoke program; a stage1 that miscompiles everything but `return 42` passes. `distcheck` is blind to a stable miscompile the same way every fixpoint is. On every host the fixed point is measured from the PIN; on arm64-linux `candidate-arm64` also runs the chain from a candidate the pin builds from the current source, and on arm64-darwin nothing at PR time does |
+| `make bootstrap` (bootstrap.yml `verify`, all three hosts) / `make distcheck` | That a checkout with NO Go toolchain reaches a working compiler: the pinned stage0 compiles the whole compiler, and the result compiles and runs a program. `distcheck` is the whole-program fixpoint — the compiler stage1 built recompiling the compiler, and the result doing it once more, byte-identically (stage2 == stage3) — the configuration no per-module fixpoint runs. Green since 2026-09-28 at 5.7 GB peak, in the same CI job (`docs/BOOTSTRAP.md`). Each stage's wall time and peak resident set are measured by `bootstrap.sh` and, on main, recorded to the commit's note under `refs/notes/perf` as lane `bootstrap-<host>` (`scripts/perf-history show bootstrap/x86-64-linux/stage2.peak_rss_mb`), so a regression in the compiler's own memory or speed on any host is a step in that trend. stage1 is left out of the comparison: its code was generated by the pin, which predates any codegen change since | `bootstrap` says nothing about what stage1 emits beyond the smoke program; a stage1 that miscompiles everything but `return 42` passes. `distcheck` is blind to a stable miscompile the same way every fixpoint is. On every host the fixed point is measured from the PIN; on arm64-linux `candidate-arm64` also runs the chain from a candidate the pin builds from the current source, and on arm64-darwin nothing at PR time does |
 | `TestSelfHostArm64DarwinMachO*` (macos.yml) | That a Mach-O the SELF-HOST toolchain assembled and ad-hoc-signed actually LOADS and runs: `arm64_native.fern`'s encoders + `macho.fern`'s container, executed by the XNU kernel. The exec half needs Apple Silicon, and it needs a driver the host can run — on darwin the `wasm_run` driver is built for `arm64-darwin` rather than as an x86-64 ELF, which is what the Linux shards use. Until #6849 the exec half ran on NO lane and an `add Xd, Xn, Xm, lsl #N` whose shift the self-host assembler silently dropped read every array element as `a[0]` | The Linux shards reach only the structural half (parse the Mach-O); they cannot launch it. And a kernel rejection is a hard failure here, not a skip — that distinction is #6042 |
 | `TestSelfHostStage2FixpointArm64` (own CI job) | The arm64 emit is a fixed point of itself AND independent of the host arch: generation 2 is a real aarch64 compiler linked from generation 1's own asm, run under qemu, and the two must emit byte-identical output. Its distinguishing value is that generation 2 runs THROUGH the assembler's own output, which is what separates "the emitter is wrong" from "the assembler is wrong" — three arm64 assembler bugs were each mis-attributed to codegen first. **Run it before pushing any change to an exit-sweep CREDIT** (105 s locally): it is the only gate that has caught a whole-compiler miscompile the entire x86-64 set missed — #7548 shipped a reclaim credit that segfaulted gen2 while both construction matrices, `TestSelfHostRcPlanDiff`, the per-module fixpoint and all three x86-64 fixpoints were green | Everything the two generations get wrong *identically*, which is the same blindness every fixpoint has. The `self` case (gen2 recompiling the whole compiler) is behind `FERN_STAGE2_SELF=1` and does not run in CI, so the span it actually gates is four inputs, not the compiler |
 | `TestSelfHostWholeCompilerArm64SingleProcessEmit` (cli job) | That the self-host CLI emits the WHOLE compiler for `-target arm64-linux` in ONE process: ~63 MB of text through its output accumulator, the shape that overran the accumulator's fixed 64 MiB buffer and segfaulted with no diagnostic (#8212) while the per-module whole-compiler build (one unit per process) and the fixture corpus stayed green | What the bytes say: it asserts exit 0 and a compiler-sized output, and leaves the text to the fixpoint and fixture legs |
 | rc corpus (`conformance/cases/rc_corpus_*`, every conformance leg) | No rc over-release on the shapes it enumerates | Shapes it does not enumerate — add one when you fix an rc bug |
 | arm64 high-heap gate (`TestArm64HighHeap*`, `internal/testing/e2e/arm64_high_heap_test.go`) | That heap pointers survive a round trip through memory when they are ABOVE 4 GiB — the address regime arm64-darwin runs in. Every other Linux/qemu lane sits at the 256 MiB arena hint, so a 32-bit load / store / compare of a heap pointer is green everywhere and wrong only on Apple hardware; that is exactly how the 4-byte Map-handle deref in the IR's wide `keys()` / `values()` builders reached main and SIGSEGV'd `map_keys_values_header_churn_free` on the macos-15 rc-corpus lane. `FERN_HIGH_HEAP=1` in the compiler's environment makes `asm_arm64_ir.fern` raise the hint to 8 GiB and qemu-aarch64 honours it, so the regime is reachable without a Mac. Three legs: the map half of the rc corpus re-run high (name-selected, with a floor so a rename cannot empty it), a set of non-Map pointer-round-trip shapes, and the same shapes at the DEFAULT hint so a failure is attributable to the address regime | Everything the two selections do not contain — this is a corpus, not a static analysis, and a truncation on a path no case walks is invisible. It also does not reproduce macOS: the hint is honoured here and IGNORED there, so it moves only the ARENA — .rodata, the binary image and the stack stay where Linux puts them, and a truncation of a non-heap address still needs the real `macos-15` lane |
 | self-host arm64 high-heap gate (`TestSelfHostArm64HighHeap*`, `internal/testing/e2ecompiler/self_host_arm64_high_heap_test.go`) | The same property for the SELF-HOST arm64 emitter: `FERN_HIGH_HEAP=1` makes `asm_arm64_ir.fern` emit the 8 GiB arena hint, and the native gate's pointer-round-trip shapes (minus the two `Map[i64, _]` cases the self-host refuses, #10005) run under qemu on that heap, with the same shapes at the default hint as the control and a probe test pinning that the knob moves the hint. Until this gate, the self-host arm64 emit had never run with a heap pointer above 4 GiB except on the `macos-15` lane, where the stage-3 arena exhaustion (#8479) lived until it stopped reproducing on 2026-09-29; `bootstrap.yml`'s `verify-arm64-darwin` gates the darwin fixed point since | The same blind spots as the native gate: only the arena moves, and only the enumerated shapes are walked. It compiles the shapes with the self-host CLI built for x86-64, so it is not a run of the self-host compiler ITSELF on a high heap — that is the stage-2 self-compile, which needs the aarch64 compiler emitted with the knob (`docs/LOCAL-DEV-LOOP.md`) |
-| Cliff corpus (`rc_arr_push_cliff_test.go`, `rc_call_result_materialise_test.go`, `rc_cliff_bytes_test.go`) | The NATIVE compiler emits no stray retain on the accumulator shapes it enumerates — i.e. they are not quadratic — and that the crossing COUNT and its byte WEIGHT stay in step | Over-*retains* on any other shape, and every self-host emitter |
+| Cliff corpus (`rc_arr_push_cliff_test.go`, `rc_call_result_materialise_test.go`, `rc_cliff_bytes_test.go`) | The compiler's x86-64 output emits no stray retain on the accumulator shapes it enumerates — i.e. they are not quadratic — and that the crossing COUNT and its byte WEIGHT stay in step | Over-*retains* on any other shape, and the arm64 and wasm emitters |
 | Driver rc guard (`util.rc_underflow_guard`) | The compiler's OWN heap accounting stayed balanced while compiling | Leaks (an over-*retain* is silent), and anything outside the drivers |
 | `TestSelfHostCompilerFreesWhatItAllocatesX86_64` | The self-host compiler, built with `FERN_LEAKCHECK`, frees every allocation it makes: one program to every target and output form (binary, `-emit asm`, `-g`, Android, Darwin, the wasm core module) and `checker.fern` to x86-64 asm | An emitter path neither input reaches |
 | `TestSelfHostWasmHostResultsBalanceTheCensus` | The wasm runtime bodies that take a result from the host free it, as a core module and as a component: the return area, and the list and strings the host writes through cabi_realloc (`read_dir`, `env`, `args`, `environ`, the clocks, an `@import` list or string result) | The `@import` record, tuple, variant and sum result wrappers, which free their return areas the same way but are not run here. `config_get`'s free of the host's string: only a wasi:http proxy component reaches it, `TestPlatformConfigFromWasiConfig` runs it under `wasmtime serve`, and a proxy component reports no census |
@@ -930,21 +930,21 @@ rather than the IR path.
 | `RUN_SECCOMP_CORPUS=1` (`TestSeccompFixtureCorpus`) | The seccomp filter is not too TIGHT: every runnable fixture behaves identically sandboxed and not | Whether the filter DENIES anything — that is `TestSeccompFilterDenies`. A permit-all filter passes this gate trivially |
 | `RUN_SHRINK_PROPERTY=1` (`TestGenBytesShrinkIsMonotonicAndValid`) | fernsmith's minimisation contract: chopping a byte off a corpus yields a program that still type-checks and is never LARGER, so a failing fuzz input reduces to a small repro. Runs over all three byte-driven entry points — `GenBytes`, `GenMainBytes`, `GenPrintableMainBytes` — at 2 seeds each unguarded; the env var widens it to 24. Checking only `GenBytes` left the two corpora the differential oracles actually shrink unproven, and adding the other two immediately found two fall-throughs that were not the smallest branch | Whether the generated programs are interesting. A generator that emitted `function main(): i32 { return 0i32; }` for every input satisfies it perfectly |
 | `scripts/fernsmith-mutant` (`TestFernsmithShrinksAPlantedMiscompile`, `FERN_FERNSMITH_MUTANT`) | That the exit-byte generator CATCHES a closure miscompile: the script plants a parameter/capture swap on both closure paths `compiler/lift.fern` builds, sweeps `GenMainBytes` corpora against the interpreter, shrinks the first divergence with `fernsmith.ShrinkMainBytes` (truncation, deleting helpers and statements, hoisting a smaller expression of the same type) to at most 1,024 bytes past the preamble, and checks the repro against the unplanted compiler. Runs nightly (`nightly-fuzz.yml`, `fernsmith-mutant`), and by hand after a generator change that could thin the closure shapes | That the repro is MINIMAL: the plant shrinks from 541 bytes to 270. Nor that the generator catches anything else: one plant measures one bug shape (the mutation score below measures many), and this one is caught at corpus 18 since fernsmith's closure cluster writes a parameter and a capture of one type on purpose; at random it took 418 |
-| Self-host checker CODE differential (`internal/testing/e2ecompiler/self_host_checker_codes_test.go`) | That the two checkers ACCEPT AND REJECT the same programs: `TestSelfHostCheckerCodesX86_64` pins a hardcoded code set per row AND compares against the Go checker, `TestSelfHostChecker{,Bundle}DifferentialX86_64` use the Go checker as sole oracle. The hardcoded half is not redundancy — a pure differential cannot tell "both emit E072" from "neither emits anything" | What the two checkers SAY. It scrapes `E\d{3}` and discards the rest, so the two can word the same code arbitrarily differently, or identically wrongly. #6990 shipped four hints naming a spelling that does not compile, in both compilers, under a green run of this gate (#7018). **And every row is a stdlib-free single-file program**, so a self-host checker change that false-positives on real library code passes it green: #7500's E063 mirror did exactly that, then failed 154 tests across a dozen lanes the moment a program importing `core/bigint` was compiled. On a self-host CHECKER change this gate is necessary and not sufficient — pair it with `TestSelfHostStdTestE2E`, which compiles the stdlib |
+| Self-host checker CODE differential (`internal/testing/e2ecompiler/self_host_checker_codes_test.go`) | That the two checkers ACCEPT AND REJECT the same programs: `TestSelfHostCheckerCodesX86_64` pins a hardcoded code set per row AND compares against the Go checker, `TestSelfHostChecker{,Bundle}DifferentialX86_64` use the Go checker as sole oracle. The hardcoded half is not redundancy — a pure differential cannot tell "both emit E072" from "neither emits anything" | What the two checkers SAY. It scrapes `E\d{3}` and discards the rest, so the two can word the same code arbitrarily differently, or identically wrongly. #6990 shipped four hints naming a spelling that does not compile, in both checkers, under a green run of this gate (#7018). **And every row is a stdlib-free single-file program**, so a self-host checker change that false-positives on real library code passes it green: #7500's E063 mirror did exactly that, then failed 154 tests across a dozen lanes the moment a program importing `core/bigint` was compiled. On a self-host CHECKER change this gate is necessary and not sufficient — pair it with `TestSelfHostStdTestE2E`, which compiles the stdlib |
 | Self-host front end and interpreter against the corpus (`internal/testing/e2e` `TestFernFixturesSelfHostCheck`, `TestFernFixturesSelfHostInterp`, `TestGrammarDerivesSelfHostParsedSources`; the `fixtures-selfhost-front-end` lane, `FERN_SELFHOST_FIXTURES=1`) | What ships, held to the corpus the Go front end and interpreter are held to. The check leg runs every `expected.error` case through `fern -check` and applies `TestFernFixtures`' contract: every sidecar line reported, and no code the sidecar does not name. The interp leg runs every interp-selected case through `fern -interp`. Each pins its divergences in `testdata/selfhost-{check,interp}-known-divergences.txt`, exact in both directions. The grammar leg requires `spec/grammar.ebnf` to derive every repository source the self-host parser accepts (`fern -fmt` is the probe) | The REPL and the playground, which share the interpreter but are driven differently. Diagnostic positions and carets, which the check leg does not compare. The grammar's converse: a source the grammar derives and the self-host parser refuses |
-| Self-host checker HINT-TEXT differential (`internal/testing/e2ecompiler/self_host_checker_hint_text_test.go`) | That the two checkers give the same ADVICE where a diagnostic tells the reader what to write. Deliberately narrow: the corpus holds only messages naming a spelling, since that is the text where a difference is a bug rather than a style — forcing all prose into lockstep would fight the partial self-host checker. `hintTextDivergences` records the rows meant to differ, and is exact in both directions: a listed row that CONVERGES fails too. "Self-host says nothing" is listed as a divergence rather than skipped, so the port's remaining hint gaps are enumerable. Runs the driver under `-interp`, so unlike its `X86_64` neighbours it needs no cross toolchain and runs on every host (~5 s) | Every message outside the corpus, and whether the advice is CORRECT — two compilers can agree on a hint that does not compile. That half is `internal/check/checker/derive_hint_test.go` (compile the suggestion) and `internal/testing/sourcelint/diag_suggestion_spelling_test.go` (no bare trait name in either compiler) |
+| Self-host checker HINT-TEXT differential (`internal/testing/e2ecompiler/self_host_checker_hint_text_test.go`) | That the two checkers give the same ADVICE where a diagnostic tells the reader what to write. Deliberately narrow: the corpus holds only messages naming a spelling, since that is the text where a difference is a bug rather than a style — forcing all prose into lockstep would fight the partial self-host checker. `hintTextDivergences` records the rows meant to differ, and is exact in both directions: a listed row that CONVERGES fails too. "Self-host says nothing" is listed as a divergence rather than skipped, so the port's remaining hint gaps are enumerable. Runs the driver under `-interp`, so unlike its `X86_64` neighbours it needs no cross toolchain and runs on every host (~5 s) | Every message outside the corpus, and whether the advice is CORRECT — two checkers can agree on a hint that does not compile. That half is `internal/check/checker/derive_hint_test.go` (compile the suggestion) and `internal/testing/sourcelint/diag_suggestion_spelling_test.go` (no bare trait name in either checker) |
 | Self-host checker code SEQUENCE (`internal/testing/e2ecompiler/self_host_checker_code_sequence_test.go`) | The ORDER the self-host emits diagnostics in and HOW MANY TIMES it emits each code (a row sets `withMsg` to compare `CODE(message)` instead, which is what gates order in a single-code pass like E053) — the one thing every other checker gate reduces away before comparing. Row-based: each pins one program's codes joined in emission order, duplicates kept. Pins CURRENT behaviour, not a claim it is right; the codes differential remains the gate for WHICH codes are correct. Earned its place on its first run by exposing a nested-lambda E049 gap (#7363), and has since caught three more in the E060/E062 pair — two downcasts silently accepted and a struct literal's `...base` visited after its fields | Every program outside its rows. Note a plain row compares CODES only, so two diagnostics with the same code swapping places is invisible to it — set `withMsg` on any row whose codes do not discriminate its diagnostics, or the row silently gates nothing about order |
 | `bind_stmt` / `check_stmt` scope parity (`internal/testing/e2ecompiler/self_host_bind_stmt_parity_test.go` + `internal/testing/sourcelint/bind_stmt_arms_test.go`) | That the checker's two statement steppers bind the same names to the same types. Twelve diagnostic walkers thread their scope through `bind_stmt`, which skips the inference `check_stmt` does for a type they all discard (#8181), so a disagreement resolves a name in the type-check pass and loses it in every diagnostic pass — surfacing as a spurious or missing diagnostic far from the statement that caused it. The e2e half drives `bind_stmt_parity_run.fern` under `-interp` (no cross toolchain, ~9 s) over a corpus held to covering every `ast.Stmt` form, comparing the bindings statement by statement; the sourcelint half reads the two functions' match arms out of checker.fern and pins the set that may rebind at all | Neither half covers the other, on purpose. The corpus catches a wrong binding RULE and only for shapes it contains; a NEW binding form is by definition not in it, which is what the arm lint is for. And the lint reads arms, so a rule changed INSIDE the StmtVar arm is invisible to it. Anything `check_expr` types the same either way is invisible to both — the recursive-local self-binding is the live example, since a lambda types from its declared signature |
 | Translation validation (`TestDifferential_TranslationValidationStrength`, `internal/testing/tv`, `docs/TRANSLATION-VALIDATION.md`) | Every strength reduction the compiler makes on fernsmith programs and the stdlib they reach computes what the replaced code did FOR ALL INPUTS, proved by Z3 over the integer fragment of `docs/INTEGER-SEMANTICS.md`, not sampled. A planted signed `x / 2^n -> x >> n` is refuted with a model. 256 seeds per PR, the 2048-seed window nightly | Every other pass: only `reduce_strength_ex` dumps. Ops outside the model (floats, pointer-width, memory, calls, control flow) are barriers the pass must leave unchanged, not proved. A rewrite that never fires on the corpus is never checked; the `tv` unit tests cover the strength table directly |
 | Self-host differential (`internal/testing/e2e/diff_oracle_selfhost_test.go`, `TestDifferential_SelfHostX86_64`, `FERN_SELFHOST_DIFF=1`) | The SELF-HOST compiler agrees with interp on exit codes, over its own 512-seed corpus, compiled through the real CLI and linked with gcc. This is the path the closure-dispatch cluster (#5001/#5007/#5009/#5026) lived on, and the only sweep that reaches it. The compile takes the semantic lowering (`semsource` / `ssaunits` / `ssarc`, `docs/SELFHOST-SEMANTIC-SOURCE.md`), and a seed it refuses FAILS (`semRefused`) rather than skipping as a coverage gap; the arm64 and wasm legs hold the same. Per PR as `diff-selfhost-x86_64` and nightly in four shards over the moving window | Seeds the compiler declines as a coverage gap: they skip (none did at the last measurement, 2026-08-20; an 0.85 floor on the run ratio stops the leg quietly hollowing out). Memory correctness with a right answer — that is the sanitize leg below. The other two self-host targets: this leg is x86-64 only, and `-target arm64-linux` is the path where the compiler emits, assembles AND links by itself. And whatever sits in its known-divergences file |
 | Self-host sanitize differential (`TestDifferential_SelfHostSanitizeX86_64`, `FERN_SELFHOST_DIFF=1`) | The same corpus built under `-sanitize`: each seed agrees with interp AND the binary reports no rc over-release, no use of a freed block and no leak (`docs/SANITIZER.md`). fernsmith's ownership cluster and nested aggregates are the shapes it judges. Per PR as `diff-selfhost-x86_64-sanitize`, nightly in four shards over the moving window. `TestDifferential_SelfHostSanitizeArm64` and `TestDifferential_SelfHostSanitizeWasm` are its siblings on the other two backends, nightly only | The unsanitized code path — `-sanitize` changes the emitted code, so a codegen bug only the plain build has is the plain leg's to catch. On wasm, an over-release or a use of a freed block: wasm carries the leak census only (`docs/SANITIZER.md`) |
 | `FERN_MUTATION_SCORE=N` (`TestFernsmithMutationScore`) | The fuzzer's MUTATION SCORE: N faults planted one at a time in the lowering, rc and x86-64 emission sources (operator swaps, a deleted assignment), each built and judged on `FERN_MUTATION_SEEDS` fernsmith programs under `-sanitize`. Prints the score and every survivor — the generator's blind spots. `docs/FUZZING.md` | Not a gate yet: no floor until enough mutants are measured for the number to be stable. Some survivors are equivalent mutants nothing can kill |
-| Self-host SSA backend (`internal/testing/e2ecompiler/self_host_ssa_backend_test.go`, `TestSelfHostSSABackend*`) | That the self-host register path (`docs/SELFHOST-SSA-BACKEND.md`), the only emitter on the native ISAs, agrees with the NATIVE compiler: each program is compiled by both for every target the host can run output for (its own ISA natively, the other under qemu when present), run, and compared on stdout AND exit status. The programs are the shapes the register path once got wrong or emits specially (loop-carried phis, immediates, the box layouts, the OS floor through the flat-op arm, dyn dispatch). Also that `-backend ssa` is byte-identical to the default, that `-backend flat` is refused on the native ISAs and names wasm's one emitter, and the emitted-shape pins (frame sized by spills, the five-instruction loop, inline rc primitives). Builds the CLI for the host (arm64-darwin Mach-O on Apple Silicon, arm64-linux ELF on arm64 Linux, x86-64 ELF on x86-64 Linux) | Every program outside its list — the corpus is the fixture legs below, where a function the lift cannot take is a compile FAILURE naming the op (there is no stack machine to decline onto, so coverage needs no tally). And the emitted code's size or speed, which the ssa-log entries carry |
+| Self-host SSA backend (`internal/testing/e2ecompiler/self_host_ssa_backend_test.go`, `TestSelfHostSSABackend*`) | That the self-host register path (`docs/SELFHOST-SSA-BACKEND.md`), the only emitter on the native ISAs, agrees with the `fern` launcher's build: each program is compiled by the self-host CLI built for this host and by the `fern` launcher it was built with, for every target the host can run output for (its own ISA natively, the other under qemu when present), run, and compared on stdout AND exit status. The programs are the shapes the register path once got wrong or emits specially (loop-carried phis, immediates, the box layouts, the OS floor through the flat-op arm, dyn dispatch). Also that `-backend ssa` is byte-identical to the default, that `-backend flat` is refused on the native ISAs and names wasm's one emitter, and the emitted-shape pins (frame sized by spills, the five-instruction loop, inline rc primitives). Builds the CLI for the host (arm64-darwin Mach-O on Apple Silicon, arm64-linux ELF on arm64 Linux, x86-64 ELF on x86-64 Linux) | Every program outside its list — the corpus is the fixture legs below, where a function the lift cannot take is a compile FAILURE naming the op (there is no stack machine to decline onto, so coverage needs no tally). And the emitted code's size or speed, which the ssa-log entries carry |
 | Self-host SSA lift admission census (`internal/testing/e2ecompiler/self_host_ssa_lift_admits_test.go`, `TestSelfHostSSALiftAdmitsEveryOp`) | WHICH IR op kinds the register path declines, over every registered kind: the production lift admits an op as an instruction of its own or through the stack machine's arm for it (`emit_stack_op`, run between a push of the operands and a pop of the result), and the golden pins the three it cannot, the kinds nothing produces. A new op kind whose pop count `ir.op_pops` does not model is a new line here, not a silent decline on every program that uses it | Whether the bridged arm is CORRECT under the register path — that is the SSA backend row above, per program. And how often a bridged op runs: it is emitted as the stack machine emits it, with every live value spilled around it |
 | Self-host async export (`internal/testing/e2ecompiler/self_host_wasm_async_export_test.go`, `TestSelfHostWasmAsyncExport{,Refusals}`) | That `-target wasm32-wasi` lifts each `async function` as a top-level `async func` of the component, beside the run entry, and that under wasmtime's async features each scalar type crosses intact, as does a void result. Also that a signature the lift cannot take, a name with no kebab-case form, and any async export on `wasm32-wasi-http` are refused | A host other than wasmtime; a callback (stackless) lift, which the self-host does not emit |
 | Self-host async import (`internal/testing/e2ecompiler/self_host_wasm_async_import_test.go`, `TestSelfHostWasmAsyncImport{,Memory,Refusals}`) | That `-target wasm32-wasi` turns each `@import(iface, name) async function` of an interface the `fern` world does not declare into an import of that interface, lowered with the async option, and that a call waits for the result. That includes a call still pending when the lower returns, since the WAT provider yields before task.return. The consumer is linked with the provider by `wasm-tools compose` and run under wasmtime's async features, for each scalar type and a void result. `…Memory` does the same for string, list and tuple parameters and string and list results. Also that a struct parameter, parameters flattening past four core values and an interface the world declares are refused | A provider that is not a sibling component |
 | Self-host `Stream[T]` (`internal/testing/e2ecompiler/self_host_wasm_async_stream_test.go`, `TestSelfHostWasmAsyncStream`) | That an async import's `Stream[T]` result is read to EOF into the `T[]` its call returns (u8, s32 and f64; forty s32s, so the buffer grows), that `for x in` iterates it, and that a `T[]` argument to a `Stream[T]` parameter is written out and dropped so the provider reads it to EOF. The provider moves two elements at a time, so both directions wait on a blocked op | Lazy iteration: the self-host collects a stream before the loop runs; a `Stream[T]` anywhere but an async import's signature, which the checker refuses as an unknown type |
-| Self-host wasi:http target (`internal/testing/e2ecompiler/self_host_wasi_http_target_test.go`, `TestSelfHostWasiHttpTarget*`; the composer's `TestSelfHostComposeHttpFromProxyWorld`; the extern bridge's `TestSelfHostExternHeapResultCustomProvider`) | That `fern.fern -target wasm32-wasi-http` builds a wasi:http/incoming-handler component that validates under wasm-tools and, under `wasmtime serve`, routes on path and method, echoes a body, reads a request header and sets response headers — and that the NATIVE compiler's component answers the same requests the same (`…MatchesNative`, the #6636 differential). Under it: the composer gate composes a hand-written handler core against the embedded proxy world (the `[resource-drop]` lowering and the incoming-handler lift), and the bridge gate drives every `@import` result shape the entry reads through — `Option[string]`, `Result[u8[], i32]`, a string-arm variant, `(string, string)[]`, a `Result` beside string params — against a hand-written provider component. `…CoreModule` pins the `-emit core-module` form the playground's browser host instantiates (the export names, and imports from the two interfaces `web/wasi-http-shim.js` implements only); `…NeedsHandle` the refusal of a handler-less program | Everything the handler does with the request between reading and answering, which is the program's own; the browser host itself (the Playwright lane); and a proxy host other than wasmtime |
+| Self-host wasi:http target (`internal/testing/e2ecompiler/self_host_wasi_http_target_test.go`, `TestSelfHostWasiHttpTarget*`; the composer's `TestSelfHostComposeHttpFromProxyWorld`; the extern bridge's `TestSelfHostExternHeapResultCustomProvider`) | That `fern.fern -target wasm32-wasi-http` builds a wasi:http/incoming-handler component that validates under wasm-tools and, under `wasmtime serve`, routes on path and method, echoes a body, reads a request header and sets response headers — and that the component the `fern` launcher builds answers the same requests the same (`…MatchesNative`, the #6636 differential). Under it: the composer gate composes a hand-written handler core against the embedded proxy world (the `[resource-drop]` lowering and the incoming-handler lift), and the bridge gate drives every `@import` result shape the entry reads through — `Option[string]`, `Result[u8[], i32]`, a string-arm variant, `(string, string)[]`, a `Result` beside string params — against a hand-written provider component. `…CoreModule` pins the `-emit core-module` form the playground's browser host instantiates (the export names, and imports from the two interfaces `web/wasi-http-shim.js` implements only); `…NeedsHandle` the refusal of a handler-less program | Everything the handler does with the request between reading and answering, which is the program's own; the browser host itself (the Playwright lane); and a proxy host other than wasmtime |
 | Ownership-inference row reuse (`internal/testing/e2ecompiler/self_host_inferred_reuse_test.go`, `TestSelfHostInferredReuseIsIdentical`) | That keeping a row's declared plan and body produces the same code as planning and lowering it under the inferred modes. `semlower.inferred_rows` keeps every row the inference did not move (#9969) — sound because a plan reads only its row's graph and modes, and a body additionally reads the grow table only through the callees it names. Five compiler modules are compiled with the reuse and with `FERN_SEM_REUSE=` and compared as WHOLE emitted modules, not by grepping for a helper: the failure this guards is a caller whose own modes are untouched but whose callee's grow mask widened, and keeping its body DROPS a bracket — an absence, which a grep for a marker cannot see. Both emissions are checked non-empty first, since two empty ones compare equal | Any module the typed pipeline does not lower whole, which is not a gap: `inferred_rows` keeps the inferred lowering only when it lowers whole, and lowers such a module under its declared modes. How MUCH the reuse saves, which is the alloc lane's row below. And the modules outside its five |
 | Self-host arm64 differential (`internal/testing/e2e/diff_oracle_selfhost_arm64_leg_test.go`, `TestDifferential_SelfHostArm64`, `FERN_SELFHOST_DIFF=1`) | The same corpus through the self-host ARM64 emitter. This is the only differential where the self-host assembles AND links the artifact itself (`arm64_native` + `elf.fern`), so an assembler gap arrives as a compile failure naming the mnemonic rather than a link error. It fails a seed the typed lowering refuses, as its x86-64 sibling does | Wasm, which is the row below. Whatever sits in its known-divergence file, which is exact in both directions |
 | Self-host wasm differential (`internal/testing/e2e/diff_oracle_selfhost_wasm_leg_test.go`, `TestDifferential_SelfHostWasm`, `FERN_SELFHOST_DIFF=1`) | The same corpus through the self-host WASM emitter — a different emitter over a different string and map layout (inline string blocks with no data pointer, a hash map rather than parallel arrays), and the one where the semantic lowering reaches a map column's release through a funcref table slot instead of a code address. It fails a seed the typed lowering refuses, as its x86-64 and arm64 siblings do. Found two real bugs on its first run: the map runtime bundle gated on the ops that BUILD a map, so a module that only READ one emitted calls into a runtime it never carried (fixed), and #9468 | **The VALUE of any seed whose oracle byte is >= 126.** WASI refuses an exit status outside `[0..126)`, so such a module exits 1 and its answer is unreadable; those seeds are still asserted to neither trap nor be rejected, but the number is not compared, and they are counted out of `selfHostWasmDiffMinRunRatio` so the floor measures what was actually compared. Measured 2026-09-16 over seeds 0..63: 34 compared, 27 uncomparable |
@@ -991,7 +991,7 @@ rather than budgeting an hour for a before/after pair).
 **What it does NOT catch: a change that is byte-identical on the corpus and
 expensive on the compiler.** The fixtures are small programs; the compiler is
 not, so a change whose cost scales with a pattern only the self-host carries
-passes this gate clean. `perf(#6911)` (`a94c97ae5`, `internal/oracle/ir/rc_analysis.go`)
+passes this gate clean. `perf(#6911)` (`a94c97ae5`)
 added **1.11 MB, +10.3%,** to `irlower_run.fern` while leaving `ackermann`,
 `map_string_key` and a bare `main` byte-for-byte unchanged — this gate would
 call it PURE. It is a MISCOMPILE gate, not a cost gate: green here means the
@@ -1067,7 +1067,8 @@ Worth knowing so you do not assume coverage you do not have:
   branchless enum drop released them without testing the tag. The behavioural
   gate reaches `env`, so `env`'s arm was caught. Nothing in the corpus reaches
   `Writer.write`'s success arm, so that one merged (#8850) and needed a second
-  PR (#8859). The natives got a STRUCTURAL gate in the first PR precisely
+  PR (#8859). The Go x86-64 and arm64 backends got a STRUCTURAL gate in the
+  first PR precisely
   because their version of the corruption is silent — the reasoning was right
   and was applied to two backends out of three, on the grounds that wasm traps.
   A trap is only a gate for the arms something actually executes.
@@ -1088,8 +1089,8 @@ Worth knowing so you do not assume coverage you do not have:
   suite's name about what it proves. It is also what the nightly
   coverage-guided self-host fuzzer steers by — the only lane that observes
   which paths inside the SELF-HOST compiler a generated program reaches, since
-  Go's instrumentation cannot see into a Fern binary. x86-64 and arm64 on
-  both compilers; `docs/COVERAGE.md`.
+  Go's instrumentation cannot see into a Fern binary. x86-64 Linux and arm64
+  Linux; `docs/COVERAGE.md`.
 
 - **Anything outside the FIXED corpus bounds, on a pull request.** Every
   fernsmith sweep that runs per-PR is a fixed prefix — 512 self-host exit-byte
@@ -1175,11 +1176,10 @@ Worth knowing so you do not assume coverage you do not have:
   exit code itself already had the signal.
 
 - **Allocation ASYMPTOTICS — now gated, by `TestX86_64AllocScaling`**
-  (`internal/testing/e2e/alloc_scaling_test.go`). The differential below compares the
-  two compilers against *each other*, so a regression that lands in the shared
-  frontend, or in a stdlib function both compile the same way, moves both sides
-  equally and stays green. This gate asks the other question: does a shape
-  still allocate in the complexity class it is supposed to?
+  (`internal/testing/e2e/alloc_scaling_test.go`). The volume gate below holds
+  each shape to a recorded per-churn figure, which says nothing about how the
+  shape scales. This gate asks the other question: does a shape still
+  allocate in the complexity class it is supposed to?
 
   It measures `__heap_bump_bytes()` for one churn at `n` and at `2n` in
   separate cold processes and bounds the RATIO, not the bytes. A recorded
@@ -1209,9 +1209,7 @@ Worth knowing so you do not assume coverage you do not have:
   a cross-backend conformance contract (`AL-01` / `AL-02` in
   `spec/semantics.md`), and the first run of its cases found the wasm
   backend never reclaiming a short-lived string — 32 fresh bytes per
-  loop iteration, unbounded, where both natives are flat (#6423). Being
-  a conformance case rather than a Go test, it also survives the freeze
-  this document's own framing is organised around.
+  loop iteration, unbounded, where x86-64 and arm64 are flat (#6423).
 
 - **Allocation COUNT — gated by `TestSelfHostAllocCountMatrixX86_64`**
   (`internal/testing/e2ecompiler/testdata/selfhost-alloc-count-matrix.txt`). The leak
@@ -1284,8 +1282,8 @@ Worth knowing so you do not assume coverage you do not have:
   read by `movl` is a large positive at 64 bits — so the `js` on every
   "negative rc = immortal, skip" arm of the rc runtime fell through to the
   decrement path, and a program that handed any immortal block to
-  `__fern_str_free` tripped the over-release detector (#6544). Both compilers
-  agreed through gcc. The new gate found the same CLASS on its first run:
+  `__fern_str_free` tripped the over-release detector (#6544). The Go and
+  self-host compilers of the day agreed through gcc. The new gate found the same CLASS on its first run:
   `movzbl` was routed to the 64-bit encoder because the zero-extended VALUE is
   identical, which put a REX.W on every byte load a program does.
 
@@ -1296,9 +1294,8 @@ Worth knowing so you do not assume coverage you do not have:
   reading of the manual) is what keeps it fixed.
 - **Over-retains.** The rc detector counts over-*releases* only. A leak reads
   as a clean 0. `FERN_LEAKCHECK=1` sees that a leak happened and
-  `FERN_RC_TRACE=1` names the alloc site it came from (both below, on the
-  native *and* the self-host x86-64 compilers). The rc corpus now runs a
-  leakcheck leg on both native backends (above), so a leak appearing in one of
+  `FERN_RC_TRACE=1` names the alloc site it came from (both below). The rc
+  corpus runs a leakcheck leg on x86-64 and arm64 (above), so a leak appearing in one of
   its clean cases fails; `FERN_RC_TRACE` is still the tool you reach for by
   hand once it does, and everything outside that corpus is still unwatched. Partial exception:
   `TestSelfHostLeakMatrixX86_64` runs the leakcheck differential over a
@@ -1315,7 +1312,7 @@ Worth knowing so you do not assume coverage you do not have:
   `fern-sanitizer:` finding is a hard failure — the latent class (a stray
   dec, a premature free whose block is then read) that the census reads as
   the same-or-better.
-- **A syntactic form native accepts and the self-host does not.** Nothing
+- **A syntactic form the oracle accepts and the compiler does not.** Nothing
   enumerates the language's surface, so parity is only ever tested at the
   shapes some case happens to use. `conformance/cases/` is the one corpus that
   reaches the self-host on all three targets — and whether a form appears
@@ -1326,10 +1323,10 @@ Worth knowing so you do not assume coverage you do not have:
   The failure this hides is not a spurious rejection, which someone would
   notice. It is a self-host parser that reads the form as something ELSE and
   compiles a different program: a literal in a variant payload (`Some(0)`) was discarded
-  outright, leaving a bare `Some` arm that matched everything — native said 2,
-  the self-host binary said 1, and the corpus was green because no case wrote
-  the form. Three pattern loops in the same file spun forever on input native
-  rejects cleanly, for the same reason.
+  outright, leaving a bare `Some` arm that matched everything — the Go
+  compiler said 2, the self-host binary said 1, and the corpus was green
+  because no case wrote the form. Three pattern loops in the same file spun
+  forever on input the Go parser rejects cleanly, for the same reason.
 
   A MISSING rejection is the direction nobody noticed, for the same reason: it
   is silent by construction. The self-host checker says nothing on ten
@@ -1372,7 +1369,7 @@ Worth knowing so you do not assume coverage you do not have:
    reads the entry's local import closure (`e2eharness.TrackFernSources`) so
    those files reach the testlog, and `make fern-test-cache` perturbs a source
    and fails if the cached result survives. `std/…` and `core/…` are already
-   covered, reaching the Go compiler through `internal/stdlib`'s `go:embed`;
+   covered, reaching the Go oracle through `internal/stdlib`'s `go:embed`;
    the self-host compiler that builds the driver binaries reads them from disk
    instead, so the harness hashes the whole stdlib tree into its build key
    (`e2eharness.stdlibHash`), which is also the read that reaches the testlog.
@@ -1511,8 +1508,8 @@ Route a probe program through the single-program path-probe driver
 (`asm_pathprobe_run.fern`) and it prints `ir` or `refused`. Two ways that misleads.
 
 **A bare `refused` verdict is not proof of a gap.** The driver refuses *invalid*
-programs too. Always confirm the probe is **native-valid first**
-(`go build -o /tmp/fern ./cmd/fern && /tmp/fern -interp prog.fern`) before
+programs too. Always confirm the probe is **valid under the oracle first**
+(`go build -o /tmp/fern-oracle ./cmd/fern && /tmp/fern-oracle -interp prog.fern`) before
 treating a bail as a real gap. Three filed issues were wrong for exactly this
 reason. The single-program drivers now WARN on stderr when a program has imports
 they cannot resolve (#6004); that warning means the verdict describes a broken
@@ -1535,7 +1532,7 @@ Most apparent "gaps" are invalid programs:
   needing `std/iter` / `std/map` / … falsely reads `refused`.
 
 **And a green `ir` verdict says nothing about runtime correctness.** Differential
-probing (native `-interp` exit code vs the self-host-IR-compiled binary's) found
+probing (the oracle's `-interp` exit code vs the self-host-IR-compiled binary's) found
 a whole closure-dispatch bug cluster this methodology misses — escaping-closure /
 closure-array shapes that lowered on the IR path but SIGSEGV'd or silently
 miscompiled at runtime (#5001 / #5007 / #5009 / #5026, plus the param / branch /
@@ -1552,7 +1549,7 @@ from a codegen bug until you check.
 Run a KNOWN-BAD program through the same path before believing any probe
 failure. If the control compiles too, the driver is not checking and the
 failure is your program. The front end (`fern.fern`) is what type-checks, and
-it rejects both with the same E003 native and the interpreter give.
+it rejects both with the same E003 the Go checker gives.
 
 This cost two wrong diagnoses in one session — a reported SIGSEGV in
 `Map.without` that was an ill-typed test (`m.without(k)` is
@@ -1616,15 +1613,15 @@ an off switch (`FERN_NO_ARRAY_FUSION=1` is the pattern) so "did the pass do
 this?" is one run rather than a rebuild, and so a suite failure can be
 attributed without bisecting.
 
-The self-host's fusion pass (`compiler/semfuse.fern`, #11072) is
-gated the same way, on all three self-host targets:
+The compiler's fusion pass (`compiler/semfuse.fern`, #11072) is
+gated the same way, on all three targets:
 `TestSelfHostArrayFusionMatchesHandWrittenLoops` compares every chain shape
 against a loop inside the program, `TestSelfHostArrayFusionStopsAllocatingIntermediates`
 bounds `__heap_alloc_count()` per chain and requires a shared intermediate and
 an unresolved element function to keep allocating, and
 `TestSelfHostArrayFusionKeepsEffectOrder` reads the order of prints from
-element functions. Native's `Test*ArrayFusion*` legs in `internal/testing/e2e` still
-build with the native backend and say nothing about this pass.
+element functions. The `Test*ArrayFusion*` legs in `internal/testing/e2e` build
+with the same compiler, so they are a second gate on this pass.
 
 ## Diagnostic modes
 
@@ -1757,10 +1754,11 @@ answer, these are the tools, in the order they are usually reached for:
   `__fn_<callee>` symbol means you measured nothing. This cost four probes on
   #7867 before it was noticed.
 
-  **A before/after comparison must build both binaries the same way.** The two
-  compilers under comparison are Go programs, and a branch cut before a
-  `go.mod` toolchain bump builds under a different Go than `origin/main` does —
-  which moves the driver's numbers on its own. A #7914 map-column probe read
+  **A before/after comparison must build both binaries the same way.** The
+  drivers are built by the pinned stage0 (`bootstrap/stage0.lock`), so a
+  branch cut before a pin refresh builds them with a different compiler than
+  `origin/main` does, which moves the driver's numbers on its own. A #7914
+  map-column probe, from when the drivers were Go-built, read
   `frees 6530 → 6140`, `live_bytes +11 KB`, and traced it to one free-site
   class before finding that disabling every changed site still measured 6140:
   the whole difference was `go 1.24` against `go 1.26`. Rebase onto
@@ -1784,11 +1782,10 @@ answer, these are the tools, in the order they are usually reached for:
 - **`FERN_RC_TRACE=1`** — one stderr line per heap event:
   `rctrace <a|f> <ptr> <size> <site> <caller>`, all four numbers fixed-width
   16-hex, `site` being the *caller's* return address and `caller` one frame
-  above it. **Both compilers emit all five fields**; the self-host omitted
-  `caller` until #7954 needed it, and without it a leak through a shared
-  runtime helper cannot be attributed at all — every append in a program
-  allocates at one address inside `__fern_arr_push`, so `site` is the same for
-  all of them. On the self-host the walk is tuned for the LEAKING path: a plain
+  above it. Without `caller` (#7954) a leak through a shared runtime helper
+  cannot be attributed at all — every append in a program allocates at one
+  address inside `__fern_arr_push`, so `site` is the same for all of them.
+  The walk is tuned for the LEAKING path: a plain
   `__fern_arr_push` reports the Fern function that called append, while a
   sole-owner append reclaims through `__fern_arr_push_owned` and reports that
   wrapper, one frame short of user code. Stands to `FERN_LEAKCHECK` as
@@ -1797,15 +1794,15 @@ answer, these are the tools, in the order they are usually reached for:
   against the `f` lines by pointer and what is left never came back; resolve
   those sites with `-g`. Run both flags together and the summary tells you how
   much to look for. Two caveats: it is per-event output, so reduce to a repro
-  before reaching for it on the self-host compiler, and **`f` sites are much
+  before reaching for it on the compiler itself, and **`f` sites are much
   less informative than `a` sites** — every release funnels through the shared
   drop helpers, so a free line usually names `__fern_arr_dec` rather than your
   code. The alloc site is the one that locates a leak. x86-64 only.
 
   **`caller` is one frame above `site`, and you usually want both.** `site`
   alone cannot tell a producer from a function code was INLINED INTO, and
-  `ir.Inline` runs twice in every backend battery. Measured on the self-host
-  driver: `site` credited **133 allocations to `lexer__tokenize_impl`**, a
+  the inliner (`compiler/seminline.fern`) splices small callees into their
+  callers. Measured on the self-host driver: `site` credited **133 allocations to `lexer__tokenize_impl`**, a
   1043-line function containing exactly **one** construction, and named the
   shared allocator `__fern_alloc_rc1` for **1689** blocks whose real producer
   is one frame further out. Rule of thumb: `site` is trustworthy for a small
@@ -1817,25 +1814,13 @@ answer, these are the tools, in the order they are usually reached for:
   that kept none yields an address that resolves to no symbol. Treat an
   unresolvable `caller` as absent rather than trusting it.
 
-  **The self-host tracer still emits four fields, not five.** Its hook takes
-  `site` as an explicit argument and carries its own `__fern_hev_site` shim,
-  so the frame relationship native relies on does not hold there and the port
-  is not a transcription — and getting it wrong does not fail loudly, it
-  silently names the wrong code. Tracked separately; until it lands, pair a
-  native trace against a self-host one on `site` only.
-
-  **Both flags work on the SELF-HOST x86-64 compiler too**, with the same
-  spelling and the same output format (`asm_ir.fern`; the arm64 and wasm
-  self-host backends do not have them). That is what makes them useful for the
-  goal-2 (Perceus port) deltas: the remaining gap versus native is an
-  allocation-VOLUME difference, and volume is exactly what nothing else gates.
-  Compile one program with each compiler under `FERN_RC_TRACE=1`, pair both
-  traces, and an `a` line the self-host emits where native emits none is a
-  missed reuse, attributed to the construction site that missed it. Three
-  differences from the native side to expect when reading self-host output:
-  - Sizes come from an **8-byte-granular** heap (native rounds to 16), and
-    both hooks report the same rounded size for a block, so an alloc and its
-    free cancel exactly.
+  The tracer is emitted by `asm_ir.fern`; the arm64 and wasm emitters do not
+  have it. It is how a missed reuse is found: compile one program before and
+  after a change under `FERN_RC_TRACE=1`, pair both traces, and an `a` line
+  only one side emits is the reuse that side missed, attributed to the
+  construction site that missed it. Three things to expect when reading it:
+  - Sizes come from an **8-byte-granular** heap, and both hooks report the
+    same rounded size for a block, so an alloc and its free cancel exactly.
   - Large-tier (>=512 KiB) blocks report their **logical** size, not the
     512-KiB-rounded capacity the arena actually bumped, so `live_bytes`
     measures demand rather than footprint.

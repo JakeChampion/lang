@@ -74,13 +74,11 @@ over a version index with a `fern.lock`** (`fern -resolve`;
 `internal/pkg/manifest` + `internal/pkg/pkgcache` + `internal/pkg/mvs` +
 `resolveImport` in `internal/pkg/modload`). The MVS design below is no
 longer hypothetical — it is the shipped `internal/pkg/mvs`. That is the
-**native** compiler; the **self-hosted** compiler resolves every
-disk-resolvable dependency form and, since #6640, runs MVS itself
-(`compiler/mvs.fern` + `fern -resolve`) — see
-`PACKAGES.md ▸ Native vs self-hosted coverage` for the exact matrix. What
+Go oracle's; the compiler resolves every dependency form and, since #6640,
+runs MVS itself (`compiler/mvs.fern` + `fern -resolve`) — see
+`PACKAGES.md ▸ Implementation`. What
 remains unbuilt: a hosted registry (deliberately — the index file needs no
-service), and the self-host side of `-fetch` / `-vendor` / `-add` /
-`-checkws`, which is what keeps a url-sourced version native-only (#6640).
+service).
 
 ## Resolution algorithms: the actual math
 

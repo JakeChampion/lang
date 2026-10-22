@@ -22,6 +22,8 @@ as slices land. It is the
 runtime-dispatch counterpart to the static trait system in
 [`TRAITS.md`](TRAITS.md) — read that first.
 
+> Slices 2 and 4 (§4.2, §4.4), and other passages naming "the native backends", `emit*` functions or `ir.*` helpers, describe the Go compiler, deleted since (`docs/NATIVE-RETIREMENT.md`); §4.3 describes the compiler.
+
 ## 1. Motivation
 
 The trait system today is **entirely static**. `impl Trait for Type`

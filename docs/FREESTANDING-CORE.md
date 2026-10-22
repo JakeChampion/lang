@@ -758,8 +758,8 @@ Today: **45 of 59 modules are core-safe.** Three results worth knowing:
 The self-host derives the same partition from its own scan (`platforms.reach`, driven by
 `compiler/drivers/platforms_reach_run.fern`), and
 `TestSelfHostStdPartitionAgreesWithNative` requires the two derivations to match module
-for module. That is the differential the partition most needs: the two compilers
-disagreeing here means they disagree about what runs on a machine with no host, and
+for module. That is the differential the partition most needs: the compiler and the
+oracle disagreeing here means they disagree about what runs on a machine with no host, and
 fifty-odd real stdlib modules exercise the capability scan far harder than the
 hand-written cases do.
 
@@ -783,8 +783,8 @@ The self-host compiler carries its own copy of the classification —
 builtin has to be classified there too. `TestSelfHostGatedBuiltinsMatch` /
 `TestSelfHostCoreBuiltinsMatch` in `internal/pkg/platforms` read that file as data and fail
 on any entry the two tables disagree about, which is the only way the drift shows up:
-neither compiler can see the other's table, and the symptom is a program one builds and
-the other refuses. The `std/` partition differential above is the second line — it
+neither side can see the other's table, and the symptom is a program the compiler
+builds and the oracle refuses, or the reverse. The `std/` partition differential above is the second line — it
 catches a classification the two tables agree on but the two *scans* apply differently.
 
 The capability profiles are compared too (`TestSelfHostCapabilityProfilesMatch`), in

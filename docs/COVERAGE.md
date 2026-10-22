@@ -67,9 +67,9 @@ measures. Subtraction costs nothing and cannot.
 
 The column is part of a branch's identity — `12:5` and `12:19` are the `if` and
 the `&&` on one line. Without it they would share counters and the report could
-not say which arm was missed. An `&&` / `||` is placed at its operator on both
-compilers; an `if` / `while` at its keyword on native and at the start of its
-condition on the self-host, whose `if` and `while` nodes carry no column.
+not say which arm was missed. An `&&` / `||` is placed at its operator; an
+`if` / `while` at the start of its condition, since the compiler's `if` and
+`while` nodes carry no column.
 
 Both exit seams report — falling off `main` and the `exit()` builtin — so a
 CLI that ends in an explicit `exit` measures the same as one that returns.
@@ -102,36 +102,29 @@ rule; the stream here is its input unchanged.
 ## What a `-cover` build costs
 
 - **One increment per executable line reached, and two per conditional
-  evaluated.** On native, no call and no allocation: an `inc` against a fixed
-  `.bss` slot on x86-64, an `ldr`/`add`/`str` triple on arm64. On the
-  self-host, a call to `__fern_cov_hit`, which allocates the counter table on
-  the first hit.
+  evaluated.** Each is a call to `__fern_cov_hit`, which allocates the
+  counter table on the first hit.
 - **One `.rodata` string and one 8-byte counter per instrumented line, and two
   of each per conditional.**
 - **Every function the program declares has its rows.** A function nothing
-  calls is the most useful thing a coverage report has to say. Native skips
-  the AST tree-shake under `-cover` and registers the sites before the
-  post-lowering dead-function cull drops the code again, so a `-cover` build
-  compiles code an ordinary build never lowers. The self-host instruments
-  before its tree shake, so the rows of a function the shake drops stay in the
-  table and report 0.
+  calls is the most useful thing a coverage report has to say. The compiler
+  instruments before its tree shake, so the rows of a function the shake
+  drops stay in the table and report 0.
 
 It is a measurement build, not a shipping one. With the flag **off**, the
 emitted asm is byte-identical to a build from a compiler without the feature:
-on native no coverage op is lowered and no symbol is emitted, and on the
-self-host the pass does not run.
+the pass does not run.
 
 ## Where it works
 
-On native, x86-64 Linux and arm64 (Linux, Darwin, Android), matching
-`-sanitize`'s reach; on the self-host, x86-64 Linux and arm64 Linux. Any other
+x86-64 Linux and arm64 Linux. Any other
 target **errors** rather than emitting an uninstrumented binary: a coverage run
 that silently measures zero is worse than one that refuses. So does `-interp`,
 which lowers nothing.
 
 ## How it is built
 
-On the self-host it is a source pass, `compiler/cover.fern`, which
+It is a source pass, `compiler/cover.fern`, which
 runs after every gate and before the tree shake:
 
 - Each statement that opens a new source line in its list is preceded by
@@ -145,39 +138,11 @@ runs after every gate and before the tree shake:
   are one string literal, a line each, so the compiler instrumenting itself
   (about 180k counters) still compiles one string rather than an array.
 
-On native it is one IR pass, so a backend gets it by wiring the emit rather
-than by reimplementing the analysis:
-
-- `ir.CoverPoints()` makes the builder emit an `OpCoverPoint` at each
-  statement that opens a new source line in its basic block, and publishes the
-  counter table as `Program.CoverSites`. The op is `— → —`, modelled on
-  `OpLine` — no stack effect, no pass has to understand it.
-- **Branch counters reuse that same op and the same table.** A branch is two
-  more entries with a different `CoverKind`, so adding branch coverage needed
-  no backend change at all: the emit already knew how to bump counter `i` and
-  print row `i`. `CoverSite.ReportLine` renders a row's fixed text and lives in
-  `internal/oracle/ir`, so the two natives cannot drift on the wire format.
-- The eval counter is emitted **before** the condition is lowered, where the
-  operand stack is in a known state and no comparison is waiting for its
-  branch; the true counter goes at the top of the arm, past the conditional
-  jump. So a conditional whose condition diverges (a call that exits) counts as
-  evaluated — the block-entry convention gcov uses.
-- The counter is keyed by `(file, line)`. `ast.Position` carries only a line,
-  so the file half comes from `FuncDecl.SourceFile`, which `modload` stamps and
-  never clears — unlike `SourceModule`, which is blanked on flat-loaded stdlib
-  decls to keep them universally visible.
-- Each backend emits a `.bss` counter array, a `.rodata` (pointer, length)
-  table of pre-baked `fern-cover: <file>:<line> ` literals, and
-  `__fern_cov_report`, a loop over the two called from both exit seams.
-- `ast.CoverLinePrefix` is the one spelling of the wire format, shared by both
-  natives and the reader.
-
 ## Coverage-guided fuzzing of the self-host compiler
 
 Every `go test -fuzz` target in the repo steers by Go's coverage
 instrumentation, which cannot see inside a Fern binary. So the self-host
-compiler — the implementation `NATIVE-CONVERGENCE.md` makes the definition
-once the freeze lands — had no coverage-guided fuzzing at all.
+compiler, the only compiler, had no coverage-guided fuzzing at all.
 
 `-cover` closes that, and the feedback needs nothing new: one input is one
 compiler process, so the report the binary already writes at exit *is* that
@@ -216,7 +181,7 @@ after the steering stopped working.
   on their own lines, so line coverage answers which arms ran; a guard on an
   arm is a conditional the report does not currently see.
 - **wasm** — no instrumentation, so `-cover` errors on the wasm targets.
-- **arm64 Darwin and Android on the self-host** — the pass is target-neutral,
+- **arm64 Darwin and Android** — the pass is target-neutral,
   but only the two Linux targets are tested, so the others refuse.
 - **Literate sources** — a `.fern.md` reports against the tangled `.fern`
   line numbers, not the document's. The remap exists (`internal/tools/literate`) but

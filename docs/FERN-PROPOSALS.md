@@ -22,16 +22,16 @@ Adapted from Victor Taelin's BIP program for Bend
 The method is his; the areas, the gates and the measurement rules are Fern's.
 Fern is not a proof language and makes no "never slower than C" claim, so the
 theorem-proving and C-parity areas are replaced with the things Fern actually
-promises: that every backend agrees, that the self-hosted compiler agrees with
-the native one, and that memory is reclaimed.
+promises: that every backend agrees, that the compiler agrees with the Go
+oracle, and that memory is reclaimed.
 
 ## 1. Improvement areas
 
 These are inspirations, not a menu. Any of them is a valid target.
 
-**1. Self-host / native agreement.** Fern's self-hosted compiler
-(`compiler/`) and its native Go compiler (`internal/`) are supposed
-to compile the same language. Every place they disagree is a bug in one of
+**1. Compiler / oracle agreement.** Fern's compiler (`compiler/`) and
+its Go oracle (`internal/`: parser, checker and interpreter) are supposed
+to accept and run the same language. Every place they disagree is a bug in one of
 them, and the disagreements that matter most are the ones no gate currently
 sees. The `-interp` oracle is cheap and total: run your program interpreted,
 run it through `bin/fern-selfhost`, compare. A whole closure-dispatch bug
@@ -46,7 +46,7 @@ the round count and eventually walks into the 16 GiB arena wall (exit 125).
 The pins are `internal/testing/e2e/testdata/conformance-leak-census.txt` and the
 per-case byte baselines in `internal/testing/e2e/rc_leak_gate_test.go`, both measured on
 the self-host: the census has one non-zero row, a block live when a bounds check
-aborts, and the gate pins no case on x86-64 or arm64. The self-host-versus-native
+aborts, and the gate pins no case on x86-64 or arm64. The leak-matrix
 grid (`internal/testing/e2ecompiler/testdata/selfhost-leak-matrix.txt`) is clean too. Related and less
 watched: over-*retains*, which are silent — an extra
 `inc` never crashes, it just makes an `rc == 1` in-place append into a copy,
@@ -55,11 +55,11 @@ wrong complexity class and fix it. `docs/TEST-GATES.md` §"What nothing gates"
 is a shopping list.
 
 **3. Backend parity.** Four target rows across three emitters — arm64 Linux,
-arm64 Darwin (which shares `EmitWithOptions` with arm64), x86-64 Linux, and
+arm64 Darwin (which shares the arm64 emitter), x86-64 Linux, and
 wasm/WASI-p2 — and `docs/BACKEND-PARITY.md` is the table of what each one can
 do. A construct that works on three rows and not the fourth is a defect, not a
 documented limitation, unless the table says so with a reason. The IR layer is
-target-agnostic: a fix in `internal/oracle/ir` is worth three fixes in the emitters,
+target-agnostic: a fix in `compiler/ir.fern` and the passes over it is worth three fixes in the emitters,
 and is the only kind that cannot drift back apart.
 
 **4. Bug fixing.** Audit, find a defect, reproduce it minimally, fix it. A
@@ -220,10 +220,10 @@ A deliberate limitation CAN still be picked IF your proposal does not change
 the design — "`?` could propagate through one more position" is fair game;
 "add a GC" is not.
 
-Two tie-breakers, both Fern-specific. Prefer a defect on the **self-host** side
-over the same defect on the native side: `docs/NATIVE-CONVERGENCE.md` is the
-policy that `internal/` eventually freezes, so native-only work is debt and
-self-host work is progress. And prefer a defect that is **invisible to every
+Two tie-breakers, both Fern-specific. Prefer a defect in the **compiler**
+over the same defect in the Go oracle: the oracle takes bugfixes and what the
+differentials need, and nothing more (`CLAUDE.md`), so oracle-only work is
+debt and compiler work is progress. And prefer a defect that is **invisible to every
 existing gate** over one a suite would have caught eventually — you are the
 only instrument that was pointed at it.
 
@@ -234,10 +234,10 @@ repository, including the implementation.
 
 Fix it at the deepest layer that owns the problem:
 
-- a lowering bug that shows up on one backend usually lives in `internal/oracle/ir`,
-  where the fix serves every backend;
-- a self-host bug in inference, the checker, `Ty` or `EmitState` lives in
-  `compiler/asmcore.fern`, which all three self-host backends share.
+- a lowering bug that shows up on one backend usually lives in `compiler/ir.fern`
+  and the passes over it, where the fix serves every backend;
+- a bug in inference, the checker, `Ty` or `EmitState` lives in
+  `compiler/asmcore.fern`, which all three backends share.
   Editing the same thing three times in the `emit_*` layers is the wrong fix
   even when it works;
 - a diagnostic that points at the wrong place is a span bug, not a message bug.

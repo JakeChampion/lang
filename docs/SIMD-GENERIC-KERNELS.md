@@ -80,7 +80,7 @@ function chunk[T: Lanes](n: i32): i32 { return n / T.LANES; }
   inside an impl or a trait default, `T.NAME` through a bound, `f64.NAME`
   on a concrete type. `Base.NAME` with no argument list is the read.
   `Base.f(…)` is the associated call.
-- Implementation, in both compilers: an associated constant is a nullary
+- Implementation, in the compiler and the Go front end: an associated constant is a nullary
   associated function marked `const`. The self-host already desugars a
   module-level `const` that way (`parser.fern` ▸ `parse_const_decl`), so the
   conformance check, the `T.f()` dispatch through a bound, the monomorphiser
@@ -96,7 +96,7 @@ function chunk[T: Lanes](n: i32): i32 { return n / T.LANES; }
 
 Decided 2026-10-21: const generics are wanted, as the project **after** the
 lane type lands, with `Vec[N, T]` as their first consumer. They are not built
-first because they are a type-system project of their own in both compilers
+first because they are a type-system project of their own in the compiler and the Go front end
 (a value-kinded parameter, inference from a lane type's width, instance
 naming in `ssasem.instance_name`, array sizing), and the portable 128-bit tier
 has exactly two float lane types, which a trait over concrete types carries
@@ -326,7 +326,7 @@ of them. No PR leaves a type on main that a backend refuses.
 | # | Slice | State |
 | --- | --- | --- |
 | 1 | This brief | this PR |
-| 2 | Associated constants, both compilers | this PR |
+| 2 | Associated constants, compiler and Go front end | this PR |
 | 3 | `std/simd`: `Lanes`, `Math`, scalar impls, `Dual`, `DoubleDouble`, benchmark | this PR |
 | 4a | Lane types: the instruction vocabulary on x86-64, arm64 and wasm | done (#12945) |
 | 4b | Lane types: IR ops, the 128-bit register class and spill slot, emission on every backend | this PR (§6 has the file-level plan) |

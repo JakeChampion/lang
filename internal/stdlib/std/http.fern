@@ -228,9 +228,9 @@ pub function plain(body: string): HttpResponse {
 // and `Err(e)` with `e.to_response()`, so a handler's helpers fail with
 // `?` and one `respond` at the end turns the failure into the reply. A
 // `handle` declared with that return type needs no `respond` of its
-// own: both compilers rename it `__fern_handle_result` and synthesise
-// the plain `handle` calling `respond` (or `respond_with` for the
-// state-threading pair) over it.
+// own: the compiler and the interpreter rename it
+// `__fern_handle_result` and synthesise the plain `handle` calling
+// `respond` (or `respond_with` for the state-threading pair) over it.
 // `problem(status, title, detail)` is the RFC 9457 problem-details
 // answer (`application/problem+json`, a title of "" reading as the
 // status text, a detail of "" left out), `HttpError` the error value

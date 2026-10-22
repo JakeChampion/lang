@@ -3263,10 +3263,6 @@ function routed_map_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
     return routed_insert(r, f, ins);
   }
   if (ssasem.is_map_iter_op(k)) {
-    if (k == ssasem.mapiter_key() || k == ssasem.mapiter_value()) {
-      r = cursor_in_range(r, ins.args[0]);
-    }
-    r = emit(r, ir.op_load_local(ins.args[0]));
     return routed_cursor(r, f, ins);
   }
   let t: typeinfo.Type = f.values[ins.args[0]];
@@ -3478,6 +3474,10 @@ function cursor_in_range(own r: irtables.LowerResult, cursor: i32): irtables.Low
 // keeps the buffer live; it is released through __mapiter_drop_impl.
 function routed_cursor(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
   let k: i32 = ins.kind_tag;
+  if (k == ssasem.mapiter_key() || k == ssasem.mapiter_value()) {
+    r = cursor_in_range(r, ins.args[0]);
+  }
+  r = emit(r, ir.op_load_local(ins.args[0]));
   if (k == ssasem.map_iter()) {
     return emit(r, ir.op_call_direct("__map_iter_impl", 1));
   }

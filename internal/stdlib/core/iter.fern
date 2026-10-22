@@ -1,10 +1,9 @@
 // core/iter.fern — a generic iterator protocol + a Range and an ArrayIter.
 //
 // The iterator trait (#2686 / the open tail of #2699). `Iterator[T]` is now
-// generic over the element type `T`, lowering on BOTH the native compiler and
-// the self-hosted compiler's IR path: parametrised-trait bounds parse on the
-// self-host (#3558) and the native checker recovers a bound-only type parameter
-// by bound-driven inference (#3596), so a fully-generic free function such as
+// generic over the element type `T`: parametrised-trait bounds parse (#3558)
+// and a bound-only type parameter is recovered by bound-driven inference
+// (#3596), so a fully-generic free function such as
 // `nth[T, I: Iterator[T]]: Option[T]` works on every backend. The numeric reducers
 // are bounded on std/num's operator traits (`sum[T: Add + Zero]`,
 // `product[T: Mul + One]`) and the comparing ones on core/cmp's `Ord` / `Eq`,
@@ -13,7 +12,7 @@
 // Two iterators ship: `Range` over `[lo, hi)`, and `ArrayIter` over a `T[]`
 // (`iter.of(xs)`), the latter being the stdlib's first PARAMETRIC impl of a
 // GENERIC trait — `impl[T] Iterator[T] for ArrayIter[T]`. That shape needed a
-// native checker fix (the conformance compare canonicalises the impl's type
+// Go checker fix (the conformance compare canonicalises the impl's type
 // params so a substituted `StructType("T")` matches the hoisted method's
 // `ParamType("T")`) and a monomorphiser fix (clone a parametric-impl method
 // per concrete `for`-type instantiation even when it is reached ONLY through a

@@ -149,7 +149,7 @@ Backend support:
 ## Control-flow inside a value-position block (`#4522`)
 
 A `return` / `break` / `continue` inside a value-position block is
-supported on every native backend (interp / wasm / arm64 / x86-64):
+supported on every backend (wasm / arm64 / x86-64) and in the interpreter:
 
 ```
 let x: i32 = { if (early) { return 0; } let k = compute(); k };
