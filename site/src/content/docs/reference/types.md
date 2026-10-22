@@ -101,6 +101,8 @@ function main(): i32 {
   byte-indexed form that gives a `str` directly and aborts instead.
 - `char` is a Unicode scalar value. `s.chars()` (in `std/string`) splits
   a string into them, and `c as i32` gives the code point.
+  Two characters compare with `<`, `<=`, `>` and `>=` by scalar value.
+  A comparison between a character and an integer requires an explicit cast.
 - Strings compare with `==` and order with `<` / `>` byte-wise; `+`
   concatenates.
 
