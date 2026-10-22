@@ -404,7 +404,7 @@ func TestSelfHostRawFloorIsTypedWhole(t *testing.T) {
 	}
 }
 
-// TestSelfHostRawFloorLookupReachesEveryRow pins raw_floor_find's prefix
+// TestSelfHostRawFloorLookupReachesEveryRow pins raw_floor_at's prefix
 // filter against the table it filters. A raw_floor_sigs row whose name matches
 // none of the prefixes is invisible to the checker: a call to it is argument-
 // checked against nothing, while semsource still contracts it, so the typed
@@ -416,9 +416,9 @@ func TestSelfHostRawFloorLookupReachesEveryRow(t *testing.T) {
 	}
 	src := string(b)
 	rows := rawFloorTableNames(t, src, `function raw_floor_sigs\(\): RawFloorSig\[\] \{`)
-	lookup := regexp.MustCompile(`(?s)function raw_floor_find\(.*?\n\}`).FindString(src)
+	lookup := regexp.MustCompile(`(?s)function raw_floor_at\(.*?\n\}`).FindString(src)
 	if lookup == "" {
-		t.Fatal("checker.fern has no raw_floor_find — point this test at the lookup that replaced it")
+		t.Fatal("checker.fern has no raw_floor_at — point this test at the lookup that replaced it")
 	}
 	var prefixes []string
 	for _, m := range regexp.MustCompile(`str_has_prefix\(name, "([^"]+)"\)`).FindAllStringSubmatch(lookup, -1) {
@@ -441,8 +441,58 @@ func TestSelfHostRawFloorLookupReachesEveryRow(t *testing.T) {
 	}
 	sort.Strings(unreached)
 	if len(unreached) > 0 {
-		t.Errorf("raw_floor_find's prefixes %v reach none of %s, so the checker leaves those rows untyped",
+		t.Errorf("raw_floor_at's prefixes %v reach none of %s, so the checker leaves those rows untyped",
 			prefixes, strings.Join(unreached, ", "))
+	}
+}
+
+// TestSelfHostIntrinsicNamesAreInternal pins what internal_name rests on:
+// every name intrinsic_result and intrinsic_params answer starts with `__`.
+// Both lookups answer "not an intrinsic" for any other name before they read
+// a table, so an intrinsic named without the prefix would type unknown.
+func TestSelfHostIntrinsicNamesAreInternal(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "compiler", "checker.fern"))
+	if err != nil {
+		t.Fatalf("read checker.fern: %v", err)
+	}
+	src := string(b)
+	compared := regexp.MustCompile(`name == "([^"]*)"`)
+	listed := regexp.MustCompile(`(?s)let names: string\[\] = \[(.*?)\];`)
+	quoted := regexp.MustCompile(`"([^"]*)"`)
+	names := map[string]bool{}
+	for _, fn := range []string{"intrinsic_result", "intrinsic_params", "is_f64_primitive", "is_bit_count", "byte_kernel_arity", "is_sha_hw_builtin"} {
+		body := regexp.MustCompile(`(?s)\nfunction ` + fn + `\(.*?\n\}`).FindString(src)
+		if body == "" {
+			t.Fatalf("checker.fern has no function %s — point this test at what replaced it", fn)
+		}
+		for _, m := range compared.FindAllStringSubmatch(body, -1) {
+			names[m[1]] = true
+		}
+		for _, l := range listed.FindAllStringSubmatch(body, -1) {
+			for _, m := range quoted.FindAllStringSubmatch(l[1], -1) {
+				names[m[1]] = true
+			}
+		}
+	}
+	rows := regexp.MustCompile(`(?s)function raw_floor_sigs\(\): RawFloorSig\[\] \{(.*?)\n\}`).FindStringSubmatch(src)
+	if rows == nil {
+		t.Fatal("checker.fern has no raw_floor_sigs table")
+	}
+	for _, m := range regexp.MustCompile(`name: "([^"]*)"`).FindAllStringSubmatch(rows[1], -1) {
+		names[m[1]] = true
+	}
+	if len(names) < 100 {
+		t.Fatalf("read only %d intrinsic names — the patterns have drifted, so this test proves nothing", len(names))
+	}
+	var plain []string
+	for n := range names {
+		if !strings.HasPrefix(n, "__") {
+			plain = append(plain, n)
+		}
+	}
+	sort.Strings(plain)
+	if len(plain) > 0 {
+		t.Errorf("the intrinsic lookups answer %s, which internal_name refuses before any table is read", strings.Join(plain, ", "))
 	}
 }
 
