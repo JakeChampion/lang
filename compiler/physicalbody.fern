@@ -5,6 +5,7 @@ import "./ssasem";
 import "./semrecords";
 import "./typeinfo";
 import "./rccertify";
+import "./semscalarreturn";
 
 // Selected facts from one producer, without retaining its input body graphs.
 pub struct Metadata { contracts: ssasem.Contract[], records: semrecords.Records, enums: semrecords.Enum[], finalizers: ssasem.Finalizer[] }
@@ -146,6 +147,9 @@ function pair_second(enums: semrecords.Enum[], t: typeinfo.Type): i32 {
   let at: i32 = semrecords.find_enum(enums, t);
   if (at < 0) {
     return -2;
+  }
+  if (semscalarreturn.variant_in_lanes(enums[at])) {
+    return 0;
   }
   let mask: i32 = 0;
   let tag: i32 = 0;

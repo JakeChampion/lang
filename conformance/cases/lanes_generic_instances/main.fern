@@ -1,0 +1,22 @@
+// One generic function called with a boolean, an f64x2 and an f32x4 gives
+// three instances. Each lane type names its own instance.
+import "std/f64";
+import "std/i32";
+
+function same[T](x: T): T {
+  return x;
+}
+
+function main(): i32 {
+  let b: boolean = same(true);
+  let v: f64x2 = same(__f64x2_splat(1.5));
+  let w: f32x4 = same(__f32x4_splat(2.5));
+  let n: i32 = 0;
+  if (b) {
+    n = 1;
+  }
+  print(n.to_string());
+  print(__f64x2_lane(v, 1).to_string());
+  print((__f32x4_lane(w, 3) as f64).to_string());
+  return 0;
+}

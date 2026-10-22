@@ -12,6 +12,8 @@
 import "core/bigint";
 import "core/int";
 import "std/crypto";
+import "std/error";
+import "core/cmp";
 
 // The digest a signature was made over.
 pub enum Hash {
@@ -29,6 +31,14 @@ pub enum RsaError {
   // The exponent is even, less than 3, or wider than 64 bits.
   BadExponent,
 }
+
+pub function (e: RsaError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for RsaError {}
+
+impl cmp.Display for RsaError {}
 
 pub function (e: RsaError) message(): string {
   match (e) {

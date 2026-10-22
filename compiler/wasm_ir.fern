@@ -6653,6 +6653,9 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irtables.StructTab): stri
   if (irtables.is_f64_scalar_type_name(fd.ret_type)) {
     return " (result f64)\n";
   }
+  if (fd.ret_type == "f64x2" || fd.ret_type == "f32x4") {
+    return " (result v128)\n";
+  }
   if (irtables.erased_passthrough_safe(fd)) {
     return " (result i64)\n";
   }
@@ -6677,6 +6680,9 @@ function produced_result_wat(r: irtables.LowerResult): string {
   if (r.result_kind == irtables.result_f64()) {
     return " (result f64)\n";
   }
+  if (r.result_kind == irtables.result_v128()) {
+    return " (result v128)\n";
+  }
   eprint("error: produced body " + r.name + " carries no result kind");
   exit(3);
   return "";
@@ -6688,6 +6694,9 @@ function fallthrough_filler(result_wat: string): string {
   }
   if (util.contains(result_wat, "f64")) {
     return "    f64.const 0)\n";
+  }
+  if (util.contains(result_wat, "v128")) {
+    return "    f64.const 0\n    f64x2.splat)\n";
   }
   return "    i32.const 0)\n";
 }
@@ -8664,8 +8673,9 @@ pub function bsd_sum_helper(): string {
 
 // str_hash_helper emits $__fern_str_hash(s, seed) -> ir.op_str_hash's hash of
 // s: a xor and a multiply per 8-byte little-endian word, the last word
-// anchored at the end of the string, a string under 8 bytes assembled into
-// one zero-padded word a byte at a time.
+// anchored at the end of the string. A string under 8 bytes is one
+// zero-padded word: two overlapping 4-byte loads from 4 bytes up, and the
+// first, middle and last bytes below that.
 pub function str_hash_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_str_hash (param $s i32) (param $seed i32) (result i32)\n";
@@ -8681,12 +8691,17 @@ pub function str_hash_helper(): string {
   o = o + "      (if (i32.ge_s (local.get $len) (i32.const 8)) (then\n";
   o = o + "        (local.set $w (i64.load (i32.add (i32.add (local.get $s) (i32.const 4)) (i32.sub (local.get $len) (i32.const 8))))))\n";
   o = o + "      (else\n";
-  o = o + "        (local.set $k (local.get $len))\n";
-  o = o + "        (block $bd (loop $bc\n";
-  o = o + "          (br_if $bd (i32.eqz (local.get $k)))\n";
-  o = o + "          (local.set $k (i32.sub (local.get $k) (i32.const 1)))\n";
-  o = o + "          (local.set $w (i64.or (i64.shl (local.get $w) (i64.const 8)) (i64.extend_i32_u (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $k))))))\n";
-  o = o + "          (br $bc)))))\n";
+  o = o + "        (local.set $k (i32.add (local.get $s) (i32.const 4)))\n";
+  o = o + "        (if (i32.ge_s (local.get $len) (i32.const 4)) (then\n";
+  o = o + "          (local.set $w (i64.or (i64.extend_i32_u (i32.load (local.get $k)))\n";
+  o = o + "            (i64.shl (i64.extend_i32_u (i32.load (i32.add (local.get $k) (i32.sub (local.get $len) (i32.const 4)))))\n";
+  o = o + "              (i64.extend_i32_u (i32.shl (i32.sub (local.get $len) (i32.const 4)) (i32.const 3)))))))\n";
+  o = o + "        (else\n";
+  o = o + "          (local.set $w (i64.or (i64.or (i64.extend_i32_u (i32.load8_u (local.get $k)))\n";
+  o = o + "            (i64.shl (i64.extend_i32_u (i32.load8_u (i32.add (local.get $k) (i32.sub (local.get $len) (i32.const 1)))))\n";
+  o = o + "              (i64.extend_i32_u (i32.shl (i32.sub (local.get $len) (i32.const 1)) (i32.const 3)))))\n";
+  o = o + "            (i64.shl (i64.extend_i32_u (i32.load8_u (i32.add (local.get $k) (i32.shr_u (local.get $len) (i32.const 1)))))\n";
+  o = o + "              (i64.extend_i32_u (i32.shl (i32.shr_u (local.get $len) (i32.const 1)) (i32.const 3))))))))))\n";
   o = o + "      (local.set $h (i64.mul (i64.xor (local.get $h) (local.get $w)) (i64.const 1099511628211)))))\n";
   o = o + "    (local.set $h (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 32))))\n";
   o = o + "    (i32.wrap_i64 (local.get $h)))\n";

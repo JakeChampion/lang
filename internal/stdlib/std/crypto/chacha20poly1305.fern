@@ -18,6 +18,8 @@
 // The valgrind gate (`__ct_secret`, docs/TEST-GATES.md) checks this.
 
 import "core/int";
+import "std/error";
+import "core/cmp";
 
 // AeadError — why a seal or an open was refused: a key or a nonce of the
 // wrong length (the length it had), or a sealed message that does not
@@ -27,6 +29,14 @@ pub enum AeadError {
   NonceLength(i32),
   Forged,
 }
+
+pub function (e: AeadError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for AeadError {}
+
+impl cmp.Display for AeadError {}
 
 pub function (e: AeadError) message(): string {
   match (e) {

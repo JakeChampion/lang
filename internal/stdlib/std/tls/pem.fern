@@ -9,6 +9,8 @@
 
 import "std/base64";
 import "std/string";
+import "std/error";
+import "core/cmp";
 
 // Block — one block: its label (CERTIFICATE, PRIVATE KEY, …) and its bytes.
 pub struct Block { label: string, bytes: u8[] }
@@ -20,6 +22,14 @@ pub enum PemError {
   MismatchedEnd(string),
   BadBase64(string),
 }
+
+pub function (e: PemError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for PemError {}
+
+impl cmp.Display for PemError {}
 
 pub function (e: PemError) message(): string {
   match (e) {

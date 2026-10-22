@@ -1,0 +1,25 @@
+import "std/i32";
+
+enum Tree[T] { Leaf, Node(Tree[T], T, Tree[T]) }
+
+function is_leaf(t: Tree): boolean {
+  match (t) {
+    Leaf => { return true; },
+    Node(_, _, _) => { return false; }
+  }
+}
+
+function main(): i32 {
+  let a: Tree[string] = Node(Leaf, "branch", Leaf);
+  let b: Tree[i32] = Node(Leaf, 7, Leaf);
+  let c = Leaf;
+  if (!is_leaf(c)) { return 1; }
+  if let Node(_, value, _) = a {
+    if (value != "branch") { return 2; }
+  } else { return 3; }
+  if let Node(_, value, _) = b {
+    if (value != 7) { return 4; }
+  } else { return 5; }
+  print("bare leaf");
+  return 0;
+}

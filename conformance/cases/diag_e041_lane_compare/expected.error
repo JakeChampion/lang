@@ -1,0 +1,2 @@
+cannot compare values of type f64x2 with "==": a lane value compares lane by lane, through __f64x2_lt and __f64x2_ne
+cannot compare values of type f64x2 with "<"

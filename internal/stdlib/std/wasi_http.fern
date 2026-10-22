@@ -29,6 +29,9 @@
 import "std/http";
 import "std/platform";
 import "std/stream";
+import "std/error";
+import "core/cmp";
+import "core/int";
 
 // The wasi:http method variant, in the WIT's case order: the discriminant
 // the host writes is this variant's index.
@@ -464,6 +467,35 @@ pub struct Outgoing { method: string, authority: string, tls: boolean, target: s
 // cap; `CutShort`, a body whose stream failed before it closed;
 // `Lost`, a future that settled with no response.
 pub enum OutgoingError { Code(i32), Field(string), BodyPastCap, CutShort, Lost }
+
+pub function (e: OutgoingError) message(): string {
+  match (e) {
+    Code(code) => {
+      return "outgoing HTTP request failed with code " + int.int_to_string(code);
+    },
+    Field(name) => {
+      return "outgoing HTTP request has an invalid field: " + name;
+    },
+    BodyPastCap => {
+      return "outgoing HTTP response body exceeds its limit";
+    },
+    CutShort => {
+      return "outgoing HTTP response body ended early";
+    },
+    Lost => {
+      return "outgoing HTTP response is unavailable";
+    }
+  }
+  return "";
+}
+
+pub function (e: OutgoingError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for OutgoingError {}
+
+impl cmp.Display for OutgoingError {}
 
 // `outgoing(o)` — `o` sent through the host, and its response read
 // whole.
