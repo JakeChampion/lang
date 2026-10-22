@@ -93,6 +93,12 @@ a byte. Without `dead_cycles` it read 195,075,845.
 loops carry and read field by field (28 boxes while the cycle stood, 2 now),
 and `loop-carried-finalizer-kept`, its twin with a finalizer.
 
+The splice has a size cost. It copies an updater's field reads into each
+caller, and the compiler has many updaters with many callers. The
+self-built compiler (`fern.fern/stage2`) links at 13,913,088 bytes, 5.4%
+over the stage0-built one, against 0.3% at the previous pin
+(`.github/selfhost-driver-sizes.txt`).
+
 `TestSelfHostInlineUpdater` pins the splice: an updater called from three
 places is spliced into each, and the same body marked `@noinline` stays a
 call.

@@ -549,14 +549,23 @@
 # output for the tracked artifact. The source, fixpoint hashes and complete
 # driver report are recorded in docs/rc-log/2026-10-17-scalar-record-returns.md.
 # The other ten baselines and the 5% tolerance are unchanged.
-fern.fern/stage2 12672208
-fern.fern 12630080
-drivers/asm_load_run.fern 10125912
-drivers/asm_modload_run.fern 8699400
-drivers/asm_ir_run.fern 8418328
-drivers/asm_run.fern 7612208
-drivers/wasm_ir_run.fern 7833136
-drivers/wasm_run.fern 7835128
-drivers/wasm_runio_run.fern 7835304
-drivers/asm_pathprobe_run.fern 4962512
-drivers/checker_modload_run.fern 2852304
+
+# 2026-10-22 (#12969) — every row from driver-sizes' report on run
+# 39765430491. fern.fern/stage2 12672208 -> 13913088 (+9.8%) and fern.fern
+# 12630080 -> 13200800 (+4.5%). The other nine drivers moved +0.7% to +4.7%.
+# fern.fern and the drivers are built by stage0 from the current sources, so
+# their growth is main's since the last pin. fern.fern/stage2 is built by the
+# compiler with #12969's record updater splice, which copies an updater's
+# field reads into each caller. Its ratio to fern.fern went from 1.003 to
+# 1.054, so the splice adds about 5% to the self-built compiler.
+fern.fern/stage2 13913088
+fern.fern 13200800
+drivers/asm_load_run.fern 10358448
+drivers/asm_modload_run.fern 9017440
+drivers/asm_ir_run.fern 8651488
+drivers/asm_run.fern 7872464
+drivers/wasm_ir_run.fern 7902352
+drivers/wasm_run.fern 7902304
+drivers/wasm_runio_run.fern 7889440
+drivers/asm_pathprobe_run.fern 5069088
+drivers/checker_modload_run.fern 2985696
