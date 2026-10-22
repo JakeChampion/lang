@@ -198,7 +198,7 @@ The self-hosted compiler needed its own fixes: its monomorphiser did not
 recover a generic instantiation from a clone-typed match binding, an indexed
 element, or a generic-struct field read; could not pin a bare nullary variant
 in a payload position; and instantiated the free generics a generic-struct
-method reaches with the struct's own type variables (`__om_insert__K__V`),
+method reaches with the struct's own type variables (`node_insert__K__V`),
 so every chain below `insert` dangled. Its rc lowering also returned a
 match-bound array payload without a transfer retain (a use-after-free in the
 vector's leaf descent under FERN_SANITIZE=1). Those live in
@@ -216,8 +216,8 @@ choosing a shape; none affects correctness, and the sanitizer census is the
 gate for closing them.
 
 - **A string-valued or string-keyed ordered-map node found by
-  `match (__om_find(m.root, k))` in `get` / `get_or` is never released** — 5
-  of the 7 blocks `tests/stdlib/ordmap_test.fern` still shows. `__om_find`
+  `match (node_find(m, k))` in `get` / `get_or` is never released** — 5
+  of the 7 blocks `tests/stdlib/ordmap_test.fern` still shows. `node_find`
   returns it with the transfer inc, and `reclaimableMatchScrutinee` refuses a
   scrutinee whose arms let a pointer out of the arm UNCOUNTED — a counted
   alias into a local is admitted since #8003, a `return` of the binding is
@@ -256,9 +256,9 @@ before that round: the blocks once attributed to them were the rebuild leak.
 Read these before extending a module; each is there because a probe showed
 the alternative allocating or leaking.
 
-- **No methods on the node enums**; every operation is a free function and
-  the public surface lives on the wrapper struct — the self-host does not
-  monomorphise a generic enum that has receiver methods.
+- **Each map is its tree**: `OrdMap` and `PMap` are the generic enums
+  themselves, with the operations as their methods and the node helpers
+  private to the module. A set holds its map with unit values.
 - **Bound methods, never operators**, on type-parameter values (`k.cmp(nk)`,
   `k.eq(other)`, `k.hash()`): `==` resolves through a `Type.eq` lookup the
   defining module cannot see (#6846).
@@ -284,12 +284,8 @@ the alternative allocating or leaking.
 - **Bitmap arithmetic in i32, logical shifts through `u32`**, popcount via
   `count_ones()` — `u32 +` / `<<` are not truncated on every self-host
   backend.
-- **The set types hold the tree root directly**, not a map inside a struct:
-  the extra box cost one allocation per operation and leaked one per
-  discarded temp.
 - **Cross-module variants cannot be named** (`ordmap.Tip` is not a thing), so
-  `std/ordset` / `std/pset` reach the node types through the `pub __om_*` /
-  `pub __hm_*` functions their map exports.
+  `std/ordset` / `std/pset` are written against their map's public methods.
 
 ## Bench programs
 

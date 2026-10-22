@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// floatMathIRCases exercise std/float's f64 math builtins — __sqrt_f64 /
+// floatMathIRCases exercise std/f64's f64 math builtins — __sqrt_f64 /
 // __floor_f64 / __ceil_f64 / __trunc_f64 / __abs_f64 / __round_f64 — through the
 // self-host IR path on x86-64 + wasm. Most map to one hardware instruction on
 // every backend (sqrtsd / roundsd / sign-mask on x86, fsqrt / frint* / fabs on
@@ -29,7 +29,7 @@ import (
 //
 // Each case casts its f64 result to i32 and returns a non-negative value kept
 // <= 126 (the wasmtime exit-code truncation gap, cf. #2908), oracle-checked
-// against the interpreter. FEATURE-AUDIT std/float row.
+// against the interpreter. FEATURE-AUDIT std/f64 row.
 var floatMathIRCases = []struct {
 	name string
 	main string

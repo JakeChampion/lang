@@ -70,7 +70,7 @@ var stdModuleReach = map[string]string{
 	"std/errno":         "",
 	"std/error":         "",
 	"std/fetch":         "config,env,fs,host,ktls,log,now,random,reactor,tcp,unix,uring",
-	"std/float":         "",
+	"std/f64":           "",
 	"std/format":        "",
 	"std/fuzz":          "config,env,fs,host,ktls,log,now,random,reactor,tcp,unix,uring",
 	"std/glob":          "",

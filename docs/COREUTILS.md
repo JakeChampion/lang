@@ -2369,7 +2369,7 @@ through the bignum again. Callgrind put 55% of the run in
 `BigInt.to_string` and `__bi_mul_small` alone.
 
 The rewrite keeps GNU's rule exactly and changes how each candidate is
-found. `std/float`'s Dragonbox already produces the shortest decimal that
+found. `std/f64`'s Dragonbox already produces the shortest decimal that
 reads back; `shortest_digits()` now hands it out as (significand,
 exponent), and its digit count is the first precision `%.*g` can succeed
 at, so the search starts there instead of at DBL_DIG. That alone is not

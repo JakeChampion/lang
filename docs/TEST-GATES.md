@@ -1119,7 +1119,7 @@ Worth knowing so you do not assume coverage you do not have:
   in the random sweep. The transcendentals stay outside the equality sweep —
   they are approximations by construction (#5541) — but they now have their
   ULP-shaped gate: `internal/testing/e2e/f64_ulp_test.go` measures the one
-  `std/float` kernel on every lane (interp, x86-64, arm64, wasm, self-host
+  `std/f64` kernel on every lane (interp, x86-64, arm64, wasm, self-host
   x86-64) against a 1400-bit reference, at 2 ulp (1 for sin, cos, log and
   pow), over a corpus spanning the full finite range, plus a 1158-argument
   magnitude sweep over the Payne-Hanek reduction path (#7878) with an

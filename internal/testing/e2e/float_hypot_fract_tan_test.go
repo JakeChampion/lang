@@ -2,14 +2,14 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/float's hypot (Euclidean length via the
+// Differential coverage for std/f64's hypot (Euclidean length via the
 // overflow-safe scaled form), fract (signed fractional part x - trunc(x)), and
 // tan (sin/cos). Both f64 and f32 receivers. Uses Pythagorean triples and
 // exactly-representable fractions so the checks are tolerance-banded but stable
 // across backends. Returns 42 iff every check holds across interp / x86-64 /
 // wasm / arm64; each leg skips itself when its toolchain is absent.
 const floatHypotFractTanProg = `
-import "std/float" as float;
+import "std/f64";
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.001; }
 function main(): i32 {
     // ---- hypot (f64) ----

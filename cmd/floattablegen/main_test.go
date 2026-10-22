@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	floatFern  = "../../internal/stdlib/std/float.fern"
+	floatFern  = "../../internal/stdlib/std/f64.fern"
 	stringFern = "../../internal/stdlib/std/string.fern"
 )
 
@@ -61,7 +61,7 @@ func abs(x int) int {
 	return x
 }
 
-// The committed float.fern must carry exactly what the generator produces, so
+// The committed f64.fern must carry exactly what the generator produces, so
 // regenerating is a no-op.
 func TestCommittedFileIsUpToDate(t *testing.T) {
 	for _, path := range []string{floatFern, stringFern} {

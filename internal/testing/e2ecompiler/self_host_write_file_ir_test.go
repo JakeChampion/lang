@@ -13,7 +13,7 @@ import (
 // through the self-hosted x86-64 IR path (newly added op_write_file, the write
 // sibling of op_read_file) and verifies: routing is pinned to "ir", the compiled
 // binary's exit matches the interpreter oracle, AND the bytes actually landed in
-// the file. write_file returns Result[(), IoError] (Ok(()) on success), reusing the
+// the file. write_file returns Result[void, IoError] (Ok(()) on success), reusing the
 // existing __fern_write_file runtime. x86-64 only — no wasm file I/O
 // (wasm_eligible rejects write_file, like read_file). This was the last non-libm
 // CLI bail (tee); with it the whole CLI corpus except bc routes IR.

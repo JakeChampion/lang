@@ -827,7 +827,7 @@ interface Reader {
 }
 interface Writer {
     write(buf: bytes): Result[i32, IoError]
-    flush(): Result[(), IoError]
+    flush(): Result[void, IoError]
 }
 ```
 

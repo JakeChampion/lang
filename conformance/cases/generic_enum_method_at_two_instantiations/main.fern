@@ -1,0 +1,24 @@
+// A generic enum with a receiver method, used at two instantiations: a bare
+// variant in a payload position takes the instantiation its payload names,
+// as an argument takes its parameter's (#12710).
+import "std/i32";
+
+enum Tree[T] {
+  Leaf,
+  Node(Tree[T], T, Tree[T]),
+}
+
+function (t: Tree[T]) size[T](): i32 {
+  match (t) {
+    Leaf => { return 0; },
+    Node(l, _, r) => { return l.size() + 1 + r.size(); },
+  }
+}
+
+function main(): i32 {
+  let a: Tree[string] = Node(Leaf, "x", Node(Leaf, "y", Leaf));
+  let b: Tree[i32] = Node(Leaf, 1, Leaf);
+  print(a.size().to_string());
+  print(b.size().to_string());
+  return 0;
+}

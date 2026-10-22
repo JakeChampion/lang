@@ -185,7 +185,7 @@ the platform's lifecycle.
       capabilities {
           fetch: (HttpRequest) -> Task[HttpResponse, FetchError],
           kv:    (string) -> Task[Option[bytes], KvError],
-          log:   (LogLevel, string) -> Task[(), Never],
+          log:   (LogLevel, string) -> Task[void, Never],
           now:   () -> Task[Instant, Never],
       }
       handler {
@@ -457,7 +457,7 @@ won't work for streaming responses or for >1 MiB requests.
   eager-read as an opt-in.** Sketch:
 
   ```
-  function handle(req: HttpRequest, plat: Platform): () {
+  function handle(req: HttpRequest, plat: Platform): void {
       let body = req.body.read_all()?;          // eager
       let resp = plat.response(200);
       resp.header("Content-Type", "text/plain");
@@ -633,8 +633,8 @@ object, multiple handler-kind keys" generalises.
 
   ```
   function fetch(req: HttpRequest, plat: Platform): HttpResponse { … }
-  function scheduled(cron: CronEvent, plat: Platform): () { … }
-  function alarm(event: AlarmEvent, plat: Platform): () { … }
+  function scheduled(cron: CronEvent, plat: Platform): void { … }
+  function alarm(event: AlarmEvent, plat: Platform): void { … }
   ```
 
   The checker recognises any/all of these and synthesises
@@ -883,7 +883,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 
 // Explicit streaming.
-function handle(req: HttpRequest, plat: Platform): () {
+function handle(req: HttpRequest, plat: Platform): void {
     let resp = plat.response(200);
     resp.header("Content-Type", "text/event-stream");
     for line in req.body.lines() {
@@ -911,10 +911,10 @@ actually want.**
 The auto-`main` synthesiser already recognises `handle`.
 Extend it to recognise:
 
-- `function scheduled(event: CronEvent, plat: Platform): ()`
+- `function scheduled(event: CronEvent, plat: Platform): void`
   — wired to `wasi:scheduled/cron-handler` or to a
   native cron driver.
-- `function alarm(event: AlarmEvent, plat: Platform): ()`
+- `function alarm(event: AlarmEvent, plat: Platform): void`
   — wired to durable-object alarms or a native timer queue.
 - `function websocket_open / websocket_message / …`
   — wired to a WS-protocol upgrade path.

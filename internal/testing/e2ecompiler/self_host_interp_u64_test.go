@@ -9,7 +9,7 @@ import (
 // stdin driver. The interpreter carries a 64-bit value as two i32 halves and
 // read them back SIGNED, with no unsigned 64-bit carrier at all, so before
 // #6810 every compare, divide, remainder and `>>` on a u64 above 2^63 took the
-// signed path — a wrong answer rather than a missing feature. std/float's
+// signed path — a wrong answer rather than a missing feature. std/f64's
 // Dragonbox formatter is written almost entirely in u64, which is where it was
 // reported (`(1.5).to_string()` came back starting with `-`); those cases need
 // the module loader and live in TestSelfHostInterpStdlibModload.

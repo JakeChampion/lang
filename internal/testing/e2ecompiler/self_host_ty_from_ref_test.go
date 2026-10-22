@@ -47,7 +47,6 @@ func TestSelfHostTyFromRef(t *testing.T) {
 		"usize => usize\n" +
 		"f64 => f64\n" +
 		"f32 => f64\n" +
-		"float => f64\n" +
 		"bool => bool\n" +
 		"boolean => bool\n" +
 		"string => string\n" +

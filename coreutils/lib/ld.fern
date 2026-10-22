@@ -33,7 +33,7 @@ import "std/string";
 import "std/array";
 import "std/u64";
 import "core/bigint";
-import "std/float";
+import "std/f64";
 
 // ---- the format ------------------------------------------------------------
 // `mant` is the significand's width in bits (C's LDBL_MANT_DIG),
@@ -1472,7 +1472,7 @@ function no_dec(): (Dec, i32) {
   return (Dec { digits: "", dp: 0 }, 0);
 }
 
-// `round_to` without the product. `std/float` keeps 10^s as a 128-bit
+// `round_to` without the product. `std/f64` keeps 10^s as a 128-bit
 // significand c with 10^s = (c − θ) × 2^β for some 0 ≤ θ < 1, so m × c
 // is v × 10^s to within m × θ < m units of its low bit, and the integer
 // part, the fraction against a half and the fraction against half the
@@ -1483,11 +1483,11 @@ function round_fast(f: Format, v: LD, x: i32, p: i32, s: i32): (Dec, i32) {
   if (s < 0 - 292 || s > 326) {
     return no_dec();
   }
-  let chi: u64 = float.pow10_hi(s);
-  let clo: u64 = float.pow10_lo(s);
+  let chi: u64 = f64.pow10_hi(s);
+  let clo: u64 = f64.pow10_lo(s);
   // v × 10^s is m × c / 2^sigma; F is that in units of 2^-64, so its
   // high word is the integer part and its low word the fraction.
-  let t: i32 = 63 - float.pow10_log2(s) - v.e;
+  let t: i32 = 63 - f64.pow10_log2(s) - v.e;
   if (t < 48 || t > 126) {
     return no_dec();
   }

@@ -44,7 +44,7 @@ const dynWidthArgsSrc = `import "std/i32";
 import "std/i64";
 import "std/u32";
 import "std/u64";
-import "std/float";
+import "std/f64";
 trait Take {
     function add(self: Self, n: i32): i32;
     function t_i64(self: Self, n: i64): i64;
@@ -116,7 +116,7 @@ import "std/i32";
 import "std/i64";
 import "std/u32";
 import "std/u64";
-import "std/float";
+import "std/f64";
 trait Show { function show(self: Self, n: i32): string; }
 impl Show for i32 { function show(self: Self, n: i32): string { return "i32:" + (self + n).to_string(); } }
 impl Show for i64 { function show(self: Self, n: i32): string { return "i64:" + (self + (n as i64)).to_string(); } }
