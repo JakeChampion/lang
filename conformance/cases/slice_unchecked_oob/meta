@@ -1,8 +1,7 @@
 waiver: harness-limit
-reason: an aborting program is only observable as an exit code on the
-  native backends. The wasm leg builds with PrintMainResult and recovers
-  the exit code from a trailing stdout line, which a trapping program
-  never reaches — the runner sees empty stdout and a trap, not 134. The
-  interpreter reports the range and exits 1 so `fern -interp` stays
-  readable, so 134 is the one code two backends agree on. Same
-  restriction, and the same reason, as oob_index_read.
+reason: an aborting program is observable as an exit code on the
+  interpreter and the native backends, which all print the same cause
+  line and exit 134. The wasm leg builds with PrintMainResult and
+  recovers the exit code from a trailing stdout line, which a trapping
+  program never reaches. Same restriction, and the same reason, as
+  oob_index_read.

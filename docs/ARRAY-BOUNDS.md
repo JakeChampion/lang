@@ -9,7 +9,7 @@ value.
 
 ```
 let xs: i32[] = [10, 20, 30];
-xs[5]                // aborts: index 5 out of range [0, 3)
+xs[5]                // aborts: fern: array index out of range
 xs[0 - 1]            // aborts: negative index
 xs = xs.with(7, 9)   // aborts: out-of-range write
 ```
@@ -44,12 +44,12 @@ both a negative index and `index >= len`.
   string-slice helper uses).
 - **wasm** traps (`unreachable`), which `wasmtime` surfaces as exit
   134.
-- **interp** reports a diagnostic (`array index N out of range [0,
-  L)`, `string index N out of range [0, L)`) and exits 1 — `fern -interp`
-  and `fern-oracle -interp` alike, a friendlier message for debugging.
+- **interp** stops with **exit code 134**, `fern -interp` and
+  `fern-oracle -interp` alike.
 
 All four agree on the observable contract: an out-of-bounds index
-aborts before producing a value.
+aborts before producing a value. The natives and both interpreters also
+print the same cause line, below.
 
 ## Allocation size (#8457)
 
@@ -59,8 +59,8 @@ its buffer `sl * n`, and `__fern_strcat` adds the two operand lengths —
 and everything downstream reads the count as unsigned, so the natives
 allocated against the zero-extended value and then walked off it.
 `__alloc_u8` and `__fern_strcat` reject a negative count on both native
-backends. Both interpreters reject it (`__alloc_u8: negative
-length`, exit 1) and wasm traps.
+backends. Both interpreters reject it with the same cause line and exit
+134, and wasm traps.
 
 A size that wraps to a small NON-negative value is a different outcome
 and stays one: the allocation succeeds at the wrapped size and the copy
@@ -94,6 +94,24 @@ backtrace:
   0x0000000000401290
 ```
 
+Both interpreters print the same cause line and exit 134, with one line
+of their own under it where a natively compiled program prints its
+backtrace (#12691):
+
+```
+fern: array index out of range
+  index 5, length 3
+```
+
+The cause lines live in `compiler/aborts.fern`, which both emitters and
+the self-host interpreter read; the Go interpreter's copies are pinned to
+it by `TestAbortCausesMatchTheCompiler`. A string's byte index reports the
+string cause, as `slice_unchecked` does; an array, a byte view and `.with`
+report the array cause. Two reads abort only in the interpreters so far: a
+map cursor read past its end (the array cause) and an out-of-range
+`buf_push_range` (the slice cause). The natives read past the end there
+(#12962).
+
 Under the header is a frame-pointer walk (the `x29` / `rbp` chain,
 bounded to 64 frames). The addresses are raw; build with `-g` and
 `addr2line` / `nm` resolve them to functions against the emitted
@@ -125,7 +143,7 @@ the source; the access-time check compares against the slice's
 past the source — was readable. Backends abort exactly as for an
 index: natives exit 134 (the IR routes construction through the
 `__slice_range(lo, hi, len)` helper), wasm traps, the interpreter
-reports `slice [lo:hi] out of range for length N` and exits 1.
+prints the slice cause line and exits 134.
 The self-host backends check inside their copying
 helpers (`__fern_arr_slice` / `$__fern_substr`) and the inline
 `str_slice` view emit. The inline emit branches to
