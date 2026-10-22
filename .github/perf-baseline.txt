@@ -275,7 +275,10 @@ x86_64/utf8_ingest_validated.ir	5869315
 # 1% or more: record_update.ir -65.63% and .text -14.54%,
 # perceus_rbtree_ck.ir -14.51%, http_hello.ir -2.59% and .text +2.40%.
 # utf8_ingest_unchecked.text moved -1.39% and utf8_ingest_validated.text
-# -1.34%. Every other row moved by less than 1%.
+# -1.34%. Every other row moved by less than 1%. The aarch64 rows are the
+# perf lane's: record_update.ir -70.25% and .text -12.29%,
+# perceus_rbtree_ck.ir -15.91%, http_hello.ir -2.20% and .text +2.42%, and
+# the two utf8_ingest .text rows -1.2%.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
@@ -303,8 +306,8 @@ aarch64/closure_call.text	1090
 aarch64/closure_call.ir	72624111
 aarch64/enum_match.text	1210
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	16282
-aarch64/http_hello.ir	26308603
+aarch64/http_hello.text	16676
+aarch64/http_hello.ir	25728660
 aarch64/int_loop.text	246
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6112
@@ -319,8 +322,8 @@ aarch64/pmap_insert.text	2868
 aarch64/pmap_insert.ir	66572386
 aarch64/pvec_with.text	3041
 aarch64/pvec_with.ir	59861409
-aarch64/record_update.text	1692
-aarch64/record_update.ir	104947544
+aarch64/record_update.text	1484
+aarch64/record_update.ir	31217543
 aarch64/sort_inplace.text	1496
 aarch64/sort_inplace.ir	52514479
 aarch64/sort_ints.text	2051
@@ -343,9 +346,9 @@ aarch64/struct_drop.text	2544
 aarch64/struct_drop.ir	221660785
 aarch64/tokenize.text	1282
 aarch64/tokenize.ir	38580038
-aarch64/utf8_ingest_unchecked.text	7619
+aarch64/utf8_ingest_unchecked.text	7528
 aarch64/utf8_ingest_unchecked.ir	2676631
-aarch64/utf8_ingest_validated.text	7871
+aarch64/utf8_ingest_validated.text	7779
 aarch64/utf8_ingest_validated.ir	6278000
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
@@ -368,4 +371,4 @@ aarch64/perceus_nqueens.ir	106188790
 aarch64/perceus_rbtree.text	3041
 aarch64/perceus_rbtree.ir	61408114
 aarch64/perceus_rbtree_ck.text	3303
-aarch64/perceus_rbtree_ck.ir	72093318
+aarch64/perceus_rbtree_ck.ir	60624651
