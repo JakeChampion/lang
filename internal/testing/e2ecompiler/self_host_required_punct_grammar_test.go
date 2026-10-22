@@ -74,6 +74,7 @@ func TestSelfHostRequiredPunctGrammar(t *testing.T) {
 		"let Some(v) = o;",
 		"let Some(v) = o { return 1; };",
 		"let 3 = n;",
+		"let 3 = n { return 1; };",
 	}
 	dir := t.TempDir()
 	check := func(bin, src string, extra ...string) (string, error) {

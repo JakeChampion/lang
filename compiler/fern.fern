@@ -6414,7 +6414,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
         dsym_offs = pa2.lab_offs;
         dwarf = darwin_dwarf(prog, tv, dv, entry_path);
       }
-      out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.text, deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs, dwarf)));
+      out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.text, arm64_native.arm64_code_len(prog), deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs, dwarf)));
       util.arr_push_cliff_report("darwin:image", 0);
     }
   } else if (target == "wasm32-wasi" && emit_text) {
