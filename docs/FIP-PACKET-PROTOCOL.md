@@ -1,5 +1,7 @@
 # Experiment 2: the bounded packet codec
 
+Status: [record] measured experiment for #9584; its e2e test still checks the claims.
+
 What #9584 asked, measured. The programs are `examples/fip/packet_*.fern` —
 four implementations of one binary protocol, differing only in where the bytes
 live — and `internal/testing/e2e/fip_packet_test.go` keeps their claims from rotting.

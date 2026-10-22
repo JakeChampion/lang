@@ -1,5 +1,8 @@
 # Native x86 test workers
 
+Status: [reference] how CI splits the x86-64 e2e suite across two worker
+processes, with the measurement behind it.
+
 The native x86 backend suite uses two independent processes through the same
 `ci-test-workers` runner as the ARM64 suite. The runner inventories and assigns
 every selected top-level test once, divides the available CPU budget between

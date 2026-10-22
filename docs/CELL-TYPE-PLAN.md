@@ -1,5 +1,8 @@
 # Cell[T] — a sanctioned mutable cell for the immutable-data world
 
+Status: [reference] implemented for every cycle-free element type; "The rule
+today" below is the current rule.
+
 Date: 2026-06-07 (scalar-array extension 2026-10-06, composite extension
 2026-10-09, #2679).
 

@@ -1,12 +1,13 @@
 # Async redesign — futures + combinators, not parser CPS
 
-> Status: **accepted direction**, migration in progress. This document
-> supersedes the *surface-syntax + parser-CPS* parts of
-> `docs/ASYNC-IMPLEMENTATION-PLAN.md`. The **runtime** pieces that plan
-> describes (the reactor, real `poll`, `register_fd`, the
-> component-model-async import path) are kept — see *Keep / cut* below.
-> Written with no users in the field, so we are free to remove the
-> `concurrent` / `await` / `race` surface rather than evolve it.
+Status: [record] accepted and shipped: the `concurrent` / `await` / `race`
+surface and its parser CPS are gone, and `std/async` is the async surface
+(`docs/ASYNC.md`). This document supersedes the *surface-syntax + parser-CPS*
+parts of `docs/ASYNC-IMPLEMENTATION-PLAN.md`. The **runtime** pieces that plan
+describes (the reactor, real `poll`, `register_fd`, the
+component-model-async import path) are kept — see *Keep / cut* below.
+Written with no users in the field, so we were free to remove the
+`concurrent` / `await` / `race` surface rather than evolve it.
 
 ## TL;DR
 

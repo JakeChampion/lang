@@ -1,6 +1,6 @@
 # `dyn Trait` — runtime trait-object dispatch
 
-Status: **design + slices 1–4 shipped** — interpreter (slice 1), all
+Status: [reference] design + slices 1–4 shipped — interpreter (slice 1), all
 three compiled backends (slice 2: wasm 2b, x86-64 2c, arm64 2d), the
 self-host (slice 3: x86-64 + arm64 + wasm), and Perceus RC for trait
 objects on **all three backends** (slice 4: wasm 4a, x86-64 4b, arm64 4c,

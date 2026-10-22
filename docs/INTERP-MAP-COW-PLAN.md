@@ -1,8 +1,9 @@
 # Plan: copy-on-write Maps in the interpreter (M1)
 
+Status: [record] implemented; the rc-based copy-on-write it scopes ships in the interpreter.
+
 Scoping document for the **M1** finding from
-`docs/ADVERSARIAL-REVIEW-2026-06.md`. Status: **IMPLEMENTED** (this was
-the original design doc; the rc-based COW it scopes now ships).
+`docs/ADVERSARIAL-REVIEW-2026-06.md`; this was the original design doc.
 
 ## Implementation status (done)
 

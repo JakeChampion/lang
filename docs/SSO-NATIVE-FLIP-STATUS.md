@@ -1,6 +1,6 @@
 # SSO native flip — arm64 shipped; x86-64 still single-word
 
-**STATUS (2026-06-03): the two-word string ABI + top-bit-tagged inline
+Status: [record] the Go native backends this describes were deleted in 2026-10. As of 2026-06-03, **the two-word string ABI + top-bit-tagged inline
 encoding is SHIPPED on arm64**, verified across the codegen unit tests,
 string/SSO e2e, cross-backend differential parity, and the full e2e suite
 (EXIT=0). The §0–§9 arc below is that implementation record.

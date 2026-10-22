@@ -1,5 +1,7 @@
 # Precise self-hosted float types
 
+Status: [record] landed; the note for the change that gave the checker exact f32/f64 float types (#8965).
+
 This integrates the float-type prerequisite from the preserved typed-match work
 into the production Fern-written compiler. It addresses #8965 and advances the
 typed-match and pre-RC ownership work in #8930 and #8920.

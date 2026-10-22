@@ -1,5 +1,7 @@
 # Verify lifetime dependencies before ownership planning
 
+Status: [record] landed; the note for the change that added `ssadeps.fern`'s dependency verification. `RC-DESIGN.md` describes the pipeline as it stands.
+
 Part of #8920's self-hosted typed-IR migration, following the dependency-aware
 SSA liveness solver. A dependency can keep an actual container alive only if
 that value exists and is available on the edge where the borrowed value is

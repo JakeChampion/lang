@@ -1,14 +1,13 @@
 # Porting Perceus RC to the self-hosted compiler
 
-> **Open follow-ups tracked in GitHub:** the goal-2 port slices
-> [#4351](https://github.com/JakeChampion/lang/issues/4351)–[#4357](https://github.com/JakeChampion/lang/issues/4357),
-> [#4399](https://github.com/JakeChampion/lang/issues/4399) (escape-taint
-> retirement) and [#4402](https://github.com/JakeChampion/lang/issues/4402)
-> (missing optimisations). The old coarse tracker #2857 is closed.
-> This doc is a living progress log — verify the latest slice before picking up
-> an item.
+Status: [record] the goal-2 log up to 2026-08-20; goal 2 is done and later entries are in `docs/rc-log/`.
+Follow-ups were tracked in the goal-2 port slices
+[#4351](https://github.com/JakeChampion/lang/issues/4351)–[#4357](https://github.com/JakeChampion/lang/issues/4357),
+[#4399](https://github.com/JakeChampion/lang/issues/4399) (escape-taint
+retirement) and [#4402](https://github.com/JakeChampion/lang/issues/4402)
+(missing optimisations); the old coarse tracker #2857 is closed.
 
-Status: **design + implementation tracker** (started 2026-06-07).
+Started 2026-06-07 as the design and implementation tracker.
 Goal: bring the native compiler's Perceus reference-counting +
 compile-time memory optimisation to the self-hosted Fern compiler
 (`compiler/`), at feature parity. This document is the

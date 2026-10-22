@@ -1,6 +1,6 @@
 # Erased-wide `T[]` generics silently miscompile on the self-host wasm path
 
-**Status:** BOTH steps done. Step 1 made the shape refuse instead of
+Status: [record] both steps done. Step 1 made the shape refuse instead of
 miscompiling; step 2 makes it compile correctly.
 **Severity when found:** silent wrong values — not a bail, not a validator
 rejection.

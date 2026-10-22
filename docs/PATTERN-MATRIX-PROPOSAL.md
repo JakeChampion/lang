@@ -1,6 +1,6 @@
 # Compiling patterns with a decision tree — what the arm-position limit costs, and what replacing the desugar would buy
 
-Status: proposal (2026-08). Not a commitment. Written after finishing the
+Status: [research] proposal (2026-08), not implemented; arm-position patterns are still a parse-time desugar. Not a commitment. Written after finishing the
 last patchable slice of [#2698](https://github.com/JakeChampion/lang/issues/2698),
 because what remains there is not a patch. Every claim about current
 behaviour below was run against the tree, not read off an issue.

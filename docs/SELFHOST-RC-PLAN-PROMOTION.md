@@ -1,6 +1,8 @@
 # Promote the rc plan: retire the credit table
 
-Status: proposal, 2026-08-23. Companion to #7253 (keying/de-multiplexing —
+Status: [record] proposal, 2026-08-23; the credit table it proposed retiring was
+deleted with the AST lowering, and the typed lowering's unit plan now decides
+every retain and release (`RC-DESIGN.md`). Companion to #7253 (keying/de-multiplexing —
 treats the table's encoding, this treats its existence), #4399 (escape-taint
 retirement), `docs/TYPED-IR-REWRITE.md` (the same argument on the type axis).
 

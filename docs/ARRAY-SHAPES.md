@@ -1,6 +1,6 @@
 # Multidimensional arrays: shape, strides and offset
 
-Status: policy doc, normative where marked. Phase 3 of #9727 (#9734); the
+Status: [policy] normative where marked. Phase 3 of #9727 (#9734); the
 module is `std/ndarray`.
 
 Upstream: `docs/ARRAY-ALGEBRA.md` (what the algebra may do; §4 for shape

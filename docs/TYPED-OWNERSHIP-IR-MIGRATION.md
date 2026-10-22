@@ -5,7 +5,7 @@ the Go compiler is a bootstrap/validation tool to retire after verified parity.
 Prioritize the self-hosted production cutover over further optional Go-pilot
 expansion. See [the self-hosted cutover plan](SELFHOST-TYPED-OWNERSHIP-CUTOVER.md).
 
-Status: executable opt-in ARM64 pilot, not a completed migration. Highest development
+Status: [record] the Go pilot (`internal/semir`) was deleted 2026-10-04 and the self-host typed lowering produces every body. Last state: executable opt-in ARM64 pilot, not a completed migration. Highest development
 priority by user direction. Related to #8920, #8278, #7989 and the existing
 SSA cutover and typed-IR work. Initial integration base: `02ea66e91`.
 
@@ -25,9 +25,9 @@ proofs, variant-distinct projections and independently verified active-variant
 guards feed counted ownership and recursive active-payload drops. Nullary values
 use immortal sentinels. Native raw/optimized and actual CLI coverage includes
 generic enum/record cycles, escaped children, loops and deferred cleanup. This
-uses the [checked enum contracts](TYPED-ENUM-CONSTRUCTION-CONTRACTS-2026-09-09.md)
+uses the [checked enum contracts](typed-log/2026-09-09-enum-construction-contracts.md)
 without adding AST ownership heuristics. It does not retire production native or
-self-host AST ownership. See [typed enum values](TYPED-ENUM-VALUES-2026-09-09.md).
+self-host AST ownership. See [typed enum values](typed-log/2026-09-09-enum-values.md).
 
 Recursive nominal record types now import as complete finite declaration graphs
 and execute under the existing independently verified counted-result ownership
@@ -35,14 +35,14 @@ contract. Generic recursive CLI inputs, recursive calls, shared updates and
 escaped children have native runtime coverage. The optional eager-tree return-
 provenance analysis separately rejects recursive input with no summary; it is
 not a prerequisite of executable ownership lowering. See
-[recursive typed records](TYPED-RECURSIVE-RECORDS-2026-09-09.md).
+[recursive typed records](typed-log/2026-09-09-recursive-records.md).
 
 Nominal records now have private typed field interfaces, explicit
 construction/projection and immutable spread updates. Ownership, exact return
 provenance and ARM64 field/deep-drop lowering use those interfaces without AST
 declaration lookup. Concrete generic records work through the common CLI's
 monomorphization. Recursive return-provenance analysis, record patterns and field mutation
-remain explicit gaps. See [typed record values](TYPED-RECORD-VALUES-2026-09-09.md).
+remain explicit gaps. See [typed record values](typed-log/2026-09-09-record-values.md).
 
 Conditional function/iteration cleanup now executes in the opt-in typed pipeline.
 Typed activation bindings, late capture snapshots and guarded writeback connect
@@ -51,7 +51,7 @@ activation and capture semantics before and after promotion, using retained
 initializer/observation events and independently reconstructed snapshot equations.
 There is no AST replay or runtime environment object. Ordinary dominating-only
 functions retain their existing expansion path. See
-[conditional cleanup execution](TYPED-CONDITIONAL-CLEANUP-2026-09-09.md).
+[conditional cleanup execution](typed-log/2026-09-09-conditional-cleanup.md).
 
 Internal guarded binding replacement now requires an exact same-binding snapshot,
 a dominating true presence guard and an unended binding lifetime. Promotion threads

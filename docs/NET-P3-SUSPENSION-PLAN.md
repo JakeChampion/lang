@@ -1,11 +1,11 @@
 # Networking P3 — inferred suspension (plan)
 
-> Status: **landed, 2026-10-04.** Phase P3 of #9851, tracked in #9857.
-> The decision it implements is #9856 (B): functions that reach a platform
-> wait are lowered to resumable state machines at the IR level, the surface
-> stays colorless, the worker's reactor drives them. This document says what
-> that cost, where each piece lives, and in what order it landed. §4 is the
-> record per slice; §5 holds the one question left open.
+Status: [record] landed 2026-10-04; phase P3 of #9851, tracked in #9857 (closed).
+The decision it implements is #9856 (B): functions that reach a platform
+wait are lowered to resumable state machines at the IR level, the surface
+stays colorless, the worker's reactor drives them. This document says what
+that cost, where each piece lives, and in what order it landed. §4 is the
+record per slice; §5 holds the one question left open.
 
 ## 1. What P3 has to deliver
 

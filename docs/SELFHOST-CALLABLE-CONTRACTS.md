@@ -1,5 +1,7 @@
 # Self-hosted callable contracts
 
+Status: [record] landed; the note for the change that made the checker keep callable parameter types and arity (#8962).
+
 Follow-up to #8960 and #8961, addressing #8962. This integrates the retained
 arrow-signature resolver from the preserved typed-match work into the production
 Fern checker. It is a prerequisite for typed captures and pre-RC semantic IR,

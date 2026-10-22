@@ -1,8 +1,8 @@
 # Closure-capture semantics — the scalar/reference asymmetry
 
-Date: 2026-07-06, revised 2026-07-20. Status: shipped and enforced
-(E049); this document writes down the contract the compiler and the interpreter
-must honour identically.
+Status: [policy] shipped and enforced (E049); this document writes down the
+contract the compiler and the interpreter must honour identically.
+Date: 2026-07-06, revised 2026-07-20.
 
 **2026-07-20 correction.** This document originally described capture as
 by-VALUE for scalars — a snapshot taken at closure creation. That was the

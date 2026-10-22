@@ -1,0 +1,71 @@
+// bench/maps/fern/shared — what the three lookup programs share: the
+// command line (`<n> <rounds>`), the probe order and the report line.
+import "std/string";
+import "std/i32";
+import "std/i64";
+
+pub struct Params { n: i32, rounds: i32 }
+
+pub function params(argv: string[]): Params {
+  let n: i32 = 4000;
+  let rounds: i32 = 40;
+  if (argv.len() > 1) {
+    n = argv[1].parse_int_or(n);
+  }
+  if (argv.len() > 2) {
+    rounds = argv[2].parse_int_or(rounds);
+  }
+  return Params { n: n, rounds: rounds };
+}
+
+function splitmix(x: u64): u64 {
+  let z: u64 = x + 0x9E3779B97F4A7C15;
+  z = (z ^ z >> 30) * 0xBF58476D1CE4E5B9;
+  z = (z ^ z >> 27) * 0x94D049BB133111EB;
+  return z ^ z >> 31;
+}
+
+// order is a fixed permutation of 0..n, the same one the Rust half uses
+// (splitmix64 and a Fisher-Yates shuffle from the same seed), so every
+// table answers the same queries in the same order.
+pub function order(n: i32): i32[] {
+  let v: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    v = v.append(i);
+    i = i + 1;
+  }
+  let s: u64 = 0x9E3779B97F4A7C15;
+  i = n - 1;
+  while (i >= 1) {
+    s = s + 0x9E3779B97F4A7C15;
+    let z: u64 = splitmix(s - 0x9E3779B97F4A7C15);
+    let j: i32 = (z % ((i + 1) as u64)) as i32;
+    let t: i32 = v[i];
+    v = v.with(i, v[j]);
+    v = v.with(j, t);
+    i = i - 1;
+  }
+  return v;
+}
+
+// string_keys is `checker__symbol_<i>` for i in 0..n, the key set of
+// bench/map_string.fern.
+pub function string_keys(n: i32): string[] {
+  let keys: string[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    keys = keys.append("checker__symbol_" + i.to_string());
+    i = i + 1;
+  }
+  return keys;
+}
+
+// report prints the line scripts/bench-maps collects: the mean cost of one
+// lookup over every round, and a checksum so a lookup the compiler dropped
+// cannot read as a fast one.
+pub function report(name: string, n: i32, total_ns: i64, rounds: i32, checksum: u64): void {
+  let lookups: i64 = n as i64 * (rounds as i64);
+  let tenths: i64 = total_ns * 10 / lookups;
+  print(name + "\tn=" + n.to_string() + "\tns_per_lookup=" + (tenths / 10).to_string() + "." + (tenths % 10).to_string() + "\tchecksum=" + checksum.to_string());
+}

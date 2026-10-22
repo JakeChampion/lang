@@ -1,6 +1,6 @@
 # PLT landscape 2026 — external developments, gap analysis, ranked actions
 
-Status: survey + recommendations (2026-07). This is the external
+Status: [research] survey + recommendations (2026-07). This is the external
 counterpart to `NICHE-LANGUAGE-RESEARCH.md`: where that doc surveyed
 individual languages for adoptable mechanisms, this one asks what has
 *moved* in programming-language theory and practice recently, which of

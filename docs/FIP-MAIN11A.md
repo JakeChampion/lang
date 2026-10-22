@@ -1,5 +1,7 @@
 # FIP experiment measurements after merged scalar reuse
 
+Status: [record] measurement snapshot on merged main 11a7173; superseded by FIP-MAINF939.md.
+
 These runs refresh the ETL, simulation, DSP and broker evidence after the
 compiler changes in merged main `11a71739408e54e69ce5a3db5bf8e2136ad8316c`.
 All four native executables changed, so the earlier measurements remain

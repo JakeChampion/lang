@@ -1,7 +1,8 @@
 # Self-host gap: enum-variant construction with a function-typed payload
 
-> **RESOLVED on the IR path — x86-64 (#4364) and wasm (#4722).** The
-> analysis below was written against the legacy **SSA / AST emitter** path
+Status: [record] resolved on the IR path, x86-64 (#4364) and wasm (#4722).
+
+> The analysis below was written against the legacy **SSA / AST emitter** path
 > (`asm_run.fern`). The production path is now the **IR path**
 > (`irlower.fern` → `asm_ir` / `wasm_ir`, `use_ir` default-true), and it
 > lowers fn-payload variant construction + `match`-bind + indirect-call

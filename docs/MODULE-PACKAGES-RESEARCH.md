@@ -1,5 +1,7 @@
 # Module system + package management research
 
+Status: [research] survey of third-party package management; not a commitment.
+
 > **2026-07 update:** see `PACKAGE-MANAGEMENT-SOTA.md` for a
 > state-of-the-art refresh (resolution-algorithm complexity, the
 > newest-language peers, supply-chain security post-2025, and

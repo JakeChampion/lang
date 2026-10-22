@@ -1,5 +1,7 @@
 # `?` and the `@try` marker
 
+Status: [reference] how `?` works on any `@try` enum.
+
 `?` is not tied to `Option` and `Result`. Any enum marked `@try` can be used
 with it:
 

@@ -1,6 +1,6 @@
 # Self-host backend: one production lowering — the IR path
 
-**Status:** DECIDED (2026-07-03). The **stack IR** (`irlower.fern` →
+Status: [record] decided 2026-07-03, partly superseded by `-backend ssa` (`SELFHOST-SSA-BACKEND.md`). The **stack IR** (`irlower.fern` →
 `asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern`) is the single
 production lowering path for the self-hosted compiler. The SSA
 `build_func` pipeline was demoted to opt-in (`-ssa`) and then retired on

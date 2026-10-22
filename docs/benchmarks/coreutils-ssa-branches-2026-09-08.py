@@ -6,7 +6,7 @@ and /bench/sort-ssa-branches (after) and the uutils
 multicall binary at /bench/uutils/coreutils. GNU 9.4+ must be in /usr/bin.
 Run `uv run --script THIS_FILE 2000 pilot`, then change only 2000 to 200000.
 Inputs and raw JSON are generated under /bench; existing names are overwritten.
-See ../COREUTILS-SSA-BRANCHES-2026-09-08.md for build and measurement details.
+See ../coreutils-log/2026-09-08-ssa-branches.md for build and measurement details.
 """
 
 import hashlib

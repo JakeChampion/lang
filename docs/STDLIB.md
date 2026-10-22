@@ -1,5 +1,7 @@
 # Standard library
 
+Status: [reference] the standard library's module reference.
+
 The Fern stdlib lives in two namespaces:
 
 - **`std/…`** — high-level helpers user code reaches for directly.
@@ -705,6 +707,25 @@ queries are O(log n).
 `contains`, the join-based `union` / `intersection` / `difference`,
 `is_subset` / `equals`, `filter` / `fold` / `for_each`. `ordset_new()`,
 `ordset_of(xs)`.
+
+### `std/constmap`
+
+An immutable map from string keys to `u64` values, built once from the whole
+key set as a binary fuse structure (Graf and Lemire, 2022): for every key,
+`data[h0] ^ data[h1] ^ data[h2] == value`, so a lookup is one hash, three
+loads and two xors whatever the key count, at about 1.125 words per key.
+`ConstMap` stores no keys, so `map(key)` for an absent key returns an
+arbitrary value; `VerifiedConstMap` keeps a 64-bit fingerprint beside each
+value and its `get(key)` answers `None` for a key it never saw. Building is
+slower than filling a `Map` and fails on a duplicate key or a length
+mismatch. The shape is Lemire's `constmap` (Go, Rust, C); the file formats
+are not shared. `bench/maps/` measures it against `Map` and the Rust crate.
+
+- `constmap_new(keys, values): Result[ConstMap, string]`,
+  `verified_new(keys, values): Result[VerifiedConstMap, string]`
+- `(m).map(key): u64` (ConstMap), `(m).len()`
+- `(m).get(key): Option[u64]`, `(m).get_or(key, fallback)`,
+  `(m).contains(key)` (VerifiedConstMap)
 
 ### `std/pmap`
 

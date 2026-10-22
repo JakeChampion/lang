@@ -1,5 +1,7 @@
 # Post-prelude cleanup
 
+Status: [record] done; every checklist item landed except item 5, which was deferred on purpose.
+
 Follow-up work surfaced while removing the auto-injected prelude
 (`docs/PRELUDE-TO-MODULES.md`). Each item is independent; ordered by
 value. Status is tracked in the checklist at the bottom.

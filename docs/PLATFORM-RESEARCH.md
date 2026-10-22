@@ -1,5 +1,7 @@
 # Platform research — the handler / host seam for edge functions
 
+Status: [research] survey of the handler/host seam for edge targets; tracked in #4414.
+
 Cross-language survey of the platform-application boundary:
 how user-written handler code talks to its host, what
 capabilities flow across the seam, what the request lifecycle

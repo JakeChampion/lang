@@ -1,6 +1,6 @@
 # Writing a specification for Fern — feasibility, prior art, and a staged shape
 
-Status: survey + recommendation (2026-08). Not a commitment; this doc
+Status: [research] survey and recommendation (2026-08), not a commitment. This doc
 exists to answer "would a spec pay for itself, and if so what kind?"
 before any of it is built. Claims about Fern's current state were
 checked against the code, not the docs.

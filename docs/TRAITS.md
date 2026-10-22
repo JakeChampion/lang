@@ -1,7 +1,7 @@
 # Traits: static ad-hoc polymorphism for Fern
 
-Status: **Phases 1–3 landed; `std/test` collapse landed (both
-compilers).** This document is the design of record;
+Status: [reference] Phases 1–3 landed; `std/test` collapse landed (both
+compilers). This document is the design of record;
 it describes the whole feature and is implemented in phases (see
 [Phasing](#phasing)). Phase 1 (trait + impl declarations, conformance
 checking, coherence), Phase 2 (bounded generics `[T: Trait]` with

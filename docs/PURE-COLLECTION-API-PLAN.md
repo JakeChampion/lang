@@ -1,7 +1,7 @@
 # Pure (immutable-looking) collection API — design plan
 
 Date: 2026-06-07.
-Status: planning. No compiler or `.fern` code changed by this doc.
+Status: [record] shipped; E055, the renamed value-returning methods and the `Array.build` builder are in both compilers.
 
 ## Purpose
 

@@ -1,5 +1,7 @@
 # Async & concurrency in Fern (user guide)
 
+Status: [reference] user guide to the shipped `std/async` combinator surface.
+
 Fern's concurrency is **colorless**: no function coloring in the surface you
 write. Concurrency is expressed with plain library combinators — `gather` /
 `race` / `with_deadline` — over a `Future[T]` (a not-yet-ready value). You write
@@ -17,7 +19,7 @@ This is the user-facing guide. For the design and internals see
 `docs/ASYNC-REDESIGN.md` (the model + rationale), `docs/STREAM-TYPE-SURFACE.md`,
 and `docs/WASI-PREVIEW3-ASYNC-PLAN.md`.
 
-> Status: the combinator surface (`std/async`) drives REAL overlapping socket
+> Backend support: the combinator surface (`std/async`) drives REAL overlapping socket
 > I/O on the native backends (x86-64 / arm64) via the OS reactor; the portable
 > `Ready`-future path runs on every backend (interp / wasm / native). The WASI
 > Preview-3 `stream[T]` import surface below does real wire I/O on wasm. The next
