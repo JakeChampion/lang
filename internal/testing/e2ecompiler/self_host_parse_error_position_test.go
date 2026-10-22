@@ -125,9 +125,9 @@ var parseErrPosCases = []struct {
 	{"generic-inherent-impl", "struct B[T] { v: T }\nimpl[T] B[T] {\n  function get(self: Self): T { return self.v; }\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	// A type-parameter list ends at `,` or `]`, and a supertrait clause at the
 	// trait's `{`: a `::` or any other token there is refused, not read on.
-	{"bound-path-sep", "import \"core/cmp\";\nfunction f[T: cmp::Ord](x: T): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"bound-path-sep", "function f[T: cmp::Ord](x: T): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"type-param-stray-token", "function f[T x](x: T): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
-	{"supertrait-path-sep", "import \"core/cmp\";\ntrait A : cmp::Ord {\n  function f(self: Self): i32;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"supertrait-path-sep", "trait A : cmp::Ord {\n  function f(self: Self): i32;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"trait-stray-token", "trait A x {\n  function f(self: Self): i32;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 }
 
