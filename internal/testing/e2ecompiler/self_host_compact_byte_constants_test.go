@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +89,18 @@ function main(): i32 {
   let words = "0,127,128,255";
   if (byteconst.words(byteconst.values(words)) != words) { return 15; }
   if (byteconst.words(byteconst.values("0xff,-1,0b101")) != "255,255,5") { return 16; }
+  let source: string = "";
+  match (read_file(args()[1])) { Ok(text) => { source = text; }, Err(_) => { return 17; } }
+  let mod = parser.module_with_builtins_typed(checker.annotate_module(parser.parse_module(lexer.tokenize(source))));
+  let p = semsource.build_module(mod).decls[0];
+  if (!p.ok || p.func.graph.nvals > 8) { return 18; }
+  let found: i32 = 0;
+  for b in p.func.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.bytes_new() && ins.imm == 10001 && ins.args.len() == 0) { found = found + 1; }
+    }
+  }
+  if (found != 1) { return 19; }
   return 0;
 }
 `
@@ -95,7 +108,11 @@ function main(): i32 {
 		t.Fatal(err)
 	}
 	bin := buildSelfHostBin(t, gcc, dir, "packed_bytes.fern", "packed-bytes")
-	if out, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {
+	literal := filepath.Join(dir, "ordinary.fern")
+	if err := os.WriteFile(literal, []byte("function f(): u8[] { return ["+strings.Repeat("17u8,", 10000)+"17u8]; }"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runX86_64Bin(runner, bin, literal).CombinedOutput(); err != nil {
 		t.Fatalf("packed byte graph: %v\n%s", err, out)
 	}
 }

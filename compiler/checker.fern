@@ -13921,47 +13921,10 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
       return int_literal_tree(e);
     },
     typeinfo.TypeArray(wa) => {
-      match (e) {
-        ast.ExprArray(arr) => {
-          // Each element is a coercion site of its own, and one that does
-          // not coerce into a dyn slot is E034 (array_elem_check).
-          if (is_dyn_slot(wa.elem)) {
-            return true;
-          }
-          for element in arr.elements {
-            if (!array_element_settles(element, wa.elem, s)) {
-              return false;
-            }
-          }
-          return true;
-        },
-        ast.ExprBytes(_) => {
-          return type_eq(wa.elem, t_u8());
-        },
-        _ => {
-          return false;
-        }
-      }
+      return array_literal_settles(e, wa.elem, s);
     },
     typeinfo.TypeTuple(wt) => {
-      match (e) {
-        ast.ExprTuple(tl) => {
-          if (tl.elements.len() != wt.elements.len()) {
-            return false;
-          }
-          let i: i32 = 0;
-          while (i < wt.elements.len()) {
-            if (!settles_or_nested(tl.elements[i], wt.elements[i], s)) {
-              return false;
-            }
-            i = i + 1;
-          }
-          return true;
-        },
-        _ => {
-          return false;
-        }
-      }
+      return tuple_literal_settles(e, wt.elements, s);
     },
     typeinfo.TypeUnion(_) => {
       return ctor_boxes_into(e, want, s) || ctor_payload_settles(e, want, s);
@@ -13972,6 +13935,46 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
     _ => {
       return false;
     }
+  }
+  return false;
+}
+
+function array_literal_settles(e: ast.Expr, elem: typeinfo.Type, s: Scope): boolean {
+  match (e) {
+    ast.ExprArray(arr) => {
+      // Each element is a coercion site. A failed dyn coercion is E034.
+      if (is_dyn_slot(elem)) {
+        return true;
+      }
+      for element in arr.elements {
+        if (!array_element_settles(element, elem, s)) {
+          return false;
+        }
+      }
+      return true;
+    },
+    ast.ExprBytes(_) => {
+      return type_eq(elem, t_u8());
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function tuple_literal_settles(e: ast.Expr, elements: typeinfo.Type[], s: Scope): boolean {
+  if let ast.ExprTuple(tl) = e {
+    if (tl.elements.len() != elements.len()) {
+      return false;
+    }
+    let i: i32 = 0;
+    while (i < elements.len()) {
+      if (!settles_or_nested(tl.elements[i], elements[i], s)) {
+        return false;
+      }
+      i = i + 1;
+    }
+    return true;
   }
   return false;
 }

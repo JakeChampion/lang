@@ -62,7 +62,7 @@ pub function valid(text: string, count: i32): boolean {
       digits = 0;
       value = 0;
     } else {
-      if (b < 48 as u8 || b > 57 as u8 || digits == 3 || digits > 0 && value == 0) {
+      if (invalid_digit(b, digits, value)) {
         return false;
       }
       value = value * 10 + (b as i32 - 48);
@@ -70,6 +70,10 @@ pub function valid(text: string, count: i32): boolean {
     }
   }
   return digits > 0 && value <= 255 && words + 1 == count;
+}
+
+function invalid_digit(b: u8, digits: i32, value: i32): boolean {
+  return b < 48 as u8 || b > 57 as u8 || digits == 3 || digits > 0 && value == 0;
 }
 
 pub function count_words(text: string): i32 {
