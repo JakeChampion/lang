@@ -343,6 +343,7 @@ inclusive_range                                      0
 inclusive_range_type_max                             0
 index_takes_any_integer_type                         0
 indirect_call_owned_param                            0
+indirect_owned_arguments_follow_their_contract        0
 inline_hints                                         0
 insert_dedup                                         0
 int_bit_accessors                                    0
