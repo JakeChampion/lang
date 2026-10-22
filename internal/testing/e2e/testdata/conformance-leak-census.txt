@@ -286,6 +286,7 @@ generic_char_ordering                                0
 generic_float_compare_ieee                           0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
+generic_fn_value_array_methods                       0
 generic_fnarg_typevar                                0
 generic_fold_accumulator_reclaim                     0
 generic_id                                           0
@@ -377,6 +378,7 @@ lanes_calls                                          0
 lanes_f32x4_ops                                      0
 lanes_f64x2_ops                                      0
 lanes_generic_instances                              0
+lanes_receivers                                      0
 lanes_spill_pressure                                 0
 len_on_empty_u8                                      0
 let_else_at_binding                                  0

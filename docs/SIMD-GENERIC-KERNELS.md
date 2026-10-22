@@ -101,7 +101,8 @@ first because they are a type-system project of their own in the compiler and th
 naming in `ssasem.instance_name`, array sizing), and the portable 128-bit tier
 has exactly two float lane types, which a trait over concrete types carries
 without them. When they land, `f64x2` and `f32x4` become spellings of
-`Vec[2, f64]` and `Vec[4, f32]`; the `Lanes` surface does not change.
+`Vec[2, f64]` and `Vec[4, f32]`; the `Lanes` surface does not change. The
+design and its slices are in `docs/CONST-GENERICS.md`.
 
 ### 3.3 The portable width is 128 bits
 
@@ -141,7 +142,7 @@ What a lane type still costs, and the plan pays:
 | Piece | Where |
 | --- | --- |
 | A scalar type of width 128 (`TypeLanes { elem, count }`) with no refcount | `typeinfo.fern`, `checker.fern`, the Go checker and oracle |
-| IR ops: `vsplat`, `vadd`, `vsub`, `vmul`, `vdiv`, `vfma`, `vsqrt`, `vmin`, `vmax`, `vabs`, `vneg`, `vfloor`, `vcmp_*` to a lane mask, `vselect`, `vload`, `vstore`, `vextract`, `vreduce_add` | `ir.fern`, target-agnostic |
+| IR ops: `vsplat`, `vadd`, `vsub`, `vmul`, `vdiv`, `vfma`, `vsqrt`, `vmin`, `vmax`, `vabs`, `vneg`, `vfloor`, `vcmp_*` to a lane mask, `vselect`, `vload`, `vstore`, `vget`, `vset`, `vextract`, `vreduce_add` | `ir.fern`, target-agnostic |
 | 16-byte spill slot and reload in `ssa.regalloc_linear` | `ssa.fern` |
 | Call ABI: a lane argument or result in a vector register (`q0`–`q7` / `xmm0`–`xmm7`) on the `.r` entry, the stack entry pushing two words | both native lifts |
 | wasm: `v128` locals, `f64x2.*` / `f32x4.*` | `wasm_ir.fern` |
@@ -327,8 +328,10 @@ of them. No PR leaves a type on main that a backend refuses.
   - `mul_add` is unfused on every engine, as the scalar one is: the product
     rounds before the add. An f32 lane computes in single precision.
   - `lane(v, i)` takes an integer literal below the lane count (E038).
-  - `load` and `with` are the element reads and `with`s of their lanes, so
-    each keeps its bounds check and the array its ownership.
+  - `load` is one array read whose result is the lane value of the group
+    of elements from the index, and `with` is one `with` that writes the
+    group, so the array keeps the ownership a `with` gives it. Each checks
+    every index of the group (§6, slice 5c).
   - A lane value lives only in a local, a parameter or a result (E085). A
     function value and a lambda carry none, since an indirect call has no
     vector register for one.
@@ -337,16 +340,29 @@ of them. No PR leaves a type on main that a backend refuses.
     `%xmm3` / `q0`. A lane value never takes a callee-saved float register,
     because AAPCS64 saves only the low 64 bits of `v8`-`v15`.
 
+### Lane memory (slice 5c)
+
+A lane `load` is the IR op `vget` and a lane `with` is `vset`. Each checks
+the first and the last index of its group against the length, then moves
+the group in one access. For an `f64[]` that is one `movupd`, `ldr q` or
+`v128.load`. The ownership test of the `with` stays: one for each group.
+
+An `f32[]` keeps each element in an 8-byte slot as an f64, so its group is
+two f64 pairs. A read narrows each pair (`cvtpd2ps`, `fcvtn`,
+`f32x4.demote_f64x2_zero`) and joins them, and a write widens each half.
+
 ## 7. Slices
 
 | # | Slice | State |
 | --- | --- | --- |
-| 1 | This brief | this PR |
-| 2 | Associated constants, compiler and Go front end | this PR |
-| 3 | `std/simd`: `Lanes`, `Math`, scalar impls, `Dual`, `DoubleDouble`, benchmark | this PR |
+| 1 | This brief | done (#12924) |
+| 2 | Associated constants, compiler and Go front end | done (#12924) |
+| 3 | `std/simd`: `Lanes`, `Math`, scalar impls, `Dual`, `DoubleDouble`, benchmark | done (#12924) |
 | 4a | Lane types: the instruction vocabulary on x86-64, arm64 and wasm | done (#12945) |
 | 4b | Lane types: IR ops, the 128-bit register class and spill slot, emission on every backend | done (#12961) |
-| 4c | Lane types: `f64x2` / `f32x4` in both front ends, the builtins, the lowering and its call ABI, both interpreters | this PR |
-| 5 | `impl Lanes` / `impl Math` for `f64x2` / `f32x4`; array fusion picks the lane instance for a packed `f64[]` map | after 4 |
-| 6 | Const generics; `Vec[N, T]` | follow-on project |
+| 4c | Lane types: `f64x2` / `f32x4` in both front ends, the builtins, the lowering and its call ABI, both interpreters | done (#13004) |
+| 5a | A lane type as a method receiver and a type argument; `impl Lanes` / `impl Math` and the `std/num` traits for `f64x2` / `f32x4` | receivers this PR, impls next |
+| 5b | Array fusion: `xs.map(k)` runs a lane kernel on whole groups of lanes | next |
+| 5c | Lane memory: one 16-byte load and one 16-byte store per group | this PR |
+| 6 | Const generics; `Vec[N, T]` | follow-on project, `docs/CONST-GENERICS.md` |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |

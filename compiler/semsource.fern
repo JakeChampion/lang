@@ -4038,9 +4038,10 @@ function lane_memory_call(name: string, c: ast.ExprCall): boolean {
   return verb == "load" && c.args.len() == 2 || verb == "with" && c.args.len() == 3;
 }
 
-// `__f64x2_load(xs, i)` is `__f64x2_of(xs[i], xs[i + 1])`, and
-// `__f64x2_with(xs, i, v)` is `xs.with(i, lane 0 of v).with(i + 1, lane 1 of v)`:
-// each element keeps its bounds check and the array its ownership.
+// `__f64x2_load(xs, i)` is one array read whose result is the lane value of
+// the group from `i`, and `__f64x2_with(xs, i, v)` one `with` that writes the
+// group: the array keeps the ownership a `with` gives it, and the lowering
+// checks every index of the group (ssarc's vget and vset).
 function lane_memory(name: string, c: ast.ExprCall, s: State): Value {
   let arr: typeinfo.Type = typeinfo.lane_builtin_params(name)[0];
   let xs: Value = expr(c.args[0], s, arr);
@@ -4055,62 +4056,14 @@ function lane_memory(name: string, c: ast.ExprCall, s: State): Value {
     return refused(at.s, "lane index type");
   }
   if (typeinfo.lane_builtin_verb(name) == "load") {
-    return lane_load(name, xs.id, at.id, at.s);
+    return define(at.s, ssasem.array_get(), [xs.id, at.id], 0, "", typeinfo.lane_builtin_result(name));
   }
   let lt: typeinfo.Type = typeinfo.lane_builtin_params(name)[2];
   let v: Value = expr(c.args[2], at.s, lt);
   if (!v.s.ok || !semtypes.equal(v.s.values[v.id], lt)) {
     return refused(v.s, "lane value type");
   }
-  return lane_with(name, xs.id, at.id, v.id, v.s);
-}
-
-// lane_offset is index `at` plus `k`.
-function lane_offset(at: i32, k: i32, s: State): Value {
-  if (k == 0) {
-    return Value { s: s, id: at };
-  }
-  let kv: Value = define(s, 1, [], k, "", t_i32());
-  return define(kv.s, 9, [at, kv.id], 0, "+", t_i32());
-}
-
-function lane_load(name: string, xs: i32, at: i32, s: State): Value {
-  let elem: typeinfo.Type = element_type(s.values[xs]);
-  let ids: i32[] = [];
-  while (ids.len() < 128 / typeinfo.lane_builtin_width(name)) {
-    let idx: Value = lane_offset(at, ids.len(), s);
-    let e: Value = define(idx.s, ssasem.array_get(), [xs, idx.id], 0, "", elem);
-    s = e.s;
-    ids = ids.append(e.id);
-  }
-  return lane_call(s, lane_sibling(name, "of"), ids);
-}
-
-function lane_with(name: string, xs: i32, at: i32, v: i32, s: State): Value {
-  let out: Value = Value { s: s, id: xs };
-  let k: i32 = 0;
-  while (k < 128 / typeinfo.lane_builtin_width(name)) {
-    let kv: Value = define(out.s, 1, [], k, "", t_i32());
-    let e: Value = lane_call(kv.s, lane_sibling(name, "lane"), [v, kv.id]);
-    let idx: Value = lane_offset(at, k, e.s);
-    out = define(idx.s, ssasem.with(), [out.id, idx.id, e.id], 0, "", idx.s.values[xs]);
-    k = k + 1;
-  }
-  return out;
-}
-
-// lane_sibling is the lane builtin `verb` of the lane type `name` names.
-function lane_sibling(name: string, verb: string): string {
-  return "__" + typeinfo.lanes_spelling(typeinfo.lane_builtin_width(name)) + "_" + verb;
-}
-
-// lane_call calls the lane builtin `name` on values already produced.
-function lane_call(s: State, name: string, ids: i32[]): Value {
-  let c: ssasem.Contract = s.contracts.list[ssasem.find_contract(s.contracts, name)];
-  if (ssasem.find_contract_in(s.calls, name) < 0) {
-    s = State { ...s, calls: s.calls.append(c) };
-  }
-  return define(s, ssasem.call(), ids, 0, name, c.result);
+  return define(v.s, ssasem.with(), [xs.id, at.id, v.id], 0, "", arr);
 }
 
 // Each argument is produced at the parameter's type and lent by the
