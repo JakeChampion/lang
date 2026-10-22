@@ -168,7 +168,7 @@ names each stage and a closed reason tag, including guarded reuse and why R7
 declined a map. See [`ARRAY-ALGEBRA.md`](../docs/ARRAY-ALGEBRA.md) for the
 interface.
 
-## The 19 unpinned codes
+## The 18 unpinned codes
 
 These have Go-side coverage but no conformance case. Most resisted the
 mechanical derivation used for the rest — their catalogue examples are

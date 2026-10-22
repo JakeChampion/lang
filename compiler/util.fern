@@ -237,14 +237,8 @@ function bucket_count(n: i32): i32 {
 // name_index indexes `names`, built backward so each chain ends up ascending.
 pub function name_index(names: string[]): NameIndex {
   let nb: i32 = bucket_count(names.len());
-  let head: i32[] = [];
-  while (head.len() < nb) {
-    head = head.append(0 - 1);
-  }
-  let next: i32[] = [];
-  while (next.len() < names.len()) {
-    next = next.append(0 - 1);
-  }
+  let head: i32[] = minus_ones(nb);
+  let next: i32[] = minus_ones(names.len());
   let k: i32 = names.len() - 1;
   while (k >= 0) {
     let b: i32 = name_bucket(names[k], nb - 1);
