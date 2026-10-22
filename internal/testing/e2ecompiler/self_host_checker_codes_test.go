@@ -758,11 +758,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-tuple-elem-into-str-var-clean", "function main(): i32 { let p: (str, i32) = (\"abc\", 4); let v: str = p.0; return v.len() + p.1; }\n", nil},
 		{"str-tuple-result-elem-into-string-e003", "function mk(t: string): (str, i32) { return (slice_unchecked(t, 0, 2), 1); }\nfunction main(): i32 { let v: string = mk(\"abc\").0; return v.len(); }\n", []string{"E003"}},
 		{"str-receiver-method-clean", "function (s: str) first(): u8 { return s[0]; }\nfunction main(): i32 { let v: str = \"hey\"; return v.first() as i32; }\n", nil},
-		// `[T]`, the array view a slice or `.as_bytes()` yields (#9944). A view
-		// and an owned `T[]` convert in neither direction — var init, assignment,
-		// return, field, argument — except an owned argument lent to a `[T]`
-		// parameter. A `[T]` binding, a slice of a view, a `[T]`-returning
-		// function and a `[T]` parameter handed on to another stay clean.
+		// A [T] view can borrow an owned T[] at a parameter or local initializer.
+		// Other conversion sites keep their assignment rules. A slice of a view
+		// and a view parameter passed to another view parameter remain valid.
 		{"arr-view-into-array-var-e003", "function main(): i32 { let all: string[] = [\"a\", \"b\", \"c\"]; let mid: string[] = all[1:3]; return mid.len(); }\n", []string{"E003"}},
 		{"arr-view-assign-e003", "function main(): i32 { let x: i32[] = [1, 2]; let y: i32[] = [3]; y = x[0:1]; return y.len(); }\n", []string{"E003"}},
 		{"arr-view-return-e002", "function g(a: i32[]): i32[] { return a[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
