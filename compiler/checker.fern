@@ -15552,10 +15552,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // code native does not.
       if (union_of_variant(id.name, s.unions).len() > 0 || parser.builtin_enum_of(id.name).len() > 0) {
         for arg in c.args {
-          // `Ok(())` is the payload written as the unit itself — void's one
-          // value, and the spelling the message asks for. Native's
-          // requireValue exempts its UnitLit here for the same reason.
-          if (is_void(check_expr(arg, s)) && !parser.is_unit_expr(arg)) {
+          // Unit literals and bindings carry a value. A void call does not.
+          let unit_binding: boolean = false;
+          if let ast.ExprIdent(_) = arg {
+            unit_binding = true;
+          }
+          if (is_void(check_expr(arg, s)) && !parser.is_unit_expr(arg) && !unit_binding) {
             out = out.append(dg_at("E072", "a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value", expr_line(arg), expr_col(arg)));
           }
         }
