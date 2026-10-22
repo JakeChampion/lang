@@ -560,14 +560,23 @@
 # main at 0b88710 self-builds at 13201616 (+4.2%), and #12988's short-string
 # str_hash adds 4368 bytes (+0.03%). The other ten baselines and the 5%
 # tolerance are unchanged.
-fern.fern/stage2 13310144
-fern.fern 13273088
-drivers/asm_load_run.fern 10125912
-drivers/asm_modload_run.fern 8699400
-drivers/asm_ir_run.fern 8418328
-drivers/asm_run.fern 7612208
-drivers/wasm_ir_run.fern 7833136
-drivers/wasm_run.fern 7835128
-drivers/wasm_runio_run.fern 7835304
-drivers/asm_pathprobe_run.fern 4962512
-drivers/checker_modload_run.fern 2852304
+# 2026-10-22 (#12969) — every row from a local TestSelfHostWarmStockDriver run
+# on the merge with main at 3c69b38a, which includes #12961. fern.fern/stage2
+# 12672208 -> 14037248 (+10.8%) and fern.fern 13273088 -> 13289616 (+0.1%).
+# The other nine drivers moved +0.8% to +4.7% from main's growth since their
+# last pin. fern.fern and the drivers are built by stage0 from the current
+# sources. fern.fern/stage2 is built by the compiler with #12969's record
+# updater splice, which copies an updater's field reads into each caller.
+# Its ratio to fern.fern went from 1.003 to 1.056, so the splice adds about
+# 5% to the self-built compiler.
+fern.fern/stage2 14037248
+fern.fern 13289616
+drivers/asm_load_run.fern 10447952
+drivers/asm_modload_run.fern 9096992
+drivers/asm_ir_run.fern 8731008
+drivers/asm_run.fern 7921744
+drivers/wasm_ir_run.fern 7918016
+drivers/wasm_run.fern 7917984
+drivers/wasm_runio_run.fern 7901024
+drivers/asm_pathprobe_run.fern 5070560
+drivers/checker_modload_run.fern 2985696
