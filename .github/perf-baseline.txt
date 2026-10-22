@@ -382,5 +382,5 @@ aarch64/perceus_nqueens.text	1709
 aarch64/perceus_nqueens.ir	106188790
 aarch64/perceus_rbtree.text	3044
 aarch64/perceus_rbtree.ir	61408114
-aarch64/perceus_rbtree_ck.text	3306
+aarch64/perceus_rbtree_ck.text	3266
 aarch64/perceus_rbtree_ck.ir	60624651
