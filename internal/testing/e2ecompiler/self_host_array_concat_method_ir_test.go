@@ -22,7 +22,7 @@ import (
 // the IR path and matches the interpreter. (This flipped
 // array_structural_verbs_test.fern from AST to IR.)
 //
-// A scalar element type takes the runtime's sized copy, `__fern_arr_concat`,
+// A scalar element type takes the runtime's box-updating join, `__fern_arr_concat`,
 // instead of the clone; a string array, whose elements are counted, keeps the
 // clone. The cases here are single-element-type per program; `concat` at two
 // element types is covered by TestSelfHostArrayMethodMultiElemIR. Each case is
@@ -86,7 +86,7 @@ func TestSelfHostArrayConcatMethodIR(t *testing.T) {
 				t.Fatalf("%s: driver emitted 0 bytes", tc.name)
 			}
 			if tc.kernel && !strings.Contains(asm, "__fern_arr_concat") {
-				t.Errorf("%s: no call to __fern_arr_concat in asm (a scalar concat did not take the runtime copy)", tc.name)
+				t.Errorf("%s: no call to __fern_arr_concat in asm (a scalar concat did not take the runtime join)", tc.name)
 			}
 			if !tc.kernel && !strings.Contains(asm, "__arrm_concat__") {
 				t.Errorf("%s: no monomorphised __arrm_concat__ clone in asm (method did not ride the IR array-method path)", tc.name)

@@ -168,7 +168,15 @@ pub function table(): Table {
   // count alone.
   rows = add(rows, ["__fern_arr_inc_elems", "__fern_arr_own_elems", "__fern_set_args"], inert(result_none()));
   // A unit of a string's own, or a counted box over bytes it does not own.
-  rows = add(rows, ["__fern_str_own", "__fern_str_borrow", "__fern_arr_str_join", "__fern_arr_concat", "__fern_bytes_owned", "__fern_bytes_range", "__fern_i32_to_string", "__fern_u32_to_string", "__fern_i64_to_string", "__fern_u64_to_string"], inert(result_fresh()));
+  rows = add(rows, ["__fern_str_own", "__fern_str_borrow", "__fern_arr_str_join", "__fern_bytes_owned", "__fern_bytes_range", "__fern_i32_to_string", "__fern_u32_to_string", "__fern_i64_to_string", "__fern_u64_to_string"], inert(result_fresh()));
+  // The scalar concat takes (width, ys, xs), xs on top, and hands xs's own
+  // block or a fresh one back, freeing nothing: the lowering settles xs's
+  // unit by comparing addresses, as core/map's copy-on-write caller does, and
+  // marks the call counted where the frame holds the receiver's unit, so the
+  // result is one of the frame's own; unmarked, onto a box the frame holds no
+  // unit of, the result is a word the certifier does not count, and the
+  // retain the lowering adds on identity is what makes it the frame's.
+  rows = add(rows, ["__fern_arr_concat"], sig(2, effect_unsure(), result_marked()));
   // A cursor's map, read through core/map: the cursor holds the unit.
   rows = add(rows, ["__mapiter_map_impl"], inert(result_borrow()));
   rows = add(rows, ["__fern_oob_abort", "__fern_slice_abort", "__fern_account_entry", "__fern_vdso_clock"], inert(result_none()));
