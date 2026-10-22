@@ -34,9 +34,9 @@ import (
 // Descriptor describes a compilation target's runtime surface.
 // One Descriptor per supported `-target=...` value.
 type Descriptor struct {
-	// Name is the canonical -target= flag value (e.g. "wasi-http",
-	// "arm64", "x86-64"). Lookups in `ForTarget` match this
-	// case-sensitively.
+	// Name is the canonical -target= flag value (e.g.
+	// "wasm32-wasi-http", "arm64-linux", "x86-64-linux"). Lookups in
+	// `ForTarget` match this case-sensitively.
 	Name string
 
 	// Description is a one-line human-readable summary of the
@@ -59,7 +59,7 @@ type Descriptor struct {
 	// Bindings lists the per-deployment configuration the host
 	// supplies — kv namespaces, service bindings, config maps,
 	// etc. Empty for targets that don't take per-deploy config
-	// (e.g. native arm64, x86-64). Today purely declarative;
+	// (e.g. arm64-linux, x86-64-linux). Today purely declarative;
 	// Phase 3 wires it to runtime binding-fetch glue.
 	Bindings []string
 

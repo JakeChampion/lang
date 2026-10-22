@@ -63,7 +63,7 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 > `%r10` shuffle) and the per-target constants factored into three tables in
 > `asmcore`: **`sysno(t, name)`**, **`at_fdcwd(t)`** (-100 Linux / -2 XNU) and
 > **`oflag(t, name)`** (O_WRONLY|O_CREAT|O_TRUNC is 577 on Linux, 1537 on
-> Darwin). `t` is `"x86_64"` / `"arm64"` / `"arm64-darwin"`. Those four leaves
+> Darwin). `t` is `"x86-64-linux"` / `"arm64-linux"` / `"arm64-darwin"`. Those four leaves
 > and the shared `__fern_io_error` classifier emit as one bundle module, so each
 > helper's call to the classifier threads as an ordinary call-graph edge — the
 > #2649 end-state in miniature, now on both register backends. `env` sits

@@ -135,7 +135,7 @@ func TestWASMAsmReservedNameFn(t *testing.T) {
 // The other half of the same namespace: the runtime helpers the backends emit
 // alongside the program. A Fern function named after one used to define that
 // symbol twice — gcc said `symbol '__fern_alloc' is already defined`, and the
-// in-process assembler (the DEFAULT for `-target x86-64`) took the first
+// in-process assembler (the DEFAULT for `-target x86-64-linux`) took the first
 // definition and built a binary that called the runtime helper wherever the
 // program meant its own function. Silently: the program below returned 32
 // instead of 42. Mangling separates the two namespaces, so the helper keeps
