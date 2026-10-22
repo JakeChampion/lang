@@ -72,7 +72,6 @@ func loop_phi {
     v12 = binary + v3 v7
     br b1
   b3:
-    v13 = phi v4 v7
     ret v3
 }
 
@@ -3181,7 +3180,6 @@ func labelled {
     br b1
   b3:
     v20 = phi v3 v9
-    v21 = phi v4 v7
     ret v20
 }
 
@@ -3274,7 +3272,6 @@ func tm_line {
     br b10
   b10:
     v16 = phi v5 v13
-    v17 = phi v15 v14
     br b3
   b3:
     v18 = phi v16
