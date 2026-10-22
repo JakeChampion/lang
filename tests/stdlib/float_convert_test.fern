@@ -1,7 +1,7 @@
 import "std/test";
-import "std/float" as float;
+import "std/f64";
 
-// tests/stdlib/float_convert_test.fern — pure-Fern coverage of std/float's
+// tests/stdlib/float_convert_test.fern — pure-Fern coverage of std/f64's
 // convenience methods layered atop the math primitives: signum (sign as a
 // float, zero at zero), lerp (precise a+(b-a)*t linear interpolation, incl.
 // endpoints and extrapolation), and to_radians / to_degrees (degree↔radian
@@ -75,7 +75,7 @@ function test_signum_lerp_f32(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/float convert");
+  let r: test.TestRunner = test.test_new("std/f64 convert");
   r = r.it("signum positive", test_signum_positive);
   r = r.it("signum negative", test_signum_negative);
   r = r.it("signum zero", test_signum_zero);

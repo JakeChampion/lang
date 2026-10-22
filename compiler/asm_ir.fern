@@ -3921,7 +3921,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // __fern_write_file is now a Fern runtime function (#2649): emitted via
   // emit_ir_runtime_fern_fn in the entry block (need-gated on write_file) —
   // openat(O_CREAT) via __syscall4 + write/close via __syscall3, returns
-  // Result[(), IoError]. The op_write_file handler calls the stack-ABI
+  // Result[void, IoError]. The op_write_file handler calls the stack-ABI
   // __fn___fern_write_file symbol.
   // __fern_remove_dir_all is now a Fern runtime function (#2649): emitted via
   // emit_ir_runtime_fern_fn in the fs bundle (need-gated on remove_dir_all) — a
@@ -3932,7 +3932,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // arm64/AST keep the register-ABI hand-asm.
   // __fern_remove_file is now a Fern runtime function (#2649): emitted via
   // emit_ir_runtime_fern_fn in the entry block (need-gated on remove_file) —
-  // unlinkat via __syscall3, returns Result[(), IoError]. The op_remove_file handler
+  // unlinkat via __syscall3, returns Result[void, IoError]. The op_remove_file handler
   // calls the stack-ABI __fn___fern_remove_file symbol.
   // __fern_temp_dir is now a Fern runtime function (#2649): emitted via
   // emit_ir_runtime_fern_fn in the entry block (need-gated on temp_dir) — builds

@@ -395,7 +395,7 @@ function main(): i32 {
 // dyn over f64 — the boxed cell carries the 8-byte float and the wrapper
 // reloads it with the f64 ABI. wasm is the backend that needs this.
 func TestDynTraitPrimitiveF64(t *testing.T) {
-	src := `import "std/float";
+	src := `import "std/f64";
 trait Show {
     function show(self: Self): f64;
 }

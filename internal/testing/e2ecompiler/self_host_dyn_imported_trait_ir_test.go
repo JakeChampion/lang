@@ -64,7 +64,7 @@ func TestSelfHostDynImportedTraitWasmIR(t *testing.T) {
 // receiver as an i32 where the method takes the f64 this backend holds an f32
 // in, so the module failed validation.
 const dynF32ImplementorSrc = `import "std/i32";
-import "std/float";
+import "std/f64";
 trait Show { function show(self: Self): string; }
 impl Show for i32 { function show(self: Self): string { return self.to_string(); } }
 impl Show for f32 { function show(self: Self): string { return self.to_string(); } }

@@ -3331,7 +3331,7 @@ function run_repl(root: string, target: string): i32 {
   print("fern REPL — Ctrl+D to exit");
   let s: interp.Session = interp.new_session();
   if (root.len() > 0) {
-    let ld: Loaded = load_checked(Sources { paths: ["repl.fern"], srcs: ["import \"std/float\";\n"], maps: [util.no_line_map()], open: modloader.no_buffers() }, root, target, "");
+    let ld: Loaded = load_checked(Sources { paths: ["repl.fern"], srcs: ["import \"std/f64\";\n"], maps: [util.no_line_map()], open: modloader.no_buffers() }, root, target, "");
     if (ld.refused.len() == 0) {
       s = s.declare(ld.b.merged);
     }

@@ -86,7 +86,7 @@ const numImports = `import "std/i32";
 import "std/i64";
 import "std/u32";
 import "std/u64";
-import "std/float";
+import "std/f64";
 `
 
 // printInt renders an integer-typed expression of type t as a
@@ -231,7 +231,7 @@ var floatMathLits = []string{
 
 // genFloatMath emits one call to an exactly-specified f64 math method.
 // Spelled as the receiver method rather than the `__*_f64` builtin because
-// that is the surface a program actually writes, and it puts the std/float
+// that is the surface a program actually writes, and it puts the std/f64
 // wrapper on the path too.
 func genFloatMath(r *rand.Rand) string {
 	m := pick(r, floatMathExact)

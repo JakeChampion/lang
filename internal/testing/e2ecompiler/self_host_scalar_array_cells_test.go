@@ -27,7 +27,6 @@ func scalarArrayCellSources() []struct{ name, source string } {
 		{"boolean-false", "boolean", "false", "x", "false"},
 		{"float32", "f32", "f32_from_bits(2143289345)", "f32_bits(x)", "2143289345"},
 		{"float64", "f64", "f64_from_bits(9221120237041090561i64)", "f64_bits(x)", "9221120237041090561i64"},
-		{"float-alias", "float", "f64_from_bits(9221120237041090561i64)", "f64_bits(x)", "9221120237041090561i64"},
 		{"float32-zero", "f32", "f32_from_bits(-2147483647 - 1)", "f32_bits(x)", "-2147483647 - 1"},
 		{"float32-infinity", "f32", "f32_from_bits(2139095040)", "f32_bits(x)", "2139095040"},
 		{"float32-subnormal", "f32", "f32_from_bits(1)", "f32_bits(x)", "1"},

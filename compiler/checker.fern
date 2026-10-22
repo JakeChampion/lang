@@ -642,7 +642,7 @@ function cell_method_type(recv: typeinfo.Type, name: string, argc: i32): typeinf
   return t_unknown("not a cell method");
 }
 
-// The six f64 primitives `std/float`'s methods dispatch to. Every backend
+// The six f64 primitives `std/f64`'s methods dispatch to. Every backend
 // implements all of them.
 function is_f64_primitive(name: string): boolean {
   let names: string[] = [
@@ -4212,7 +4212,7 @@ function scalar_module_for(t: typeinfo.Type): string {
       return "std/i32";
     },
     typeinfo.TypeFloat(_) => {
-      return "std/float";
+      return "std/f64";
     },
     typeinfo.TypeString(_) => {
       return "std/string";
@@ -8659,7 +8659,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (name == "f32") {
     return t_f32();
   }
-  if (name == "f64" || name == "float") {
+  if (name == "f64") {
     return t_float();
   }
   if (name == "void") {
@@ -18569,7 +18569,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   // methods; `u8` when std/i32's 21 ascii classifiers moved onto the
   // byte type (both #5629). That is the same bug twice, so the whole
   // integer family is listed now rather than one width at a time.
-  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "float" || rt == "char") {
+  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char") {
     return true;
   }
   for ch in rt {
@@ -25149,6 +25149,74 @@ function e021_object_safety_diags(mod: parser.Module, focus: util.NameIndex): ut
   return out;
 }
 
+// e021_unknown_dyn_trait_diags is E021 for a trait a `dyn` type names that
+// nothing declares, once per trait, in the positions native's
+// validateDynTraitTypes walks: a parameter, a return type and a local
+// annotation.
+function e021_unknown_dyn_trait_diags(mod: parser.Module, focus: util.NameIndex): util.Diag[] {
+  let out: util.Diag[] = [];
+  let seen: string[] = [];
+  let imports: string[] = import_paths_of(mod);
+  for fn in mod.funcs {
+    if (!in_focus(focus, fn)) {
+      continue;
+    }
+    for site in e021_dyn_trait_sites(fn) {
+      let base: string = site.spelling;
+      if (!util.has_str(seen, base) && !bound_import_unloaded(base, imports, mod.trait_reqs) && bound_trait_req(base, fn.module, mod.trait_reqs) < 0) {
+        seen = seen.append(base);
+        out = out.append(dg_at("E021", "unknown trait \"" + util.demangle(bound_trait_display(base, fn.module, mod.trait_reqs)) + "\" in `dyn` type", site.line, site.col));
+      }
+    }
+  }
+  return out;
+}
+
+// DynSite is a `dyn` spelling and where native reports it: the function for a
+// parameter or the return type, the `let` for a local annotation.
+struct DynSite { spelling: string, line: i32, col: i32 }
+
+// e021_dyn_trait_sites is every trait a `dyn` type in fn's parameters, return
+// type or local annotations names, each `+` entry separately, in the order
+// native visits them.
+function e021_dyn_trait_sites(fn: parser.FuncDecl): DynSite[] {
+  let sites: DynSite[] = [];
+  for param in fn.params {
+    sites = sites.append(DynSite { spelling: param.type_name, line: fn.line, col: fn.col });
+  }
+  sites = sites.append(DynSite { spelling: fn.ret_type, line: fn.line, col: fn.col });
+  for stmt in fn.body {
+    sites = astwalk.fold_stmt_nodes(stmt, sites, e021_dyn_site_at, e021_no_site, astwalk.descend_all);
+  }
+  let out: DynSite[] = [];
+  for site in sites {
+    if (e021_dyn_target(site.spelling).len() > 0) {
+      for entry in parser.split_plus_bounds(e021_dyn_element(site.spelling)) {
+        out = out.append(DynSite { spelling: parser.parse_type_ref(util.trim(entry)).base, line: site.line, col: site.col });
+      }
+    }
+  }
+  return out;
+}
+
+function e021_dyn_site_at(st: ast.Stmt, own a: DynSite[]): DynSite[] {
+  match (st) {
+    ast.StmtVar(v) => {
+      if (e021_dyn_target(v.type_name).len() > 0) {
+        return a.append(DynSite { spelling: v.type_name, line: v.line, col: v.col });
+      }
+      return a;
+    },
+    _ => {
+      return a;
+    }
+  }
+}
+
+function e021_no_site(e: ast.Expr, own a: DynSite[]): DynSite[] {
+  return a;
+}
+
 // --- E060 / E062 / E021: dyn downcast target, ambiguous dyn method (#4347),
 // --- associated function called through a dyn value (#7398) ----------------
 //
@@ -26275,7 +26343,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   if (focus_names.len() == 0) {
     decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), util.append_diags(e021_diags(mod), bound_decl_diags(mod)))), derive_diags);
   }
-  let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, env, focus)), e049_diags(mod, env, focus)), e021_object_safety_diags(mod, focus)), e060_e062_diags(mod, focus)));
+  let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, env, focus)), e049_diags(mod, env, focus)), e021_object_safety_diags(mod, focus)), util.append_diags(e021_unknown_dyn_trait_diags(mod, focus), e060_e062_diags(mod, focus))));
   if (dd.len() > 0) {
     well_typed = false;
   }

@@ -18,7 +18,7 @@ import (
 // own under no-prelude. The auto-prelude used to load the whole tree,
 // which masked modules that called a method / free function from
 // another module without declaring the `import` (std/time → std/string,
-// std/test → std/float, std/fuzz → std/test all had this). A module
+// std/test → std/f64, std/fuzz → std/test all had this). A module
 // that can't be imported alone is a latent break waiting for the first
 // program that reaches for it.
 func TestStdlibModulesImportStandalone(t *testing.T) {

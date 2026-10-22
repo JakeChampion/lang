@@ -55,7 +55,7 @@ struct Row { n: i32, name: string }
 // which impl ran rather than being a value the arithmetic could reach by
 // accident.
 const fnValueRecvScalarTrait = `import "std/i32";
-import "std/float";
+import "std/f64";
 
 trait Tag { function tag(self: Self): i32; }
 impl Tag for i32 { function tag(self: Self): i32 { return 1; } }

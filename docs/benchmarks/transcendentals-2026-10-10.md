@@ -1,9 +1,9 @@
-# f64 transcendentals: per-backend kernels vs std/float (2026-10-10)
+# f64 transcendentals: per-backend kernels vs std/f64 (2026-10-10)
 
 #5541 replaced the hand-written exp, log, sin, cos and pow kernels (x86-64 and
 arm64 assembly in the self-host emitters, wasm text, the Go interpreter's
 copies and `internal/tables/fdlibm`) with one Fern definition in
-`internal/stdlib/std/float.fern` that every target compiles.
+`internal/stdlib/std/f64.fern` that every target compiles.
 
 ## Results are bit-identical
 
@@ -15,7 +15,7 @@ bit.
 ## Speed
 
 arm64-darwin (Apple M-series), 20M calls per function over a fixed argument
-sweep, min of 9 runs, user time. "Before" is the compiler and std/float at the
+sweep, min of 9 runs, user time. "Before" is the compiler and std/f64 at the
 branch point; "after" is this branch. The machine was shared and repeat runs
 moved by up to 10%, so read the ratios, not the absolute numbers.
 

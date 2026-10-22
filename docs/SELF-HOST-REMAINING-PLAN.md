@@ -229,9 +229,9 @@ and K/V type combinations (string→string vs string→i32) need handling.
 
 ---
 
-## Item 4 — `std/float` → libm intrinsics ✅
+## Item 4 — `std/f64` → libm intrinsics ✅
 
-**Blocker.** `std/float` calls `__abs_f64`, `__sqrt_f64`, `__floor_f64`,
+**Blocker.** `std/f64` calls `__abs_f64`, `__sqrt_f64`, `__floor_f64`,
 `__ceil_f64`, `__round_f64`, `__trunc_f64`, and (then) `__sin_f64`,
 `__cos_f64`, `__exp_f64`, `__log_f64`, `__pow_f64`.
 
@@ -248,14 +248,14 @@ and K/V type combinations (string→string vs string→i32) need handling.
 checked to a tolerance (compare truncated/scaled results).
 
 **Risk.** High for the transcendentals — specialised numerics, the most
-error-prone item. The cheap subset is low-risk but `std/float` only fully
+error-prone item. The cheap subset is low-risk but `std/f64` only fully
 links once all 11 exist.
 
 **Status.** Done. Cheap subset (abs/sqrt/floor/ceil/round/trunc) is
 inlined as single SSE / FP instructions on both backends, except `round`
 (ties-away-from-zero), which is `frinta` on arm64 but `trunc` plus an exact
 fractional-part test on x86 — `roundsd` has no ties-away mode, and the
-shorter `trunc(x + copysign(0.5, x))` identity is not equivalent (#7880). Transcendentals (sin/cos/exp/log/pow) are std/float's own Fern since #5541,
+shorter `trunc(x + copysign(0.5, x))` identity is not equivalent (#7880). Transcendentals (sin/cos/exp/log/pow) are std/f64's own Fern since #5541,
 which retired their builtins and the per-backend bundles; the accuracy gate is
 `internal/testing/e2e/f64_ulp_test.go`; fixpoint stays
 byte-identical.
@@ -881,16 +881,16 @@ planned order:
     ride the `needs_heap` gate). arm64 mirror is CI-gated.
   - ✅ `f64__to_string` (float→decimal formatting) — emitted on both
     backends as `__fern_f64_to_string`, a hand-asm transcription of
-    `std/float`'s `__float_to_string` with k=15: NaN → "NaN"; sign
+    `std/f64`'s `__float_to_string` with k=15: NaN → "NaN"; sign
     split; Inf (`x != 0 && x*2 == x`) → "Inf"; integer part via
     truncating float→int convert (`cvttsd2si` / `fcvtzs`); fraction
     scaled by 1e15, truncated, zero-padded to 15 digits with trailing
     zeros trimmed and the decimal point dropped when the fraction is 0.
     `(x: f64).to_string()` / `(x: f32).to_string()` dispatch to it
     (f32 collapses to the f64 tag in the self-host, so it formats with
-    k=15 rather than std/float's k=7 — the self-host has no distinct f32
+    k=15 rather than std/f64's k=7 — the self-host has no distinct f32
     value). Verified by a differential test whose expected output is
-    std/float's exact rendering — including the IEEE noise digits
+    std/f64's exact rendering — including the IEEE noise digits
     (`123456.789000000004307`, `9999999.990000000223517`) —
     (`self_host_f64_test.go`); arm64 mirror is CI-gated. With this the
     runtime-builtin surface for `std/test` is complete.

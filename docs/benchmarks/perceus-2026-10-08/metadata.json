@@ -154,7 +154,7 @@
     "stdlib/std/string.fern": "177911b07db9e4cc73a5a621b3b92c30d3838f9591f1c943d9583efef8e51b3e",
     "stdlib/std/fetch.fern": "6d64dfb741284f683a347376f40dd373b2dc82e28956bb9dbfb5d715fe82c6d0",
     "stdlib/std/headers.fern": "d0fa083c6ab2fc9e39c3d12e803c3e5391e29ac009df7ac5be4ef705dda00068",
-    "stdlib/std/float.fern": "d745ef5e859e53c5497cda41e733de45450f87ed4460719b36ffcc4c4449fdb5",
+    "stdlib/std/f64.fern": "d745ef5e859e53c5497cda41e733de45450f87ed4460719b36ffcc4c4449fdb5",
     "stdlib/std/time.fern": "6f19f3e56af5e6e937f815f3f489f0622916755076351c77f4ca0df6ef20bbbd",
     "stdlib/std/sim_platform.fern": "127d71e5afa0b1474d6f472fadf23b939fb847c176e271c2ee12773ed7bcb585",
     "stdlib/std/url.fern": "7bb5337a38b80d6ef06b4c0baa56cf839c5eb184a4061397f5c2191bec7d3699",

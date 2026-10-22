@@ -118,7 +118,21 @@ var parseErrPosCases = []struct {
 	{"struct-update-refused-base", "struct Foo { x: i32 }\nfunction main(): i32 {\n  let x = Foo { ...(; ;\n  return 0;\n}\n"},
 	// A missing closer after a well-formed element is still its own error.
 	{"struct-lit-missing-brace", "struct Foo { x: i32 }\nfunction main(): i32 {\n  let x = Foo { x: 1 ;\n  return 0;\n}\n"},
+	// `float` and `()` are not type spellings, wherever a type is read.
+	{"float-let-annotation", "function main(): i32 {\n  let x: float = 1.0;\n  return 0;\n}\n"},
+	{"float-generic-arg", "function f(x: Option[float]): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"float-bound-arg", "function f[T: Iterator[float]](x: T): T {\n  return x;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"unit-bound-arg", "function f[T: Iterator[()]](x: T): T {\n  return x;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"unit-return-type", "function f(): () {\n  return;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"unit-generic-arg", "function f(): Result[(), i32] {\n  return Ok(0);\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	// `+` continues a `dyn` type only; a bound takes no associated-type pin.
+	{"plus-outside-dyn-in-generic-arg", "trait A {}\nfunction f(x: Map[A + float, i32]): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"impl-names-float", "struct float { n: i32 }\nimpl float {\n  function get(): i32 { return 0; }\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"bound-assoc-pin", "trait Holder {\n  type Item;\n}\nfunction f[T: Holder[Item = i32]](x: T): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"array-missing-bracket", "function main(): i32 {\n  let x = [1 2];\n  return 0;\n}\n"},
+	// A lambda's return annotation is followed by the lambda's own arrow, so
+	// `() =>` there is the refused unit type, not a function type.
+	{"lambda-return-unit-p001", "function main(): i32 {\n  let f = (x: i32): () => x;\n  return 0;\n}\n"},
 	// `::` is only an associated-type projection; as a path it is a P001 (#12698).
 	{"path-sep-call", "function main(): i32 {\n  return helpers::add5(10);\n}\n"},
 	{"path-sep-const", "function main(): i32 {\n  let c = helpers::BONUS;\n  return c;\n}\n"},

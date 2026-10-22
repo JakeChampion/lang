@@ -1,6 +1,6 @@
 // Cross-backend f32/f64 printing + round-trip parity (#4410 part 2).
 //
-// The `to_string` formatter (std/float `__float_shortest` / Dragonbox) is a
+// The `to_string` formatter (std/f64 `__float_shortest` / Dragonbox) is a
 // single shared Fern implementation compiled per target, doing all of its work
 // in integer arithmetic over the IEEE-754 fields, so its output MUST be
 // byte-identical across interp / x86_64 / arm64 / wasm. This fixture pins that
@@ -20,7 +20,7 @@
 // TestFloatStringRoundTripIsExactIdentity; what these add here is that the
 // round-trip holds on every backend, which is this fixture's job.
 import "core/int";
-import "std/float";
+import "std/f64";
 import "std/string";
 
 // round-trips the f32 `x` through to_string → parse_float (which parses in

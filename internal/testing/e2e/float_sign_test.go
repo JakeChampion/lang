@@ -1,7 +1,7 @@
 package e2e
 
 // Differential coverage for the float sign-bit predicates `is_sign_negative` /
-// `is_sign_positive` on std/float (f64 + f32). They read the IEEE-754 sign bit
+// `is_sign_positive` on std/f64 (f64 + f32). They read the IEEE-754 sign bit
 // (via f64_bits / f32_bits), so they classify `-0.0` as negative and `+0.0` as
 // positive — which `x < 0.0` cannot (it is false for both zeros and for NaN).
 // Checks the ordinary signs, both signed zeros (constructed from bits so the
@@ -11,7 +11,7 @@ package e2e
 import "testing"
 
 const floatSignProg = `
-import "std/float";
+import "std/f64";
 function main(): i32 {
     let negzero: f64 = f64_from_bits(0 - 9223372036854775807 - 1);   // 0x8000...0
     if (!(0.0 - 5.0).is_sign_negative()) { return 1; }
