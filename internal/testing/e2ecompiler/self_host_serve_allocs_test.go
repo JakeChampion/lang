@@ -157,8 +157,10 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 // around it; 247.2 here with a byte slice's view descriptor in the frame
 // (#12780) and payloads taken out of enum slots (#12781); 230.33 on
 // arm64-darwin and 231.19 on the x86-64 runner with methods' variant returns
-// paired, where 247.33 was measured before.
-const ServeAllocsH3Ceiling = 232
+// paired, where 247.33 was measured before; 226.06 and 226.92 on two runs
+// here with a scalar concat growing a sole receiver's block in place
+// (docs/benchmarks/net-h3-concat-2026-10-21.md).
+const ServeAllocsH3Ceiling = 228
 
 // ServeAllocsH3MuxCeiling bounds allocations per hello request with
 // ServeAllocsH3MuxConcurrency requests in flight on one connection, the
@@ -167,9 +169,11 @@ const ServeAllocsH3Ceiling = 232
 // shared across the requests answered in one pass, so the per-request share
 // falls as the concurrency rises. Measured 133.33 at this ratchet's shape
 // (64 in flight, 100,000 rounds) on the x86-64 runner
-// (docs/benchmarks/net-h3-encode-2026-10-21.md); bounded like the H2 and
+// (docs/benchmarks/net-h3-encode-2026-10-21.md), and 130.32 here with a
+// scalar concat growing a sole receiver's block in place
+// (docs/benchmarks/net-h3-concat-2026-10-21.md); bounded like the H2 and
 // serial H3 means, a ceiling that a gain lowers.
-const ServeAllocsH3MuxCeiling = 134
+const ServeAllocsH3MuxCeiling = 131
 
 // ServeAllocsH3MuxConcurrency is how many requests the multiplexed client
 // keeps in flight: enough to measure the multiplexed path, below the

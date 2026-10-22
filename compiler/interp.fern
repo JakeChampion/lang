@@ -5223,7 +5223,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
           is_method = true;
           if (static_type.len() > 0) {
             // The binding's annotation applies the type the call is made on
-            // (`let s: G[f64] = G.splat(2.5)` reads `T::LANES` at T = f64).
+            // (`let s: G[f64] = G.splat(2.5)` reads `T.LANES` at T = f64).
             if (expect.len() > 0 && util.base_type_name(expect) == static_type) {
               static_type = expect;
             }
@@ -5860,7 +5860,7 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
   }
   let env: Env = new_module_env(funcs, aliases, type_decls, outs);
   // The applied type's arguments bind a parametric impl's type parameters
-  // (`Dual[f64].LANES()` reads `T::LANES` at T = f64).
+  // (`Dual[f64].LANES()` reads `T.LANES` at T = f64).
   let targs: parser.TypeRef[] = parser.parse_type_ref(type_name).args;
   let t: i32 = 0;
   while (t < fd.type_params.len() && t < targs.len()) {

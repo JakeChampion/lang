@@ -26,7 +26,7 @@ function sigmoid[T: simd.Math](x: T): T {
 }
 
 function lanes_of[T: simd.Lanes](x: T): i32 {
-  return T::LANES;
+  return T.LANES;
 }
 
 function test_kernel_on_f64(): test.TestOutcome {

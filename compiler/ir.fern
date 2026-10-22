@@ -8535,13 +8535,15 @@ pub function const_propagate(ops: Op[]): Op[] {
   // is how a scope's end names the slots it could have written. bound lists
   // every slot has[] is true for, each once, and may also hold slots since
   // unbound until the next kill drops them.
+  // Every slot starts on one placeholder op; has[] says which hold a real one.
   let known: Op[] = [];
+  let zero: Op = op_const_i32(0);
   let has: boolean[] = __alloc_bool(nslots);
   let wrote: i32[] = util.minus_ones(nslots);
   let bound: i32[] = [];
   let z: i32 = 0;
   while (z < nslots) {
-    known = known.append(op_const_i32(0));
+    known = known.append(zero);
     z = z + 1;
   }
 
