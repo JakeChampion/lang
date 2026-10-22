@@ -68,6 +68,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -568,6 +569,10 @@ func main() {
 		code, err := runInterp(path, interpArgs)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
+			var abort *interp.Abort
+			if errors.As(err, &abort) {
+				os.Exit(interp.AbortStatus)
+			}
 			os.Exit(1)
 		}
 		os.Exit(code)

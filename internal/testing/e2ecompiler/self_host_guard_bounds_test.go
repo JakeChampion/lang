@@ -306,9 +306,14 @@ func TestSelfHostGuardBoundsX86_64(t *testing.T) {
 		t.Run("fewer_checks/"+tw.name, func(t *testing.T) {
 			proven := emit(t, tw.proven)
 			unproven := emit(t, tw.unproven)
-			got, base := strings.Count(proven, "__fern_oob_abort"), strings.Count(unproven, "__fern_oob_abort")
+			// An array index traps to __fern_oob_abort and a string index to
+			// __fern_str_oob_abort; a guard can prove away either.
+			traps := func(asm string) int {
+				return strings.Count(asm, "__fern_oob_abort") + strings.Count(asm, "__fern_str_oob_abort")
+			}
+			got, base := traps(proven), traps(unproven)
 			if got >= base {
-				t.Fatalf("the guard proved nothing: %d __fern_oob_abort against the unproven twin's %d", got, base)
+				t.Fatalf("the guard proved nothing: %d bounds traps against the unproven twin's %d", got, base)
 			}
 			want := interpExit(t, interpBin, tw.proven+"\n")
 			for name, asm := range map[string]string{"proven": proven, "unproven": unproven} {
