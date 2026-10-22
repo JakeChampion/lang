@@ -496,7 +496,7 @@ function errors_of(ds: util.Diag[]): Finding[] {
 // refusal is a rejection with no code and no position — a module that could
 // not be loaded — whose message `-check` prints as the whole line.
 function refusal(msg: string): Finding {
-  return Finding { diag: util.Diag { related: [], code: "", message: msg, line: 0, col: 0, fix: None }, warning: false, path: "" };
+  return Finding { diag: util.Diag { related: [], length: 0, code: "", message: msg, line: 0, col: 0, fix: None }, warning: false, path: "" };
 }
 
 function has_error(fs: Finding[]): boolean {
@@ -611,13 +611,14 @@ function source_line(path: string, n: i32): string {
 }
 
 // snippet is the source line under a positioned diagnostic and a caret at its
-// column, laid out as native's renderer does: indented four spaces, or behind
-// a line-number gutter when colour is on.
-function snippet(st: DiagStyle, path: string, line: i32, col: i32, sgr: string): string {
-  return marked_snippet(st, path, line, col, sgr, -1);
+// column, `^~~~` across a span of `length` bytes, laid out as native's renderer
+// does: indented four spaces, or behind a line-number gutter when colour is on.
+function snippet(st: DiagStyle, path: string, line: i32, col: i32, sgr: string, length: i32): string {
+  return marked_snippet(st, path, line, col, sgr, length, false);
 }
 
-function marked_snippet(st: DiagStyle, path: string, line: i32, col: i32, sgr: string, length: i32): string {
+// A related location's snippet is indented further and underlined with `-`.
+function marked_snippet(st: DiagStyle, path: string, line: i32, col: i32, sgr: string, length: i32, related: boolean): string {
   let text: string = source_line(path, line);
   if (text.len() == 0) {
     return "";
@@ -632,9 +633,9 @@ function marked_snippet(st: DiagStyle, path: string, line: i32, col: i32, sgr: s
     pad = pad + " ";
     w = w - 1;
   }
-  let mark: string = paint(st, sgr, snippet_mark(length, room));
+  let mark: string = paint(st, sgr, snippet_mark(length, room, related));
   let indent: string = "    ";
-  if (length >= 0) {
+  if (related) {
     indent = "        ";
   }
   if (!st.color) {
@@ -643,20 +644,19 @@ function marked_snippet(st: DiagStyle, path: string, line: i32, col: i32, sgr: s
   return "\n " + util.i32_to_string(line) + " " + gutter_sep(st) + " " + text + "\n" + note_prefix(st, line) + pad + mark;
 }
 
-function snippet_mark(length: i32, room: i32): string {
-  if (length < 0) {
-    return "^";
-  }
+function snippet_mark(length: i32, room: i32, related: boolean): string {
   let n: i32 = length;
-  if (n <= 0) {
-    n = 1;
-  }
   if (n > room) {
     n = room;
   }
-  let mark: string = "-";
+  let mark: string = "^";
+  let fill: string = "~";
+  if (related) {
+    mark = "-";
+    fill = "-";
+  }
   while (n > 1) {
-    mark = mark + "-";
+    mark = mark + fill;
     n = n - 1;
   }
   return mark;
@@ -733,7 +733,7 @@ function finding_text(st: DiagStyle, f: Finding, entry: string, files: string[],
     path = entry_display(entry);
   }
   let sgr: string = if (f.warning) { "33" } else { "31" };
-  return head + snippet(st, path, util.pos_line(d.line), d.col, sgr) + related + help_line(st, d);
+  return head + snippet(st, path, util.pos_line(d.line), d.col, sgr, d.length) + related + help_line(st, d);
 }
 
 function related_text(st: DiagStyle, related: util.Related[], entry: string, files: string[]): string {
@@ -744,7 +744,7 @@ function related_text(st: DiagStyle, related: util.Related[], entry: string, fil
       path = entry_display(entry);
     }
     out = out + "\n    " + util.pos_str(entry_display(entry), files, r.line, r.col) + ": " + paint(st, "34", "note:") + " " + r.message;
-    out = out + marked_snippet(st, path, util.pos_line(r.line), r.col, "34", r.length);
+    out = out + marked_snippet(st, path, util.pos_line(r.line), r.col, "34", r.length, true);
   }
   return out;
 }
@@ -759,13 +759,26 @@ function entry_display(entry_path: string): string {
   return entry_path;
 }
 
-// eprint_findings prints each finding and reports whether any rejects the
-// program.
+// eprint_findings prints each finding, ordered by file and position, and
+// reports whether any rejects the program.
 function eprint_findings(st: DiagStyle, fs: Finding[], entry: string, files: string[], maps: util.LineMap[]): boolean {
-  for f in fs {
+  for f in by_position(fs, maps) {
     eprint(finding_text(st, f, entry, files, maps));
   }
   return has_error(fs);
+}
+
+// by_position sorts findings by file, line and column; one without a position
+// goes first, and findings at one position keep their order.
+function by_position(fs: Finding[], maps: util.LineMap[]): Finding[] {
+  return util.sorted_by(fs, (a: Finding, b: Finding) => finding_after(a, b, maps));
+}
+
+function finding_after(a: Finding, b: Finding, maps: util.LineMap[]): boolean {
+  if (a.path != b.path) {
+    return util.str_less(b.path, a.path);
+  }
+  return util.diag_after(util.doc_diag(maps, a.diag), util.doc_diag(maps, b.diag));
 }
 
 // arm64_refusals renders the assembler's / linker's refusal list as ONE
@@ -2938,7 +2951,7 @@ function tangle_error(path: string, line: i32, col: i32, msg: string): string {
 
 // eprint_tangle_error prints a refusal with the line it points at.
 function eprint_tangle_error(path: string, line: i32, col: i32, msg: string): void {
-  eprint(tangle_error(path, line, col, msg) + snippet(plain_style(), path, line, col, "31"));
+  eprint(tangle_error(path, line, col, msg) + snippet(plain_style(), path, line, col, "31", 0));
 }
 
 // display_path names a module file as native's diagnostics do: a stdlib module
@@ -3309,7 +3322,7 @@ function todo_warnings(sites: parser.TodoSite[], entry_path: string): Finding[] 
   let name: string = entry_display(entry_path);
   let out: Finding[] = [];
   for site in sites {
-    out = out.append(Finding { diag: util.Diag { related: [], code: "", message: "`todo` stub remaining", line: site.line, col: site.col, fix: None }, warning: true, path: name });
+    out = out.append(Finding { diag: util.Diag { related: [], length: 0, code: "", message: "`todo` stub remaining", line: site.line, col: site.col, fix: None }, warning: true, path: name });
   }
   return out;
 }
@@ -4654,7 +4667,7 @@ function lsp_doc_text(s: Server, path: string): string {
 function lsp_diagnostics(s: Server, c: Checked, files: string[], path: string, text: string): string[] {
   let t: lsp.Text = lsp.text_of(text);
   let out: string[] = [];
-  for f in c.findings {
+  for f in by_position(c.findings, c.maps) {
     let d: util.Diag = util.doc_diag(c.maps, f.diag);
     let m: i32 = util.pos_file_index(d.line);
     if (m < files.len() && files[m] == path) {
@@ -4746,12 +4759,12 @@ function package_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
   let vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
   for v in vs {
     if (!v.governed) {
-      out = out.append(Finding { diag: util.Diag { related: [], code: "", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: true, path: "" });
+      out = out.append(Finding { diag: util.Diag { related: [], length: 0, code: "", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: true, path: "" });
     }
   }
   for v in vs {
     if (v.governed) {
-      out = out.append(Finding { diag: util.Diag { related: [], code: "E070", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: false, path: "" });
+      out = out.append(Finding { diag: util.Diag { related: [], length: 0, code: "E070", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: false, path: "" });
     }
   }
   return out;

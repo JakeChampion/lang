@@ -293,7 +293,8 @@ function test_goaway(): test.TestOutcome {
 }
 
 // A request whose field section refers to inserts the encoder stream has
-// not yet delivered waits for them, then arrives whole.
+// not yet delivered waits for them, then arrives whole; `waiting` reports
+// it meanwhile.
 function test_qpack_blocked(): test.TestOutcome {
   let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64);
   let step6: h3.Session = s;
@@ -314,7 +315,30 @@ function test_qpack_blocked(): test.TestOutcome {
       written = written + id.to_string() + ":" + hex.hex_encode(bytes) + " ";
     }
   }
-  return test.assert_eq(int_text(acts1.len()) + " " + int_text(evs1.len()) + " | " + noted("server", evs2) + "| " + written, "0 0 | server headers 0 [:authority=www.example.com :path=/sample/path :method=GET :scheme=https ]; server end 0; | 11:02 11:80 ");
+  let waits: string = s0.waiting(0 as i64).to_string() + " " + s1.waiting(0 as i64).to_string() + " " + step8.waiting(0 as i64).to_string();
+  return test.assert_eq(waits + " | " + int_text(acts1.len()) + " " + int_text(evs1.len()) + " | " + noted("server", evs2) + "| " + written, "false true false | 0 0 | server headers 0 [:authority=www.example.com :path=/sample/path :method=GET :scheme=https ]; server end 0; | 11:02 11:80 ");
+}
+
+// Request streams share index slots with other stream IDs (id >> 2). A
+// stream that is not the request in its slot is not taken for it: no
+// unidirectional stream is `waiting`, so the encoder stream that unblocks
+// requests 0 and 4 is read; and a client ignores a stream the server
+// opened rather than read it as the response to the request in its slot.
+function test_slot_sharing(): test.TestOutcome {
+  let headers: u8[] = hex.hex_decode("0106" + "03811011d1d7");
+  let s: h3.Session = h3.server(h3.config()).start(3 as i64, 7 as i64, 11 as i64).taken();
+  s = s.on_stream(0 as i64, headers, true).on_stream(4 as i64, headers, true).taken();
+  let waits: string = "";
+  for id in [0 as i64, 1 as i64, 2 as i64, 4 as i64, 5 as i64, 6 as i64, 10 as i64] {
+    waits = waits + id.to_string() + "=" + s.waiting(id).to_string() + " ";
+  }
+  let encoder: string = "02" + "3fbd01c00f7777772e6578616d706c652e636f6dc10c2f73616d706c652f70617468";
+  let step: h3.Session = s.on_stream(6 as i64, hex.hex_decode(encoder), false);
+  let evs: string = noted("server", step.events);
+  let unblocked: string = (evs.contains("headers 0 ") && evs.contains("headers 4 ")).to_string() + " " + step.waiting(0 as i64).to_string() + " " + step.waiting(4 as i64).to_string();
+  let c: h3.Session = h3.client(h3.config()).start(2 as i64, 6 as i64, 10 as i64).send_headers(0 as i64, get("/a"), true).taken();
+  let c2: h3.Session = c.on_stream(1 as i64, hex.hex_decode("01030000d9"), false);
+  return test.assert_eq(waits + "| " + unblocked + " | client [" + noted("client", c2.events) + "]", "0=true 1=false 2=false 4=true 5=false 6=false 10=false | true false false | client []");
 }
 
 function int_text(n: i32): string {
@@ -331,5 +355,6 @@ function main(): i32 {
   r = r.it("GOAWAY", test_goaway);
   r = r.it("a field section blocked on QPACK", test_qpack_blocked);
   r = r.it("a request stream below the swept window is still answered", test_reordered_low_stream);
+  r = r.it("a stream is not taken for the request sharing its slot", test_slot_sharing);
   return r.finish();
 }

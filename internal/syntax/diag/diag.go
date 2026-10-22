@@ -13,6 +13,7 @@ package diag
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
@@ -180,6 +181,35 @@ func stampFile(err error, filename string) {
 // Errors is a flat collection of errors. Useful when a pass (e.g. the
 // type checker) wants to report many problems in one go.
 type Errors []error
+
+// SortedByPosition is es ordered by file, then line and column, as the
+// compiler orders them: the entry's (file "" or entry) first, an error with no
+// position first in its file, and errors at one position in the order given.
+func (es Errors) SortedByPosition(entry string) Errors {
+	out := append(Errors(nil), es...)
+	key := func(e error) (string, int, int) {
+		file := ""
+		if f, ok := e.(Filed); ok && f.File() != entry {
+			file = f.File()
+		}
+		if p, ok := e.(Positioned); ok {
+			return file, p.Position().Line, p.Position().Col
+		}
+		return file, 0, 0
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		fi, li, ci := key(out[i])
+		fj, lj, cj := key(out[j])
+		if fi != fj {
+			return fi < fj
+		}
+		if li != lj {
+			return li < lj
+		}
+		return ci < cj
+	})
+	return out
+}
 
 func (es Errors) Error() string {
 	switch len(es) {
