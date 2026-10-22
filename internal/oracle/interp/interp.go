@@ -63,7 +63,26 @@ type Number int64
 type Bool bool
 type String string
 type Void struct{}
+
 type Func struct{ Decl *ast.FuncDecl }
+
+// ExitStatus is the process status `main`'s result v maps to, and whether it
+// is one: an integer is its low byte (two's complement, as exit() keeps it),
+// a boolean 1 or 0, and void 0.
+func ExitStatus(v Value) (int, bool) {
+	switch x := v.(type) {
+	case Number:
+		return int(x) & 0xFF, true
+	case Bool:
+		if x {
+			return 1, true
+		}
+		return 0, true
+	case Void:
+		return 0, true
+	}
+	return 0, false
+}
 
 // Array is the interpreter's `T[]` value: a view (E) over a backing
 // buffer, plus that buffer's shared header. Every view of one allocation
