@@ -9507,7 +9507,9 @@ function arm64_gas_dlabel_off(p: Arm64GasProg, name: string): i32 {
 // trading the data and read-only buffers when one side is the read-only
 // constants (section 3).
 function arm64_enter_section(own p: Arm64GasProg, from: i32, to: i32): Arm64GasProg {
-  if ((from == 3) == (to == 3)) {
+  let leaving: boolean = from == 3;
+  let entering: boolean = to == 3;
+  if (leaving == entering) {
     return p;
   }
   let active: i32[] = p.data;

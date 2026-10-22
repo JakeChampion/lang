@@ -1565,7 +1565,9 @@ function x86_rodata_label_at(own a: X86Asm, name: string, idx: i32, sec: i32): X
 // x86_enter_section moves the assembler from section `from` to `to`, trading
 // the data and read-only buffers when one side is .rodata (section 3).
 function x86_enter_section(own a: X86Asm, from: i32, to: i32): X86Asm {
-  if ((from == 3) == (to == 3)) {
+  let leaving: boolean = from == 3;
+  let entering: boolean = to == 3;
+  if (leaving == entering) {
     return a;
   }
   let active: i32[] = a.rodata;
