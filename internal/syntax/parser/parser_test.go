@@ -907,6 +907,33 @@ func TestNonLvalueAssignTargetsRejected(t *testing.T) {
 	}
 }
 
+// A refusal at a missing closer or name says what the token does there,
+// in the words the self-hosted parser uses for the same refusal.
+func TestRefusalsNameTheirConstruct(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{"let x = [1\n2];", `expected "]" to close this array literal`},
+		{"let x = g(1\n2);", `expected ")" to close this call`},
+		{"let a = [1]; let x = a[0;", `expected "]" to close this index`},
+		{"let a = [1]; let x = a[0:1;", `expected "]" to close this slice`},
+		{"let a = 1; a.;", `expected a field or method name after "."`},
+		{"let x 1;", `expected "=" after the name in this declaration`},
+		{"let x: i32 1;", `expected "=" after the name in this declaration`},
+		{"let p = P { 1 };", "expected a field name in this struct literal"},
+		{"let p = P { a 1 };", `expected ":" after the field name in this struct literal`},
+		{"let p = P { a: 1 a: 2 };", `expected "}" to close this struct literal`},
+		{"let p = P { a: 1 }; let q = P { ...p a: 2 };", `expected "}" to close this struct update`},
+	} {
+		src := "struct P { a: i32 }\nfunction g(a: i32, b: i32): i32 { return a; }\nfunction f(): i32 {\n" + tc.body + "\nreturn 0;\n}"
+		_, err := Parse(src)
+		if err == nil || !hasParseCode(err, "P001") || !strings.Contains(err.Error(), ": "+tc.want) {
+			t.Errorf("%s: want P001 %q, got %v", tc.body, tc.want, err)
+		}
+	}
+	if _, err := Parse("function f(): i32 { let Some(x) 5 else { return 1; }; return 0; }"); err == nil || !strings.Contains(err.Error(), `expected "=", got "5"`) {
+		t.Errorf(`a refutable pattern keeps "expected \"=\", got": %v`, err)
+	}
+}
+
 // Assignment is a statement: it yields no value, so it cannot stand where an
 // expression is read. The statement positions still take it, chained ones
 // included.
