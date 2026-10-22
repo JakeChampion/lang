@@ -9293,6 +9293,7 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
       }
       if (!reported) {
         out = out.append(util.Diag {
+          length: 0,
           related: [],
           code: code,
           message: "the returned view's source cannot be kept alive beyond this function: return owned storage or a view of a parameter instead",

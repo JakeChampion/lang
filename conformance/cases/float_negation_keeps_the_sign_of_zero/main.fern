@@ -1,0 +1,17 @@
+// Unary minus flips the sign bit, so the negation of a zero is a negative
+// zero and dividing by it gives negative infinity, in f64 and in f32.
+function main(): i32 {
+  let z: f64 = 0.0;
+  let w: f32 = 0.0 as f32;
+  let r: i32 = 0;
+  if (1.0 / -z < 0.0) {
+    r = r + 1;
+  }
+  if ((1.0 as f32) / -w < (0.0 as f32)) {
+    r = r + 2;
+  }
+  if (1.0 / -(-z) > 0.0) {
+    r = r + 4;
+  }
+  return r;
+}

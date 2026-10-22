@@ -7357,6 +7357,9 @@ function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
     if (is_integer(lt) && is_integer(rt)) {
       return t_bool();
     }
+    if (type_eq(lt, t_char()) && type_eq(rt, t_char())) {
+      return t_bool();
+    }
     if (float_operands_agree(lt, rt)) {
       return t_bool();
     }
@@ -16001,7 +16004,8 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
       let oki_o: boolean = o_both_int && int_operands_agree(olt, ort, b.left, b.right);
       let okf_o: boolean = float_operands_agree(olt, ort);
       let oks_o: boolean = type_eq(olt, t_string()) && type_eq(ort, t_string());
-      if (!oki_o && !okf_o && !oks_o) {
+      let okc_o: boolean = type_eq(olt, t_char()) && type_eq(ort, t_char());
+      if (!oki_o && !okf_o && !oks_o && !okc_o) {
         if (type_eq(olt, ort) && is_composite_type(olt)) {
           // Ordering two values of the SAME composite type is
           // structural comparison via the type's `Ord` impl —
@@ -18447,7 +18451,7 @@ function dg(code: string, message: string): util.Diag {
 }
 
 function dg_at(code: string, message: string, line: i32, col: i32): util.Diag {
-  return util.Diag { related: [], code: code, message: util.show_type_vars(message), line: line, col: col, fix: None };
+  return util.Diag { related: [], length: 0, code: code, message: util.show_type_vars(message), line: line, col: col, fix: None };
 }
 
 // with_fix is `d` fixed by respelling `old`, written at `line`, `col`, as `to`,
@@ -18495,7 +18499,7 @@ function (s: Scope) method_fix(d: util.Diag, fa: ast.ExprFieldAccess, recv: type
 // in `s` declares it. Its fix is a retired name's replacement, or else the
 // closest name `s` can resolve.
 function undefined_name(name: string, s: Scope, line: i32, col: i32): util.Diag {
-  let d: util.Diag = dg_at("E001", "cannot find \"" + name + "\" in this scope", line, col);
+  let d: util.Diag = util.Diag { ...dg_at("E001", "cannot find \"" + name + "\" in this scope", line, col), length: name.len() };
   // A retired name is too far from its replacement for a respelling to find.
   if (name == "string_from_bytes") {
     return with_fix(d, name, line, col, "string_from_bytes_unchecked", " (or `std/utf8.from_bytes`, which validates and returns `Option[string]`)");

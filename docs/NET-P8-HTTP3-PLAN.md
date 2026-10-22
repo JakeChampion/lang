@@ -81,7 +81,10 @@ Each is a bound with a test that crosses it.
    cap (CRYPTO_BUFFER_EXCEEDED); stream data only up to the flow-control
    window it was granted; streams only up to the limits advertised; an ACK
    frame's ranges are capped; QPACK's dynamic table, its blocked streams and
-   a field section's size are capped.
+   a field section's size are capped. A field section's size counts each
+   field as it is decoded. An encoder-stream literal too long for the table
+   is refused at its length. A stream that waits on QPACK stays unread, so
+   its window holds its later bytes.
 3. **Floods of cheap frames.** PING, empty STREAM, NEW_CONNECTION_ID and
    PATH_CHALLENGE count against a per-connection budget, as HTTP/2's reset
    and empty-DATA budgets do.
