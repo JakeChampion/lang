@@ -131,7 +131,7 @@ function byte_value(word: str): u8 {
   let value: i32 = 0;
   for b in word.as_bytes() {
     if (b < 48 as u8 || b > 57 as u8) {
-      return util.lit_to_i32(word.to_owned()) as u8;
+      return util.lit_to_i32(word + "") as u8;
     }
     value = value * 10 + b as i32 - 48;
   }
