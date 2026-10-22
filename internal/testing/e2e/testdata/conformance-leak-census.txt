@@ -236,6 +236,7 @@ field_read_off_a_call_through_a_function_field       0
 fizzbuzz                                             0
 float_arith_ops                                      0
 float_bit_reinterpret                                0
+float_negation_keeps_the_sign_of_zero                0
 float_pythagoras                                     0
 float_reduce_in_index_order                          0
 float_to_int_saturating                              0

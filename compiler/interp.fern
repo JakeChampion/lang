@@ -4548,10 +4548,10 @@ function eval_unary(op: string, ov: Value): Value {
         return v_uint(0 - u.v);
       },
       VFloat(f) => {
-        return v_float(0.0 - f.v);
+        return v_float(-f.v);
       },
       VFloat32(f) => {
-        return v_float32(0.0 - f.v);
+        return v_float32(-f.v);
       },
       _ => {
         return v_err("unary `-` operand not i32 or f64");
