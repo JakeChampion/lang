@@ -161,12 +161,14 @@ fern -add helper path:../helper                          # { path = "../helper" 
 fern -add webkit url:https://example.com/webkit.tar.gz   # fetches, records the hash
 fern -add lexer  workspace                               # { workspace = true }
 fern -add json   version:1.2.0                           # "1.2.0", resolved by -resolve
-fern -add kv     path:../kv -grant net,time              # { path = "../kv", capabilities = ["net", "time"] }
-fern -add pure   version:2.0.0 -grant none               # { version = "2.0.0", capabilities = [] }
+fern -grant net,time -add kv path:../kv                  # { path = "../kv", capabilities = ["net", "time"] }
+fern -grant none -add pure version:2.0.0                 # { version = "2.0.0", capabilities = [] }
 ```
 
 `-grant` writes a `capabilities` list on any form, in the manifest's
 canonical order; `none` writes an empty one, which denies every capability.
+Like every driver flag it goes before `-add`'s arguments; written after
+them it is refused.
 A package named with a `-` is imported by that name and qualified with `_`
 in its place: `import "my-lib";` then `my_lib.f()`.
 

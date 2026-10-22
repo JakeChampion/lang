@@ -107,8 +107,8 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 				t.Fatalf("native add ok = %v, self-host = %v\n--- native ---\n%s\n--- self-host ---\n%s",
 					nativeOK, shOK, nativeOut, shOut)
 			}
-			if want, got := strings.ReplaceAll(string(nativeOut), nativeDir, "<ROOT>"),
-				strings.ReplaceAll(string(shOut), selfDir, "<ROOT>"); want != got {
+			nativeText := strings.ReplaceAll(strings.ReplaceAll(string(nativeOut), nativeDir, "<ROOT>"), "fern-oracle: ", "fern: ")
+			if want, got := nativeText, strings.ReplaceAll(string(shOut), selfDir, "<ROOT>"); want != got {
 				t.Errorf("add output differs:\n--- native ---\n%s\n--- self-host ---\n%s", want, got)
 			}
 			if c.manifest == "" {
@@ -132,13 +132,34 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 			}
 		})
 	}
-	// Too few arguments is a usage refusal: exit 2, as an unknown flag is.
-	t.Run("missing-spec", func(t *testing.T) {
+	// Too few or too many arguments is a usage refusal: exit 2, as an
+	// unknown flag is.
+	t.Run("argument-count", func(t *testing.T) {
+		for _, argv := range [][]string{{"-add", "helper"}, {"-add", "helper", "path:../h", t.TempDir(), "extra"}} {
+			for _, bin := range []string{nativeBin, driverBin} {
+				cmd := exec.Command(bin, argv...)
+				_ = cmd.Run()
+				if code := cmd.ProcessState.ExitCode(); code != 2 {
+					t.Errorf("%s %s exited %d, want 2", filepath.Base(bin), strings.Join(argv, " "), code)
+				}
+			}
+		}
+	})
+	// A -grant after the arguments is a driver flag past the point flags are
+	// parsed: both refuse it rather than write the dependency without it.
+	t.Run("grant-after-arguments", func(t *testing.T) {
 		for _, bin := range []string{nativeBin, driverBin} {
-			cmd := exec.Command(bin, "-add", "helper")
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 2 {
-				t.Errorf("%s -add helper exited %d, want 2", filepath.Base(bin), code)
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "fern.toml"), []byte(noTable), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(bin, "-add", "kv", "path:../kv", dir, "-grant", "net")
+			out, _ := cmd.CombinedOutput()
+			if code := cmd.ProcessState.ExitCode(); code != 2 || !strings.Contains(string(out), ": -grant comes after the source file") {
+				t.Errorf("%s: exit %d, want 2 and the refusal\n%s", filepath.Base(bin), code, out)
+			}
+			if man, _ := os.ReadFile(filepath.Join(dir, "fern.toml")); string(man) != noTable {
+				t.Errorf("%s: refused add still rewrote the manifest:\n%q", filepath.Base(bin), man)
 			}
 		}
 	})
@@ -148,7 +169,10 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 // and grant, so every dependency form the manifest accepts can be written
 // without editing it by hand.
 func TestSelfHostAddWritesEveryForm(t *testing.T) {
-	bin := buildFernCLIBin(t)
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	for _, c := range []struct{ spec, grant, want string }{
 		{"path:../dep", "", `dep = { path = "../dep" }`},
 		{"workspace", "", `dep = { workspace = true }`},
@@ -164,7 +188,7 @@ func TestSelfHostAddWritesEveryForm(t *testing.T) {
 		if c.grant != "" {
 			args = append([]string{"-grant", c.grant}, args...)
 		}
-		out, err := exec.Command(bin, args...).CombinedOutput()
+		out, err := runX86_64Bin(runner, bin, args...).CombinedOutput()
 		if err != nil {
 			t.Errorf("%s -grant %q: %v\n%s", c.spec, c.grant, err, out)
 			continue
@@ -181,7 +205,7 @@ func TestSelfHostAddWritesEveryForm(t *testing.T) {
 		}
 	}
 	// A refusal says `fern:` and names the flag, as every other CLI refusal does.
-	out, _ := exec.Command(bin, "-add", "9bad", "path:../x", t.TempDir()).CombinedOutput()
+	out, _ := runX86_64Bin(runner, bin, "-add", "9bad", "path:../x", t.TempDir()).CombinedOutput()
 	if !strings.HasPrefix(string(out), "fern: -add: invalid dependency name") {
 		t.Errorf("refusal %q does not start with \"fern: -add:\"", out)
 	}

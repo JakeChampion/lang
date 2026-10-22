@@ -657,8 +657,14 @@ func main() {
 	}
 
 	if *doAdd {
-		if flag.NArg() < 2 {
-			fmt.Fprintln(os.Stderr, "usage: fern-oracle -add NAME SPEC [DIR] [-grant CAPS]   (SPEC = path:../dir | url:https://… | workspace | version:X.Y.Z)")
+		for i := range flag.Args() {
+			if _, err := programArgs(flag.Args()[i:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+		}
+		if flag.NArg() < 2 || flag.NArg() > 3 {
+			fmt.Fprintln(os.Stderr, "usage: fern-oracle [-grant CAPS] -add NAME SPEC [DIR]   (SPEC = path:../dir | url:https://… | workspace | version:X.Y.Z)")
 			os.Exit(2)
 		}
 		addDir := "."

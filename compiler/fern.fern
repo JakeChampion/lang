@@ -1721,7 +1721,7 @@ function usage_lines(embedded: boolean): string[] {
     "       fern -lint [-lint-set RULE=LEVEL] [-lint-cover FILE] PATH...",
     "       fern -doc [-o OUT] MODULE.fern | -doc -o OUTDIR DIR",
     "       fern -tangle | -weave | -doctest DOC.fern.md",
-    "       fern -add NAME SPEC [DIR]",
+    "       fern [-grant CAPS] -add NAME SPEC [DIR]",
     "       fern -resolve | -vendor | -fetch [DIR]",
     "       fern -lsp | -repl [-target ISA-ENV]" + root,
     "       fern -cover-report [-lcov] FILE",
@@ -2134,9 +2134,16 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
 // The manifest is edited TEXTUALLY, so existing formatting and comments
 // survive: a dependency is a line spliced into `[dependencies]`, not a
 // re-render of a parsed tree.
-function run_add(pos: string[], grant: string, fetcher: Fetcher): i32 {
-  if (pos.len() < 2) {
-    eprint("usage: fern -add NAME SPEC [DIR] [-grant CAPS]   (SPEC = path:../dir | url:https://… | workspace | version:X.Y.Z)");
+function run_add(pos: string[], grant: string, fetcher: Fetcher, embedded: boolean): i32 {
+  // `-add` runs no program, so a `-x` among its arguments is a driver flag
+  // written too late, never data.
+  for a in pos {
+    if (is_flag(a)) {
+      return flag_after_entry(a, embedded);
+    }
+  }
+  if (pos.len() < 2 || pos.len() > 3) {
+    eprint("usage: fern [-grant CAPS] -add NAME SPEC [DIR]   (SPEC = path:../dir | url:https://… | workspace | version:X.Y.Z)");
     return 2;
   }
   let name: string = pos[0];
@@ -5883,7 +5890,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
 
   // `-add` edits a manifest and compiles nothing.
   if (mode_add) {
-    return run_add(pos, grant, fetcher);
+    return run_add(pos, grant, fetcher, embedded);
   }
 
   let bad_target: string = target_refusal(target);
