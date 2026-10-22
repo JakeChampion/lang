@@ -1,7 +1,7 @@
 package wasi:http@0.2.0;
 
 // Vendored copy of `wasi:http/outgoing-handler@0.2.0`: the host's HTTP
-// client. A `fern -target wasi-http` component IMPORTS it, and std/fetch
+// client. A `fern -target wasm32-wasi-http` component IMPORTS it, and std/fetch
 // sends through it on that target (std/wasi_http).
 // Source: https://github.com/WebAssembly/wasi-http/blob/main/wit/handler.wit
 interface outgoing-handler {

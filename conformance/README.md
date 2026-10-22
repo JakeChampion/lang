@@ -124,7 +124,7 @@ program is precisely what these cases pin, and it cannot be two.
 An abort on wasm is a trap, and the wasm leg fails any case that traps,
 since a trap is also how a miscompile shows there. The abort family
 (`oob_index_read` and its siblings) therefore restricts `backends` to the
-natives and carries a `harness-limit` waiver. This is a property of how
+interpreter and the natives and carries a `harness-limit` waiver. This is a property of how
 the leg reads a run, not of the wasm target, which traps exactly as
 intended.
 

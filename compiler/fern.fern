@@ -975,12 +975,12 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
   // Anything unencodable means bytes were dropped, so every offset past
   // the first is wrong — refuse rather than write it (SH-005, #6045).
   if (a.unknown.len() > 0) {
-    eprint("fern: -target x86-64: in-process assembler could not encode: " + a.unknown[0]);
+    eprint("fern: -target x86-64-linux: in-process assembler could not encode: " + a.unknown[0]);
     return "";
   }
   let eoff: i32 = x86_native.x86_label_off(a, "_start");
   if (eoff < 0) {
-    eprint("fern: -target x86-64: no _start symbol in the emitted program");
+    eprint("fern: -target x86-64-linux: no _start symbol in the emitted program");
     return "";
   }
   util.arr_push_cliff_report("x86:unwind", 0);
@@ -1262,7 +1262,7 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     a = x86_native.X86Asm { ...a, unknown: ["an absolute code address in a shared object: " + a.afix_names[0]] };
   }
   if (a.unknown.len() > 0) {
-    eprint("fern: -target x86-64: in-process assembler could not encode: " + a.unknown[0]);
+    eprint("fern: -target x86-64-linux: in-process assembler could not encode: " + a.unknown[0]);
     return "";
   }
   let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
@@ -3296,8 +3296,8 @@ function with_findings(fs: Finding[], more: Finding[]): Finding[] {
 
 // interp_status is an interpreted program's exit status — an i32 result's
 // value, a boolean's 1 or 0, 254 for anything else — and, when it stopped,
-// the line saying why. A program's own abort exits 1 with the Go
-// interpreter's message; a stop that is the interpreter's own is 254, and
+// the line saying why. A program's own fatal abort exits 134 with a compiled
+// program's cause line; a stop that is the interpreter's own is 254, and
 // printing why is the difference between "exit 254" and a usable report
 // (#5990).
 function interp_status(v: interp.Value): (i32, string) {
@@ -3313,7 +3313,7 @@ function interp_status(v: interp.Value): (i32, string) {
     },
     interp.VErr(ev) => {
       if (ev.abort) {
-        return (1, ev.msg);
+        return (134, ev.msg);
       }
       if (ev.msg.len() == 0) {
         return (254, "");
@@ -5902,7 +5902,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   }
   if (shared) {
     if (target != "x86-64-linux" && target != "arm64-linux" && target != "arm64-android") {
-      eprint("fern: -shared is only supported with -target x86-64, arm64, or arm64-android (got \"" + target + "\")");
+      eprint("fern: -shared is only supported with -target x86-64-linux, arm64-linux or arm64-android (got \"" + target + "\")");
       return 2;
     }
     if (out_path.len() == 0 && emit != "asm") {

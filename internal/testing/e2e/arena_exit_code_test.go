@@ -66,7 +66,7 @@ func TestArenaExhaustedExitCodeSelfHostLockstep(t *testing.T) {
 	want := e2eharness.ExitArenaExhausted
 	// Both emitters pass the status beside the cause line, so the one call is
 	// the same text in each file.
-	marker := fmt.Sprintf("asmcore.msg_oom(), %d)", want)
+	marker := fmt.Sprintf("aborts.oom(), %d)", want)
 	for _, file := range []string{"asm_ir.fern", "asm_arm64_ir.fern"} {
 		path := filepath.Join("..", "..", "..", "compiler", file)
 		src, err := os.ReadFile(path)

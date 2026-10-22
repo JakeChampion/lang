@@ -66,7 +66,7 @@ func TestCmdLangComponentTempDirRemoveFile(t *testing.T) {
 	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (temp_dir + remove_file) failed: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (temp_dir + remove_file) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -169,7 +169,7 @@ func TestCmdLangComponentStatOnly(t *testing.T) {
 	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (stat only) failed: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (stat only) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -242,7 +242,7 @@ func TestCmdLangComponentReadAppend(t *testing.T) {
 	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (read + append) failed: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (read + append) failed: %v\n%s", err, out)
 	}
 	if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
 		t.Errorf("read + append: wasmtime run failed (want exit 0): %v", err)
@@ -317,7 +317,7 @@ func TestCmdLangComponentReadDirRemoveDirAll(t *testing.T) {
 	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (read_dir + remove_dir_all) failed: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (read_dir + remove_dir_all) failed: %v\n%s", err, out)
 	}
 	if err := exec.Command("wasmtime", "run", "--dir", dir, compPath).Run(); err != nil {
 		t.Errorf("read_dir + remove_dir_all: wasmtime run failed (want exit 0): %v", err)
@@ -369,7 +369,7 @@ function main(): i32 {
 	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("a std/test program must build for -target wasm: %v\n%s", err, out)
+		t.Fatalf("a std/test program must build for -target wasm32-wasi: %v\n%s", err, out)
 	}
 	run := exec.Command("wasmtime", "run", "--dir", dir, compPath)
 	got, err := run.Output()
@@ -426,7 +426,7 @@ func TestCmdLangComponentCreateDirAll(t *testing.T) {
 	build := exec.Command(buildFernCLI(t), "-target", "wasm32-wasi", "-o", compPath, srcPath)
 	build.Dir = projectRoot(t)
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (create_dir_all) failed: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (create_dir_all) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)

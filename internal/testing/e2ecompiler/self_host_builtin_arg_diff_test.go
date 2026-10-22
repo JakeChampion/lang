@@ -165,7 +165,7 @@ func selfHostParameterisedBuiltins(t *testing.T) []string {
 	// The raw floor is self-host only: native declares none of it, so it has
 	// no oracle here. TestSelfHostRawFloorIsTypedWhole gates it against ssarc.
 	floor := selfHostFileSection(t, "checker.fern",
-		`(?s)pub struct RawFloorSig \{.*?\nfunction raw_floor_find\(.*?\n\}\n`)
+		`(?s)pub struct RawFloorSig \{.*?\nfunction raw_floor_at\(.*?\n\}\n`)
 	body = strings.Replace(body, floor, "", 1)
 	seen := map[string]bool{}
 	rows := selfHostFileSection(t, "checker.fern", `(?s)function builtin_sigs\(\): string\[\] \{.*?\n\}`)
