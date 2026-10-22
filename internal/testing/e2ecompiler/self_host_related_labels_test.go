@@ -24,7 +24,7 @@ func TestSelfHostRelatedLabelSerialization(t *testing.T) {
 import "./util";
 function main(): i32 {
   let r: util.Related = util.Related { line: 2, col: 7, length: 2, message: "context" };
-  let d: util.Diag = util.Diag { code: "E013", message: "duplicate", line: 1, col: 4, fix: Some(util.Fix { line: 2, col: 5, old: "x", new_text: "y", title: "rename" }), related: [r, util.Related { ...r, line: 3 }] };
+  let d: util.Diag = util.Diag { code: "E013", message: "duplicate", line: 1, col: 4, length: 0, fix: Some(util.Fix { line: 2, col: 5, old: "x", new_text: "y", title: "rename" }), related: [r, util.Related { ...r, line: 3 }] };
   let mapped: util.Diag = util.doc_diag([util.LineMap { doc: "doc.fern.md", lits: [7, 9], shifts: [2, 4] }], d);
   if (mapped.line != 7 || mapped.col != 2 || mapped.related.len() != 1 || mapped.related[0].line != 9 || mapped.related[0].col != 3 || mapped.related[0].length != 2) { return 1; }
   let Some(fix) = mapped.fix else { return 2; };

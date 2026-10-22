@@ -134,14 +134,14 @@ const TARGET_FLAG: string = "-target";
 // preview-1 host runs.
 const EMIT_FLAG: string = "-emit";
 
-// report_diags prints `line:col: error[E0XX]: message` for each diagnostic,
-// with the module's path ahead of it for an imported module (util.pos_str), and
-// reports whether any were printed. An empty code renders without the
+// report_diags prints `line:col: error[E0XX]: message` for each diagnostic, in
+// position order, with the module's path ahead of it for an imported module
+// (util.pos_str), and reports whether any were printed. An empty code renders without the
 // `error[…]` segment — some diagnostics are uncoded, and parity is on the text
 // native actually prints — and a zero line drops the position prefix, which the
 // checker still leaves on some paths.
 function report_diags(diags: util.Diag[], files: string[]): boolean {
-  for d in diags {
+  for d in util.sorted_by(diags, util.diag_after) {
     let tag: string = "";
     if (d.code.len() > 0) {
       tag = "error[" + d.code + "]: ";
