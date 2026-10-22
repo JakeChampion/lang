@@ -4748,7 +4748,8 @@ function eval_unary(op: string, ov: Value): Value {
   }
   // `x as? T` between integers: Some of the converted value when it holds x
   // exactly, else None (#12708).
-  if (op.len() > 4 && slice_unchecked(op, 0, 4) == "as?_" && is_int_like(ov)) {
+  let is_as_opt: boolean = op.len() > 4 && slice_unchecked(op, 0, 4) == "as?_";
+  if (is_as_opt && util.has_str(["u8", "i32", "u32", "i64", "u64", "usize"], slice_unchecked(op, 4, op.len())) && is_int_like(ov)) {
     let t: Value = eval_unary("as_" + slice_unchecked(op, 4, op.len()), ov);
     if (vint_as_i64(t) == vint_as_i64(ov) && int_is_negative(t) == int_is_negative(ov)) {
       return v_variant("Some", [t]);
@@ -4759,15 +4760,12 @@ function eval_unary(op: string, ov: Value): Value {
   // `x as? T` on a `dyn` value: Some(x) when its run-time type is T, the
   // struct T or a variant of the enum T, else None. A variant's owner tells
   // it from a struct of its name.
-  if (op.len() > 4 && slice_unchecked(op, 0, 4) == "as?_") {
-    if let VStruct(sv) = ov {
-      let t: string = util.base_type_name(slice_unchecked(op, 4, op.len()) + "");
-      if (sv.owner == t || sv.owner.len() == 0 && sv.type_name == t) {
-        return v_variant("Some", [ov]);
-      }
-      let none: Value[] = [];
-      return v_variant("None", none);
+  if (is_as_opt) {
+    if (dispatch_type_name(ov) == util.base_type_name(slice_unchecked(op, 4, op.len()) + "")) {
+      return v_variant("Some", [ov]);
     }
+    let none: Value[] = [];
+    return v_variant("None", none);
   }
   // A non-numeric `as <Type>` (`as_i32[]`, `as_string`, `as_Option[i32]`,
   // …) is a zero-cost type ascription — identity on the runtime value.

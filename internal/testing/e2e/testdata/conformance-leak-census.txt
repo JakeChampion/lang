@@ -202,6 +202,7 @@ div_modulo                                           0
 divmod_inline                                        0
 dyn_bound_satisfied                                  0
 dyn_dispatch_tells_a_struct_from_its_namesake_variant 0
+dyn_downcast_of_a_scalar_is_none                     0
 dyn_no_implementer                                   0
 dyn_trait_dispatch                                   0
 dyn_two_word_dispatch                                0
