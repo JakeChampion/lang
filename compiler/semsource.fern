@@ -2651,9 +2651,12 @@ function builtin_concat(c: ast.ExprCall, s: State): Value {
 
 // `xs.join(sep)` on a string array, which the parser folds to std/array's
 // `__carrm_string__join(xs, sep)`, is the runtime's one-allocation join rather
-// than std/array's builder-backed body.
+// than std/array's builder-backed body. A program's own `(xs: string[]) join`
+// takes the same name, so the declaration must be std/array's: its module is
+// the mangle prefix the stdlib's `array` gets, since the stdlib is assigned
+// its prefixes first.
 function join_kernel(name: string, c: ast.ExprCall, s: State): boolean {
-  return c.args.len() == 2 && name == parser.concrete_array_method_name("string[]", "join") && is_string_array(checked(c.args[0], s));
+  return c.args.len() == 2 && name == parser.concrete_array_method_name("string[]", "join") && is_string_array(checked(c.args[0], s)) && s.scope.lookup_sig(name).module == util.mangle_prefix("array");
 }
 
 function folded_join(c: ast.ExprCall, s: State): Value {
@@ -8270,7 +8273,7 @@ function rc_contracts(): ssasem.Contract[] {
   ];
 }
 
-// The six f64 primitives `std/float` dispatches to.
+// The six f64 primitives `std/f64` dispatches to.
 function float_primitive_contracts(): ssasem.Contract[] {
   let names: string[] = [
     "__sqrt_f64", "__floor_f64", "__ceil_f64", "__round_f64", "__trunc_f64",

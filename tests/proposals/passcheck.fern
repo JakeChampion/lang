@@ -1,7 +1,7 @@
 // tests/proposals/passcheck.fern — proposal turn, drawn line 201:
 // "A password strength estimator with an entropy calculation."
 //
-// Entropy is length x log2(pool). `std/float` has a `log2`, and this file does
+// Entropy is length x log2(pool). `std/f64` has a `log2`, and this file does
 // not use it: it does not build for the wasm target at all (#6404 — thirteen
 // libm methods share that gap), and on the targets where `pow` does build it
 // is several ULP off an exactly representable answer (#6405). An estimator

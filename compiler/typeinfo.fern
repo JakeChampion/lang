@@ -24,7 +24,7 @@ pub function width_ptr(): i32 {
 // spelling survives verbatim inside a generic argument) and `void`.
 pub function is_primitive_type_name(t: string): boolean {
   return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "usize"
-    || t == "f32" || t == "f64" || t == "float"
+    || t == "f32" || t == "f64"
     || t == "boolean" || t == "bool"
     || t == "string" || t == "str" || t == "char" || t == "void";
 }

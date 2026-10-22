@@ -1,5 +1,5 @@
 // spec: FS-07
-import "std/float";
+import "std/f64";
 // Subtraction, negation, `!=` and `<=` on f64 — the four ordinary float
 // operations no other case reached. Operands come from a call so constant
 // folding cannot evaluate the arithmetic away and leave the ops unlowered.

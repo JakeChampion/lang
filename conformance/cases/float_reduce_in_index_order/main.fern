@@ -24,7 +24,7 @@
 // same inputs — and an implementation free to reassociate could not
 // meet that. The case makes the consequence for reductions checkable.
 import "std/array";
-import "std/float";
+import "std/f64";
 import "std/num";
 
 function main(): i32 {

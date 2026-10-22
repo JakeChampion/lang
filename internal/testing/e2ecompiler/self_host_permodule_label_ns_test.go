@@ -27,7 +27,7 @@ import (
 // An f64 literal is the ordinary way to reach fresh_label on the IR path (the
 // literal's IEEE-754 bits go to .rodata under a fresh label), so the shape that
 // broke is unremarkable: import a stdlib module that contains float literals,
-// use a float literal in main. `import "std/float"` plus any f-string of a
+// use a float literal in main. `import "std/f64"` plus any f-string of a
 // float is exactly that, and it pulls in ~825 functions — comfortably inside
 // the per-module rescue's window.
 //
@@ -35,11 +35,11 @@ import (
 // With the fix a unit's labels read `.Lfloat_0` / `.L__entry_0`, matching the
 // `.Sfloat_0` string pool beside them.
 
-// floatLabelNSProg formats floats through std/float, and holds float literals in
+// floatLabelNSProg formats floats through std/f64, and holds float literals in
 // main as well: the collision needs a fresh_label user in TWO units, so a
 // program that only formats (literals confined to the library) would not
 // reproduce it.
-const floatLabelNSProg = `import "std/float";
+const floatLabelNSProg = `import "std/f64";
 function main(): i32 {
     let a: f64 = 1.0 / 3.0;
     let b: f64 = 0.1;

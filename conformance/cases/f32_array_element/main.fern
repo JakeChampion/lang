@@ -24,7 +24,7 @@
 //             so a fix that simply marked every float array f32 is caught.
 //
 // Sentinels are 251-253, above the `% 113` the success path returns.
-import "std/float";
+import "std/f64";
 
 function sum_f32(a: f32[]): i32 {
     let n: i32 = 0;

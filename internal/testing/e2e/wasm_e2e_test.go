@@ -6830,7 +6830,7 @@ func TestWASMJsonParseSurrogatePairs(t *testing.T) {
 // trailing zeros, special values get canonical names.
 func TestWASMFloatToString(t *testing.T) {
 	src := `
-import "std/float";
+import "std/f64";
 function main(): i32 {
 		// Integer values lose the decimal point entirely.
 		let a: f32 = 0.0;

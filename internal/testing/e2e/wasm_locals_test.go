@@ -42,7 +42,7 @@ func TestWasmManyTemporariesInOneFunction(t *testing.T) {
 // constant argument, their loops fold away.
 const wasmLocalsProbeSrc = `import "std/i32";
 import "std/i64";
-import "std/float";
+import "std/f64";
 
 trait Shape { function area(self: Self, k: i32): i32; }
 struct Sq { s: i32 }

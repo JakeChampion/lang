@@ -145,10 +145,10 @@ function main(): i32 {
 }`},
 	// The persistent collections (#6794) through the self-host loader: generic
 	// enums / structs with receiver methods whose bodies call bounded free
-	// generics on the struct's own type vars (`__om_insert(m.root, k, v)` under
+	// generics on the struct's own type vars (`node_insert(m, k, v)` under
 	// `OrdMap[K, V]`). Those calls are instantiated per STRUCT clone, with the
 	// receiver typed in the env — pre-fix the method body was rewritten once
-	// with `k: K`, keying an erased clone (`__om_insert__K__V`) whose own
+	// with `k: K`, keying an erased clone (`node_insert__K__V`) whose own
 	// generic calls then dangled. Each row inserts, snapshots, removes and reads
 	// both the live value and the snapshot.
 	{"ordmap", `import "std/ordmap";

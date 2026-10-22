@@ -1,8 +1,8 @@
 import "std/test";
-import "std/float" as float;
+import "std/f64";
 
 // tests/stdlib/float_hyperbolic_test.fern — pure-Fern coverage of
-// std/float.sinh / cosh / tanh: the hyperbolic trig functions, built on the
+// std/f64.sinh / cosh / tanh: the hyperbolic trig functions, built on the
 // natural exp. Reference values at x=1, odd/even symmetry, the cosh²-sinh²==1
 // identity, and tanh's ±1 saturation. Both f64 and f32. The Go-side
 // TestFloatHyperbolic pins these across interp / x86-64 / arm64; this is the
@@ -66,7 +66,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/float sinh/cosh/tanh");
+  let r: test.TestRunner = test.test_new("std/f64 sinh/cosh/tanh");
   r = r.it("at zero", test_at_zero);
   r = r.it("at one", test_at_one);
   r = r.it("symmetry", test_symmetry);

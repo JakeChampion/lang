@@ -172,7 +172,7 @@ func TestShortestTieAdmitsOnlyExactTies(t *testing.T) {
 // `n` values and returns the lines.
 func runFloatStrings(t *testing.T, body string, n int) []string {
 	t.Helper()
-	src := "import \"std/float\";\nfunction main(): i32 {\n" + body + "    return 0;\n}\n"
+	src := "import \"std/f64\";\nfunction main(): i32 {\n" + body + "    return 0;\n}\n"
 	out, code := compileAndRunX86_64(t, src)
 	if code != 0 {
 		t.Fatalf("exit = %d\noutput:\n%s", code, out)

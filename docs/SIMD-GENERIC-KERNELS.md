@@ -42,7 +42,7 @@ deliberately not copied:
 | Associated types, supertraits | shipped (`ASSOCIATED-TYPES.md`) |
 | Operator overloading on structs: `+ - * / %` and unary `-` desugar to `add` / `sub` / `mul` / `div` / `rem` / `neg` by name | shipped (#2706) |
 | `Add` / `Sub` / `Mul` / `Div` / `Neg` / `Zero` / `One` and the `Num` supertrait, implemented for every built-in number | shipped (`std/num`) |
-| `exp`, `log`, `sin`, `cos`, `tan`, `atan2`, `expm1`, `log1p`, `cbrt`, `pow`, … on `f64` in pure Fern, bit-identical on every backend | shipped (`std/float`), concrete in `f64` |
+| `exp`, `log`, `sin`, `cos`, `tan`, `atan2`, `expm1`, `log1p`, `cbrt`, `pow`, … on `f64` in pure Fern, bit-identical on every backend | shipped (`std/f64`), concrete in `f64` |
 | SIMD in the compiler | fused whole-loop kernels only: `__memchr`, `__count_byte`, `__ascii_run`, `__inner_mul_add_f64`, … (`ATLAS-PLATFORM-PLAN.md` §3) |
 | A SIMD value type | none |
 | Associated constants on traits | none before this plan |
@@ -157,7 +157,7 @@ widening §1.2 said it leaves available.
 ## 5. `std/simd`
 
 One module, `internal/stdlib/std/simd.fern`, importing `std/num` and
-`std/float`.
+`std/f64`.
 
 ```fern
 pub trait Lanes: num.Num + num.Neg {
@@ -197,7 +197,7 @@ The fused form (`vfma` in §4, and a scalar `fma` beside it) is part of the
 lane-type slice, where both baselines have the instruction.
 
 - **Scalar impls**: `impl Lanes for f64` and `impl Lanes for f32`, one lane,
-  delegating to `std/float`. Every generic kernel runs today through these.
+  delegating to `std/f64`. Every generic kernel runs today through these.
 - **`Dual[T: Lanes]`** `{ v: T, d: T }`: `impl[T: Lanes] num.Add for
   Dual[T]` and the rest, so `a * b + c` on duals is plain source, and
   `impl[T: Lanes] Lanes for Dual[T]` so a kernel takes a dual. A `Dual` of
@@ -207,12 +207,12 @@ lane-type slice, where both baselines have the instruction.
   on `f64`.
 - **`Math`**: `exp`, `log`, `sin`, `cos`, `tan`, `tanh`, `atan`, `expm1`,
   `log1p` and `pow`, a trait each type implements for itself. The scalars
-  adopt `std/float`'s methods (an impl adopts a method the type already has,
+  adopt `std/f64`'s methods (an impl adopts a method the type already has,
   so `impl Math for f64 {}` is the whole binding); `Dual` applies the chain
   rule to the inner type's functions; `DoubleDouble` reduces the argument
   and sums a series at its own precision, seeded by the inner type's own
   result where a Newton step doubles it (log, atan, sqrt). The lane types
-  implement `Math` with the bit-level kernels ported from `std/float`
+  implement `Math` with the bit-level kernels ported from `std/f64`
   (slice 5); writing those against `Lanes` before a lane type exists would
   leave them untested on the only type they are for.
 
@@ -230,7 +230,7 @@ own cost (about 3x and 20x the scalar).
 Gates: `tests/stdlib/simd_test.fern` runs through `std/test`. A Go gate in
 `internal/testing/e2e/test_runner_test.go` and a self-host interpreter gate in
 `internal/testing/e2ecompiler` run it. Its sweep case holds every `Math`
-function on `DoubleDouble` and every `Dual` derivative to `std/float` over a
+function on `DoubleDouble` and every `Dual` derivative to `std/f64` over a
 range of arguments. Its NaN case holds `eq` and the double-double `lt` to
 IEEE. The e2e compiled legs run it on x86-64 and wasm.
 

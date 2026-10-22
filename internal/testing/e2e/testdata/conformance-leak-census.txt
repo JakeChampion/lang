@@ -270,6 +270,9 @@ generic_call_infers_from_variant_argument            0
 generic_call_through_fn_value                        0
 generic_call_in_struct_field                         0
 generic_enum_bound_dispatch                          0
+generic_enum_method_at_two_instantiations            0
+generic_enum_method_builds_a_variant                 0
+generic_enum_method_reaches_generic_helpers          0
 generic_enum_named_without_arguments                 0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0

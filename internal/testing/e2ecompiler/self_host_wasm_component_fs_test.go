@@ -21,7 +21,7 @@ import (
 // remove_dir_all on a plain file leaves the file in place; x86-64 and the
 // interpreter answer as these cases do.
 
-// fsComponentPrelude names each IoError variant, prints a Result[(), _] as
+// fsComponentPrelude names each IoError variant, prints a Result[void, _] as
 // `label ok` / `label <variant>`, and a line read as `label [line]`,
 // `label <at-eof>` or `label <variant>`.
 const fsComponentPrelude = `import "std/i64";
@@ -40,7 +40,7 @@ function kind(e: IoError): string {
     }
 }
 
-function unit(label: string, r: Result[(), IoError]): void {
+function unit(label: string, r: Result[void, IoError]): void {
     match (r) { Ok(_) => { print(label + " ok"); }, Err(e) => { print(label + " " + kind(e)); } }
 }
 
