@@ -927,20 +927,8 @@ func runInterp(srcPath string, argv []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	// Clamp main's return value to a process exit code. The AST
-	// interpreter wraps i32 in interp.Number; void main returns
-	// interp.Void. Anything else is a misuse — return 0 + a warning
-	// rather than panic.
-	if n, ok := v.(interp.Number); ok {
-		// POSIX exit status is the low 8 bits of the value passed to
-		// exit() — two's complement for a negative value — so the compiled
-		// backends exit -3 as 253 (0xFD), -1 as 255. `& 0xFF` on a Go int
-		// already yields that low byte, so a negative return must NOT be
-		// abs'd first: `code = -code` gave -3 -> 3, diverging from every
-		// compiled backend (and from POSIX). Match the backends directly.
-		return int(n) & 0xFF, nil
-	}
-	return 0, nil
+	status, _ := interp.ExitStatus(v)
+	return status, nil
 }
 
 // runCheck loads one entry module ("-" reads stdin) and runs gates.Check on

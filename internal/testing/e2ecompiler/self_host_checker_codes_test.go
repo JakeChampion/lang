@@ -1608,6 +1608,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// needs core/iter, which these single-file rows do not load: the
 		// for_over_* conformance cases cover it.
 		{"e083-unbounded-type-parameter", "function each[T](v: T): i32 { for x in v { } return 0; }\nfunction main(): i32 { return each(1); }\n", []string{"E083"}},
+		// E084: main takes no parameters and returns an integer, a boolean or
+		// void; an i64 or boolean result is accepted.
+		{"e084-main-parameter", "function main(argv: string[]): i32 { return argv.len(); }\n", []string{"E084"}},
+		{"e084-main-string-result", "function main(): string { return \"hi\"; }\n", []string{"E084"}},
+		{"e084-main-both", "function main(argv: string[]): f64 { return 1.5; }\n", []string{"E084", "E084"}},
+		{"e084-main-i64-ok", "function main(): i64 { return 1 as i64; }\n", nil},
+		{"e084-main-boolean-ok", "function main(): boolean { return true; }\n", nil},
+		{"e084-method-named-main-ok", "struct P { x: i32 }\nfunction (p: P) main(n: i32): string { return \"m\"; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e083-iter-returns-no-iterator", "struct Counter { n: i32 }\nfunction (c: Counter) iter(): i32 { return c.n; }\nfunction main(): i32 { let k: Counter = Counter { n: 3 }; for n in k { } return 0; }\n", []string{"E083"}},
 		{"e082-parameter-shadows-a-view", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (v: i32): i32 => v + 1; return g(v.len()); }\nfunction main(): i32 { return f(\"ab\"); }\n", nil},
 		{"e082-shared-struct-graph", e082SharedChain("i32"), nil},
@@ -3162,8 +3170,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// ast.EnumType), so a match / if-let on the value draws E023 at the
 		// scrutinee — alongside the E064 the annotation itself draws. A
 		// known enum / builtin Option match stays clean.
-		{"e023-match-unknown-enum", "function main(s: Statuus[i32]): i32 {\n    match (s) {\n        _ => { return 0; }\n    }\n}\n", []string{"E023", "E064"}},
-		{"e023-iflet-unknown-enum", "function main(s: Statuus[i32]): i32 {\n    if let Some(v) = s {\n        return 0;\n    }\n    return 0;\n}\n", []string{"E023", "E064"}},
+		{"e023-match-unknown-enum", "function f(s: Statuus[i32]): i32 {\n    match (s) {\n        _ => { return 0; }\n    }\n}\nfunction main(): i32 { return 0; }\n", []string{"E023", "E064"}},
+		{"e023-iflet-unknown-enum", "function f(s: Statuus[i32]): i32 {\n    if let Some(v) = s {\n        return 0;\n    }\n    return 0;\n}\nfunction main(): i32 { return 0; }\n", []string{"E023", "E064"}},
 		{"e023-known-enum-match-ok", "enum Color { Red, Green }\nfunction f(c: Color): i32 { match (c) { Red => { return 1; }, Green => { return 2; } } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e023-option-match-ok", "function main(): i32 { let o: Option[i32] = Some(3); match (o) { Some(v) => { return v; }, None => { return 0; } } }\n", nil},
 		// E044 (unsupported capture type): a lambda capturing a value with

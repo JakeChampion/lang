@@ -20,12 +20,8 @@ const interpDriverMod = "import \"std/io\";\n" +
 	"    let src: string = \"\";\n" +
 	"    match (io.read_all_stdin()) { Ok(text) => { src = text; }, Err(_) => { return 253; } }\n" +
 	"    let mod: parser.Module = parser.parse_module(lexer.tokenize(src));\n" +
-	"    let result: interp.Value = interp.eval_module(mod);\n" +
-	"    match (result) {\n" +
-	"        interp.VInt(i) => { return i.v; },\n" +
-	"        interp.VBool(b) => { if (b.v) { return 1; } return 0; },\n" +
-	"        _ => { return 254; }\n" +
-	"    }\n" +
+	"    let (is_status, status) = interp.exit_status(interp.eval_module(mod));\n" +
+	"    if (is_status) { return status; }\n" +
 	"    return 254;\n" +
 	"}\n"
 
