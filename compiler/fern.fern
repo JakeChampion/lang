@@ -364,6 +364,39 @@ function chunk_keeps_content(before: string, after: string): boolean {
   return content_print(fmt_wrap(before)) == content_print(fmt_wrap(after));
 }
 
+function comma_joined(xs: string[]): string {
+  let joined: string = "";
+  for x in xs {
+    if (joined.len() > 0) {
+      joined = joined + ", ";
+    }
+    joined = joined + x;
+  }
+  return joined;
+}
+
+// read_source reads a source a tool takes as a path, stdin for `-`.
+function read_source(path: string): Result[string, string] {
+  if (path == "-") {
+    match (io.read_all_stdin()) {
+      Ok(s) => {
+        return Ok(s);
+      },
+      Err(e) => {
+        return Err(e.message());
+      }
+    }
+  }
+  match (read_file(path)) {
+    Ok(s) => {
+      return Ok(s);
+    },
+    Err(e) => {
+      return Err(e.message());
+    }
+  }
+}
+
 // read_failure is the one-line report for a file that could not be read:
 // `fern: cannot read entry file /abs/x.fern: invalid UTF-8`.
 function read_failure(what: string, path: string, reason: string): string {
@@ -377,23 +410,28 @@ function read_failure(what: string, path: string, reason: string): string {
 // exit 1 in every mode, and nothing is written. Returns the exit code for this
 // file.
 function fmt_file(st: DiagStyle, path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
+  if (path == "-" && fmt_write) {
+    eprint("fern: -fmt -w cannot write back stdin; drop -w to print the result");
+    return 2;
+  }
   let esrc: string = "";
-  match (read_file(path)) {
+  match (read_source(path)) {
     Ok(s) => {
       esrc = s;
     },
     Err(e) => {
-      eprint(read_failure("entry file", path, e.message()));
+      eprint(read_failure("file", path, e));
       return 1;
     }
   }
-  let (formatted, errs) = format_text(path, esrc);
+  let name: string = entry_display(path);
+  let (formatted, errs) = format_text(name, esrc);
   let no_files: string[] = [];
-  if (eprint_findings(st, errs, path, no_files, [util.no_line_map()])) {
+  if (eprint_findings(st, errs, name, no_files, [util.no_line_map()])) {
     return 1;
   }
   if (fmt_diff) {
-    let d: string = printer.unified_diff(esrc, formatted, path, path);
+    let d: string = printer.unified_diff(esrc, formatted, name, name);
     if (d.len() == 0) {
       return 0;
     }
@@ -711,8 +749,8 @@ function related_text(st: DiagStyle, related: util.Related[], entry: string, fil
   return out;
 }
 
-// entry_display is the entry path as a diagnostic names it: the path the
-// command line gave, or `<stdin>` for a program read from stdin, as native
+// entry_display is a source path as a diagnostic names it: the path the
+// command line gave, or `<stdin>` for a source read from stdin, as native
 // spells it.
 function entry_display(entry_path: string): string {
   if (entry_path == "-") {
@@ -1542,12 +1580,12 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-targets", "", "list the supported targets and what each provides"),
     ] },
     FlagGroup { title: "fmt", flags: [
-      cli_flag("-fmt", "", "print each FILE formatted (-o OUT takes one FILE)"),
+      cli_flag("-fmt", "", "print each FILE formatted: - for stdin, a DIR for every source beneath it (-o OUT takes one FILE)"),
       cli_flag("-w", "", "with -fmt: overwrite each file"),
       cli_flag("-d", "", "with -fmt: print unified diffs, exiting 1 when any file differs"),
     ] },
     FlagGroup { title: "lint", flags: [
-      cli_flag("-lint", "", "lint each PATH, a .fern file or a directory of them"),
+      cli_flag("-lint", "", "lint each PATH: a .fern or .fern.md file, a directory of them, or - for stdin"),
       cli_flag("-lint-rules", "", "list the lint rules with their severities and options"),
       cli_flag("-lint-set", "RULE=LEVEL", "with -lint: set a rule to allow, warn or deny (repeatable)"),
       cli_flag("-lint-opt", "RULE.OPT=VALUE", "with -lint: set a rule option (repeatable)"),
@@ -1678,7 +1716,7 @@ function usage_lines(embedded: boolean): string[] {
     "usage: fern [FLAG...] FILE.fern" + unless_embedded(embedded, " [STDLIB") + " [--] [ARG...]" + unless_embedded(embedded, "]"),
     "       fern -check [FLAG...] DIR" + root,
     "       fern -check | -interp [FLAG...] -             (the program on stdin)",
-    "       fern -fmt [-w | -d | -o OUT] FILE...",
+    "       fern -fmt [-w | -d | -o OUT] FILE | DIR | -...",
     "       fern -lint [-lint-set RULE=LEVEL] [-lint-cover FILE] PATH...",
     "       fern -doc [-o OUT] MODULE.fern | -doc -o OUTDIR DIR",
     "       fern -tangle | -weave | -doctest DOC.fern.md",
@@ -3630,7 +3668,12 @@ function run_doc(path: string, out_path: string): i32 {
     eprint("fern: -doc: cannot read " + path);
     return 1;
   }
-  let page: string = ferndoc.render_page(src, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))));
+  let (code, terr) = doc_source(path, src);
+  if (terr.len() > 0) {
+    eprint(terr);
+    return 1;
+  }
+  let page: string = ferndoc.render_page(code, doc_module_path(path_base(util.dir_of(path)), doc_stem(path_base(path))));
   if (out_path.len() == 0) {
     write(page);
     return 0;
@@ -3651,7 +3694,8 @@ function run_doc(path: string, out_path: string): i32 {
 // The page filename flattens a subdirectory with `_` — `wasm/convert` becomes
 // `wasm_convert.md` — so every page of a namespace is one flat directory and
 // two modules with the same basename in different subdirectories cannot
-// clobber each other.
+// clobber each other. A document that fails to tangle is reported and the walk
+// goes on, exiting 1 once every other page is written.
 function doc_tree(dir: string, out_dir: string): i32 {
   if (out_dir.len() == 0) {
     eprint("fern: -doc <DIR> needs -o OUTDIR — a directory of pages has nowhere else to go");
@@ -3669,6 +3713,7 @@ function doc_tree(dir: string, out_dir: string): i32 {
   // rather than recursion, matching copy_package's walk.
   let rels: string[] = [""];
   let ri: i32 = 0;
+  let status: i32 = 0;
   while (ri < rels.len()) {
     let rel: string = rels[ri];
     ri = ri + 1;
@@ -3708,6 +3753,11 @@ function doc_tree(dir: string, out_dir: string): i32 {
       if (!is_doc_module(name)) {
         continue;
       }
+      // A document beside a module of the same stem is that module's
+      // commentary: the loader takes the .fern, and so does its page.
+      if (is_literate(name) && util.has_str(entries, slice_unchecked(name, 0, name.len() - 3) + "")) {
+        continue;
+      }
       let src: string = "";
       let read_ok: boolean = false;
       match (read_file(child)) {
@@ -3721,8 +3771,18 @@ function doc_tree(dir: string, out_dir: string): i32 {
         eprint("fern: -doc: cannot read " + child);
         return 1;
       }
+      // A chunk library has no module to document.
+      if (is_literate(name) && !literate.is_program(src)) {
+        continue;
+      }
       let stem: string = doc_stem(child_rel);
-      let page: string = ferndoc.render_page(src, doc_module_path(ns, stem));
+      let (code, terr) = doc_source(child, src);
+      if (terr.len() > 0) {
+        eprint(terr);
+        status = 1;
+        continue;
+      }
+      let page: string = ferndoc.render_page(code, doc_module_path(ns, stem));
       // A module with nothing public gets no page at all rather than a
       // heading with no content under it.
       if (page.len() == 0) {
@@ -3738,22 +3798,36 @@ function doc_tree(dir: string, out_dir: string): i32 {
       }
     }
   }
-  return 0;
+  return status;
 }
 
 // is_doc_module selects the files a reference page is generated from: Fern
-// modules, minus the `_test_` stubs, which are fixtures rather than API.
-// `.fern.md` is excluded by the same suffix test that admits `.fern`.
+// modules and literate documents, minus the `_test_` stubs, which are
+// fixtures rather than API.
 function is_doc_module(name: string): boolean {
-  if (name.len() < 6 || slice_unchecked(name, name.len() - 5, name.len()) != ".fern") {
+  if (!util.str_has_suffix(name, ".fern") && !is_literate(name)) {
     return false;
   }
   return !(name.len() >= 6 && slice_unchecked(name, 0, 6) == "_test_");
 }
 
-// doc_stem drops a trailing `.fern`, leaving the module's path relative to its
-// namespace.
+// doc_source is the module a page documents: the file itself, or the entry
+// module a literate document tangles to. The second result is why it cannot
+// be tangled, empty when it can.
+function doc_source(path: string, src: string): (string, string) {
+  let (mods, terr) = entry_sources(path, src);
+  if (terr.len() > 0) {
+    return ("", terr);
+  }
+  return (mods.srcs[0], "");
+}
+
+// doc_stem drops a trailing `.fern` or `.fern.md`, leaving the module's path
+// relative to its namespace.
 function doc_stem(p: string): string {
+  if (is_literate(p)) {
+    return slice_unchecked(p, 0, p.len() - 8) + "";
+  }
   if (p.len() >= 5 && slice_unchecked(p, p.len() - 5, p.len()) == ".fern") {
     return slice_unchecked(p, 0, p.len() - 5) + "";
   }
@@ -5070,52 +5144,61 @@ function run_and_clean(target: string, out: string, dir: string, prog_args: stri
   return status;
 }
 
-// lint_targets is every .fern file the -lint paths name, a directory
-// contributing each .fern beneath it, sorted; the error is set for a path that
-// is neither.
-function lint_targets(paths: string[]): (string[], string) {
+// source_files is every source the paths of a per-file tool name, in the
+// order they were given: a directory contributes each .fern and .fern.md
+// beneath it, sorted, and `-` names stdin. The second result marks the files a
+// directory walk found rather than a path named. The error is set for a path
+// that is none of these.
+function source_files(paths: string[]): (string[], boolean[], string) {
   let out: string[] = [];
-  let todo: string[] = paths;
-  while (todo.len() > 0) {
-    let p: string = todo[0];
-    let rest: string[] = [];
-    let k: i32 = 1;
-    while (k < todo.len()) {
-      rest = rest.append(todo[k]);
-      k = k + 1;
-    }
-    todo = rest;
+  let walked: boolean[] = [];
+  for p in paths {
     if (util.is_dir(p)) {
-      // `src/` walks as `src/a.fern`, not `src//a.fern`: the spelling is what
-      // a finding prints and what a -cover run's file names are matched to.
-      let dir: string = p;
-      while (dir.len() > 1 && util.str_has_suffix(dir, "/")) {
-        dir = slice_unchecked(dir, 0, dir.len() - 1) + "";
-      }
-      if let Ok(names) = read_dir(p) {
-        for n in names {
-          let child: string = dir + "/" + n;
-          if (util.is_dir(child) || util.str_has_suffix(n, ".fern")) {
-            todo = todo.append(child);
-          }
+      for f in dir_sources(p) {
+        if (!util.has_str(out, f)) {
+          out = out.append(f);
+          walked = walked.append(true);
         }
       }
       continue;
     }
-    if (util.str_has_suffix(p, ".fern.md")) {
+    if (p != "-" && !util.str_has_suffix(p, ".fern") && !is_literate(p)) {
       let no: string[] = [];
-      return (no, p + ": linting a literate document is not supported yet — tangle it first (`fern -tangle " + p + "`)");
-    }
-    if (!util.str_has_suffix(p, ".fern")) {
+      let none: boolean[] = [];
       if let Err(e) = read_file(p) {
-        let no: string[] = [];
-        return (no, p + ": " + e.message());
+        return (no, none, p + ": " + e.message());
       }
-      let no: string[] = [];
-      return (no, p + ": not a .fern source");
+      return (no, none, p + ": not a .fern source");
     }
     if (!util.has_str(out, p)) {
       out = out.append(p);
+      walked = walked.append(false);
+    }
+  }
+  return (out, walked, "");
+}
+
+// dir_sources is every .fern and .fern.md beneath dir, sorted.
+function dir_sources(dir: string): string[] {
+  let base: string = dir;
+  while (base.len() > 1 && base[base.len() - 1] == b'/') {
+    base = slice_unchecked(base, 0, base.len() - 1) + "";
+  }
+  let out: string[] = [];
+  let todo: string[] = [base];
+  let ti: i32 = 0;
+  while (ti < todo.len()) {
+    let d: string = todo[ti];
+    ti = ti + 1;
+    if let Ok(names) = read_dir(d) {
+      for n in names {
+        let child: string = d + "/" + n;
+        if (util.is_dir(child)) {
+          todo = todo.append(child);
+        } else if (util.str_has_suffix(n, ".fern") || is_literate(n)) {
+          out = out.append(child);
+        }
+      }
     }
   }
   let i: i32 = 1;
@@ -5129,7 +5212,7 @@ function lint_targets(paths: string[]): (string[], string) {
     out = out.with(j + 1, f);
     i = i + 1;
   }
-  return (out, "");
+  return out;
 }
 
 // lint_config resolves the run's configuration: the [lint] tables of the
@@ -5255,6 +5338,31 @@ function lint_text(st: DiagStyle, f: lint.Finding, src: string): string {
   return out;
 }
 
+// lint_module lints one module's `code`, reporting its findings at the
+// positions `lm` moves them to. A parse error is reported instead, the module
+// skipped and the second result false; a rule the parser happens to report but
+// the checker owns (a coded E finding) does not count as one.
+function lint_module(st: DiagStyle, cfg: lint.Config, shown: string, code: string, lm: util.LineMap, cov_files: coverreport.File[]): (lint.Finding[], boolean) {
+  let lx: lexer.LexResult = lexer.tokenize_full(code);
+  let m: parser.Module = parser.parse_module(lx.tokens);
+  let perrs: Finding[] = [];
+  for pf in parse_findings(m) {
+    if (pf.diag.code.len() == 0 || pf.diag.code[0] == b'P') {
+      perrs = perrs.append(pf);
+    }
+  }
+  let no_files: string[] = [];
+  let out: lint.Finding[] = [];
+  if (eprint_findings(st, perrs, shown, no_files, [lm])) {
+    return (out, false);
+  }
+  for fd in lint.lint_file(cfg, shown, code, m, lx.comments, cov_files) {
+    let (line, col) = util.doc_pos([lm], fd.line, fd.col);
+    out = out.append(lint.Finding { ...fd, line: line, col: col });
+  }
+  return (out, true);
+}
+
 // lint_cover reads the -cover run the change-risk rule scores from, `""`
 // for none. The error is a usage error: a run that cannot be read or holds
 // no rows, or a rule that would score with no run to score from.
@@ -5283,28 +5391,22 @@ function lint_cover(cfg: lint.Config, cover_path: string): (coverreport.File[], 
   }
 }
 
-// run_lint is `fern -lint PATH...`: exit 1 when a rule set to deny fires, 2
-// for a usage or configuration error. `cover_path` is the saved -cover run
-// the change-risk rule scores from, "" for none.
+// run_lint is `fern -lint PATH...`: exit 1 when a rule set to deny fires or a
+// file does not parse or tangle, 2 for a usage or configuration error.
+// `cover_path` is the saved -cover run the change-risk rule scores from, ""
+// for none.
 function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[], cover_path: string): i32 {
   if (paths.len() == 0) {
-    eprint("usage: fern -lint PATH... (a .fern file or a directory of them)");
+    eprint("usage: fern -lint PATH... (a .fern or .fern.md file, or a directory of them)");
     return 2;
   }
-  let (files, terr) = lint_targets(paths);
+  let (files, walked, terr) = source_files(paths);
   if (terr.len() > 0) {
     eprint("fern: " + terr);
     return 2;
   }
   if (files.len() == 0) {
-    let joined: string = "";
-    for p in paths {
-      if (joined.len() > 0) {
-        joined = joined + ", ";
-      }
-      joined = joined + p;
-    }
-    eprint("fern: no .fern files under " + joined);
+    eprint("fern: no .fern or .fern.md files under " + comma_joined(paths));
     return 2;
   }
   let (cfg, cerr) = lint_config(files[0], sets, opts);
@@ -5319,42 +5421,50 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
   }
   let covered_files: i32 = 0;
   let all: lint.Finding[] = [];
-  let srcs: string[] = [];
   let out: string = "";
-  for f in files {
+  let broken: boolean = false;
+  let fi: i32 = 0;
+  while (fi < files.len()) {
+    let f: string = files[fi];
+    let found: boolean = walked[fi];
+    fi = fi + 1;
     let src: string = "";
-    match (read_file(f)) {
+    match (read_source(f)) {
       Ok(t) => {
         src = t;
       },
       Err(e) => {
-        eprint("fern: " + f + ": " + e.message());
+        eprint("fern: " + f + ": " + e);
         return 2;
       }
     }
-    let lx: lexer.LexResult = lexer.tokenize_full(src);
-    let m: parser.Module = parser.parse_module(lx.tokens);
-    // A parse error skips the file; a rule the parser happens to report but
-    // the checker owns (a coded E finding) does not.
-    let perrs: Finding[] = [];
-    for pf in parse_findings(m) {
-      if (pf.diag.code.len() == 0 || pf.diag.code[0] == b'P') {
-        perrs = perrs.append(pf);
-      }
+    // A chunk library a directory walk turns up has no module to lint.
+    if (found && is_literate(f) && !literate.is_program(src)) {
+      continue;
     }
-    let no_files: string[] = [];
-    if (eprint_findings(st, perrs, f, no_files, [util.no_line_map()])) {
+    // A literate document is linted as the modules it tangles to, its
+    // findings moved back onto the document.
+    let (mods, terr) = entry_sources(f, src);
+    if (terr.len() > 0) {
+      eprint(terr);
+      broken = true;
       continue;
     }
     if (lint.cover_of(cov_files, f) >= 0) {
       covered_files = covered_files + 1;
     }
-    for fd in lint.lint_file(cfg, f, src, m, lx.comments, cov_files) {
-      if (all.len() > 0) {
-        out = out + "\n";
+    let mi: i32 = 0;
+    while (mi < mods.srcs.len()) {
+      let (fds, parsed) = lint_module(st, cfg, entry_display(f), mods.srcs[mi], mods.maps[mi], cov_files);
+      broken = broken || !parsed;
+      for fd in fds {
+        if (all.len() > 0) {
+          out = out + "\n";
+        }
+        out = out + lint_text(st, fd, src) + "\n";
+        all = all.append(fd);
       }
-      out = out + lint_text(st, fd, src) + "\n";
-      all = all.append(fd);
+      mi = mi + 1;
     }
   }
   if (cfg.risk != lint.ALLOW && cov_files.len() > 0 && covered_files == 0) {
@@ -5366,7 +5476,7 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
     out = out + sum + "\n";
   }
   write(out);
-  if (lint.failed(all)) {
+  if (broken || lint.failed(all)) {
     return 1;
   }
   return 0;
@@ -5826,14 +5936,23 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // rest, and the exit code is the worst one seen — so `-d` over a list exits
   // 1 when any file needs formatting.
   if (mode_fmt) {
-    if (out_path.len() > 0 && pos.len() > 1) {
-      eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(pos.len()) + " given)");
+    let (files, _, ferr) = source_files(pos);
+    if (ferr.len() > 0) {
+      eprint("fern: " + ferr);
+      return 2;
+    }
+    if (files.len() == 0) {
+      eprint("fern: -fmt: no .fern or .fern.md files under " + comma_joined(pos));
+      return 2;
+    }
+    if (out_path.len() > 0 && files.len() > 1) {
+      eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(files.len()) + " given)");
       return 2;
     }
     let code: i32 = 0;
     let fi: i32 = 0;
-    while (fi < pos.len()) {
-      let fc: i32 = fmt_file(st, pos[fi], fmt_write, fmt_diff, out_path);
+    while (fi < files.len()) {
+      let fc: i32 = fmt_file(st, files[fi], fmt_write, fmt_diff, out_path);
       if (fc > code) {
         code = fc;
       }
@@ -5850,10 +5969,10 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   let esrc: string = "";
   let eok: boolean = false;
   let eerr: string = "";
-  // `-` names stdin for the two modes native reads it in, and only those:
-  // `-fmt -` and a compile from `-` are file errors under native, and the
-  // self-host accepting them would be a divergence in the permissive
-  // direction — the one that lets a program build under one compiler only.
+  // `-` names stdin for the two modes native reads it in, and only those: a
+  // compile from `-` is a file error under native, and the self-host
+  // accepting it would be a divergence in the permissive direction — the one
+  // that lets a program build under one compiler only.
   // A program on stdin is how a pipeline stage, an editor buffer, or a host
   // with no filesystem to open names one with no file behind it (#6643).
   if (entry_path == "-" && (mode_check || mode_interp)) {

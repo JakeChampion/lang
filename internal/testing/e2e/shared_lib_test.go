@@ -1301,7 +1301,8 @@ func sharedCEntryCheck(t *testing.T, target, cc, runner string, env []string, ma
 // sharedImageCheck holds a shared object to what a loader needs: ET_DYN for
 // the machine, PT_DYNAMIC, a non-executable PT_GNU_STACK, and on arm64 no
 // segment both writable and executable, which Android refuses. Its .bss is
-// zero-fill in memory, not bytes in the file.
+// zero-fill in memory, not bytes in the file. It carries no stack-overflow
+// handler: the host owns the stack and the signal handlers.
 func sharedImageCheck(t *testing.T, so []byte, machine elf.Machine) {
 	t.Helper()
 	f, err := elf.NewFile(bytes.NewReader(so))
@@ -1329,6 +1330,9 @@ func sharedImageCheck(t *testing.T, so []byte, machine elf.Machine) {
 	}
 	if len(so) > 256<<10 {
 		t.Errorf("a seven-function library is %d bytes; its .bss is being written into the file", len(so))
+	}
+	if bytes.Contains(so, []byte("fern: stack overflow")) {
+		t.Errorf("the shared object carries the stack-overflow handler, which would take its host's SIGSEGV")
 	}
 }
 
