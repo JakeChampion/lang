@@ -2350,6 +2350,11 @@ function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], go
 //
 // The three takes and the field steal are this one question asked with
 // different allowances; what each allows is stated at its call.
+//
+// An array element's take also lets the array go whole into a record update
+// that keeps it, when the record is then rebuilt around the store-back at
+// the taken element and reached no other way (`kept_store_back`): the slot
+// is empty only between the take and that store.
 function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, pos: i32, take: ssa.SInst, strict: boolean, own_root: boolean, through_take: boolean): boolean {
   let root: i32 = take.args[0];
   let b: ssa.SBlock = f.graph.blocks[bi];
@@ -2357,6 +2362,7 @@ function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[],
     return true;
   }
   let stores: i32 = 0;
+  let kept: i32[] = [];
   let u: i32 = ssasem.first_use_in(a.uses, root, bi);
   while (u < a.uses.start[root + 1] && a.uses.block[u] == bi) {
     if (a.uses.at[u] > pos) {
@@ -2372,7 +2378,15 @@ function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[],
           }
         }
       } else if (!other_slot_get(later, take)) {
-        return true;
+        let through: i32[] = kept_store_back(a, defs, b, bi, later, a.uses.slot[u], take, 0);
+        if (through.len() == 0) {
+          return true;
+        }
+        stores = stores + 1;
+        if (stores > 1) {
+          return true;
+        }
+        kept = util.append_all(kept, through);
       }
     }
     u = u + 1;
@@ -2387,10 +2401,115 @@ function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[],
   let k: i32 = a.anchored.start[root];
   while (k < a.anchored.start[root + 1]) {
     let w: i32 = a.anchored.at[k];
-    if (reaches_root(a, defs, take, root, through_take, w) && used_after(a, bi, pos, w)) {
+    if (reaches_root(a, defs, take, root, through_take, w) && used_after(a, bi, pos, w) && reaches_past_kept(a, w, root, kept, __alloc_bool(a.parents.len()))) {
       return true;
     }
     k = k + 1;
+  }
+  return false;
+}
+
+// The values the array a take's element came out of reaches, when the record
+// update `update` keeps it in field `k` and that field is read back once,
+// only to store at the taken element and rebuild the record around the
+// result — `R { ...r, k: r.k.with(i, x) }` after `R { ...r, e: v }` — or to
+// keep it through another such update first. Empty when the record, or the
+// array through it, is reached any other way in the block, or leaves it.
+function kept_store_back(a: ssasem.Analysis, defs: ssa.SInst[], b: ssa.SBlock, bi: i32, update: ssa.SInst, k: i32, take: ssa.SInst, depth: i32): i32[] {
+  let none: i32[] = [];
+  if (depth > 3 || update.kind_tag != ssasem.record_new() || ssasem.update_base(update) < 0 || take.kind_tag != ssasem.array_get()) {
+    return none;
+  }
+  let rec: i32 = update.result;
+  if (rec < 0 || ssalive.live_out_has(a.flow, bi, rec)) {
+    return none;
+  }
+  // The record's operand uses are its field reads; the rebuild names it as
+  // its donor, which is no operand, so the block is scanned for it.
+  let field: i32 = 0 - 1;
+  let u: i32 = ssasem.first_use_in(a.uses, rec, bi);
+  while (u < a.uses.start[rec + 1] && a.uses.block[u] == bi) {
+    if (a.uses.kinds[u] == ssasem.term_use()) {
+      return none;
+    }
+    let later: ssa.SInst = b.insts[a.uses.at[u]];
+    if (later.kind_tag != ssasem.record_get() || later.args[0] != rec) {
+      return none;
+    }
+    if (later.imm == k) {
+      if (field >= 0) {
+        return none;
+      }
+      field = later.result;
+    }
+    u = u + 1;
+  }
+  let rebuilt: i32 = 0 - 1;
+  let at: i32 = 0;
+  while (at < b.insts.len()) {
+    if (ssasem.update_base(b.insts[at]) == rec) {
+      if (rebuilt >= 0) {
+        return none;
+      }
+      rebuilt = at;
+    }
+    at = at + 1;
+  }
+  if (field < 0 || rebuilt < 0 || ssalive.live_out_has(a.flow, bi, field)) {
+    return none;
+  }
+  let final: ssa.SInst = b.insts[rebuilt];
+  if (k >= final.args.len()) {
+    return none;
+  }
+  // The field read goes one place: the rebuild, keeping it through to the
+  // next update, or the store-back whose result the rebuild carries.
+  let n: i32 = 0;
+  let store: i32 = 0 - 1;
+  u = ssasem.first_use_in(a.uses, field, bi);
+  while (u < a.uses.start[field + 1] && a.uses.block[u] == bi) {
+    n = n + 1;
+    if (a.uses.kinds[u] == ssasem.term_use()) {
+      return none;
+    }
+    let later: ssa.SInst = b.insts[a.uses.at[u]];
+    if (a.uses.at[u] == rebuilt && final.args[k] == field) {
+      let through: i32[] = kept_store_back(a, defs, b, bi, final, k, take, depth + 1);
+      if (through.len() == 0) {
+        return none;
+      }
+      return util.append_all([rec, field], through);
+    }
+    if (later.kind_tag == ssasem.with() && later.args.len() == 3 && a.uses.slot[u] == 0 && same_index(defs, later.args[1], take.args[1])) {
+      store = later.result;
+    }
+    u = u + 1;
+  }
+  if (n != 1 || store < 0 || final.args[k] != store) {
+    return none;
+  }
+  return [rec, field, store];
+}
+
+// Whether `w` reaches `root` by a chain that passes no value of `kept`: a
+// record update that keeps the taken array, the field read out of it, and
+// the store-back are vetted by `kept_store_back`, and a value reached only
+// through them is not another reader of the slot.
+function reaches_past_kept(a: ssasem.Analysis, w: i32, root: i32, kept: i32[], seen: boolean[]): boolean {
+  if (kept.len() == 0) {
+    return true;
+  }
+  if (w == root) {
+    return true;
+  }
+  if (w < 0 || w >= seen.len() || seen[w] || util.index_of_i32(kept, w) >= 0) {
+    return false;
+  }
+  seen = seen.with(w, true);
+  for p in a.parents[w] {
+    if (reaches_past_kept(a, p, root, kept, seen)) {
+      return true;
+    }
   }
   return false;
 }

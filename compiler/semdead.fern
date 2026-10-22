@@ -1,6 +1,7 @@
 // A record, tuple or variant construction nothing reads is not built
 // (#11912): its box, the stores into it and its release would be the whole
-// of its effect. Each operand loses a reader and is released where it dies,
+// of its effect. A copy nothing reads goes the same way: it reads its
+// source, which the plan then has to keep past the read. Each operand loses a reader and is released where it dies,
 // which is where the construction stood. A construction is kept when its
 // type has a finalizer (the drop is the point of building it). A record update names its
 // base in `imm` rather than as an operand, and that counts as a read: the
@@ -66,11 +67,11 @@ function prune_round(f: ssasem.Func, g: ssa.SFunc, uses: i32[]): Round {
 
 function unread_construction(f: ssasem.Func, uses: i32[], ins: ssa.SInst): boolean {
   let k: i32 = ins.kind_tag;
-  if (k != ssasem.record_new() && k != ssasem.tuple_new() && k != ssasem.variant_new()) {
+  if (k != ssasem.record_new() && k != ssasem.tuple_new() && k != ssasem.variant_new() && k != 7) {
     return false;
   }
   if (ins.result < 0 || ins.result >= uses.len() || uses[ins.result] != 0) {
     return false;
   }
-  return !ssasem.has_finalizer(f, f.values[ins.result]);
+  return k == 7 || !ssasem.has_finalizer(f, f.values[ins.result]);
 }
