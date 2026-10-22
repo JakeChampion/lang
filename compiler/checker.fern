@@ -670,12 +670,20 @@ function is_bit_count(name: string): boolean {
   return false;
 }
 
+// Every runtime intrinsic is named `__…`, so a name without the prefix is none.
+function internal_name(name: string): boolean {
+  return name.len() > 2 && name[0] == b'_' && name[1] == b'_';
+}
+
 // The runtime intrinsics: the float primitives, the bit counts, the raw-memory
 // escape hatches, the byte scans over a borrowed string, and the C-ABI
 // trampolines. `__alloc_u8` and its typed siblings are the ones whose result
 // the caller OWNS — a fresh zeroed array — where every other answer here is a
 // scalar.
 function intrinsic_result(name: string, argc: i32): typeinfo.Type {
+  if (!internal_name(name)) {
+    return t_unknown("not a runtime intrinsic");
+  }
   let raw: RawFloorSig[] = raw_floor_find(name);
   if (raw.len() == 1 && raw[0].params.len() == argc) {
     return raw[0].result;
@@ -936,6 +944,9 @@ function builtin_result_type(recv: typeinfo.Type, name: string, is_method: boole
 // parameter that carries it. The second half reports whether `name` is one at
 // all, since an empty list is a real signature (`__ptr_width()`).
 function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
+  if (!internal_name(name)) {
+    return ([], false);
+  }
   let raw: RawFloorSig[] = raw_floor_find(name);
   if (raw.len() == 1) {
     return (raw[0].params, true);
