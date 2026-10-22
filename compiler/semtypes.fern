@@ -42,6 +42,11 @@ function numeric_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
       return x.width == y.width && x.polymorphic == y.polymorphic;
     }
   }
+  if let typeinfo.TypeLanes(x) = a {
+    if let typeinfo.TypeLanes(y) = b {
+      return x.width == y.width;
+    }
+  }
   return false;
 }
 
@@ -231,6 +236,9 @@ function concrete_numeric(t: typeinfo.Type): boolean {
   }
   if let typeinfo.TypeFloat(f) = t {
     return !f.polymorphic && (f.width == 32 || f.width == 64);
+  }
+  if let typeinfo.TypeLanes(l) = t {
+    return l.width == 32 || l.width == 64;
   }
   return false;
 }
@@ -466,6 +474,9 @@ pub function needs_anchor(t: typeinfo.Type): boolean {
     return false;
   }
   if let typeinfo.TypeFloat(_) = t {
+    return false;
+  }
+  if let typeinfo.TypeLanes(_) = t {
     return false;
   }
   if let typeinfo.TypeVoid(_) = t {

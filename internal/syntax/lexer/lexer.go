@@ -137,6 +137,8 @@ var keywords = map[string]bool{
 	"usize":  true,
 	"f32":    true,
 	"f64":    true,
+	"f64x2":  true,
+	"f32x4":  true,
 	"as":     true,
 	"struct": true,
 	"import": true,

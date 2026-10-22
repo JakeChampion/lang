@@ -470,6 +470,16 @@ pub function is_sole(op: Op): boolean {
   return op.i64_imm == 5;
 }
 
+// lane_call marks a direct call whose result is a lane value, which the
+// register ABI returns in a vector register.
+pub function lane_call(op: Op): Op {
+  return Op { ...op, i64_imm: 6 };
+}
+
+pub function is_lane_call(op: Op): boolean {
+  return op.i64_imm == 6;
+}
+
 pub function op_arr_set(width: i32): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }

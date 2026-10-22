@@ -4347,3 +4347,31 @@ func TestTraitDefaultOwnTypeParams(t *testing.T) {
 		t.Errorf("required method with its own type parameters: got %v", err)
 	}
 }
+
+// `f64x2` and `f32x4` are type keywords: a parameter, a result and a local
+// annotation each read as ast.LanesType with the element width, and the
+// spelling round-trips through String.
+func TestLaneTypeKeywords(t *testing.T) {
+	prog, err := Parse(`function f(a: f64x2): f32x4 { let b: f32x4 = __f32x4_splat(1.0); return b; }`)
+	if err != nil {
+		t.Fatalf("lane types should parse: %v", err)
+	}
+	fn := prog.Funcs[0]
+	for _, c := range []struct {
+		got   ast.Type
+		width int
+		text  string
+	}{
+		{fn.Params[0].Type, 64, "f64x2"},
+		{fn.ReturnType, 32, "f32x4"},
+		{fn.Body.Stmts[0].(*ast.Var).Type, 32, "f32x4"},
+	} {
+		lt, ok := c.got.(ast.LanesType)
+		if !ok || lt.Width != c.width || lt.String() != c.text {
+			t.Errorf("want %s (width %d), got %#v", c.text, c.width, c.got)
+		}
+	}
+	if _, err := Parse(`function f(): i32 { let f64x2: i32 = 1; return f64x2; }`); err == nil {
+		t.Error("a lane type keyword should not parse as a binding name")
+	}
+}

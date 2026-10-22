@@ -798,6 +798,15 @@ pub function is_float(t: typeinfo.Type): boolean {
   return is_f64(t) || is_f32(t);
 }
 
+// A lane value (`f64x2`, `f32x4`): 128 bits in a vector register or a v128
+// local, with no unit, reached only through the lane ops.
+pub function is_lanes(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeLanes(_) = t {
+    return true;
+  }
+  return false;
+}
+
 // The integer types this vocabulary admits. An operator is written for one of
 // them at a time: both operands carry the same type and so does the result.
 // The checker auto-widens the narrower side of a mixed-width operator and the
@@ -2898,6 +2907,9 @@ function leaf_key(t: typeinfo.Type): string {
   if (semtypes.is_never(t)) {
     return "$never";
   }
+  if let typeinfo.TypeLanes(l) = t {
+    return typeinfo.lanes_spelling(l.width);
+  }
   if (is_void(t)) {
     return "void";
   }
@@ -3044,6 +3056,9 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
   if (is_float(left) && semtypes.equal(left, right)) {
     return float_result(op, left);
   }
+  if (is_lanes(left) && semtypes.equal(left, right)) {
+    return lanes_result(op, left);
+  }
   if (is_bool(left) && is_bool(right) && (op == "==" || op == "!=")) {
     return typeinfo.TypeBool { tag: 0 };
   }
@@ -3114,10 +3129,18 @@ function string_result(op: string): typeinfo.Type {
   return typeinfo.unchecked();
 }
 
+// Lane arithmetic keeps the lane type; nothing else applies to lane values.
+function lanes_result(op: string, t: typeinfo.Type): typeinfo.Type {
+  if (util.has_str(["+", "-", "*", "/"], op)) {
+    return t;
+  }
+  return typeinfo.unchecked();
+}
+
 // Negation keeps its operand's type, at either signed width. An unsigned
 // negation never reaches this op: the producer writes it as `0 - x`.
 pub function unary_result(op: string, operand: typeinfo.Type): typeinfo.Type {
-  if (op == "-" && (is_i32(operand) || is_i64(operand) || is_float(operand))) {
+  if (op == "-" && (is_i32(operand) || is_i64(operand) || is_float(operand) || is_lanes(operand))) {
     return operand;
   }
   if (op == "!" && is_bool(operand)) {

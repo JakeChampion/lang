@@ -40,6 +40,7 @@ import "std/error";
 import "std/platform";
 import "std/url";
 import "std/utf8" as utf8;
+import "core/cmp";
 
 // `http_status_text(code)` — the IANA reason phrase for every status
 // code RFC 9110 defines, plus the registered ones the standard library
@@ -303,6 +304,25 @@ pub function problem(status: i32, title: string, detail: string): HttpResponse {
 
 pub struct HttpError { status: i32, title: string, detail: string }
 
+pub function (e: HttpError) message(): string {
+  let title: string = e.title;
+  if (title.len() == 0) {
+    title = http_status_text(e.status);
+  }
+  if (e.detail.len() > 0) {
+    return title + ": " + e.detail;
+  }
+  return title;
+}
+
+pub function (e: HttpError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for HttpError {}
+
+impl cmp.Display for HttpError {}
+
 pub function fail(status: i32, detail: string): HttpError {
   return HttpError { status: status, title: http_status_text(status), detail: detail };
 }
@@ -354,6 +374,38 @@ pub enum BodyError {
   NotUtf8,
   EndedEarly(i32),
 }
+
+pub function (e: BodyError) message(): string {
+  match (e) {
+    UnsupportedMediaType(ct) => {
+      if (ct.len() == 0) {
+        return "expected a Content-Type of application/json";
+      }
+      return "expected application/json, got " + ct;
+    },
+    MalformedJson(why) => {
+      return why.to_string();
+    },
+    WrongShape(why) => {
+      return why;
+    },
+    NotUtf8 => {
+      return "body is not valid UTF-8";
+    },
+    EndedEarly(fault) => {
+      return __ended_early_detail(fault);
+    }
+  }
+  return "";
+}
+
+pub function (e: BodyError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for BodyError {}
+
+impl cmp.Display for BodyError {}
 
 impl ToResponse for BodyError {
   function to_response(self: BodyError): HttpResponse {

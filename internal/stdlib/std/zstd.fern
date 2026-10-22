@@ -12,6 +12,7 @@
 import "std/deflate";
 import "std/hash";
 import "core/cmp";
+import "std/error";
 
 // `ZstdError` — why a stream could not be decoded: it ends inside a frame
 // (`ZstdTruncated`); it breaks the format, with what was wrong
@@ -19,6 +20,14 @@ import "core/cmp";
 // checksum does not match (`ZstdChecksum`); or it needs what this decoder
 // does not do (`ZstdUnsupported`: a dictionary).
 pub enum ZstdError { ZstdTruncated, ZstdMalformed(string), ZstdTooLarge, ZstdChecksum, ZstdUnsupported(string) }
+
+pub function (e: ZstdError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for ZstdError {}
+
+impl cmp.Display for ZstdError {}
 
 pub function (e: ZstdError) message(): string {
   match (e) {
