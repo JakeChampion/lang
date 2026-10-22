@@ -12381,6 +12381,11 @@ func (c *checker) methodsFor(typeName string, recv ast.Type) []string {
 			out = append(out, name)
 			continue
 		}
+		// A method the caller cannot reach is no advice: naming it would hide
+		// the import hint that repairs the call.
+		if !c.methodVisibleHere(mangled) {
+			continue
+		}
 		sig, ok := c.info.FuncSigs[mangled]
 		if !ok || len(sig.Params) == 0 {
 			out = append(out, name)

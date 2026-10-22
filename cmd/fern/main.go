@@ -663,7 +663,7 @@ func main() {
 	if *doAdd {
 		if flag.NArg() < 2 {
 			fmt.Fprintln(os.Stderr, "usage: fern-oracle -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)")
-			os.Exit(1)
+			os.Exit(2)
 		}
 		addDir := "."
 		if flag.NArg() >= 3 {

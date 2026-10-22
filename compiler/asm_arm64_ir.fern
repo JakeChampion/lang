@@ -8389,6 +8389,51 @@ function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
   return s.write(".size __fern_report, .-__fern_report\n");
 }
 
+// emit_map_fail_trap is .Lalloc_map_fail, the arena mmap's failure: x0 holds
+// -errno. It spells the cause line with the errno on the stack and reports it
+// with exit 123, apart from a full arena's 125.
+function emit_map_fail_trap(s: asmcore.EmitState): asmcore.EmitState {
+  let text: string = aborts.map_fail();
+  let n: string = util.i32_to_string(text.len());
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lmsg_map_fail:\n    .ascii \"" + text + "\"\n");
+  s = s.write("    .text\n");
+  s = s.write(".Lalloc_map_fail:\n");
+  s = s.write("    neg x9, x0\n");
+  s = s.write("    sub sp, sp, #96\n");
+  s = s.write("    add x10, sp, #96\n");
+  s = s.write("    mov x12, #10\n");
+  s = s.write("    sub x10, x10, #1\n");
+  s = s.write("    strb w12, [x10]\n");  // newline
+  s = s.write("    mov x11, #41\n");
+  s = s.write("    sub x10, x10, #1\n");
+  s = s.write("    strb w11, [x10]\n");  // `)`
+  s = s.write(".Lmap_fail_digit:\n");
+  s = s.write("    udiv x13, x9, x12\n");
+  s = s.write("    msub x14, x13, x12, x9\n");
+  s = s.write("    add x14, x14, #48\n");
+  s = s.write("    sub x10, x10, #1\n");
+  s = s.write("    strb w14, [x10]\n");
+  s = s.write("    mov x9, x13\n");
+  s = s.write("    cbnz x9, .Lmap_fail_digit\n");
+  s = s.write("    adrp x15, .Lmsg_map_fail\n");
+  s = s.write("    add x15, x15, :lo12:.Lmsg_map_fail\n");
+  s = s.write("    add x15, x15, #" + n + "\n");
+  s = s.write("    mov x11, #" + n + "\n");
+  s = s.write(".Lmap_fail_copy:\n");
+  s = s.write("    sub x15, x15, #1\n");
+  s = s.write("    ldrb w14, [x15]\n");
+  s = s.write("    sub x10, x10, #1\n");
+  s = s.write("    strb w14, [x10]\n");
+  s = s.write("    subs x11, x11, #1\n");
+  s = s.write("    b.ne .Lmap_fail_copy\n");
+  s = s.write("    mov x1, x10\n");
+  s = s.write("    add x2, sp, #96\n");
+  s = s.write("    sub x2, x2, x10\n");
+  s = s.write("    mov x0, #123\n");
+  return s.write("    b __fern_report\n");
+}
+
 function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   // 16 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
   // allocation. Keeping it outside the image's .bss leaves the R+W segment
@@ -8623,7 +8668,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    mov x8, #222\n");  // __NR_mmap
   s = s.write("    svc #0\n");
   s = s.write("    cmn x0, #0\n");  // mmap returns -errno on failure
-  s = s.write("    b.mi .Lalloc_oom\n");
+  s = s.write("    b.mi .Lalloc_map_fail\n");
   s = s.write("    adrp x1, __fern_heap_ptr\n");
   s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
   s = s.write("    str x0, [x1]\n");  // heap_ptr = arena base
@@ -8664,6 +8709,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // arena trap could not be told apart from the kernel OOM-killer.
   // Lockstep with the native backends' ExitArenaExhausted and asm_ir.
   s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", aborts.oom(), 125);
+  s = emit_map_fail_trap(s);
   s = s.write(".size __fern_alloc, .-__fern_alloc\n");
 
   // The fatal aborts (#5538, #11405): each trap names its cause and branches

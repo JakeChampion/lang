@@ -91,9 +91,9 @@ function flow(s: string): void {
   mutation(s, "shrq $3, %rcx", "shrl $35, %ecx", true);
   mutation(s, "shrq $3, %rcx", "shrq $-1, %rcx", false);
   mutation(s, "leaq 0(,%rcx,8), %rdi", "leaq 0(,%rcx,4), %rdi", false);
-  mutation(s, "jl .Lalloc_oom", "jg .Lalloc_oom", false);
-  mutation(s, "jl .Lalloc_oom", "jne .Lalloc_oom", false);
-  mutation(s, "jl .Lalloc_oom", "jle .Lalloc_oom", true);
+  mutation(s, "jl .Lalloc_map_fail", "jg .Lalloc_map_fail", false);
+  mutation(s, "jl .Lalloc_map_fail", "jne .Lalloc_map_fail", false);
+  mutation(s, "jl .Lalloc_map_fail", "jle .Lalloc_map_fail", true);
   mutation(s, "ja .Lalloc_oom", "jae .Lalloc_oom", true);
   mutation(s, "cmpq __fern_heap_end(%rip), %rdi", "cmpl __fern_heap_end(%rip), %edi", false);
   mutation(s, "ret", "jmp .Loutside\nret", false);

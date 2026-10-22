@@ -9727,8 +9727,9 @@ function unknown_error_stmt_at(st: ast.Stmt, own a: UnkScan): UnkScan {
 function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
   match (e) {
     ast.ExprUnknown(u) => {
-      // A bare `return;`'s placeholder value is not an error.
-      if (u.kind == parser.BARE_RETURN) {
+      // A bare `return;`'s placeholder value is not an error, and a
+      // REPORTED token's error is already in the list.
+      if (u.kind == parser.BARE_RETURN || u.kind == parser.REPORTED) {
         return a;
       }
       return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, u.kind, u.line, u.col)) };

@@ -465,7 +465,7 @@ any conclusion about allocation, from the `-O` binary.
 bare `fn=(id)` refers back to an earlier definition and the cost lines under a
 caller are inclusive.
 
-## Arena exhaustion is exit 125; a host OOM-kill is 137
+## Arena exhaustion is exit 125; an unmapped arena is 123; a host OOM-kill is 137
 
 Distinguishable by status alone, which is the point — they used to share 137,
 which made every occurrence a manual investigation and had three harness sites
@@ -477,6 +477,11 @@ treating genuine compiler regressions as infra.
   and under WASI's 126 ceiling so it survives wasmtime. Pinned across the
   self-host emitters by `internal/testing/e2e/arena_exit_code_test.go`
   (`e2eharness.ExitArenaExhausted`).
+- **123** (`ExitArenaUnmapped`) — the arena's first `mmap` failed, so nothing
+  was ever allocated; the cause line names the errno (`fern: could not map the
+  heap arena (errno 12)` is ENOMEM). An address-space cap (`ulimit -v`, a
+  cgroup or sandbox limit) below the 16 GiB reservation causes it, not the
+  program. Logs from before #12911 show it as 125.
 - **137** (128+9, SIGKILL) — the host ran out of RAM. Also reads as `signal:
   killed` from the self-host compiler building a driver, or `as`/gcc dying on
   a link. Retry with a smaller budget per the knobs above. This is *total-RAM* pressure, not a

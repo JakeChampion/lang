@@ -31,3 +31,9 @@ pub function alloc_size(): string {
 pub function oom(): string {
   return "fern: out of memory (heap arena exhausted)";
 }
+
+// map_fail opens the cause line for an arena that was never mapped; the
+// runtime appends the errno and the closing ")".
+pub function map_fail(): string {
+  return "fern: could not map the heap arena (errno ";
+}

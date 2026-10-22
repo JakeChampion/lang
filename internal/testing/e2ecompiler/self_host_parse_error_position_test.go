@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -34,8 +35,8 @@ function main(): i32 {
 // util.format_diags renders, and nativeDiagPos the `file:line:col:` prefix and
 // code native's diagnostic printer renders.
 var (
-	selfHostDiagPos = regexp.MustCompile(`error\[(P\d+)\].*\((\d+):(\d+)\)`)
-	nativeDiagPos   = regexp.MustCompile(`:(\d+):(\d+): error\[(P\d+)\]`)
+	selfHostDiagPos = regexp.MustCompile(`error\[(P\d+)\]: (?:in fn '[^']*': |at top level: )?(.*) \((\d+):(\d+)\)`)
+	nativeDiagPos   = regexp.MustCompile(`:(\d+):(\d+): error\[(P\d+)\]: (.*)`)
 )
 
 // parseErrPosCases are programs whose FIRST parse error is a parser-side
@@ -147,12 +148,19 @@ var parseErrPosCases = []struct {
 	{"type-param-stray-token", "function f[T x](x: T): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"supertrait-path-sep", "trait A : cmp::Ord {\n  function f(self: Self): i32;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"trait-stray-token", "trait A x {\n  function f(self: Self): i32;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"call-missing-paren", "function f(a: i32, b: i32): i32 {\n  return a;\n}\nfunction main(): i32 {\n  return f(1\n  2);\n}\n"},
+	{"index-missing-bracket", "function main(): i32 {\n  let a = [1, 2];\n  return a[0;\n}\n"},
+	{"slice-missing-bracket", "function main(): i32 {\n  let a = [1, 2];\n  let b = a[0:1;\n  return 0;\n}\n"},
+	{"struct-update-missing-brace", "struct Foo { x: i32 }\nfunction main(): i32 {\n  let a = Foo { x: 1 };\n  let b = Foo { ...a x: 2 };\n  return 0;\n}\n"},
+	{"field-name-missing-after-dot", "function main(): i32 {\n  let a = 1;\n  a.;\n  return 0;\n}\n"},
+	{"let-name-without-equals", "function main(): i32 {\n  let x 1;\n  return 0;\n}\n"},
+	{"let-annotated-without-equals", "function main(): i32 {\n  let x: i32 1;\n  return 0;\n}\n"},
 }
 
 // TestSelfHostParseErrorPositions pins SH-041 (tracking #2849): a
 // parser-side sentinel carries the position of the token the parser gave up
 // on, and the diagnostic raised for it reports that position rather than 0:0,
-// under the code native gives the same program.
+// under the code and in the words native gives the same program.
 //
 // It is a differential, not a golden: the expectation is native's own reported
 // position for the same program, so a case cannot be "fixed" by writing down
@@ -168,7 +176,7 @@ func TestSelfHostParseErrorPositions(t *testing.T) {
 
 	for _, tc := range parseErrPosCases {
 		t.Run(tc.name, func(t *testing.T) {
-			wantCode, wantLine, wantCol := nativeParsePos(t, fernBin, tc.src)
+			wantCode, wantLine, wantCol, wantMsg := nativeParsePos(t, fernBin, tc.src)
 
 			probe := filepath.Join(stage, "main.fern")
 			if err := os.WriteFile(probe, []byte(fmt.Sprintf(parseErrPosProbe, fernStringLit(tc.src))), 0o644); err != nil {
@@ -181,7 +189,7 @@ func TestSelfHostParseErrorPositions(t *testing.T) {
 				t.Fatalf("probe failed: %v\nstdout: %s\nstderr: %s", err, out.String(), errb.String())
 			}
 			got := out.String()
-			m := selfHostDiagPos.FindStringSubmatch(got)
+			m := earliestSelfHostDiag(got)
 			if m == nil {
 				t.Fatalf("self-host raised no positioned parse diagnostic for this program\ngot: %q", got)
 			}
@@ -190,14 +198,33 @@ func TestSelfHostParseErrorPositions(t *testing.T) {
 			}
 			// A sentinel with no position renders as 0:0 here and the
 			// compiler's printer drops the location line entirely.
-			if m[2] == "0" {
+			if m[3] == "0" {
 				t.Errorf("self-host diagnostic has no position (line 0)\ngot: %q", got)
 			}
-			if m[2] != wantLine || m[3] != wantCol {
-				t.Errorf("position %s:%s, want native's %s:%s\nself-host: %q", m[2], m[3], wantLine, wantCol, got)
+			if m[3] != wantLine || m[4] != wantCol {
+				t.Errorf("position %s:%s, want native's %s:%s\nself-host: %q", m[3], m[4], wantLine, wantCol, got)
+			}
+			if m[2] != wantMsg {
+				t.Errorf("message %q, want native's %q", m[2], wantMsg)
 			}
 		})
 	}
+}
+
+// earliestSelfHostDiag is the submatch of the diagnostic in out that comes
+// first in the source, the one native stops at and the CLI prints first. The
+// pre-check lists function bodies before the expectations recorded at top level.
+func earliestSelfHostDiag(out string) []string {
+	var best []string
+	bl, bc := 0, 0
+	for _, m := range selfHostDiagPos.FindAllStringSubmatch(out, -1) {
+		l, _ := strconv.Atoi(m[3])
+		c, _ := strconv.Atoi(m[4])
+		if best == nil || l < bl || l == bl && c < bc {
+			best, bl, bc = m, l, c
+		}
+	}
+	return best
 }
 
 // stageParseProbeTree stages the self-host front-end closure (lexer / parser /
@@ -406,7 +433,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 
 // nativeParsePos returns the code, line and col of native's first parse
 // diagnostic for src — the oracle each self-host diagnostic is compared against.
-func nativeParsePos(t *testing.T, fernBin, src string) (code, line, col string) {
+func nativeParsePos(t *testing.T, fernBin, src string) (code, line, col, msg string) {
 	t.Helper()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "prog.fern")
@@ -421,7 +448,7 @@ func nativeParsePos(t *testing.T, fernBin, src string) (code, line, col string) 
 	if m == nil {
 		t.Fatalf("native raised no positioned parse diagnostic for this program, so it cannot serve as the oracle\nstderr: %s", errb.String())
 	}
-	return m[3], m[1], m[2]
+	return m[3], m[1], m[2], m[4]
 }
 
 // fernStringLit renders src as a Fern string literal for embedding in the
@@ -446,7 +473,7 @@ func TestSelfHostCheckParseGatesLeadWithPositionX86_64(t *testing.T) {
 	lead := regexp.MustCompile(`^(?:[^:\s]+:)?(\d+):(\d+): error\[(P\d+)\]: `)
 	for _, tc := range parseErrPosCases {
 		t.Run(tc.name, func(t *testing.T) {
-			wantCode, wantLine, wantCol := nativeParsePos(t, fernBin, tc.src)
+			wantCode, wantLine, wantCol, _ := nativeParsePos(t, fernBin, tc.src)
 			p := filepath.Join(t.TempDir(), "prog.fern")
 			if err := os.WriteFile(p, []byte(tc.src), 0o644); err != nil {
 				t.Fatal(err)
