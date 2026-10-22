@@ -554,7 +554,13 @@
 # driver-sizes lane on #12961 (lane types 4b: the thirty lane ops on every
 # backend, the lane register class and its spill pairs), merged with main
 # at 826a5d0. The other ten baselines and the 5% tolerance are unchanged.
-fern.fern/stage2 12672208
+#
+# 2026-10-22 — fern.fern/stage2 12672208 -> 13310144 (+5.0%), measured by
+# the driver-sizes lane on #12988 merged with main at 4426eac. Main's growth:
+# main at 0b88710 self-builds at 13201616 (+4.2%), and #12988's short-string
+# str_hash adds 4368 bytes (+0.03%). The other ten baselines and the 5%
+# tolerance are unchanged.
+fern.fern/stage2 13310144
 fern.fern 13273088
 drivers/asm_load_run.fern 10125912
 drivers/asm_modload_run.fern 8699400
