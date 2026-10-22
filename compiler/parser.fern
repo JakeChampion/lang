@@ -225,6 +225,7 @@ pub function with_stdlib_origin(mod: Module, path: string): Module {
   if (!util.is_stdlib_path(path)) {
     return mod;
   }
+  path = util.without_fern_ext(path);
   let funcs: FuncDecl[] = [];
   for f in mod.funcs {
     funcs = funcs.append(FuncDecl { ...f, stdlib: path });
