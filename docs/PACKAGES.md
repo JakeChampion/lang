@@ -47,7 +47,7 @@ webkit = { url = "https://example.com/webkit.tar.gz", hash = "sha256:…" }  # 6
 kv = { path = "../kv", capabilities = ["net"] }    # capability grant
 ```
 
-The parser (`internal/pkg/manifest`) is a strict TOML subset — sections,
+The parser (`compiler/fern_toml.fern`) is a strict TOML subset — sections,
 quoted strings, arrays, inline tables and `#` comments (on their own line
 or after a value), each entry on one line — and rejects anything else with a
 pointed error. A bare `helper = "1.2.0"` is a versioned (MVS) dependency (see below);
@@ -160,7 +160,15 @@ so comments and formatting survive:
 fern -add helper path:../helper                          # { path = "../helper" }
 fern -add webkit url:https://example.com/webkit.tar.gz   # fetches, records the hash
 fern -add lexer  workspace                               # { workspace = true }
+fern -add json   version:1.2.0                           # "1.2.0", resolved by -resolve
+fern -add kv     path:../kv -grant net,time              # { path = "../kv", capabilities = ["net", "time"] }
+fern -add pure   version:2.0.0 -grant none               # { version = "2.0.0", capabilities = [] }
 ```
+
+`-grant` writes a `capabilities` list on any form, in the manifest's
+canonical order; `none` writes an empty one, which denies every capability.
+A package named with a `-` is imported by that name and qualified with `_`
+in its place: `import "my-lib";` then `my_lib.f()`.
 
 The `url:` form is the ergonomic payoff: you never hand-compute a
 `sha256`. `add` downloads the archive, records the hash it observed
@@ -262,79 +270,37 @@ no-build-time-network constraint). A versioned dep whose lock is missing
 errors pointing at `fern -resolve`; a locked url version absent from the
 store errors pointing at `fern -fetch` (which also populates url
 versions from a committed lock, for fresh-machine offline builds). MVS
-implementation: `internal/pkg/mvs` (semver, index parse, the fixpoint,
+implementation: `compiler/mvs.fern` (semver, index parse, the fixpoint,
 lockfile read/write).
 
-## Native vs self-hosted coverage
+## Implementation
 
-The two compilers are **not** at parity. The **native** compiler
-(`internal/*`, the `fern` CLI) implements the whole surface below; the
-**self-hosted** compiler's module loader
-(`compiler/modloader.fern` + `fern_toml.fern`) implements a
-subset.
+The shipped `fern` is the self-hosted compiler, and it implements the whole
+surface above: manifest validation (`compiler/fern_toml.fern`), module
+loading with `path`, `workspace`, vendored, versioned and `url` dependencies
+(`compiler/modloader.fern`), MVS and `fern.lock` (`compiler/mvs.fern`),
+`-resolve`, `-check <DIR>`, `-add`, `-fetch` and `-vendor`.
 
-| Capability | Native | Self-hosted |
-| --- | --- | --- |
-| `fern.toml` validation, same diagnostics (pinned by `self_host_manifest_parity_test.go`) | ✅ | ✅ |
-| `path` deps + resolver-side isolation | ✅ | ✅ |
-| `[workspace]` + `workspace = true` deps | ✅ | ✅ |
-| vendored mode (`vendor/`) | ✅ | ✅ |
-| versioned deps via `fern.lock` (`path` source) | ✅ | ✅ |
-| `url`+hash deps + content-addressed store | ✅ | ✅ |
-| versioned deps whose lock source is a `url` | ✅ | ✅ |
-| `-resolve` (Minimum Version Selection → `fern.lock`) | ✅ | ✅ |
-| `-check <DIR>` (package, or every `[workspace]` member) | ✅ | ✅ |
-| `-add NAME SPEC` | ✅ | ✅ |
-| CLI commands `-fetch` / `-vendor` | ✅ | ✅ (`-fetch` in the shipped `fern`, see below) |
+Store-backed dependencies — `url` deps, and versioned deps whose lock source
+is a `url` — resolve from the content-addressed store
+(`$FERN_CACHE_DIR/pkgs/<hex>/`, else `<user-cache>/fern/pkgs/<hex>/` via
+`$XDG_CACHE_HOME`, `$HOME/.cache`, or `$HOME/Library/Caches` on darwin). A
+build only reads the store; a missing entry is a diagnostic naming
+`fern -fetch`. Populating it is `compiler/pkgfetch.fern`: download over
+HTTP(S) with `std/fetch`, check the sha256, gunzip, unpack the tar into a
+private directory and rename it into place. `-fetch`, `-add NAME url:…` and
+`-resolve` over a `url` index entry all go through it. The pinned stage0
+cannot compile `std/fetch`, so only the shipped `fern`
+(`compiler/fern_main.fern`) links it, handing it to `fern.fern` as a
+`Fetcher`; a build of `fern.fern` alone refuses what needs a download.
 
-The self-hosted loader (`compiler/modloader.fern` +
-`fern_toml.fern`) resolves every **disk-resolvable** form: `path` deps,
-`workspace = true` member deps (walking up to the `[workspace]` root and
-matching by package name), vendored mode (`<vendor-root>/vendor/<name>/`
-takes precedence), and versioned deps pinned in `fern.lock` to a `path`
-source. All need no network or cache lookup.
+The Go oracle keeps its own loader (`internal/pkg/manifest`, `modload`,
+`mvs`, `pkgcache`) so its interpreter can run a multi-package program. The
+parity tests hold the two to the same behaviour:
+`self_host_manifest_parity_test.go` for manifest diagnostics,
+`TestSelfHostResolveDifferentialX86_64` for the lock, byte for byte, and
+`TestSelfHostCheckWorkspaceDifferentialX86_64` for workspace verdicts.
 
-The **store-backed** forms — `url` deps, and versioned deps whose lock
-source is a `url` — resolve since #4949: the loader computes the store
-path (`$FERN_CACHE_DIR/pkgs/<hex>/`, else `<user-cache>/fern/pkgs/<hex>/`
-via `$XDG_CACHE_HOME`, `$HOME/.cache`, or `$HOME/Library/Caches` on darwin)
-and reads the unpacked package from it — `modloader.store_dir`, mirroring
-native `pkgcache.Root()`/`Dir()`. A build only reads the store (the
-no-build-time-network constraint); a missing entry is a diagnostic naming
-`fern -fetch`.
-
-Populating it is `compiler/pkgfetch.fern`: download over HTTP(S) with
-`std/fetch`, check the sha256, gunzip, unpack the tar into a private
-directory and rename it into place (from inside the archive's one top-level
-directory, when it has one). `-fetch`, `-add NAME url:…` and `-resolve`
-over a `url` index entry all go through it. The pinned stage0 cannot
-compile `std/fetch`, so only the shipped `fern` (`compiler/fern_main.fern`)
-links it, handing it to `fern.fern` as a `Fetcher`; a build of `fern.fern`
-alone refuses what needs a download.
-
-Manifest EDITING is the self-host's for the two offline sources: `fern -add
-NAME path:../dir` and `fern -add NAME workspace` splice a dependency line into
-`[dependencies]`, textually, so comments and formatting survive.
-`TestSelfHostAddDifferentialX86_64` compares the resulting manifest bytes with
-native's. `url:` downloads the archive to record its sha256, and leaves it
-in the store.
-
-Workspace CHECKING is the self-host's too: `fern -check <DIR>` type-checks the
-package governing DIR, or every member of the workspace it roots, aggregating
-rather than stopping at the first failure.
-`TestSelfHostCheckWorkspaceDifferentialX86_64` pins the per-member verdicts and
-the summary against native's. Only the verdicts: the *explanations* are not
-comparable while the self-host checker is partial (#4346).
-
-Version RESOLUTION is the self-host's since #6640: `compiler/mvs.fern`
-ports native's `internal/pkg/mvs` — version precedence, the index format, the
-max-of-the-minimums fixpoint, top-level `[exclude]` round-up, and the
-`fern.lock` text — and `fern -resolve [DIR]` drives it, fetching a version
-it selects from a `url` source into the store. The two compilers are pinned
-against each other by `TestSelfHostResolveDifferentialX86_64`, which
-compares the emitted lock byte for byte, refusals and their wording
-included.
-
-The self-host wiring is **additive** throughout — consulted only when a
-`fern.toml` is actually present — so the compiler's own manifest-less
-bootstrap is byte-for-byte unchanged.
+The package wiring is **additive** — consulted only when a `fern.toml` is
+actually present — so the compiler's own manifest-less bootstrap is
+byte-for-byte unchanged.

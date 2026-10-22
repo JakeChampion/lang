@@ -42,24 +42,32 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 		dep      string
 		spec     string
 		wantOK   bool
+		grant    string // the -grant value, "" for none
 	}{
 		// The line goes directly under an existing table header, and the
 		// comment and the dependency already there are untouched.
-		{"path-into-existing-table", withTable, "helper", "path:../helper", true},
+		{"path-into-existing-table", withTable, "helper", "path:../helper", true, ""},
 		// A trailing comment on the header still names the table (#11841).
-		{"path-into-commented-table", "[package]\nname = \"app\"\n[dependencies]  # deps\n", "helper", "path:../helper", true},
+		{"path-into-commented-table", "[package]\nname = \"app\"\n[dependencies]  # deps\n", "helper", "path:../helper", true, ""},
 		// No table yet: one is appended, with the same separating blank line.
-		{"path-creates-table", noTable, "helper", "path:../helper", true},
+		{"path-creates-table", noTable, "helper", "path:../helper", true, ""},
 		// A manifest whose last line has no newline must not gain a joined line.
-		{"path-no-trailing-newline", noTrailingNewline, "helper", "path:../helper", true},
-		{"workspace-spec", noTable, "member", "workspace", true},
-		{"name-with-punctuation", noTable, "my_dep-2", "path:../x", true},
+		{"path-no-trailing-newline", noTrailingNewline, "helper", "path:../helper", true, ""},
+		{"workspace-spec", noTable, "member", "workspace", true, ""},
+		{"name-with-punctuation", noTable, "my_dep-2", "path:../x", true, ""},
+		// A version alone is the bare form; with a grant, an inline table.
+		{"version-spec", noTable, "json", "version:1.2.0", true, ""},
+		{"version-with-grant", noTable, "json", "version:1.2.0", true, "time,net"},
+		{"path-with-grant", withTable, "kv", "path:../kv", true, "fs"},
+		{"workspace-grant-none", noTable, "member", "workspace", true, "none"},
 		// Refusals: each must be the same refusal, not merely a shared failure.
-		{"already-declared", withTable, "existing", "path:../elsewhere", false},
-		{"leading-digit-name", noTable, "9bad", "path:../x", false},
-		{"unrecognised-spec", noTable, "ok", "nonsense", false},
-		{"empty-path", noTable, "ok", "path:", false},
-		{"no-manifest", "", "ok", "path:../x", false},
+		{"already-declared", withTable, "existing", "path:../elsewhere", false, ""},
+		{"version-not-semver", noTable, "json", "version:1.2", false, ""},
+		{"grant-unknown-capability", noTable, "kv", "path:../kv", false, "net,teleport"},
+		{"leading-digit-name", noTable, "9bad", "path:../x", false, ""},
+		{"unrecognised-spec", noTable, "ok", "nonsense", false, ""},
+		{"empty-path", noTable, "ok", "path:", false, ""},
+		{"no-manifest", "", "ok", "path:../x", false, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -77,11 +85,18 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 				}
 			}
 
-			nativeCmd := exec.Command(nativeBin, "-add", c.dep, c.spec, nativeDir)
+			args := func(dir string) []string {
+				a := []string{"-add", c.dep, c.spec, dir}
+				if c.grant != "" {
+					a = append([]string{"-grant", c.grant}, a...)
+				}
+				return a
+			}
+			nativeCmd := exec.Command(nativeBin, args(nativeDir)...)
 			nativeOut, _ := nativeCmd.CombinedOutput()
 			nativeOK := nativeCmd.ProcessState.ExitCode() == 0
 
-			shCmd := exec.Command(driverBin, "-add", c.dep, c.spec, selfDir)
+			shCmd := exec.Command(driverBin, args(selfDir)...)
 			shOut, _ := shCmd.CombinedOutput()
 			shOK := shCmd.ProcessState.ExitCode() == 0
 
@@ -127,4 +142,47 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestSelfHostAddWritesEveryForm pins the line `-add` writes for each source
+// and grant, so every dependency form the manifest accepts can be written
+// without editing it by hand.
+func TestSelfHostAddWritesEveryForm(t *testing.T) {
+	bin := buildFernCLIBin(t)
+	for _, c := range []struct{ spec, grant, want string }{
+		{"path:../dep", "", `dep = { path = "../dep" }`},
+		{"workspace", "", `dep = { workspace = true }`},
+		{"version:1.2.0", "", `dep = "1.2.0"`},
+		{"version:1.2.0", "time,net", `dep = { version = "1.2.0", capabilities = ["net", "time"] }`},
+		{"path:../dep", "none", `dep = { path = "../dep", capabilities = [] }`},
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "fern.toml"), []byte("[package]\nname = \"app\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		args := []string{"-add", "dep", c.spec, dir}
+		if c.grant != "" {
+			args = append([]string{"-grant", c.grant}, args...)
+		}
+		out, err := exec.Command(bin, args...).CombinedOutput()
+		if err != nil {
+			t.Errorf("%s -grant %q: %v\n%s", c.spec, c.grant, err, out)
+			continue
+		}
+		if want := "fern: added " + c.want + "\n"; string(out) != want {
+			t.Errorf("%s -grant %q: printed %q, want %q", c.spec, c.grant, out, want)
+		}
+		man, err := os.ReadFile(filepath.Join(dir, "fern.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "[package]\nname = \"app\"\n\n[dependencies]\n" + c.want + "\n"; string(man) != want {
+			t.Errorf("%s -grant %q: fern.toml\n%q\nwant\n%q", c.spec, c.grant, man, want)
+		}
+	}
+	// A refusal says `fern:` and names the flag, as every other CLI refusal does.
+	out, _ := exec.Command(bin, "-add", "9bad", "path:../x", t.TempDir()).CombinedOutput()
+	if !strings.HasPrefix(string(out), "fern: -add: invalid dependency name") {
+		t.Errorf("refusal %q does not start with \"fern: -add:\"", out)
+	}
 }

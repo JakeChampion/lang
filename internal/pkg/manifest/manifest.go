@@ -300,7 +300,7 @@ func Parse(src string) (*Manifest, error) {
 				return nil, fmt.Errorf("line %d: exclude %s: %w", ln+1, key, err)
 			}
 			for _, v := range vs {
-				if !isVersion(v) {
+				if !IsVersion(v) {
 					return nil, fmt.Errorf("line %d: exclude %s: version must be MAJOR.MINOR.PATCH digits, got %q", ln+1, key, v)
 				}
 			}
@@ -419,7 +419,7 @@ func parseDep(val string) (Dep, error) {
 		if err != nil {
 			return Dep{}, fmt.Errorf("a bare dependency value must be a version string like \"1.2.0\" (or use an inline table): %w", err)
 		}
-		if !isVersion(s) {
+		if !IsVersion(s) {
 			return Dep{}, fmt.Errorf("version must be MAJOR.MINOR.PATCH digits, got %q", s)
 		}
 		return Dep{Version: s}, nil
@@ -446,7 +446,7 @@ func parseDep(val string) (Dep, error) {
 			continue
 		}
 		if k == "capabilities" {
-			cs, err := parseCapabilities(v)
+			cs, err := ParseCapabilities(v)
 			if err != nil {
 				return Dep{}, fmt.Errorf("capabilities: %w", err)
 			}
@@ -474,7 +474,7 @@ func parseDep(val string) (Dep, error) {
 			}
 			dep.Hash = s
 		case "version":
-			if !isVersion(s) {
+			if !IsVersion(s) {
 				return Dep{}, fmt.Errorf("version must be MAJOR.MINOR.PATCH digits, got %q", s)
 			}
 			dep.Version = s
@@ -531,14 +531,14 @@ func splitTopLevel(body string) []string {
 	return append(out, body[start:])
 }
 
-// parseCapabilities parses a dependency's `capabilities = ["net", …]`
+// ParseCapabilities parses a dependency's `capabilities = ["net", …]`
 // grant list and validates every name against the v1 vocabulary
 // (internal/pkg/caps.Capabilities), failing fast at manifest load so a
 // typo'd grant can't silently deny (or a stale name silently allow).
 // The result is sorted + deduped, and non-nil even when empty —
 // `capabilities = []` grants nothing, which is different from the key
 // being absent (Dep.Capabilities == nil, warn-and-allow).
-func parseCapabilities(val string) ([]string, error) {
+func ParseCapabilities(val string) ([]string, error) {
 	names, err := parseStringArray(val)
 	if err != nil {
 		return nil, err
@@ -563,10 +563,10 @@ func parseCapabilities(val string) ([]string, error) {
 	return out, nil
 }
 
-// isVersion reports whether s is a bare MAJOR.MINOR.PATCH version (the
+// IsVersion reports whether s is a bare MAJOR.MINOR.PATCH version (the
 // only form MVS constraints and the index use — no ranges, no
 // pre-release, keeping resolution deterministic).
-func isVersion(s string) bool {
+func IsVersion(s string) bool {
 	parts := strings.Split(s, ".")
 	if len(parts) != 3 {
 		return false

@@ -432,7 +432,8 @@ func main() {
 	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between each file and its formatted form; exits 1 when any differs")
 	doResolve := flag.Bool("resolve", false, "run Minimum Version Selection over a fern.toml's versioned ([package] index) dependencies and write the chosen versions to fern.lock (pass the manifest, its directory, or any file inside the package; default `.`). url-sourced versions are fetched and verified into the content-addressed store. The build reads fern.lock; the compiler never reads the index.")
 	doVendor := flag.Bool("vendor", false, "flatten the transitive dependency graph of a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into <root>/vendor/<name>/, one directory per package. After vendoring, builds are fully offline — the loader resolves declared dependencies out of vendor/ and never touches the network or the deps' original path/url locations. url dependencies must be fetched (`fern-oracle -fetch`) first; vendoring copies from the store.")
-	doAdd := flag.Bool("add", false, "add a dependency to the nearest fern.toml: `fern-oracle -add NAME SPEC [DIR]` where SPEC is `path:../dir`, `url:https://…/pkg.tar.gz` (the archive is fetched and its sha256 recorded automatically — no hand-computed hash), or `workspace` (a `{ workspace = true }` member dep). DIR (default `.`) selects the package whose fern.toml to edit. The manifest is edited textually so comments and formatting survive.")
+	doAdd := flag.Bool("add", false, "add a dependency to the nearest fern.toml: `fern-oracle -add NAME SPEC [DIR]` where SPEC is `path:../dir`, `url:https://…/pkg.tar.gz` (the archive is fetched and its sha256 recorded automatically — no hand-computed hash), `workspace` (a `{ workspace = true }` member dep), or `version:X.Y.Z` (an MVS dependency). DIR (default `.`) selects the package whose fern.toml to edit. The manifest is edited textually so comments and formatting survive.")
+	addGrant := flag.String("grant", "", "with -add: the comma-separated capabilities the dependency may reach, or `none` for an empty grant")
 	doFetch := flag.Bool("fetch", false, "download the url+hash dependencies declared by a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into the content-addressed package store, verifying each archive against its declared sha256 before unpacking. Transitive: path dependencies' manifests are fetched too. It, `-add url:` and `-resolve` are the commands that download packages — build/check/interp read the store and error when a url dependency hasn't been fetched.")
 	doLint := flag.Bool("lint", false, "lint FILE.fern or every .fern source under a directory, reporting code that compiles but reads badly (start with `fern-oracle -lint-rules`). Parse-only: no type-checking, no import resolution, so a file with a type error still lints and a whole tree costs one parse per file. Severities come from the governing fern.toml's [lint] table and then -lint-set; a `// fern-lint: allow RULE` comment silences one site. Exits 1 when a rule set to `deny` fires; a `warn` finding prints and exits 0.")
 	listLintRulesFlag := flag.Bool("lint-rules", false, "list the lint rules with their default severity, description, and tunable options, then exit.")
@@ -657,14 +658,14 @@ func main() {
 
 	if *doAdd {
 		if flag.NArg() < 2 {
-			fmt.Fprintln(os.Stderr, "usage: fern-oracle -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)")
+			fmt.Fprintln(os.Stderr, "usage: fern-oracle -add NAME SPEC [DIR] [-grant CAPS]   (SPEC = path:../dir | url:https://… | workspace | version:X.Y.Z)")
 			os.Exit(2)
 		}
 		addDir := "."
 		if flag.NArg() >= 3 {
 			addDir = flag.Arg(2)
 		}
-		if err := runAdd(flag.Arg(0), flag.Arg(1), addDir); err != nil {
+		if err := runAdd(flag.Arg(0), flag.Arg(1), *addGrant, addDir); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
