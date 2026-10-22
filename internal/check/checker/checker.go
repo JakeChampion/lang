@@ -20199,6 +20199,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			return common
 		case "<", ">", "<=", ">=":
 			if c.paramComparable(lt, rt, "cmp") {
+				n.ParamCmp = true
+				return ast.BoolType{}
+			}
+			if _, isChar := lt.(ast.CharType); isChar && n.ParamCmp && ast.Equal(lt, rt) {
+				n.CmpCall = &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "cmp"}, Args: []ast.Expr{n.Right}}
+				c.checkExpr(n.CmpCall, s)
 				return ast.BoolType{}
 			}
 			// Composite-type ordering. `<` / `<=` / `>` / `>=` on a

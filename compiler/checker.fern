@@ -25818,7 +25818,7 @@ function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDec
     }
     keys = keys.append(key);
     let g: parser.FuncDecl = gens[template_index(gens, inst.name)];
-    let routed: parser.FuncDecl = parser.FuncDecl { ...g, body: parser.route_bound_calls(g, inst.cts, mf) };
+    let routed: parser.FuncDecl = parser.FuncDecl { ...g, body: parser.route_bound_calls(g, inst.cts, env.trait_reqs, mf) };
     let cl: parser.FuncDecl = parser.instantiate_func(routed, key, g.all_type_params, inst.cts, mod.impls);
     clones = clones.append(cl);
     pending = body_insts(cl, env, msc, gens, inst.depth + 1, pending);

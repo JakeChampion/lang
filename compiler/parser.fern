@@ -15009,14 +15009,14 @@ function bound_use(fd: FuncDecl, cts: string[], reqs: TraitReq[], funcs: MFns): 
 // naming the bound's provider by its trait, so the clone's check reads the
 // bound's answer rather than an ambiguity (ambiguous_call_diags), as the Go
 // checker re-checks a clone with the trait the template's check resolved
-// each call to. The comparison rewrite is left to the monomorphiser: the
-// template's operators were checked as written.
-pub function route_bound_calls(fd: FuncDecl, cts: string[], funcs: MFns): ast.Stmt[] {
-  let (routed, bases, traits) = bound_routes(fd, cts, funcs);
-  if (routed.len() == 0) {
+// each call to. Its comparisons are rewritten as the monomorphiser rewrites
+// them, so an instance at a type that orders only through `cmp` (`char`)
+// checks as it lowers.
+pub function route_bound_calls(fd: FuncDecl, cts: string[], reqs: TraitReq[], funcs: MFns): ast.Stmt[] {
+  let ctx: BoundUse = BoundUse { ...bound_use(fd, cts, reqs, funcs), by_trait: true };
+  if (ctx.ord.len() == 0 && ctx.eq.len() == 0 && ctx.routed.len() == 0) {
     return fd.body;
   }
-  let ctx: BoundUse = BoundUse { env: env_from_decl(fd), funcs: MFns { ...funcs, keep_vars: true }, ord: [], eq: [], routed: routed, bases: bases, traits: traits, by_trait: true };
   let (out, after) = bc_body(fd.body, ctx);
   return out;
 }
@@ -15104,13 +15104,14 @@ function bound_supplies(reqs: TraitReq[], bound: string, method: string): boolea
 }
 
 // A primitive compares with its own operators, never through its `cmp` or `eq`:
-// a float's `cmp` is a total order where `<` is IEEE (#12697).
+// a float's `cmp` is a total order where `<` is IEEE (#12697). `char` has `Ord`
+// but no ordering operator, so its orderings go through `cmp`.
 function native_order_agrees(t: string): boolean {
-  return util.has_str(["i32", "i64", "u32", "u64", "u8", "usize", "char", "f32", "f64", "string"], t);
+  return util.has_str(["i32", "i64", "u32", "u64", "u8", "usize", "f32", "f64", "string"], t);
 }
 
 function native_eq_agrees(t: string): boolean {
-  return native_order_agrees(t) || t == "boolean";
+  return native_order_agrees(t) || t == "boolean" || t == "char";
 }
 
 // Each statement list owns its scope: a binding it makes is gone after it.

@@ -1904,6 +1904,11 @@ type Binary struct {
 	// (cmp returns -1/0/1). The post-check rewrite replaces the
 	// Binary with that scalar comparison; Op is preserved.
 	CmpCall *Call
+	// ParamCmp is set by the checker on an ordering of two values of one
+	// bounded type parameter. It survives into each monomorphised clone,
+	// where an instance type with `Ord` but no ordering operator (`char`)
+	// takes the CmpCall desugar instead of the operator.
+	ParamCmp bool
 	// ArithCall is set by the checker when an arithmetic operator
 	// (`+` `-` `*` `/`) is applied to a composite type (struct / enum)
 	// whose conventionally-named method exists (`+`→add, `-`→sub,

@@ -268,6 +268,7 @@ generic_call_through_fn_value                        0
 generic_call_in_struct_field                         0
 generic_enum_bound_dispatch                          0
 generic_enum_named_without_arguments                 0
+generic_char_ordering                                0
 generic_float_compare_ieee                           0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
