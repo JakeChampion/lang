@@ -1961,9 +1961,9 @@ function rename_imports(entry: parser.Module, imports: LoadedModule[], ids: stri
 // LoadedModule pairs an imported module with its two names, which are NOT
 // the same string and must not be conflated:
 //
-//   name  — the module's own name, its file's basename. visibility.fern
-//           keys the private declarations on it and maps a qualifier to it
-//           through the import, since an alias or a `-` makes them differ.
+//   name  — the module's own name, its file's basename, which a diagnostic
+//           names it by; an alias or a `-` makes it differ from the
+//           qualifier source writes.
 //   ident — the IDENTITY, one string per FILE, which the bundler needs to
 //           give two same-basename modules their own prefixes (#9762).
 //           Empty from a loader that does not resolve paths; then the

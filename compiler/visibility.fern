@@ -72,6 +72,17 @@ function module_named(loaded: flatten.LoadedModule[], name: string): i32 {
   return 0 - 1;
 }
 
+// module_key is a loaded module's identity for the private keys: its resolved
+// file, so two modules of one name (`std/ndarray` and a program's own
+// `ndarray`) keep their declarations apart, or its name from a loader that
+// resolves no paths.
+function module_key(lm: flatten.LoadedModule): string {
+  if (lm.ident.len() > 0) {
+    return lm.ident;
+  }
+  return lm.name;
+}
+
 // private_keys builds `<mod>.<name>` for every private top-level FUNCTION and
 // TYPE across the loaded set, once per run, so a reference is one lookup rather
 // than a scan of the target module's declarations. Receiver-bearing methods are
@@ -82,23 +93,23 @@ function private_keys(loaded: flatten.LoadedModule[]): string[] {
   for lm in loaded {
     for f in lm.mod.funcs {
       if (!f.is_pub && !f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
-        out = out.append(lm.name + "." + f.name);
+        out = out.append(module_key(lm) + "." + f.name);
       }
     }
     for sd in lm.mod.structs {
       // A variant defers to its enum, so it contributes no key of its own.
       if (!sd.is_pub && !sd.is_package && sd.enum_owner.len() == 0 && sd.name.len() > 0) {
-        out = out.append(lm.name + "." + sd.name);
+        out = out.append(module_key(lm) + "." + sd.name);
       }
     }
     for en in lm.mod.enums {
       if (!en.is_pub && !en.is_package) {
-        out = out.append(lm.name + "." + en.name);
+        out = out.append(module_key(lm) + "." + en.name);
       }
     }
     for al in lm.mod.aliases {
       if (!al.is_pub && !al.is_package) {
-        out = out.append(lm.name + "." + al.name);
+        out = out.append(module_key(lm) + "." + al.name);
       }
     }
   }
@@ -116,7 +127,7 @@ function private_const_keys(loaded: flatten.LoadedModule[]): string[] {
   for lm in loaded {
     for f in lm.mod.funcs {
       if (f.is_const && !f.is_pub && !f.is_package && f.receiver_name.len() == 0 && f.name.len() > 0) {
-        out = out.append(lm.name + "." + f.name);
+        out = out.append(module_key(lm) + "." + f.name);
       }
     }
   }
@@ -193,19 +204,23 @@ function owner_ident(src: parser.Module, qual: string): string {
   return "";
 }
 
-// module_name_of is the name of the loaded module `qual` reaches from the module
-// being checked: its file's base name, which the private keys use and which an
-// alias or a `-` in the name makes differ from the qualifier.
-function module_name_of(cx: VisCtx, qual: string): string {
+// loaded_index is the loaded module `qual` reaches from the module being
+// checked, found through the import's resolved file, which an alias or a `-`
+// in the name does not change; by name from a loader that resolves no paths.
+// -1 when `qual` reaches none.
+function loaded_index(cx: VisCtx, qual: string): i32 {
   let owner: string = owner_ident(cx.src, qual);
-  if (owner.len() > 0) {
-    for lm in cx.loaded {
-      if (lm.ident == owner) {
-        return lm.name;
-      }
-    }
+  if (owner.len() == 0) {
+    return module_named(cx.loaded, qual);
   }
-  return qual;
+  let i: i32 = 0;
+  while (i < cx.loaded.len()) {
+    if (cx.loaded[i].ident == owner) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // package_scope reports whether `qual.name` names a `pub(package)`
@@ -247,13 +262,17 @@ function module_diags(cx: VisCtx): util.Diag[] {
     }
   }
   for r in refs {
-    let key: string = module_name_of(cx, r.qual) + "." + r.name;
+    let mi: i32 = loaded_index(cx, r.qual);
+    let key: string = "";
+    if (mi >= 0) {
+      key = module_key(cx.loaded[mi]) + "." + r.name;
+    }
     let (scoped, refused) = package_scope(cx, r.qual, r.name);
     if (scoped) {
       if (refused) {
         out = out.append(package_diag(cx, r.qual, r.name, r.line, r.col));
       }
-    } else if (cx.priv.has(key)) {
+    } else if (mi >= 0 && cx.priv.has(key)) {
       let kw: string = "function";
       if (util.has_str(cx.priv_consts, key)) {
         kw = "const";
@@ -261,7 +280,7 @@ function module_diags(cx: VisCtx): util.Diag[] {
       out = out.append(util.Diag {
         related: [],
         code: "",
-        message: key + " is not exported (declare it as `pub " + kw + " " + r.name + " …` to make it accessible from other modules)",
+        message: cx.loaded[mi].name + "." + r.name + " is not exported (declare it as `pub " + kw + " " + r.name + " …` to make it accessible from other modules)",
         line: r.line,
         col: r.col,
         fix: None,
@@ -414,14 +433,11 @@ function check_type_name(tn: string, cx: VisCtx, line: i32, col: i32, acc: util.
     }
     return acc;
   }
-  let m: string = module_name_of(cx, q);
-  if (!cx.priv.has(m + "." + base)) {
+  let mi: i32 = loaded_index(cx, q);
+  if (mi < 0 || !cx.priv.has(module_key(cx.loaded[mi]) + "." + base)) {
     return acc;
   }
-  let mi: i32 = module_named(cx.loaded, m);
-  if (mi < 0) {
-    return acc;
-  }
+  let m: string = cx.loaded[mi].name;
   // Only reached for a name already known private, so the declaration scan
   // behind the kind word runs once per DIAGNOSTIC, not once per reference.
   if (!declares_private_type(cx.loaded[mi].mod, base)) {
