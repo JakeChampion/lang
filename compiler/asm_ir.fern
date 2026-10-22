@@ -7948,6 +7948,30 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
   return ssa_vunary(ins, reg_of, s);
 }
 
+// ssa_lane_arm_at reports a lane op or a copy of a lane value.
+function ssa_lane_arm_at(ins: ssa.SInst, fr: SsaFrame): boolean {
+  return ssa.lane_inst(ins) || ins.kind_tag == 7 && ins.result < fr.lanes.len() && fr.lanes[ins.result];
+}
+
+// ssa_lane_arm emits a lane op, or a copy of a lane value.
+function ssa_lane_arm(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ssa.lane_inst(ins)) {
+    return ssa_lane_inst(ins, reg_of, s);
+  }
+  return ssa_vcopy(ins, reg_of, s);
+}
+
+// ssa_vcopy moves a lane value to a copy's home, all 16 bytes of it.
+function ssa_vcopy(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (a != d) {
+    s = s.write("    movapd " + a + ", " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
 // ssa_vsplat: every lane takes the f64, which an f32 lane rounds first.
 function ssa_vsplat(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
@@ -9421,7 +9445,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 // SsaFrame is the frame below the values: three words per frame-resident
 // view box after the values. ssa_view_off is the offset of a view's lowest
 // word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32, lanes: boolean[] }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -9871,8 +9895,8 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (k == 35) {
     return ssa_line_loc(ins, s);
   }
-  if (ssa.lane_inst(ins)) {
-    return ssa_lane_inst(ins, reg_of, s);
+  if (ssa_lane_arm_at(ins, fr)) {
+    return ssa_lane_arm(ins, reg_of, s);
   }
   if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
     return s;
@@ -10532,7 +10556,8 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let bp: i32[] = ssa.block_positions(f);
   let lbase: i32 = s.nlab;
   s = s.lab_take(bp.len());
-  let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase };
+  let lanes: boolean[] = ssa.lane_values(f);
+  let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes };
   let fusions: ssaprepare.Fusion[] = [];
   let framed = !leaf;
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
@@ -10551,7 +10576,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   } else {
     s = ssa_frame(s, saved, frame);
   }
-  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: ssa_lane_slot_table(reg_of, ssa.lane_values(f)) };
+  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: ssa_lane_slot_table(reg_of, lanes) };
   s = ssa_load_params(f, reg_of, s);
   // `pos` numbers the instructions and terminators as the allocator does, so
   // a `-g` variable range's labels land where its home takes and drops it.

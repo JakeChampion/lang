@@ -15,7 +15,8 @@ import (
 // self_host_byte_view_rc_test.go does. `main` computes with every op on
 // f64x2 and f32x4 values held in locals, reads lanes back with vextract and
 // exits with the number of the first check that is not the spec's answer, 0
-// when all hold. Each target's emitter, allocator and encoder are what the
+// when all hold. Check 33 spills lane values across a call, and check 34
+// calls a lane function with no f64 value in it. Each target's emitter, allocator and encoder are what the
 // exit code proves: a wrong register class, slot size or instruction gives a
 // wrong lane, not a diagnostic.
 const laneIRDriver = `import "./ir";
@@ -126,6 +127,24 @@ function main(): i32 {
   m = m.append(ir.op_load_local(4)).append(ir.op_load_local(0)).append(v("vstore"));
   m = check(m, [ir.op_load_local(4), v("vload"), ir.op_lane_at("vextract", 64, 1)], "-2.5", 25);
   m = check(m, [ir.op_load_local(4), v("vload"), ir.op_lane_at("vextract", 64, 0)], "3.0", 25);
+  // 34: kern doubles the stored lanes with vload, vadd and vstore alone, a
+  // body with no f64 value to seed the float class.
+  m = m.append(ir.op_load_local(4)).append(ir.op_call_direct("kern", 1)).append(ir.op_drop());
+  m = check(m, [ir.op_load_local(4), v("vload"), ir.op_lane_at("vextract", 64, 0)], "6.0", 34);
+  m = check(m, [ir.op_load_local(4), v("vload"), ir.op_lane_at("vextract", 64, 1)], "-5.0", 34);
+  // 33: a + b and a * b held across a call, so both spill to a slot pair;
+  // then two f64s read out of them held across another call, so they spill
+  // where the pairs were.
+  m = m.append(ir.op_load_local(0)).append(ir.op_load_local(1)).append(v("vadd")).append(ir.op_store_local(5));
+  m = m.append(ir.op_load_local(0)).append(ir.op_load_local(1)).append(v("vmul")).append(ir.op_store_local(6));
+  m = m.append(ir.op_call_direct("side", 0)).append(ir.op_drop());
+  m = check(m, [ir.op_load_local(5), ir.op_lane_at("vextract", 64, 1)], "1.5", 33);
+  m = check(m, [ir.op_load_local(6), ir.op_lane_at("vextract", 64, 0)], "4.5", 33);
+  m = m.append(ir.op_load_local(5)).append(ir.op_lane_at("vextract", 64, 0)).append(ir.op_store_local(7));
+  m = m.append(ir.op_load_local(6)).append(ir.op_lane_at("vextract", 64, 1)).append(ir.op_store_local(8));
+  m = m.append(ir.op_call_direct("side", 0)).append(ir.op_drop());
+  m = check(m, [ir.op_load_local(7)], "4.5", 33);
+  m = check(m, [ir.op_load_local(8)], "-10.0", 33);
   // 26..31: f32x4 on c = [1.5, 1.5, 1.5, -4.0].
   m = check(m, bin32("vadd", c(), 3), "-8.0", 26);
   m = check(m, bin32("vmul", c(), 0), "2.25", 26);
@@ -148,7 +167,9 @@ function main(): i32 {
   m = check(m, [ir.op_load_local(3), ir.op_lane_at("vextract", 64, 0)], "10.5", 32);
   m = check(m, [ir.op_load_local(3), ir.op_lane_at("vextract", 64, 1)], "-3.5", 32);
   m = m.append(ir.op_const_i32(0)).append(ir.op_return());
-  let mod = parser.parse_module(lexer.tokenize("function main(): i32 { return 0; }"));
+  let kern: ir.Op[] = [ir.op_load_local(0), ir.op_load_local(0), v("vload"), ir.op_load_local(0), v("vload"), v("vadd"), v("vstore"),
+    ir.op_const_i32(0), ir.op_return()];
+  let mod = parser.parse_module(lexer.tokenize("@noinline function side(): i32 { return 7; } @noinline function kern(p: usize): i32 { return 0; } function main(): i32 { return side() + kern(0 as usize); }"));
   let d = semlower.driven(mod, av[1]);
   let g = semlower.program(d);
   if (av[1] == "wasm32-wasi") {
@@ -162,7 +183,10 @@ function main(): i32 {
   for r in g.cache {
     let out = r;
     if (i < g.im.funcs.len() && g.im.funcs[i].name == "main") {
-      out = irtables.LowerResult { ...r, ops: m, n_params: 0, n_locals: 5, v128_slots: [0, 1, 2, 3] };
+      out = irtables.LowerResult { ...r, ops: m, n_params: 0, n_locals: 9, v128_slots: [0, 1, 2, 3, 5, 6], f64_slots: [7, 8] };
+    }
+    if (i < g.im.funcs.len() && g.im.funcs[i].name == "kern") {
+      out = irtables.LowerResult { ...r, ops: kern, n_params: 1, n_locals: 1 };
     }
     cache = cache.append(out);
     i = i + 1;
