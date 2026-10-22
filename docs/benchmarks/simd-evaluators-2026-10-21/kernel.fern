@@ -7,7 +7,7 @@
 // element count).
 import "std/bench" as bench;
 import "std/simd" as simd;
-import "std/float";
+import "std/f64";
 import "std/i64";
 
 function kernel[T: simd.Math](x: T): T {

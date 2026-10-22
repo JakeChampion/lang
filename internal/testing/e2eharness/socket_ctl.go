@@ -130,14 +130,14 @@ function fail(n: i32): i32 {
     return n;
 }
 
-function ok(r: Result[(), net.NetError]): boolean {
+function ok(r: Result[void, net.NetError]): boolean {
     match (r) {
         Ok(u) => { return true; },
         Err(e) => { return false; },
     }
 }
 
-function unsupported(r: Result[(), net.NetError]): boolean {
+function unsupported(r: Result[void, net.NetError]): boolean {
     match (r) {
         Ok(u) => { return false; },
         Err(e) => { return e.errno() == 58; },

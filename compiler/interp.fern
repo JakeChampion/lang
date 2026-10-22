@@ -7979,7 +7979,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
     }
     return cell_value(args[0]);
   }
-  // The float reinterpret quartet — `std/float`'s formatter takes a
+  // The float reinterpret quartet — `std/f64`'s formatter takes a
   // number apart through these, so every f-string on an f64 reaches them.
   if (name == "f64_bits") {
     if (args.len() != 1 || !is_float_like(args[0])) {

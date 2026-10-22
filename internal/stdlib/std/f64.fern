@@ -1,4 +1,4 @@
-// std/float — f32 / f64 to-string formatting.
+// std/f64 — f32 / f64 to-string formatting.
 //
 // `to_string()` is SHORTEST ROUND-TRIP: the fewest digits that parse back to
 // exactly the same float, correctly rounded, computed by Dragonbox (see
@@ -10,7 +10,7 @@
 // exact against `f64.const inf`.
 //
 // No prelude: these are in scope only after a program
-// declares `import "std/float";` (docs/PRELUDE-TO-MODULES.md,
+// declares `import "std/f64";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
 
 // The formatters dispatch (i64) `.to_string()` (e.g. __float_int_part's
@@ -1257,7 +1257,7 @@ pub function (n: f64) to_string_prec(prec: i32): string {
 // usual rules, no integer-style traps. Callers building
 // numerically-sensitive code (`x.sqrt()` on x close to 0,
 // `x.log()` on negative x) should compare results against
-// the textbook formula for the edge cases — std/float
+// the textbook formula for the edge cases — std/f64
 // doesn't guard.
 
 pub function (x: f64) abs(): f64 {

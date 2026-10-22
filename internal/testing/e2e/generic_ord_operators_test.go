@@ -15,7 +15,7 @@ import (
 const genericOrdOperatorsSrc = `import "core/cmp" as cmp;
 import "core/iter" as iter;
 import "std/array";
-import "std/float";
+import "std/f64";
 import "std/i64";
 
 function above[T: cmp.Ord](a: T, b: T): boolean { return a > b; }

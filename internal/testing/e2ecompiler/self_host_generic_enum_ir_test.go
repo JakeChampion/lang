@@ -146,6 +146,37 @@ function main(): i32 {
     let b: Box[i32, string] = Full(5);
     return take(b.pair(Full(9))) + take(b.pair(Full(2)));
 }`, 11},
+	// A method that builds a variant, read back by another method (#12904): the
+	// template's `Bin(t, k, …)` is typed by the type variable K, which names no
+	// instantiation, so no clone at K is made. 1 + 2 == 3.
+	{"method_builds_variant", `enum Tree[K] { Tip, Bin(Tree[K], K, i32) }
+function (t: Tree[K]) size(): i32 { match (t) { Tip => { return 0; }, Bin(_, _, n) => { return n; } } }
+function (t: Tree[K]) put(k: K): Tree[K] { return Bin(t, k, t.size() + 1); }
+function main(): i32 {
+    let a: Tree[i32] = Tip;
+    let b: Tree[string] = Tip;
+    return a.put(1).size() + b.put("x").put("y").size();
+}`, 3},
+	// A method's clone hands a bare unit variant to a generic function, whose
+	// parameter takes the instantiation the call's other argument binds (#12904).
+	{"method_bare_variant_to_generic", `enum Tree[K] { Tip, Bin(Tree[K], K, i32) }
+function (t: Tree[K]) size(): i32 { match (t) { Tip => { return 0; }, Bin(_, _, n) => { return n; } } }
+function leaf[K](l: Tree[K], k: K): Tree[K] { return Bin(l, k, l.size() + 1); }
+function (t: Tree[K]) grow(k: K): Tree[K] { return leaf(Tip, k); }
+function main(): i32 {
+    let a: Tree[i32] = Tip;
+    return a.grow(7).size();
+}`, 1},
+	// A method's clone matches on a generic function's result: the call is
+	// keyed (`find__i32`) before its clone exists, and its return type is read
+	// off the template the instance names (#12904).
+	{"method_matches_generic_call", `enum Tree[K] { Tip, Bin(Tree[K], K, i32) }
+function find[K](t: Tree[K], k: K): Tree[K] { return t; }
+function (t: Tree[K]) has(k: K): i32 { match (find(t, k)) { Tip => { return 0; }, Bin(_, _, n) => { return n; } } }
+function main(): i32 {
+    let a: Tree[i32] = Bin(Tip, 1, 4);
+    return a.has(1);
+}`, 4},
 }
 
 // TestSelfHostGenericEnumIRX86_64 builds the self-host asm_run driver and runs

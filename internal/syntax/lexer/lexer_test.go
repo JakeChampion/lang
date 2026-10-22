@@ -540,11 +540,9 @@ func TestFloatLiteralStillWorksAfterNonDot(t *testing.T) {
 	}
 }
 
-// `float` is the width-unqualified alias for f64 (#5363), handled
-// contextually in the parser's type position (like `str`). It must
-// stay an Ident at the lexer level — NOT a reserved keyword — so
-// the std/float module qualifier (`float.pi()`) and `float` locals
-// keep working.
+// `float` is not a type; the parser refuses it in type position in
+// favour of `f64`. It stays an Ident at the lexer level, so a `float`
+// local or field keeps working.
 func TestFloatIsNoLongerAKeyword(t *testing.T) {
 	toks, _, err := Tokenize("float")
 	if err != nil {

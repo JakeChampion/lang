@@ -374,13 +374,13 @@ pub function decl_is_prim_recv(structs: StructTab, name: string): boolean {
 // a struct's type id (its index in `structs`). The order is fixed for
 // deterministic codegen (docs/DYN-TRAITS.md §4.2.3 — fixpoint determinism).
 pub function prim_type_ids(): string[] {
-  return ["i32", "boolean", "bool", "i64", "u32", "u64", "usize", "f64", "f32", "float", "string", "u8", "char"];
+  return ["i32", "boolean", "bool", "i64", "u32", "u64", "usize", "f64", "f32", "string", "u8", "char"];
 }
 
 // prim_type_id maps a primitive receiver type name to its wasm dyn-box shape id
 // (structs.decls.len() + its index in prim_type_ids), or -1 if not a primitive. Both
 // op_dyn_box (store @0) and op_dyn_dispatch (compare) key off this, so a boxed
-// value's offset-0 id matches the dispatch arm. bool/boolean and f32/f64/float
+// value's offset-0 id matches the dispatch arm. bool/boolean
 // share spellings but each maps to its own slot; that is harmless (an impl names
 // exactly one spelling, used at both box and dispatch).
 pub function prim_type_id(structs: StructTab, name: string): i32 {
@@ -448,7 +448,7 @@ pub function decl_field_type_at(structs: StructTab, struct_name: string, index: 
 // immediate), so an `f32[]` strides 8 here where native strides 4 — the
 // slot-width divergence #4366 tracks separately.
 pub function elem_ty_is_f64slot(t: string): boolean {
-  return t == "f64" || t == "f32" || t == "float";
+  return t == "f64" || t == "f32";
 }
 
 // sat_binary_ops is the saturating shape over SLOTS: the two operands already
@@ -1015,7 +1015,7 @@ pub function map_fbinop(op: string): string {
   return "";
 }
 
-// f64_math_builtin_kind maps a std/float math builtin name to its op_funary
+// f64_math_builtin_kind maps a std/f64 math builtin name to its op_funary
 // opcode, or "" if `name` is not one. Most are a single hardware instruction:
 // __sqrt_f64 (sqrtsd / fsqrt / f64.sqrt), __floor_f64 / __ceil_f64 / __trunc_f64
 // (roundsd $1/$2/$3 / frintm/p/z / f64.floor/ceil/trunc), and __abs_f64 (sign-bit
@@ -1126,7 +1126,7 @@ pub function result_f64(): i32 {
 // casts are no-ops and every float op runs at double width), so the two spell
 // the same runtime value. Scalars only: f64[] and f32[] are not classified here.
 pub function is_f64_scalar_type_name(t: string): boolean {
-  return t == "f64" || t == "f32" || t == "float";
+  return t == "f64" || t == "f32";
 }
 
 // The key of a `let` binding SITE: two `let`s of one name in sibling blocks are

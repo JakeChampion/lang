@@ -1,5 +1,5 @@
 // f64 / f32 are first-class in the core/cmp traits: Eq (a.eq(b)), Display
-// (a.to_string(), adopted from std/float, now imported by core/cmp so the empty
+// (a.to_string(), adopted from std/f64, now imported by core/cmp so the empty
 // impl resolves), Debug (a.to_debug()), and Ord (a.cmp(b) -> -1/0/1). Before,
 // f64 implemented none of these, so `assert_eq(3.14, 3.14)` and any `[T: Eq +
 // Display]` / `[T: Ord]` generic over a float were a hard E021. Paired with the

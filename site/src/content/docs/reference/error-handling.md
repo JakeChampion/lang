@@ -65,7 +65,7 @@ E]`, built with `Ok(())`. That keeps every fallible operation the same
 shape, so `?` works on all of them.
 
 ```fern
-function ensure_readable(path: string): Result[(), IoError] {
+function ensure_readable(path: string): Result[void, IoError] {
     read_file(path)?;   // nothing to bind — just propagate the failure
     return Ok(());
 }

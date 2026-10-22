@@ -356,7 +356,7 @@ function grown_leaves(sofar: Inlined, sp: Spliceable): Spliceable {
 }
 
 // A function the splices so far turned into a shared one is shared from the
-// next round: `__om_balance` returns its rotations' calls until the rotations,
+// next round: `node_balance` returns its rotations' calls until the rotations,
 // each called once, are spliced into it, and every return is a construction
 // after.
 function grown_shared(sofar: Inlined, sp: Spliceable): Spliceable {

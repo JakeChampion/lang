@@ -17,7 +17,7 @@ import (
 // match payload of the variable's type: `>` is IEEE, false against NaN, as it
 // is on a concrete f64 (#12697).
 const boundTraitProviderSrc = `import "core/cmp" as cmp;
-import "std/float";
+import "std/f64";
 import "std/num";
 
 struct P { x: i32 }

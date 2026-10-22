@@ -119,9 +119,8 @@ var keywords = map[string]bool{
 	"string":   true,
 	// Sized numeric type names. The legacy `number` alias for
 	// `i32` was removed in the legacy-cleanup pass. `float` is
-	// the width-unqualified alias for f64 (#5363), handled
-	// contextually in the parser's type position — never a
-	// keyword, so `float.pi()` module calls keep working.
+	// not one: it stays an identifier, which the parser refuses
+	// in type position in favour of `f64`.
 	// isize/i8/i16/u16 were retired (issue #4408): isize had zero
 	// uses, and i8/i16/u16 carried a full per-stride backend cost
 	// for a handful of call sites — i32/u32 cover them now.

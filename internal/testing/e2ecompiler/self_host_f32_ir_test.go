@@ -11,12 +11,12 @@ import (
 // plain i32 slot instead passes its 8-byte float bit pattern through the 4-byte
 // integer path and miscompiles (e.g. `id32(5.5 as f32)` returns 0 instead of 5).
 //
-// These are the std/float f32-method shapes (abs/sqrt/floor/round via
+// These are the std/f64 f32-method shapes (abs/sqrt/floor/round via
 // `__*_f64(x as f64) as f32`), written as free functions.
 //
 // Each case casts its f32 result to i32 and returns a non-negative value kept
 // <= 126 (the wasmtime exit-code truncation gap, cf. #2908), oracle-checked
-// against the interpreter. FEATURE-AUDIT std/float row.
+// against the interpreter. FEATURE-AUDIT std/f64 row.
 var f32IRCases = []struct {
 	name string
 	main string
@@ -29,7 +29,7 @@ function main(): i32 { let a: f32 = 5.5 as f32; return id32(a) as i32; }`},
 function main(): i32 { return add32(2.5 as f32, 3.0 as f32) as i32; }`},
 	{"mul", `function mul32(a: f32, b: f32): f32 { return a * b; }
 function main(): i32 { return mul32(2.0 as f32, 3.5 as f32) as i32; }`},
-	// std/float f32-method shapes as free functions: __*_f64(x as f64) as f32.
+	// std/f64 f32-method shapes as free functions: __*_f64(x as f64) as f32.
 	{"abs", `function fabs32(x: f32): f32 { return __abs_f64(x as f64) as f32; }
 function main(): i32 { let a: f32 = 0.0 - 5.5 as f32; return fabs32(a) as i32; }`},
 	{"sqrt", `function fsqrt32(x: f32): f32 { return __sqrt_f64(x as f64) as f32; }

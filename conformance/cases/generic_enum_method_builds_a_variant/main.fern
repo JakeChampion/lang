@@ -1,0 +1,36 @@
+// A method of a generic enum that builds a variant, read back by another
+// method (#12904). `put` builds `Bin` directly; `grow` hands a bare `Tip` to a
+// generic function, which takes its instantiation from the other argument.
+import "std/i32";
+
+enum Tree[K] { Tip, Bin(Tree[K], K, i32) }
+
+function (t: Tree[K]) size(): i32 {
+  match (t) {
+    Tip => { return 0; },
+    Bin(_, _, n) => { return n; },
+  }
+}
+
+function (t: Tree[K]) put(k: K): Tree[K] {
+  return Bin(t, k, t.size() + 1);
+}
+
+function leaf[K](l: Tree[K], k: K): Tree[K] {
+  return Bin(l, k, l.size() + 1);
+}
+
+function (t: Tree[K]) grow(k: K): Tree[K] {
+  return leaf(Tip, k);
+}
+
+function main(): i32 {
+  let a: Tree[i32] = Tip;
+  a = a.put(2);
+  print(a.size().to_string());
+  let b: Tree[string] = Tip;
+  b = b.put("x").put("y");
+  print(b.size().to_string());
+  print(a.grow(7).size().to_string());
+  return 0;
+}

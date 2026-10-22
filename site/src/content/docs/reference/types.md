@@ -10,7 +10,7 @@ sidebar:
 | Category   | Members                                              |
 | ---------- | ---------------------------------------------------- |
 | Integers   | `i32` `i64` `u8` `u32` `u64` `usize`                  |
-| Floats     | `f32` `f64` (`float` is an alias for `f64`)          |
+| Floats     | `f32` `f64`                                          |
 | Text       | `string` (owned UTF-8), `str` (a borrowed string slice), `char` (a Unicode scalar value) |
 | Other      | `boolean` `void` (its value is `()`)                 |
 | Composite  | `T[]` (array), `[T]` (slice), `(T, U, ...)` (tuple), `Map[K, V]`, `Cell[T]` |
@@ -164,7 +164,7 @@ function main(): i32 {
 An enum variant carries nothing, positional payloads, or named fields:
 
 ```fern
-import "std/float";
+import "std/f64";
 
 enum Shape {
     Circle { r: f64 },
@@ -204,16 +204,14 @@ value — the **unit value**. Write `()` when a generic needs a type
 argument but there is nothing to carry:
 
 ```fern
-function ensure_readable(path: string): Result[(), IoError] {
+function ensure_readable(path: string): Result[void, IoError] {
     read_file(path)?;   // the contents don't matter, only that it worked
     return Ok(());
 }
 ```
 
-`()` is also accepted as a type, so `Result[(), IoError]` and
-`Result[void, IoError]` are the same type spelled two ways — much as
-`float` is an alias for `f64`. `fern -fmt` normalises the type spelling
-to `void`; the value is always `()`.
+The type is written `void` and its one value `()`: `()` in type
+position is refused with a diagnostic naming `void`.
 
 A void-returning *call* is not a value: `Ok(log_it())` is an error, not
 a unit value (`fern -explain E072`). Call it as a statement, then return

@@ -577,7 +577,7 @@ pub function variance_f64(arr: f64[]): Option[f64] {
 
 // `stddev_f64(arr)` — the POPULATION standard deviation, `sqrt(variance)`.
 // `None` for an empty array. `sqrt` goes through the `__sqrt_f64` builtin
-// directly so this needs no std/float import.
+// directly so this needs no std/f64 import.
 pub function stddev_f64(arr: f64[]): Option[f64] {
   match (variance_f64(arr)) {
     Some(v) => {

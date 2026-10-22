@@ -64,23 +64,16 @@ import "std/i32";
 // whether the child for 5-bit index i is present, and the children are
 // packed in index order, so a child's slot is the popcount of the bits
 // below its own; `size` is the number of leaves in the subtree. `Empty`
-// is only ever the root of an empty map. No methods are declared on
-// this enum (a generic enum with receiver methods is not monomorphised
-// by the self-hosted compiler); the public surface lives on `PMap`, and
-// the `pub __hm_*` node functions exist for `std/pset`, which shares
-// this trie with unit values.
-pub enum HNode[K, V] { Empty, Leaf(i32, K, V), Coll(i32, HNode[K, V][]), Branch(i32, i32, HNode[K, V][]) }
-
-// The public handle. Construct one only through `pmap_new` /
-// `from_arrays`; the `root` field is an implementation detail.
-pub struct PMap[K, V] { root: HNode[K, V] }
+// is only ever the root of an empty map. The map is the trie: construct
+// one only through `pmap_new` / `from_arrays`.
+pub enum PMap[K, V] { Empty, Leaf(i32, K, V), Coll(i32, PMap[K, V][]), Branch(i32, i32, PMap[K, V][]) }
 
 // `pmap_new()` — the empty map. The key and value types are fixed by
 // the annotation at the binding (`let m: PMap[string, i32] =
 // pmap_new();`).
 pub function pmap_new[K, V](): PMap[K, V] {
-  let e: HNode[K, V] = Empty;
-  return PMap { root: e };
+  let e: PMap[K, V] = Empty;
+  return e;
 }
 
 // `from_arrays(keys, values)` — the map holding `keys[i] -> values[i]`
@@ -102,11 +95,11 @@ pub function from_arrays[K: cmp.Hash + cmp.Eq, V](keys: K[], values: V[]): PMap[
 }
 
 // ---- hashing and bit helpers -----------------------------------------
-// __hm_mix is the murmur3 32-bit finaliser: an avalanche over a hash
+// node_mix is the murmur3 32-bit finaliser: an avalanche over a hash
 // whose entropy may sit in its low bits (a derived `h * 31 + f` hash),
 // so every 5-bit slice of the result is usable as a trie index. All
 // arithmetic is wrapping i32; only the logical shifts go through u32.
-pub function __hm_mix(x: i32): i32 {
+function node_mix(x: i32): i32 {
   let h: i32 = x;
   h = h ^ (h as u32 >> 16 as u32) as i32;
   h = h * (0 - 2048144789);  // 0x85ebca6b
@@ -116,19 +109,19 @@ pub function __hm_mix(x: i32): i32 {
   return h;
 }
 
-// __hm_frag is the 5-bit slice of `h` selected at trie depth `shift`
+// node_frag is the 5-bit slice of `h` selected at trie depth `shift`
 // (shift = 0, 5, 10, … 30; the last slice has 2 bits).
-function __hm_frag(h: i32, shift: i32): i32 {
+function node_frag(h: i32, shift: i32): i32 {
   return (h as u32 >> shift as u32) as i32 & 31;
 }
 
-// __hm_slot is the child index of `bit` in a branch with `bitmap`: the
+// node_slot is the child index of `bit` in a branch with `bitmap`: the
 // number of present children below it.
-function __hm_slot(bitmap: i32, bit: i32): i32 {
+function node_slot(bitmap: i32, bit: i32): i32 {
   return (bitmap & bit - 1).count_ones();
 }
 
-pub function __hm_size[K, V](n: HNode[K, V]): i32 {
+function node_size[K, V](n: PMap[K, V]): i32 {
   match (n) {
     Empty => {
       return 0;
@@ -145,9 +138,9 @@ pub function __hm_size[K, V](n: HNode[K, V]): i32 {
   }
 }
 
-// __hm_insert_at inserts `x` at index `i` of `xs`, shifting the rest up.
-function __hm_insert_at[K, V](xs: HNode[K, V][], i: i32, x: HNode[K, V]): HNode[K, V][] {
-  let out: HNode[K, V][] = [];
+// node_insert_at inserts `x` at index `i` of `xs`, shifting the rest up.
+function node_insert_at[K, V](xs: PMap[K, V][], i: i32, x: PMap[K, V]): PMap[K, V][] {
+  let out: PMap[K, V][] = [];
   let j: i32 = 0;
   while (j < i) {
     out = out.append(xs[j]);
@@ -161,9 +154,9 @@ function __hm_insert_at[K, V](xs: HNode[K, V][], i: i32, x: HNode[K, V]): HNode[
   return out;
 }
 
-// __hm_remove_at drops index `i` of `xs`.
-function __hm_remove_at[K, V](xs: HNode[K, V][], i: i32): HNode[K, V][] {
-  let out: HNode[K, V][] = [];
+// node_remove_at drops index `i` of `xs`.
+function node_remove_at[K, V](xs: PMap[K, V][], i: i32): PMap[K, V][] {
+  let out: PMap[K, V][] = [];
   let j: i32 = 0;
   while (j < xs.len()) {
     if (j != i) {
@@ -174,20 +167,20 @@ function __hm_remove_at[K, V](xs: HNode[K, V][], i: i32): HNode[K, V][] {
   return out;
 }
 
-// __hm_pair builds the smallest subtree holding two leaves whose hashes
+// node_pair builds the smallest subtree holding two leaves whose hashes
 // differ (or a collision node when they do not), starting at depth
 // `shift`.
-function __hm_pair[K, V](a: HNode[K, V], ah: i32, b: HNode[K, V], bh: i32, shift: i32): HNode[K, V] {
+function node_pair[K, V](a: PMap[K, V], ah: i32, b: PMap[K, V], bh: i32, shift: i32): PMap[K, V] {
   if (ah == bh) {
     return Coll(ah, [a, b]);
   }
   if (shift >= 32) {
     return Coll(ah, [a, b]);
   }
-  let fa: i32 = __hm_frag(ah, shift);
-  let fb: i32 = __hm_frag(bh, shift);
+  let fa: i32 = node_frag(ah, shift);
+  let fb: i32 = node_frag(bh, shift);
   if (fa == fb) {
-    let inner: HNode[K, V] = __hm_pair(a, ah, b, bh, shift + 5);
+    let inner: PMap[K, V] = node_pair(a, ah, b, bh, shift + 5);
     return Branch(1 << fa, 2, [inner]);
   }
   if (fa < fb) {
@@ -196,9 +189,9 @@ function __hm_pair[K, V](a: HNode[K, V], ah: i32, b: HNode[K, V], bh: i32, shift
   return Branch(1 << fa | 1 << fb, 2, [b, a]);
 }
 
-// __hm_coll_index is the index of the leaf holding `k` in a collision
+// node_coll_index is the index of the leaf holding `k` in a collision
 // node's array, or -1.
-function __hm_coll_index[K: cmp.Hash + cmp.Eq, V](leaves: HNode[K, V][], k: K): i32 {
+function node_coll_index[K: cmp.Hash + cmp.Eq, V](leaves: PMap[K, V][], k: K): i32 {
   let i: i32 = 0;
   while (i < leaves.len()) {
     match (leaves[i]) {
@@ -216,14 +209,14 @@ function __hm_coll_index[K: cmp.Hash + cmp.Eq, V](leaves: HNode[K, V][], k: K): 
   return 0 - 1;
 }
 
-// __hm_insert returns the trie with `k -> v` added or replaced; `h` is
+// node_insert returns the trie with `k -> v` added or replaced; `h` is
 // the mixed hash of `k`. The match consumes `n`, so on the unique path
 // each level's box is released and its child array rewritten in place:
 // the arms rebuild the node from its bindings rather than reading `n`
 // again, and the Branch arm takes the child OUT of its slot
 // (`kids.with(idx, Empty)`) before descending, so it reaches the recursive
 // call at its own count; see docs/PERSISTENT-COLLECTIONS.md.
-pub function __hm_insert[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift: i32, k: K, v: V): HNode[K, V] {
+function node_insert[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], h: i32, shift: i32, k: K, v: V): PMap[K, V] {
   match (n) {
     Empty => {
       return Leaf(h, k, v);
@@ -232,43 +225,43 @@ pub function __hm_insert[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift:
       if (lh == h && lk.eq(k)) {
         return Leaf(h, k, v);
       }
-      let fresh: HNode[K, V] = Leaf(h, k, v);
-      return __hm_pair(Leaf(lh, lk, lv), lh, fresh, h, shift);
+      let fresh: PMap[K, V] = Leaf(h, k, v);
+      return node_pair(Leaf(lh, lk, lv), lh, fresh, h, shift);
     },
     Coll(ch, leaves) => {
       if (ch != h) {
-        let fresh: HNode[K, V] = Leaf(h, k, v);
-        return __hm_pair(Coll(ch, leaves), ch, fresh, h, shift);
+        let fresh: PMap[K, V] = Leaf(h, k, v);
+        return node_pair(Coll(ch, leaves), ch, fresh, h, shift);
       }
-      let i: i32 = __hm_coll_index(leaves, k);
+      let i: i32 = node_coll_index(leaves, k);
       if (i >= 0) {
         return Coll(ch, leaves.with(i, Leaf(h, k, v)));
       }
       return Coll(ch, leaves.append(Leaf(h, k, v)));
     },
     Branch(bm, s, kids) => {
-      let bit: i32 = 1 << __hm_frag(h, shift);
-      let idx: i32 = __hm_slot(bm, bit);
+      let bit: i32 = 1 << node_frag(h, shift);
+      let idx: i32 = node_slot(bm, bit);
       if ((bm & bit) == 0) {
-        let fresh: HNode[K, V] = Leaf(h, k, v);
-        let grown: HNode[K, V][] = __hm_insert_at(kids, idx, fresh);
+        let fresh: PMap[K, V] = Leaf(h, k, v);
+        let grown: PMap[K, V][] = node_insert_at(kids, idx, fresh);
         return Branch(bm | bit, s + 1, grown);
       }
-      let e: HNode[K, V] = Empty;
-      let child: HNode[K, V] = kids[idx];
-      let rest: HNode[K, V][] = kids.with(idx, e);
-      let old: i32 = __hm_size(child);
-      child = __hm_insert(child, h, shift + 5, k, v);
-      let added: i32 = __hm_size(child) - old;
+      let e: PMap[K, V] = Empty;
+      let child: PMap[K, V] = kids[idx];
+      let rest: PMap[K, V][] = kids.with(idx, e);
+      let old: i32 = node_size(child);
+      child = node_insert(child, h, shift + 5, k, v);
+      let added: i32 = node_size(child) - old;
       return Branch(bm, s + added, rest.with(idx, child));
     }
   }
 }
 
-// __hm_find returns the leaf holding `k`, or Empty. Iterative through
+// node_find returns the leaf holding `k`, or Empty. Iterative through
 // the branches; only a collision node is scanned.
-pub function __hm_find[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, k: K): HNode[K, V] {
-  let cur: HNode[K, V] = n;
+function node_find[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], h: i32, k: K): PMap[K, V] {
+  let cur: PMap[K, V] = n;
   let shift: i32 = 0;
   let descending: boolean = true;
   while (descending) {
@@ -283,31 +276,31 @@ pub function __hm_find[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, k: K): H
         descending = false;
       },
       Coll(ch, leaves) => {
-        let i: i32 = __hm_coll_index(leaves, k);
+        let i: i32 = node_coll_index(leaves, k);
         if (i >= 0) {
           return leaves[i];
         }
         descending = false;
       },
       Branch(bm, s, kids) => {
-        let bit: i32 = 1 << __hm_frag(h, shift);
+        let bit: i32 = 1 << node_frag(h, shift);
         if ((bm & bit) == 0) {
           descending = false;
         } else {
-          cur = kids[__hm_slot(bm, bit)];
+          cur = kids[node_slot(bm, bit)];
           shift = shift + 5;
         }
       }
     }
   }
-  let e: HNode[K, V] = Empty;
+  let e: PMap[K, V] = Empty;
   return e;
 }
 
-// __hm_is_branch: true for a Branch node (a Leaf or Coll can stand alone
+// node_is_branch: true for a Branch node (a Leaf or Coll can stand alone
 // as a parent's only child; a Branch cannot, because its hash prefix
 // would be lost).
-function __hm_is_branch[K, V](n: HNode[K, V]): boolean {
+function node_is_branch[K, V](n: PMap[K, V]): boolean {
   match (n) {
     Branch(bm, s, kids) => {
       return true;
@@ -324,23 +317,23 @@ function __hm_is_branch[K, V](n: HNode[K, V]): boolean {
   }
 }
 
-// __hm_remove_branch is the Branch arm of __hm_remove. A branch left with
+// node_remove_branch is the Branch arm of node_remove. A branch left with
 // a single leaf or collision child collapses to that child, so a trie's
 // shape depends only on its keys.
-function __hm_remove_branch[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], bm: i32, s: i32, kids: HNode[K, V][], h: i32, shift: i32, k: K): HNode[K, V] {
-  let bit: i32 = 1 << __hm_frag(h, shift);
+function node_remove_branch[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], bm: i32, s: i32, kids: PMap[K, V][], h: i32, shift: i32, k: K): PMap[K, V] {
+  let bit: i32 = 1 << node_frag(h, shift);
   if ((bm & bit) == 0) {
     return n;
   }
-  let idx: i32 = __hm_slot(bm, bit);
-  let old: i32 = __hm_size(kids[idx]);
-  let child: HNode[K, V] = __hm_remove(kids[idx], h, shift + 5, k);
-  let now: i32 = __hm_size(child);
+  let idx: i32 = node_slot(bm, bit);
+  let old: i32 = node_size(kids[idx]);
+  let child: PMap[K, V] = node_remove(kids[idx], h, shift + 5, k);
+  let now: i32 = node_size(child);
   if (now == old) {
     return n;
   }
   if (now > 0) {
-    if (kids.len() == 1 && !__hm_is_branch(child)) {
+    if (kids.len() == 1 && !node_is_branch(child)) {
       return child;
     }
     return Branch(bm, s - 1, kids.with(idx, child));
@@ -348,23 +341,23 @@ function __hm_remove_branch[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], bm: i32, s:
   if (kids.len() == 1) {
     return child;
   }
-  let rest: HNode[K, V][] = __hm_remove_at(kids, idx);
-  if (rest.len() == 1 && !__hm_is_branch(rest[0])) {
+  let rest: PMap[K, V][] = node_remove_at(kids, idx);
+  if (rest.len() == 1 && !node_is_branch(rest[0])) {
     return rest[0];
   }
   return Branch(bm & 0 - 1 - bit, s - 1, rest);
 }
 
-// __hm_remove returns the trie without `k`; the input itself when `k`
+// node_remove returns the trie without `k`; the input itself when `k`
 // is absent.
-pub function __hm_remove[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift: i32, k: K): HNode[K, V] {
+function node_remove[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], h: i32, shift: i32, k: K): PMap[K, V] {
   match (n) {
     Empty => {
       return n;
     },
     Leaf(lh, lk, lv) => {
       if (lh == h && lk.eq(k)) {
-        let e: HNode[K, V] = Empty;
+        let e: PMap[K, V] = Empty;
         return e;
       }
       return n;
@@ -373,42 +366,17 @@ pub function __hm_remove[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift:
       if (ch != h) {
         return n;
       }
-      let i: i32 = __hm_coll_index(leaves, k);
+      let i: i32 = node_coll_index(leaves, k);
       if (i < 0) {
         return n;
       }
       if (leaves.len() == 2) {
         return leaves[1 - i];
       }
-      return Coll(ch, __hm_remove_at(leaves, i));
+      return Coll(ch, node_remove_at(leaves, i));
     },
     Branch(bm, s, kids) => {
-      return __hm_remove_branch(n, bm, s, kids, h, shift, k);
-    }
-  }
-}
-
-// __hm_empty / __hm_holds exist for `std/pset`: a module cannot name
-// another module's variants, so the set builds its empty root and tests
-// a lookup result through these.
-pub function __hm_empty[K, V](): HNode[K, V] {
-  let e: HNode[K, V] = Empty;
-  return e;
-}
-
-pub function __hm_holds[K, V](n: HNode[K, V]): boolean {
-  match (n) {
-    Leaf(h, k, v) => {
-      return true;
-    },
-    Empty => {
-      return false;
-    },
-    Coll(h, xs) => {
-      return false;
-    },
-    Branch(b, s, xs) => {
-      return false;
+      return node_remove_branch(n, bm, s, kids, h, shift, k);
     }
   }
 }
@@ -422,7 +390,7 @@ pub function __hm_holds[K, V](n: HNode[K, V]): boolean {
 // looping, so the `own` accumulator is consumed once per frame in the
 // self-reassigning form (an `own` value consumed inside a loop is not
 // reclaimed in place).
-pub function __hm_keys_into[K, V](n: HNode[K, V], own acc: K[]): K[] {
+function node_keys_into[K, V](n: PMap[K, V], own acc: K[]): K[] {
   match (n) {
     Empty => {
       return acc;
@@ -432,26 +400,26 @@ pub function __hm_keys_into[K, V](n: HNode[K, V], own acc: K[]): K[] {
       return acc;
     },
     Coll(h, leaves) => {
-      acc = __hm_keys_kids(leaves, 0, acc);
+      acc = node_keys_kids(leaves, 0, acc);
       return acc;
     },
     Branch(bm, s, kids) => {
-      acc = __hm_keys_kids(kids, 0, acc);
+      acc = node_keys_kids(kids, 0, acc);
       return acc;
     }
   }
 }
 
-function __hm_keys_kids[K, V](kids: HNode[K, V][], i: i32, own acc: K[]): K[] {
+function node_keys_kids[K, V](kids: PMap[K, V][], i: i32, own acc: K[]): K[] {
   if (i >= kids.len()) {
     return acc;
   }
-  acc = __hm_keys_into(kids[i], acc);
-  acc = __hm_keys_kids(kids, i + 1, acc);
+  acc = node_keys_into(kids[i], acc);
+  acc = node_keys_kids(kids, i + 1, acc);
   return acc;
 }
 
-function __hm_values_into[K, V](n: HNode[K, V], own acc: V[]): V[] {
+function node_values_into[K, V](n: PMap[K, V], own acc: V[]): V[] {
   match (n) {
     Empty => {
       return acc;
@@ -461,26 +429,26 @@ function __hm_values_into[K, V](n: HNode[K, V], own acc: V[]): V[] {
       return acc;
     },
     Coll(h, leaves) => {
-      acc = __hm_values_kids(leaves, 0, acc);
+      acc = node_values_kids(leaves, 0, acc);
       return acc;
     },
     Branch(bm, s, kids) => {
-      acc = __hm_values_kids(kids, 0, acc);
+      acc = node_values_kids(kids, 0, acc);
       return acc;
     }
   }
 }
 
-function __hm_values_kids[K, V](kids: HNode[K, V][], i: i32, own acc: V[]): V[] {
+function node_values_kids[K, V](kids: PMap[K, V][], i: i32, own acc: V[]): V[] {
   if (i >= kids.len()) {
     return acc;
   }
-  acc = __hm_values_into(kids[i], acc);
-  acc = __hm_values_kids(kids, i + 1, acc);
+  acc = node_values_into(kids[i], acc);
+  acc = node_values_kids(kids, i + 1, acc);
   return acc;
 }
 
-function __hm_entries_into[K, V](n: HNode[K, V], own acc: (K, V)[]): (K, V)[] {
+function node_entries_into[K, V](n: PMap[K, V], own acc: (K, V)[]): (K, V)[] {
   match (n) {
     Empty => {
       return acc;
@@ -490,26 +458,26 @@ function __hm_entries_into[K, V](n: HNode[K, V], own acc: (K, V)[]): (K, V)[] {
       return acc;
     },
     Coll(h, leaves) => {
-      acc = __hm_entries_kids(leaves, 0, acc);
+      acc = node_entries_kids(leaves, 0, acc);
       return acc;
     },
     Branch(bm, s, kids) => {
-      acc = __hm_entries_kids(kids, 0, acc);
+      acc = node_entries_kids(kids, 0, acc);
       return acc;
     }
   }
 }
 
-function __hm_entries_kids[K, V](kids: HNode[K, V][], i: i32, own acc: (K, V)[]): (K, V)[] {
+function node_entries_kids[K, V](kids: PMap[K, V][], i: i32, own acc: (K, V)[]): (K, V)[] {
   if (i >= kids.len()) {
     return acc;
   }
-  acc = __hm_entries_into(kids[i], acc);
-  acc = __hm_entries_kids(kids, i + 1, acc);
+  acc = node_entries_into(kids[i], acc);
+  acc = node_entries_kids(kids, i + 1, acc);
   return acc;
 }
 
-pub function __hm_fold[K, V, A](n: HNode[K, V], init: A, f: (A, K, V) => A): A {
+function node_fold[K, V, A](n: PMap[K, V], init: A, f: (A, K, V) => A): A {
   match (n) {
     Empty => {
       return init;
@@ -521,7 +489,7 @@ pub function __hm_fold[K, V, A](n: HNode[K, V], init: A, f: (A, K, V) => A): A {
       let a: A = init;
       let i: i32 = 0;
       while (i < leaves.len()) {
-        a = __hm_fold(leaves[i], a, f);
+        a = node_fold(leaves[i], a, f);
         i = i + 1;
       }
       return a;
@@ -530,7 +498,7 @@ pub function __hm_fold[K, V, A](n: HNode[K, V], init: A, f: (A, K, V) => A): A {
       let a: A = init;
       let i: i32 = 0;
       while (i < kids.len()) {
-        a = __hm_fold(kids[i], a, f);
+        a = node_fold(kids[i], a, f);
         i = i + 1;
       }
       return a;
@@ -538,7 +506,7 @@ pub function __hm_fold[K, V, A](n: HNode[K, V], init: A, f: (A, K, V) => A): A {
   }
 }
 
-pub function __hm_for_each[K, V](n: HNode[K, V], f: (K, V) => void): void {
+function node_for_each[K, V](n: PMap[K, V], f: (K, V) => void): void {
   match (n) {
     Empty => {
       return;
@@ -549,45 +517,45 @@ pub function __hm_for_each[K, V](n: HNode[K, V], f: (K, V) => void): void {
     Coll(h, leaves) => {
       let i: i32 = 0;
       while (i < leaves.len()) {
-        __hm_for_each(leaves[i], f);
+        node_for_each(leaves[i], f);
         i = i + 1;
       }
     },
     Branch(bm, s, kids) => {
       let i: i32 = 0;
       while (i < kids.len()) {
-        __hm_for_each(kids[i], f);
+        node_for_each(kids[i], f);
         i = i + 1;
       }
     }
   }
 }
 
-// __hm_map_values rebuilds the trie with every value transformed; the
+// node_map_values rebuilds the trie with every value transformed; the
 // shape, hashes, and sizes are unchanged.
-function __hm_map_values[K, V, W](n: HNode[K, V], f: (V) => W): HNode[K, W] {
+function node_map_values[K, V, W](n: PMap[K, V], f: (V) => W): PMap[K, W] {
   match (n) {
     Empty => {
-      let e: HNode[K, W] = Empty;
+      let e: PMap[K, W] = Empty;
       return e;
     },
     Leaf(h, k, v) => {
       return Leaf(h, k, f(v));
     },
     Coll(h, leaves) => {
-      let out: HNode[K, W][] = [];
+      let out: PMap[K, W][] = [];
       let i: i32 = 0;
       while (i < leaves.len()) {
-        out = out.append(__hm_map_values(leaves[i], f));
+        out = out.append(node_map_values(leaves[i], f));
         i = i + 1;
       }
       return Coll(h, out);
     },
     Branch(bm, s, kids) => {
-      let out: HNode[K, W][] = [];
+      let out: PMap[K, W][] = [];
       let i: i32 = 0;
       while (i < kids.len()) {
-        out = out.append(__hm_map_values(kids[i], f));
+        out = out.append(node_map_values(kids[i], f));
         i = i + 1;
       }
       return Branch(bm, s, out);
@@ -595,9 +563,9 @@ function __hm_map_values[K, V, W](n: HNode[K, V], f: (V) => W): HNode[K, W] {
   }
 }
 
-// __hm_prefix_ok: does `lh` agree with the path prefix `h` on the
+// node_prefix_ok: does `lh` agree with the path prefix `h` on the
 // `shift` low bits already consumed above this node?
-function __hm_prefix_ok(lh: i32, h: i32, shift: i32): boolean {
+function node_prefix_ok(lh: i32, h: i32, shift: i32): boolean {
   if (shift == 0) {
     return true;
   }
@@ -605,9 +573,9 @@ function __hm_prefix_ok(lh: i32, h: i32, shift: i32): boolean {
   return (lh as u32 << keep) as i32 == (h as u32 << keep) as i32;
 }
 
-// __hm_valid_coll: a collision node holds at least two leaves, all with
+// node_valid_coll: a collision node holds at least two leaves, all with
 // its hash.
-function __hm_valid_coll[K, V](ch: i32, leaves: HNode[K, V][]): boolean {
+function node_valid_coll[K, V](ch: i32, leaves: PMap[K, V][]): boolean {
   if (leaves.len() < 2) {
     return false;
   }
@@ -634,10 +602,10 @@ function __hm_valid_coll[K, V](ch: i32, leaves: HNode[K, V][]): boolean {
   return true;
 }
 
-// __hm_child_hash is the hash a Leaf / Coll child carries, or -1 for a
+// node_child_hash is the hash a Leaf / Coll child carries, or -1 for a
 // Branch (which has no single hash) — used to check a child sits in the
 // slot its hash selects.
-function __hm_child_hash[K, V](n: HNode[K, V]): i32 {
+function node_child_hash[K, V](n: PMap[K, V]): i32 {
   match (n) {
     Leaf(lh, lk, lv) => {
       return lh;
@@ -654,15 +622,15 @@ function __hm_child_hash[K, V](n: HNode[K, V]): i32 {
   }
 }
 
-// __hm_valid_branch: the bitmap's popcount is the child count, no child
+// node_valid_branch: the bitmap's popcount is the child count, no child
 // is Empty, a lone child is a Branch (a lone leaf would have collapsed),
 // every Leaf / Coll child sits in the slot its hash selects, and the
 // cached size is the children's total.
-function __hm_valid_branch[K, V](bm: i32, s: i32, kids: HNode[K, V][], h: i32, shift: i32): boolean {
+function node_valid_branch[K, V](bm: i32, s: i32, kids: PMap[K, V][], h: i32, shift: i32): boolean {
   if (bm.count_ones() != kids.len() || kids.len() == 0) {
     return false;
   }
-  if (kids.len() == 1 && !__hm_is_branch(kids[0])) {
+  if (kids.len() == 1 && !node_is_branch(kids[0])) {
     return false;
   }
   let total: i32 = 0;
@@ -670,15 +638,15 @@ function __hm_valid_branch[K, V](bm: i32, s: i32, kids: HNode[K, V][], h: i32, s
   let frag: i32 = 0;
   while (frag < 32) {
     if ((bm & 1 << frag) != 0) {
-      let child: HNode[K, V] = kids[i];
-      let ch: i32 = __hm_child_hash(child);
-      if (ch != 0 - 1 && __hm_frag(ch, shift) != frag) {
+      let child: PMap[K, V] = kids[i];
+      let ch: i32 = node_child_hash(child);
+      if (ch != 0 - 1 && node_frag(ch, shift) != frag) {
         return false;
       }
-      if (!__hm_valid(child, h | frag << shift, shift + 5)) {
+      if (!node_valid(child, h | frag << shift, shift + 5)) {
         return false;
       }
-      total = total + __hm_size(child);
+      total = total + node_size(child);
       i = i + 1;
     }
     frag = frag + 1;
@@ -686,21 +654,21 @@ function __hm_valid_branch[K, V](bm: i32, s: i32, kids: HNode[K, V][], h: i32, s
   return total == s;
 }
 
-// __hm_valid checks the structural invariants below a node reached
+// node_valid checks the structural invariants below a node reached
 // through path prefix `h` at depth `shift`.
-pub function __hm_valid[K, V](n: HNode[K, V], h: i32, shift: i32): boolean {
+function node_valid[K, V](n: PMap[K, V], h: i32, shift: i32): boolean {
   match (n) {
     Empty => {
       return shift == 0;
     },
     Leaf(lh, lk, lv) => {
-      return __hm_prefix_ok(lh, h, shift);
+      return node_prefix_ok(lh, h, shift);
     },
     Coll(ch, leaves) => {
-      return __hm_prefix_ok(ch, h, shift) && __hm_valid_coll(ch, leaves);
+      return node_prefix_ok(ch, h, shift) && node_valid_coll(ch, leaves);
     },
     Branch(bm, s, kids) => {
-      return __hm_valid_branch(bm, s, kids, h, shift);
+      return node_valid_branch(bm, s, kids, h, shift);
     }
   }
 }
@@ -708,34 +676,30 @@ pub function __hm_valid[K, V](n: HNode[K, V], h: i32, shift: i32): boolean {
 // ---- public surface ---------------------------------------------------
 // `len()` — the number of entries. O(1).
 pub function (m: PMap[K, V]) len(): i32 {
-  return __hm_size(m.root);
+  return node_size(m);
 }
 
 // `is_empty()` — true when there are no entries.
 pub function (m: PMap[K, V]) is_empty(): boolean {
-  return __hm_size(m.root) == 0;
+  return node_size(m) == 0;
 }
 
 // `insert(k, v)` — the map with `k -> v`; an existing `k` takes the new
 // value. Never touches the receiver's nodes, so a snapshot taken
 // before the call is unchanged after it.
 pub function (m: PMap[K, V]) insert[K: cmp.Hash + cmp.Eq, V](k: K, v: V): PMap[K, V] {
-  let e: HNode[K, V] = Empty;
-  let root: HNode[K, V] = m.root;
-  m = PMap { ...m, root: e };
-  root = __hm_insert(root, __hm_mix(k.hash()), 0, k, v);
-  return PMap { ...m, root: root };
+  return node_insert(m, node_mix(k.hash()), 0, k, v);
 }
 
 // `remove(k)` — the map without `k`; the receiver unchanged when `k`
 // is absent.
 pub function (m: PMap[K, V]) remove[K: cmp.Hash + cmp.Eq, V](k: K): PMap[K, V] {
-  return PMap { root: __hm_remove(m.root, __hm_mix(k.hash()), 0, k) };
+  return node_remove(m, node_mix(k.hash()), 0, k);
 }
 
 // `get(k)` — `Some(value)` when `k` is present.
 pub function (m: PMap[K, V]) get[K: cmp.Hash + cmp.Eq, V](k: K): Option[V] {
-  match (__hm_find(m.root, __hm_mix(k.hash()), k)) {
+  match (node_find(m, node_mix(k.hash()), k)) {
     Leaf(h, lk, lv) => {
       return Some(lv);
     },
@@ -753,7 +717,7 @@ pub function (m: PMap[K, V]) get[K: cmp.Hash + cmp.Eq, V](k: K): Option[V] {
 
 // `get_or(k, fallback)` — the value at `k`, or `fallback`.
 pub function (m: PMap[K, V]) get_or[K: cmp.Hash + cmp.Eq, V](k: K, fallback: V): V {
-  match (__hm_find(m.root, __hm_mix(k.hash()), k)) {
+  match (node_find(m, node_mix(k.hash()), k)) {
     Leaf(h, lk, lv) => {
       return lv;
     },
@@ -771,7 +735,7 @@ pub function (m: PMap[K, V]) get_or[K: cmp.Hash + cmp.Eq, V](k: K, fallback: V):
 
 // `contains(k)` — is `k` a key?
 pub function (m: PMap[K, V]) contains[K: cmp.Hash + cmp.Eq, V](k: K): boolean {
-  match (__hm_find(m.root, __hm_mix(k.hash()), k)) {
+  match (node_find(m, node_mix(k.hash()), k)) {
     Leaf(h, lk, lv) => {
       return true;
     },
@@ -790,10 +754,10 @@ pub function (m: PMap[K, V]) contains[K: cmp.Hash + cmp.Eq, V](k: K): boolean {
 // `update(k, f)` — the map with the value at `k` replaced by `f(old)`;
 // the receiver unchanged when `k` is absent.
 pub function (m: PMap[K, V]) update[K: cmp.Hash + cmp.Eq, V](k: K, f: (V) => V): PMap[K, V] {
-  let h: i32 = __hm_mix(k.hash());
-  match (__hm_find(m.root, h, k)) {
+  let h: i32 = node_mix(k.hash());
+  match (node_find(m, h, k)) {
     Leaf(lh, lk, lv) => {
-      return PMap { root: __hm_insert(m.root, h, 0, k, f(lv)) };
+      return node_insert(m, h, 0, k, f(lv));
     },
     Empty => {
       return m;
@@ -810,13 +774,13 @@ pub function (m: PMap[K, V]) update[K: cmp.Hash + cmp.Eq, V](k: K, f: (V) => V):
 // `keys()` / `values()` — the entries, in hash order.
 pub function (m: PMap[K, V]) keys(): K[] {
   let acc: K[] = [];
-  acc = __hm_keys_into(m.root, acc);
+  acc = node_keys_into(m, acc);
   return acc;
 }
 
 pub function (m: PMap[K, V]) values(): V[] {
   let acc: V[] = [];
-  acc = __hm_values_into(m.root, acc);
+  acc = node_values_into(m, acc);
   return acc;
 }
 
@@ -824,24 +788,24 @@ pub function (m: PMap[K, V]) values(): V[] {
 // which is what `for (k, v) in m` walks.
 pub function (m: PMap[K, V]) iter(): iter.ArrayIter[(K, V)] {
   let acc: (K, V)[] = [];
-  acc = __hm_entries_into(m.root, acc);
+  acc = node_entries_into(m, acc);
   return iter.of(acc);
 }
 
 // `fold(init, f)` — `f` over every entry in hash order.
 pub function (m: PMap[K, V]) fold[K, V, A](init: A, f: (A, K, V) => A): A {
-  return __hm_fold(m.root, init, f);
+  return node_fold(m, init, f);
 }
 
 // `for_each(f)` — call `f(k, v)` on every entry in hash order.
 pub function (m: PMap[K, V]) for_each(f: (K, V) => void): void {
-  __hm_for_each(m.root, f);
+  node_for_each(m, f);
 }
 
 // `map_values(f)` — the map with every value replaced by `f(value)`;
 // keys and shape are unchanged.
 pub function (m: PMap[K, V]) map_values[K, V, W](f: (V) => W): PMap[K, W] {
-  return PMap { root: __hm_map_values(m.root, f) };
+  return node_map_values(m, f);
 }
 
 // `filter(pred)` — the map of the entries `pred(k, v)` accepts.
@@ -917,5 +881,5 @@ pub function (m: PMap[K, V]) difference[K: cmp.Hash + cmp.Eq, V](other: PMap[K, 
 // `is_valid()` — do the trie invariants hold over every node? Always
 // true for a map built through this module; exposed for tests.
 pub function (m: PMap[K, V]) is_valid(): boolean {
-  return __hm_valid(m.root, 0, 0);
+  return node_valid(m, 0, 0);
 }

@@ -12,7 +12,7 @@
 // only a mixed or fractional operation widens to the f64 side.
 import "std/string";
 import "std/i64";
-import "std/float";
+import "std/f64";
 
 // The VCL types this evaluator represents. DURATION is seconds and BYTES
 // is a byte count, both already normalised from their unit suffix at

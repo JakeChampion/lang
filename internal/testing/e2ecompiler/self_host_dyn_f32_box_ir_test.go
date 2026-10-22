@@ -12,7 +12,7 @@ import (
 // only when the value is read back at f32 width.
 const dynF32BoxSrc = `import "core/cmp";
 import "std/i32";
-import "std/float";
+import "std/f64";
 trait Show { function show(self: Self): string; }
 impl Show for i32 { function show(self: Self): string { return self.to_string(); } }
 impl Show for f32 { function show(self: Self): string { return "f" + self.to_string(); } }

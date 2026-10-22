@@ -26,9 +26,9 @@ trait impl dyn
 ```
 
 `in` is *not* reserved — the foreach forms below match it positionally,
-so `in` stays available as an ordinary identifier. Neither is `float`,
-the width-unqualified alias for `f64`: the parser recognises it in type
-position only, which keeps `float.pi()` module calls working.
+so `in` stays available as an ordinary identifier. `float` is not a
+type either: the 64-bit float is written `f64`, and `float` in type
+position is refused with a diagnostic saying so.
 
 Several more names mean something only in one position and are ordinary
 identifiers everywhere else:
@@ -305,7 +305,7 @@ function main(): i32 {
 `{{` and `}}` escape literal braces inside an f-string. Each hole
 becomes `(expr).to_string()`, so the `to_string` for that type has to be
 in scope: `import "std/string"` for a string, `"std/i32"` for an `i32`,
-`"std/float"` for a float, and so on. Without it the checker names the
+`"std/f64"` for a float, and so on. Without it the checker names the
 module to import.
 
 ## Attributes

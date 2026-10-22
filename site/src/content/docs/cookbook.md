@@ -50,7 +50,7 @@ same way whatever the operation is — even when success carries nothing.
 `()` is that nothing.
 
 ```fern
-function save(path: string, body: string): Result[(), IoError] {
+function save(path: string, body: string): Result[void, IoError] {
     write_file(path, body)?;
     return Ok(());
 }
@@ -69,7 +69,7 @@ path that is already there is `Ok`, so writing into a layout you do not
 have yet is two calls rather than a walk.
 
 ```fern
-function save_into(dir: string, name: string, body: string): Result[(), IoError] {
+function save_into(dir: string, name: string, body: string): Result[void, IoError] {
     create_dir_all(dir)?;
     write_file(dir + "/" + name, body)?;
     return Ok(());

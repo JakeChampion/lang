@@ -1,10 +1,10 @@
 import "core/int";
 import "std/format";
-import "std/float";
+import "std/f64";
 
 // std/format Rust-style `{:fill|align|width.precision}` specs, the
 // Display-accepting entry points that take args raw, and the
-// precision-controlled float formatter (std/float to_string_prec) — #2684.
+// precision-controlled float formatter (std/f64 to_string_prec) — #2684.
 // Verified byte-for-byte across interp / x86-64 / arm64 / wasm.
 function main(): i32 {
     // Plain `{}` substitution.
