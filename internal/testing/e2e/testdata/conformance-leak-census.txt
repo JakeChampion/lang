@@ -946,6 +946,7 @@ strength_reduction_mul                               0
 string_and_i64                                       0
 string_arr                                           0
 string_builder                                       0
+string_callbacks_in_collection_combinators           0
 string_camel_pascal                                  0
 string_case_predicates                               0
 string_concat                                        0

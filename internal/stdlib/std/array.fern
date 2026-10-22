@@ -1744,11 +1744,8 @@ pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
 // Method forms of the combinators above, so pipelines read
 // left-to-right — `xs.map(f).filter(keep)` instead of the inside-out
 // `filter(map(xs, f), keep)`. Enabled by element-polymorphic method
-// receivers (#2692); each just delegates to the free function. Same
-// callback constraint as the free versions: a callback whose
-// parameter / return is a composite (`string`, `Option`, …) hits the
-// indirect-call codegen limitation (#2753) on the native + wasm
-// backends, so keep callbacks scalar / bool / pointer-shaped there.
+// receivers (#2692). Each delegates to the free function. Callbacks accept
+// strings and composite values on every backend.
 
 // `xs.is_empty()` — true iff `xs` has no elements.
 pub function (xs: T[]) is_empty(): boolean {
