@@ -2063,10 +2063,25 @@ func (r *rewriter) bindStmt(s ast.Stmt) {
 	case *ast.Var:
 		r.localVars[x.Name] = true
 	case *ast.Destructure:
-		for _, name := range x.Names {
+		for _, name := range destructureNames(x) {
 			r.localVars[name] = true
 		}
 	}
+}
+
+// destructureNames is every name d binds: its `@` name, its elements, and
+// those of each nested level.
+func destructureNames(d *ast.Destructure) []string {
+	names := append([]string{}, d.Names...)
+	if d.AtName != "" {
+		names = append(names, d.AtName)
+	}
+	for _, sub := range d.Nested {
+		if sub != nil {
+			names = append(names, destructureNames(sub)...)
+		}
+	}
+	return names
 }
 
 func paramNames(params []ast.Param) []string {
@@ -2139,7 +2154,11 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 			r.rewriteDestructureStructNames(x.Pattern)
 		}
 		r.rewriteExpr(&x.Iter)
-		r.withScope([]string{x.Var}, func() { r.rewriteStmt(x.Body) })
+		names := []string{x.Var}
+		if x.Pattern != nil {
+			names = append(names, destructureNames(x.Pattern)...)
+		}
+		r.withScope(names, func() { r.rewriteStmt(x.Body) })
 	case *ast.Return:
 		if x.Value != nil {
 			r.rewriteExpr(&x.Value)
