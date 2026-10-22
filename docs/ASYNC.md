@@ -22,7 +22,7 @@ and `docs/WASI-PREVIEW3-ASYNC-PLAN.md`.
 > Backend support: the combinator surface (`std/async`) drives REAL overlapping socket
 > I/O on the native backends (x86-64 / arm64) via the OS reactor; the portable
 > `Ready`-future path runs on every backend (interp / wasm / native). The WASI
-> Preview-3 `stream[T]` import surface below does real wire I/O on wasm. The next
+> Preview-3 `Stream[T]` import surface below does real wire I/O on wasm. The next
 > milestone is promoting `Future[T]` to a first-class IR type so wasm futures use
 > the component-model-async host scheduler (`docs/ASYNC-REDESIGN.md` PR5).
 
@@ -31,14 +31,14 @@ and the Go e2e suite (`async_combinators_test.go`, `async_fetch_future_test.go`)
 
 ---
 
-## 1. Streams: `stream[T]`
+## 1. Streams: `Stream[T]`
 
-An async host import can return a `stream[T]` — a sequence delivered incrementally
+An async host import can return a `Stream[T]` — a sequence delivered incrementally
 over the wire. Under the colorless model the call site sees a plain value:
 
 ```fern
 @import("wasi:http/types", "body-stream")
-async function body(): stream[u8];
+async function body(): Stream[u8];
 ```
 
 **Collect it eagerly** — the whole stream into a `u8[]`:
@@ -64,7 +64,7 @@ async function sum(): i32 {
 ```
 
 Lazy `for x in stream` works for any scalar element type (`u8` / `i32` / `i64` /
-`f64`, …). A `stream[T]` **parameter** is the mirror: you pass an eager `T[]` and
+`f64`, …). A `Stream[T]` **parameter** is the mirror: you pass an eager `T[]` and
 the wrapper streams its elements out over the wire.
 
 ---

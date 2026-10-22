@@ -162,10 +162,10 @@ type FloatType struct {
 }
 type ArrayType struct{ Elem Type }
 
-// StreamType is the WASI Preview-3 async data channel `stream[T]` — a sequence
+// StreamType is the WASI Preview-3 async data channel `Stream[T]` — a sequence
 // of `T` delivered incrementally over the wire. It appears in Fern source only
 // as the result type of an async `@import` (e.g. `async function body():
-// stream[u8]`); under the colorless model the call site yields the fully
+// Stream[u8]`); under the colorless model the call site yields the fully
 // collected `T[]` (the compiler drives `stream.read` + the await loop to EOF —
 // see docs/STREAM-TYPE-SURFACE.md). `future[T]` is intentionally NOT a surface
 // type (colorless auto-await subsumes a single deferred value).
@@ -563,7 +563,7 @@ func (s StreamType) String() string {
 	if s.Elem == nil {
 		return "stream"
 	}
-	return "stream[" + s.Elem.String() + "]"
+	return "Stream[" + s.Elem.String() + "]"
 }
 func (t TupleType) String() string {
 	out := "("
@@ -1530,6 +1530,10 @@ type DowncastExpr struct {
 	// compare is exact for any trait set (docs/DYN-TRAITS.md §10). The
 	// interpreter handles any set by runtime concrete-type tag.
 	Traits []string
+	// Lowered is set by the checker when `Inner` is an integer and Target
+	// an integer type: the checked conversion's block-expr, which the
+	// post-check rewrite puts in the node's place (#12708).
+	Lowered Expr
 }
 
 // BlockExpr is a block used in value position: `{ stmt; stmt; …; tailExpr }`.

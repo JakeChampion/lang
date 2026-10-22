@@ -611,7 +611,7 @@ func printType(t ast.Type) string {
 	case ast.ArrayType:
 		return printType(x.Elem) + "[]"
 	case ast.StreamType:
-		return "stream[" + printType(x.Elem) + "]"
+		return "Stream[" + printType(x.Elem) + "]"
 	case *ast.FuncType:
 		out := "("
 		for i, p := range x.Params {

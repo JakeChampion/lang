@@ -135,16 +135,15 @@ var keywords = map[string]bool{
 	// Backed by `ast.NumberType{Width: WidthPtr}` so the
 	// checker and codegen route it through the same machinery
 	// that already sizes OpStore / OpLoad of heap pointer values.
-	"usize":   true,
-	"f32":     true,
-	"f64":     true,
-	"as":      true,
-	"default": true,
-	"struct":  true,
-	"import":  true,
-	"pub":     true,
-	"const":   true,
-	"enum":    true,
+	"usize":  true,
+	"f32":    true,
+	"f64":    true,
+	"as":     true,
+	"struct": true,
+	"import": true,
+	"pub":    true,
+	"const":  true,
+	"enum":   true,
 	// `type X = A | B | C;` declares a union of struct types —
 	// see UnionDecl in internal/syntax/ast. The checker desugars these
 	// to synthetic enums (`enum X { A(A), B(B), C(C) }`) so the

@@ -18,7 +18,6 @@ function let use as
 if else while for loop break continue return
 true false boolean void string
 i32 i64 u8 u32 u64 usize f32 f64
-default
 struct enum type
 import pub const
 match when
@@ -128,8 +127,10 @@ bits are shifted out). Both families are
 integer-only and otherwise behave exactly like their wrapping
 counterparts — see [Integer arithmetic](../types/#integer-arithmetic).
 
-`e as? T` is the checked downcast from a `dyn Trait` value to a concrete
-type, giving `Option[T]` — see [Traits](../traits/#runtime-dispatch--dyn-trait).
+`e as? T` gives `Option[T]`. From a `dyn Trait` value it is the checked
+downcast to a concrete type — see [Traits](../traits/#runtime-dispatch--dyn-trait).
+From an integer it is the checked conversion to another integer type:
+`Some` when the value fits `T`, so `300 as? u8` is `None`.
 
 ## Trailing commas
 
