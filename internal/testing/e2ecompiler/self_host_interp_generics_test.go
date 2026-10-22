@@ -36,7 +36,7 @@ func runSelfHostInterp(t *testing.T, name, src string) string {
 }
 
 const selfHostStructOpsSrc = `import "std/num" as num;
-import "std/float";
+import "std/f64";
 import "std/i32";
 trait Lanes { const LANES: i32; function splat(x: f64): Self; }
 impl Lanes for f64 {

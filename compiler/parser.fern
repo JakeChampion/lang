@@ -1871,8 +1871,9 @@ function unit_type_message(): string {
 
 // at_float_type reports `float` written as a type name, which the language
 // refuses in favour of `f64`: not the head of a module path (`float.x`), not a
-// segment of one (`m.float`), not a union member, and not the trait or
-// resource name after `dyn`, a `dyn` continuation's `+`, `own` or `borrow`.
+// segment of one (`m.float`), not a union member, not the type an `impl`
+// names, and not the trait or resource name after `dyn`, a `dyn`
+// continuation's `+`, `own` or `borrow`.
 function at_float_type(p: Par, seg: string): boolean {
   if (seg != "float" || p.peek_punct_at(1) == ".") {
     return false;
@@ -1885,7 +1886,7 @@ function at_float_type(p: Par, seg: string): boolean {
   if (prev == "|" || prev == "=" && p.peek_punct_at(1) == "|") {
     return false;
   }
-  return !util.has_str([".", "dyn", "+", "own", "borrow"], prev);
+  return !util.has_str([".", "dyn", "+", "own", "borrow", "impl"], prev);
 }
 
 function float_type_message(): string {

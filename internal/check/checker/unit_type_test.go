@@ -13,10 +13,7 @@ import (
 // the caller matches the same two arms as any other Result.
 func TestUnitValueChecks(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
-		{"unit type argument, unit payload",
-			`function f(): Result[void, IoError] { return Ok(()); }
-			 function main(): i32 { return 0; }`},
-		{"void spelling of the same type",
+		{"void type argument, unit payload",
 			`function f(): Result[void, IoError] { return Ok(()); }
 			 function main(): i32 { return 0; }`},
 		{"? propagates through a unit Result",

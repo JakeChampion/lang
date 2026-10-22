@@ -123,6 +123,7 @@ var parseErrPosCases = []struct {
 	{"unit-generic-arg", "function f(): Result[(), i32] {\n  return Ok(0);\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	// `+` continues a `dyn` type only; a bound takes no associated-type pin.
 	{"plus-outside-dyn-in-generic-arg", "trait A {}\nfunction f(x: Map[A + float, i32]): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"impl-names-float", "struct float { n: i32 }\nimpl float {\n  function get(): i32 { return 0; }\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"bound-assoc-pin", "trait Holder {\n  type Item;\n}\nfunction f[T: Holder[Item = i32]](x: T): i32 {\n  return 0;\n}\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"array-missing-bracket", "function main(): i32 {\n  let x = [1 2];\n  return 0;\n}\n"},
 	// A lambda's return annotation is followed by the lambda's own arrow, so
