@@ -13,7 +13,7 @@ import (
 //
 // The other two tiers refuse an out-of-range string index:
 //
-//	interp        exit 1    string index 99 out of range [0, 3)
+//	interp        exit 134  fern: string index out of range
 //	native x86-64 exit 134  fern: string index out of range
 //
 // The self-host wasm emitter did neither. `str_index` was a plain arm of

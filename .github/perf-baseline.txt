@@ -65,11 +65,11 @@ x86_64/array_scale_f64.text	1175
 x86_64/array_scale_f64.ir	21301811
 x86_64/array_with.ir	37759033
 x86_64/array_with.text	1202
-x86_64/ascii_scan.text	1259
+x86_64/ascii_scan.text	1265
 x86_64/ascii_scan.ir	37213680
-x86_64/byte_copy_append.text	1122
+x86_64/byte_copy_append.text	1125
 x86_64/byte_copy_append.ir	50303032
-x86_64/byte_copy_with.text	1075
+x86_64/byte_copy_with.text	1078
 x86_64/byte_copy_with.ir	49705206
 x86_64/call_overhead.text	233
 x86_64/call_overhead.ir	8250759
@@ -77,21 +77,21 @@ x86_64/closure_call.text	890
 x86_64/closure_call.ir	63018106
 x86_64/enum_match.text	1007
 x86_64/enum_match.ir	50850037
-x86_64/http_hello.text	15722
+x86_64/http_hello.text	15657
 x86_64/http_hello.ir	24268390
 x86_64/int_loop.text	178
 x86_64/int_loop.ir	12000022
-x86_64/map_int.text	5754
+x86_64/map_int.text	5757
 x86_64/map_int.ir	38013213
-x86_64/map_probe_chain.text	5761
+x86_64/map_probe_chain.text	5764
 x86_64/map_probe_chain.ir	354691233
-x86_64/map_string.text	6681
+x86_64/map_string.text	6688
 x86_64/map_string.ir	62112069	2
 x86_64/ordmap_insert.text	2828
 x86_64/ordmap_insert.ir	105979300
 x86_64/pmap_insert.text	2600
 x86_64/pmap_insert.ir	56484087
-x86_64/pvec_with.text	2778
+x86_64/pvec_with.text	2772
 x86_64/pvec_with.ir	56311395
 x86_64/record_update.ir	109849111
 x86_64/record_update.text	1513
@@ -99,27 +99,27 @@ x86_64/sort_inplace.text	1302
 x86_64/sort_inplace.ir	43386475
 x86_64/sort_ints.text	1777
 x86_64/sort_ints.ir	31486513
-x86_64/sort_strings.text	3070
+x86_64/sort_strings.text	3077
 x86_64/sort_strings.ir	105209600
-x86_64/string_build.text	1839
+x86_64/string_build.text	1846
 x86_64/string_build.ir	42789760
-x86_64/string_count_byte.text	1149
+x86_64/string_count_byte.text	1155
 x86_64/string_count_byte.ir	135589294
-x86_64/string_find_byte.text	1516
+x86_64/string_find_byte.text	1522
 x86_64/string_find_byte.ir	43567332
-x86_64/string_rfind_byte.text	1585
+x86_64/string_rfind_byte.text	1591
 x86_64/string_rfind_byte.ir	43576238
-x86_64/string_scan.text	2085
+x86_64/string_scan.text	2092
 x86_64/string_scan.ir	53025531
 x86_64/string_slice.text	816
 x86_64/string_slice.ir	38700038
-x86_64/struct_drop.text	2213
+x86_64/struct_drop.text	2220
 x86_64/struct_drop.ir	191340526
 x86_64/tokenize.text	1050
 x86_64/tokenize.ir	36960039
-x86_64/utf8_ingest_unchecked.text	7216
+x86_64/utf8_ingest_unchecked.text	7220
 x86_64/utf8_ingest_unchecked.ir	2801108
-x86_64/utf8_ingest_validated.text	7464
+x86_64/utf8_ingest_validated.text	7468
 x86_64/utf8_ingest_validated.ir	5916089
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -269,71 +269,79 @@ x86_64/utf8_ingest_validated.ir	5916089
 # records. The x86_64 figure is a local callgrind count on the merged
 # tree. The aarch64 figure is the perf lane's at the earlier head.
 #
+# Re-pinned 2026-10-22 (#12957) on `.text` only. Every aarch64 program with a
+# heap carries 3 more instructions, the frameless functions' string-index
+# trap entry (__fern_str_oob_abort_leaf). On x86_64 a program that indexes a
+# string carries its string trap stub (+4), and one that links __alloc_u8,
+# the byte allocator or str_grow carries the `.c` entries that keep the
+# caller's frame for their size and range traps (+3 each). No `.ir` row
+# moves: none of the new code runs unless a program aborts.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
 # on one program says nothing about the next. A new benchmark reports as
 # UNBASELINED here for one CI run, which is the gate saying "measured,
 # recorded, not yet compared" — paste that run's block in rather than guessing.
-aarch64/array_append.text	1234
+aarch64/array_append.text	1237
 aarch64/array_append.ir	17893556
-aarch64/array_index.text	1232
+aarch64/array_index.text	1235
 aarch64/array_index.ir	18548348
-aarch64/array_scale_f64.text	1326
+aarch64/array_scale_f64.text	1329
 aarch64/array_scale_f64.ir	25365579
-aarch64/array_with.text	1384
+aarch64/array_with.text	1387
 aarch64/array_with.ir	31219422
-aarch64/ascii_scan.text	1540
+aarch64/ascii_scan.text	1543
 aarch64/ascii_scan.ir	68660210
-aarch64/byte_copy_append.text	1380
+aarch64/byte_copy_append.text	1383
 aarch64/byte_copy_append.ir	31956591
-aarch64/byte_copy_with.text	1323
+aarch64/byte_copy_with.text	1326
 aarch64/byte_copy_with.ir	31304907
 aarch64/call_overhead.text	304
 aarch64/call_overhead.ir	11250762
-aarch64/closure_call.text	1090
+aarch64/closure_call.text	1093
 aarch64/closure_call.ir	72624111
-aarch64/enum_match.text	1210
+aarch64/enum_match.text	1213
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	16282
+aarch64/http_hello.text	16209
 aarch64/http_hello.ir	26308603
 aarch64/int_loop.text	246
 aarch64/int_loop.ir	18000025
-aarch64/map_int.text	6112
+aarch64/map_int.text	6115
 aarch64/map_int.ir	37224371
-aarch64/map_probe_chain.text	6123
+aarch64/map_probe_chain.text	6126
 aarch64/map_probe_chain.ir	353848242
-aarch64/map_string.text	7204
+aarch64/map_string.text	7207
 aarch64/map_string.ir	63502584	2
-aarch64/ordmap_insert.text	3193
+aarch64/ordmap_insert.text	3196
 aarch64/ordmap_insert.ir	114061180
-aarch64/pmap_insert.text	2868
+aarch64/pmap_insert.text	2871
 aarch64/pmap_insert.ir	66572386
-aarch64/pvec_with.text	3041
+aarch64/pvec_with.text	3039
 aarch64/pvec_with.ir	59861409
-aarch64/record_update.text	1692
+aarch64/record_update.text	1695
 aarch64/record_update.ir	104947544
-aarch64/sort_inplace.text	1496
+aarch64/sort_inplace.text	1499
 aarch64/sort_inplace.ir	52514479
-aarch64/sort_ints.text	2051
+aarch64/sort_ints.text	2054
 aarch64/sort_ints.ir	33759009
-aarch64/sort_strings.text	3471
+aarch64/sort_strings.text	3474
 aarch64/sort_strings.ir	106027235
-aarch64/string_build.text	2246
+aarch64/string_build.text	2249
 aarch64/string_build.ir	47221394
-aarch64/string_count_byte.text	1384
+aarch64/string_count_byte.text	1387
 aarch64/string_count_byte.ir	295398919
-aarch64/string_find_byte.text	1790
+aarch64/string_find_byte.text	1793
 aarch64/string_find_byte.ir	55807313
-aarch64/string_rfind_byte.text	1880
+aarch64/string_rfind_byte.text	1883
 aarch64/string_rfind_byte.ir	55809919
-aarch64/string_scan.text	2439
+aarch64/string_scan.text	2442
 aarch64/string_scan.ir	60275834
-aarch64/string_slice.text	1026
+aarch64/string_slice.text	1029
 aarch64/string_slice.ir	43620043
-aarch64/struct_drop.text	2544
+aarch64/struct_drop.text	2547
 aarch64/struct_drop.ir	221660785
-aarch64/tokenize.text	1282
+aarch64/tokenize.text	1285
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	7619
 aarch64/utf8_ingest_unchecked.ir	2676631
@@ -351,13 +359,13 @@ x86_64/perceus_rbtree.text	2778
 x86_64/perceus_rbtree.ir	56980847
 x86_64/perceus_rbtree_ck.text	3022
 x86_64/perceus_rbtree_ck.ir	65400121
-aarch64/perceus_cfold.text	2046
+aarch64/perceus_cfold.text	2049
 aarch64/perceus_cfold.ir	61163070
-aarch64/perceus_deriv.text	2878
+aarch64/perceus_deriv.text	2881
 aarch64/perceus_deriv.ir	82014028
-aarch64/perceus_nqueens.text	1706
+aarch64/perceus_nqueens.text	1709
 aarch64/perceus_nqueens.ir	106188790
-aarch64/perceus_rbtree.text	3041
+aarch64/perceus_rbtree.text	3044
 aarch64/perceus_rbtree.ir	61408114
-aarch64/perceus_rbtree_ck.text	3303
+aarch64/perceus_rbtree_ck.text	3306
 aarch64/perceus_rbtree_ck.ir	72093318
