@@ -1,0 +1,72 @@
+=== RUN   TestSelfHostFeatureCensus
+    self_host_feature_census_test.go:349: self-host feature census over 326 modules, literals stripped:
+    self_host_feature_census_test.go:349:   generic functions              16  in 2 modules
+    self_host_feature_census_test.go:349:   generic structs                 0  in 0 modules
+    self_host_feature_census_test.go:349:   arrow lambdas                  15  in 5 modules
+    self_host_feature_census_test.go:349:   nested named fns               89  in 8 modules
+    self_host_feature_census_test.go:349:   for..in loops                4194  in 252 modules
+    self_host_feature_census_test.go:349:   try op                          0  in 0 modules
+    self_host_feature_census_test.go:349:   Map type spellings             11  in 4 modules
+    self_host_feature_census_test.go:349:   astwalk call sites            313  in 27 modules
+    self_host_feature_census_test.go:349:   wildcard match arms          1367  in 42 modules
+    self_host_feature_census_test.go:349:   arrow tokens                 6145  in 77 modules
+    self_host_feature_census_test.go:349:   while loops                  4866  in 233 modules
+    self_host_feature_census_test.go:349:   as casts                     2831  in 196 modules
+    self_host_feature_census_test.go:349:   minus-one sentinel returns    680  in 71 modules
+    self_host_feature_census_test.go:349:   method decls                  159  in 10 modules
+    self_host_feature_census_test.go:349:   annotated let decls         27052  in 264 modules
+    self_host_feature_census_test.go:349:   inferred let decls           4188  in 177 modules
+    self_host_feature_census_test.go:349:   increment by one             5132  in 276 modules
+--- PASS: TestSelfHostFeatureCensus (0.54s)
+=== RUN   TestStripFernLiterals
+=== RUN   TestStripFernLiterals/plain_code
+=== RUN   TestStripFernLiterals/line_comment
+=== RUN   TestStripFernLiterals/whole-line_comment
+=== RUN   TestStripFernLiterals/string
+=== RUN   TestStripFernLiterals/comment_marker_inside_string
+=== RUN   TestStripFernLiterals/escaped_quote_in_string
+=== RUN   TestStripFernLiterals/string_ending_in_escaped_backslash
+=== RUN   TestStripFernLiterals/apostrophe_inside_string
+=== RUN   TestStripFernLiterals/quote_inside_char_literal
+=== RUN   TestStripFernLiterals/escaped_quote_char_literal
+=== RUN   TestStripFernLiterals/escaped_backslash_char_literal
+=== RUN   TestStripFernLiterals/byte_literal
+=== RUN   TestStripFernLiterals/multi-byte_char_literal
+=== RUN   TestStripFernLiterals/f-string
+=== RUN   TestStripFernLiterals/f-string_with_nested_string
+=== RUN   TestStripFernLiterals/f-string_with_brace_escapes
+=== RUN   TestStripFernLiterals/identifier_ending_in_f
+=== RUN   TestStripFernLiterals/lone_apostrophe
+=== RUN   TestStripFernLiterals/unterminated_string
+=== RUN   TestStripFernLiterals/unterminated_comment-free_f-string
+=== RUN   TestStripFernLiterals/line_count_preserved
+=== RUN   TestStripFernLiterals/comment_then_char_literal_next_line
+=== RUN   TestStripFernLiterals/string_then_comment
+=== RUN   TestStripFernLiterals/two_strings_on_a_line
+--- PASS: TestStripFernLiterals (0.00s)
+    --- PASS: TestStripFernLiterals/plain_code (0.00s)
+    --- PASS: TestStripFernLiterals/line_comment (0.00s)
+    --- PASS: TestStripFernLiterals/whole-line_comment (0.00s)
+    --- PASS: TestStripFernLiterals/string (0.00s)
+    --- PASS: TestStripFernLiterals/comment_marker_inside_string (0.00s)
+    --- PASS: TestStripFernLiterals/escaped_quote_in_string (0.00s)
+    --- PASS: TestStripFernLiterals/string_ending_in_escaped_backslash (0.00s)
+    --- PASS: TestStripFernLiterals/apostrophe_inside_string (0.00s)
+    --- PASS: TestStripFernLiterals/quote_inside_char_literal (0.00s)
+    --- PASS: TestStripFernLiterals/escaped_quote_char_literal (0.00s)
+    --- PASS: TestStripFernLiterals/escaped_backslash_char_literal (0.00s)
+    --- PASS: TestStripFernLiterals/byte_literal (0.00s)
+    --- PASS: TestStripFernLiterals/multi-byte_char_literal (0.00s)
+    --- PASS: TestStripFernLiterals/f-string (0.00s)
+    --- PASS: TestStripFernLiterals/f-string_with_nested_string (0.00s)
+    --- PASS: TestStripFernLiterals/f-string_with_brace_escapes (0.00s)
+    --- PASS: TestStripFernLiterals/identifier_ending_in_f (0.00s)
+    --- PASS: TestStripFernLiterals/lone_apostrophe (0.00s)
+    --- PASS: TestStripFernLiterals/unterminated_string (0.00s)
+    --- PASS: TestStripFernLiterals/unterminated_comment-free_f-string (0.00s)
+    --- PASS: TestStripFernLiterals/line_count_preserved (0.00s)
+    --- PASS: TestStripFernLiterals/comment_then_char_literal_next_line (0.00s)
+    --- PASS: TestStripFernLiterals/string_then_comment (0.00s)
+    --- PASS: TestStripFernLiterals/two_strings_on_a_line (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	0.554s

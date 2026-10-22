@@ -47,9 +47,9 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 
 | Construct | The language has it | Self-host uses it | Gate |
 |---|---|---|---|
-| Generic functions | ✅ monomorphised, with trait bounds | **15** — `astwalk`'s 9 fold spine and 5 accumulator map spine, and `util.append_all` | pinned |
+| Generic functions | ✅ monomorphised, with trait bounds | **16** — `astwalk`'s 9 fold spine and 5 accumulator map spine, `util.append_all` and `util.sorted_by` | pinned |
 | Generic structs | ✅ | **0** — load-bearing: a generic struct in a signature promotes its type param to the monomorphiser, which the per-module emit path does not run (the accumulator spine returns bare tuples for exactly that reason) | pinned |
-| Closures / lambdas | Capturing and escaping lambdas and nested named functions | **103**: 89 nested named functions across 8 modules, plus 14 arrow lambdas across 4 modules. Visitors capture queried names, function-signature registries, declared types and instrumentation context. | pinned |
+| Closures / lambdas | Capturing and escaping lambdas and nested named functions | **104**: 89 nested named functions across 8 modules, plus 15 arrow lambdas across 5 modules. Visitors capture queried names, function-signature registries, declared types, source line maps and instrumentation context. | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **2,026** in 66 modules — `checker.fern`, `parser.fern` and `semsource.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **12** spellings in 5 modules (`wasm_ir`'s call set, `builtins`' mirror of `JObject`, `printer`'s line-id table for the linear-space diff (#8611), `modloader`'s fact-hash de-duplication set, and `ircore`'s unit-owner tables) | pinned |
@@ -66,6 +66,10 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | Wildcard `_ =>` match arms | — | **3,038** of **11,180** arrow tokens (27%) | ceiling |
 | Locals with a written type annotation | inference exists | **17,168** of 17,175 (99.9%) | logged |
 | Methods (`function (r: T) name(…)`) | ✅ | **289** in 9 modules | logged |
+
+The generic and closure rows include the diagnostic sort from #12993
+(2026-10-22). Its generic function is util.sorted_by. Its comparator in
+fern.fern captures source line maps.
 
 The wildcard row last moved at #8410, and DOWN: the `@`-binding precondition
 the two post-match box releases in `irlower.fern` share became one `if let`

@@ -22,3 +22,8 @@ The base snapshot remains fixed for later certification comparisons.
 
 The main-d669/ directory contains the complete logs, hashes and size report.
 The earlier measurements retain their recorded source scope.
+
+The feature census also records main's diagnostic sort from #12993.
+It contains 16 generic functions and 15 arrow lambdas.
+The exact pins and the language-friction table now include util.sorted_by
+and its comparator closure. The literal-strip and census checks pass.
