@@ -163,7 +163,13 @@ pub struct VHandle { r: Option[Reader], w: Option[Writer], d: Option[Dir] }
 // an Env slot, and lookup reads through it.
 pub struct VCellA { c: Cell[i64[]], elem: string }
 
-pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VType | VHandle | VCellA;
+// VCellV is the capture cell for any other value a closure reads and its
+// enclosing body reassigns: a string, an array, a map, a struct. E057 keeps a
+// Value out of a Cell, so it holds the value as the program cell's text
+// encoding (cell_any_text), read back on every lookup.
+pub struct VCellV { c: Cell[string] }
+
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VType | VHandle | VCellA | VCellV;
 
 function v_int(n: i32): Value {
   return VInt { v: n, is_char: false };
@@ -1235,6 +1241,9 @@ function deref_cell(v: Value): Value {
       }
       return v_arr_of(els, ca.elem);
     },
+    VCellV(cv) => {
+      return cell_any_value(cv.c.get(), cell_new(0));
+    },
     _ => {
       return v;
     }
@@ -1275,6 +1284,13 @@ function cell_slot_set(slot: Value, v: Value): boolean {
           return false;
         }
       }
+    },
+    VCellV(cv) => {
+      let (ok, text) = encoded_text(v);
+      if (ok) {
+        cv.c.set(text);
+      }
+      return ok;
     },
     _ => {
       return false;
@@ -1501,9 +1517,9 @@ function cellify_env(e: Env, names: string[]): Env {
     if (idx >= 0) {
       let cur: Value = out.values[idx];
       let boxed: Value = cell_for(cur);
-      // cell_for returns its argument unchanged for a non-scalar (E049
-      // keeps those read-only) and for an already-celled slot, so this
-      // is idempotent and never re-seeds a live cell.
+      // cell_for returns its argument unchanged for a value with no cell
+      // (a function) and for an already-celled slot, so this is idempotent
+      // and never re-seeds a live cell.
       if (!is_cell(cur)) {
         out = out.update(names[i], boxed);
       }
@@ -1739,6 +1755,9 @@ function is_cell(v: Value): boolean {
     VCellF(_) => {
       return true;
     },
+    VCellV(_) => {
+      return true;
+    },
     _ => {
       return false;
     }
@@ -1762,7 +1781,14 @@ function cell_for(v: Value): Value {
     VFloat(f) => {
       return VCellF { c: cell_new(f.v) };
     },
+    VFunc(_) => {
+      return v;
+    },
     _ => {
+      let (ok, text) = encoded_text(v);
+      if (ok) {
+        return VCellV { c: cell_new(text) };
+      }
       return v;
     }
   }
@@ -1940,15 +1966,25 @@ function cell_any_text(h: usize, v: Value): boolean {
   }
 }
 
-function cell_value_text(v: Value): Value {
+// encoded_text is v in the program cell's text encoding, and whether it has one:
+// a function or a cell inside it has none.
+function encoded_text(v: Value): (boolean, string) {
   let h: usize = buf_new(64);
   if (!cell_any_text(h, v)) {
     buf_free(h);
+    return (false, "");
+  }
+  let text: string = buf_take(h);
+  buf_free(h);
+  return (true, text);
+}
+
+function cell_value_text(v: Value): Value {
+  let (ok, text) = encoded_text(v);
+  if (!ok) {
     return v_err("Cell: the value holds a function or a cell, which E057 rejects");
   }
-  let encoded: string = buf_take(h);
-  buf_free(h);
-  return v_string(encoded);
+  return v_string(text);
 }
 
 function cell_scalar_value(tag: i32, bits: i64): Value {
@@ -8225,6 +8261,9 @@ function value_eq(a: Value, b: Value): boolean {
       return false;
     },
     VCellF(_) => {
+      return false;
+    },
+    VCellV(_) => {
       return false;
     },
     VCell(_) => {
