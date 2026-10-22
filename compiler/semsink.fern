@@ -10,9 +10,12 @@
 // include the phi operands its edges hand on, which is how a recursive
 // update that became a loop passes the child it descends into. A projection
 // whose parent is itself one read above is re-read from the parent's re-read.
+// First, a read that repeats one a dominating block made is that read when
+// the plan must take the first (`reuse`).
 import "./ssa";
 import "./ssadeps";
 import "./ssalive";
+import "./semcse";
 import "./ssasem";
 import "./typeinfo";
 import "./util";
@@ -24,12 +27,86 @@ pub struct Sunk { f: ssasem.Func, reread: i32 }
 // out of each block, counting only the uses that name them; and, by value,
 // the positions of the blocks that use it other than to read a projection of
 // it or test its variant.
-struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][] }
+struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][], kids: i32[][], grown: i32[][] }
 
 // A phi operand a block's edge hands on, rewritten to the block's re-read.
 struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
 
 pub function sink(f: ssasem.Func): Sunk {
+  let ru: Sunk = reuse(f);
+  let sk: Sunk = sink_rereads(ru.f);
+  return Sunk { f: sk.f, reread: ru.reread + sk.reread };
+}
+
+// A counted projection read off the same parent and slot as one a dominating
+// block read is that read when the first is one the plan must take out of
+// the box (child_used_above): a second read of the slot would find it
+// emptied. `reread` counts the reads replaced.
+function reuse(f: ssasem.Func): Sunk {
+  let g: ssa.SFunc = f.graph;
+  let at: i32[] = projection_blocks(g, f.values);
+  if (at.len() == 0 || !repeated_across(g, f.values, at)) {
+    return Sunk { f: f, reread: 0 };
+  }
+  let rd: Reads = reads_of(g, f.values, at);
+  if (!rd.flow.ok) {
+    return Sunk { f: f, reread: 0 };
+  }
+  let reads: ssa.SInst[] = counted_reads(g, f.values);
+  let same: i32[] = identity(f.values.len());
+  let n: i32 = 0;
+  for r in reads {
+    let bi: i32 = rd.at[r.result];
+    let first: i32 = earlier_read(rd, reads, r, bi, same, f.values);
+    if (first >= 0) {
+      same = same.with(r.result, first);
+      n = n + 1;
+    }
+  }
+  if (n == 0) {
+    return Sunk { f: f, reread: 0 };
+  }
+  return Sunk { f: semcse.replaced(f, same), reread: n };
+}
+
+// The counted projections of `g`, in block order.
+function counted_reads(g: ssa.SFunc, values: typeinfo.Type[]): ssa.SInst[] {
+  let reads: ssa.SInst[] = [];
+  for b in g.blocks {
+    for ins in b.insts {
+      if (counted_projection(ins, values)) {
+        reads = reads.append(ins);
+      }
+    }
+  }
+  return reads;
+}
+
+// Each of `n` values standing for itself.
+function identity(n: i32): i32[] {
+  let out: i32[] = __alloc_i32(n);
+  let k: i32 = 0;
+  while (k < n) {
+    out = out.with(k, k);
+    k = k + 1;
+  }
+  return out;
+}
+
+// The read in a block strictly dominating the one at `bi` that `r` repeats
+// and that must be taken, -1 for none.
+function earlier_read(rd: Reads, reads: ssa.SInst[], r: ssa.SInst, bi: i32, same: i32[], values: typeinfo.Type[]): i32 {
+  for u in reads {
+    let ub: i32 = rd.at[u.result];
+    if (u.result != r.result && ub != bi && ssadeps.dom_holds(rd.dom, bi, ub) && semcse.same_slot(u, r, same, values)
+      && child_used_above(rd, rd.spent, bi, u.result, 0)) {
+      return semcse.stand_in(same, u.result);
+    }
+  }
+  return 0 - 1;
+}
+
+function sink_rereads(f: ssasem.Func): Sunk {
   let g: ssa.SFunc = f.graph;
   let at: i32[] = crossing_projections(g, f.values);
   if (at.len() == 0) {
@@ -87,23 +164,50 @@ function projection(kind: i32): boolean {
 }
 
 // `at` is crossing_projections'.
+struct Tree { par: i32[], parent: boolean[], kids: i32[][] }
+
 function reads_of(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): Reads {
-  let par: i32[] = __alloc_i32(values.len());
-  let parent: boolean[] = __alloc_bool(values.len());
   let deps: i32[][] = [];
   while (deps.len() < values.len()) {
     deps = deps.append([]);
   }
+  let t: Tree = projection_tree(g, values, deps);
+  let pos: i32[] = ssa.block_positions(g);
+  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent_by(g, t.parent, deps, pos), kids: t.kids, grown: grown_by(g, deps) };
+}
+
+function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): Tree {
+  let par: i32[] = __alloc_i32(values.len());
+  let parent: boolean[] = __alloc_bool(values.len());
+  let kids: i32[][] = deps;
   for b in g.blocks {
     for ins in b.insts {
       if (counted_projection(ins, values)) {
         par = par.with(ins.result, ins.args[0]);
-        parent = parent.with(ins.args[0], true);
+        parent = parent.with(ins.args[0], true).with(ins.result, true);
+        kids = kids.with(ins.args[0], kids[ins.args[0]].append(ins.result));
       }
     }
   }
+  return Tree { par: par, parent: parent, kids: kids };
+}
+
+function grown_by(g: ssa.SFunc, deps: i32[][]): i32[][] {
+  let grown: i32[][] = deps;
+  let bi: i32 = 0;
+  for b in g.blocks {
+    for ins in b.insts {
+      if (grows(ins.kind_tag) && ins.args.len() > 0 && ins.args[0] >= 0 && ins.args[0] < grown.len()) {
+        grown = grown.with(ins.args[0], grown[ins.args[0]].append(bi));
+      }
+    }
+    bi = bi + 1;
+  }
+  return grown;
+}
+
+function spent_by(g: ssa.SFunc, parent: boolean[], deps: i32[][], pos: i32[]): i32[][] {
   let spent: i32[][] = deps;
-  let pos: i32[] = ssa.block_positions(g);
   let bi: i32 = 0;
   for b in g.blocks {
     for ins in b.insts {
@@ -116,18 +220,31 @@ function reads_of(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): Reads {
     if (b.term.kind_tag == 1) {
       spent = spend(spent, parent, b.term.value, bi);
     }
-    for sid in successors(b.term) {
-      let s: ssa.SBlock = g.blocks[pos[sid]];
-      let slot: i32 = util.index_of_i32(s.preds, b.id);
-      for phi in s.insts {
-        if (phi.kind_tag == 8 && slot >= 0 && slot < phi.args.len()) {
-          spent = spend(spent, parent, phi.args[slot], bi);
-        }
-      }
-    }
+    spent = spend_phi_inputs(g, pos, b, spent, parent, bi);
     bi = bi + 1;
   }
-  return Reads { dom: ssadeps.dominates(g), par: par, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent };
+  return spent;
+}
+
+// A phi input is spent at the end of the predecessor that passes it.
+function spend_phi_inputs(g: ssa.SFunc, pos: i32[], b: ssa.SBlock, spent0: i32[][], parent: boolean[], bi: i32): i32[][] {
+  let spent: i32[][] = spent0;
+  for sid in successors(b.term) {
+    let s: ssa.SBlock = g.blocks[pos[sid]];
+    let slot: i32 = util.index_of_i32(s.preds, b.id);
+    for phi in s.insts {
+      if (phi.kind_tag == 8 && slot >= 0 && slot < phi.args.len()) {
+        spent = spend(spent, parent, phi.args[slot], bi);
+      }
+    }
+  }
+  return spent;
+}
+
+// An update of its first operand, in place when that operand is the box's
+// only holder.
+function grows(kind: i32): boolean {
+  return kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.arr_concat();
 }
 
 function spend(own spent: i32[][], parent: boolean[], v: i32, bi: i32): i32[][] {
@@ -157,6 +274,52 @@ function read_arity(kind: i32): i32 {
 // worth computing. A phi operand is a use in the predecessor its edge
 // leaves.
 function crossing_projections(g: ssa.SFunc, values: typeinfo.Type[]): i32[] {
+  let at: i32[] = projection_blocks(g, values);
+  if (at.len() == 0) {
+    return at;
+  }
+  let bi: i32 = 0;
+  for b in g.blocks {
+    for ins in b.insts {
+      if (reads_across(g, b, ins, at)) {
+        return at;
+      }
+    }
+    if (returns_across(b, at, bi)) {
+      return at;
+    }
+    bi = bi + 1;
+  }
+  return [];
+}
+
+// An operand reads a projection made in another block. A phi's operand is
+// read at the end of its predecessor.
+function reads_across(g: ssa.SFunc, b: ssa.SBlock, ins: ssa.SInst, at: i32[]): boolean {
+  let slot: i32 = 0;
+  for a in ins.args {
+    if (a >= 0 && a < at.len() && at[a] >= 0) {
+      let from: i32 = b.id;
+      if (ins.kind_tag == 8 && slot < b.preds.len()) {
+        from = b.preds[slot];
+      }
+      if (g.blocks[at[a]].id != from) {
+        return true;
+      }
+    }
+    slot = slot + 1;
+  }
+  return false;
+}
+
+function returns_across(b: ssa.SBlock, at: i32[], bi: i32): boolean {
+  let v: i32 = b.term.value;
+  return b.term.kind_tag == 1 && v >= 0 && v < at.len() && at[v] >= 0 && at[v] != bi;
+}
+
+// The position of each counted projection's block, by value, -1 for every
+// other value; empty when there is no counted projection.
+function projection_blocks(g: ssa.SFunc, values: typeinfo.Type[]): i32[] {
   let at: i32[] = [];
   let bi: i32 = 0;
   for b in g.blocks {
@@ -175,33 +338,42 @@ function crossing_projections(g: ssa.SFunc, values: typeinfo.Type[]): i32[] {
     }
     bi = bi + 1;
   }
-  if (at.len() == 0) {
-    return at;
+  return at;
+}
+
+// Whether a value has two counted reads of the same slot in different
+// blocks, the only case reuse can act on, so the dominators and liveness
+// it needs are computed for nothing else.
+function repeated_across(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): boolean {
+  let by: i32[][] = [];
+  while (by.len() < values.len()) {
+    by = by.append([]);
   }
-  bi = 0;
-  for b in g.blocks {
-    for ins in b.insts {
-      let slot: i32 = 0;
-      for a in ins.args {
-        if (a >= 0 && a < at.len() && at[a] >= 0) {
-          let from: i32 = b.id;
-          if (ins.kind_tag == 8 && slot < b.preds.len()) {
-            from = b.preds[slot];
-          }
-          if (g.blocks[at[a]].id != from) {
-            return at;
-          }
-        }
-        slot = slot + 1;
+  let reads: ssa.SInst[] = counted_reads(g, values);
+  let k: i32 = 0;
+  for ins in reads {
+    let p: i32 = ins.args[0];
+    if (p >= 0 && p < by.len()) {
+      if (repeats_one(reads, by[p], ins, at)) {
+        return true;
       }
+      by = by.with(p, by[p].append(k));
     }
-    let v: i32 = b.term.value;
-    if (b.term.kind_tag == 1 && v >= 0 && v < at.len() && at[v] >= 0 && at[v] != bi) {
-      return at;
-    }
-    bi = bi + 1;
+    k = k + 1;
   }
-  return [];
+  return false;
+}
+
+// Whether `ins` reads the slot one of the reads `seen` names reads, in
+// another block.
+function repeats_one(reads: ssa.SInst[], seen: i32[], ins: ssa.SInst, at: i32[]): boolean {
+  for k in seen {
+    let r: ssa.SInst = reads[k];
+    if (r.kind_tag == ins.kind_tag && r.imm == ins.imm && r.str == ins.str && at[r.result] != at[ins.result]) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Whether the block at `bi` re-reads anything: sink_block rebuilds a block,
@@ -312,7 +484,30 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
 // while the child lives: a parent handed on, a record moved into a loop say,
 // would have to be kept for the re-read and copied by whoever it went to.
 function read_above(rd: Reads, bi: i32, v: i32): boolean {
-  return read_above_for(rd, bi, v, v);
+  return read_above_for(rd, bi, v, v) && !child_used_above(rd, rd.grown, bi, v, 0);
+}
+
+// Whether a projection read off `v`, at any depth, has a use `by` names in a
+// block other than the one at `bi` that dominates it. `by` is `rd.spent`,
+// any use but a further read, or `rd.grown`, an update in place. Such a read
+// is one the plan must take out of its box, and every read on the way to it
+// with it, so the slot `v` came from must not be read again: a read at `bi`
+// is a second read of it.
+function child_used_above(rd: Reads, by: i32[][], bi: i32, v: i32, depth: i32): boolean {
+  if (depth > 8) {
+    return true;
+  }
+  for c in rd.kids[v] {
+    for s in by[c] {
+      if (s != bi && ssadeps.dom_holds(rd.dom, bi, s)) {
+        return true;
+      }
+    }
+    if (child_used_above(rd, by, bi, c, depth + 1)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // read_above for `v`, a parent on the way to `leaf`, the value the block

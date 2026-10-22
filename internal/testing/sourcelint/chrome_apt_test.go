@@ -41,6 +41,9 @@ func TestDisableChromeAptSources(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.source), 0o640); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Chmod(path, 0o640); err != nil {
+				t.Fatal(err)
+			}
 			for range 2 {
 				if out, err := exec.Command("bash", script, root).CombinedOutput(); err != nil {
 					t.Fatalf("cleanup: %v\n%s", err, out)
