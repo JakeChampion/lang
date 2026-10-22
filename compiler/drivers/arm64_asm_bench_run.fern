@@ -54,8 +54,10 @@ function main(): i32 {
   let dv: i64 = arm64_native.macho_data_vaddr(pa.text.len(), 0, p.data.len(), p.bss_size);
   p = arm64_native.arm64_gas_link(p, tv, dv);
   let pa2: arm64_native.Arm64Asm = p.asm;
-  print("text=" + pa2.text.len().to_string() + " data=" + p.data.len().to_string()
-    + " bump=" + __heap_bump_bytes().to_string() + "\n");
+  // `text` is the code; the read-only constants laid after it are counted on their own.
+  let code: i32 = arm64_native.arm64_code_len(p);
+  print("text=" + code.to_string() + " data=" + p.data.len().to_string()
+    + " bump=" + __heap_bump_bytes().to_string() + " ro=" + (pa2.text.len() - code).to_string() + "\n");
   if (p.unknown.len() > 0) {
     let u: i32 = 0;
     while (u < p.unknown.len()) {
@@ -67,7 +69,7 @@ function main(): i32 {
     // Little-endian bytes back into 32-bit words, so the output is directly
     // comparable with the native assembler's instruction stream.
     let b: i32 = 0;
-    while (b + 3 < pa2.text.len()) {
+    while (b + 3 < code) {
       let w: i64 = pa2.text[b] as i64 | pa2.text[b + 1] as i64 << 8
         | pa2.text[b + 2] as i64 << 16 | pa2.text[b + 3] as i64 << 24;
       print("word " + (b / 4).to_string() + " " + w.to_string());
