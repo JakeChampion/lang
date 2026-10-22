@@ -1,0 +1,14 @@
+generic nan == nan false
+generic nan != nan true
+generic 1 < nan false
+generic nan >= 1 false
+concrete nan == nan false
+concrete 1 < nan false
+eq nan nan true
+cmp 1 nan < 0 true
+generic f32 nan == nan false
+generic struct == true
+generic struct < true
+concrete struct >= false
+concrete enum < true
+generic enum >= false

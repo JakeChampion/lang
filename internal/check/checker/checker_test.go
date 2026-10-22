@@ -1839,10 +1839,9 @@ function main(): i32 { return 0; }`)
 	}
 }
 
-// Comparisons on a bounded TYPE PARAMETER mean the bound's method (#12034):
-// an ordering on a `T` whose bound supplies `cmp` is `a.cmp(b) <op> 0`, an
-// equality on one whose bound supplies `eq` is `a.eq(b)`. An ordering on a `T`
-// whose bound supplies no `cmp` stays E009; equality needs no bound.
+// An ordering on a bounded TYPE PARAMETER needs a bound that supplies `cmp`,
+// and stays E009 without one; equality needs no bound. Each instance then
+// compares at its own type (#12697).
 func TestComparisonOverTypeParam(t *testing.T) {
 	const traits = `trait Ord { function cmp(self: Self, o: Self): i32; }
 trait Eq { function eq(self: Self, o: Self): boolean; }

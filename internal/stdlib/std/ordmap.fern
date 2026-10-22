@@ -734,7 +734,7 @@ function node_ordered[K: cmp.Ord, V](l: OrdMap[K, V], k: K, r: OrdMap[K, V]): bo
   match (node_max_node(l)) {
     Tip => {},
     Bin(ml, mk, mv, mr, ms) => {
-      if (mk >= k) {
+      if (mk.cmp(k) >= 0) {
         return false;
       }
     }
@@ -742,7 +742,7 @@ function node_ordered[K: cmp.Ord, V](l: OrdMap[K, V], k: K, r: OrdMap[K, V]): bo
   match (node_min_node(r)) {
     Tip => {},
     Bin(ml, mk, mv, mr, ms) => {
-      if (mk <= k) {
+      if (mk.cmp(k) <= 0) {
         return false;
       }
     }

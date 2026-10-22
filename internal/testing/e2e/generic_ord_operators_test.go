@@ -6,14 +6,12 @@ import (
 	"testing"
 )
 
-// The comparison operators on a value of a bounded type variable mean the
-// bound's method in every instance (#12034): `<` on `T: Ord` is `a.cmp(b) < 0`
-// and `==` on `T: Eq` is `a.eq(b)`. For an f64 instance that is cmp's total
-// order, NaN above every number, and eq's NaN equal to itself, not the IEEE
-// operators. The core/cmp, core/iter and std/array helpers write their
-// comparisons with the operators, so they are held to the same order. NaN
-// prints as "nan": 0.0 / 0.0 is a negative NaN on x86-64 and a positive one on
-// arm64.
+// A comparison operator on a value of a bounded type variable is the
+// instance's own operator (#12697): at f64 it is IEEE, so NaN is unordered and
+// unequal to itself, as it is in concrete code. The core/cmp, core/iter and
+// std/array helpers call `cmp`, so they keep its total order, NaN above every
+// number. NaN prints as "nan": 0.0 / 0.0 is a negative NaN on x86-64 and a
+// positive one on arm64.
 const genericOrdOperatorsSrc = `import "core/cmp" as cmp;
 import "core/iter" as iter;
 import "std/array";
@@ -49,8 +47,8 @@ function main(): i32 {
 }
 `
 
-const genericOrdOperatorsWant = `TFTT
-TFTT
+const genericOrdOperatorsWant = `FFTT
+FTTF
 4607182418800017408 nan 4611686018427387904
 TTTF
 nan

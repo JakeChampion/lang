@@ -442,8 +442,8 @@ pub function nth[T, I: Iterator[T]](it: I, n: i32): Option[T] {
   return None;
 }
 
-// min returns the smallest value an iterator yields by `Ord`, or `None` if
-// empty. Ties keep the first.
+// min returns the smallest value an iterator yields by `Ord`'s `cmp`, or
+// `None` if empty. Ties keep the first.
 pub function min[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
   match (it.next()) {
     Some(first) => {
@@ -453,7 +453,7 @@ pub function min[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
       while (go) {
         match (cur.next()) {
           Some(t) => {
-            if (t.0 < best) {
+            if (t.0.cmp(best) < 0) {
               best = t.0;
             }
             cur = t.1;
@@ -471,8 +471,8 @@ pub function min[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
   }
 }
 
-// max returns the largest value an iterator yields by `Ord`, or `None` if
-// empty. Ties keep the first.
+// max returns the largest value an iterator yields by `Ord`'s `cmp`, or
+// `None` if empty. Ties keep the first.
 pub function max[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
   match (it.next()) {
     Some(first) => {
@@ -482,7 +482,7 @@ pub function max[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
       while (go) {
         match (cur.next()) {
           Some(t) => {
-            if (t.0 > best) {
+            if (t.0.cmp(best) > 0) {
               best = t.0;
             }
             cur = t.1;

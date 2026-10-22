@@ -999,7 +999,7 @@ pub function running_max[T: cmp.Ord](xs: T[]): T[] {
   let best: T = xs[0];
   let i: i32 = 0;
   while (i < xs.len()) {
-    if (xs[i] > best) {
+    if (xs[i].cmp(best) > 0) {
       best = xs[i];
     }
     out = out.append(best);
@@ -1016,7 +1016,7 @@ pub function running_min[T: cmp.Ord](xs: T[]): T[] {
   let best: T = xs[0];
   let i: i32 = 0;
   while (i < xs.len()) {
-    if (xs[i] < best) {
+    if (xs[i].cmp(best) < 0) {
       best = xs[i];
     }
     out = out.append(best);
@@ -2068,10 +2068,10 @@ pub function (xs: T[]) range[T: cmp.Ord + num.Sub](): Option[T] {
   let lo: T = xs[0];
   let hi: T = xs[0];
   for x in xs {
-    if (x < lo) {
+    if (x.cmp(lo) < 0) {
       lo = x;
     }
-    if (x > hi) {
+    if (x.cmp(hi) > 0) {
       hi = x;
     }
   }

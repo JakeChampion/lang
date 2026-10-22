@@ -773,7 +773,7 @@ pub function assert_neq[T: cmp.Eq + cmp.Display](actual: T, expected: T): TestOu
 }
 
 pub function assert_lt[T: cmp.Ord + cmp.Display](a: T, b: T): TestOutcome {
-  if (a < b) {
+  if (a.cmp(b) < 0) {
     return Pass;
   }
   return Fail("assert_lt: expected " + __quoted(a.to_string())
