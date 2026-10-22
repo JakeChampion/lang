@@ -10289,14 +10289,10 @@ func (c *checker) tryConvertErrToDyn(n *ast.TryOp, srcEnum, retEnum ast.EnumType
 	if !ok {
 		return nil, false
 	}
-	tn, ok := methodTypeName(srcEnum.Args[1])
-	if !ok {
-		return nil, false
-	}
 	// E must implement EVERY trait in the dyn-error set — `dyn A + B` ⇐ E iff
 	// E impls A AND B (the same impl-all gate the multi-trait coercion uses).
 	// A single-trait `dyn Error` is the 1-element case.
-	if !c.implementsAllDynTraits(dt, tn) {
+	if !c.canBoxInto(dt, srcEnum.Args[1]) {
 		return nil, false
 	}
 	c.tryConvN++
@@ -11517,7 +11513,7 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 			// Coercion gate: the concrete must implement EVERY trait in
 			// the set (`dyn A + B` ⇐ C iff C impls A AND B). Record the
 			// whole set so tree-shaking roots all the impl methods.
-			if tn, ok := methodTypeName(srcType); ok && c.implementsAllDynTraits(dt, tn) {
+			if tn, ok := methodTypeName(srcType); ok && c.canBoxInto(dt, srcType) {
 				if c.info.DynCoercions == nil {
 					c.info.DynCoercions = map[ast.Expr]DynCoercion{}
 				}
@@ -11740,19 +11736,57 @@ func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string) bool {
 	return true
 }
 
+// canBoxInto checks concrete implementations or the source parameter's declared bounds.
+func (c *checker) canBoxInto(dt ast.DynTraitType, src ast.Type) bool {
+	param, isParam := src.(ast.ParamType)
+	if !isParam {
+		tn, ok := methodTypeName(src)
+		return ok && c.implementsAllDynTraits(dt, tn)
+	}
+	decl := c.typeParamDecl(param.Name)
+	if decl == nil {
+		return false
+	}
+	direct := decl.Bounds[param.Name]
+	traits := c.expandTraits(direct)
+	for i, trait := range dt.Traits {
+		if !slices.Contains(traits, trait) {
+			return false
+		}
+		// A bound does not establish the associated types of a concrete implementation.
+		if len(dt.AssocFor(i)) > 0 {
+			return false
+		}
+		if want := dt.ArgsFor(i); len(want) > 0 {
+			matched := false
+			for j, bound := range direct {
+				if args := decl.BoundArgs[param.Name]; bound == trait && j < len(args) && typeArgsEqual(args[j], want) {
+					matched = true
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // missingDynTraits returns a human-readable description of which trait(s)
 // in the `dyn` set the concrete type `src` fails to implement — used to
 // name the offending trait(s) in coercion-failure diagnostics. Returns
 // the single trait spelling for a 1-element gap (so the single-trait
 // message reads exactly as before).
 func (c *checker) missingDynTraits(dt ast.DynTraitType, src ast.Type) string {
-	tn, ok := methodTypeName(src)
-	if !ok {
-		return demangle(dt.Trait0())
+	if _, ok := methodTypeName(src); !ok {
+		if _, param := src.(ast.ParamType); !param {
+			return demangle(dt.Trait0())
+		}
 	}
 	var missing []string
-	for _, tr := range dt.Traits {
-		if !c.info.Impls[tr][tn] {
+	for i, tr := range dt.Traits {
+		one := ast.NewDynTraitTypeFull([]string{tr}, [][]ast.Type{dt.ArgsFor(i)}, [][]ast.AssocBinding{dt.AssocFor(i)})
+		if !c.canBoxInto(one, src) {
 			missing = append(missing, demangle(tr))
 		}
 	}
@@ -12011,12 +12045,7 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 		if _, isDyn := src.(ast.DynTraitType); isDyn {
 			return false // distinct dyn types: only Equal (handled above) assigns
 		}
-		if tn, ok := methodTypeName(src); ok {
-			// Impl-ALL: a concrete coerces to `dyn A + B` iff it impls
-			// every trait in the set.
-			return c.implementsAllDynTraits(dt, tn)
-		}
-		return false
+		return c.canBoxInto(dt, src)
 	}
 	// WIT resource handles (P5 — docs/WIT-BRING-YOUR-OWN.md): an owned handle
 	// `own R` coerces to a borrow `borrow R` of the same resource (you may

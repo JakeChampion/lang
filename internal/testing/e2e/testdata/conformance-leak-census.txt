@@ -935,6 +935,7 @@ sso_triple_concat_via_inline                         0
 static_variant_of_an_unsettled_generic_enum          0
 stdin_double                                         0
 stdin_line                                           0
+stdlib_errors_box_through_try                        0
 str_to_owned_into_own_param                          0
 strarrarr_struct_field                               0
 strconcat                                            0
