@@ -1942,6 +1942,11 @@ if (!verify.verify_signed(leaf, scheme, signed, signature)) { … }
   certificate below the CA that sets them. A certificate marking constraints
   of another form critical is refused. Policies and revocation are not
   checked.
+- `DENIED_SPKI` holds the SHA-256 of each key that is refused on any path,
+  whatever the roots: the eight eMudhra intermediate CA keys of
+  CVE-2026-111943, the same list as Go's crypto/x509. A chain with such a
+  key is refused with `DeniedKey`, at the leaf or at an issuer.
+  `denied_key(cert)` is the check alone.
 
 ### `std/tls/x509`
 
@@ -1953,7 +1958,8 @@ X.509 certificates (RFC 5280) as TLS reads them. `parse(der)` answers a
 - `issuer` and `subject`, each a `Name { raw, common_name }`.
 - `not_before` and `not_after`, in Unix seconds.
 - `key`: `RsaKey(n, e)`, `EcKey(curve, point)` on P-256 or P-384,
-  `Ed25519Key(k)` or `OtherKey(oid)`.
+  `Ed25519Key(k)` or `OtherKey(oid)`, and `spki`, the SubjectPublicKeyInfo
+  DER it was read from.
 - `ca`, `path_len`, `key_usage` (as `KU_*` bits) and `ext_key_usage`.
 - `permitted_dns`, `excluded_dns`, `permitted_ip` and `excluded_ip`, a CA's
   name constraints (each IP subtree an address then its mask).
