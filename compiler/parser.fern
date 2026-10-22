@@ -520,6 +520,10 @@ pub function is_cast_op(op: string): boolean {
 // leaves, so `return (;` stays diagnosed.
 pub const BARE_RETURN: string = "bare-return";
 
+// REPORTED is the ExprUnknown kind for a token an expectation before it has
+// already refused, so the token is reported once.
+pub const REPORTED: string = "reported";
+
 // bare_return reports whether a `return`'s value is absent.
 pub function bare_return(e: ast.Expr): boolean {
   if let ast.ExprUnknown(u) = e {
@@ -1899,16 +1903,52 @@ function (p: Par) expect(t: string): Par {
   return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \"" + t + "\", got " + tok_desc(p.peek()))) };
 }
 
+// reported_at says whether the last expectation the parser recorded refused
+// the token at line:col.
+function (p: Par) reported_at(line: i32, col: i32): boolean {
+  if (p.type_errs.len() == 0) {
+    return false;
+  }
+  if let ast.StmtUnknown(u) = p.type_errs[p.type_errs.len() - 1] {
+    return u.line == line && u.col == col;
+  }
+  return false;
+}
+
 // missing_close is the sentinel for a construct whose closer, named by `kind`,
 // is absent after `parts`. A part holding a refusal is the earlier error, the
-// one native stops at, so it stands in for the construct.
-function missing_close(kind: string, parts: ast.Expr[], p: Par): ast.Expr {
+// one native stops at, so it stands in for the construct. The parse resumes
+// past the construct's own closer, or at the `;` or enclosing closer that
+// ends it first.
+function missing_close(kind: string, parts: ast.Expr[], p: Par): (ast.Expr, Par) {
+  let closer: string = slice_unchecked(kind, 8, 9) + "";
+  let at: ast.Expr = e_unknown_at(kind, p.peek_line(), p.peek_col());
   for e in parts {
     if (holds_sentinel(e)) {
-      return e;
+      at = e;
+      break;
     }
   }
-  return e_unknown_at(kind, p.peek_line(), p.peek_col());
+  let depth: i32 = 0;
+  while (!p.at_end()) {
+    let pc: string = p.peek_punct();
+    if (depth == 0 && pc == closer) {
+      return (at, p.advance());
+    }
+    if (depth == 0 && pc == ";") {
+      break;
+    }
+    if (pc == "(" || pc == "[" || pc == "{") {
+      depth = depth + 1;
+    } else if (pc == ")" || pc == "]" || pc == "}") {
+      if (depth == 0) {
+        break;
+      }
+      depth = depth - 1;
+    }
+    p = p.advance();
+  }
+  return (at, p);
 }
 
 // end_of is expect_semi after a statement ending in `e`. An expression the
@@ -2708,7 +2748,7 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
     } else {
       // No overrides — expect the closing brace (pure copy).
       if (p.peek_punct() != "}") {
-        return (missing_close("missing } in struct update", [base], p), p);
+        return missing_close("missing } in struct update", [base], p);
       }
       p = p.advance();
       return (e_struct_update(type_name, fnames, flines, fcols, fvals, base, sline, scol), p);
@@ -2751,7 +2791,7 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
         parts = parts.append(v);
       }
     }
-    return (missing_close("missing } in struct lit", parts, p), p);
+    return missing_close("missing } in struct lit", parts, p);
   }
   p = p.advance();
   if (has_base) {
@@ -2957,7 +2997,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         }
       }
       if (p.peek_punct() != ")") {
-        return (missing_close("missing ) in call", args, p), p);
+        return missing_close("missing ) in call", args, p);
       }
       p = p.advance();
       if (pending_type_args.len() > 0) {
@@ -2988,7 +3028,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         let (shi_expr, shi_p) = parse_expr(p);
         p = shi_p;
         if (p.peek_punct() != "]") {
-          return (missing_close("missing ] in slice", [shi_expr], p), p);
+          return missing_close("missing ] in slice", [shi_expr], p);
         }
         p = p.advance();
         base = e_slice_from_start(base, shi_expr, bline, bcol);
@@ -3119,13 +3159,13 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         let (end_expr, end_p) = parse_expr(p);
         p = end_p;
         if (p.peek_punct() != "]") {
-          return (missing_close("missing ] in slice", [idx_expr, end_expr], p), p);
+          return missing_close("missing ] in slice", [idx_expr, end_expr], p);
         }
         p = p.advance();
         base = e_slice(base, idx_expr, end_expr, bline, bcol);
       } else {
         if (p.peek_punct() != "]") {
-          return (missing_close("missing ] in index", [idx_expr], p), p);
+          return missing_close("missing ] in index", [idx_expr], p);
         }
         p = p.advance();
         base = e_index(base, idx_expr, bline, bcol);
@@ -3441,7 +3481,9 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let kwline: i32 = p.peek_line();
         let kwcol: i32 = p.peek_col();
         let look: Par = p.advance();
-        if (look.peek_punct() == ".") {
+        // `::` takes the same base, so parse_postfix refuses it as a path
+        // separator, as native does.
+        if (look.peek_punct() == "." || look.peek_punct() == "::") {
           return parse_postfix(look, e_ident_at(x.name, kwline, kwcol));
         }
       }
@@ -3568,7 +3610,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
           }
         }
         if (p.peek_punct() != "]") {
-          return (missing_close("missing ] in array literal", elems, p), p);
+          return missing_close("missing ] in array literal", elems, p);
         }
         p = p.advance();
         return parse_postfix(p, e_array_at(elems, x.line, x.col));
@@ -3608,8 +3650,12 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       // punct that failed, not the token the parser resumed at.
       let badline: i32 = p.peek_line();
       let badcol: i32 = p.peek_col();
+      let bad: string = "punct:" + x.text;
+      if (p.reported_at(badline, badcol)) {
+        bad = REPORTED;
+      }
       p = p.advance();
-      return (e_unknown_at("punct:" + x.text, badline, badcol), p);
+      return (e_unknown_at(bad, badline, badcol), p);
     },
     lexer.TokEof(_) => {
       return (e_unknown_at("eof", p.peek_line(), p.peek_col()), p);
