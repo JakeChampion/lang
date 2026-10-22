@@ -133,6 +133,18 @@ struct Rewrite { f: ssasem.Func, changed: boolean }
 pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], uncalled: boolean[], size: boolean): Inlined {
   let ix: util.NameIndex = util.name_index(names);
   let calls: i32[] = call_counts(funcs0, ix);
+  let sp: Spliceable = splice_plan(funcs0, ix, calls, inlinable, unnamed, size);
+  let done: Rounds = splice_rounds(funcs0, rewrite, sp);
+  let rounds: Inlined = done.out;
+  sp = grown_leaves(rounds, done.sp);
+  let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
+  let out: Inlined = split_all(paired_all(rounds, names, rewrite, uncalled), rewrite, modes);
+  dump_wanted(out.funcs);
+  return Inlined { ...out, spliced: spliced_away(sp, ctors, calls, call_counts(out.funcs, ix)) };
+}
+
+// Which splice each function takes, before any round runs.
+function splice_plan(funcs0: ssasem.Func[], ix: util.NameIndex, calls: i32[], inlinable: boolean[], unnamed: boolean[], size: boolean): Spliceable {
   let cycle: i32[] = ownership.cycles(callees_of_all(funcs0, ix));
   let leaves: boolean[] = [];
   let once: boolean[] = [];
@@ -140,23 +152,23 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let small: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs0.len()) {
-    let is_leaf: boolean = !size && inlinable[i] && (leaf(funcs0[i]) || updater(funcs0[i]));
-    let is_shared: boolean = !size && !is_leaf && inlinable[i] && unnamed[i] && shared_spliceable(funcs0[i], calls[i], cycle[i]);
-    small = small.append(is_shared && count_insts(funcs0[i].graph) <= max_shared_insts());
+    let f: ssasem.Func = funcs0[i];
+    let is_leaf: boolean = leaf_spliceable(f, inlinable[i], size);
+    let other: boolean = !is_leaf && inlinable[i] && unnamed[i];
+    let is_shared: boolean = !size && other && shared_spliceable(f, calls[i], cycle[i]);
+    small = small.append(is_shared && count_insts(f.graph) <= max_shared_insts());
     leaves = leaves.append(is_leaf);
     shared = shared.append(is_shared);
-    once = once.append(is_shared || !is_leaf && inlinable[i] && unnamed[i] && once_spliceable(funcs0[i], calls[i]));
+    once = once.append(is_shared || other && once_spliceable(f, calls[i]));
     i = i + 1;
   }
-  let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, small: small, inlinable: inlinable, calls: calls, unnamed: unnamed, cycle: cycle, size: size };
-  let done: Rounds = splice_rounds(funcs0, rewrite, sp);
-  let rounds: Inlined = done.out;
-  sp = grown_leaves(rounds, done.sp);
-  let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
-  let out: Inlined = split_all(paired_all(rounds, names, rewrite, uncalled), rewrite, modes);
+  return Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, small: small, inlinable: inlinable, calls: calls, unnamed: unnamed, cycle: cycle, size: size };
+}
+
+function dump_wanted(funcs: ssasem.Func[]): void {
   match (env("FERN_SEM_DUMP")) {
     Some(want) => {
-      for f in out.funcs {
+      for f in funcs {
         if (f.graph.name == want) {
           dump_func(f);
         }
@@ -164,7 +176,6 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
     },
     None => {}
   }
-  return Inlined { ...out, spliced: spliced_away(sp, ctors, calls, call_counts(out.funcs, ix)) };
 }
 
 // The semantic graph of the function `FERN_SEM_DUMP` names as this pass
@@ -190,6 +201,10 @@ function dump_func(f: ssasem.Func): void {
 }
 
 // Whether `f`, called `calls` times and no leaf, is spliced into its caller.
+function leaf_spliceable(f: ssasem.Func, inlinable: boolean, size: boolean): boolean {
+  return !size && inlinable && (leaf(f) || updater(f));
+}
+
 function once_spliceable(f: ssasem.Func, calls: i32): boolean {
   return calls == 1 && !lends_view(f) && spliceable(f, max_once_insts());
 }

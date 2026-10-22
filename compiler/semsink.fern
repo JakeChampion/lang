@@ -164,13 +164,21 @@ function projection(kind: i32): boolean {
 }
 
 // `at` is crossing_projections'.
+struct Tree { par: i32[], parent: boolean[], kids: i32[][] }
+
 function reads_of(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): Reads {
-  let par: i32[] = __alloc_i32(values.len());
-  let parent: boolean[] = __alloc_bool(values.len());
   let deps: i32[][] = [];
   while (deps.len() < values.len()) {
     deps = deps.append([]);
   }
+  let t: Tree = projection_tree(g, values, deps);
+  let pos: i32[] = ssa.block_positions(g);
+  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent_by(g, t.parent, deps, pos), kids: t.kids, grown: grown_by(g, deps) };
+}
+
+function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): Tree {
+  let par: i32[] = __alloc_i32(values.len());
+  let parent: boolean[] = __alloc_bool(values.len());
   let kids: i32[][] = deps;
   for b in g.blocks {
     for ins in b.insts {
@@ -181,15 +189,28 @@ function reads_of(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): Reads {
       }
     }
   }
-  let spent: i32[][] = deps;
+  return Tree { par: par, parent: parent, kids: kids };
+}
+
+function grown_by(g: ssa.SFunc, deps: i32[][]): i32[][] {
   let grown: i32[][] = deps;
-  let pos: i32[] = ssa.block_positions(g);
   let bi: i32 = 0;
   for b in g.blocks {
     for ins in b.insts {
       if (grows(ins.kind_tag) && ins.args.len() > 0 && ins.args[0] >= 0 && ins.args[0] < grown.len()) {
         grown = grown.with(ins.args[0], grown[ins.args[0]].append(bi));
       }
+    }
+    bi = bi + 1;
+  }
+  return grown;
+}
+
+function spent_by(g: ssa.SFunc, parent: boolean[], deps: i32[][], pos: i32[]): i32[][] {
+  let spent: i32[][] = deps;
+  let bi: i32 = 0;
+  for b in g.blocks {
+    for ins in b.insts {
       if (!projection(ins.kind_tag) && ins.kind_tag != ssasem.variant_is() && ins.kind_tag != 8) {
         for a in ins.args {
           spent = spend(spent, parent, a, bi);
@@ -199,18 +220,25 @@ function reads_of(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): Reads {
     if (b.term.kind_tag == 1) {
       spent = spend(spent, parent, b.term.value, bi);
     }
-    for sid in successors(b.term) {
-      let s: ssa.SBlock = g.blocks[pos[sid]];
-      let slot: i32 = util.index_of_i32(s.preds, b.id);
-      for phi in s.insts {
-        if (phi.kind_tag == 8 && slot >= 0 && slot < phi.args.len()) {
-          spent = spend(spent, parent, phi.args[slot], bi);
-        }
-      }
-    }
+    spent = spend_phi_inputs(g, pos, b, spent, parent, bi);
     bi = bi + 1;
   }
-  return Reads { dom: ssadeps.dominates(g), par: par, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent, kids: kids, grown: grown };
+  return spent;
+}
+
+// A phi input is spent at the end of the predecessor that passes it.
+function spend_phi_inputs(g: ssa.SFunc, pos: i32[], b: ssa.SBlock, spent0: i32[][], parent: boolean[], bi: i32): i32[][] {
+  let spent: i32[][] = spent0;
+  for sid in successors(b.term) {
+    let s: ssa.SBlock = g.blocks[pos[sid]];
+    let slot: i32 = util.index_of_i32(s.preds, b.id);
+    for phi in s.insts {
+      if (phi.kind_tag == 8 && slot >= 0 && slot < phi.args.len()) {
+        spent = spend(spent, parent, phi.args[slot], bi);
+      }
+    }
+  }
+  return spent;
 }
 
 // An update of its first operand, in place when that operand is the box's
@@ -253,27 +281,40 @@ function crossing_projections(g: ssa.SFunc, values: typeinfo.Type[]): i32[] {
   let bi: i32 = 0;
   for b in g.blocks {
     for ins in b.insts {
-      let slot: i32 = 0;
-      for a in ins.args {
-        if (a >= 0 && a < at.len() && at[a] >= 0) {
-          let from: i32 = b.id;
-          if (ins.kind_tag == 8 && slot < b.preds.len()) {
-            from = b.preds[slot];
-          }
-          if (g.blocks[at[a]].id != from) {
-            return at;
-          }
-        }
-        slot = slot + 1;
+      if (reads_across(g, b, ins, at)) {
+        return at;
       }
     }
-    let v: i32 = b.term.value;
-    if (b.term.kind_tag == 1 && v >= 0 && v < at.len() && at[v] >= 0 && at[v] != bi) {
+    if (returns_across(b, at, bi)) {
       return at;
     }
     bi = bi + 1;
   }
   return [];
+}
+
+// An operand reads a projection made in another block. A phi's operand is
+// read at the end of its predecessor.
+function reads_across(g: ssa.SFunc, b: ssa.SBlock, ins: ssa.SInst, at: i32[]): boolean {
+  let slot: i32 = 0;
+  for a in ins.args {
+    if (a >= 0 && a < at.len() && at[a] >= 0) {
+      let from: i32 = b.id;
+      if (ins.kind_tag == 8 && slot < b.preds.len()) {
+        from = b.preds[slot];
+      }
+      if (g.blocks[at[a]].id != from) {
+        return true;
+      }
+    }
+    slot = slot + 1;
+  }
+  return false;
+}
+
+function returns_across(b: ssa.SBlock, at: i32[], bi: i32): boolean {
+  let v: i32 = b.term.value;
+  return b.term.kind_tag == 1 && v >= 0 && v < at.len() && at[v] >= 0 && at[v] != bi;
 }
 
 // The position of each counted projection's block, by value, -1 for every
