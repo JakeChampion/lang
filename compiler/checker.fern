@@ -5448,7 +5448,7 @@ function builtin_sigs(): string[] {
 pub function builtin_sig(name: string): typeinfo.Type {
   let head: string = name + "(";
   for row in builtin_sigs() {
-    if (row.len() > head.len() && util.str_has_prefix(row, head)) {
+    if (row.len() > head.len() && row[0] == head[0] && util.str_has_prefix(row, head)) {
       let close: i32 = util.index_of_sub(row, "): ");
       let inner: string = slice_unchecked(row, head.len(), close) + "";
       let params: typeinfo.Type[] = [];
@@ -6011,9 +6011,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // dispatch as a closure call rather than a plain
   // function lookup. Otherwise fall through to the
   // function-sig table.
-  let bound_ty: typeinfo.Type = s.lookup(name);
-  match (bound_ty) {
-    typeinfo.TypeFunc(tf) => {
+  let bound_at: i32 = s.binding_index(name);
+  if (bound_at >= 0) {
+    if let typeinfo.TypeFunc(tf) = s.types[bound_at] {
       // An unrecorded param list says nothing about the call, so a binding
       // taken from a fn-typed struct field (`let h = obj.f; h(2)`) types to
       // the declared return rather than collapsing to unknown.
@@ -6032,8 +6032,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         ci = ci + 1;
       }
       return tf.ret_type;
-    },
-    _ => {}
+    }
   }
   // Variant constructors (#4346 piece 2): `Some(x)` / `Ok(x)` / `Err(e)`
   // (and a user enum's payload variant `A(x)`) aren't functions — they
@@ -24211,8 +24210,9 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
     }
     return out;
   }
-  match (cur.lookup(callee_name)) {
-    typeinfo.TypeFunc(ft) => {
+  let bound_at: i32 = cur.binding_index(callee_name);
+  if (bound_at >= 0) {
+    if let typeinfo.TypeFunc(ft) = cur.types[bound_at] {
       if (ft.param_types.len() == 0) {
         out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", c.line, c.col));
         return out;
@@ -24228,8 +24228,7 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
         }
       }
       return out;
-    },
-    _ => {}
+    }
   }
   out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", c.line, c.col));
   return out;

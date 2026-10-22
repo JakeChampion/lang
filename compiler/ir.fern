@@ -7827,10 +7827,10 @@ function zg_rezero(ops: Op[], i: i32): boolean {
 function zg_first_write(ops: Op[], nslots: i32): i32[] {
   let k_store: i32 = K_STORE_LOCAL;
   let k_tee: i32 = K_TEE_LOCAL;
-  let first: i32[] = [];
+  let first: i32[] = __alloc_i32(nslots);
   let z: i32 = 0;
   while (z < nslots) {
-    first = first.append(ops.len());
+    first = first.with(z, ops.len());
     z = z + 1;
   }
   let i: i32 = 0;
