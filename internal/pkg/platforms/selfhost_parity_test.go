@@ -143,12 +143,10 @@ func TestSelfHostCapabilityProfilesMatch(t *testing.T) {
 	}
 }
 
-// TestSelfHostTargetNamesMatch pins the target list itself. The two compilers
-// spelled targets differently until #6635 — `arm64` there, `arm64-linux` here
-// — which meant a build command could not be moved between them, and a
-// differential had to translate. The one difference the self-host is allowed
-// is a target it has no backend for at all; there is none today, so the lists
-// are compared whole.
+// TestSelfHostTargetNamesMatch pins the target list itself, so a build command
+// moves between the two compilers unchanged. The one difference the self-host
+// is allowed is a target it has no backend for at all; there is none today, so
+// the lists are compared whole.
 func TestSelfHostTargetNamesMatch(t *testing.T) {
 	got := fernStringList(regexp.MustCompile(`(?s)pub function targets\(\): string\[\] \{\s*return \[(.*?)\];`).FindStringSubmatch(readSelfHostPlatforms(t))[1])
 	if len(got) == 0 {

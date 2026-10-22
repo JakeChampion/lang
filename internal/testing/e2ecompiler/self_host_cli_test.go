@@ -217,7 +217,7 @@ function main(): i32 {
 		}
 		wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath, stdlibRoot)
 		if code != 0 {
-			t.Fatalf("-target wasm emit exited %d, want 0", code)
+			t.Fatalf("-target wasm32-wasi emit exited %d, want 0", code)
 		}
 		// The typed lowering produces std/u32's own to_string body. What
 		// this pins is the #5992 invariant: every function the module calls,
@@ -271,7 +271,7 @@ function main(): i32 {
 		}
 		wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath, stdlibRoot)
 		if code != 0 {
-			t.Fatalf("-target wasm emit exited %d, want 0", code)
+			t.Fatalf("-target wasm32-wasi emit exited %d, want 0", code)
 		}
 		watPath := filepath.Join(dir, "capture_write.wat")
 		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
@@ -333,7 +333,7 @@ function main(): i32 {
 		}
 		wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath, stdlibRoot)
 		if code != 0 {
-			t.Fatalf("-target wasm emit exited %d, want 0", code)
+			t.Fatalf("-target wasm32-wasi emit exited %d, want 0", code)
 		}
 		if got := bytes.Count(wat, []byte("(func $P.scale ")); got != 1 {
 			t.Errorf("emitted WAT defines $P.scale %d times, want exactly 1", got)
@@ -388,7 +388,7 @@ function main(): i32 { return sum(2, 3) * 10 + mine(2, 3); }
 		}
 		wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath, stdlibRoot)
 		if code != 0 {
-			t.Fatalf("-target wasm emit exited %d, want 0", code)
+			t.Fatalf("-target wasm32-wasi emit exited %d, want 0", code)
 		}
 		// std/num's tiny `add` is inlined at its call, so it may leave no symbol.
 		if got := bytes.Count(wat, []byte("(func $i32.add ")); got > 1 {
@@ -444,7 +444,7 @@ impl B for S { function m(self: Self): i32 { return 7; } }
 				}
 				wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath)
 				if code != 0 {
-					t.Fatalf("-target wasm emit exited %d, want 0", code)
+					t.Fatalf("-target wasm32-wasi emit exited %d, want 0", code)
 				}
 				watPath := filepath.Join(dir, "dyn_"+tc.name+".wat")
 				if err := os.WriteFile(watPath, wat, 0o644); err != nil {
@@ -476,7 +476,7 @@ function main(): i32 {
 			}
 			wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath)
 			if code != 0 {
-				t.Fatalf("-target wasm emit exited %d, want 0", code)
+				t.Fatalf("-target wasm32-wasi emit exited %d, want 0", code)
 			}
 			watPath := filepath.Join(dir, "dyn_multi.wat")
 			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
@@ -2114,7 +2114,7 @@ function main(): i32 {
 		progBin := filepath.Join(dir, "arm_prog.bin")
 		_, code := runDriver(t, "-target", "arm64-linux", "-o", progBin, srcPath)
 		if code != 0 {
-			t.Fatalf("-target arm64 emit exited %d, want 0", code)
+			t.Fatalf("-target arm64-linux emit exited %d, want 0", code)
 		}
 		raw, err := os.ReadFile(progBin)
 		if err != nil {
@@ -2122,7 +2122,7 @@ function main(): i32 {
 		}
 		f, err := elf.NewFile(bytes.NewReader(raw))
 		if err != nil {
-			t.Fatalf("-target arm64 output is not a parseable ELF: %v", err)
+			t.Fatalf("-target arm64-linux output is not a parseable ELF: %v", err)
 		}
 		if f.Machine != elf.EM_AARCH64 || f.Type != elf.ET_EXEC {
 			t.Fatalf("got machine=%v type=%v, want AARCH64/EXEC", f.Machine, f.Type)
@@ -2177,7 +2177,7 @@ function main(): i32 {
 		// The driver emits a WASI WAT module under -target wasm32-wasi; run it
 		// directly with wasmtime and check exit code + stdout.
 		if _, err := exec.LookPath("wasmtime"); err != nil {
-			t.Skip("wasmtime not on PATH; skipping -target wasm")
+			t.Skip("wasmtime not on PATH; skipping -target wasm32-wasi")
 		}
 		srcPath := filepath.Join(dir, "wasm_prog.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"hi from wasm\"); return 6 * 7; }\n"), 0o644); err != nil {
@@ -2185,10 +2185,10 @@ function main(): i32 {
 		}
 		wat, code := runDriver(t, "-target", "wasm32-wasi", "-emit", "asm", srcPath)
 		if code != 0 {
-			t.Fatalf("-target wasm emit exited %d, want 0", code)
+			t.Fatalf("-target wasm32-wasi emit exited %d, want 0", code)
 		}
 		if len(wat) == 0 {
-			t.Fatal("-target wasm produced 0 bytes")
+			t.Fatal("-target wasm32-wasi produced 0 bytes")
 		}
 		watPath := filepath.Join(dir, "wasm_prog.wat")
 		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
