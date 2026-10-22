@@ -1019,6 +1019,36 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 			td.AssocTypes = append(td.AssocTypes, atName.Text)
 			continue
 		}
+		// Associated constant: `const NAME: T;` (abstract) or
+		// `const NAME: T = expr;` (a default). An associated function with
+		// no parameters, read as `Base::NAME`.
+		if p.match(lexer.Keyword, "const") {
+			ckw := p.advance()
+			cname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ":"); err != nil {
+				return nil, err
+			}
+			ctype, err := p.parseType()
+			if err != nil {
+				return nil, err
+			}
+			var body *ast.Block
+			if _, ok := p.accept(lexer.Punct, "="); ok {
+				val, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				body = &ast.Block{P: val.Pos(), Stmts: []ast.Stmt{&ast.Return{P: val.Pos(), Value: val}}}
+			}
+			if _, err := p.expect(lexer.Punct, ";"); err != nil {
+				return nil, err
+			}
+			td.Methods = append(td.Methods, ast.TraitMethod{P: ckw.Pos, Name: cname.Text, Result: ctype, Assoc: true, Const: true, Body: body})
+			continue
+		}
 		mkw, err := p.expect(lexer.Keyword, "function")
 		if err != nil {
 			return nil, err
@@ -1228,9 +1258,40 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			id.AssocTypeBindings[atName.Text] = ast.SubstSelf(atType, implType)
 			continue
 		}
-		fn, err := p.parseFunction()
-		if err != nil {
-			return nil, nil, err
+		var fn *ast.FuncDecl
+		if p.match(lexer.Keyword, "const") {
+			// Associated constant binding `const NAME: T = expr;`: an
+			// associated function with no parameters whose body returns expr.
+			ckw := p.advance()
+			cname, err := p.expect(lexer.Ident, "")
+			if err != nil {
+				return nil, nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ":"); err != nil {
+				return nil, nil, err
+			}
+			ctype, err := p.parseType()
+			if err != nil {
+				return nil, nil, err
+			}
+			if _, err := p.expect(lexer.Punct, "="); err != nil {
+				return nil, nil, err
+			}
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, nil, err
+			}
+			if _, err := p.expect(lexer.Punct, ";"); err != nil {
+				return nil, nil, err
+			}
+			fn = &ast.FuncDecl{P: ckw.Pos, Name: cname.Text, ReturnType: ctype, AssocConst: true,
+				Body: &ast.Block{P: val.Pos(), Stmts: []ast.Stmt{&ast.Return{P: val.Pos(), Value: val}}}}
+		} else {
+			f, err := p.parseFunction()
+			if err != nil {
+				return nil, nil, err
+			}
+			fn = f
 		}
 		if fn.Receiver != nil {
 			return nil, nil, p.errorf(fn.P,
@@ -6179,6 +6240,10 @@ var keywordModuleQualifier = map[string]bool{
 	"i64":    true,
 	"u32":    true,
 	"u64":    true,
+	"u8":     true,
+	"f32":    true,
+	"f64":    true,
+	"usize":  true,
 }
 
 func (p *parser) parsePrimary() (ast.Expr, error) {
@@ -6344,7 +6409,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		// rewrite resolve it like any other qualified reference.
 		if keywordModuleQualifier[t.Text] &&
 			p.i+1 < len(p.tokens) &&
-			p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "." {
+			p.tokens[p.i+1].Kind == lexer.Punct && (p.tokens[p.i+1].Text == "." || p.tokens[p.i+1].Text == "::") {
 			p.advance()
 			return &ast.Ident{P: t.Pos, Name: t.Text}, nil
 		}

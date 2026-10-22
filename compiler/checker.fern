@@ -2736,7 +2736,7 @@ function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
   while (i < names.len()) {
     let ft: typeinfo.Type = t_unknown("binding");
     if (i < fields.len()) {
-      ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "" }, s);
+      ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "", path_sep: false, const_read: false }, s);
     }
     out = out.bind(names[i], ft);
     i = i + 1;
@@ -5858,7 +5858,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       // returns unknown. `T` gives the type variable, a concrete type the real
       // type.
       if (!qhandled) {
-        let ah: AssocHit = assoc_call_req(fa.obj, fa.field, s);
+        let ah: AssocHit = assoc_call_req(fa.obj, fa.field, s, fa.const_read);
         if (ah.found) {
           // An inherent impl's associated function has no trait requirement to
           // read its return from, so it is typed from its own declaration.
@@ -14273,10 +14273,10 @@ function qual_variant_union(fa: ast.ExprFieldAccess, s: Scope): string {
 // trait that declared the requirement (empty for an inherent impl), which the
 // E021 "called as a method" message names. `params` are the requirement's
 // parameter spellings, also in `Self`, read only when `owner` is set.
-struct AssocHit { found: boolean, ret: string, owner: string, params: string[] }
+struct AssocHit { found: boolean, ret: string, owner: string, params: string[], is_const: boolean }
 
 function assoc_miss(): AssocHit {
-  return AssocHit { found: false, ret: "", owner: "", params: [] };
+  return AssocHit { found: false, ret: "", owner: "", params: [], is_const: false };
 }
 
 // trait_req_idx resolves a bound's trait SPELLING to its requirement record.
@@ -14342,7 +14342,7 @@ function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, see
       for p in rs.params {
         params = params.append(parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types));
       }
-      return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name, params: params };
+      return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name, params: params, is_const: rs.is_const };
     }
   }
   for supertrait in req.supertraits {
@@ -14688,7 +14688,7 @@ function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
         if (h.found) {
           return h;
         }
-        return AssocHit { found: true, ret: "", owner: "", params: [] };
+        return AssocHit { found: true, ret: "", owner: "", params: [], is_const: s.lookup_assoc_sig(base, field).is_const };
       }
     }
   }
@@ -14721,8 +14721,9 @@ function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): p
 // type. The object is a type qualifier with no value behind it, so walking it
 // reports E001 "undefined name" on a call native accepts (#6933). A value
 // binding of the same name shadows the type and makes it a genuine method
-// call.
-function assoc_call_req(obj: ast.Expr, field: string, s: Scope): AssocHit {
+// call. A `Base::NAME` read (`const_read`) names a declared constant, so the
+// instantiation-borne hit below is not for it.
+function assoc_call_req(obj: ast.Expr, field: string, s: Scope, const_read: boolean): AssocHit {
   match (obj) {
     ast.ExprIdent(oid) => {
       if (s.known(oid.name)) {
@@ -14744,8 +14745,8 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope): AssocHit {
       // return type is unrecoverable, as every erased parameter's is (#8461).
       // A bounded parameter must resolve through its declared traits above:
       // treating the qualifier alone as a hit also accepts T.nope().
-      if (util.index_of_str(s.tparams, oid.name) >= 0 && tp_bound_for(oid.name, s.tparams, s.tbounds).len() == 0) {
-        return AssocHit { found: true, ret: "", owner: "", params: [] };
+      if (!const_read && util.index_of_str(s.tparams, oid.name) >= 0 && tp_bound_for(oid.name, s.tparams, s.tbounds).len() == 0) {
+        return AssocHit { found: true, ret: "", owner: "", params: [], is_const: false };
       }
       return assoc_miss();
     },
@@ -14771,6 +14772,28 @@ function assoc_hit_type(h: AssocHit, obj: ast.Expr, s: Scope): typeinfo.Type {
     _ => {}
   }
   return s.resolve_type(parser.subst_self(h.ret, self_name));
+}
+
+// assoc_base_name is the type a `Base.f` names, or "" when the object is not
+// a bare name.
+function assoc_base_name(obj: ast.Expr): string {
+  if let ast.ExprIdent(oid) = obj {
+    return oid.name;
+  }
+  return "";
+}
+
+// assoc_const_read_diags holds a `Base::NAME` read to a constant and a
+// `Base.f(…)` call to a function.
+function assoc_const_read_diags(h: AssocHit, c: ast.ExprCall, mfa: ast.ExprFieldAccess): util.Diag[] {
+  if (mfa.const_read == h.is_const) {
+    return [];
+  }
+  let base: string = util.demangle(assoc_base_name(mfa.obj));
+  if (mfa.const_read) {
+    return [dg_at("E043", base + "::" + mfa.field + " is an associated function, not a constant; call it as " + base + "::" + mfa.field + "(...)", c.line, c.col)];
+  }
+  return [dg_at("E043", base + "::" + mfa.field + " is an associated constant; read it as " + base + "::" + mfa.field + " without an argument list", c.line, c.col)];
 }
 
 // assoc_arg_diags checks an associated call's arguments against the trait
@@ -15076,7 +15099,7 @@ function display_rewrite(c: ast.ExprCall, nargs: ast.Expr[], s: Scope): ast.Expr
   }
   let ln: i32 = expr_line(c.args[0]);
   let cl: i32 = expr_col(c.args[0]);
-  let callee: ast.Expr = ast.ExprFieldAccess { obj: nargs[0], field: "to_string", line: ln, col: cl, ty: "" };
+  let callee: ast.Expr = ast.ExprFieldAccess { obj: nargs[0], field: "to_string", line: ln, col: cl, ty: "", path_sep: false, const_read: false };
   return [ast.ExprCall { callee: callee, args: [], line: ln, col: cl, type_args: [], ty: "string" }];
 }
 
@@ -15242,7 +15265,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // resolution below has also missed. Ordered the other way this arm
       // claimed every such call and reported a variant nobody wrote (#8461).
       let cqen: string = qual_enum_name(mfa.obj, s);
-      if (cqen.len() > 0 && !assoc_call_req(mfa.obj, mfa.field, s).found) {
+      if (cqen.len() > 0 && !assoc_call_req(mfa.obj, mfa.field, s, mfa.const_read).found) {
         if (!qual_variant_exists(cqen, mfa.field, s)) {
           out = out.append(dg_at("E036", "enum " + cqen + " has no variant \"" + mfa.field + "\"", mfa.line, mfa.col));
         } else {
@@ -15259,12 +15282,21 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // so it must be diverted before the recursion reads it as a
       // value and reports E001 (#6933). The arguments are still
       // walked.
-      let ah: AssocHit = assoc_call_req(mfa.obj, mfa.field, s);
+      let ah: AssocHit = assoc_call_req(mfa.obj, mfa.field, s, mfa.const_read);
       if (ah.found) {
+        // A `Base::NAME` read names a constant and `Base.f(…)` a function;
+        // the rewrite marks the read's callee const_read.
+        let acr: util.Diag[] = assoc_const_read_diags(ah, c, mfa);
+        if (acr.len() > 0) {
+          return util.append_diags(out, acr);
+        }
         for arg in c.args {
           out = util.append_diags(out, call_diags(arg, s));
         }
         return util.append_diags(out, assoc_arg_diags(ah, c, mfa, s));
+      }
+      if (mfa.const_read) {
+        return out.append(dg_at("E043", util.demangle(assoc_base_name(mfa.obj)) + " has no associated constant \"" + mfa.field + "\"", c.line, c.col));
       }
       out = call_diags(mfa.obj, s);
       match (check_expr(mfa.obj, s)) {
@@ -17344,7 +17376,7 @@ function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
   let col: i32 = expr_col(fr.iter);
   let subject: ast.Expr = fr.iter;
   if (sub.via_iter) {
-    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "" }, args: [], line: line, col: col, type_args: [], ty: "" };
+    subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: fr.iter, field: "iter", line: line, col: col, ty: "", path_sep: false, const_read: false }, args: [], line: line, col: col, type_args: [], ty: "" };
   }
   return Some(parser.iterator_loop(fr, subject, col));
 }
@@ -17353,7 +17385,7 @@ function iterator_lowering(fr: ast.StmtFor, s: Scope): Option[ast.Stmt] {
 // of type `t`; unknown when `t` has no such method.
 function probe_method(t: typeinfo.Type, name: string, s: Scope): typeinfo.Type {
   let recv: ast.Expr = ast.ExprIdent { name: "__for_iter", line: 0, col: 0, ty: "" };
-  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+  let call: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: name, line: 0, col: 0, ty: "", path_sep: false, const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   return check_expr(call, s.bind("__for_iter", t));
 }
 
@@ -18772,7 +18804,8 @@ function const_grammar_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   let earlier: string[] = [];
   for fd in mod.funcs {
-    if (fd.is_const) {
+    // An associated constant is a function body, free to read `T::LANES`.
+    if (fd.is_const && fd.receiver_type.len() == 0) {
       for stmt in fd.body {
         match (stmt) {
           ast.StmtReturn(r) => {
@@ -24415,6 +24448,19 @@ function e032_stmts(stmts: ast.Stmt[], lastfn: string[], s: Scope): util.Diag[] 
 // default is synthesised onto the impl), so a complete-via-default impl is
 // never falsely flagged. This is the first slice of the E021 family; arity /
 // object-safety / supertrait / bound conformance (+ E060 / E062) are follow-ups.
+// e021_const_kind_diags is E021 when a trait's associated constant is bound by
+// a function, or its associated function by a const: the two are not
+// interchangeable even at the same signature.
+function e021_const_kind_diags(req: parser.FuncDecl, impl_fn: parser.FuncDecl, im: parser.ImplInfo): util.Diag[] {
+  if (req.is_const == impl_fn.is_const) {
+    return [];
+  }
+  if (req.is_const) {
+    return [dg_at("E021", im.impl_type + "." + req.name + " is an associated constant of trait " + im.trait_name + "; bind it with `const " + req.name + ": " + parser.subst_self(req.ret_type, im.impl_type) + " = …;`, not a function", im.line, im.col)];
+  }
+  return [dg_at("E021", im.impl_type + "." + req.name + " is an associated function of trait " + im.trait_name + "; provide it with `function`, not a const", im.line, im.col)];
+}
+
 // e021_recv_method_idx returns the index in mod.funcs of the receiver method
 // named `m` on base type `ty`, or -1. This is the impl's PROVIDING method — a
 // written impl method OR an inherent method an empty impl adopts (a builtin like
@@ -24593,11 +24639,18 @@ function e021_diags(mod: parser.Module): util.Diag[] {
           // "adopt the existing method" rule).
           let midx: i32 = e021_recv_method_idx(mod, im.impl_type, reqs[ri]);
           if (!name_in(reqs[ri], im.method_names) && midx < 0) {
-            out = out.append(dg_at("E021", im.impl_type + " does not implement " + im.trait_name + ": missing method \"" + reqs[ri] + "\"", im.line, im.col));
+            if (ri < sigs.len() && sigs[ri].is_const) {
+              out = out.append(dg_at("E021", im.impl_type + " does not implement " + im.trait_name + ": missing associated constant \"" + reqs[ri] + "\"", im.line, im.col));
+            } else {
+              out = out.append(dg_at("E021", im.impl_type + " does not implement " + im.trait_name + ": missing method \"" + reqs[ri] + "\"", im.line, im.col));
+            }
           } else if (midx >= 0 && ri < sigs.len()) {
             // Provided as a receiver method — check its signature
             // against the trait's declaration (#4347 slice 2).
-            if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im, trait_req.type_params, mod.impls)) {
+            let kind_dg: util.Diag[] = e021_const_kind_diags(sigs[ri], mod.funcs[midx], im);
+            if (kind_dg.len() > 0) {
+              out = util.append_diags(out, kind_dg);
+            } else if (!e021_sig_matches(sigs[ri], mod.funcs[midx], im, trait_req.type_params, mod.impls)) {
               out = out.append(e021_wrong_sig(sigs[ri], mod.funcs[midx], im, trait_req.type_params, mod.impls));
             }
           }
@@ -24609,7 +24662,9 @@ function e021_diags(mod: parser.Module): util.Diag[] {
         for ds in trait_req.default_sigs {
           let didx: i32 = e021_recv_method_idx(mod, im.impl_type, ds.name);
           let written: boolean = name_in(ds.name, im.method_names) && didx >= 0;
-          if (written && !e021_sig_matches(ds, mod.funcs[didx], im, trait_req.type_params, mod.impls)) {
+          if (written && e021_const_kind_diags(ds, mod.funcs[didx], im).len() > 0) {
+            out = util.append_diags(out, e021_const_kind_diags(ds, mod.funcs[didx], im));
+          } else if (written && !e021_sig_matches(ds, mod.funcs[didx], im, trait_req.type_params, mod.impls)) {
             out = out.append(e021_wrong_sig(ds, mod.funcs[didx], im, trait_req.type_params, mod.impls));
           } else if (!written && !e021_self_matches(ds, im, trait_req.type_params, mod.impls)) {
             out = out.append(dg_at("E021", im.impl_type + "." + ds.name + " has the wrong signature for trait " + im.trait_name, im.line, im.col));
@@ -27949,7 +28004,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       if (vqu.len() == 0) {
         ft = field_access_result_type(fa, typed_type(oa, fa.obj, s), s);
       }
-      return Typed { e: ast.ExprFieldAccess { obj: oa.e, field: fa.field, line: fa.line, col: fa.col, ty: type_to_irtag(ft) }, ty: ft, known: true };
+      return Typed { e: ast.ExprFieldAccess { ...fa, obj: oa.e, ty: type_to_irtag(ft) }, ty: ft, known: true };
     },
     ast.ExprIndex(x) => {
       let aa: Typed = annotate_typed(x.array, s);
@@ -31387,7 +31442,7 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
     let elems: ast.Expr[] = [];
     let i: i32 = 0;
     while (i < want.args.len()) {
-      let part: ast.Expr = ast.ExprFieldAccess { obj: e, field: util.i32_to_string(i), line: expr_line(e), col: expr_col(e), ty: "" };
+      let part: ast.Expr = ast.ExprFieldAccess { obj: e, field: util.i32_to_string(i), line: expr_line(e), col: expr_col(e), ty: "", path_sep: false, const_read: false };
       elems = elems.append(lit_float_read(part, want.args[i]));
       i = i + 1;
     }

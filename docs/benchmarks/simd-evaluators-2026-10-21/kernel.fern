@@ -1,0 +1,64 @@
+// One kernel, three evaluators: the same generic body over an f64[] as a
+// plain f64, as Dual[f64] (value and derivative) and as DoubleDouble[f64],
+// timed with std/bench so the allocation count per evaluation is visible
+// beside the time. A Dual or DoubleDouble operation builds a record; the
+// question the benchmark answers is whether those records are spliced away
+// (allocs stays at the f64 run's) or materialised (allocs grows with the
+// element count).
+import "std/bench" as bench;
+import "std/simd" as simd;
+import "std/float";
+import "std/i64";
+
+function kernel[T: simd.Math](x: T): T {
+  let p: T = simd.horner(x, [1.0, -0.5, 0.25, -0.125, 0.0625, -0.03125, 0.015625]);
+  let s: T = T.splat(1.0) / (T.splat(1.0) + (-p).exp());
+  return s * x.sqrt();
+}
+
+function inputs(n: i32): f64[] {
+  let xs: f64[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    xs = xs.append(0.5 + i as f64 * 0.001);
+    i = i + 1;
+  }
+  return xs;
+}
+
+pub function main(): i32 {
+  let xs: f64[] = inputs(20000);
+  let sink: f64 = 0.0;
+  let scalar: bench.Report = bench.run("f64", 3, 20, () => {
+    let acc: f64 = 0.0;
+    for x in xs {
+      acc = acc + kernel(x);
+    }
+    sink = sink + acc;
+  });
+  let dual: bench.Report = bench.run("Dual[f64]", 3, 20, () => {
+    let acc: f64 = 0.0;
+    for x in xs {
+      let d: simd.Dual[f64] = simd.seed(x);
+      let y: simd.Dual[f64] = kernel(d);
+      acc = acc + y.v + y.d;
+    }
+    sink = sink + acc;
+  });
+  let dd: bench.Report = bench.run("DoubleDouble[f64]", 3, 20, () => {
+    let acc: f64 = 0.0;
+    for x in xs {
+      let q: simd.DoubleDouble[f64] = simd.dd_splat(x);
+      let y: simd.DoubleDouble[f64] = kernel(q);
+      acc = acc + y.hi + y.lo;
+    }
+    sink = sink + acc;
+  });
+  print(scalar.describe());
+  print(dual.describe());
+  print(dd.describe());
+  if (sink != sink) {
+    return 1;
+  }
+  return 0;
+}

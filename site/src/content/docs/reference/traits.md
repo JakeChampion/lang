@@ -1,6 +1,6 @@
 ---
 title: Traits
-description: Traits and impls, bounded generics, supertraits, associated types, derive, methods, operators, Drop, and dyn Trait.
+description: Traits and impls, bounded generics, supertraits, associated types and constants, derive, methods, operators, Drop, and dyn Trait.
 sidebar:
   order: 3
 ---
@@ -215,6 +215,40 @@ function main(): i32 {
     return 0;
 }
 ```
+
+### Associated constants
+
+A trait can declare a constant each impl fixes, read as `Self::NAME`
+inside the impl, `T::NAME` through a bound, or `f64::NAME` on a concrete
+type. A trait may give it a default:
+
+```fern
+import "std/i32";
+
+trait Lanes {
+    const LANES: i32;
+    const NAME: string = "lanes";
+}
+
+struct Pair { a: f64, b: f64 }
+
+impl Lanes for Pair { const LANES: i32 = 2; }
+impl Lanes for f64 { const LANES: i32 = 1; }
+
+function chunks[T: Lanes](n: i32): i32 {
+    return n / T::LANES;
+}
+
+function main(): i32 {
+    print(chunks[Pair](8).to_string());   // 4
+    print(Pair::NAME);                    // lanes
+    return 0;
+}
+```
+
+A constant is bound with `const`, never with a `function` of the same
+name, and read without an argument list: `T::LANES()` is `E043`, as is
+`T::zero` on an associated function.
 
 ### Associated functions
 
