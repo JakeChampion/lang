@@ -964,7 +964,7 @@ function (s: Session) __find(id: i64): i32 {
     return 0 - 1;
   }
   let i: i32 = s.req_index[k as i32] - 1;
-  if (i < 0 || s.reqs[i].gone) {
+  if (i < 0 || s.reqs[i].gone || s.reqs[i].id != id) {
     return 0 - 1;
   }
   return i;

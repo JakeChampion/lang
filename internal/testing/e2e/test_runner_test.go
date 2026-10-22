@@ -1268,7 +1268,7 @@ func TestRunnerHTTPQPACKExamplePasses(t *testing.T) {
 // at a time, interim responses, QPACK blocking, GOAWAY, and the stream and
 // connection errors.
 func TestRunnerHTTPH3ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_h3", "std/http/h3", 8)
+	runnerSuitePasses(t, "http_h3", "std/http/h3", 9)
 }
 
 // `tests/stdlib/http_h3q_test.fern` runs HTTP/3 over std/quic connections
