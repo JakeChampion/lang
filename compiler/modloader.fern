@@ -61,13 +61,14 @@ pub function base_name(path: string): string {
   return slice_unchecked(path, start, path.len()) + "";
 }
 
-// rel_path strips a leading import-relative `./` so the path joins cleanly
-// onto the entry directory: "./lexer" → "lexer", "std/io" → "std/io".
+// rel_path strips a leading import-relative `./` and a `.fern` so the path
+// joins cleanly onto the entry directory: "./lexer.fern" → "lexer", "std/io" →
+// "std/io".
 function rel_path(path: string): string {
   if (path.len() >= 2 && slice_unchecked(path, 0, 2) == "./") {
-    return slice_unchecked(path, 2, path.len()) + "";
+    return util.without_fern_ext(slice_unchecked(path, 2, path.len()) + "");
   }
-  return path;
+  return util.without_fern_ext(path);
 }
 
 // unreadable reports whether a failed read found the file there but could not
@@ -363,7 +364,7 @@ function load_lib(ov: Overlay, depdir: string): Resolved {
     },
     Err(e) => {}
   }
-  return res_read(ov, depdir, strip_fern_ext(deplib));
+  return res_read(ov, depdir, util.without_fern_ext(deplib));
 }
 
 // up_dir is the directory above `dir` (both end in '/', "" naming the working
@@ -534,15 +535,6 @@ pub function store_dir(hash: string): Option[string] {
     return None;
   }
   return Some(root + "/" + hr.hex + "/");
-}
-
-// strip_fern_ext removes a trailing ".fern" so the name joins onto
-// res_read (which appends ".fern"): "api.fern" → "api", "lib" → "lib".
-function strip_fern_ext(s: string): string {
-  if (s.len() >= 5 && slice_unchecked(s, s.len() - 5, s.len()) == ".fern") {
-    return slice_unchecked(s, 0, s.len() - 5) + "";
-  }
-  return s;
 }
 
 // unresolved_import is the diagnostic for an import that resolves to no

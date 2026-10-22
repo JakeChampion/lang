@@ -6,8 +6,12 @@
 // type has a finalizer (the drop is the point of building it). A record update names its
 // base in `imm` rather than as an operand, and that counts as a read: the
 // update consumes the base's box, so the base stays built while the update
-// does. Removing one construction can leave another unread, so the pass
-// runs to a fixpoint.
+// does. A cycle of phis and constructions that only read one another is
+// unread too: a loop that carries a record it never reads rebuilds it from
+// itself each round, after the leaf inliner splits its fields into phis of
+// their own.
+// Removing one construction can leave another unread, so the pass runs to a
+// fixpoint.
 import "./ssa";
 import "./ssasem";
 
@@ -46,12 +50,13 @@ function reads(g: ssa.SFunc): i32[] {
 }
 
 function prune_round(f: ssasem.Func, g: ssa.SFunc, uses: i32[]): Round {
+  let dead: boolean[] = dead_cycles(f, g, uses);
   let blocks: ssa.SBlock[] = [];
   let removed: i32 = 0;
   for b in g.blocks {
     let kept: ssa.SInst[] = [];
     for ins in b.insts {
-      if (unread_construction(f, uses, ins)) {
+      if (unread_construction(f, uses, ins) || droppable(ins.kind_tag) && in_range(ins.result, dead.len()) && dead[ins.result]) {
         removed = removed + 1;
       } else {
         kept = kept.append(ins);
@@ -63,6 +68,76 @@ function prune_round(f: ssasem.Func, g: ssa.SFunc, uses: i32[]): Round {
     return Round { g: g, removed: 0 };
   }
   return Round { g: ssa.SFunc { ...g, blocks: blocks }, removed: removed };
+}
+
+// The phis and constructions that only other such values read, by value.
+// Every phi and every construction unread_construction may drop starts in
+// the set. One leaves it when it has a reader outside the set: an
+// instruction, a terminator, or a record update naming it as its base. A
+// value whose type has a finalizer stays, since the drop it delays is the
+// point of building it.
+function dead_cycles(f: ssasem.Func, g: ssa.SFunc, uses: i32[]): boolean[] {
+  let dead: boolean[] = candidates(f, g, uses.len());
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    let by_dead: i32[] = reads_by(g, dead);
+    let v: i32 = 0;
+    while (v < dead.len()) {
+      if (dead[v] && uses[v] != by_dead[v]) {
+        dead = dead.with(v, false);
+        changed = true;
+      }
+      v = v + 1;
+    }
+  }
+  return dead;
+}
+
+// Every droppable value of `g` whose type has no finalizer, by value.
+function candidates(f: ssasem.Func, g: ssa.SFunc, n: i32): boolean[] {
+  let out: boolean[] = __alloc_bool(n);
+  for b in g.blocks {
+    for ins in b.insts {
+      if (droppable(ins.kind_tag) && in_range(ins.result, n) && !ssasem.has_finalizer(f, f.values[ins.result])) {
+        out = out.with(ins.result, true);
+      }
+    }
+  }
+  return out;
+}
+
+// How many reads of each value the values `dead` marks make: an operand, or
+// the base a record update names.
+function reads_by(g: ssa.SFunc, dead: boolean[]): i32[] {
+  let out: i32[] = __alloc_i32(dead.len());
+  for b in g.blocks {
+    for ins in b.insts {
+      if (droppable(ins.kind_tag) && in_range(ins.result, dead.len()) && dead[ins.result]) {
+        for a in ins.args {
+          out = counted(out, a);
+        }
+        out = counted(out, ssasem.update_base(ins));
+      }
+    }
+  }
+  return out;
+}
+
+function counted(own out: i32[], v: i32): i32[] {
+  if (!in_range(v, out.len())) {
+    return out;
+  }
+  return out.with(v, out[v] + 1);
+}
+
+function in_range(v: i32, n: i32): boolean {
+  return v >= 0 && v < n;
+}
+
+// A phi, a copy, or a record, tuple or variant construction.
+function droppable(k: i32): boolean {
+  return k == 8 || k == 7 || k == ssasem.record_new() || k == ssasem.tuple_new() || k == ssasem.variant_new();
 }
 
 function unread_construction(f: ssasem.Func, uses: i32[], ins: ssa.SInst): boolean {
