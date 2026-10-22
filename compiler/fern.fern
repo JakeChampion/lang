@@ -1603,7 +1603,8 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-lsp", "", "the language server on stdin and stdout"),
     ] },
     FlagGroup { title: "packages", flags: [
-      cli_flag("-add", "", "declare a dependency in fern.toml (SPEC is path:DIR, url:URL or workspace)"),
+      cli_flag("-add", "", "declare a dependency in fern.toml (SPEC is path:DIR, url:URL, workspace or version:X.Y.Z)"),
+      cli_flag("-grant", "CAPS", "with -add: the comma-separated capabilities the dependency may reach, or none"),
       cli_flag("-resolve", "", "run MVS over the manifest's index and write fern.lock"),
       cli_flag("-vendor", "", "flatten the dependency graph into vendor/"),
       cli_flag("-fetch", "", "download the url dependencies into the package store"),
@@ -1720,7 +1721,7 @@ function usage_lines(embedded: boolean): string[] {
     "       fern -lint [-lint-set RULE=LEVEL] [-lint-cover FILE] PATH...",
     "       fern -doc [-o OUT] MODULE.fern | -doc -o OUTDIR DIR",
     "       fern -tangle | -weave | -doctest DOC.fern.md",
-    "       fern -add NAME SPEC [DIR]",
+    "       fern [-grant CAPS] -add NAME SPEC [DIR]",
     "       fern -resolve | -vendor | -fetch [DIR]",
     "       fern -lsp | -repl [-target ISA-ENV]" + root,
     "       fern -cover-report [-lcov] FILE",
@@ -2125,15 +2126,25 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
 
 // run_add implements `-add NAME SPEC [DIR]`: append a declared dependency to
 // the fern.toml governing DIR (the working directory by default). SPEC selects
-// the source — `path:../helper`, `workspace`, or `url:https://…`, which is
-// downloaded to record its archive's sha256 (and leaves it in the store).
+// the source — `path:../helper`, `workspace`, `version:1.2.0`, or
+// `url:https://…`, which is downloaded to record its archive's sha256 (and
+// leaves it in the store). `grant`, from -grant, is the capabilities list:
+// "" writes none, "none" an empty one.
 //
 // The manifest is edited TEXTUALLY, so existing formatting and comments
 // survive: a dependency is a line spliced into `[dependencies]`, not a
 // re-render of a parsed tree.
-function run_add(pos: string[], fetcher: Fetcher): i32 {
-  if (pos.len() < 2) {
-    eprint("usage: fern -add NAME SPEC   (SPEC = path:../dir | url:https://… | workspace)");
+function run_add(pos: string[], grant: string, fetcher: Fetcher): i32 {
+  // `-add` runs no program, so a `-x` among its arguments is a driver flag
+  // written too late, never data.
+  for a in pos {
+    if (is_flag(a)) {
+      eprint("fern: " + a + " comes after -add's arguments, where flags are no longer parsed; put it before -add");
+      return 2;
+    }
+  }
+  if (pos.len() < 2 || pos.len() > 3) {
+    eprint("usage: fern [-grant CAPS] -add NAME SPEC [DIR]   (SPEC = path:../dir | url:https://… | workspace | version:X.Y.Z)");
     return 2;
   }
   let name: string = pos[0];
@@ -2144,12 +2155,12 @@ function run_add(pos: string[], fetcher: Fetcher): i32 {
   }
   dir = abs_dir(dir);
   if (!fern_toml.valid_dep_name(name)) {
-    eprint("add: invalid dependency name " + mvs.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
+    eprint("fern: -add: invalid dependency name " + mvs.quoted(name) + " (letters, digits, `_`, `-`; must not start with a digit)");
     return 1;
   }
   let mdir: string = find_manifest_dir(dir);
   if (mdir.len() == 0) {
-    eprint("add: no fern.toml governs " + dir + " — create one with a [package] table first");
+    eprint("fern: -add: no fern.toml governs " + dir + " — create one with a [package] table first");
     return 1;
   }
   let mpath: string = mdir + "/fern.toml";
@@ -2159,10 +2170,10 @@ function run_add(pos: string[], fetcher: Fetcher): i32 {
     return 1;
   }
   if (fern_toml.has_dep(man, name)) {
-    eprint("add: " + mvs.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
+    eprint("fern: -add: " + mvs.quoted(name) + " is already a dependency in " + mpath + " (edit it by hand to change its source)");
     return 1;
   }
-  let line: string = dep_line(name, spec, fetcher);
+  let line: string = dep_line(name, spec, grant, fetcher);
   if (line.len() == 0) {
     return 1;
   }
@@ -2177,7 +2188,7 @@ function run_add(pos: string[], fetcher: Fetcher): i32 {
     Err(e) => {}
   }
   if (!ok) {
-    eprint("add: cannot read " + mpath);
+    eprint("fern: -add: cannot read " + mpath);
     return 1;
   }
   let updated: string = insert_dependency(orig, line);
@@ -2185,50 +2196,105 @@ function run_add(pos: string[], fetcher: Fetcher): i32 {
   // would not load.
   let edited: fern_toml.Manifest = fern_toml.parse(updated);
   if (edited.err.len() > 0) {
-    eprint("add: the edit would produce an invalid manifest (" + edited.err + ") — no change written");
+    eprint("fern: -add: the edit would produce an invalid manifest (" + edited.err + ") — no change written");
     return 1;
   }
   match (write_file(mpath, updated)) {
     Ok(u) => {},
     Err(e) => {
-      eprint("add: cannot write " + mpath + ": " + e.message());
+      eprint("fern: -add: cannot write " + mpath + ": " + e.message());
       return 1;
     }
   }
-  eprint("add: " + line);
+  eprint("fern: added " + line);
   return 0;
 }
 
 // dep_line is the manifest line declaring `name` from the `-add` source
-// `spec`, or "" once it has said why there is none.
-function dep_line(name: string, spec: string, fetcher: Fetcher): string {
+// `spec` and capability grant `grant`, or "" once it has said why there is
+// none. A version with no grant takes the bare form, `name = "1.2.0"`.
+function dep_line(name: string, spec: string, grant: string, fetcher: Fetcher): string {
+  let fields: string = dep_source(spec, fetcher);
+  if (fields.len() == 0) {
+    return "";
+  }
+  if (grant.len() == 0) {
+    if (util.str_has_prefix(spec, "version:")) {
+      return name + " = " + mvs.quoted(slice_unchecked(spec, 8, spec.len()) + "");
+    }
+    return name + " = { " + fields + " }";
+  }
+  let granted: string = grant_list(grant);
+  if (granted.len() == 0) {
+    return "";
+  }
+  return name + " = { " + fields + ", capabilities = " + granted + " }";
+}
+
+// dep_source is the inline-table fields naming the `-add` source `spec`, or ""
+// once it has said why there are none.
+function dep_source(spec: string, fetcher: Fetcher): string {
   if (spec == "workspace") {
-    return name + " = { workspace = true }";
+    return "workspace = true";
   } else if (util.str_has_prefix(spec, "path:")) {
     let p: string = slice_unchecked(spec, 5, spec.len()) + "";
     if (p.len() == 0) {
-      eprint("add: empty path in " + mvs.quoted(spec));
+      eprint("fern: -add: empty path in " + mvs.quoted(spec));
       return "";
     }
-    return name + " = { path = " + mvs.quoted(p) + " }";
+    return "path = " + mvs.quoted(p);
+  } else if (util.str_has_prefix(spec, "version:")) {
+    let v: string = slice_unchecked(spec, 8, spec.len()) + "";
+    if (!fern_toml.is_version(v)) {
+      eprint("fern: -add: version must be MAJOR.MINOR.PATCH digits, got " + mvs.quoted(v));
+      return "";
+    }
+    return "version = " + mvs.quoted(v);
   } else if (util.str_has_prefix(spec, "url:")) {
     let u: string = slice_unchecked(spec, 4, spec.len()) + "";
     if (!util.str_has_prefix(u, "https://") && !util.str_has_prefix(u, "http://")) {
-      eprint("add: url must be http(s), got " + mvs.quoted(u));
+      eprint("fern: -add: url must be http(s), got " + mvs.quoted(u));
       return "";
     }
     eprint("fetching " + u + " to compute its hash…");
     let got: Fetched = fetcher.fetch(u, "");
     if (got.err.len() > 0) {
-      eprint("add: " + got.err);
+      eprint("fern: -add: " + got.err);
       return "";
     }
-    return name + " = { url = " + mvs.quoted(u) + ", hash = " + mvs.quoted(got.hash) + " }";
-  } else {
-    eprint("add: unrecognised source " + mvs.quoted(spec) + " — use path:DIR, url:HTTPS_URL, or workspace");
+    return "url = " + mvs.quoted(u) + ", hash = " + mvs.quoted(got.hash);
+  }
+  eprint("fern: -add: unrecognised source " + mvs.quoted(spec) + " — use path:DIR, url:HTTPS_URL, workspace or version:X.Y.Z");
+  return "";
+}
+
+// grant_list is -grant's comma-separated capabilities as a manifest array, in
+// the manifest's order, "[]" for `none`, or "" once it has said which name is
+// not a capability.
+function grant_list(grant: string): string {
+  if (grant == "none") {
+    return "[]";
+  }
+  let quoted: string = "";
+  for name in mvs.split_char(grant, b',') {
+    if (quoted.len() > 0) {
+      quoted = quoted + ", ";
+    }
+    quoted = quoted + mvs.quoted(name);
+  }
+  let named: fern_toml.ParsedList = fern_toml.parse_capabilities("[" + quoted + "]");
+  if (named.err.len() > 0) {
+    eprint("fern: -add: -grant: " + named.err);
     return "";
   }
-  return "";
+  let out: string = "";
+  for cap in named.values {
+    if (out.len() > 0) {
+      out = out + ", ";
+    }
+    out = out + mvs.quoted(cap);
+  }
+  return "[" + out + "]";
 }
 
 // insert_dependency splices a dependency line into a manifest's
@@ -5560,6 +5626,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   let mode_resolve: boolean = false;
   let mode_tangle: boolean = false;
   let chunk: string = "";
+  let grant: string = "";
   let mode_doc: boolean = false;
   let mode_add: boolean = false;
   let mode_vendor: boolean = false;
@@ -5735,6 +5802,8 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
       mode_targets = f.on;
     } else if (f.name == "-chunk") {
       chunk = f.value;
+    } else if (f.name == "-grant") {
+      grant = f.value;
     } else if (f.name == "-emit") {
       emit = f.value;
     } else if (f.name == "-O") {
@@ -5817,7 +5886,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
 
   // `-add` edits a manifest and compiles nothing.
   if (mode_add) {
-    return run_add(pos, fetcher);
+    return run_add(pos, grant, fetcher);
   }
 
   let bad_target: string = target_refusal(target);

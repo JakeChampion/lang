@@ -310,7 +310,7 @@ function with_exclude(m: Manifest, key: string, val: string, at: string): Manife
 // Parsed is one scalar value, or why it is not one.
 struct Parsed { value: string, err: string }
 
-struct ParsedList { values: string[], err: string }
+pub struct ParsedList { values: string[], err: string }
 
 // parse_string accepts a double-quoted string with no escapes.
 function parse_string(val: string): Parsed {
@@ -359,7 +359,7 @@ function parse_str_array(val: string): ParsedList {
 }
 
 // is_version reports whether `s` is a bare MAJOR.MINOR.PATCH version.
-function is_version(s: string): boolean {
+pub function is_version(s: string): boolean {
   let parts: string[] = split_char(s, b'.');
   if (parts.len() != 3) {
     return false;
@@ -593,7 +593,7 @@ function inline_parts(body: string): string[] {
 
 // parse_capabilities parses a `capabilities = [...]` grant: every name from
 // the vocabulary, deduped and in vocabulary order. Empty grants nothing.
-function parse_capabilities(val: string): ParsedList {
+pub function parse_capabilities(val: string): ParsedList {
   let names: ParsedList = parse_str_array(val);
   if (names.err.len() > 0) {
     return names;
