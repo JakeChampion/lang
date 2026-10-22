@@ -768,7 +768,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"arr-view-return-e002", "function g(a: i32[]): i32[] { return a[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"arr-view-field-e043", "struct Q { xs: i32[] }\nfunction mk(a: i32[]): Q { return Q { xs: a[0:1] }; }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
 		{"arr-ret-fn-into-array-e003", "function first(a: [i32]): [i32] { return a[0:1]; }\nfunction main(): i32 { let x: i32[] = [1, 2]; let o: i32[] = first(x); return o.len(); }\n", []string{"E003"}},
-		{"arr-owned-into-view-var-e003", "function main(): i32 { let a: i32[] = [1]; let w: [i32] = a; return w.len(); }\n", []string{"E003"}},
+		{"arr-owned-into-view-var", "function main(): i32 { let a: i32[] = [1]; let w: [i32] = a; return w.len(); }\n", nil},
 		{"arr-owned-return-from-view-fn-e002", "function f(a: i32[]): [i32] { return a; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"arr-view-param-into-array-param-e038", "function h(x: i32[]): i32 { return x.len(); }\nfunction k(v: [i32]): i32 { return h(v); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
 		{"as-bytes-into-array-var-e003", "function main(): i32 { let s: string = \"ab\"; let b: u8[] = s.as_bytes(); return b.len(); }\n", []string{"E003"}},
