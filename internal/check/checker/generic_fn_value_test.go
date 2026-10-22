@@ -47,6 +47,12 @@ func TestGenericFnValueErrors(t *testing.T) {
 function main(): i32 { return apply_i(measure, 3); }`, "type argument T = i32 does not implement trait Shape required by measure"},
 		{"arity differs", `function apply2(f: (Sq, Sq) => i32): i32 { return f(Sq { s: 1 }, Sq { s: 2 }); }
 function main(): i32 { return apply2(measure); }`, "cannot be used as a value"},
+		{"generic callee callback result", `function same[T](x: T): T { return x; }
+function apply[T](x: T, f: (T) => boolean): boolean { return f(x); }
+function main(): i32 { if (apply(1, same)) { return 1; } return 0; }`, "expected (i32) => boolean"},
+		{"generic callee result inference", `function text[T](x: T): string { return "x"; }
+function apply[T, U](x: T, f: (T) => U): U { return f(x); }
+function main(): i32 { let n: i32 = apply(1, text); return n; }`, "expected i32, got string"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

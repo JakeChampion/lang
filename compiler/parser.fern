@@ -12668,6 +12668,44 @@ function method_param_spellings(c: ast.ExprCall, fa: ast.ExprFieldAccess, env: M
   if (rt.len() == 0) {
     return none;
   }
+  // Array methods become free functions before this pass. Bind their
+  // parameters through that function, including its leading receiver.
+  if (array_method_element(rt).len() > 0) {
+    let name: string = concrete_array_method_name(rt, fa.field);
+    if (!has_free_decl(funcs, name)) {
+      name = "__arrm_" + fa.field;
+      if (spelling_is_view(rt)) {
+        name = "__viewm_" + fa.field;
+      }
+    }
+    let args: ast.Expr[] = [fa.obj];
+    for a in c.args {
+      args = args.append(a);
+    }
+    let folded: ast.ExprCall = ast.ExprCall { ...c, callee: e_ident(name), args: args };
+    let all: string[] = call_param_spellings(folded, env, funcs);
+    let at: i32 = bg_find(funcs, name);
+    if (at >= 0) {
+      let fd: FuncDecl = funcs.decls[at];
+      let vars: string[] = fd.all_type_params;
+      for p in fd.params {
+        vars = type_str_vars(param_spelling(p), vars);
+      }
+      let cts: string[] = call_bound_vars(FuncDecl { ...fd, all_type_params: vars }, folded, env, funcs);
+      let i: i32 = 0;
+      while (i < all.len()) {
+        all = all.with(i, subst_ty(all[i], vars, cts));
+        i = i + 1;
+      }
+    }
+    let out: string[] = [];
+    let i: i32 = 1;
+    while (i < all.len()) {
+      out = out.append(all[i]);
+      i = i + 1;
+    }
+    return out;
+  }
   let base: string = strip_struct_base(rt);
   let rvars: string[] = [];
   let rcts: string[] = [];
@@ -12716,7 +12754,7 @@ function mono_call_args(c: ast.ExprCall, env: MEnv, funcs: MFns, ins: Insts): (a
   let i: i32 = 0;
   while (i < c.args.len()) {
     let ra: RExpr = RExpr { rexpr: c.args[i], rins: cur };
-    if (i < pspell.len() && arg_wants_expected(c.args[i], env, funcs) && type_str_vars(pspell[i], []).len() == 0) {
+    if (i < pspell.len() && arg_wants_expected(c.args[i], env, funcs) && (type_str_vars(pspell[i], []).len() == 0 || generic_fn_value_name(c.args[i], env, funcs).len() > 0)) {
       ra = mono_call_expected(c.args[i], pspell[i], env, funcs, cur);
     } else {
       ra = mono_expr(c.args[i], env, funcs, cur);
@@ -27884,10 +27922,10 @@ function dv_default_expr(t: string): ast.Expr {
     return e_bool(false);
   }
   if (t == "f32" || t == "f64") {
-    return e_number("0.0", "", true);
+    return e_number("0.0", t, true);
   }
   if (dv_is_scalar(t)) {
-    return e_number("0", "", false);
+    return e_number("0", t, false);
   }
   let noargs: ast.Expr[] = [];
   return e_call(e_field_access(e_ident(t), "default"), noargs);
@@ -27994,14 +28032,14 @@ function dv_is_num_scalar(t: string): boolean {
 function dv_num_identity_expr(t: string, one: boolean): ast.Expr {
   if (t == "f32" || t == "f64") {
     if (one) {
-      return e_number("1.0", "", true);
+      return e_number("1.0", t, true);
     }
-    return e_number("0.0", "", true);
+    return e_number("0.0", t, true);
   }
   if (one) {
-    return e_number("1", "", false);
+    return e_number("1", t, false);
   }
-  return e_number("0", "", false);
+  return e_number("0", t, false);
 }
 
 // struct_default_derivable reports whether EVERY field of `sd` has a

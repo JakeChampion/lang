@@ -82,7 +82,7 @@ pub struct VTuple { elements: Value[] }
 // point of construction so free identifiers in the body resolve
 // against the enclosing function's bindings rather than the
 // caller's.
-pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[] }
+pub struct VFunc { name: string, params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[] }
 
 // VMap models the runtime hash-map. Parallel arrays for keys
 // and values keep the implementation trivial — lookup is a
@@ -5247,6 +5247,7 @@ function resolve_ident_value(name: string, env: Env): Value {
         let no_values: Value[] = [];
         let no_types: string[] = [];
         return VFunc {
+          name: name,
           params: vfd.params,
           ret_type: vfd.ret_type,
           body: vfd.body,
@@ -5439,6 +5440,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       // idents against this snapshot first; the call
       // site re-binds params on top.
       return VFunc {
+        name: "",
         params: lm.params,
         ret_type: lm.ret_type,
         body: lm.body,
@@ -6174,7 +6176,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
 // the lambda body resolve against the enclosing function's
 // scope. Args bind on top in declaration order.
 function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
-  let fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [] };
+  let fv: VFunc = VFunc { name: "", params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [] };
   match (cv) {
     VFunc(v) => {
       fv = v;
@@ -6185,6 +6187,11 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
   }
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
+  }
+  // Named functions retain their declaration, including generic bounds.
+  // The ordinary call path binds type arguments from these runtime values.
+  if (fv.name.len() > 0) {
+    return call_func(fv.name, args, funcs, aliases, type_decls, outs);
   }
   let env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, outs: outs, ret: "" };
   let j: i32 = 0;
