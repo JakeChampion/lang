@@ -8,8 +8,9 @@ import (
 
 // An associated constant parses in a trait body (abstract, or with a
 // default) and in an impl body, each as an associated function with no
-// parameters marked const; `f64::LANES` parses as a path on the primitive
-// keyword, which the formatter round-trips (see docs/ASSOCIATED-TYPES.md).
+// parameters marked const; `f64.LANES` parses as a field access on the
+// primitive keyword, which the formatter round-trips (see
+// docs/ASSOCIATED-TYPES.md).
 func TestAssocConstParse(t *testing.T) {
 	prog, err := Parse(`trait Lanes {
     const LANES: i32;
@@ -19,9 +20,9 @@ func TestAssocConstParse(t *testing.T) {
 struct V2 { a: f64 }
 impl Lanes for V2 {
     const LANES: i32 = 2;
-    function width(self: Self): i32 { return Self::LANES; }
+    function width(self: Self): i32 { return Self.LANES; }
 }
-function chunk[T: Lanes](n: i32): i32 { return n / T::LANES + f64::LANES; }`)
+function chunk[T: Lanes](n: i32): i32 { return n / T.LANES + f64.LANES; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,13 +53,13 @@ function chunk[T: Lanes](n: i32): i32 { return n / T::LANES + f64::LANES; }`)
 	}
 	ret := prog.Funcs[len(prog.Funcs)-1].Body.Stmts[0].(*ast.Return).Value.(*ast.Binary)
 	div := ret.Left.(*ast.Binary)
-	if fa, ok := div.Right.(*ast.FieldAccess); !ok || !fa.PathSep || fa.Field != "LANES" {
-		t.Errorf("T::LANES = %#v, want a PathSep field access", div.Right)
+	if fa, ok := div.Right.(*ast.FieldAccess); !ok || fa.Field != "LANES" {
+		t.Errorf("T.LANES = %#v, want a field access", div.Right)
 	}
-	if fa, ok := ret.Right.(*ast.FieldAccess); !ok || !fa.PathSep || fa.Field != "LANES" {
-		t.Errorf("f64::LANES = %#v, want a PathSep field access on the keyword", ret.Right)
+	if fa, ok := ret.Right.(*ast.FieldAccess); !ok || fa.Field != "LANES" {
+		t.Errorf("f64.LANES = %#v, want a field access on the keyword", ret.Right)
 	} else if id, ok := fa.Target.(*ast.Ident); !ok || id.Name != "f64" {
-		t.Errorf("f64::LANES target = %#v, want the f64 ident", fa.Target)
+		t.Errorf("f64.LANES target = %#v, want the f64 ident", fa.Target)
 	}
 }
 

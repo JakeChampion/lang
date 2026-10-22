@@ -14590,7 +14590,7 @@ function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): p
 // type. The object is a type qualifier with no value behind it, so walking it
 // reports E001 "undefined name" on a call native accepts (#6933). A value
 // binding of the same name shadows the type and makes it a genuine method
-// call. A `Base::NAME` read (`const_read`) names a declared constant, so the
+// call. A `Base.NAME` read (`const_read`) names a declared constant, so the
 // instantiation-borne hit below is not for it.
 function assoc_call_req(obj: ast.Expr, field: string, s: Scope, const_read: boolean): AssocHit {
   match (obj) {
@@ -14652,7 +14652,7 @@ function assoc_base_name(obj: ast.Expr): string {
   return "";
 }
 
-// assoc_const_read_diags holds a `Base::NAME` read to a constant and a
+// assoc_const_read_diags holds a `Base.NAME` read to a constant and a
 // `Base.f(…)` call to a function.
 function assoc_const_read_diags(h: AssocHit, c: ast.ExprCall, mfa: ast.ExprFieldAccess): util.Diag[] {
   if (mfa.const_read == h.is_const) {
@@ -14660,9 +14660,9 @@ function assoc_const_read_diags(h: AssocHit, c: ast.ExprCall, mfa: ast.ExprField
   }
   let base: string = util.demangle(assoc_base_name(mfa.obj));
   if (mfa.const_read) {
-    return [dg_at("E043", base + "::" + mfa.field + " is an associated function, not a constant; call it as " + base + "::" + mfa.field + "(...)", c.line, c.col)];
+    return [dg_at("E043", base + "." + mfa.field + " is an associated function, not a constant; call it as " + base + "." + mfa.field + "(...)", c.line, c.col)];
   }
-  return [dg_at("E043", base + "::" + mfa.field + " is an associated constant; read it as " + base + "::" + mfa.field + " without an argument list", c.line, c.col)];
+  return [dg_at("E043", base + "." + mfa.field + " is an associated constant; read it as " + base + "." + mfa.field + " without an argument list", c.line, c.col)];
 }
 
 // assoc_arg_diags checks an associated call's arguments against the trait
@@ -15153,7 +15153,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // walked.
       let ah: AssocHit = assoc_call_req(mfa.obj, mfa.field, s, mfa.const_read);
       if (ah.found) {
-        // A `Base::NAME` read names a constant and `Base.f(…)` a function;
+        // A `Base.NAME` read names a constant and `Base.f(…)` a function;
         // the rewrite marks the read's callee const_read.
         let acr: util.Diag[] = assoc_const_read_diags(ah, c, mfa);
         if (acr.len() > 0) {
@@ -18671,7 +18671,7 @@ function const_grammar_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   let earlier: string[] = [];
   for fd in mod.funcs {
-    // An associated constant is a function body, free to read `T::LANES`.
+    // An associated constant is a function body, free to read `T.LANES`.
     if (fd.is_const && fd.receiver_type.len() == 0) {
       for stmt in fd.body {
         match (stmt) {

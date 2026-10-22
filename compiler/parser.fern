@@ -29010,7 +29010,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
       }
       // An associated constant: `const NAME: T;` is required of every impl,
       // `const NAME: T = expr;` is a default. Both are receiver-less
-      // functions with no parameters, read as `Base::NAME`.
+      // functions with no parameters, read as `Base.NAME`.
       if (p.peek_keyword() == "const") {
         let (ac_func, ac_p) = parse_assoc_const_decl(p, false);
         p = ac_p;
@@ -29901,7 +29901,7 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
   return Module { ...mod, funcs: funcs, top_stmts: astwalk.substitute_consts(mod.top_stmts, [], t.names, t.values) };
 }
 
-// rewrite_assoc_const_reads turns every `Base::NAME` read — a field access
+// rewrite_assoc_const_reads turns every `Base.NAME` read — a field access
 // whose object names a type rather than a value — into the argument-less
 // associated call it is, its callee marked const_read so the checker holds it
 // to a constant. The object is a struct, an enum (when an impl gives it an

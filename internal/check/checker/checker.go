@@ -216,7 +216,7 @@ type Info struct {
 	AssocBindings map[string]map[string]ast.Type
 	// AssocConsts marks each associated constant by its hoisted name
 	// (`__assoc_<Type>_<NAME>`): an impl's `const NAME: T = expr;`, or a
-	// trait's defaulted one synthesised onto an impl. A `Base::NAME` read is
+	// trait's defaulted one synthesised onto an impl. A `Base.NAME` read is
 	// a call of one of these and nothing else may call one.
 	AssocConsts map[string]bool
 	// TryShapes records every enum the `?` operator accepts, keyed by enum
@@ -8551,7 +8551,7 @@ func containsString(xs []string, s string) bool {
 // checked. Returns the matching trait-method signature and the trait
 // name. Used by the deferred-dispatch path for trait-bounded generics.
 // See docs/TRAITS.md.
-// rewriteAssocConstReads turns every `Base::NAME` read — a field access
+// rewriteAssocConstReads turns every `Base.NAME` read — a field access
 // whose target names a type rather than a value — into the argument-less
 // associated call it is, marked AssocConst so the call site may only name a
 // constant. The target is a struct, a primitive, a type parameter of the
@@ -8614,16 +8614,16 @@ func (c *checker) assocConstBase(name, field string, tps map[string]bool, inMeth
 	return false
 }
 
-// assocConstReadOK holds a `Base::NAME` read to a constant and a
+// assocConstReadOK holds a `Base.NAME` read to a constant and a
 // `Base.f(...)` call to a function, reporting the mismatch at n.
 func (c *checker) assocConstReadOK(n *ast.Call, base, field string, isConst bool) bool {
 	if n.AssocConst == isConst {
 		return true
 	}
 	if n.AssocConst {
-		c.errfCode(n.P, "E043", "%s::%s is an associated function, not a constant; call it as %s::%s(...)", demangle(base), field, demangle(base), field)
+		c.errfCode(n.P, "E043", "%s.%s is an associated function, not a constant; call it as %s.%s(...)", demangle(base), field, demangle(base), field)
 	} else {
-		c.errfCode(n.P, "E043", "%s::%s is an associated constant; read it as %s::%s without an argument list", demangle(base), field, demangle(base), field)
+		c.errfCode(n.P, "E043", "%s.%s is an associated constant; read it as %s.%s without an argument list", demangle(base), field, demangle(base), field)
 	}
 	return false
 }

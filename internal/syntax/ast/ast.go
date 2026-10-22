@@ -1752,7 +1752,7 @@ type Call struct {
 	P      Position
 	Callee Expr
 	Args   []Expr
-	// AssocConst marks a read of an associated constant, `Base::NAME`: the
+	// AssocConst marks a read of an associated constant, `Base.NAME`: the
 	// checker rewrites the field access to this argument-less call of the
 	// impl's `__assoc_<Base>_NAME`, and only such a call may name a constant.
 	AssocConst bool
@@ -3294,7 +3294,7 @@ type FuncDecl struct {
 	AssocType string
 	// AssocConst marks an impl's `const NAME: T = expr;` — an associated
 	// function (AssocType set, no parameters) whose body returns expr and
-	// whose reads are spelled `Base::NAME`.
+	// whose reads are spelled `Base.NAME`.
 	AssocConst bool
 	// ImplWritten is an impl method's signature as written, before `Self`
 	// became the impl type and `self` the receiver, for the formatter.
@@ -3707,7 +3707,7 @@ type TraitMethod struct {
 	Assoc  bool
 	// Const marks an associated constant — `const NAME: T;` or, with a
 	// Body holding its default, `const NAME: T = expr;`. It is an
-	// associated function with no parameters, read as `Base::NAME`.
+	// associated function with no parameters, read as `Base.NAME`.
 	Const bool
 	// Body, when non-nil, is a default implementation: the trait method
 	// was written `function f(self: Self): T { … }` rather than ending
