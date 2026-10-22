@@ -200,11 +200,12 @@ function dump_func(f: ssasem.Func): void {
   }
 }
 
-// Whether `f`, called `calls` times and no leaf, is spliced into its caller.
+// Whether `f` is a leaf or an updater, spliced into every caller.
 function leaf_spliceable(f: ssasem.Func, inlinable: boolean, size: boolean): boolean {
   return !size && inlinable && (leaf(f) || updater(f));
 }
 
+// Whether `f`, called `calls` times and no leaf, is spliced into its caller.
 function once_spliceable(f: ssasem.Func, calls: i32): boolean {
   return calls == 1 && !lends_view(f) && spliceable(f, max_once_insts());
 }
