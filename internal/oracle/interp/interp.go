@@ -8274,11 +8274,15 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("index must be number, got %T", idxV)
 		}
+		idxText := strconv.FormatInt(int64(idx), 10)
+		if x.IdxUnsigned {
+			idxText = strconv.FormatUint(uint64(idx), 10)
+		}
 		// String indexing returns the byte at offset i as a Number,
 		// matching the codegen lowering of `s[i]`.
 		if s, ok := arrV.(String); ok {
-			if idx < 0 || int(idx) >= len(string(s)) {
-				return nil, fmt.Errorf("string index %d out of range [0, %d)", idx, len(string(s)))
+			if idx < 0 || idx >= Number(len(string(s))) {
+				return nil, fmt.Errorf("string index %s out of range [0, %d)", idxText, len(string(s)))
 			}
 			return Number(int64(string(s)[idx])), nil
 		}
@@ -8286,8 +8290,8 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("indexing non-array %T", arrV)
 		}
-		if idx < 0 || int(idx) >= len(arr.E) {
-			return nil, fmt.Errorf("array index %d out of range [0, %d)", idx, len(arr.E))
+		if idx < 0 || idx >= Number(len(arr.E)) {
+			return nil, fmt.Errorf("array index %s out of range [0, %d)", idxText, len(arr.E))
 		}
 		return arr.E[idx], nil
 	case *ast.SliceExpr:

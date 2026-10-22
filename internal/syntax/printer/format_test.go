@@ -1397,6 +1397,10 @@ func TestFormatKeepsHexLiteralBase(t *testing.T) {
 		{"uppercase_digits", "function f(): u32 { return 0xFFFFFFFF as u32; }", "0xFFFFFFFF as u32"},
 		{"typed_suffix", "function f(): i64 { return 0xffi64; }", "return 0xffi64;"},
 		{"decimal_untouched", "function f(): i32 { return 4095; }", "return 4095;"},
+		{"separators", "function f(): i64 { return 4_294_967_297i64; }", "return 4_294_967_297i64;"},
+		{"hex_separators", "function f(): u32 { return 0xffff_0000u32; }", "return 0xffff_0000u32;"},
+		{"usize_suffix", "function f(): usize { return 8usize; }", "return 8usize;"},
+		{"float_separators", "function f(): f64 { return 1_000.5; }", "return 1_000.5;"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := formatSrc(t, tc.src)

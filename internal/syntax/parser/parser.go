@@ -6242,18 +6242,18 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	switch t.Kind {
 	case lexer.Number:
 		p.advance()
-		digits, base := t.Text, 10
-		if len(t.Text) > 2 && t.Text[0] == '0' {
-			switch t.Text[1] {
+		digits, base := strings.ReplaceAll(t.Text, "_", ""), 10
+		if len(digits) > 2 && digits[0] == '0' {
+			switch digits[1] {
 			case 'x', 'X':
-				digits, base = t.Text[2:], 16
+				digits, base = digits[2:], 16
 			case 'o', 'O':
-				digits, base = t.Text[2:], 8
+				digits, base = digits[2:], 8
 			case 'b', 'B':
-				digits, base = t.Text[2:], 2
+				digits, base = digits[2:], 2
 			}
 		}
-		prefixed := base != 10
+		spelled := base != 10 || strings.Contains(t.Text, "_")
 		lit := &ast.NumberLit{P: t.Pos}
 		// strconv rather than a hand-rolled accumulate, so a magnitude past
 		// 64 bits is seen instead of wrapping (docs/ADVERSARIAL-REVIEW-2026-06.md, F3).
@@ -6277,7 +6277,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			}
 		}
 		lit.Value = v
-		if prefixed {
+		if spelled {
 			lit.Raw = t.Text
 		}
 		// Typed suffix (`42i64`, `7u8`): stamp Width + IsUnsigned
@@ -6299,6 +6299,9 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		case "u64":
 			lit.Width = 64
 			lit.IsUnsigned = true
+		case "usize":
+			lit.Width = ast.WidthPtr
+			lit.IsUnsigned = true
 		default:
 			return nil, p.errorfCode(t.Pos, "P002", "unexpected numeric suffix %q on integer literal", t.Suffix)
 		}
@@ -6307,7 +6310,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 		p.advance()
 		// `42f32` — integer-shaped text with a float suffix. Use
 		// strconv.ParseFloat which handles both `42` and `1.5`.
-		f, err := strconv.ParseFloat(t.Text, 64)
+		f, err := strconv.ParseFloat(strings.ReplaceAll(t.Text, "_", ""), 64)
 		if err != nil {
 			return nil, p.errorfCode(t.Pos, "P002", "invalid float literal %q: %v", t.Text, err)
 		}

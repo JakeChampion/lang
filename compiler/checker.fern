@@ -6307,17 +6307,17 @@ function elemless_array(t: typeinfo.Type): boolean {
 
 // uninferred_call_diags reports E040 for a type variable nothing binds: no
 // explicit type argument, argument or bound, and absent from the result, where
-// a destination could. Only an empty array literal counts as an argument that
-// binds nothing; one the checker types in part is left to native, and so is a
+// a destination could. Only an argument binds_nothing names counts as binding
+// nothing; one the checker types in part is left to native, and so is a
 // parameter a bound names, which only the bound's impl can bind.
-function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name: string): util.Diag[] {
+function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name: string, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.type_args.len() > 0) {
     return out;
   }
   let ret: parser.TypeRef = sig_ret_ref(sig);
   for tp in sig.all_type_params {
-    let (named, all_empty) = empty_array_positions(sig.param_type_names, c.args, tp);
+    let (named, all_empty) = empty_array_positions(sig.param_type_names, c.args, tp, s);
     if (util.index_of_str(bn, tp) < 0 && !type_ref_names_any(ret, [tp]) && !bound_names_tp(sig.type_bounds, tp) && all_empty) {
       out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + name + " — supply it explicitly at the call site (e.g. " + name + "[i32](...)) or annotate the binding", c.line, c.col));
     }
@@ -6329,7 +6329,7 @@ function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name
 // labelled `recv`.`method` as native labels it. The receiver binds exactly the
 // variables its declared type names, so a concrete receiver (`u8[]`, `[u8]`,
 // `string`) binds none of the method's own (#10991).
-function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig): util.Diag[] {
+function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.type_args.len() > 0 || msig.name.len() == 0 || c.args.len() != msig.param_type_names.len()) {
     return out;
@@ -6337,7 +6337,7 @@ function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, 
   let rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
   let ret: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
   for tp in msig.all_type_params {
-    let (named, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp);
+    let (named, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp, s);
     if (!type_ref_names_any(rref, [tp]) && !type_ref_names_any(ret, [tp]) && !bound_names_tp(msig.type_bounds, tp) && all_empty) {
       out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + recv + "." + method + " — supply it explicitly at the call site (e.g. ." + method + "[i32](...)) or annotate the binding", c.line, c.col));
     }
@@ -6353,7 +6353,7 @@ function declared_method_diags(c: ast.ExprCall, recv: string, method: string, s:
   if (msig.name.len() > 0 && c.args.len() != msig.param_types.len()) {
     return [dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col)];
   }
-  return uninferred_method_diags(c, recv, method, msig);
+  return uninferred_method_diags(c, recv, method, msig, s);
 }
 
 // uninferred_recv_diags reports E040 for a variable of the receiver's type
@@ -6361,7 +6361,7 @@ function declared_method_diags(c: ast.ExprCall, recv: string, method: string, s:
 // argument at all, so nothing binds `T` in `o.count()` unless an argument, the
 // result or a bound does, as in uninferred_method_diags. An argument that is a
 // type variable (`self` inside the type's own generic methods) binds it.
-function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, args: typeinfo.Type[]): util.Diag[] {
+function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, args: typeinfo.Type[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.type_args.len() > 0 || msig.name.len() == 0 || c.args.len() != msig.param_type_names.len()) {
     return out;
@@ -6375,7 +6375,7 @@ function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, ms
     let bare: boolean = ar.args.len() == 0 && ar.array_depth == 0 && !ar.is_tuple && !ar.is_fn;
     let bound: boolean = k < args.len();
     if (bare && !bound && !type_ref_names_any(ret, [tp]) && !bound_names_tp(msig.type_bounds, tp)) {
-      let (_, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp);
+      let (_, all_empty) = empty_array_positions(msig.param_type_names, c.args, tp, s);
       if (all_empty) {
         out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + recv + "." + method + " — supply it explicitly at the call site (e.g. ." + method + "[i32](...)) or annotate the binding", c.line, c.col));
       }
@@ -6387,16 +6387,17 @@ function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, ms
 
 // empty_array_positions reads the values whose declared type spells `tp`:
 // whether any does, and whether every one binds nothing: an empty array
-// literal (#10499), or a `use` callback whose binding has no type (#10833).
+// literal (#10499), a `use` callback whose binding has no type (#10833), or a
+// bare payload-less variant of a generic enum (#12910).
 // An empty spelling declares no type.
-function empty_array_positions(spellings: string[], values: ast.Expr[], tp: string): (boolean, boolean) {
+function empty_array_positions(spellings: string[], values: ast.Expr[], tp: string, s: Scope): (boolean, boolean) {
   let named: boolean = false;
   let all_empty: boolean = true;
   let k: i32 = 0;
   while (k < spellings.len() && k < values.len()) {
     if (spellings[k].len() > 0 && type_ref_names_any(parser.parse_type_ref(spellings[k]), [tp])) {
       named = true;
-      if (!binds_nothing(values[k])) {
+      if (!binds_nothing(values[k], s)) {
         all_empty = false;
       }
     }
@@ -6405,10 +6406,13 @@ function empty_array_positions(spellings: string[], values: ast.Expr[], tp: stri
   return (named, all_empty);
 }
 
-function binds_nothing(e: ast.Expr): boolean {
+function binds_nothing(e: ast.Expr, s: Scope): boolean {
   match (e) {
     ast.ExprArray(arr) => {
       return arr.elements.len() == 0;
+    },
+    ast.ExprIdent(id) => {
+      return !s.is_bound(id.name) && generic_unit_variant(id.name, s);
     },
     ast.ExprLambda(lm) => {
       return lm.use_infer && lm.params.len() > 0 && lm.params[0].type_name.len() == 0;
@@ -6418,6 +6422,13 @@ function binds_nothing(e: ast.Expr): boolean {
     }
   }
   return false;
+}
+
+// generic_unit_variant: `name` is a payload-less variant of a generic enum,
+// which as a bare value names none of the enum's type arguments.
+function generic_unit_variant(name: string, s: Scope): boolean {
+  let owner: UnionSig = union_sig_of_variant(name, s.unions);
+  return owner.is_enum && owner.type_params.len() > 0 && !variant_carries_payload(s, name);
 }
 
 // bound_names_tp: one of `bounds` spells `tp`, so bound_bindings may be what
@@ -6942,7 +6953,7 @@ function reads_i64(t: typeinfo.Type): boolean {
 // lit_uninferable_param names a type parameter of a destination-less literal
 // that nothing can bind: unbound in `args`, and every field spelled with it
 // holds an empty array literal. "" when there is none.
-function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[]): string {
+function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[], s: Scope): string {
   // A struct update's base fixes every argument the overrides leave open.
   if (sl.has_base) {
     return "";
@@ -6960,7 +6971,7 @@ function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typ
           spellings = spellings.append("");
         }
       }
-      let (named, all_empty) = empty_array_positions(spellings, sl.field_values, tp);
+      let (named, all_empty) = empty_array_positions(spellings, sl.field_values, tp, s);
       if (named && all_empty) {
         return tp;
       }
@@ -7113,6 +7124,9 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
   }
   if (n.suffix == "u8") {
     return t_u8();
+  }
+  if (n.suffix == "usize") {
+    return t_usize();
   }
   // An `i32` suffix names i32 even past i32-max, where the magnitude rule
   // below would call the literal i64 and the assignment would fail E003
@@ -7510,7 +7524,7 @@ function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
 // index_result_type is check_index_expr over the checked array and index types.
 function index_result_type(at: typeinfo.Type, it: typeinfo.Type): typeinfo.Type {
   if (!is_integer(it)) {
-    return t_unknown("array index must be i32");
+    return t_unknown("array index must be an integer");
   }
   match (at) {
     typeinfo.TypeArray(ta) => {
@@ -7648,7 +7662,7 @@ function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
     return t_struct(sl.type_name);
   }
   let largs: typeinfo.Type[] = struct_lit_args(sl, ssig, s);
-  if (lit_uninferable_param(sl, ssig, largs).len() > 0) {
+  if (lit_uninferable_param(sl, ssig, largs, s).len() > 0) {
     return t_unknown("struct " + sl.type_name + " has a type argument nothing binds");
   }
   if (lit_field_clash(sl, ssig, largs, s) >= 0) {
@@ -15367,7 +15381,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               out = util.append_diags(out, call_bound_diags(sig.type_params, sig.type_bounds, sig.module, util.demangle(sig.name), cbn, cbt, s, c.line, c.col));
               let (fbn, fbt) = call_bindings(sig, c, s);
               out = util.append_diags(out, bound_arg_diags(sig, c, fbn, fbt, s));
-              out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name));
+              out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name, s));
             }
           }
         }
@@ -15506,7 +15520,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             arr_label = "slice";
           }
           let asig: MethodSig = s.array_recv_method(mfa.field, ar.view);
-          out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig));
+          out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig, s));
           if (asig.name.len() > 0 && c.args.len() == asig.param_types.len()) {
             out = util.append_diags(out, method_arg_diags(c, mfa.field, asig, recv, s));
             out = util.append_diags(out, method_type_arg_diags(c, mfa.field, asig, recv, s));
@@ -15576,8 +15590,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               } else {
                 out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
                 out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
-                out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig));
-                out = util.append_diags(out, uninferred_recv_diags(c, sn.name, mfa.field, msig, sn.args));
+                out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig, s));
+                out = util.append_diags(out, uninferred_recv_diags(c, sn.name, mfa.field, msig, sn.args, s));
               }
             } else {
               // A call `obj.m(...)` on a known struct with no
@@ -15632,8 +15646,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (umsig.name.len() > 0 && c.args.len() == umsig.param_types.len()) {
             out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));
             out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
-            out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig));
-            out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args));
+            out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig, s));
+            out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args, s));
           }
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
@@ -16331,12 +16345,11 @@ function struct_name_of(t: typeinfo.Type): string {
 
 function call_diags_index(ix: ast.ExprIndex, s: Scope, out: util.Diag[]): util.Diag[] {
   out = util.append_diags(call_diags(ix.array, s), call_diags(ix.index, s));
-  // E034: an array / string index must be an i32. Mirrors the Go
-  // checker's Index case (index type != i32 -> E034 at the index
-  // position). A missing / unknown index type is skipped (no cascade).
+  // E034: an array / string index must be an integer. A missing / unknown
+  // index type is skipped (no cascade).
   let ixt: typeinfo.Type = check_expr(ix.index, s);
-  if (!is_unknown(ixt) && !type_eq(ixt, t_i32())) {
-    out = out.append(dg_at("E034", "index must be i32, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
+  if (!is_unknown(ixt) && !is_integer(ixt)) {
+    out = out.append(dg_at("E034", "index must be an integer, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
   }
   // E034: the indexed value must be an array or string. Mirrors the Go
   // checker ("indexing non-array value"); a non-array/string (i32 /
@@ -16492,7 +16505,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
   }
   if (args.len() == 0 && fsig.type_params.len() > 0) {
     args = struct_lit_args(sl, fsig, s);
-    let utp: string = lit_uninferable_param(sl, fsig, args);
+    let utp: string = lit_uninferable_param(sl, fsig, args, s);
     if (utp.len() > 0) {
       out = out.append(dg_at("E040", "could not infer type parameter " + utp + " for struct " + sl.type_name + " — supply it explicitly at the construction site (e.g. " + sl.type_name + "[i32] { ... }) or annotate the binding (e.g. let x: " + sl.type_name + "[i32] = ...)", sl.line, sl.col));
     }
