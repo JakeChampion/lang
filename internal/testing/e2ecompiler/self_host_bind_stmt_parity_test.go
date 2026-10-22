@@ -153,7 +153,7 @@ function main(): i32 { return top + topInferred + ta + tb; }`,
   let after: i32 = 2;
   return after;
 }`,
-		minCompared: 7,
+		minCompared: 4,
 	},
 	{
 		name: "match arms",

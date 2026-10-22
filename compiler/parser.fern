@@ -7276,10 +7276,10 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     let (kvnames, kvcount, kvok, kvnames_p) = parse_destructure_names(kv_open);
     p = kvnames_p;
     if (!kvok || kvcount < 2) {
-      return (s_unknown(p, "for pattern needs at least 2 binders"), p);
+      return for_refused(p, "for pattern needs at least 2 binders");
     }
     if (p.peek_ident() != "in") {
-      return (s_unknown(p, "missing `in` in for"), p);
+      return for_refused(p, "missing `in` in for");
     }
     p = p.advance();
     // Suppress trailing struct-literal parsing — the `{` that
@@ -7321,7 +7321,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
       let (fpnames, fpcount, fpok, fpnames_p) = parse_destructure_names(p);
       p = fpnames_p;
       if (!fpok || fpcount < 2) {
-        return (s_unknown(p, "for pattern needs at least 2 binders"), p);
+        return for_refused(p, "for pattern needs at least 2 binders");
       }
       fpre = [s_var_at(fpnames, destr_marker(fp_at, false, ""), fp_init, fp_line, fp_col)];
     } else {
@@ -7338,12 +7338,12 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
   } else {
     fvar = p.peek_ident();
     if (fvar.len() == 0) {
-      return (s_unknown(p, "missing for-let name"), p);
+      return for_refused(p, "missing for-let name");
     }
     p = p.advance();
   }
   if (p.peek_ident() != "in") {
-    return (s_unknown(p, "missing `in` in for"), p);
+    return for_refused(p, "missing `in` in for");
   }
   p = p.advance();  // consume `in`
   // Suppress trailing struct-literal parsing on the iter so that
@@ -7388,6 +7388,17 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     fbi = fbi + 1;
   }
   return (s_for(fvar, iter_expr, fpre), p);
+}
+
+// for_refused is a `for` whose header was refused at `p`. The loop's body
+// is parsed past, so it is not re-read as statements after the refusal.
+function for_refused(p: Par, kind: string): (ast.Stmt, Par) {
+  let open: Par = p.skip_to_open();
+  if (open.peek_punct() != "{") {
+    return (s_unknown(p, kind), p);
+  }
+  let (skipped, sp) = parse_block(open);
+  return (s_unknown(p, kind), sp);
 }
 
 // with_stmt_line stamps the source line a statement STARTS on. Five Stmt kinds
@@ -7918,7 +7929,9 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     if (p.peek_is_pat_literal() || p.peek_at_literal()) {
       let (lel_at, lel_atp) = take_at_binding(p);
       let (lel_lits, lel_his, lel_hrs, lel_incs, lel_p) = parse_lit_alts(lel_atp);
-      let (lel_init, lel_ip) = parse_expr(lel_p.expect("="));
+      let lel_saved: boolean = lel_p.no_struct;
+      let (lel_init, lel_ip0) = parse_expr(lel_p.expect("=").with_no_struct(true));
+      let lel_ip: Par = lel_ip0.with_no_struct(lel_saved);
       let (lel_else, lel_rest, lel_restp) = parse_let_else_tail(lel_ip);
       p = lel_restp;
       let lel_arms: ast.LitArm[] = [];
@@ -7962,7 +7975,9 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         lsp_p = lsp_ap;
         lsp_pats = lsp_pats.append(lsp_alt);
       }
-      let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("="));
+      let lsp_saved: boolean = lsp_p.no_struct;
+      let (lsp_init, lsp_ip0) = parse_expr(lsp_p.expect("=").with_no_struct(true));
+      let lsp_ip: Par = lsp_ip0.with_no_struct(lsp_saved);
       let (lsp_else, lsp_rest, lsp_restp) = parse_let_else_tail(lsp_ip);
       p = lsp_restp;
       let lsp_arms: ast.MatchArm[] = [];
