@@ -1045,7 +1045,7 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		}
 		// Associated constant: `const NAME: T;` (abstract) or
 		// `const NAME: T = expr;` (a default). An associated function with
-		// no parameters, read as `Base::NAME`.
+		// no parameters, read as `Base.NAME`.
 		if p.match(lexer.Keyword, "const") {
 			ckw := p.advance()
 			cname, err := p.expect(lexer.Ident, "")
