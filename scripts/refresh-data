@@ -10,7 +10,7 @@
 #   publicsuffix      the public suffix list (cmd/pslgen -> std/publicsuffix)
 #                     from publicsuffix.org
 #   roots             Mozilla's root store (cmd/rootsgen -> std/tls/mozilla)
-#                     from mozilla-central's certdata.txt and nssckbi.h
+#                     from NSS's own certdata.txt and nssckbi.h
 #   toolchain-tables  the tables that follow the pinned Go toolchain: the IANA
 #                     zones its zoneinfo.zip holds (cmd/tzdatagen -> std/tz)
 #                     and the Unicode tables of its unicode package plus the
@@ -47,7 +47,7 @@ publicsuffix() {
 
 roots() {
   echo "== roots"
-  local base=https://hg.mozilla.org/mozilla-central/raw-file/tip/security/nss/lib/ckfw/builtins
+  local base=https://hg.mozilla.org/projects/nss/raw-file/tip/lib/ckfw/builtins
   fetch "$base/certdata.txt" cmd/rootsgen/certdata.txt
   fetch "$base/nssckbi.h" cmd/rootsgen/nssckbi.h
   go run ./cmd/rootsgen

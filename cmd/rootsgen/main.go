@@ -7,8 +7,9 @@
 //	go run ./cmd/rootsgen
 //
 // To refresh the list: replace cmd/rootsgen/certdata.txt and nssckbi.h
-// with the current security/nss/lib/ckfw/builtins/certdata.txt and
-// nssckbi.h from mozilla-central (the NSS builtins version is read from
+// with the current lib/ckfw/builtins/certdata.txt and nssckbi.h from
+// NSS's own repository, not mozilla-central, which takes an NSS change
+// only when Firefox next imports NSS (the builtins version is read from
 // the header's NSS_BUILTINS_LIBRARY_VERSION) and re-run; that is what
 // `scripts/refresh-data roots` does, and what the refresh-data workflow
 // does every week. TestCommittedFileIsUpToDate fails until the output is
