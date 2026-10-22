@@ -9241,6 +9241,9 @@ pub struct Arm64GasProg {
   // places with `data`, so the data directives always write `data`.
   ro: i32[],
   ro_base: i32,
+  // Where the code ends in the text, before the padding ahead of ro_base; -1
+  // with no constants.
+  code_end: i32,
   dlab_names: string[],
   dlab_offs: i32[],
   // Whether each data symbol is in the read-only constants.
@@ -9280,7 +9283,7 @@ pub struct Arm64GasProg {
 
 function arm64_gas_prog_new(): Arm64GasProg {
   return Arm64GasProg {
-    asm: arm64_asm_new(), data: [], ro: [], ro_base: 0 - 1,
+    asm: arm64_asm_new(), data: [], ro: [], ro_base: 0 - 1, code_end: 0 - 1,
     dlab_names: [], dlab_offs: [], dlab_ro: [],
     dlab_head: arm64_empty_buckets(), dlab_next: [], dlab_tail: arm64_empty_buckets(),
     pf_sites: [], pf_syms: [], pf_kinds: [],
@@ -9556,8 +9559,8 @@ function arm64_enter_section(own p: Arm64GasProg, from: i32, to: i32): Arm64GasP
 // arm64_code_len is the length of the code in the program's text, without
 // the read-only constants laid after it.
 pub function arm64_code_len(p: Arm64GasProg): i32 {
-  if (p.ro_base >= 0) {
-    return p.ro_base;
+  if (p.code_end >= 0) {
+    return p.code_end;
   }
   return p.asm.text.len();
 }
@@ -10756,6 +10759,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
   if (p.ro.len() > 0) {
     let text: u8[] = a.text;
     a = Arm64Asm { ...a, text: [] };
+    let code_end: i32 = text.len();
     while (text.len() % 16 != 0) {
       text = text.append(0 as u8);
     }
@@ -10764,7 +10768,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
       text = text.append(b as u8);
     }
     a = Arm64Asm { ...a, text: text };
-    p = Arm64GasProg { ...p, ro: [], ro_base: ro_base };
+    p = Arm64GasProg { ...p, ro: [], ro_base: ro_base, code_end: code_end };
   }
   let ui: i32 = 0;
   while (ui < a.unres.len()) {
@@ -11358,7 +11362,7 @@ function macho_lcstr_cmd_len(cmd: i32, path: string): i32 {
 }
 
 // macho_load_cmds_len is the total size of all load commands: __PAGEZERO
-// + __TEXT (1 section) + optional __DATA (1 section) + optional __DWARF
+// + __TEXT (__text, then optional __const and __eh_frame) + optional __DATA (1 section) + optional __DWARF
 // (macho_dwarf_sects sections, under `-g`) + __LINKEDIT +
 // LC_DYLD_INFO_ONLY + LC_SYMTAB + LC_DYSYMTAB + LC_BUILD_VERSION +
 // LC_LOAD_DYLINKER + LC_LOAD_DYLIB + LC_MAIN + LC_CODE_SIGNATURE.
@@ -11369,8 +11373,11 @@ function macho_lcstr_cmd_len(cmd: i32, path: string): i32 {
 // command and the first code byte, the layout the retired native writer
 // fixed (it counted dyldInfoCmdLen twice). It fixes text_off and so every
 // address; dropping it is a layout change of its own.
-function macho_load_cmds_len(has_data: boolean, has_eh: boolean, dwarf: boolean): i32 {
+function macho_load_cmds_len(has_data: boolean, has_ro: boolean, has_eh: boolean, dwarf: boolean): i32 {
   let n: i32 = 72 + (72 + 80) + 72;  // PAGEZERO + TEXT(1 sect) + LINKEDIT
+  if (has_ro) {
+    n = n + 80;  // __TEXT's __const section header
+  }
   if (has_eh) {
     n = n + 80;  // __TEXT's second section header, __eh_frame
   }
@@ -11391,10 +11398,10 @@ function macho_load_cmds_len(has_data: boolean, has_eh: boolean, dwarf: boolean)
 // macho_text_off is the file offset of code within __TEXT (after the
 // Mach-O header + load commands). A native assembler needs this to
 // resolve @PAGE / @PAGEOFF references before the same blobs are laid out
-// here at the same address. Reserve the optional DWARF command space in
-// both builds so debug metadata never changes linked instructions.
+// here at the same address. The optional __const header and DWARF commands
+// have their space reserved in every build, so neither moves the code.
 function macho_text_off(has_data: boolean, has_eh: boolean, dwarf: boolean): i32 {
-  return 32 + macho_load_cmds_len(has_data, has_eh, true);
+  return 32 + macho_load_cmds_len(has_data, true, has_eh, true);
 }
 
 // macho_dwarf_sects names the __DWARF segment's sections, in the order a
@@ -11917,7 +11924,7 @@ pub function macho_entry_off(a: Arm64Asm): i32 {
 // LC_DYLD_INFO_ONLY rebase stream is how the image asks for that. Pass an
 // empty array when the data blob holds no absolute addresses.
 pub function macho_executable(text: u8[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[]): i32[] {
-  return macho_executable_binds(text, eh, data, ident, entry_off, bss, rebase_offs, [], [], [], [], []);
+  return macho_executable_binds(text, text.len(), eh, data, ident, entry_off, bss, rebase_offs, [], [], [], [], []);
 }
 
 // macho_executable_binds is macho_executable plus the `.quad` slots dyld binds
@@ -11933,8 +11940,9 @@ pub function macho_executable(text: u8[], eh: i32[], data: i32[], ident: string,
 // __LINKEDIT, as Go's linker lays a static Mach-O out: unmapped (vmsize 0,
 // no protections), its sections S_ATTR_DEBUG, and read by lldb and dsymutil
 // straight from the executable, with no dSYM.
-pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[], dwarf: i32[][]): i32[] {
+pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[], dwarf: i32[][]): i32[] {
   let text_len: i32 = text.len();
+  let has_ro: boolean = code_len < text_len;
   let eh_len: i32 = eh.len();
   let has_eh: boolean = eh_len > 0;
   let data_len: i32 = data.len();
@@ -12002,7 +12010,7 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
   }
   // sizeofcmds is the size of the commands ACTUALLY written, which is
   // macho_load_cmds_len minus its 48 bytes of layout slack.
-  let sizeofcmds: i32 = macho_load_cmds_len(has_data, has_eh, has_dwarf) - 48;
+  let sizeofcmds: i32 = macho_load_cmds_len(has_data, has_ro, has_eh, has_dwarf) - 48;
 
   let buf: i32[] = [];
 
@@ -12026,14 +12034,22 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
   // ---- __PAGEZERO ----
   buf = macho_seg(buf, "__PAGEZERO", 0, base, 0, 0, 0, 0, 0);
 
-  // ---- __TEXT (r-x), 1 section, 2 with unwind data ----
+  // ---- __TEXT (r-x): the code, then the read-only constants and the unwind data ----
   let text_nsects: i32 = 1;
+  if (has_ro) {
+    text_nsects = text_nsects + 1;
+  }
   if (has_eh) {
-    text_nsects = 2;
+    text_nsects = text_nsects + 1;
   }
   buf = macho_seg(buf, "__TEXT", base, text_vmsize as i64, 0, text_vmsize as i64, 5, 5, text_nsects);
   // flags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
-  buf = macho_sect(buf, "__text", "__TEXT", text_vaddr, text_len, text_off, 2, 0x80000400);
+  buf = macho_sect(buf, "__text", "__TEXT", text_vaddr, code_len, text_off, 2, 0x80000400);
+  if (has_ro) {
+    // The constants follow the code 16-aligned (arm64_gas_program).
+    let ro_at: i32 = macho_align_up(code_len, 16);
+    buf = macho_sect(buf, "__const", "__TEXT", text_vaddr + ro_at as i64, text_len - ro_at, text_off + ro_at, 4, 0);
+  }
   if (has_eh) {
     // __eh_frame is data, not instructions: no attributes, 8-aligned.
     // dyld's _dyld_find_unwind_sections hands this section to libunwind's
