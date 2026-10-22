@@ -969,6 +969,7 @@ target_arch_arm64                                    0
 target_arch_named                                    0
 target_arch_wasm32                                   0
 target_arch_x86_64                                   0
+target_branch_hides_a_gated_builtin                  0
 target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0

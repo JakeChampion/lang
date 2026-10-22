@@ -31,7 +31,7 @@ func TestEveryTargetComposes(t *testing.T) {
 // the identical list four times and missing one was silent.
 //
 // Environments are deliberately NOT covered: linux and android share the
-// hosted-native profile on purpose, because they differ in object format
+// hosted-linux profile on purpose, because they differ in object format
 // and syscall vector rather than in what the host grants.
 func TestCapabilityProfilesAreDistinct(t *testing.T) {
 	seen := map[string]string{}

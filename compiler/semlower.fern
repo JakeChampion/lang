@@ -26,6 +26,7 @@ import "./lift";
 import "./parser";
 import "./platforms";
 import "./semsource";
+import "./ssa";
 import "./ssasem";
 import "./ssarc";
 import "./ssaunits";
@@ -159,10 +160,30 @@ function refusal(p: semsource.Produced, body: irtables.LowerResult): string {
   return body.why;
 }
 
+// dump_if_asked prints the semantic graph of the function FERN_SEM_DUMP
+// names, as the planner reads it: after the rewrites, before any count.
+// A trailing `*` names every function with that prefix.
+function dump_if_asked(p: semsource.Produced): void {
+  match (env("FERN_SEM_DUMP")) {
+    Some(want) => {
+      let name: string = p.func.graph.name;
+      if (want == name || util.str_has_suffix(want, "*") && util.str_has_prefix(name, slice_unchecked(want, 0, want.len() - 1))) {
+        let modes: string = "";
+        for m in p.modes {
+          modes = modes + " " + util.i32_to_string(m);
+        }
+        eprint("FERN_SEM_DUMP: " + name + " modes" + modes + "\n" + ssa.print_func(p.func.graph));
+      }
+    },
+    None => {}
+  }
+}
+
 // A produced function is planned over the analysis it carries when the
 // anchoring verified the graph the planner sees; one whose graph a rewrite
 // moved since carries none and is analysed here.
 function plan_of(p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Plan {
+  dump_if_asked(p);
   match (p.analysis) {
     Some(a) => {
       return ssaunits.plan_analyzed(p.func, p.modes, a, view);

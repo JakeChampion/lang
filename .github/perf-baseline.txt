@@ -92,7 +92,7 @@ x86_64/ordmap_insert.ir	105979300
 x86_64/pmap_insert.text	2600
 x86_64/pmap_insert.ir	56484087
 x86_64/pvec_with.text	2778
-x86_64/pvec_with.ir	57131286
+x86_64/pvec_with.ir	56311395
 x86_64/record_update.ir	109849111
 x86_64/record_update.text	1513
 x86_64/sort_inplace.text	1302
@@ -263,6 +263,12 @@ x86_64/utf8_ingest_validated.ir	5916089
 # longer; `.ir` moved +0.05% on x86_64. Both figures are the static count of
 # the cross-emitted assembly, which is what the lanes count.
 #
+# Re-pinned 2026-10-22 (#12947) on pvec_with.ir (x86_64 -1.44%, aarch64
+# -1.61%): an array element's take survives the record update that keeps
+# its array, so a `with` on an element no longer copies the holder's
+# records. The x86_64 figure is a local callgrind count on the merged
+# tree. The aarch64 figure is the perf lane's at the earlier head.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -304,7 +310,7 @@ aarch64/ordmap_insert.ir	114061180
 aarch64/pmap_insert.text	2868
 aarch64/pmap_insert.ir	66572386
 aarch64/pvec_with.text	3041
-aarch64/pvec_with.ir	60838467
+aarch64/pvec_with.ir	59861409
 aarch64/record_update.text	1692
 aarch64/record_update.ir	104947544
 aarch64/sort_inplace.text	1496

@@ -228,11 +228,49 @@ pub function real_driver(): RealDriver {
 // the whole of its life.
 pub function real_driver_io_uring(): RealDriver {
   let d: RealDriver = real_driver();
-  let ring: i64 = ring_new(1024);
+  let ring: i64 = __ring_new(1024);
   if (ring >= 0 as i64) {
     d.ring.set(ring);
   }
   return d;
+}
+
+// The io_uring builtins are Linux's. On every other target the driver never
+// has a ring, these answer as a ring that is not there does, and the calls
+// are not in the program.
+function __ring_new(entries: i32): i64 {
+  if (target_os() == "linux" || target_os() == "android") {
+    return ring_new(entries);
+  }
+  return (0 - 38) as i64;
+}
+
+function __ring_ctl(ring: i64, op: i32, fd: i32, arg: i32): i32 {
+  if (target_os() == "linux" || target_os() == "android") {
+    return ring_ctl(ring, op, fd, arg);
+  }
+  return 0 - 9;
+}
+
+function __ring_wait(ring: i64, events: i32[], timeout_ms: i32): i32 {
+  if (target_os() == "linux" || target_os() == "android") {
+    return ring_wait(ring, events, timeout_ms);
+  }
+  return 0 - 9;
+}
+
+function __ring_recv(ring: i64, fd: i32, buf: u8[]): i32 {
+  if (target_os() == "linux" || target_os() == "android") {
+    return ring_recv(ring, fd, buf);
+  }
+  return 0 - 9;
+}
+
+function __ring_send_zc(ring: i64, fd: i32, data: u8[], from: i32): i32 {
+  if (target_os() == "linux" || target_os() == "android") {
+    return ring_send_zc(ring, fd, data, from);
+  }
+  return 0 - 9;
 }
 
 // `.io_uring()` — whether the driver waits on an io_uring.
@@ -245,7 +283,7 @@ pub function (d: RealDriver) io_uring(): boolean {
 function __real_ctl(d: RealDriver, op: i32, fd: i32, arg: i32): i32 {
   let ring: i64 = d.ring.get();
   if (ring >= 0 as i64) {
-    return ring_ctl(ring, op, fd, arg);
+    return __ring_ctl(ring, op, fd, arg);
   }
   let r: i32 = __real_reactor(d);
   if (r < 0) {
@@ -258,7 +296,7 @@ function __real_ctl(d: RealDriver, op: i32, fd: i32, arg: i32): i32 {
 function __real_wait(d: RealDriver, events: i32[], timeout_ms: i32): i32 {
   let ring: i64 = d.ring.get();
   if (ring >= 0 as i64) {
-    return ring_wait(ring, events, timeout_ms);
+    return __ring_wait(ring, events, timeout_ms);
   }
   return reactor_wait(__real_reactor(d), events, timeout_ms);
 }
@@ -299,7 +337,7 @@ function __real_reactor(d: RealDriver): i32 {
 pub function (d: RealDriver) handle(): i32 {
   let ring: i64 = d.ring.get();
   if (ring >= 0 as i64) {
-    return ring_ctl(ring, 7, 0, 0);
+    return __ring_ctl(ring, 7, 0, 0);
   }
   return __real_reactor(d);
 }
@@ -399,32 +437,32 @@ impl Driver for RealDriver {
   function recv_into(self: RealDriver, fd: i32, buf: u8[]): i32 {
     let ring: i64 = self.ring.get();
     if (ring >= 0 as i64) {
-      return ring_recv(ring, fd, buf);
+      return __ring_recv(ring, fd, buf);
     }
     return tcp_recv_into(fd, buf);
   }
   function send_zc(self: RealDriver, fd: i32, data: u8[], from: i32): i32 {
     let ring: i64 = self.ring.get();
     if (ring >= 0 as i64) {
-      return ring_send_zc(ring, fd, data, from);
+      return __ring_send_zc(ring, fd, data, from);
     }
     return 0 - 95;
   }
   function zc_result(self: RealDriver, slot: i32): i32 {
-    return ring_ctl(self.ring.get(), 8, slot, 0);
+    return __ring_ctl(self.ring.get(), 8, slot, 0);
   }
   function zc_notified(self: RealDriver, slot: i32): boolean {
-    return ring_ctl(self.ring.get(), 9, slot, 0) != 0;
+    return __ring_ctl(self.ring.get(), 9, slot, 0) != 0;
   }
   function zc_release(self: RealDriver, slot: i32): i32 {
-    return ring_ctl(self.ring.get(), 10, slot, 0);
+    return __ring_ctl(self.ring.get(), 10, slot, 0);
   }
   function close(self: RealDriver): i32 {
     let ring: i64 = self.ring.get();
     self.signals.set("");
     if (ring >= 0 as i64) {
       self.ring.set(-(1 as i64));
-      return ring_ctl(ring, 3, 0, 0);
+      return __ring_ctl(ring, 3, 0, 0);
     }
     let r: i32 = self.reactor.get();
     if (r < 0) {

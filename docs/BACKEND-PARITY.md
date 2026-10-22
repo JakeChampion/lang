@@ -89,8 +89,8 @@ errno on failure on every target. `__store_u8(addr, v)` writes the low byte
 of `v`. Every native target lowers the same names, so a socket primitive is
 one Fern body rather than assembly per target. They are runtime
 intrinsics with a `__` prefix, not public builtins: `internal/pkg/platforms`
-gates them under the `syscall` capability only the hosted-native profile
-grants, they carry no package capability, and networking APIs built on them
+gates them under the `syscall` capability only the hosted profiles
+grant, they carry no package capability, and networking APIs built on them
 still need their own classifications.
 
 | Target | lowering |
@@ -265,11 +265,13 @@ readable while the queue holds bytes, and the read takes them before the
 socket's. `ring_send_zc(ring, fd, data, from)` writes `data[from:]` by
 `IORING_OP_SEND_ZC` and answers the slot whose result, notification and
 release `ring_ctl` ops 8 to 10 read; the caller keeps `data` until the
-notification. Only Linux has a body; Darwin, wasm and both
+notification. They are the `uring` capability, which only the Linux
+and Android profile grants, so E066 refuses them on Darwin and wasm. Both
 interpreters answer ENOSYS, as a kernel without io_uring or under a seccomp
-profile refusing it does, and `async.real_driver_io_uring()` keeps the
-reactor there. qemu-user implements no io_uring, so an arm64 binary under
-qemu takes the reactor too.
+profile refusing it does. std/async reaches them under a `target_os()`
+branch, so `async.real_driver_io_uring()` builds everywhere and keeps the
+reactor where there is no ring. qemu-user implements no io_uring, so an
+arm64 binary under qemu takes the reactor too.
 
 Per target, every socket primitive is provided as follows. "Fern body" is
 the one body in `asmcore.fern` over the syscall floor, the same on
@@ -284,14 +286,14 @@ of these at check time there.
 | `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
 | `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5, 7, 9 and 10 through wasi:sockets; 1, 3 and 6 `-ENOTSUP`; every op but 9 and 10 `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv_into` and `tcp_send_bytes` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket; ops 9 and 10 read the descriptor's own sockaddr |
 | `tcp_recv_into` | Fern body, `read(2)`, -errno on failure | Fern body | non-blocking read on the input stream, `-EAGAIN` when empty, `-EIO` on a stream error | E066 | a read through the descriptor |
-| `tcp_ktls` | Fern body: `setsockopt` for the `tls` upper-layer protocol and each direction's keys, `sendmsg` and `recvmsg` with the record type as a control message | `-ENOSYS` | `-ENOSYS` | E066 | `-ENOSYS` |
+| `tcp_ktls` | Fern body: `setsockopt` for the `tls` upper-layer protocol and each direction's keys, `sendmsg` and `recvmsg` with the record type as a control message | E066: no `ktls` | E066: no `ktls` | E066 | `-ENOSYS` |
 | `tcp_sendfile` | Fern body, `sendfile(2)`, the file advanced by what the socket took | Fern body, the position read and moved around Darwin's offset-and-length form | `-ENOTSUP`: the serve loop reads the file and sends the piece | E066 | a read of the open file then one socket write, the file moved back over what the socket did not take |
 | `tcp_send_buf` | Fern body, one `sendto(2)` of the builder's bytes from `from` | Fern body | the builder's bytes written to the output stream in place, as `tcp_send_bytes` writes an array | E066 | one socket write of the builder's bytes |
 | `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
 | `udp_bind_with` | Fern body | Fern body, Darwin's option numbers | `udp_bind`; `reuse_port` not read | E066 | raw descriptor, the options set before the bind |
 | `unix_listen`, `unix_connect` | Fern body | Fern body, `sun_len` head | E066: no `unix` | E066 | net package |
 | `reactor_new`, `reactor_ctl`, `reactor_wait` | Fern body, epoll | Fern body, kqueue | a table of wasi:io pollables; signals `-ENOTSUP` | E066: no `reactor` | an epoll or kqueue set over the handles; signals through a pipe |
-| `ring_new`, `ring_ctl`, `ring_wait`, `ring_recv`, `ring_send_zc` | Fern body, io_uring (kernel 6.1 setup flags), `-ENOSYS` or `-EPERM` where the kernel refuses it | `-ENOSYS` | `-ENOSYS` | E066: no `reactor` | `-ENOSYS` |
+| `ring_new`, `ring_ctl`, `ring_wait`, `ring_recv`, `ring_send_zc` | Fern body, io_uring (kernel 6.1 setup flags), `-ENOSYS` or `-EPERM` where the kernel refuses it | E066: no `uring` | E066: no `uring` | E066: no `uring` | `-ENOSYS` |
 
 On arm64-darwin `poll(fds, timeout_ms)` reaches `kqueue`/`kevent`
 (`asmcore.fern`'s `rt_src_poll_kqueue`). It ignores negative fds and failed

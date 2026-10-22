@@ -37,7 +37,7 @@ func TestSelfHostInterpImplementsHostedBuiltins(t *testing.T) {
 		t.Fatalf("the dispatch extracted from %s lacks print or read_file — the patterns have gone stale, which would make this test vacuous", path)
 	}
 	granted := map[string]bool{}
-	for _, profile := range []string{"hosted-native", "hosted-darwin"} {
+	for _, profile := range []string{"hosted-linux", "hosted-darwin"} {
 		for _, c := range capabilityProfiles[profile] {
 			granted[c] = true
 		}
