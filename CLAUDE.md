@@ -178,6 +178,12 @@ an in-flight run finish: the push cancels the older run, and that is accepted.
 Fixes you already have in hand, review nits included, go out in one push rather
 than one each.
 
+**A baseline a PR moves is re-banked in that PR, without asking.** The perf,
+cliff, emitted-size and allocation lanes each pin one (`.github/*-baseline.txt`).
+When a lane reports a row moved, in either direction, pin the lane's measured
+value with a dated note in the file and push. The owner has said so. Do not
+ask again.
+
 **One red lane cancels the rest.** When a lane concludes `failure` the rest of
 the run is cancelled to hand the lock to the next PR — so a red PR shows one
 `failure` among a wall of `cancelled`, and a `cancelled` check is not a second

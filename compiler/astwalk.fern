@@ -1526,7 +1526,7 @@ pub function substitute_consts_expr(e: ast.Expr, names: string[], values: ast.Ex
 }
 
 // rewrite_assoc_const_reads is substitute_consts's sibling for the reads of
-// associated constants: a field access `Base::NAME` whose object, unshadowed
+// associated constants: a field access `Base.NAME` whose object, unshadowed
 // by a binder, names one of `types` becomes the argument-less call of the
 // associated function, its callee marked const_read. An enum's field is a
 // variant unless `enum_assoc` lists `Enum.field` as an associated function.
