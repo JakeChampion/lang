@@ -3748,7 +3748,7 @@ pub function (s: string) parse_int_radix(base: i32): Option[i32] {
 // The exact fallback's arbitrary-precision arithmetic is `core/bigint`.
 //
 // This used to be a private base-2^32 bignum inlined here, because
-// std/string cannot import std/float (float → std/i32 → std/string would
+// std/string cannot import std/f64 (float → std/i32 → std/string would
 // cycle) and there was nowhere else for it to live. core/bigint imports
 // NOTHING precisely so that this module can use it, so the six `__bn_*`
 // helpers are gone rather than wrapped.

@@ -2168,10 +2168,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// every target has an exact instruction for each (Go's `math`
 	// package for the interp; wasm's f64.{sqrt,floor,…} ops; the
 	// native ISAs' own). The transcendentals are not among them:
-	// std/float computes those in Fern.
+	// std/f64 computes those in Fern.
 	//
 	// The user-facing surface is the receiver methods in
-	// `std/float` (`(x: f64).sqrt()`, `(x: f64).floor()`, …)
+	// `std/f64` (`(x: f64).sqrt()`, `(x: f64).floor()`, …)
 	// which dispatch to these primitives. Every backend
 	// implements all of them.
 	f64ToF64Builtin := &ast.FuncType{
@@ -2189,7 +2189,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// + wasm backends route f64 / i64 through their own
 	// reinterpret instructions and don't need a builtin helper.
 	// Exposing the signature lets pure-Lang float-formatting
-	// code (std/float's Dragonbox `__float_shortest`, future
+	// code (std/f64's Dragonbox `__float_shortest`, future
 	// hex-float emitters) extract the IEEE-754 fields without a
 	// runtime trip.
 	c.info.FuncSigs["f64_bits"] = &ast.FuncType{
@@ -12969,7 +12969,7 @@ func scalarModuleFor(t ast.Type) string {
 			mod = "std/i32"
 		}
 	case ast.FloatType:
-		mod = "std/float"
+		mod = "std/f64"
 	case ast.StringType:
 		mod = "std/string"
 	case ast.StrType:

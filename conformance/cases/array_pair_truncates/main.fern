@@ -16,7 +16,7 @@
 // truncated to the right one.
 import "std/array";
 import "std/i32";
-import "std/float";
+import "std/f64";
 
 function main(): i32 {
   let a: i32[] = [1, 2, 3, 4, 5];

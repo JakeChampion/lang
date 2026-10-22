@@ -146,9 +146,9 @@ function main(): i32 {
 }
 `, 44, ""},
 	// `?` on a success that carries `()` resumes with the unit value.
-	{"try-unit-success", `function ok(): Result[(), IoError] { return Ok(()); }
-function bad(): Result[(), IoError] { return Err(Interrupted); }
-function chain(fail: boolean): Result[(), IoError] {
+	{"try-unit-success", `function ok(): Result[void, IoError] { return Ok(()); }
+function bad(): Result[void, IoError] { return Err(Interrupted); }
+function chain(fail: boolean): Result[void, IoError] {
     ok()?;
     if (fail) { bad()?; }
     return Ok(());

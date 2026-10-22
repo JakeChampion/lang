@@ -150,7 +150,7 @@ contract, pinned here.
 
 `(f32).to_string()` and `(f64).to_string()` route through one shared
 Fern implementation — `__float_shortest` / `__float_shortest_f32` in
-`std/float.fern` — which is compiled per target from the same source. It
+`std/f64.fern` — which is compiled per target from the same source. It
 does all of its work in integer arithmetic over the IEEE-754 fields
 (`f64_bits` / `f32_bits`), never in the float domain, so its output is
 **byte-for-byte identical across interp / x86_64 / arm64 / wasm** for
@@ -173,7 +173,7 @@ Notation is scientific when the decimal exponent of the leading digit is
 sign and no zero padding (`1e-5`, `1e+21`). The low threshold is C/Go `'g'`'s;
 the high one and the exponent spelling are JavaScript's. So `1e20` prints as
 `100000000000000000000` where Go's `%v` gives `1e+20`, and `0.00001` prints as
-`1e-5` where Go gives `1e-05` (`internal/stdlib/std/float.fern:363`).
+`1e-5` where Go gives `1e-05` (`internal/stdlib/std/f64.fern:363`).
 
 Guaranteed:
 
@@ -207,7 +207,7 @@ constant-work and allocates nothing beyond the result string. The tables
 are the cost: 619 128-bit entries for f64 and 78 64-bit entries for f32,
 ~10 KB of static data, generated and verified against the upstream
 dragonbox table by `cmd/floattablegen` (`go run ./cmd/floattablegen
-internal/stdlib/std/float.fern internal/stdlib/std/string.fern` regenerates
+internal/stdlib/std/f64.fern internal/stdlib/std/string.fern` regenerates
 them and the Eisel-Lemire table). They ship as `const` u64 arrays, which
 every backend lays out as static data, so a lookup is one load.
 
@@ -277,18 +277,14 @@ finite value — not a tolerance. Code may compare the result with `==`.
 **f64 is the default and primary float** (owner decision, #5363). An
 unsuffixed float literal with no expected-type pressure settles to f64
 (`ast.FloatType.NormalWidth`, mirrored by the interp and the IR
-lowering's Width-0 → `OpConstF64` path), and `float` is a first-class
-alias for f64 on both compilers — the native parser resolves it
-contextually in type position (like `str`; it is not a lexer keyword,
-so `float.pi()`-style module calls keep working), matching the
-self-host checker's long-standing resolution. The old discrepancy
-(native E064 on `float`, self-host silently f64) is resolved. f32
+lowering's Width-0 → `OpConstF64` path). The type is written `f64`:
+`float` is refused in type position with a diagnostic naming `f64`
+(#12700), and the module is `std/f64`. f32
 remains fully supported via explicit annotation (`let x: f32`), suffix
 (`1.5f32`), or cast (`x as f32`); it is opt-in precision-narrowing,
 never a default. Pinned by `TestFloatDefaultWidthF64`
-(`internal/testing/e2e/float_semantics_test.go`), `TestFloatAliasAndDefaultWidth`
-(checker), and the `float-alias-ok` / `float-alias-mismatch`
-self-host checker-codes fixtures.
+(`internal/testing/e2e/float_semantics_test.go`) and the
+`float_is_not_a_type` conformance case.
 
 ### Literal range
 

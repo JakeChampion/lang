@@ -641,11 +641,11 @@ function e_struct_update(type_name: string, field_names: string[], field_lines: 
 }
 
 function e_field_access(obj: ast.Expr, field: string): ast.Expr {
-  return ast.ExprFieldAccess { obj: obj, field: field, line: 0, col: 0, ty: "", path_sep: false, const_read: false };
+  return ast.ExprFieldAccess { obj: obj, field: field, line: 0, col: 0, ty: "", const_read: false };
 }
 
 function e_field_access_at(obj: ast.Expr, field: string, line: i32, col: i32): ast.Expr {
-  return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "", path_sep: false, const_read: false };
+  return ast.ExprFieldAccess { obj: obj, field: field, line: line, col: col, ty: "", const_read: false };
 }
 
 // e_lambda_at is the one place the ExprLambda literal is written; e_lambda_fn
@@ -1857,6 +1857,40 @@ function (p: Par) advance(): Par {
 // required: native's P001 "expected a type, got X".
 function (p: Par) expected_type(): Par {
   return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected a type, got " + tok_desc(p.peek()))) };
+}
+
+// refused_type records native's P001 for a type spelling the language does
+// not have, naming the one it does; the caller parses on as that spelling.
+function (p: Par) refused_type(msg: string): Par {
+  return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:" + msg)) };
+}
+
+function unit_type_message(): string {
+  return "`()` is not a type; the unit type is written `void`";
+}
+
+// at_float_type reports `float` written as a type name, which the language
+// refuses in favour of `f64`: not the head of a module path (`float.x`), not a
+// segment of one (`m.float`), not a union member, not the type an `impl`
+// names, and not the trait or resource name after `dyn`, a `dyn`
+// continuation's `+`, `own` or `borrow`.
+function at_float_type(p: Par, seg: string): boolean {
+  if (seg != "float" || p.peek_punct_at(1) == ".") {
+    return false;
+  }
+  if (p.pos == 0) {
+    return true;
+  }
+  let prev: string = tok_spelling(p.toks[p.pos - 1]);
+  // A union member is a struct name: `type A = float | B;`.
+  if (prev == "|" || prev == "=" && p.peek_punct_at(1) == "|") {
+    return false;
+  }
+  return !util.has_str([".", "dyn", "+", "own", "borrow", "impl"], prev);
+}
+
+function float_type_message(): string {
+  return "`float` is not a type; the 64-bit float is written `f64`";
 }
 
 // handle_word_misuse records native's P001 for `own` / `borrow` at the cursor
@@ -3200,7 +3234,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         p = qr_p;
         base = qr_expr;
       } else {
-        base = ast.ExprFieldAccess { obj: base, field: fname, line: dline, col: dcol, ty: "", path_sep: pk == "::", const_read: false };
+        base = ast.ExprFieldAccess { obj: base, field: fname, line: dline, col: dcol, ty: "", const_read: false };
       }
     } else if (p.peek_keyword() == "as") {
       // `expr as Type` cast. Desugar to a unary op
@@ -3441,7 +3475,9 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
         let kwline: i32 = p.peek_line();
         let kwcol: i32 = p.peek_col();
         let look: Par = p.advance();
-        if (look.peek_punct() == ".") {
+        // `::` takes the same base, so parse_postfix refuses it as a path
+        // separator, as native does.
+        if (look.peek_punct() == "." || look.peek_punct() == "::") {
           return parse_postfix(look, e_ident_at(x.name, kwline, kwcol));
         }
       }
@@ -8267,11 +8303,10 @@ function fn_ret_admitted(rr_name: string): string {
   return "";
 }
 
-// at_unit_type reports whether the cursor sits on the unit type `()`. Native's
-// type parser resolves the empty parens to the void type and its printer writes
-// `void`, so the self-host records the same name rather than the written parens
-// (#8759). `() => R` is a function type with an empty parameter list, not the
-// unit, and is left for the collectors that build a fn-type spelling.
+// at_unit_type reports whether the cursor sits on `()` written as a type, which
+// the language refuses in favour of `void`. `() => R` is a function type with
+// an empty parameter list and is left for the collectors that build a fn-type
+// spelling.
 function at_unit_type(p: Par): boolean {
   return p.peek_punct() == "(" && p.peek_punct_at(1) == ")" && p.peek_punct_at(2) != "=>";
 }
@@ -8406,10 +8441,10 @@ function enclosing_opener(p: Par, from: i32): i32 {
 }
 
 function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Par) {
-  // The unit type `()`, folded to `void` before the collect loop can record
-  // its parens as a spelling.
-  if (at_unit_type(p)) {
-    let up: Par = p.advance();
+  // `()` as a type is refused; it parses on as `void`. With the arrow reserved
+  // for a lambda's own, `() =>` is a unit annotation, not a function type.
+  if (at_unit_type(p) || !top_arrow && p.peek_punct() == "(" && p.peek_punct_at(1) == ")") {
+    let up: Par = p.refused_type(unit_type_message()).advance();
     up = up.advance();
     return consume_array_suffix(up, "void");
   }
@@ -8454,11 +8489,10 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
   let telem_after_comma: boolean = false;
   while (!p.at_end()) {
     let tpk: string = p.peek_punct();
-    // A unit ELEMENT of a tuple type — `((), i32)`. The head `()` never
-    // reaches here (folded above), so this is always a nested one.
+    // `()` as an ELEMENT of a tuple type — `((), i32)`.
     if (at_unit_type(p)) {
       tbuf = tbuf + "void";
-      p = p.advance();
+      p = p.refused_type(unit_type_message()).advance();
       p = p.advance();
       tprev_word = false;
       tprev_prefix = false;
@@ -8559,6 +8593,10 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
     }
     // Word prefixes must stay separate from their type: dyn Speak, own T,
     // and borrow Socket. The formatter preserves every word boundary.
+    if (at_float_type(p, tseg)) {
+      p = p.refused_type(float_type_message());
+      tseg = "f64";
+    }
     if (tprev_word && (p.verbatim || tprev_prefix)) {
       tbuf = tbuf + " ";
     }
@@ -8855,6 +8893,9 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
   // `"dyn Error"` spelling. Without it the payload type is stored as
   // `"dynError"` and the dyn-dispatch guard (`rty[0:4] == "dyn "`) misses.
   let prev_ident: boolean = false;
+  // The bracket depth a `dyn` opened at, whose `+` continues it until the
+  // argument ends; -1 outside one.
+  let dyn_depth: i32 = 0 - 1;
   while (depth > 0 && !p.at_end()) {
     let pk: string = p.peek_punct();
     if (pk == "[") {
@@ -8869,12 +8910,18 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
       if (depth == 0) {
         break;
       }
+      if (dyn_depth > depth) {
+        dyn_depth = 0 - 1;
+      }
       inner = inner + "]";
       p = p.advance();
       prev_ident = false;
       continue;
     }
     if (pk == ",") {
+      if (dyn_depth == depth) {
+        dyn_depth = 0 - 1;
+      }
       p = p.advance();
       // A tuple type takes no trailing comma; a type-argument list does.
       if (p.peek_punct() == ")") {
@@ -8890,17 +8937,20 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
     // top-level `parse_type` spelling (` + ` joined) so the dyn payload
     // type round-trips identically.
     if (pk == "+") {
+      if (dyn_depth != depth) {
+        p = p.expect("]");
+      }
       inner = inner + " + ";
       p = p.advance();
       prev_ident = false;
       continue;
     }
-    // The unit type as a generic ARGUMENT — `Result[(), E]`, `Option[()]`.
-    // Folded to `void` here too: this collector reads the brackets a token
-    // at a time and never calls back into the type parser.
+    // `()` written as a generic ARGUMENT — `Result[(), E]` — is refused here
+    // too: this collector reads the brackets a token at a time and never
+    // calls back into the type parser.
     if (at_unit_type(p)) {
       inner = inner + "void";
-      p = p.advance();
+      p = p.refused_type(unit_type_message()).advance();
       p = p.advance();
       prev_ident = false;
       continue;
@@ -8959,8 +9009,15 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
     if (seg.len() == 0) {
       break;
     }
+    if (seg == "dyn") {
+      dyn_depth = depth;
+    }
     if (misused_handle_word(p, seg)) {
       p = p.handle_word_misuse(seg);
+    }
+    if (at_float_type(p, seg)) {
+      p = p.refused_type(float_type_message());
+      seg = "f64";
     }
     if (prev_ident) {
       inner = inner + " ";
@@ -9085,6 +9142,9 @@ function parse_type_name_nested(p: Par): (string, string, Par) {
   }
   if (base.len() == 0) {
     return parse_type_punct_led(p);
+  }
+  if (at_float_type(p, base)) {
+    return parse_type_ident_led(p.refused_type(float_type_message()), "f64");
   }
   return parse_type_ident_led(p, base);
 }
@@ -9395,44 +9455,34 @@ function parse_type_param_list(p: Par): (TpList, Par) {
           }
         }
         // A parametrised-trait bound (`T: Iterator[i32]`) carries a
-        // bracketed type-arg list after the trait name — consume the
-        // balanced `[ … ]` (possibly nested) so the bound parses and
-        // the function stays on the monomorphisation / IR path rather
-        // than mis-parsing at the `[` and bailing.
+        // A bound's type arguments are types, read by the type parser as
+        // native reads them, so a refused spelling in one is refused here.
         if (p.peek_punct() == "[") {
-          let depth: i32 = 0;
-          let bgo: boolean = true;
+          p = p.advance();
           let bargs: string = "";
-          while (bgo && !p.at_end()) {
-            let bpk: string = p.peek_punct();
-            if (bpk == "[") {
-              depth = depth + 1;
-              bargs = bargs + "[";
-              p = p.advance();
-            } else if (bpk == "]") {
-              depth = depth - 1;
-              bargs = bargs + "]";
-              p = p.advance();
-              if (depth == 0) {
-                bgo = false;
-              }
-            } else if (bpk == ",") {
+          while (!p.at_end() && p.peek_punct() != "]") {
+            let barg_at: i32 = p.pos;
+            let (barg, barg_ret, barg_p) = parse_type_name(p);
+            p = barg_p;
+            if (p.pos == barg_at) {
+              p = p.expected_type().advance();
+              continue;
+            }
+            if (bargs.len() > 0) {
               bargs = bargs + ", ";
+            }
+            bargs = bargs + barg;
+            if (p.peek_punct() == ",") {
               p = p.advance();
-            } else if (bpk == "=") {
+            } else if (p.peek_punct() != "]") {
               // An associated-type pin belongs to a `dyn` type, not a bound.
-              p = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \"]\", got " + tok_desc(p.peek()))) };
-              p = p.advance();
-            } else {
-              let bseg: string = p.peek_ident();
-              if (bseg.len() == 0) {
-                bseg = p.peek_keyword();
-              }
-              bargs = bargs + bseg;
-              p = p.advance();
+              p = p.expect("]").advance();
             }
           }
-          tname = tname + bargs;
+          if (p.peek_punct() == "]") {
+            p = p.advance();
+          }
+          tname = tname + "[" + bargs + "]";
         }
         if (tname.len() > 0) {
           if (this_bounds.len() > 0) {
@@ -29134,9 +29184,9 @@ function skip_decl_modifier(p: Par, name: string, before: string): Par {
 // that shape still behaves as it did before this pass existed.
 
 // is_float_type_name reports whether a declared type name denotes a float
-// scalar. `float` is the unsuffixed spelling; f32 is f64-shaped downstream.
+// scalar; f32 is f64-shaped downstream.
 function is_float_type_name(t: string): boolean {
-  return t == "f64" || t == "f32" || t == "float";
+  return t == "f64" || t == "f32";
 }
 
 // is_unsettled_int_literal reports whether `e` is an integer literal whose type
@@ -30294,14 +30344,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         trait_defaults = trait_defaults.append(tpr_defaults[tdi]);
         tdi = tdi + 1;
       }
-      // Retain the trait's required (abstract) method set for E021 (#4347).
-      // Retain a trait's requirement record when it has abstract methods
-      // OR supertraits — a supertrait-only trait (`trait Num: Add + …{}`)
-      // has no methods but still drives the E021 supertrait-impl check —
-      // OR defaults, which a `dyn` of the trait calls.
-      if (tpr_req.methods.len() > 0 || tpr_req.supertraits.len() > 0 || tpr_req.assoc_sigs.len() > 0 || tpr_req.default_sigs.len() > 0) {
-        trait_reqs = trait_reqs.append(tpr_req);
-      }
+      // Every declared trait keeps its requirement record, a member-less one
+      // included: it is how the checker knows the trait exists.
+      trait_reqs = trait_reqs.append(tpr_req);
       continue;
     }
     if (kw == "impl") {

@@ -2,7 +2,7 @@ import "std/test";
 import "std/json";
 import "std/i32";
 import "std/i64";
-import "std/float";
+import "std/f64";
 import "std/option";
 
 // tests/stdlib/json_document_test.fern — std/json's Document: one parse into a

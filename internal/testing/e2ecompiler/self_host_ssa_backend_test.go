@@ -327,7 +327,7 @@ function main(): i32 {
 	// the lowering inserts for an integer literal at an f64 parameter, the
 	// f32 and i64 reinterprets, and the transcendentals the runtime supplies.
 	{name: "floats", src: `
-import "std/float";
+import "std/f64";
 function area(r: f64): f64 { return 3.141592653589793 * r * r; }
 function hyp(a: f64, b: f64): f64 { return (a * a + b * b).sqrt(); }
 function classify(x: f64): i32 {
@@ -393,7 +393,7 @@ function main(): i32 {
 	// patterns, so a rounding difference shows.
 	{name: "float_registers", src: `
 import "std/i64";
-import "std/float";
+import "std/f64";
 function show(x: f64): void { print(f64_bits(x).to_string() + "\n"); }
 function idn(x: f64, n: i32): f64 { if (n == 0) { return x; } return idn(x, n - 1); }
 function poke(n: i32): i32 { if (n > 100) { return n; } return poke(n + 50) - 49; }

@@ -1,5 +1,5 @@
-import "std/float";
-// std/float sqrt(16.0) = 4.0, byte-exact on all four backends.
+import "std/f64";
+// std/f64 sqrt(16.0) = 4.0, byte-exact on all four backends.
 // This used to opt out of arm64/x86_64 with "sqrt needs libm; the
 // -nostdlib native backends can't link it" and to match on a
 // substring "to stay robust to trailing fractional digits". Both

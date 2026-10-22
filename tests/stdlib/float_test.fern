@@ -52,7 +52,7 @@ function test_nan_compares_unequal_to_itself(): test.TestOutcome {
   let z: f64 = 0.0;
   let nan: f64 = z / z;
   // The textbook NaN property; failure here would mean
-  // either the interp or std/float misclassified NaN.
+  // either the interp or std/f64 misclassified NaN.
   if (nan == nan) {
     return test.fail("NaN compared equal to itself");
   }

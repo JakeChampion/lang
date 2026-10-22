@@ -209,9 +209,9 @@ Five PRs, each shippable. Breaking changes are fine — single user.
 - Default literal type stays `i32`. Literals are polymorphic in
   expected-type context: `let x: i64 = 1` works without a cast.
 - Explicit conversion only (`x as i64`); no implicit widening.
-- `f32` (existing) and `f64` (new); `float` becomes an alias —
-  originally planned as f32, decided as **f64** (#5363,
-  2026-07: f64 is the default and primary float).
+- `f32` (existing) and `f64` (new); f64 is the default and primary
+  float (#5363). The `float` alias this once added was deleted
+  (#12700): `f64` is the one spelling.
 - The historical `number` alias was dropped in PR 1's
   follow-up cleanup; use `i32` / `i64` / `u32` etc. directly.
 - Update WASM codegen: i64 ops via `i64.*` instructions.
@@ -257,8 +257,8 @@ Status:
   `OpFPromoteF32` / `OpFDemoteF64` cast ops, wasm codegen picks
   `f64.*` instructions when `Op.Width == 64`, and float
   literals (`1.5`, `3.14`) participate in the same polymorphic-
-  literal flow as integer literals. `float` is the alias for
-  f64 (#5363; an unsettled literal also defaults to f64).
+  literal flow as integer literals. An unsettled literal defaults
+  to f64 (#5363).
 
 ### PR 2 — Tuples (shipped) + slice views (deferred)
 

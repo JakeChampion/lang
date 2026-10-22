@@ -16,7 +16,7 @@ import (
 // comparison, `>` meaning cmp's order with NaN above every number, through a
 // bounded impl and through a match payload of the variable's type.
 const boundTraitProviderSrc = `import "core/cmp" as cmp;
-import "std/float";
+import "std/f64";
 import "std/num";
 
 struct P { x: i32 }

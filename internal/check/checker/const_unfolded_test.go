@@ -29,10 +29,10 @@ const LATE: i32 = 3;
 }
 
 // The stdlib's own private consts resolve too: std/string's Eisel-Lemire
-// table and std/float's Dragonbox tables are module-private u64 arrays.
+// table and std/f64's Dragonbox tables are module-private u64 arrays.
 func TestStdlibConstsCheckBeforeFolding(t *testing.T) {
 	prog, _, err := modload.LoadSource(`import "std/string";
-import "std/float";
+import "std/f64";
 function main(): i32 {
     match ("1.5".parse_float()) {
         Some(v) => { return v.to_string().len(); },

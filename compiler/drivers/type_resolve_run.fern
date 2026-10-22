@@ -46,7 +46,7 @@ function main(): i32 {
     checker.UnionSig { name: "Shape", variants: [], is_try: false, is_enum: true, module: "", type_params: [], instance: "", visible_from: [] },
   ];
   let corpus: string[] = [
-    "i32", "i64", "u32", "u64", "bool", "boolean", "string", "f64", "f32", "float",
+    "i32", "i64", "u32", "u64", "bool", "boolean", "string", "f64", "f32",
     "Foo", "Bar", "Shape", "Baz",
     "i32[]", "string[]", "Foo[]", "Shape[]", "i32[][]", "Foo[][]",
     "(i32, string)", "(Foo, Shape)", "(i32, string, boolean)", "(string, (i32, boolean))",
