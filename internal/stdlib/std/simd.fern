@@ -24,17 +24,20 @@ import "std/num" as num;
 import "std/float";
 
 // Lanes is a value of LANES elements that supports the arithmetic, the
-// comparisons and the bit-exact helpers a numeric kernel needs. `lt` yields a
-// lane mask in the type itself, one lane 1.0 where the comparison holds and
-// 0.0 where it does not, and `select` reads that mask; a scalar's mask is its
-// own `1.0` / `0.0`. SPLIT is Dekker's splitting constant, 2^(p/2) + 1 for a
-// p-bit significand, which `DoubleDouble` needs to form exact products.
+// comparisons and the bit-exact helpers a numeric kernel needs. `lt` and `ne`
+// yield a lane mask in the type itself, one lane 1.0 where the comparison
+// holds and 0.0 where it does not (`ne` is 1.0 for a NaN operand), and
+// `select` reads that mask; a scalar's mask is its own `1.0` / `0.0`. SPLIT is
+// Dekker's splitting constant, 2^(p/2) + 1 for a p-bit significand, which
+// `DoubleDouble` needs to form exact products.
 pub trait Lanes: num.Num + num.Neg {
   const LANES: i32;
   const SPLIT: f64;
   function splat(x: f64): Self;
   function lane(self: Self, i: i32): f64;
-  function fma(self: Self, b: Self, c: Self): Self;
+  // `self * b + c` with the type's own roundings. A fused form needs a
+  // builtin (docs/SIMD-GENERIC-KERNELS.md §6).
+  function mul_add(self: Self, b: Self, c: Self): Self;
   function sqrt(self: Self): Self;
   function abs(self: Self): Self;
   function floor(self: Self): Self;
@@ -42,6 +45,7 @@ pub trait Lanes: num.Num + num.Neg {
   function min(self: Self, o: Self): Self;
   function max(self: Self, o: Self): Self;
   function lt(self: Self, o: Self): Self;
+  function ne(self: Self, o: Self): Self;
   function select(m: Self, a: Self, b: Self): Self;
   // `self * 2^k`, exact, for an integral k in every lane.
   function ldexp(self: Self, k: Self): Self;
@@ -64,8 +68,8 @@ pub trait Math: Lanes {
 // ---- f64 ------------------------------------------------------------------
 
 // The scalar impls bind only what std/float does not already give the type:
-// an impl adopts a method the type has (sqrt, abs, floor, round, min, max,
-// and every special function of Math).
+// an impl adopts a method the type has (mul_add, sqrt, abs, floor, round,
+// min, max, and every special function of Math).
 impl Lanes for f64 {
   const LANES: i32 = 1;
   const SPLIT: f64 = 134217729.0;
@@ -75,11 +79,14 @@ impl Lanes for f64 {
   function lane(self: f64, i: i32): f64 {
     return self;
   }
-  function fma(self: f64, b: f64, c: f64): f64 {
-    return self * b + c;
-  }
   function lt(self: f64, o: f64): f64 {
     if (self < o) {
+      return 1.0;
+    }
+    return 0.0;
+  }
+  function ne(self: f64, o: f64): f64 {
+    if (self != o) {
       return 1.0;
     }
     return 0.0;
@@ -122,11 +129,14 @@ impl Lanes for f32 {
   function lane(self: f32, i: i32): f64 {
     return self as f64;
   }
-  function fma(self: f32, b: f32, c: f32): f32 {
-    return self * b + c;
-  }
   function lt(self: f32, o: f32): f32 {
     if (self < o) {
+      return 1.0;
+    }
+    return 0.0;
+  }
+  function ne(self: f32, o: f32): f32 {
+    if (self != o) {
       return 1.0;
     }
     return 0.0;
@@ -146,21 +156,22 @@ impl Math for f32 {}
 
 // ---- generic helpers --------------------------------------------------------
 
+// eq is the lane mask of `a == b`: 0.0 for a NaN operand, as `ne` is 1.0. A
+// method `eq` on the scalars would clash with `cmp.Eq`'s boolean one.
+pub function eq[T: Lanes](a: T, b: T): T {
+  return T.splat(1.0) - a.ne(b);
+}
+
 // horner evaluates c[0] + c[1] x + c[2] x^2 + … on any `Lanes` type, the
 // coefficients given as f64 and splat as they are used.
 pub function horner[T: Lanes](x: T, c: f64[]): T {
   let acc: T = T.splat(c[c.len() - 1]);
   let i: i32 = c.len() - 2;
   while (i >= 0) {
-    acc = acc.fma(x, T.splat(c[i]));
+    acc = acc.mul_add(x, T.splat(c[i]));
     i = i - 1;
   }
   return acc;
-}
-
-// eq is the lane mask of `a == b`, from the two `lt`s a kernel has.
-pub function eq[T: Lanes](a: T, b: T): T {
-  return (T.splat(1.0) - a.lt(b)) * (T.splat(1.0) - b.lt(a));
 }
 
 // ---- Dual: forward-mode automatic differentiation -------------------------
@@ -219,8 +230,8 @@ impl[T: Lanes] Lanes for Dual[T] {
   function lane(self: Dual[T], i: i32): f64 {
     return self.v.lane(i);
   }
-  function fma(self: Dual[T], b: Dual[T], c: Dual[T]): Dual[T] {
-    return Dual { v: self.v.fma(b.v, c.v), d: self.d * b.v + self.v * b.d + c.d };
+  function mul_add(self: Dual[T], b: Dual[T], c: Dual[T]): Dual[T] {
+    return Dual { v: self.v.mul_add(b.v, c.v), d: self.d * b.v + self.v * b.d + c.d };
   }
   function sqrt(self: Dual[T]): Dual[T] {
     let r: T = self.v.sqrt();
@@ -246,6 +257,9 @@ impl[T: Lanes] Lanes for Dual[T] {
   }
   function lt(self: Dual[T], o: Dual[T]): Dual[T] {
     return Dual { v: self.v.lt(o.v), d: T.splat(0.0) };
+  }
+  function ne(self: Dual[T], o: Dual[T]): Dual[T] {
+    return Dual { v: self.v.ne(o.v), d: T.splat(0.0) };
   }
   function select(m: Dual[T], a: Dual[T], b: Dual[T]): Dual[T] {
     return Dual { v: T.select(m.v, a.v, b.v), d: T.select(m.v, a.d, b.d) };
@@ -406,7 +420,7 @@ impl[T: Lanes] Lanes for DoubleDouble[T] {
   function lane(self: DoubleDouble[T], i: i32): f64 {
     return self.hi.lane(i) + self.lo.lane(i);
   }
-  function fma(self: DoubleDouble[T], b: DoubleDouble[T], c: DoubleDouble[T]): DoubleDouble[T] {
+  function mul_add(self: DoubleDouble[T], b: DoubleDouble[T], c: DoubleDouble[T]): DoubleDouble[T] {
     return self * b + c;
   }
   // One Newton step from the lanes' root doubles its precision.
@@ -442,6 +456,9 @@ impl[T: Lanes] Lanes for DoubleDouble[T] {
   function lt(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
     let m: T = self.hi.lt(o.hi) + eq(self.hi, o.hi) * self.lo.lt(o.lo);
     return DoubleDouble { hi: m, lo: T.splat(0.0) };
+  }
+  function ne(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
+    return DoubleDouble { hi: T.splat(1.0) - eq(self.hi, o.hi) * eq(self.lo, o.lo), lo: T.splat(0.0) };
   }
   function select(m: DoubleDouble[T], a: DoubleDouble[T], b: DoubleDouble[T]): DoubleDouble[T] {
     return DoubleDouble { hi: T.select(m.hi, a.hi, b.hi), lo: T.select(m.hi, a.lo, b.lo) };

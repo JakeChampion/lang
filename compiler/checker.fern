@@ -5858,7 +5858,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       // returns unknown. `T` gives the type variable, a concrete type the real
       // type.
       if (!qhandled) {
-        let ah: AssocHit = assoc_call_req(fa.obj, fa.field, s);
+        let ah: AssocHit = assoc_call_req(fa.obj, fa.field, s, fa.const_read);
         if (ah.found) {
           // An inherent impl's associated function has no trait requirement to
           // read its return from, so it is typed from its own declaration.
@@ -14721,8 +14721,9 @@ function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): p
 // type. The object is a type qualifier with no value behind it, so walking it
 // reports E001 "undefined name" on a call native accepts (#6933). A value
 // binding of the same name shadows the type and makes it a genuine method
-// call.
-function assoc_call_req(obj: ast.Expr, field: string, s: Scope): AssocHit {
+// call. A `Base::NAME` read (`const_read`) names a declared constant, so the
+// instantiation-borne hit below is not for it.
+function assoc_call_req(obj: ast.Expr, field: string, s: Scope, const_read: boolean): AssocHit {
   match (obj) {
     ast.ExprIdent(oid) => {
       if (s.known(oid.name)) {
@@ -14744,7 +14745,7 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope): AssocHit {
       // return type is unrecoverable, as every erased parameter's is (#8461).
       // A bounded parameter must resolve through its declared traits above:
       // treating the qualifier alone as a hit also accepts T.nope().
-      if (util.index_of_str(s.tparams, oid.name) >= 0 && tp_bound_for(oid.name, s.tparams, s.tbounds).len() == 0) {
+      if (!const_read && util.index_of_str(s.tparams, oid.name) >= 0 && tp_bound_for(oid.name, s.tparams, s.tbounds).len() == 0) {
         return AssocHit { found: true, ret: "", owner: "", params: [], is_const: false };
       }
       return assoc_miss();
@@ -15264,7 +15265,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // resolution below has also missed. Ordered the other way this arm
       // claimed every such call and reported a variant nobody wrote (#8461).
       let cqen: string = qual_enum_name(mfa.obj, s);
-      if (cqen.len() > 0 && !assoc_call_req(mfa.obj, mfa.field, s).found) {
+      if (cqen.len() > 0 && !assoc_call_req(mfa.obj, mfa.field, s, mfa.const_read).found) {
         if (!qual_variant_exists(cqen, mfa.field, s)) {
           out = out.append(dg_at("E036", "enum " + cqen + " has no variant \"" + mfa.field + "\"", mfa.line, mfa.col));
         } else {
@@ -15281,7 +15282,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // so it must be diverted before the recursion reads it as a
       // value and reports E001 (#6933). The arguments are still
       // walked.
-      let ah: AssocHit = assoc_call_req(mfa.obj, mfa.field, s);
+      let ah: AssocHit = assoc_call_req(mfa.obj, mfa.field, s, mfa.const_read);
       if (ah.found) {
         // A `Base::NAME` read names a constant and `Base.f(…)` a function;
         // the rewrite marks the read's callee const_read.

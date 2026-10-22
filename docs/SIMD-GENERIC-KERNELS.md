@@ -166,13 +166,14 @@ pub trait Lanes: num.Num + num.Neg {
     const LANES: i32;
     function splat(x: Self::Elem): Self;        // every lane = x
     function lane(self: Self, i: i32): Self::Elem;
-    function fma(self: Self, b: Self, c: Self): Self;   // self * b + c, one rounding where the target has it
+    function mul_add(self: Self, b: Self, c: Self): Self;   // self * b + c, the type's own roundings
     function sqrt(self: Self): Self;
     function abs(self: Self): Self;
     function floor(self: Self): Self;
     function min(self: Self, o: Self): Self;
     function max(self: Self, o: Self): Self;
     function lt(self: Self, o: Self): Self::Mask;
+    function ne(self: Self, o: Self): Self::Mask;      // 1 for a NaN operand; `eq` is a helper built on it
     function select(mask: Self::Mask, a: Self, b: Self): Self;
     function to_bits(self: Self): Self::Bits;   // for exponent manipulation in exp / log
     function from_bits(b: Self::Bits): Self;
@@ -190,6 +191,12 @@ The bit-level primitives the vector kernels need (`to_bits`, lane-wise
 shifts) arrive with the lane type in slice 5, where there is a type to test
 them on; until then `ldexp` and `round` cover the argument reductions.
 
+`mul_add` is `self * b + c` with two roundings on every type built so far.
+There is no fused multiply-add builtin or IR op yet, so `horner` and the
+double-double two-product do not get the single rounding the hardware has.
+The fused form (`vfma` in §4, and a scalar `fma` beside it) is part of the
+lane-type slice, where both baselines have the instruction.
+
 - **Scalar impls**: `impl Lanes for f64` and `impl Lanes for f32`, one lane,
   delegating to `std/float`. Every generic kernel runs today through these.
 - **`Dual[T: Lanes]`** `{ v: T, d: T }`: `impl[T: Lanes] num.Add for
@@ -197,8 +204,8 @@ them on; until then `ldexp` and `round` cover the argument reductions.
   `impl[T: Lanes] Lanes for Dual[T]` so a kernel takes a dual. A `Dual` of
   an `f64x2` differentiates two points at once.
 - **`DoubleDouble[T: Lanes]`** `{ hi: T, lo: T }`: Dekker's two-sum and
-  two-product, with `fma` where the trait provides one. About 106 bits on
-  `f64`.
+  two-product by `SPLIT`, so no fused multiply-add is needed. About 106 bits
+  on `f64`.
 - **`Math`**: `exp`, `log`, `sin`, `cos`, `tan`, `tanh`, `atan`, `expm1`,
   `log1p` and `pow`, a trait each type implements for itself. The scalars
   adopt `std/float`'s methods (an impl adopts a method the type already has,
@@ -221,10 +228,12 @@ nothing reads a `Dual { … }` construction apart. The fix is in the compiler
 (#12931), not at the call site, and takes both evaluators to the arithmetic's
 own cost (about 3x and 20x the scalar).
 
-Gates: `tests/stdlib/simd_*_test.fern` through `std/test`, each with a Go
-gate in `internal/testing/e2e/test_runner_test.go`; the differential against
-`std/float` over a sweep of arguments per kernel; the e2e compiled legs on
-x86-64 and wasm.
+Gates: `tests/stdlib/simd_test.fern` runs through `std/test`. A Go gate in
+`internal/testing/e2e/test_runner_test.go` and a self-host interpreter gate in
+`internal/testing/e2ecompiler` run it. Its sweep case holds every `Math`
+function on `DoubleDouble` and every `Dual` derivative to `std/float` over a
+range of arguments. Its NaN case holds `eq` and the double-double `lt` to
+IEEE. The e2e compiled legs run it on x86-64 and wasm.
 
 ## 6. The lane type
 
@@ -267,10 +276,10 @@ file, so the slice starts from facts rather than from §4's table:
 - **The front ends.** `f64x2` and `f32x4` are type keywords in both lexers; a
   `TypeLanes` variant joins `typeinfo.Type` and every exhaustive match over it
   (27 arms in `checker.fern`, about 15 across the lowering); the Go side is
-  `ast.LanesType` beside `FloatType` (70 arms in `checker.go`). The thirteen
+  `ast.LanesType` beside `FloatType` (70 arms in `checker.go`). The fourteen
   operations `Lanes` needs beyond the operators (`splat`, `of`, `lane`,
-  `fma`, `sqrt`, `abs`, `floor`, `round`, `min`, `max`, `lt`, `select`,
-  `ldexp`) and the two memory ops are `__f64x2_*` / `__f32x4_*` builtins:
+  `mul_add`, `sqrt`, `abs`, `floor`, `round`, `min`, `max`, `lt`, `ne`,
+  `select`, `ldexp`) and the two memory ops are `__f64x2_*` / `__f32x4_*` builtins:
   each is a signature in both checkers, an arm in both interpreters, an IR
   op, a lift arm per native, a `v128` emission, and an entry in the four
   capability tables.

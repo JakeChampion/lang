@@ -249,6 +249,82 @@ function test_dd_f32(): test.TestOutcome {
   return test.assert_true((err.hi as f64).abs() < 1.0e-13);
 }
 
+// `ne` and `eq` are IEEE: a NaN operand compares unequal to everything,
+// itself included, and the double-double `lt` tie-break on `hi` follows.
+function test_eq_nan(): test.TestOutcome {
+  let z: f64 = 0.0;
+  let nan: f64 = z / z;
+  if (nan.ne(5.0) != 1.0 || simd.eq(nan, 5.0) != 0.0 || simd.eq(nan, nan) != 0.0 || simd.eq(5.0, nan) != 0.0 || simd.eq(5.0, 5.0) != 1.0) {
+    return test.fail("f64 eq with NaN");
+  }
+  let d: simd.Dual[f64] = simd.seed(nan);
+  if (simd.eq(d, d).v != 0.0) {
+    return test.fail("dual eq with NaN");
+  }
+  let a: simd.DoubleDouble[f64] = simd.dd(5.0, 0.0);
+  let b: simd.DoubleDouble[f64] = simd.dd(nan, 1.0);
+  if (simd.eq(a, b).hi != 0.0 || simd.eq(b, b).hi != 0.0 || a.ne(b).hi != 1.0 || a.lt(b).hi != 0.0 || b.lt(a).hi != 0.0) {
+    return test.fail("double-double eq and lt with NaN");
+  }
+  if (simd.eq(a, a).hi != 1.0 || simd.eq(a, simd.dd(5.0, 1.0)).hi != 0.0) {
+    return test.fail("double-double eq reads both halves");
+  }
+  return test.pass();
+}
+
+function close_rel(a: f64, b: f64, tol: f64): boolean {
+  let m: f64 = b.abs();
+  if (m < 1.0e-300) {
+    m = 1.0e-300;
+  }
+  return (a - b).abs() <= tol * m;
+}
+
+// Every Math function on DoubleDouble and every Dual derivative against
+// std/float over a range of arguments: the double-double value within a few
+// ulp of the f64 result (the f64 side is the less accurate one), and the
+// derivative against the analytic form built from std/float.
+function test_sweep_against_float(): test.TestOutcome {
+  let names: string[] = ["exp", "log", "sin", "cos", "tan", "tanh", "atan", "expm1", "log1p", "pow"];
+  let i: i32 = 0;
+  while (i < 30) {
+    let x: f64 = -2.9 + 0.2 * (i as f64);
+    let p: f64 = 0.1 + 0.2 * (i as f64);
+    let q: simd.DoubleDouble[f64] = simd.dd_splat(x);
+    let qp: simd.DoubleDouble[f64] = simd.dd_splat(p);
+    let d: simd.Dual[f64] = simd.seed(x);
+    let dp: simd.Dual[f64] = simd.seed(p);
+    let got: f64[] = [
+      simd.dd_value(q.exp()), simd.dd_value(qp.log()), simd.dd_value(q.sin()), simd.dd_value(q.cos()),
+      simd.dd_value(q.tan()), simd.dd_value(q.tanh()), simd.dd_value(q.atan()), simd.dd_value(q.expm1()),
+      simd.dd_value(qp.log1p()), simd.dd_value(qp.pow(simd.dd_splat(1.7))),
+    ];
+    let want: f64[] = [x.exp(), p.log(), x.sin(), x.cos(), x.tan(), x.tanh(), x.atan(), x.expm1(), p.log1p(), p.pow(1.7)];
+    let slope: f64[] = [
+      d.exp().d, dp.log().d, d.sin().d, d.cos().d, d.tan().d, d.tanh().d, d.atan().d, d.expm1().d,
+      dp.log1p().d, dp.pow(simd.dual(1.7, 0.0)).d,
+    ];
+    let t: f64 = x.tan();
+    let th: f64 = x.tanh();
+    let want_slope: f64[] = [
+      x.exp(), 1.0 / p, x.cos(), -x.sin(), 1.0 + t * t, 1.0 - th * th, 1.0 / (1.0 + x * x), x.exp(),
+      1.0 / (1.0 + p), 1.7 * p.pow(0.7),
+    ];
+    let k: i32 = 0;
+    while (k < 10) {
+      if (!close_rel(got[k], want[k], 1.0e-15)) {
+        return test.fail(names[k] + " at " + x.to_string() + ": " + got[k].to_string() + " vs " + want[k].to_string());
+      }
+      if (!close_rel(slope[k], want_slope[k], 1.0e-15)) {
+        return test.fail("d/dx " + names[k] + " at " + x.to_string() + ": " + slope[k].to_string() + " vs " + want_slope[k].to_string());
+      }
+      k = k + 1;
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("simd");
   r = r.it("kernel on f64", test_kernel_on_f64);
@@ -267,5 +343,7 @@ function main(): i32 {
   r = r.it("double-double generic kernel", test_dd_generic_kernel);
   r = r.it("dual of double-double", test_dual_of_dd);
   r = r.it("double-double over f32", test_dd_f32);
+  r = r.it("eq is IEEE for NaN", test_eq_nan);
+  r = r.it("sweep against std/float", test_sweep_against_float);
   return r.finish();
 }

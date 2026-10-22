@@ -104,6 +104,13 @@ function f[T: Lanes](): i32 { return T::WIDTH; }
 function main(): i32 { return V2::WIDTH + f[V2](); }`,
 	},
 	{
+		// An unbounded parameter's associated functions come from its
+		// instantiation; a constant read has no declaration to resolve.
+		name: "an unbounded parameter declares no constant",
+		src: `function f[T](x: T): i32 { return T::NOPE; }
+function main(): i32 { return f(1); }`,
+	},
+	{
 		// An enum's field is a variant unless an impl gives the enum an
 		// associated function of that name.
 		name: "an enum's unknown field is a missing variant",

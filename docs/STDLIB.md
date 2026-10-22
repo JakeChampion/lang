@@ -806,15 +806,18 @@ rule; `docs/ARRAY-ALGEBRA.md` §4 is why a wrong shape aborts.
 
 One numeric kernel, several evaluators (`docs/SIMD-GENERIC-KERNELS.md`).
 `Lanes` is the arithmetic a kernel composes — `num.Num + num.Neg`, `splat(x:
-f64)`, `lane(i)`, `fma`, `sqrt`, `abs`, `floor`, `round`, `min`, `max`, `lt`
-(a lane mask in the type itself) and `select`, `ldexp`, and the associated
-constants `LANES` and `SPLIT` — and `Math` adds `exp`, `log`, `sin`, `cos`,
+f64)`, `lane(i)`, `mul_add`, `sqrt`, `abs`, `floor`, `round`, `min`, `max`,
+`lt` and `ne` (a lane mask in the type itself, `ne` 1.0 for a NaN operand)
+and `select`, `ldexp`, and the associated constants `LANES` and `SPLIT` — and
+`Math` adds `exp`, `log`, `sin`, `cos`,
 `tan`, `tanh`, `atan`, `expm1`, `log1p`, `pow`. `f64` and `f32` implement both
 from `std/float`. `Dual[T]` (`seed(x)`, `dual(v, d)`) carries a derivative by
 the chain rule; `DoubleDouble[T]` (`dd_splat(x)`, `dd_of(v)`, `dd_value`)
 carries about twice the lanes' precision by Dekker and Bailey arithmetic and
-its own argument reduction and series. `horner(x, coeffs)` and `eq(a, b)` are
-the generic helpers. Gate: `tests/stdlib/simd_test.fern`.
+its own argument reduction and series. `horner(x, coeffs)` and `eq(a, b)`
+(0.0 for a NaN operand) are the generic helpers. Gate: `tests/stdlib/simd_test.fern`, which also holds every `Math`
+function on `DoubleDouble` and the `Dual` derivative to `std/float` over a
+sweep of arguments.
 
 ### `std/pvec`
 
