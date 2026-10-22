@@ -11056,18 +11056,34 @@ function lc_exit_report(lc: boolean): string {
   return "    (global.set $__fern_lc_exited (i32.const 1))\n    (call $__fern_lc_report)\n";
 }
 
+// main_result_wat calls `$main` for its result as an i32: an i64 or u64 result
+// is wrapped to its low 32 bits.
+function main_result_wat(mod: parser.Module): string {
+  for fd in mod.funcs {
+    if (fd.name == "main" && (fd.ret_type == "i64" || fd.ret_type == "u64")) {
+      return "(i32.wrap_i64 (call $main))";
+    }
+  }
+  return "(call $main)";
+}
+
+// low_byte_wat is the process status a result is, as a native kernel keeps it.
+function low_byte_wat(result: string): string {
+  return "(i32.and " + result + " (i32.const 255))";
+}
+
 // component_run_entry is `$__fern_lang_run`: main's result mapped to the 0 = ok /
 // 1 = err the canon lift expects, reporting the census on the way out when
 // `report` is set.
-function component_run_entry(report: boolean, sanitize: boolean, set_args: boolean, fdt: boolean): string {
+function component_run_entry(report: boolean, sanitize: boolean, set_args: boolean, fdt: boolean, call_main: string): string {
   if (!report) {
-    return "  (func $__fern_lang_run (result i32) (i32.eqz (i32.eqz (call $main))))\n";
+    return "  (func $__fern_lang_run (result i32) (i32.eqz (i32.eqz " + call_main + ")))\n";
   }
   let tables: string = "";
   if (fdt) {
     tables = fdt_release();
   }
-  return lc_report_funcs(sanitize, set_args, tables) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
+  return lc_report_funcs(sanitize, set_args, tables) + "  (func $__fern_lang_run (result i32) (local $r i32)\n    (local.set $r " + call_main + ")\n    (call $__fern_lc_report)\n    (i32.eqz (i32.eqz (local.get $r))))\n";
 }
 
 // lc_report_funcs is `$__fern_lc_report` and the two writers it calls, for
@@ -13183,11 +13199,11 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // `_start` exits through the raw import: the reporting $__fern_proc_exit
     // marks its line ` from=exit`, which is the exit() op's alone.
     if (lc) {
-      parts = parts.append("  (func $__fern_main_reporting (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (local.get $r))\n");
-      parts = parts.append("  (func $__fern_start (call $__fern_proc_exit_raw (call $__fern_main_reporting)))\n");
+      parts = parts.append("  (func $__fern_main_reporting (result i32) (local $r i32)\n    (local.set $r " + main_result_wat(mod) + ")\n    (call $__fern_lc_report)\n    (local.get $r))\n");
+      parts = parts.append("  (func $__fern_start (call $__fern_proc_exit_raw " + low_byte_wat("(call $__fern_main_reporting)") + "))\n");
       parts = parts.append("  (export \"main\" (func $__fern_main_reporting))\n");
     } else {
-      parts = parts.append("  (func $__fern_start (call $__fern_proc_exit (call $main)))\n");
+      parts = parts.append("  (func $__fern_start (call $__fern_proc_exit " + low_byte_wat(main_result_wat(mod)) + "))\n");
       parts = parts.append("  (export \"main\" (func $main))\n");
     }
     parts = parts.append("  (export \"_start\" (func $__fern_start)))\n");
@@ -13201,7 +13217,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (lifts_async(mod, mode)) {
     parts = parts.append(async_lift_wrappers(mod));
   }
-  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize, need(needs, "@calls_set_args"), mode == 2 && need_fd_table(needs)));
+  parts = parts.append(component_run_entry(lc && !module_is_proxy(mod), sw.sanitize, need(needs, "@calls_set_args"), mode == 2 && need_fd_table(needs), low_byte_wat(main_result_wat(mod))));
   parts = parts.append("  (export \"_lang_run\" (func $__fern_lang_run)))\n");
   return util.str_join_chunks(parts);
 }

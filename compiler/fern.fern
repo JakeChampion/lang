@@ -3294,8 +3294,8 @@ function with_findings(fs: Finding[], more: Finding[]): Finding[] {
   return out;
 }
 
-// interp_status is an interpreted program's exit status — an i32 result's
-// value, a boolean's 1 or 0, 254 for anything else — and, when it stopped,
+// interp_status is an interpreted program's exit status — interp.exit_status
+// for main's result, 254 for anything else — and, when it stopped,
 // the line saying why. A program's own abort exits 1 with the Go
 // interpreter's message; a stop that is the interpreter's own is 254, and
 // printing why is the difference between "exit 254" and a usable report
