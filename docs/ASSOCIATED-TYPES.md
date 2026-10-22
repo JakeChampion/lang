@@ -138,10 +138,10 @@ declared types are SPELLINGS rather than a tree:
   associated-type impl reads as a signature mismatch.
 
 `TestSelfHostAssocTypesDifferential` holds conformance, resolution and object
-safety to native's exact diagnostics.
+safety to the Go checker's exact diagnostics.
 
 One divergence is deliberate and is NOT this feature's: where a projection has
-no binding, native also reports a cascading `E002 return type mismatch` against
+no binding, the Go checker also reports a cascading `E002 return type mismatch` against
 the unresolved type and the self-host does not. It declines that E002 for any
 unknown nominal return (`function f(): Nope { return 1; }`) — its documented
 zero-false-positive conservatism, and a separate convergence item.
@@ -177,9 +177,10 @@ function chunk[T: Lanes](n: i32): i32 { return n / T.LANES; }
   associated functions come from its instantiation, which a read cannot
   resolve).
 
-Implementation, both compilers: an associated constant is an associated
-function with no parameters marked `const` (`TraitMethod.Const` /
-`FuncDecl.AssocConst` natively; `FuncDecl.is_const` on the self-host, as a
+Implementation, in the compiler and the Go front end: an associated constant
+is an associated function with no parameters marked `const`
+(`TraitMethod.Const` / `FuncDecl.AssocConst` in Go; `FuncDecl.is_const` in
+the compiler, as a
 module `const` already is), so conformance, `T.f()` dispatch through a bound,
 monomorphisation and the interpreters need no new case. A read is a field
 access on a TYPE name, which has no value-level fields: a scope-aware pass
@@ -194,8 +195,8 @@ explicit type arguments (`chunk[V2](8)`) in `bind_tyargs`, which an argument
 value could not pin; `T.zero()` under an explicit instantiation reached the
 same gap.
 
-`TestSelfHostAssocConstsDifferential` holds the rules above to native's exact
-diagnostics.
+`TestSelfHostAssocConstsDifferential` holds the rules above to the Go checker's
+exact diagnostics.
 
 ## Scope / follow-ups
 

@@ -930,13 +930,13 @@ pub function __map_put_impl(m: usize, k: usize, v: usize): usize {
 // slot).
 //
 // The array is built as a typed Fern array rather than by writing an array
-// header by hand, so each compiler lays it out the way its own arrays are:
-// the self-host's header and slot size differ from native's (#9608).
+// header by hand, so the compiler lays it out the way its own arrays are
+// (#9608).
 //
 // __map_i32_column serves every i32-sized column: i32, u32, f32 and usize,
 // whose values are copied as their 32-bit pattern. A `boolean` column needs
-// its own builder because its array element does not stride 4 on the
-// natives (#10000), and a one-byte `u8` column is __map_u8_column. A
+// its own builder because it answers a `boolean[]` (#10000), and a
+// one-byte `u8` column is __map_u8_column. A
 // pointer-shaped column (string, struct, enum, array) goes to
 // __map_string_column or __map_ptr_column.
 //
@@ -956,9 +956,8 @@ pub function __map_i32_column(m: usize, kvOffset: i32): i32[] {
 }
 
 // A wide key or value, an i64 or u64 or a float's bits, crosses core/map's
-// pointer-wide slot as a cell holding its eight bytes. The typed self-host
-// lowering emits one IR for every target, so it boxes on all of them, as
-// wasm32 does for a wide key (keyKind 2) and native for a wide value: it
+// pointer-wide slot as a cell holding its eight bytes. The typed lowering
+// emits one IR for every target, so it boxes on all of them: it
 // boxes with __map_cell, reads back with __map_cell_load, and returns a cell
 // no column took with __map_cell_free.
 pub function __map_cell(v: i64): usize {
@@ -1177,12 +1176,9 @@ pub function __map_ptr_column(m: usize, kvOffset: i32, retainVals: i32): usize {
 // __map_string_column builds a fresh `string[]` snapshot of
 // the Map's K or V column. Each entry slot holds a cell-
 // pointer (Map K/V boxing); we deref each one via the
-// `cellPtr as string` cast (which emits OpLoad{WidthString}
-// on two-word targets and is a no-op on legacy native single-
-// pointer-string targets) and push the resulting string into
+// `cellPtr as string` cast and push the resulting string into
 // a growing `string[]`. Per-element stride is whatever the
-// IR computes for `string[]` on this target (8 bytes on
-// wasm32, 16 on flipped arm64, 8 on legacy native).
+// IR computes for `string[]` on this target.
 pub function __map_string_column(m: usize, kvOffset: i32): usize {
   let buf: usize = __load_ptr(m);
   let cap: i32 = __load_i32(buf);

@@ -33,7 +33,7 @@ Rules for a benchmark in here:
 Adding one is a baseline change in **two** files, because two lanes share this
 corpus:
 
-- `scripts/perf-bench` measures the NATIVE compiler's output, both counts, for
+- `scripts/perf-bench` measures `bin/fern`'s output, both counts, for
   the host arch → `.github/perf-baseline.txt`. The other arch's `.text` half is
   a static count over cross-emitted assembly, so it can be produced from either
   host; only its `.ir` half needs that arch's runner.

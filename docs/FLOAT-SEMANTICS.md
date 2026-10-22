@@ -138,7 +138,7 @@ The NaN-test idiom runs on every backend (the interpreter handles
 `*ast.FloatLit` and the parser accepts scientific-notation literals
 like `1.0e38f32`). The differential oracle still excludes f32 from
 its generated programs by policy (see below), but the snippets above
-are supported everywhere, not just on the native backends.
+are supported everywhere.
 
 ## Comparison: operators are IEEE, `eq` and `cmp` are a total order
 

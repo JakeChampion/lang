@@ -333,7 +333,7 @@ pub function (s: Sim) advance_to(to_ns: i64): boolean {
 // PRNG, so a run is a function of the seed. A task whose wait nothing can
 // answer is cancelled rather than left to hang. Answers in entry order:
 // `Done(v)` or `Cancelled`, each task's record freed. With no task ever
-// current (the Go compiler, docs/ASYNC.md §8) each entry runs to its end
+// current (the interpreter, docs/ASYNC.md §8) each entry runs to its end
 // inside `task_start`, in order, and nothing is cancelled.
 pub function run_tasks[T](drv: Sim, entries: (() => T)[], cancel_at_ms: i32[]): async.TaskStatus[T][] {
   let tasks: async.Task[T][] = [];

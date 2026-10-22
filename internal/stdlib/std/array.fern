@@ -1901,11 +1901,8 @@ pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] {
 // element type (i32 / i64 / u32 / u64 / f32 / f64 / string and
 // `@derive(Ord)` / `@derive(Eq)` types), not just the i32- / string-
 // specific hand-written receivers. Each is READ-ONLY over its inputs
-// (no copy-on-write), so it is correct on the self-host IR path as well
-// as native; a *mutating* sort method (`xs.sorted()` → `cmp.sort`) is
-// deferred until the self-host RC copy-on-write matches native.
-// (Bounded-receiver generic methods: carried on the self-host IR path by
-// the same fold that already lowers `map`/`filter`/`fold`.)
+// (no copy-on-write). (Bounded-receiver generic methods: carried by the
+// same fold that already lowers `map`/`filter`/`fold`.)
 
 // `xs.is_sorted()` — true iff `xs` is in non-decreasing `Ord` order
 // (vacuously true for length < 2).

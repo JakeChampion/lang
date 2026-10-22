@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Type-check every stdlib module as a standalone import, with the native
-# `fern -check`.
+# Type-check every stdlib module as a standalone import, with
+# `bin/fern -check`.
 #
 # Import-wrapper form because a std module is not an entry module: checking
 # e.g. std/array directly redeclares the `__method_*` builtins it defines.
