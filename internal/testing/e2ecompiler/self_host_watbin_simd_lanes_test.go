@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -50,7 +51,31 @@ func TestSelfHostWatbinSimdLanes(t *testing.T) {
 	if code, out := run(wasmPath); code != 0 {
 		t.Errorf("watbin's module exits %d, want 0: check %d failed\n%s", code, code, out)
 	}
+
+	// A lane index at the shape's lane count names no lane. The encoder
+	// refuses it, as it refuses an unknown instruction, rather than masking it
+	// to a lane that validates.
+	if err := os.WriteFile(watPath, []byte(simdLaneOutOfRangeWat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).CombinedOutput()
+	if err == nil {
+		t.Fatalf("watbin assembled f64x2.extract_lane 2, want a refusal\n%s", out)
+	}
+	if !strings.Contains(string(out), "lane index out of range: f64x2.extract_lane 2") {
+		t.Errorf("watbin refused the module for another reason\n%s", out)
+	}
 }
+
+// simdLaneOutOfRangeWat reads lane 2 of an f64x2, which has lanes 0 and 1.
+const simdLaneOutOfRangeWat = `(module
+  (memory (export "memory") 1)
+  (func (export "_start") (result f64)
+    f64.const 1.0
+    f64x2.splat
+    f64x2.extract_lane 2)
+)
+`
 
 // simdLanesWat exits with the number of the first failing check, 0 when every
 // op gave the spec's answer. Lanes are read back with extract_lane and

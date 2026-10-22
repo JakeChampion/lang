@@ -1352,52 +1352,196 @@ function sat_trunc_opcode(op: string): i32 {
 // than the access is a VALIDATION error where a smaller one is always legal —
 // so simd_load_align answers 0 rather than reusing memarg_align's natural one.
 function simd_opcode(op: string): i32 {
-  let i: i32 = index_of_str(simd_op_names(), op);
-  if (i < 0) {
-    return 0 - 1;
+  if (op == "v128.load") {
+    return 0;
   }
-  return simd_op_codes()[i];
-}
-
-// simd_op_names and simd_op_codes are one table in two columns: the SIMD ops
-// the byte kernels and the lane type (docs/SIMD-GENERIC-KERNELS.md §6) emit,
-// each with its 0xFD sub-opcode. The two arrays are kept in the same order.
-function simd_op_names(): string[] {
-  return [
-    "v128.load", "v128.store", "i8x16.splat", "i8x16.eq", "i8x16.bitmask",
-    "v128.not", "v128.and", "v128.andnot", "v128.or", "v128.xor", "v128.bitselect",
-    "f64x2.splat", "f64x2.extract_lane", "f64x2.replace_lane",
-    "f64x2.eq", "f64x2.ne", "f64x2.lt", "f64x2.gt", "f64x2.le", "f64x2.ge",
-    "f64x2.ceil", "f64x2.floor", "f64x2.trunc", "f64x2.nearest",
-    "f64x2.abs", "f64x2.neg", "f64x2.sqrt", "f64x2.add", "f64x2.sub", "f64x2.mul", "f64x2.div",
-    "f64x2.min", "f64x2.max", "f64x2.pmin", "f64x2.pmax",
-    "f32x4.splat", "f32x4.extract_lane", "f32x4.replace_lane",
-    "f32x4.eq", "f32x4.ne", "f32x4.lt", "f32x4.gt", "f32x4.le", "f32x4.ge",
-    "f32x4.ceil", "f32x4.floor", "f32x4.trunc", "f32x4.nearest",
-    "f32x4.abs", "f32x4.neg", "f32x4.sqrt", "f32x4.add", "f32x4.sub", "f32x4.mul", "f32x4.div",
-    "f32x4.min", "f32x4.max", "f32x4.pmin", "f32x4.pmax",
-    "f32x4.demote_f64x2_zero", "f64x2.promote_low_f32x4",
-    "i32x4.extract_lane", "i64x2.extract_lane",
-  ];
-}
-
-function simd_op_codes(): i32[] {
-  return [
-    0, 11, 15, 35, 100,
-    77, 78, 79, 80, 81, 82,
-    20, 33, 34,
-    71, 72, 73, 74, 75, 76,
-    116, 117, 122, 148,
-    236, 237, 239, 240, 241, 242, 243,
-    244, 245, 246, 247,
-    19, 31, 32,
-    65, 66, 67, 68, 69, 70,
-    103, 104, 105, 106,
-    224, 225, 227, 228, 229, 230, 231,
-    232, 233, 234, 235,
-    94, 95,
-    27, 29,
-  ];
+  if (op == "v128.store") {
+    return 11;
+  }
+  if (op == "i8x16.splat") {
+    return 15;
+  }
+  if (op == "i8x16.eq") {
+    return 35;
+  }
+  if (op == "i8x16.bitmask") {
+    return 100;
+  }
+  if (op == "v128.not") {
+    return 77;
+  }
+  if (op == "v128.and") {
+    return 78;
+  }
+  if (op == "v128.andnot") {
+    return 79;
+  }
+  if (op == "v128.or") {
+    return 80;
+  }
+  if (op == "v128.xor") {
+    return 81;
+  }
+  if (op == "v128.bitselect") {
+    return 82;
+  }
+  if (op == "f64x2.splat") {
+    return 20;
+  }
+  if (op == "f64x2.extract_lane") {
+    return 33;
+  }
+  if (op == "f64x2.replace_lane") {
+    return 34;
+  }
+  if (op == "f64x2.eq") {
+    return 71;
+  }
+  if (op == "f64x2.ne") {
+    return 72;
+  }
+  if (op == "f64x2.lt") {
+    return 73;
+  }
+  if (op == "f64x2.gt") {
+    return 74;
+  }
+  if (op == "f64x2.le") {
+    return 75;
+  }
+  if (op == "f64x2.ge") {
+    return 76;
+  }
+  if (op == "f64x2.ceil") {
+    return 116;
+  }
+  if (op == "f64x2.floor") {
+    return 117;
+  }
+  if (op == "f64x2.trunc") {
+    return 122;
+  }
+  if (op == "f64x2.nearest") {
+    return 148;
+  }
+  if (op == "f64x2.abs") {
+    return 236;
+  }
+  if (op == "f64x2.neg") {
+    return 237;
+  }
+  if (op == "f64x2.sqrt") {
+    return 239;
+  }
+  if (op == "f64x2.add") {
+    return 240;
+  }
+  if (op == "f64x2.sub") {
+    return 241;
+  }
+  if (op == "f64x2.mul") {
+    return 242;
+  }
+  if (op == "f64x2.div") {
+    return 243;
+  }
+  if (op == "f64x2.min") {
+    return 244;
+  }
+  if (op == "f64x2.max") {
+    return 245;
+  }
+  if (op == "f64x2.pmin") {
+    return 246;
+  }
+  if (op == "f64x2.pmax") {
+    return 247;
+  }
+  if (op == "f32x4.splat") {
+    return 19;
+  }
+  if (op == "f32x4.extract_lane") {
+    return 31;
+  }
+  if (op == "f32x4.replace_lane") {
+    return 32;
+  }
+  if (op == "f32x4.eq") {
+    return 65;
+  }
+  if (op == "f32x4.ne") {
+    return 66;
+  }
+  if (op == "f32x4.lt") {
+    return 67;
+  }
+  if (op == "f32x4.gt") {
+    return 68;
+  }
+  if (op == "f32x4.le") {
+    return 69;
+  }
+  if (op == "f32x4.ge") {
+    return 70;
+  }
+  if (op == "f32x4.ceil") {
+    return 103;
+  }
+  if (op == "f32x4.floor") {
+    return 104;
+  }
+  if (op == "f32x4.trunc") {
+    return 105;
+  }
+  if (op == "f32x4.nearest") {
+    return 106;
+  }
+  if (op == "f32x4.abs") {
+    return 224;
+  }
+  if (op == "f32x4.neg") {
+    return 225;
+  }
+  if (op == "f32x4.sqrt") {
+    return 227;
+  }
+  if (op == "f32x4.add") {
+    return 228;
+  }
+  if (op == "f32x4.sub") {
+    return 229;
+  }
+  if (op == "f32x4.mul") {
+    return 230;
+  }
+  if (op == "f32x4.div") {
+    return 231;
+  }
+  if (op == "f32x4.min") {
+    return 232;
+  }
+  if (op == "f32x4.max") {
+    return 233;
+  }
+  if (op == "f32x4.pmin") {
+    return 234;
+  }
+  if (op == "f32x4.pmax") {
+    return 235;
+  }
+  if (op == "f32x4.demote_f64x2_zero") {
+    return 94;
+  }
+  if (op == "f64x2.promote_low_f32x4") {
+    return 95;
+  }
+  if (op == "i32x4.extract_lane") {
+    return 27;
+  }
+  if (op == "i64x2.extract_lane") {
+    return 29;
+  }
+  return 0 - 1;
 }
 
 // simd_has_memarg says whether a SIMD op carries the (align, offset) pair
@@ -1413,6 +1557,43 @@ function simd_has_lane(op: string): boolean {
   return str_ends_with(op, ".extract_lane") || str_ends_with(op, ".replace_lane");
 }
 
+// str_ends_with and str_starts_with are local copies: this module imports
+// nothing, and both are std/string methods.
+function str_ends_with(s: string, suffix: string): boolean {
+  if (suffix.len() > s.len()) {
+    return false;
+  }
+  return slice_unchecked(s, s.len() - suffix.len(), s.len()) == suffix;
+}
+
+function str_starts_with(s: string, prefix: string): boolean {
+  if (prefix.len() > s.len()) {
+    return false;
+  }
+  return slice_unchecked(s, 0, prefix.len()) == prefix;
+}
+
+// simd_lane_index is the lane index `text` names for `op`. An index at or
+// above the shape's lane count is not an instruction, so it fails the encode
+// as an unknown instruction does: a masked index would validate as another
+// lane.
+function simd_lane_index(op: string, text: string): i32 {
+  let lanes: i32 = 16;
+  if (str_starts_with(op, "f64x2.") || str_starts_with(op, "i64x2.")) {
+    lanes = 2;
+  } else if (str_starts_with(op, "f32x4.") || str_starts_with(op, "i32x4.")) {
+    lanes = 4;
+  } else if (str_starts_with(op, "i16x8.")) {
+    lanes = 8;
+  }
+  let idx: i32 = parse_dec(text);
+  if (idx < 0 || idx >= lanes) {
+    eprint("watbin: lane index out of range: " + op + " " + text);
+    exit(1);
+  }
+  return idx;
+}
+
 // simd_arity gives how many stack operands a SIMD op takes, so enc_instr can
 // encode them post-order without a per-op branch.
 function simd_arity(op: string): i32 {
@@ -1421,34 +1602,23 @@ function simd_arity(op: string): i32 {
   }
   // v128.store takes the address then the value, like the scalar stores; a
   // replace_lane takes the vector then the scalar.
-  if (op == "v128.store" || op == "i8x16.eq" || str_ends_with(op, ".replace_lane")) {
+  if (op == "v128.store" || str_ends_with(op, ".replace_lane")) {
     return 2;
   }
-  let dot: i32 = index_of_str(["add", "sub", "mul", "div", "min", "max", "pmin", "pmax", "eq", "ne", "lt", "gt", "le", "ge", "and", "andnot", "or", "xor"], simd_op_verb(op));
-  if (dot >= 0) {
+  if (simd_binary_verb(op)) {
     return 2;
   }
   return 1;
 }
 
-function str_ends_with(s: string, suffix: string): boolean {
-  if (suffix.len() > s.len()) {
-    return false;
-  }
-  return slice_unchecked(s, s.len() - suffix.len(), s.len()) == suffix;
-}
-
-// simd_op_verb is the part of a SIMD op after its shape prefix: "add" of
-// "f64x2.add".
-function simd_op_verb(op: string): string {
-  let k: i32 = 0;
-  while (k < op.len()) {
-    if (op[k] == b'.') {
-      return slice_unchecked(op, k + 1, op.len()) + "";
-    }
-    k = k + 1;
-  }
-  return op;
+// simd_binary_verb says whether a SIMD op's verb, the part after its shape
+// prefix ("add" of "f64x2.add"), names a two-operand op.
+function simd_binary_verb(op: string): boolean {
+  return str_ends_with(op, ".add") || str_ends_with(op, ".sub") || str_ends_with(op, ".mul") || str_ends_with(op, ".div")
+    || str_ends_with(op, ".min") || str_ends_with(op, ".max") || str_ends_with(op, ".pmin") || str_ends_with(op, ".pmax")
+    || str_ends_with(op, ".eq") || str_ends_with(op, ".ne") || str_ends_with(op, ".lt") || str_ends_with(op, ".gt")
+    || str_ends_with(op, ".le") || str_ends_with(op, ".ge")
+    || str_ends_with(op, ".and") || str_ends_with(op, ".andnot") || str_ends_with(op, ".or") || str_ends_with(op, ".xor");
 }
 
 // bulk_mem_opcode maps a bulk-memory op to its 0xFC-prefixed sub-opcode index,
@@ -1792,7 +1962,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
       out = leb_u32(out, 0);  // offset
     }
     if (simd_has_lane(op)) {
-      out = out.append(parse_dec(node.items[1].text) & 255);
+      out = out.append(simd_lane_index(op, node.items[1].text));
     }
     return out;
   }
@@ -1980,7 +2150,7 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
           out = leb_u32(out, 0);
         }
         if (simd_has_lane(op)) {
-          out = out.append(parse_dec(instrs[i + 1].text) & 255);
+          out = out.append(simd_lane_index(op, instrs[i + 1].text));
           i = i + 1;
         }
       } else if (stf >= 0) {

@@ -298,7 +298,9 @@ of them. No PR leaves a type on main that a backend refuses.
 - **4a, the instruction vocabulary.** Each assembler learns the forms the
   lane ops need. Nothing emits them yet. On x86-64 the new forms are `cmppd`
   and `cmpps` (the predicate in the imm8), `roundpd` and `roundps`, and the
-  FMA3 `vfmadd213pd` and `vfmadd213ps`, which carry VEX.W. The packed
+  FMA3 `vfmadd213pd` and `vfmadd213ps`, which carry VEX.W. The compares and
+  the roundings are the legacy SSE spellings and the fused multiply-add is
+  the VEX spelling, and the lane type emits each as named here. The packed
   arithmetic, `andpd`, `unpcklpd`, `pextrq` and `movupd` were already
   encodable. On arm64 the new forms are `fmla` and `fmls`, the seven `frint*`
   roundings and `bsl`, `bit` and `bif`. The `.2d` arithmetic, `fcmeq`, `dup`
