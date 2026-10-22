@@ -9077,8 +9077,8 @@ function ssa_line_reg(text: string, at: i32, prefix: string): string {
 struct SsaArgMoves { ok: boolean, text: string[] }
 
 // ssa_arg_moves loads the popped operands into their registers as one
-// parallel move: a load goes once no pending load still reads its register.
-// A cycle is refused, and the arm then takes every operand from the stack.
+// parallel move: a load occurs when no pending load reads its register.
+// A register exchange resolves a cycle without stack operands.
 function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore.EmitState): SsaArgMoves {
   let srcs: string[] = [];
   let dsts: string[] = [];
@@ -9103,7 +9103,9 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
     let i: i32 = 0;
     while (i < dsts.len()) {
       if (!done[i] && !ssa_still_read(srcs, done, dsts[i], i)) {
-        out = out.append("    movq " + srcs[i] + ", " + dsts[i] + "\n");
+        if (srcs[i] != dsts[i]) {
+          out = out.append("    movq " + srcs[i] + ", " + dsts[i] + "\n");
+        }
         done = done.with(i, true);
         left = left - 1;
         progressed = true;
@@ -9111,7 +9113,24 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
       i = i + 1;
     }
     if (!progressed) {
-      return SsaArgMoves { ok: false, text: [] };
+      let j: i32 = 0;
+      while (done[j]) {
+        j = j + 1;
+      }
+      let src: string = srcs[j];
+      let dst: string = dsts[j];
+      out = out.append("    xchgq " + src + ", " + dst + "\n");
+      done = done.with(j, true);
+      left = left - 1;
+      let k: i32 = 0;
+      while (k < srcs.len()) {
+        if (!done[k] && srcs[k] == src) {
+          srcs = srcs.with(k, dst);
+        } else if (!done[k] && srcs[k] == dst) {
+          srcs = srcs.with(k, src);
+        }
+        k = k + 1;
+      }
     }
   }
   return SsaArgMoves { ok: true, text: out };

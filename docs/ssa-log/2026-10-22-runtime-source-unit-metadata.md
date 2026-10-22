@@ -24,4 +24,12 @@ The same tests fail against the prior emitters.
 All nine register-call checks fail across the three native targets.
 The floating-point call check also fails.
 
+The metadata change exposed an x86 operand cycle in the byte-copy runtime.
+The stack adapter previously used six stack instructions for that cycle.
+The adapter now resolves register cycles with register exchanges.
+An executable probe checks 625 assignments across four registers and one spill slot.
+The assignments include register cycles, repeated sources and spilled values.
+The byte-copy suites pass on x86-64 Linux, ARM64 Linux through QEMU and WASI.
+These suites include bounds failures, alias cases, sanitizer checks and heap census checks.
+
 The current validation does not establish a speed improvement.

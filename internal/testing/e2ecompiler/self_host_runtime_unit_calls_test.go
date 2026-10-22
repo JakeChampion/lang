@@ -90,3 +90,23 @@ function main(): i32 {
 		t.Fatal("floating-point runtime call has no register ABI")
 	}
 }
+
+func TestSelfHostRuntimeUnitByteCopyMoves(t *testing.T) {
+	cli := newStrictCLI(t)
+	stackCopy := regexp.MustCompile(`(?m)(?:    (?:pushq|popq) %[^\n]+\n){2,}    rep movsb\n`)
+	for _, name := range []string{"byte_copy_append", "byte_copy_with"} {
+		t.Run(name, func(t *testing.T) {
+			source, err := os.ReadFile(langSrcAbs(t, "bench/"+name+".fern"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			asm := cli.emit(t, "x86-64-linux", string(source))
+			if !strings.Contains(asm, "    rep movsb\n") {
+				t.Fatal("byte-copy kernel is absent")
+			}
+			if stackCopy.MatchString(asm) {
+				t.Fatal("byte-copy operands use a stack exchange")
+			}
+		})
+	}
+}
