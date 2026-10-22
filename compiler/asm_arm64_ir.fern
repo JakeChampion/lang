@@ -6977,10 +6977,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
   // reached through the __raw_scratch op. It moved out of emit_rt_fs for the
   // same heap-independence reason: gating it on the fs runtime left a scalar
   // timing program referencing a slot nothing defined. Same gate as asm_ir's.
-  let ctgt: string = "arm64-linux";
-  if (darwin) {
-    ctgt = "arm64-darwin";
-  }
+  let ctgt: string = rt_key(darwin);
   if (s.any_need([
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
@@ -10033,13 +10030,17 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  // The target key the migrated Fern helpers below are built for — same
-  // derivation as emit_rt_clock_and_print's ctgt.
-  let tgt: string = "arm64-linux";
+// rt_key is the asmcore runtime key the Fern runtime bodies are built for.
+// arm64-android runs Linux's kernel ABI, so it takes arm64-linux's.
+function rt_key(darwin: boolean): string {
   if (darwin) {
-    tgt = "arm64-darwin";
+    return "arm64-darwin";
   }
+  return "arm64-linux";
+}
+
+function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  let tgt: string = rt_key(darwin);
   // __fern_reader_read_chunk and __fern_reader_close are Fern runtime functions
   // (#2649): asmcore.rt_src_reader_read_chunk / rt_src_reader_close, emitted
   // need-gated below. Their Option and string boxes come from ordinary lowering
@@ -10877,10 +10878,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   // bodies. darwinize cannot remap a number the emitter only has at runtime
   // (its rule needs a literal `mov x8, #N`), which is why the target's number
   // is baked into the source here instead.
-  let tgt: string = "arm64-linux";
-  if (darwin) {
-    tgt = "arm64-darwin";
-  }
+  let tgt: string = rt_key(darwin);
   // random_bytes: fill a scratch buffer through __syscall3, spread the bytes
   // into a fresh u8[] box (__raw_arr_box).
   if (s.has_need("random_bytes")) {
@@ -12410,9 +12408,8 @@ function emit_profile_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Em
   // The runtime below uses LSE, which an external assembler enables only from here on.
   s = s.write("    .arch_extension lse\n");
   s = s.write("    .bss\n    .p2align 3\n.Lprofile_ring: .zero 4337824\n    .data\n    .p2align 3\n");
-  let target = "arm64-linux";
+  let target: string = rt_key(darwin);
   if (darwin) {
-    target = "arm64-darwin";
     // Darwin's raw sigaction has handler, trampoline, mask32 and flags32.
     s = s.write(".Lprofile_action: .quad __fern_profile_signal, __fern_profile_trampoline\n    .long 0, 66\n");
   } else {

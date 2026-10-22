@@ -58,8 +58,8 @@ function run(): i32 {
   // the loaded import set; the named module's bodies are NOT emitted here
   // (it is emitted as its own unit).
   let sig_paths: string[] = [];
-  // `-target x86_64|arm64` selects the backend pair; default x86_64 keeps
-  // every pre-fold caller byte-identical.
+  // `-target x86-64-linux|arm64-linux|arm64-darwin` selects the backend; a
+  // caller that names none gets x86-64-linux.
   let target: string = "x86-64-linux";
   let ai: i32 = 1;
   while (ai < av.len()) {

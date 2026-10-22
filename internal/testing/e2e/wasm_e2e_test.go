@@ -11356,7 +11356,7 @@ func TestCmdLangTargetWasmNoAdapter(t *testing.T) {
 		"-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm (no adapter) failed: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi (no adapter) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)

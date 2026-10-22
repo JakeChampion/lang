@@ -9,14 +9,16 @@ name: Build & release
 # and the diagnostic explanations embedded: `make bin/fern` builds it from the
 # pinned stage0 (docs/BOOTSTRAP.md) on each host, with no Go toolchain.
 #
-# Host coverage matches `README.md`:
-#   - linux-amd64  : ubuntu-24.04
-#   - linux-arm64  : ubuntu-24.04-arm  (matches CI's arm64 lane)
-#   - darwin-arm64 : macos-15          (matches macos.yml's pin)
+# Host coverage matches `README.md`. An asset is named `<os>-<arch>`, the
+# spelling a download page uses; the matrix below pairs each with the
+# `-target` it builds the compiler for:
+#   - linux-x86_64 : x86-64-linux, ubuntu-24.04
+#   - linux-arm64  : arm64-linux,  ubuntu-24.04-arm  (matches CI's arm64 lane)
+#   - darwin-arm64 : arm64-darwin, macos-15          (matches macos.yml's pin)
 #
 # Windows is intentionally absent — the README doesn't claim it as
 # a host platform, and the language's compilation targets
-# (arm64-linux ELF, arm64-darwin Mach-O, wasm component) are
+# (arm64-linux ELF, arm64-darwin Mach-O, wasm32-wasi component) are
 # produced regardless of the host the compiler runs on.
 
 on:

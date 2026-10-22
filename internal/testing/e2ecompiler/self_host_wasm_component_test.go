@@ -184,7 +184,7 @@ func TestSelfHostWasmComponentFull(t *testing.T) {
 			}
 			refPath := filepath.Join(dir, "ref.wasm")
 			if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-				t.Fatalf("fern -target wasm: %v\n%s", err, out)
+				t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 			}
 			ref, err := os.ReadFile(refPath)
 			if err != nil {
@@ -453,7 +453,7 @@ func TestSelfHostWasmComponentFullIO(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -695,7 +695,7 @@ func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -1017,7 +1017,7 @@ func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -1276,7 +1276,7 @@ func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -1522,7 +1522,7 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -1749,7 +1749,7 @@ func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -1977,7 +1977,7 @@ func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -2196,7 +2196,7 @@ func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -2416,7 +2416,7 @@ func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -2629,7 +2629,7 @@ func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -2854,7 +2854,7 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -3083,7 +3083,7 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -3305,7 +3305,7 @@ func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -3540,7 +3540,7 @@ func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -3771,7 +3771,7 @@ func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {
@@ -3998,7 +3998,7 @@ func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
 	if out, err := exec.Command(fernBin, "-target", "wasm32-wasi", "-o", refPath, progPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm: %v\n%s", err, out)
+		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
 	ref, err := os.ReadFile(refPath)
 	if err != nil {

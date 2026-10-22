@@ -535,7 +535,7 @@ func builtinStructDecls() []*ast.StructDecl {
 			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
 		},
 		// HttpRequest / HttpResponse back the
-		// `fern -target wasi-http` mode (step 5 of
+		// `fern -target wasm32-wasi-http` mode (step 5 of
 		// docs/WASI-PREVIEW2.md). They're always available so
 		// CLI-target programs can construct one for tests, but
 		// the wasm backend only emits the
