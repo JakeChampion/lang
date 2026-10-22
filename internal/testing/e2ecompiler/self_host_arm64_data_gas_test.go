@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +51,7 @@ func TestSelfHostArm64DataGas(t *testing.T) {
 // tool.
 func TestSelfHostArm64DarwinMachOSymbolRuns(t *testing.T) {
 	assertMachORuns(t, machoRun{name: "sym42", main: arm64MachOSymbolDriverMain, wantExit: 42, wantData: true})
+	assertMachORuns(t, machoRun{name: "const42", main: strings.Replace(arm64MachOSymbolDriverMain, "__DATA,__data", "__TEXT,__const", 1), wantExit: 42})
 }
 
 // arm64DataGasSelfTestMain checks data-directive emission, the data symbol
@@ -58,8 +60,8 @@ func TestSelfHostArm64DarwinMachOSymbolRuns(t *testing.T) {
 // (adrp at 0x100000310, __DATA at 0x100004000 -> page delta 4, off 0).
 const arm64DataGasSelfTestMain = `
 function main(): i32 {
-    // .quad in __const: 8 bytes, symbol at offset 0.
-    let p1: Arm64GasProg = arm64_gas_program(".section __TEXT,__const\nanswer:\n.quad 42\n");
+    // .quad in __data: 8 bytes, symbol at offset 0.
+    let p1: Arm64GasProg = arm64_gas_program(".section __DATA,__data\nanswer:\n.quad 42\n");
     if (p1.data.len() != 8) { return 1; }
     if (p1.data[0] != 42 || p1.data[1] != 0) { return 2; }
     if (arm64_gas_dlabel_off(p1, "answer") != 0) { return 3; }
@@ -70,7 +72,7 @@ function main(): i32 {
     let p3: Arm64GasProg = arm64_gas_program(".data\nmsg:\n.asciz \"hi\"\n");
     if (p3.data[0] != 104 || p3.data[1] != 105 || p3.data[2] != 0) { return 5; }
     // @PAGE/@PAGEOFF queue two fixups, then link patches adrp + ldr.
-    let p4: Arm64GasProg = arm64_gas_program("adrp x1, answer@PAGE\nldr x0, [x1, answer@PAGEOFF]\nmov x16, #1\nsvc #0x80\n.section __TEXT,__const\nanswer:\n.quad 42\n");
+    let p4: Arm64GasProg = arm64_gas_program("adrp x1, answer@PAGE\nldr x0, [x1, answer@PAGEOFF]\nmov x16, #1\nsvc #0x80\n.section __DATA,__data\nanswer:\n.quad 42\n");
     if (p4.pf_sites.len() != 2) { return 6; }
     p4 = arm64_gas_link(p4, 0x100000310, 0x100004000);
     let as4: Arm64Asm = p4.asm;
@@ -78,11 +80,23 @@ function main(): i32 {
     if (as4.text[0] != 33 || as4.text[1] != 0 || as4.text[2] != 0 || as4.text[3] != 144) { return 7; }
     // ldr x0, [x1, #0] -> 0xF9400020 -> 20 00 40 F9
     if (as4.text[4] != 32 || as4.text[5] != 0 || as4.text[6] != 64 || as4.text[7] != 249) { return 8; }
+    // A __TEXT,__const constant follows the code, 16-aligned, and resolves
+    // against the text address: no data bytes, and the page fixup lands in
+    // __TEXT.
+    let p5: Arm64GasProg = arm64_gas_program("adrp x1, answer@PAGE\nldr x0, [x1, answer@PAGEOFF]\n.section __TEXT,__const\nanswer:\n.quad 42\n");
+    if (p5.data.len() != 0 || p5.ro_base != 16 || p5.asm.text.len() != 24 || p5.asm.text[16] != 42) { return 9; }
+    p5 = arm64_gas_link(p5, 0x100000000, 0x100004000);
+    let as5: Arm64Asm = p5.asm;
+    // adrp x1, #0 -> 0x90000001 -> 01 00 00 90; ldr x0, [x1, #16] -> 0xF9400820
+    if (as5.text[0] != 1 || as5.text[3] != 144 || as5.text[4] != 32 || as5.text[5] != 8 || as5.text[6] != 64 || as5.text[7] != 249) { return 10; }
+    // A load-time address cannot live in read-only data.
+    let p6: Arm64GasProg = arm64_gas_program(".section __TEXT,__const\nslot:\n.quad answer\nanswer:\n.quad 1\n");
+    if (p6.unknown.len() != 1) { return 11; }
     return 0;
 }
 `
 
-// arm64MachOSymbolDriverMain assembles a program that loads a __const
+// arm64MachOSymbolDriverMain assembles a program that loads a __data
 // `.quad 42` by name (adrp/ldr @PAGE/@PAGEOFF) and exits with it.
 const arm64MachOSymbolDriverMain = "\n" +
 	"function main(): i32 {\n" +
@@ -92,7 +106,7 @@ const arm64MachOSymbolDriverMain = "\n" +
 	"    asm = asm + \"    ldr x0, [x1, answer@PAGEOFF]\\n\";\n" +
 	"    asm = asm + \"    mov x16, #1\\n\";\n" +
 	"    asm = asm + \"    svc #0x80\\n\";\n" +
-	"    asm = asm + \".section __TEXT,__const\\n\";\n" +
+	"    asm = asm + \".section __DATA,__data\\n\";\n" +
 	"    asm = asm + \"answer:\\n\";\n" +
 	"    asm = asm + \"    .quad 42\\n\";\n" +
 	"    let p: Arm64GasProg = arm64_gas_program(asm);\n" +
