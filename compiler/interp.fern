@@ -5864,10 +5864,6 @@ function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string):
   return 0 - 1;
 }
 
-// call_assoc runs `<type_name>.<name>(args)`. The declared return type is the
-// impl type (`Self` was rewritten to it at parse time), so coercing the result
-// to it gives `i64.zero()` a 64-bit zero rather than the i32 its `return 0`
-// body literally evaluates to.
 // applied_type_in is the first application of `base` in the type spelling
 // `t`, `t` itself included, or "" when `t` names none.
 function applied_type_in(t: string, base: string): string {
@@ -5901,6 +5897,10 @@ function struct_type_params(decls: parser.StructDecl[], name: string): string[] 
   return none;
 }
 
+// call_assoc runs `<type_name>.<name>(args)`. The declared return type is the
+// impl type (`Self` was rewritten to it at parse time), so coercing the result
+// to it gives `i64.zero()` a 64-bit zero rather than the i32 its `return 0`
+// body literally evaluates to.
 function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
   let ai: i32 = assoc_index(funcs, type_name, name);
   if (ai < 0) {
@@ -5910,7 +5910,7 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
-  let env: Env = new_module_env(funcs, aliases, type_decls, outs);
+  let env: Env = Env { ...new_module_env(funcs, aliases, type_decls, outs), ret: fd.ret_type };
   // The applied type's arguments bind a parametric impl's type parameters
   // (`Dual[f64].LANES()` reads `T.LANES` at T = f64), or the struct's own
   // where the function declares none, as a derived `default()` does.

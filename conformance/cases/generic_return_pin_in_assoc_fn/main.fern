@@ -1,0 +1,10 @@
+// A returned call pins a type parameter only the callee's result names, in an
+// associated function as in a free function or a method.
+trait Ident { function one(): Self; }
+trait Mk { function make(): A; }
+struct A { v: i32 }
+impl Ident for A { function one(): Self { return A { v: 10 }; } }
+function unit[T: Ident](): T { return T.one(); }
+struct W { a: i32 }
+impl Mk for W { function make(): A { return unit(); } }
+function main(): i32 { return W.make().v; }
