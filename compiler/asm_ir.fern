@@ -6879,11 +6879,22 @@ function ssa_mov_rr(s: asmcore.EmitState, dst: string, src: string): asmcore.Emi
 // ssa_mov_slot writes the load `movq disp(%rbp), reg` or the store `movq
 // reg, disp(%rbp)`.
 function ssa_mov_slot(s: asmcore.EmitState, load: boolean, reg: string, disp: i32): asmcore.EmitState {
-  if (ssa_is_xmm(reg) && load) {
-    return s.write("    movsd " + ssa_mem("%rbp", disp, false) + ", " + reg + "\n");
-  }
   if (ssa_is_xmm(reg)) {
-    return s.write("    movsd " + reg + ", " + ssa_mem("%rbp", disp, false) + "\n");
+    let m: string = "movsd";
+    let at: i32 = disp;
+    if (ssa_lane_disp(disp, s)) {
+      // The pair's second unit is the lower address, where its 16 bytes start.
+      m = "movupd";
+      at = disp - 8;
+    }
+    if (load) {
+      return s.write("    " + m + " " + ssa_mem("%rbp", at, false) + ", " + reg + "\n");
+    }
+    return s.write("    " + m + " " + reg + ", " + ssa_mem("%rbp", at, false) + "\n");
+  }
+  if (ssa_lane_disp(disp, s)) {
+    // A lane pair copied slot to slot goes through %xmm2 as 16 bytes.
+    return ssa_mov_slot(s, load, "%xmm2", disp);
   }
   return ssa_mov_rm(s, 64, load, reg, "%rbp", disp);
 }
@@ -7585,6 +7596,9 @@ function ssa_funary_known(what: string): boolean {
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
   let k: i32 = ins.kind_tag;
+  if (ssa.lane_inst(ins)) {
+    return true;
+  }
   if (k == 10) {
     return ssa_unary_known(ins.str);
   }
@@ -7863,6 +7877,372 @@ function ssa_fbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
   }
   s = s.write("    ucomisd " + b + ", " + a + "\n    movq $0, " + d + "\n" + cc + "    movzbq " + r8 + ", " + d + "\n");
   return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ---- lane ops (docs/SIMD-GENERIC-KERNELS.md §6) -----------------------------
+//
+// A lane value (ssa.lane_values) is 128 bits: two f64 lanes (imm 64) or four
+// f32 lanes (imm 32). It lives in an xmm register of the float class or in a
+// 16-byte slot pair (ssa_lane_slots), moves as movapd / movupd, and the arms
+// below read an operand from its home or from %xmm1 / %xmm2 once ssa_fread
+// has loaded it, and write the result into its home or into %xmm0 for
+// ssa_fput. Where SSE is two-operand the left operand is copied into the
+// destination first, which the allocator keeps apart from every operand.
+
+// ssa_lane_slot_table marks the frame slot units the lane values occupy.
+function ssa_lane_slot_table(reg_of: i32[], lanes: boolean[]): boolean[] {
+  let units: boolean[] = [];
+  let v: i32 = 0;
+  while (v < lanes.len()) {
+    if (lanes[v] && reg_of[v] < 0 - 1) {
+      let u: i32 = ssa.spill_slot(reg_of[v]);
+      while (units.len() <= u + 1) {
+        units = units.append(false);
+      }
+      units = units.with(u, true).with(u + 1, true);
+    }
+    v = v + 1;
+  }
+  return units;
+}
+
+// ssa_lane_disp reports a slot displacement inside a lane pair.
+function ssa_lane_disp(disp: i32, s: asmcore.EmitState): boolean {
+  if (s.ssa_lane_slots.len() == 0) {
+    return false;
+  }
+  let u: i32 = (0 - disp - s.ssa_save) / 8 - 1;
+  return u >= 0 && u < s.ssa_lane_slots.len() && s.ssa_lane_slots[u];
+}
+
+// ssa_lane_spill is the spill count rounded up to whole pairs when the
+// function has a lane value, whose pair sits at an even index.
+function ssa_lane_spill(f: ssa.SFunc, nspill: i32): i32 {
+  if (nspill % 2 == 1 && ssa.has_lanes(f)) {
+    return nspill + 1;
+  }
+  return nspill;
+}
+
+// ssa_lane_sfx is the packed-float suffix of the element width.
+function ssa_lane_sfx(width: i32): string {
+  if (width == 32) {
+    return "ps";
+  }
+  return "pd";
+}
+
+function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let b: string = ssa.lane_base(ins.str);
+  if (b == "vsplat") {
+    return ssa_vsplat(ins, reg_of, s);
+  }
+  if (b == "vextract") {
+    return ssa_vextract(ins, reg_of, s);
+  }
+  if (b == "vreplace") {
+    return ssa_vreplace(ins, reg_of, s);
+  }
+  if (b == "vfma") {
+    return ssa_vfma(ins, reg_of, s);
+  }
+  if (b == "vselect") {
+    return ssa_vselect(ins, reg_of, s);
+  }
+  if (b == "vload") {
+    return ssa_vload(ins, reg_of, s);
+  }
+  if (b == "vstore") {
+    return ssa_vstore(ins, reg_of, s);
+  }
+  if (b == "vround") {
+    return ssa_vround(ins, reg_of, s);
+  }
+  if (ins.args.len() == 2) {
+    return ssa_vbin(ins, reg_of, s);
+  }
+  return ssa_vunary(ins, reg_of, s);
+}
+
+// ssa_lane_arm_at reports a lane op or a copy of a lane value.
+function ssa_lane_arm_at(ins: ssa.SInst, fr: SsaFrame): boolean {
+  return ssa.lane_inst(ins) || ins.kind_tag == 7 && ins.result < fr.lanes.len() && fr.lanes[ins.result];
+}
+
+// ssa_lane_arm emits a lane op, or a copy of a lane value.
+function ssa_lane_arm(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ssa.lane_inst(ins)) {
+    return ssa_lane_inst(ins, reg_of, s);
+  }
+  return ssa_vcopy(ins, reg_of, s);
+}
+
+// ssa_vcopy moves a lane value to a copy's home, all 16 bytes of it.
+function ssa_vcopy(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (a != d) {
+    s = s.write("    movapd " + a + ", " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vsplat: every lane takes the f64, which an f32 lane rounds first.
+function ssa_vsplat(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (ins.imm == 32) {
+    s = s.write("    cvtsd2ss " + a + ", " + d + "\n    shufps $0, " + d + ", " + d + "\n");
+  } else {
+    if (a != d) {
+      s = s.write("    movapd " + a + ", " + d + "\n");
+    }
+    s = s.write("    unpcklpd " + d + ", " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vextract: lane N as an f64, into the result's float home or %xmm0, from
+// where ssa_fput moves it to an integer home or a slot.
+function ssa_vextract(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let lane: i32 = ssa_lane_index(ins.str);
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let v: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (v != d) {
+    s = s.write("    movapd " + v + ", " + d + "\n");
+  }
+  if (ins.imm == 32) {
+    if (lane > 0) {
+      s = s.write("    shufps $" + util.i32_to_string(lane) + ", " + d + ", " + d + "\n");
+    }
+    s = s.write("    cvtss2sd " + d + ", " + d + "\n");
+  } else if (lane == 1) {
+    s = s.write("    unpckhpd " + d + ", " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_lane_index is the lane after the colon of "vextract:1" / "vreplace:3".
+function ssa_lane_index(what: string): i32 {
+  let k: i32 = 0;
+  while (k < what.len()) {
+    if (what[k] == b':') {
+      return what[k + 1] as i32 - 48;
+    }
+    k = k + 1;
+  }
+  return 0;
+}
+
+// ssa_vreplace: the lane value with lane N replaced by the f64, which goes
+// through %rcx as its bit pattern (its f32 pattern for an f32 lane).
+function ssa_vreplace(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let lane: string = util.i32_to_string(ssa_lane_index(ins.str));
+  s = ssa_fread(reg_of, ins.args[0], "%xmm2", s);
+  let v: string = ssa_fsrc(reg_of, ins.args[0], "%xmm2");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (v != d) {
+    s = s.write("    movapd " + v + ", " + d + "\n");
+  }
+  if (ins.imm == 32) {
+    s = ssa_fread(reg_of, ins.args[1], "%xmm1", s);
+    s = s.write("    cvtsd2ss " + ssa_fsrc(reg_of, ins.args[1], "%xmm1") + ", %xmm1\n    movd %xmm1, %ecx\n    pinsrd $" + lane + ", %ecx, " + d + "\n");
+  } else {
+    s = ssa_load(reg_of, ins.args[1], "%rcx", s);
+    s = s.write("    pinsrq $" + lane + ", %rcx, " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vbin_form is a lane binary's SSE mnemonic (without the width suffix),
+// its compare predicate (-1 for none) and whether the destination takes the
+// RIGHT operand: `b < a ? b : a` is minpd with b in the destination, and the
+// swapped compares and andnot read the same way.
+struct VBinForm { mnem: string, pred: i32, right: boolean }
+
+function ssa_vbin_form(b: string): VBinForm {
+  let names: string[] = ["vadd", "vsub", "vmul", "vdiv", "vand", "vor", "vxor", "vmin", "vmax", "vandnot", "veq", "vlt", "vle", "vne", "vgt", "vge"];
+  let mnems: string[] = ["add", "sub", "mul", "div", "and", "or", "xor", "min", "max", "andn", "cmp", "cmp", "cmp", "cmp", "cmp", "cmp"];
+  let preds: i32[] = [0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0, 1, 2, 4, 1, 2];
+  let rights: boolean[] = [false, false, false, false, false, false, false, true, true, true, false, false, false, false, true, true];
+  let i: i32 = util.index_of_str(names, b);
+  return VBinForm { mnem: mnems[i], pred: preds[i], right: rights[i] };
+}
+
+function ssa_vbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let form: VBinForm = ssa_vbin_form(ssa.lane_base(ins.str));
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  s = ssa_fread(reg_of, ins.args[1], "%xmm2", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let b: string = ssa_fsrc(reg_of, ins.args[1], "%xmm2");
+  if (form.right) {
+    let t: string = a;
+    a = b;
+    b = t;
+  }
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (a != d) {
+    s = s.write("    movapd " + a + ", " + d + "\n");
+  }
+  let imm: string = "";
+  if (form.pred >= 0) {
+    imm = "$" + util.i32_to_string(form.pred) + ", ";
+  }
+  s = s.write("    " + form.mnem + ssa_lane_sfx(ins.imm) + " " + imm + b + ", " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vunary: sqrt and the roundings are one instruction; abs and neg build
+// their mask in %xmm2 from all ones (pcmpeqd) shifted. The result may share
+// the operand's register (a unary's operand dies at it), so nothing writes
+// the destination before the operand is read.
+function ssa_vunary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let b: string = ssa.lane_base(ins.str);
+  let sfx: string = ssa_lane_sfx(ins.imm);
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (b == "vsqrt") {
+    s = s.write("    sqrt" + sfx + " " + a + ", " + d + "\n");
+  } else if (b == "vabs" || b == "vneg") {
+    s = s.write("    pcmpeqd %xmm2, %xmm2\n" + ssa_lane_mask_shift(b, ins.imm, "%xmm2"));
+    let op: string = "and";
+    if (b == "vneg") {
+      op = "xor";
+    }
+    if (a != d) {
+      s = s.write("    movapd " + a + ", " + d + "\n");
+    }
+    s = s.write("    " + op + sfx + " %xmm2, " + d + "\n");
+  } else {
+    let mode: string = "1";
+    if (b == "vceil") {
+      mode = "2";
+    } else if (b == "vtrunc") {
+      mode = "3";
+    }
+    s = s.write("    round" + sfx + " $" + mode + ", " + a + ", " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_lane_mask_shift turns an all-ones register into the sign mask (neg) or
+// the magnitude mask (abs) of the element width.
+function ssa_lane_mask_shift(b: string, width: i32, d: string): string {
+  if (width == 32) {
+    if (b == "vneg") {
+      return "    pslld $31, " + d + "\n";
+    }
+    return "    psrld $1, " + d + "\n";
+  }
+  if (b == "vneg") {
+    return "    psllq $63, " + d + "\n";
+  }
+  return "    psrlq $1, " + d + "\n";
+}
+
+// ssa_vround is round half away from zero: r = trunc(x), then r + copysign(1, x)
+// where |x - r| >= 0.5 (the scalar fround's test, exact because x - r is).
+// %xmm2 holds copysign(1, x) and %xmm1 x, then the mask; 1.0 and 0.5 come
+// from .rodata. The destination may be the operand's register, so x is
+// copied to %xmm1 before it is written.
+function ssa_vround(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let sfx: string = ssa_lane_sfx(ins.imm);
+  let w: string = util.i32_to_string(ins.imm);
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let x: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  s = s.write("    pcmpeqd %xmm2, %xmm2\n" + ssa_lane_mask_shift("vneg", ins.imm, "%xmm2"));
+  s = s.write("    and" + sfx + " " + x + ", %xmm2\n    or" + sfx + " .Lv_one" + w + "(%rip), %xmm2\n");
+  if (x != "%xmm1") {
+    s = s.write("    movapd " + x + ", %xmm1\n");
+  }
+  s = s.write("    round" + sfx + " $3, %xmm1, " + d + "\n");
+  // |x - r|: the sign bit shifted out and back in.
+  let sh: string = "q";
+  if (ins.imm == 32) {
+    sh = "d";
+  }
+  s = s.write("    sub" + sfx + " " + d + ", %xmm1\n    psll" + sh + " $1, %xmm1\n    psrl" + sh + " $1, %xmm1\n");
+  s = s.write("    cmp" + sfx + " $5, .Lv_half" + w + "(%rip), %xmm1\n");
+  s = s.write("    and" + sfx + " %xmm1, %xmm2\n    add" + sfx + " %xmm2, " + d + "\n");
+  s = asmcore.EmitState { ...s, lane_consts: true };
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vfma: a * b + c in one rounding (FMA3), with a copied into the
+// destination, which vfmadd213 multiplies by b and adds c to.
+function ssa_vfma(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[1], "%xmm1", s);
+  s = ssa_fread(reg_of, ins.args[2], "%xmm2", s);
+  let a: string = ssa_fhome(reg_of, ins.args[0]);
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (a == "") {
+    s = ssa_load(reg_of, ins.args[0], d, s);
+  } else if (a != d) {
+    s = s.write("    movapd " + a + ", " + d + "\n");
+  }
+  s = s.write("    vfmadd213" + ssa_lane_sfx(ins.imm) + " " + ssa_fsrc(reg_of, ins.args[2], "%xmm2") + ", " + ssa_fsrc(reg_of, ins.args[1], "%xmm1") + ", " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// ssa_vselect (args a, b, mask): a where the mask is set, b elsewhere, as
+// (m & a) | (~m & b): m & a in %xmm2, ~m & b in %xmm1 over the mask copied
+// there, b read into the destination when it has no home, since no fourth
+// scratch exists.
+function ssa_vselect(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let sfx: string = ssa_lane_sfx(ins.imm);
+  s = ssa_fread(reg_of, ins.args[2], "%xmm1", s);
+  s = ssa_fread(reg_of, ins.args[0], "%xmm2", s);
+  let m: string = ssa_fsrc(reg_of, ins.args[2], "%xmm1");
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm2");
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  let b: string = ssa_fhome(reg_of, ins.args[1]);
+  if (b == "") {
+    s = ssa_load(reg_of, ins.args[1], d, s);
+    b = d;
+  }
+  if (a != "%xmm2") {
+    s = s.write("    movapd " + a + ", %xmm2\n");
+  }
+  s = s.write("    and" + sfx + " " + m + ", %xmm2\n");
+  if (m != "%xmm1") {
+    s = s.write("    movapd " + m + ", %xmm1\n");
+  }
+  s = s.write("    andn" + sfx + " " + b + ", %xmm1\n    or" + sfx + " %xmm2, %xmm1\n");
+  return ssa_store(reg_of, ins.result, "%xmm1", s);
+}
+
+// ssa_vload / ssa_vstore: 16 unaligned bytes at an address in an integer
+// register.
+function ssa_vload(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_read(reg_of, ins.args[0], "%rcx", s);
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  s = s.write("    movupd (" + ssa_src(reg_of, ins.args[0], "%rcx") + "), " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+function ssa_vstore(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_read(reg_of, ins.args[0], "%rcx", s);
+  s = ssa_fread(reg_of, ins.args[1], "%xmm1", s);
+  return s.write("    movupd " + ssa_fsrc(reg_of, ins.args[1], "%xmm1") + ", (" + ssa_src(reg_of, ins.args[0], "%rcx") + ")\n");
+}
+
+// emit_lane_consts lays down the 16-byte constants the lane arms read, once
+// per unit that used one.
+function emit_lane_consts(s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.lane_consts) {
+    return s;
+  }
+  s = s.write("    .section .rodata\n    .align 16\n");
+  s = s.write(".Lv_one64:\n    .quad 4607182418800017408\n    .quad 4607182418800017408\n");
+  s = s.write(".Lv_half64:\n    .quad 4602678819172646912\n    .quad 4602678819172646912\n");
+  s = s.write(".Lv_one32:\n    .long 1065353216\n    .long 1065353216\n    .long 1065353216\n    .long 1065353216\n");
+  s = s.write(".Lv_half32:\n    .long 1056964608\n    .long 1056964608\n    .long 1056964608\n    .long 1056964608\n");
+  return s;
 }
 
 function ssa_sse_arith(what: string): string {
@@ -9083,7 +9463,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 // SsaFrame is the frame below the values: three words per frame-resident
 // view box after the values. ssa_view_off is the offset of a view's lowest
 // word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, lit0: i32[], lbase: i32, lanes: boolean[] }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -9533,6 +9913,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (k == 35) {
     return ssa_line_loc(ins, s);
   }
+  if (ssa_lane_arm_at(ins, fr)) {
+    return ssa_lane_arm(ins, reg_of, s);
+  }
   if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
     return s;
   }
@@ -9668,7 +10051,7 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
     while (i < srcs.len()) {
       if (!done[i] && !ssa_move_blocked(srcs, dsts, done, i, parking, parked)) {
         if (parking && srcs[i] == parked) {
-          s = s.write("    movq %r11, " + ssa_loc(dsts[i], s) + "\n");
+          s = ssa_unpark(dsts[i], ssa_vec_loc(parked, s), s);
         } else {
           s = ssa_move(srcs[i], dsts[i], s);
         }
@@ -9683,12 +10066,42 @@ function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asm
       while (done[j]) {
         j = j + 1;
       }
-      s = s.write("    movq " + ssa_loc(srcs[j], s) + ", %r11\n");
+      s = ssa_park(srcs[j], s);
       parking = true;
       parked = srcs[j];
     }
   }
   return ssa_x0_forget(s);
+}
+
+// ssa_vec_loc reports a location of the float class: an xmm register or a
+// lane pair's slot, which a cycle parks in %xmm2 as 16 bytes rather than in
+// %r11.
+function ssa_vec_loc(loc: i32, s: asmcore.EmitState): boolean {
+  if (loc >= 0) {
+    return loc >= ssa_fbase();
+  }
+  return ssa_lane_disp(ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save), s);
+}
+
+function ssa_park(loc: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (!ssa_vec_loc(loc, s)) {
+    return s.write("    movq " + ssa_loc(loc, s) + ", %r11\n");
+  }
+  if (loc >= 0) {
+    return ssa_mov_rr(s, "%xmm2", ssa_reg(loc));
+  }
+  return ssa_mov_slot(s, true, "%xmm2", ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save));
+}
+
+function ssa_unpark(loc: i32, vec: boolean, s: asmcore.EmitState): asmcore.EmitState {
+  if (!vec) {
+    return s.write("    movq %r11, " + ssa_loc(loc, s) + "\n");
+  }
+  if (loc >= 0) {
+    return ssa_mov_rr(s, ssa_reg(loc), "%xmm2");
+  }
+  return ssa_mov_slot(s, false, "%xmm2", ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save));
 }
 
 // A move is blocked while another pending move still reads its destination
@@ -10137,7 +10550,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let fn_label: string = "__fn_" + asmcore.sanitize_label(label_name);
   let dbg: asmcore.DbgVars = asmcore.dbg_vars(fn_label, alloc, r, formed.repl, if (s.var_rows) { seen_vals } else { [] }, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
   let views: i32[] = ssa_view_slots(f);
-  let nspill: i32 = ssa.spill_count(reg_of);
+  let nspill: i32 = ssa_lane_spill(f, ssa.spill_count(reg_of));
   let tails: boolean = s.profile == 0;
   // A function with no frame slots that might make no call but a tail call is
   // emitted into a buffer first, behind placeholders for its exits; its text
@@ -10161,7 +10574,8 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let bp: i32[] = ssa.block_positions(f);
   let lbase: i32 = s.nlab;
   s = s.lab_take(bp.len());
-  let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase };
+  let lanes: boolean[] = ssa.lane_values(f);
+  let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes };
   let fusions: ssaprepare.Fusion[] = [];
   let framed = !leaf;
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
@@ -10180,7 +10594,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   } else {
     s = ssa_frame(s, saved, frame);
   }
-  s = asmcore.EmitState { ...s, ssa_save: save };
+  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: ssa_lane_slot_table(reg_of, lanes) };
   s = ssa_load_params(f, reg_of, s);
   // `pos` numbers the instructions and terminators as the allocator does, so
   // a `-g` variable range's labels land where its home takes and drops it.
@@ -10244,7 +10658,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = s.write(ssa_resolve_tails(ssa_replace_all(leaf_text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)), ssa_leaf_epilogue(saved)));
     }
   }
-  s = asmcore.EmitState { ...s, ssa_save: 0, ssa_trap_suffix: "" };
+  s = asmcore.EmitState { ...s, ssa_save: 0, ssa_trap_suffix: "", ssa_lane_slots: [] };
   s = asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg);
   return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
 }
@@ -12009,6 +12423,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   // .data: one block per static aggregate constant (#6149). After the string
   // pool, because a block's first word is a shape POINTER into it.
   s = asmcore.emit_const_agg_data(s);
+  s = emit_lane_consts(s);
   // Per-module shape pointers: emit each distinct shape name once as a `.weak`
   // global symbol (shape_sym) carrying its name bytes. Every unit referencing the
   // same shape emits the same weak symbol, so the linker merges them to ONE

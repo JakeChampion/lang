@@ -1,0 +1,2 @@
+main takes no parameters; read the command line with args()
+main returns an integer, a boolean or void, not string
