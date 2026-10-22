@@ -11358,7 +11358,8 @@ function macho_lcstr_cmd_len(cmd: i32, path: string): i32 {
 }
 
 // macho_load_cmds_len is the total size of all load commands: __PAGEZERO
-// + __TEXT (1 section) + optional __DATA (1 section) + optional __DWARF
+// + __TEXT (__text, and __const when the text holds read-only constants)
+// + optional __DATA (1 section) + optional __DWARF
 // (macho_dwarf_sects sections, under `-g`) + __LINKEDIT +
 // LC_DYLD_INFO_ONLY + LC_SYMTAB + LC_DYSYMTAB + LC_BUILD_VERSION +
 // LC_LOAD_DYLINKER + LC_LOAD_DYLIB + LC_MAIN + LC_CODE_SIGNATURE.
@@ -11369,8 +11370,11 @@ function macho_lcstr_cmd_len(cmd: i32, path: string): i32 {
 // command and the first code byte, the layout the retired native writer
 // fixed (it counted dyldInfoCmdLen twice). It fixes text_off and so every
 // address; dropping it is a layout change of its own.
-function macho_load_cmds_len(has_data: boolean, has_eh: boolean, dwarf: boolean): i32 {
+function macho_load_cmds_len(has_data: boolean, has_eh: boolean, dwarf: boolean, has_const: boolean): i32 {
   let n: i32 = 72 + (72 + 80) + 72;  // PAGEZERO + TEXT(1 sect) + LINKEDIT
+  if (has_const) {
+    n = n + 80;  // __TEXT's __const section header
+  }
   if (has_eh) {
     n = n + 80;  // __TEXT's second section header, __eh_frame
   }
@@ -11394,7 +11398,7 @@ function macho_load_cmds_len(has_data: boolean, has_eh: boolean, dwarf: boolean)
 // here at the same address. Reserve the optional DWARF command space in
 // both builds so debug metadata never changes linked instructions.
 function macho_text_off(has_data: boolean, has_eh: boolean, dwarf: boolean): i32 {
-  return 32 + macho_load_cmds_len(has_data, has_eh, true);
+  return 32 + macho_load_cmds_len(has_data, has_eh, true, true);
 }
 
 // macho_dwarf_sects names the __DWARF segment's sections, in the order a
@@ -11916,8 +11920,36 @@ pub function macho_entry_off(a: Arm64Asm): i32 {
 // dyld slides a PIE image, so each of those needs the slide added; the
 // LC_DYLD_INFO_ONLY rebase stream is how the image asks for that. Pass an
 // empty array when the data blob holds no absolute addresses.
+// macho_text_seg writes __TEXT (r-x) and its sections: __text, then __const
+// for the read-only constants past `code_len` and __eh_frame, where present.
+function macho_text_seg(buf: i32[], text_vmsize: i32, text_off: i32, code_len: i32, text_len: i32, eh_off: i32, eh_len: i32): i32[] {
+  let base: i64 = macho_base_vaddr();
+  let text_vaddr: i64 = base + text_off as i64;
+  let nsects: i32 = 1;
+  if (code_len < text_len) {
+    nsects = nsects + 1;
+  }
+  if (eh_len > 0) {
+    nsects = nsects + 1;
+  }
+  buf = macho_seg(buf, "__TEXT", base, text_vmsize as i64, 0, text_vmsize as i64, 5, 5, nsects);
+  // flags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+  buf = macho_sect(buf, "__text", "__TEXT", text_vaddr, code_len, text_off, 2, 0x80000400);
+  if (code_len < text_len) {
+    // 16-aligned, as the assembler lays the constants.
+    buf = macho_sect(buf, "__const", "__TEXT", text_vaddr + code_len as i64, text_len - code_len, text_off + code_len, 4, 0);
+  }
+  if (eh_len > 0) {
+    // __eh_frame is data, not instructions: no attributes, 8-aligned.
+    // dyld's _dyld_find_unwind_sections hands this section to libunwind's
+    // DWARF fallback, so it has to be findable by name in __TEXT.
+    buf = macho_sect(buf, "__eh_frame", "__TEXT", base + eh_off as i64, eh_len, eh_off, 3, 0);
+  }
+  return buf;
+}
+
 pub function macho_executable(text: u8[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[]): i32[] {
-  return macho_executable_binds(text, eh, data, ident, entry_off, bss, rebase_offs, [], [], [], [], []);
+  return macho_executable_binds(text, text.len(), eh, data, ident, entry_off, bss, rebase_offs, [], [], [], [], []);
 }
 
 // macho_executable_binds is macho_executable plus the `.quad` slots dyld binds
@@ -11933,8 +11965,9 @@ pub function macho_executable(text: u8[], eh: i32[], data: i32[], ident: string,
 // __LINKEDIT, as Go's linker lays a static Mach-O out: unmapped (vmsize 0,
 // no protections), its sections S_ATTR_DEBUG, and read by lldb and dsymutil
 // straight from the executable, with no dSYM.
-pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[], dwarf: i32[][]): i32[] {
+pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[], dwarf: i32[][]): i32[] {
   let text_len: i32 = text.len();
+  let has_const: boolean = code_len < text_len;
   let eh_len: i32 = eh.len();
   let has_eh: boolean = eh_len > 0;
   let data_len: i32 = data.len();
@@ -12002,7 +12035,7 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
   }
   // sizeofcmds is the size of the commands ACTUALLY written, which is
   // macho_load_cmds_len minus its 48 bytes of layout slack.
-  let sizeofcmds: i32 = macho_load_cmds_len(has_data, has_eh, has_dwarf) - 48;
+  let sizeofcmds: i32 = macho_load_cmds_len(has_data, has_eh, has_dwarf, has_const) - 48;
 
   let buf: i32[] = [];
 
@@ -12026,20 +12059,7 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
   // ---- __PAGEZERO ----
   buf = macho_seg(buf, "__PAGEZERO", 0, base, 0, 0, 0, 0, 0);
 
-  // ---- __TEXT (r-x), 1 section, 2 with unwind data ----
-  let text_nsects: i32 = 1;
-  if (has_eh) {
-    text_nsects = 2;
-  }
-  buf = macho_seg(buf, "__TEXT", base, text_vmsize as i64, 0, text_vmsize as i64, 5, 5, text_nsects);
-  // flags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
-  buf = macho_sect(buf, "__text", "__TEXT", text_vaddr, text_len, text_off, 2, 0x80000400);
-  if (has_eh) {
-    // __eh_frame is data, not instructions: no attributes, 8-aligned.
-    // dyld's _dyld_find_unwind_sections hands this section to libunwind's
-    // DWARF fallback, so it has to be findable by name in __TEXT.
-    buf = macho_sect(buf, "__eh_frame", "__TEXT", base + eh_off as i64, eh_len, eh_off, 3, 0);
-  }
+  buf = macho_text_seg(buf, text_vmsize, text_off, code_len, text_len, eh_off, eh_len);
 
   // ---- __DATA (r/w), 1 section (optional) ----
   if (has_data) {
