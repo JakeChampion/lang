@@ -20,6 +20,7 @@ import "./sourcepos";
 
 import "./lexer";
 import "./parser";
+import "./aborts";
 import "./asmcore";
 import "./rtprofile";
 import "./x86_native";
@@ -2988,19 +2989,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // 125, not 137: 137 is 128+9, what a shell reports for SIGKILL, so an arena
   // trap could not be told apart from the kernel OOM-killer. Opposite causes,
   // opposite fixes. Lockstep with the native backends' ExitArenaExhausted.
-  s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", asmcore.msg_oom(), 125);
+  s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", aborts.oom(), 125);
   // The fatal aborts (#5538, #11405): each trap names its cause and
   // tail-jumps to __fern_report, so a per-access check stays a compare + a
   // jae to a shared label. __fern_oob_abort is arr_get / arr_set,
-  // __fern_str_oob_abort the inline str_slice view, __fern_slice_abort the
-  // __fern_arr_slice bodies' range check, __fern_alloc_size_abort a
-  // raw_alloc or __alloc_u8 size that is negative as an i32, which is how a
-  // helper's `la + lb` looks once it wraps past 2 GiB. Texts and statuses
-  // match the native backends'.
-  s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", asmcore.msg_arr_oob(), 134);
-  s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", asmcore.msg_str_oob(), 134);
-  s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", asmcore.msg_slice_range(), 134);
-  s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", asmcore.msg_alloc_size(), 134);
+  // __fern_str_oob_abort a string byte and the inline str_slice view,
+  // __fern_slice_abort the __fern_arr_slice bodies' range check,
+  // __fern_alloc_size_abort a raw_alloc or __alloc_u8 size that is negative
+  // as an i32, which is how a helper's `la + lb` looks once it wraps past
+  // 2 GiB. Texts and statuses match the native backends'.
+  s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", aborts.arr_oob(), 134);
+  s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", aborts.str_oob(), 134);
+  s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", aborts.slice_range(), 134);
+  s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
   s = emit_trap_stubs(s);
   // __fern_arr_box(%rdi = cap element count) -> %rax = data ptr (base+16).
   // base = [cap, rc=1, len=cap, e0..]; element i at data+(i+1)*8.
@@ -8195,7 +8196,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (k == 44) {
     s = s.need("heap");
     if (ins.imm != 1) {
-      s = ssa_trap_jump(ssa_alu_rm(s, 7, 64, true, b, a, 8), "jae", "__fern_oob_abort");
+      s = ssa_trap_jump(ssa_alu_rm(s, 7, 64, true, b, a, 8), "jae", "__fern_str_oob_abort");
     }
     if (ins.imm == 2) {
       return s;
@@ -8223,10 +8224,12 @@ function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string,
   s = s.need("heap");
   if (ins.imm != 1) {
     let len_at: i32 = 0;
+    let trap: string = "__fern_oob_abort";
     if (k == 44) {
       len_at = 8;
+      trap = "__fern_str_oob_abort";
     }
-    s = ssa_trap_jump(ssa_alu_im(s, 7, 64, c, a, len_at), "jbe", "__fern_oob_abort");
+    s = ssa_trap_jump(ssa_alu_im(s, 7, 64, c, a, len_at), "jbe", trap);
   }
   if (k != 43 && ins.imm == 2) {
     return s;
@@ -12138,7 +12141,7 @@ function emit_segv_install(own s: asmcore.EmitState): asmcore.EmitState {
 // default action back and returns, so the access faults again and the process
 // dies of SIGSEGV as it would have.
 function emit_stack_overflow_runtime(s: asmcore.EmitState): asmcore.EmitState {
-  let msg: string = asmcore.msg_stack_overflow();
+  let msg: string = aborts.stack_overflow();
   s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
   s = s.write("__fern_segv:\n    movq 16(%rsi), %rax\n    subq 160(%rdx), %rax\n    addq $1048576, %rax\n    cmpq $2097152, %rax\n    jae .Lfern_segv_other\n    movq 168(%rdx), %rax\n    movq 120(%rdx), %rcx\n    subq $16, %rsp\n    movq %rcx, (%rsp)\n    movq %rax, 8(%rsp)\n    movq %rsp, %rbp\n    leaq .Lmsg_stack_overflow(%rip), %rsi\n    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n    movq $134, %rdi\n    jmp __fern_report\n.Lfern_segv_other:\n    subq $32, %rsp\n    movq $0, (%rsp)\n    movq $0x04000000, 8(%rsp)\n");
   s = emit_segv_install(s);
@@ -12363,7 +12366,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // non-atomic counts. The export entries and the __c_call shims keep it.
   if (s.shared) {
     s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n    .text\n");
-    s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", asmcore.msg_busy(), 134);
+    s = abort_trap(s, "__fern_busy_abort", ".Lmsg_busy", aborts.busy(), 134);
   }
   // The UAF quarantine's fatal report. Self-contained — its own write(2) +
   // exit(124) rather than the hev writer — so FERN_RC_FREE_DEBUG works
