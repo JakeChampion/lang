@@ -116,6 +116,15 @@ function type_checks(): i32 {
     let literal: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: true };
     let inferred: typeinfo.Type = typeinfo.TypeUnion { name: "Result", args: [literal, never] };
     if (semtypes.equal(literal, i) || semtypes.concrete(literal, false) || semtypes.concrete(inferred, false)) { return 12; }
+    let empty_values: typeinfo.Type = typeinfo.TypeMap { key: s, value: never };
+    let empty_keys: typeinfo.Type = typeinfo.TypeMap { key: never, value: i };
+    let empty_both: typeinfo.Type = typeinfo.TypeMap { key: never, value: never };
+    for m in [empty_values, empty_keys, empty_both] {
+        if (!semtypes.concrete(m, false) || !ssasem.is_supported_map(m)) { return 13; }
+    }
+    if (!ssasem.narrow_map_value(never) || !ssasem.retained_column(never)) { return 14; }
+    let unknown: typeinfo.Type = typeinfo.TypeMap { key: s, value: typeinfo.unchecked() };
+    if (semtypes.concrete(unknown, false) || ssasem.is_supported_map(unknown)) { return 15; }
     return 0;
 }
 `
