@@ -103,6 +103,9 @@ function main(): i32 {
     "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe", "sha256_hw", "sha256_hw_blocks", "bswap",
     "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
     "mulhi_u", "writer_splice_forever", "utf8_blocks", "sha1_hw", "sha1_hw_blocks", "aes_gcm_seal", "aes_gcm_open", "mismatch_bytes_str",
+    "vsplat", "vextract", "vreplace", "vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vfma",
+    "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround", "veq", "vne", "vlt", "vle", "vgt", "vge",
+    "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
   ];
   if (!ir.kind_retired(198) || ir.kind_name(198) != "invalid") {
     failures = failures + 1;

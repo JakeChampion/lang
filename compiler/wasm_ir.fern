@@ -5699,6 +5699,97 @@ struct WasmOpCtx {
   base: i32,
 }
 
+// ---- lane ops (docs/SIMD-GENERIC-KERNELS.md §6) -----------------------------
+//
+// A lane value is a v128: f64x2 for width 64, f32x4 for width 32. The f64 a
+// splat or replace takes is demoted for an f32 lane, and an extracted f32
+// lane is promoted, since the stack carries every float as f64. vmin / vmax
+// are pmin / pmax, a compare gives the lane mask and vselect is bitselect.
+// vfma is a multiply then an add (wasm has no fused form) and vround is
+// round half away from zero built as emit_wasm_fround builds the scalar's.
+// The two v128 scratch locals follow the five scalar ones (vtmp, vtmp2).
+
+function has_lane_op(ops: ir.Op[]): boolean {
+  for o in ops {
+    if (ir.is_lane_kind(o.kind_tag)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function wasm_lane_shape(width: i32): string {
+  if (width == 32) {
+    return "f32x4";
+  }
+  return "f64x2";
+}
+
+// wasm_lane_const splats a constant into every lane.
+function wasm_lane_const(width: i32, text: string): string {
+  if (width == 32) {
+    return "    f64.const " + text + "\n    f32.demote_f64\n    f32x4.splat\n";
+  }
+  return "    f64.const " + text + "\n    f64x2.splat\n";
+}
+
+function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
+  let k: string = ir.kind_name(o.kind_tag);
+  let sh: string = wasm_lane_shape(o.width);
+  let vtmp: string = util.i32_to_string(cx.base + 5);
+  let vtmp2: string = util.i32_to_string(cx.base + 6);
+  if (k == "vsplat") {
+    if (o.width == 32) {
+      return "    f32.demote_f64\n    f32x4.splat\n";
+    }
+    return "    f64x2.splat\n";
+  }
+  if (k == "vextract") {
+    let out: string = "    " + sh + ".extract_lane " + util.i32_to_string(o.i32_imm) + "\n";
+    if (o.width == 32) {
+      return out + "    f64.promote_f32\n";
+    }
+    return out;
+  }
+  if (k == "vreplace") {
+    let pre: string = "";
+    if (o.width == 32) {
+      pre = "    f32.demote_f64\n";
+    }
+    return pre + "    " + sh + ".replace_lane " + util.i32_to_string(o.i32_imm) + "\n";
+  }
+  if (k == "vfma") {
+    return "    local.set " + vtmp + "\n    " + sh + ".mul\n    local.get " + vtmp + "\n    " + sh + ".add\n";
+  }
+  if (k == "vround") {
+    return emit_wasm_lane_round(o.width, sh, vtmp, vtmp2);
+  }
+  return "    " + wasm_lane_verb(k, sh) + "\n";
+}
+
+// wasm_lane_verb is the wasm instruction of a lane op with the same operand
+// order: the shape's arithmetic, compare or rounding, or a v128 bitwise op.
+function wasm_lane_verb(k: string, sh: string): string {
+  let names: string[] = ["vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "veq", "vne", "vlt", "vle", "vgt", "vge", "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore"];
+  let verbs: string[] = ["add", "sub", "mul", "div", "pmin", "pmax", "sqrt", "abs", "neg", "floor", "ceil", "trunc", "eq", "ne", "lt", "le", "gt", "ge", "v128.and", "v128.or", "v128.xor", "v128.andnot", "v128.bitselect", "v128.load", "v128.store"];
+  let v: string = verbs[util.index_of_str(names, k)];
+  if (util.str_has_prefix(v, "v128.")) {
+    return v;
+  }
+  return sh + "." + v;
+}
+
+// emit_wasm_lane_round: r = trunc(x), then r + copysign(1, x) in every lane
+// where |x - r| >= 0.5, the mask applied with v128.and.
+function emit_wasm_lane_round(width: i32, sh: string, vtmp: string, vtmp2: string): string {
+  let x: string = "    local.get " + vtmp + "\n";
+  let r: string = "    local.get " + vtmp2 + "\n";
+  let out: string = "    local.set " + vtmp + "\n" + x + "    " + sh + ".trunc\n    local.set " + vtmp2 + "\n" + r;
+  out = out + x + wasm_lane_const(width, "-0.0") + "    v128.and\n" + wasm_lane_const(width, "1.0") + "    v128.or\n";
+  out = out + x + r + "    " + sh + ".sub\n    " + sh + ".abs\n" + wasm_lane_const(width, "0.5") + "    " + sh + ".ge\n";
+  return out + "    v128.and\n    " + sh + ".add\n";
+}
+
 function wat_integer_text(text: string): string {
   // Fern accepts either hex prefix; WAT requires a lowercase x.
   let start: i32 = 0;
@@ -5746,6 +5837,9 @@ function wasm_text_const(o: ir.Op): string {
 // One guard per IR op. The multi-line cases have their own functions; what
 // is left is a single append per op.
 function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
+  if (ir.is_lane_kind(o.kind_tag)) {
+    return emit_wasm_lane(o, cx);
+  }
   let parts: string[] = [];
   let ns: string = cx.ns;
   let str_vals: string[] = cx.str_vals;
@@ -6603,7 +6697,7 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
   ircore.lower_failed_refuse(fn_name, r);
   irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   irverifygate.certify_ops_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
-  let f: wasmlocals.Frame = wasmlocals.coalesce(r.ops, r.n_params, r.n_locals, r.i64_slots, r.f64_slots);
+  let f: wasmlocals.Frame = wasmlocals.coalesce(r.ops, r.n_params, r.n_locals, r.i64_slots, r.f64_slots, r.v128_slots);
   let arrtmp: i32 = f.n_locals;
   let eltmp: i32 = f.n_locals + 1;
   // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -6628,6 +6722,8 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
       parts = parts.append(" (param i64)");
     } else if (slot_in_list(f.f64_slots, p)) {
       parts = parts.append(" (param f64)");
+    } else if (slot_in_list(f.v128_slots, p)) {
+      parts = parts.append(" (param v128)");
     } else {
       parts = parts.append(" (param i32)");
     }
@@ -6639,7 +6735,13 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
   // are two i32 (arrtmp/eltmp), one f64 (f64tmp), one i64 (i64tmp), one i32
   // (bctmp, the bounds-check index holder).
   let nbody: i32 = f.n_locals - r.n_params;
+  // A body with a lane op gets two v128 scratch locals after the five, for
+  // the operand reorderings vfma, vselect and vround need.
+  let lanes: boolean = has_lane_op(f.ops);
   let nloc: i32 = nbody + 5;
+  if (lanes) {
+    nloc = nloc + 2;
+  }
   parts = parts.append("    (local");
   let l: i32 = 0;
   while (l < nloc) {
@@ -6647,10 +6749,14 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
       parts = parts.append(" f64");
     } else if (l == nbody + 3) {
       parts = parts.append(" i64");
+    } else if (l >= nbody + 5) {
+      parts = parts.append(" v128");
     } else if (l < nbody && slot_in_list(f.i64_slots, r.n_params + l)) {
       parts = parts.append(" i64");
     } else if (l < nbody && slot_in_list(f.f64_slots, r.n_params + l)) {
       parts = parts.append(" f64");
+    } else if (l < nbody && slot_in_list(f.v128_slots, r.n_params + l)) {
+      parts = parts.append(" v128");
     } else {
       parts = parts.append(" i32");
     }
