@@ -26,8 +26,11 @@ func TestHyphenatedImportQualifier(t *testing.T) {
 	write("two-x.fern", "pub function two(): i32 { return 2; }\n")
 	write("main.fern", "import \"my-h\";\nimport \"./two-x\";\nfunction main(): i32 { return my_h.three() + two_x.two(); }\n")
 	main := filepath.Join(dir, "main.fern")
-	for name, bin := range map[string]string{"self-host": buildFernCLIBin(t), "oracle": buildLangBinForInterp(t)} {
-		cmd := exec.Command(bin, "-interp", main)
+	cli := buildSelfHostCLI(t)
+	for name, cmd := range map[string]*exec.Cmd{
+		"self-host": runX86_64Bin(cli.runner, cli.bin, "-interp", main, cli.stdlib),
+		"oracle":    exec.Command(buildLangBinForInterp(t), "-interp", main),
+	} {
 		cmd.Dir = dir
 		out, _ := cmd.CombinedOutput()
 		if code := cmd.ProcessState.ExitCode(); code != 5 {

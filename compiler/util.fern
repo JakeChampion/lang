@@ -1624,6 +1624,32 @@ pub function dep_subpath(import_path: string): string {
   return slice_unchecked(import_path, n.len() + 1, import_path.len()) + "";
 }
 
+// import_qualifier is the name an import binds when it has no `as`: the path's
+// last segment, "./lexer" → "lexer", "std/io" → "io", with `_` for each `-`,
+// which a file or package name may hold and an identifier may not: "my-h" →
+// "my_h".
+pub function import_qualifier(path: string): string {
+  let start: i32 = 0;
+  let i: i32 = 0;
+  while (i < path.len()) {
+    if (path[i] == b'/') {
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  let out: string = "";
+  let from: i32 = start;
+  i = start;
+  while (i < path.len()) {
+    if (path[i] == b'-') {
+      out = out + slice_unchecked(path, from, i) + "_";
+      from = i + 1;
+    }
+    i = i + 1;
+  }
+  return out + slice_unchecked(path, from, path.len());
+}
+
 // mangle_prefix maps a module's bundle name to something an assembler will
 // accept in a symbol. A file name is not required to be an identifier —
 // `coreutils/[.fern` is the bracket form of test(1) and is named for the

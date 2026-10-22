@@ -538,7 +538,7 @@ pub function mod_names(mod: parser.Module): string[] {
     if (mod.imports[i].alias.len() > 0) {
       out = out.append(mod.imports[i].alias);
     } else {
-      out = out.append(basename(mod.imports[i].path));
+      out = out.append(util.import_qualifier(mod.imports[i].path));
     }
     i = i + 1;
   }

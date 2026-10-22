@@ -38,7 +38,7 @@ function import_quals(mod: parser.Module): string[] {
     if (im.alias.len() > 0) {
       out = out.append(im.alias);
     } else {
-      out = out.append(base_name_of(im.path));
+      out = out.append(util.import_qualifier(im.path));
     }
   }
   return out;
@@ -57,17 +57,7 @@ function base_name_of(path: string): string {
     }
     i = i + 1;
   }
-  let out: string = "";
-  let from: i32 = start;
-  i = start;
-  while (i < path.len()) {
-    if (path[i] == b'-') {
-      out = out + slice_unchecked(path, from, i) + "_";
-      from = i + 1;
-    }
-    i = i + 1;
-  }
-  return out + slice_unchecked(path, from, path.len());
+  return slice_unchecked(path, start, path.len()) + "";
 }
 
 // module_named finds a loaded module by its namespace name.
@@ -196,7 +186,7 @@ function vis_ctx(src: parser.Module, src_ident: string, loaded: flatten.LoadedMo
 // or "" when no import of `src` is written that way.
 function owner_ident(src: parser.Module, qual: string): string {
   for im in src.imports {
-    if (im.alias == qual || im.alias.len() == 0 && base_name_of(im.path) == qual) {
+    if (im.alias == qual || im.alias.len() == 0 && util.import_qualifier(im.path) == qual) {
       return im.resolved;
     }
   }
