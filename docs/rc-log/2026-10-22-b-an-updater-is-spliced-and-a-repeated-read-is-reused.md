@@ -48,7 +48,7 @@ things still stopped it here.
 
 - **`semsink.child_used_above`.** semsink refuses a re-read where a
   projection off the first read is updated in place (`append`, `with`,
-  `concat`) in a dominator. The reuse refuses for any use. That predicate
+  `concat`) in a dominator. The reuse occurs for any use. That predicate
   for the re-read cost ten boxes a request elsewhere in the serve loop.
 
 - **`semcse.replaced`.** The rewrite that drops a merged read now renames a

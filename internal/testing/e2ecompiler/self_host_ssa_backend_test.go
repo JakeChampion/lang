@@ -1516,7 +1516,8 @@ function main(): i32 { return (step(40i64, 2i64) + step(1i64, 2i64) + first_over
 // retains once, so its listing carries three guard chains and calls neither
 // stub. `__fern_rc_dec` is not one of them — in the self-host it maps to the
 // array release, which frees — so the slice call put also makes stays. put
-// is an updater, which callers splice, so it is kept as a call.
+// is an updater, which callers would splice, so it is `@noinline` to keep its
+// body listed.
 func TestSelfHostSSARcPrimitivesAreInline(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
