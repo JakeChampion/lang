@@ -12667,44 +12667,6 @@ function method_param_spellings(c: ast.ExprCall, fa: ast.ExprFieldAccess, env: M
   if (rt.len() == 0) {
     return none;
   }
-  // Array methods become free functions before this pass. Bind their
-  // parameters through that function, including its leading receiver.
-  if (array_method_element(rt).len() > 0) {
-    let name: string = concrete_array_method_name(rt, fa.field);
-    if (!has_free_decl(funcs, name)) {
-      name = "__arrm_" + fa.field;
-      if (spelling_is_view(rt)) {
-        name = "__viewm_" + fa.field;
-      }
-    }
-    let args: ast.Expr[] = [fa.obj];
-    for a in c.args {
-      args = args.append(a);
-    }
-    let folded: ast.ExprCall = ast.ExprCall { ...c, callee: e_ident(name), args: args };
-    let all: string[] = call_param_spellings(folded, env, funcs);
-    let at: i32 = bg_find(funcs, name);
-    if (at >= 0) {
-      let fd: FuncDecl = funcs.decls[at];
-      let vars: string[] = fd.all_type_params;
-      for p in fd.params {
-        vars = type_str_vars(param_spelling(p), vars);
-      }
-      let cts: string[] = call_bound_vars(FuncDecl { ...fd, all_type_params: vars }, folded, env, funcs);
-      let i: i32 = 0;
-      while (i < all.len()) {
-        all = all.with(i, subst_ty(all[i], vars, cts));
-        i = i + 1;
-      }
-    }
-    let out: string[] = [];
-    let i: i32 = 1;
-    while (i < all.len()) {
-      out = out.append(all[i]);
-      i = i + 1;
-    }
-    return out;
-  }
   let base: string = strip_struct_base(rt);
   let rvars: string[] = [];
   let rcts: string[] = [];
