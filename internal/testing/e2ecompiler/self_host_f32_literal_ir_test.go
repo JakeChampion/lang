@@ -7,7 +7,7 @@ import "testing"
 // suffixed `f32` literal the checker typed f64, which surfaced in array
 // literals, generic calls and the value an `if` or `match` yields. Each line
 // prints what the interpreter prints.
-const f32LiteralSrc = `import "std/float";
+const f32LiteralSrc = `import "std/f64";
 import "std/i32";
 function id[T](x: T): T { return x; }
 function pick[T](c: boolean, a: T, b: T): T { return if (c) { a } else { b }; }

@@ -1,8 +1,8 @@
 import "std/test";
-import "std/float" as float;
+import "std/f64";
 
 // tests/stdlib/float_round_to_test.fern — pure-Fern coverage of
-// std/float.round_to(digits): round to N decimal places, half away from zero.
+// std/f64.round_to(digits): round to N decimal places, half away from zero.
 // Positive digits round the fraction, negative digits round to tens / hundreds.
 // Both f64 and f32. Kept as its own suite so the self-host merged bundle stays
 // under the asm_ir IR budget; uses assert_eq_f64_near (tolerance-banded). The
@@ -55,7 +55,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/float round_to");
+  let r: test.TestRunner = test.test_new("std/f64 round_to");
   r = r.it("two places", test_two_places);
   r = r.it("zero places", test_zero_places);
   r = r.it("half away", test_half_away);

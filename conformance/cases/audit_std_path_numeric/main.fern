@@ -3,9 +3,9 @@ import "std/path";
 import "std/i64";
 import "std/u32";
 import "std/u64";
-import "std/float";
+import "std/f64";
 
-// Audit fixture: std/path + wider-int (i64/u32/u64) + std/float across
+// Audit fixture: std/path + wider-int (i64/u32/u64) + std/f64 across
 // every native backend.
 
 function main(): i32 {
@@ -23,7 +23,7 @@ function main(): i32 {
     if ((12 as u32).max(7 as u32) != (12 as u32)) { print("FAIL u32-max"); return 16; }
     if ((3 as u64).clamp(5 as u64, 9 as u64) != (5 as u64)) { print("FAIL u64-clamp"); return 17; }
 
-    // std/float
+    // std/f64
     if ((16.0).sqrt() != 4.0) { print("FAIL sqrt"); return 18; }
     if ((3.7).floor() as i32 != 3 || (3.2).ceil() as i32 != 4) { print("FAIL floorceil"); return 19; }
     if (((0.0 - 2.5).abs() * 2.0) as i32 != 5) { print("FAIL fabs"); return 20; }

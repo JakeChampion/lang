@@ -117,7 +117,7 @@ func TestBugHunt_FloatBinaryToIntCast(t *testing.T) {
 // interp / arm64 / wasm, which all treat any ordered comparison
 // against NaN as false (and != as true). It surfaced as
 // `(0.0/0.0).to_string()` printing "-0" on x86-64 (the NaN check in
-// std/float is `x != x`, which the buggy comparison defeated) while
+// std/f64 is `x != x`, which the buggy comparison defeated) while
 // every other backend printed "NaN". Each case returns 7 when the
 // NaN comparison is IEEE-correct and 1 otherwise.
 func TestBugHunt_FloatNaNComparisonParity(t *testing.T) {
@@ -186,7 +186,7 @@ func TestBugHunt_FloatToIntSaturation(t *testing.T) {
 // boundary. Native backends print to stdout; we assert the interp
 // produces the exact decimal and the natives match it.
 func TestBugHunt_FloatToStringLargeMagnitude(t *testing.T) {
-	src := `import "std/float";
+	src := `import "std/f64";
 function main(): i32 {
     print((1e20).to_string());
     print((0.0 - 3.0e20).to_string());

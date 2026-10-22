@@ -18,7 +18,7 @@
 // std/test, so the file is its own test suite.
 
 import "std/test";
-import "std/float";
+import "std/f64";
 import "std/i32";
 
 // Exponents over (length, mass, time). Dimensionless is all zeroes.

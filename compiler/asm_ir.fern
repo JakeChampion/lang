@@ -2688,6 +2688,50 @@ function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: stri
   return s;
 }
 
+// emit_map_fail_trap is .Lalloc_map_fail, the arena mmap's failure: %rax holds
+// -errno. It spells the cause line with the errno on the stack and reports it
+// with exit 123, apart from a full arena's 125.
+function emit_map_fail_trap(s: asmcore.EmitState): asmcore.EmitState {
+  let text: string = asmcore.msg_map_fail();
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lmsg_map_fail:\n    .ascii \"" + text + "\"\n");
+  s = s.write("    .section .text\n");
+  s = s.write(".Lalloc_map_fail:\n");
+  s = s.write("    negq %rax\n");
+  s = s.write("    subq $96, %rsp\n");
+  s = s.write("    leaq 96(%rsp), %rdi\n");
+  s = s.write("    movl $10, %edx\n");
+  s = s.write("    decq %rdi\n");
+  s = s.write("    movb %dl, (%rdi)\n");  // newline
+  s = s.write("    movl $41, %edx\n");
+  s = s.write("    decq %rdi\n");
+  s = s.write("    movb %dl, (%rdi)\n");  // `)`
+  s = s.write("    movl $10, %ecx\n");
+  s = s.write(".Lmap_fail_digit:\n");
+  s = s.write("    xorl %edx, %edx\n");
+  s = s.write("    divq %rcx\n");
+  s = s.write("    addl $48, %edx\n");
+  s = s.write("    decq %rdi\n");
+  s = s.write("    movb %dl, (%rdi)\n");
+  s = s.write("    testq %rax, %rax\n");
+  s = s.write("    jne .Lmap_fail_digit\n");
+  s = ssa_lea_sym(s, ".Lmsg_map_fail", "%rsi");
+  s = s.write("    addq $" + util.i32_to_string(text.len()) + ", %rsi\n");
+  s = s.write("    movl $" + util.i32_to_string(text.len()) + ", %ecx\n");
+  s = s.write(".Lmap_fail_copy:\n");
+  s = s.write("    decq %rsi\n");
+  s = s.write("    movb (%rsi), %dl\n");
+  s = s.write("    decq %rdi\n");
+  s = s.write("    movb %dl, (%rdi)\n");
+  s = s.write("    decq %rcx\n");
+  s = s.write("    jne .Lmap_fail_copy\n");
+  s = s.write("    movq %rdi, %rsi\n");
+  s = s.write("    leaq 96(%rsp), %rdx\n");
+  s = s.write("    subq %rsi, %rdx\n");
+  s = s.write("    movq $123, %rdi\n");
+  return s.write("    jmp __fern_report\n");
+}
+
 // emit_report emits __fern_report(%rsi = cause line, %rdx = its length,
 // %rdi = exit status): write(2) the line, then exit with the status — through
 // __fern_bt_exit's frame-pointer walk when the build keeps the backtrace,
@@ -2963,7 +3007,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movl $9, %eax\n");  // __NR_mmap
   s = s.syscall(9);
   s = s.write("    cmpq $0, %rax\n");  // mmap returns -errno on failure
-  s = s.write("    jl .Lalloc_oom\n");
+  s = s.write("    jl .Lalloc_map_fail\n");
   s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
   s = s.write("    movq %rax, __fern_heap_base(%rip)\n");  // record arena base (freeable-range lower bound)
   s = s.write("    movabs $17179869184, %rcx\n");  // heap_size (64-bit imm)
@@ -2989,6 +3033,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // trap could not be told apart from the kernel OOM-killer. Opposite causes,
   // opposite fixes. Lockstep with the native backends' ExitArenaExhausted.
   s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", asmcore.msg_oom(), 125);
+  s = emit_map_fail_trap(s);
   // The fatal aborts (#5538, #11405): each trap names its cause and
   // tail-jumps to __fern_report, so a per-access check stays a compare + a
   // jae to a shared label. __fern_oob_abort is arr_get / arr_set,
@@ -3911,7 +3956,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // __fern_write_file is now a Fern runtime function (#2649): emitted via
   // emit_ir_runtime_fern_fn in the entry block (need-gated on write_file) —
   // openat(O_CREAT) via __syscall4 + write/close via __syscall3, returns
-  // Result[(), IoError]. The op_write_file handler calls the stack-ABI
+  // Result[void, IoError]. The op_write_file handler calls the stack-ABI
   // __fn___fern_write_file symbol.
   // __fern_remove_dir_all is now a Fern runtime function (#2649): emitted via
   // emit_ir_runtime_fern_fn in the fs bundle (need-gated on remove_dir_all) — a
@@ -3922,7 +3967,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // arm64/AST keep the register-ABI hand-asm.
   // __fern_remove_file is now a Fern runtime function (#2649): emitted via
   // emit_ir_runtime_fern_fn in the entry block (need-gated on remove_file) —
-  // unlinkat via __syscall3, returns Result[(), IoError]. The op_remove_file handler
+  // unlinkat via __syscall3, returns Result[void, IoError]. The op_remove_file handler
   // calls the stack-ABI __fn___fern_remove_file symbol.
   // __fern_temp_dir is now a Fern runtime function (#2649): emitted via
   // emit_ir_runtime_fern_fn in the entry block (need-gated on temp_dir) — builds

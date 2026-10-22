@@ -711,7 +711,7 @@ function keyed_recs(a: string, n: i32): i32 {
 // string is still refused, its column being one the release does not walk.
 function map_value(m: Map[string, string], k: string): i32 { return m.get_or(k, k).len(); }
 // The runtime intrinsics, typed as native's FuncSigs types them and contracted
-// here: the f64 primitives std/float dispatches to, the bit counts, the raw
+// here: the f64 primitives std/f64 dispatches to, the bit counts, the raw
 // memory escape hatches, the byte scans over a LENT string, and the C-ABI
 // trampolines. Only __alloc_u8 hands back a reference — a fresh zeroed
 // buffer the caller owns — so it is the one whose unit this frame drops.

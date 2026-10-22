@@ -2,7 +2,7 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/float.sinh / cosh / tanh — the hyperbolic trig
+// Differential coverage for std/f64.sinh / cosh / tanh — the hyperbolic trig
 // functions, built on the natural exp. Like the other exp/log-derived helpers,
 // the wasmbin leg skips (the legacy AST backend doesn't wire libm exp).
 // Tolerance-banded; checks the reference values at x=1, the odd/even symmetry,
@@ -10,7 +10,7 @@ import "testing"
 // Returns 42 iff every check holds across interp / x86-64 / wasm / arm64; each
 // leg skips itself when its toolchain is absent.
 const floatHyperbolicProg = `
-import "std/float" as float;
+import "std/f64";
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.001; }
 function main(): i32 {
     if (!approx((0.0).sinh(), 0.0)) { return 1; }

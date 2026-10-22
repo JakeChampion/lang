@@ -14,15 +14,15 @@
 // f32 and f64 renderings DIFFER, so dropping that mark makes this case disagree
 // with native rather than passing quietly.
 //
-// `float` is deliberately NOT f32-tagged: it is the f64 alias, and tagging it
-// would round its arithmetic through a demote/promote pair (#5882). The
-// float_payload arm pins that it still renders at f64 precision.
+// An `Option[f64]` field shares the slot and must NOT pick up the f32 tag,
+// which would round its arithmetic through a demote/promote pair (#5882). The
+// f64_payload arm pins that it still renders at f64 precision.
 //
 // Sentinels are 251-253, above the `% 113` the success path returns.
-import "std/float";
+import "std/f64";
 
 struct H { o: Option[f32], n: i32 }
-struct F { o: Option[float], n: i32 }
+struct F { o: Option[f64], n: i32 }
 
 function mk_res(i: i32): Result[f32, string] {
     if (i > 0) { return Ok(0.5 as f32 * i as f32); }
@@ -95,9 +95,9 @@ function mk_prec(i: i32): Option[f32] {
     return None;
 }
 
-// `float` is the f64 alias — this pins that it renders at f64 precision, i.e.
-// that the shared 8-byte slot did NOT pick up the f32 tag.
-function float_payload(i: i32): i32 {
+// An f64 payload renders at f64 precision: the shared 8-byte slot did NOT pick
+// up the f32 tag.
+function f64_payload(i: i32): i32 {
     let f: F = F { o: Some(3.14159 * 2.5 * 2.5), n: i };
     match (f.o) { Some(b) => { return b.to_string().len(); }, None => {} }
     return 253;
@@ -108,7 +108,7 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 50) {
         acc = acc + res_ok(i) + res_err(i) + opt_local(i) + opt_nested(i)
-            + f32_field(i) + f32_precision(i) + float_payload(i);
+            + f32_field(i) + f32_precision(i) + f64_payload(i);
         i = i + 1;
     }
     if (__rc_underflow_count() != 0) { return 251; }

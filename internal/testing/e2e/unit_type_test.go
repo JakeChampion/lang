@@ -18,10 +18,10 @@ import "testing"
 //	failure path  → +2
 //	exit          → 3
 const unitProgram = `
-function ok(): Result[(), IoError] { return Ok(()); }
-function bad(): Result[(), IoError] { return Err(Interrupted); }
+function ok(): Result[void, IoError] { return Ok(()); }
+function bad(): Result[void, IoError] { return Err(Interrupted); }
 
-function chain(fail: boolean): Result[(), IoError] {
+function chain(fail: boolean): Result[void, IoError] {
     ok()?;
     if (fail) { bad()?; }
     return Ok(());

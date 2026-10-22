@@ -40,7 +40,6 @@ func TestSelfHostTypeResolve(t *testing.T) {
 		"string => string\n" +
 		"f64 => f64\n" +
 		"f32 => f32\n" +
-		"float => f64\n" +
 		"Foo => struct:Foo\n" +
 		"Bar => struct:Bar\n" +
 		"Shape => union:Shape\n" +

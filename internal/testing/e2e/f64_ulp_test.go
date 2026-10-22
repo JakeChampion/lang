@@ -1,7 +1,7 @@
 package e2e
 
 // The accuracy gate for the f64 transcendentals — sin / cos / exp / log / pow
-// — on every lane. They are std/float's own Fern (one definition every
+// — on every lane. They are std/f64's own Fern (one definition every
 // backend compiles and the interpreter runs), so each lane is held to the
 // same bound and, in TestF64TranscendentalBackendsAgree, to the same bits.
 //
@@ -46,14 +46,14 @@ import (
 // room for an algorithmic error.
 const maxULP = 2
 
-// interpULP matches the compiled bound: the interpreter runs std/float's Fern
+// interpULP matches the compiled bound: the interpreter runs std/f64's Fern
 // kernels like any other code rather than delegating to Go's `math`, which is
 // wrong past the bound on all three of sin, exp and log — unbounded in ulp
 // terms near a zero of sine, +Inf across [709.436, 709.7827) for exp, and
 // saturated at ln(2^-1022) for every subnormal argument to log.
 const interpULP = maxULP
 
-// The log kernel's band edges and table shape (std/float's _fd_log): the near-1
+// The log kernel's band edges and table shape (std/f64's _fd_log): the near-1
 // path covers bits(x) in [logNear1Lo, logNear1Hi), and table row i covers the
 // z whose bits(z) - logOff has i in its top logTableBits mantissa bits.
 const (
@@ -507,7 +507,7 @@ func f64SpecialCases() []f64Case {
 // check, because that is the point. Go reduces large arguments less
 // accurately than glibc: it is 40 ulp out at 1e30, and at the classic
 // worst-case argument below it returns -4.8435e-19 for a true -4.6872e-19 —
-// a 3% error. That inaccuracy is why std/float carries its own reduction, which
+// a 3% error. That inaccuracy is why std/f64 carries its own reduction, which
 // the interpreter runs, instead of delegating to Go's math, and why this
 // reference, never the interpreter, is the oracle sin/cos are measured against
 // (#7878).
@@ -541,7 +541,7 @@ func TestRefSinCosLargeArguments(t *testing.T) {
 // per line, in order.
 func f64UlpProg(cs []f64Case) string {
 	var b strings.Builder
-	b.WriteString("import \"std/i64\";\nimport \"std/float\";\n")
+	b.WriteString("import \"std/i64\";\nimport \"std/f64\";\n")
 	b.WriteString("function emit(v: f64): i32 { print(f64_bits(v).to_string()); return 0; }\n")
 	for _, f := range []string{"sin", "cos", "exp", "log"} {
 		fmt.Fprintf(&b, "function f%s(x: f64): f64 { return x.%s(); }\n", f, f)
@@ -673,7 +673,7 @@ func TestF64TranscendentalUlpX86_64(t *testing.T) {
 // arguments at four mantissas across every seventh exponent, both signs.
 //
 // Every lane runs it: both native backends, wasm, and the interpreter, which
-// runs std/float's reduction rather than Go's math, whose error near a zero of
+// runs std/f64's reduction rather than Go's math, whose error near a zero of
 // sin/cos is unbounded in ulp terms (617 ulp at 2^728, 3% at the worst-case
 // argument below). The reference, not the interpreter, remains the oracle
 // everything is measured against.
@@ -989,7 +989,7 @@ func TestF64TranscendentalUlpSelfHostX86_64(t *testing.T) {
 }
 
 // TestF64TranscendentalLanesAgree pins the interpreter and wasm to a register
-// backend bit for bit over the whole corpus. Every lane runs std/float's one
+// backend bit for bit over the whole corpus. Every lane runs std/f64's one
 // definition, so any difference is a lane computing an f64 operation
 // differently, not a difference of algorithm.
 func TestF64TranscendentalLanesAgree(t *testing.T) {

@@ -807,7 +807,7 @@ function main(): i32 {
     let d: X86Asm = x86_asm_new();
     d = x86_lea_rip_label(d, x86_rax(), "S0");
     x86_push_arr(d.code, x86_mov_load_r64([], x86_rax(), x86_rax(), 0));
-    d = x86_rodata_label(d, "S0");
+    d = x86_rodata_label(d, "S0", 1);
     d = x86_rodata_quad(d, 42i64);
     d = x86_resolve(d);
     if (d.text.len() != 10 || d.text[0] as i32 != 72 || d.text[1] as i32 != 141 || d.text[2] as i32 != 5 || d.text[3] as i32 != 9 || d.text[4] as i32 != 0 || d.text[5] as i32 != 0 || d.text[6] as i32 != 0) { return 8; }
@@ -931,7 +931,7 @@ function main(): i32 {
     x86_push_arr(a.code, x86_mov_r64_r64([], x86_rdi(), x86_rax()));  // exit code = answer
     x86_push_arr(a.code, x86_mov_r32_imm32([], x86_rax(), 60));
     x86_push_arr(a.code, x86_syscall([]));
-    a = x86_rodata_label(a, "answer");
+    a = x86_rodata_label(a, "answer", 1);
     a = x86_rodata_quad(a, 42i64);                          // .quad 42
     a = x86_resolve(a);
     let bin: i32[] = elf_static_executable_data_x86(a.text, a.rodata);

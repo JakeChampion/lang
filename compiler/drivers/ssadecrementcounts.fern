@@ -1,3 +1,4 @@
+import "std/i32";
 import "../ssadecrementcount" as count;
 
 function require(ok: boolean, code: i32): void {

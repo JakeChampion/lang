@@ -11,9 +11,9 @@ import (
 // notation instead of silently losing data (1e-300 -> "0", 1e300 -> an
 // unmarked garbage integer). Asserts properties, not the exact (not-yet-
 // shortest) mantissa. Runs on the native x86-64 backend, which compiles the
-// same std/float Fern source as interp / arm64 / wasm.
+// same std/f64 Fern source as interp / arm64 / wasm.
 func TestFloatScientificMagnitude(t *testing.T) {
-	src := `import "std/float";
+	src := `import "std/f64";
 function main(): i32 {
     write((1e-300).to_string()); write("|");
     write((1e300).to_string()); write("|");

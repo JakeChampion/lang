@@ -3,7 +3,7 @@
 import "std/i32";
 import "std/i64";
 import "std/u64";
-import "std/float";
+import "std/f64";
 
 function main(): i32 {
     print(1_000_000.to_string());

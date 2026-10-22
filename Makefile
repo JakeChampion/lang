@@ -50,7 +50,7 @@ digest-check:
 	uv run --no-project scripts/gen_digests.py --check
 	uv run --no-project python -B -m unittest discover -s scripts -p test_gen_digests.py
 
-# The same for the generated data of std/float's log and pow, a region each.
+# The same for the generated data of std/f64's log and pow, a region each.
 log-table-check:
 	uv run --no-project scripts/gen_log_table.py --check
 	uv run --no-project scripts/gen_pow_table.py --check

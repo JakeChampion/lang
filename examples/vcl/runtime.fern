@@ -12,7 +12,7 @@
 // transaction log in `vclrun` is just that.
 import "std/string";
 import "std/i64";
-import "std/float";
+import "std/f64";
 import "./value";
 
 // An HTTP header set, as parallel name/value arrays. Lookup is

@@ -9,7 +9,7 @@
 // compiling changed nothing.
 import "std/string";
 import "std/i64";
-import "std/float";
+import "std/f64";
 import "./runtime";
 import "./machine";
 

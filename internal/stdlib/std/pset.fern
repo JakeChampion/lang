@@ -20,15 +20,14 @@ import "core/cmp";
 import "core/iter";
 import "std/pmap";
 
-// The public handle: the trie root directly (not a `PMap` inside a
-// struct, which would cost a box per operation). Construct one only
-// through `pset_new` / `pset_of`; the field is an implementation detail.
-pub struct PSet[T] { root: pmap.HNode[T, i32] }
+// The public handle: the map with unit values. Construct one only through
+// `pset_new` / `pset_of`; the field is an implementation detail.
+pub struct PSet[T] { root: pmap.PMap[T, i32] }
 
 // `pset_new()` — the empty set. The element type is fixed by the
 // annotation at the binding (`let s: PSet[string] = pset_new();`).
 pub function pset_new[T](): PSet[T] {
-  let e: pmap.HNode[T, i32] = pmap.__hm_empty();
+  let e: pmap.PMap[T, i32] = pmap.pmap_new();
   return PSet { root: e };
 }
 
@@ -45,28 +44,27 @@ pub function pset_of[T: cmp.Hash + cmp.Eq](xs: T[]): PSet[T] {
 
 // `len()` — the number of elements. O(1).
 pub function (s: PSet[T]) len(): i32 {
-  return pmap.__hm_size(s.root);
+  return s.root.len();
 }
 
 // `is_empty()` — true when there are no elements.
 pub function (s: PSet[T]) is_empty(): boolean {
-  return pmap.__hm_size(s.root) == 0;
+  return s.root.is_empty();
 }
 
 // `add(x)` — the set with `x`; the receiver unchanged when present.
 pub function (s: PSet[T]) add[T: cmp.Hash + cmp.Eq](x: T): PSet[T] {
-  return PSet { root: pmap.__hm_insert(s.root, pmap.__hm_mix(x.hash()), 0, x, 0) };
+  return PSet { root: s.root.insert(x, 0) };
 }
 
 // `remove(x)` — the set without `x`; the receiver unchanged when absent.
 pub function (s: PSet[T]) remove[T: cmp.Hash + cmp.Eq](x: T): PSet[T] {
-  return PSet { root: pmap.__hm_remove(s.root, pmap.__hm_mix(x.hash()), 0, x) };
+  return PSet { root: s.root.remove(x) };
 }
 
 // `contains(x)` — is `x` a member?
 pub function (s: PSet[T]) contains[T: cmp.Hash + cmp.Eq](x: T): boolean {
-  let hit: pmap.HNode[T, i32] = pmap.__hm_find(s.root, pmap.__hm_mix(x.hash()), x);
-  return pmap.__hm_holds(hit);
+  return s.root.contains(x);
 }
 
 // `iter()` — an Iterator over the elements in hash order, which is what
@@ -77,9 +75,7 @@ pub function (s: PSet[T]) iter(): iter.ArrayIter[T] {
 
 // `to_array()` — the elements, in hash order.
 pub function (s: PSet[T]) to_array(): T[] {
-  let acc: T[] = [];
-  acc = pmap.__hm_keys_into(s.root, acc);
-  return acc;
+  return s.root.keys();
 }
 
 // `union(other)` — every element of both; the smaller set is folded
@@ -164,16 +160,16 @@ pub function (s: PSet[T]) filter[T: cmp.Hash + cmp.Eq](pred: (T) => boolean): PS
 
 // `fold(init, f)` — `f` over every element in hash order.
 pub function (s: PSet[T]) fold[T, A](init: A, f: (A, T) => A): A {
-  return pmap.__hm_fold(s.root, init, (a: A, k: T, v: i32) => f(a, k));
+  return s.root.fold(init, (a: A, k: T, v: i32) => f(a, k));
 }
 
 // `for_each(f)` — call `f` on every element in hash order.
 pub function (s: PSet[T]) for_each(f: (T) => void): void {
-  pmap.__hm_for_each(s.root, (k: T, v: i32) => f(k));
+  s.root.for_each((k: T, v: i32) => f(k));
 }
 
 // `is_valid()` — do the trie invariants hold? Always true for a set
 // built through this module; exposed for tests.
 pub function (s: PSet[T]) is_valid(): boolean {
-  return pmap.__hm_valid(s.root, 0, 0);
+  return s.root.is_valid();
 }

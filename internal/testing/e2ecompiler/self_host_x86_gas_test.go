@@ -376,7 +376,7 @@ function main(): i32 {
     if (x86_gas_comment_start("    .ascii \"a#b\"") != (0 - 1)) { return 27; }
     if (x86_gas_comment_start("    movq %rax, %rcx # note") != 20) { return 28; }
     if (x86_gas_comment_start("    .ascii \"q\" # t") != 15) { return 29; }
-    let sh: X86Asm = x86_gas_assemble(".section .rodata\n.S0: .ascii \"p?q#f\"\n");
+    let sh: X86Asm = x86_gas_assemble(".data\n.S0: .ascii \"p?q#f\"\n");
     if (sh.rodata.len() != 16 || sh.rodata[3] != 35) { return 30; }
     // A no-base SIB "disp(,%index,scale)" is its own addressing mode; the
     // empty base field read as register -1 and was masked to a real one.
@@ -404,13 +404,20 @@ function main(): i32 {
     let b4: i32 = x86_label_idx(bl, "end");
     if (b2 < 0 || bl.lab_secs[b2] != 2 || bl.lab_offs[b2] != 12) { return 105; }
     if (b3 < 0 || bl.lab_offs[b3] != 14 || b4 < 0 || bl.lab_offs[b4] != 30) { return 106; }
-    let dl: X86Asm = x86_gas_assemble("    .section .rodata\nqs: .quad 1, -2\nls: .long 3, 4\nnext: .quad 5\n");
+    let dl: X86Asm = x86_gas_assemble("    .data\nqs: .quad 1, -2\nls: .long 3, 4\nnext: .quad 5\n");
     if (dl.rodata.len() != 32 || dl.rodata[0] != 1 || dl.rodata[8] != 254 || dl.rodata[15] != 255) { return 107; }
     let dn: i32 = x86_label_idx(dl, "next");
     if (dl.rodata[16] != 3 || dl.rodata[20] != 4 || dl.rodata[24] != 5 || dn < 0 || dl.lab_offs[dn] != 24) { return 108; }
     // Each symbol in a .quad list is its own relocation.
-    let sl: X86Asm = x86_gas_assemble("    .section .rodata\nt: .quad t, 0, t\n");
+    let sl: X86Asm = x86_gas_assemble("    .data\nt: .quad t, 0, t\n");
     if (sl.rodata.len() != 32 || sl.dfix_offs.len() != 2 || sl.dfix_offs[0] != 0 || sl.dfix_offs[1] != 16) { return 109; }
+    // .rodata is laid after the code, 16-aligned, in the executable segment:
+    // none of it in the data blob, and its label resolves past the code.
+    let ro: X86Asm = x86_gas_assemble(".text\nnop\n.section .rodata\nk: .quad 7\n.data\nd: .quad 9\n");
+    let rk: i32 = x86_label_idx(ro, "k");
+    if (ro.rodata.len() != 16 || ro.rodata[0] != 9 || x86_code_len(ro) != 1 || ro.text.len() != 24 || ro.text[16] as i32 != 7 || rk < 0 || ro.lab_secs[rk] != 3) { return 110; }
+    // A load-time address cannot live in read-only data.
+    if (x86_gas_assemble(".section .rodata\nt: .quad t\n").unknown.len() != 1) { return 111; }
     // The packed-SSE2 front end, assembled as the __memchr kernel emits it
     // (docs/ATLAS-PLATFORM-PLAN.md §3): splat, load, compare, gather, scan.
     // The expected bytes are GNU as output for this exact text — the point
@@ -683,7 +690,7 @@ const x86GasAlign16DriverMain = `
 function main(): i32 {
     let src: string = ".text\n_start:\n\tleaq ro16(%rip), %rax\n\tleaq bs16(%rip), %rcx\n\torq %rcx, %rax\n\tandq $15, %rax\n\tmovq %rax, %rdi\n\taddq $42, %rdi\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\n\t.byte 1\n\t.align 16\nro16:\n\t.quad 7\n.bss\n\t.byte 0\n\t.align 16\nbs16:\n\t.quad 0\n";
     let a: X86Asm = x86_gas_assemble(src);
-    if (a.unknown.len() > 0 || a.text.len() != 37) { return 2; }
+    if (a.unknown.len() > 0 || x86_code_len(a) != 37) { return 2; }
     if (x86_gas_assemble(".section .rodata\n\t.align 32\n").unknown.len() != 1) { return 3; }
     write(string_from_bytes_unchecked(elf_program_x86(a.text, [], [], a.rodata, a.bss_size, 0)));
     return 0;

@@ -643,6 +643,12 @@ pub function msg_oom(): string {
   return "fern: out of memory (heap arena exhausted)";
 }
 
+// msg_map_fail opens the cause line for an arena that was never mapped; the
+// runtime appends the errno and the closing ")".
+pub function msg_map_fail(): string {
+  return "fern: could not map the heap arena (errno ";
+}
+
 // backtrace_on is the -backtrace default: whether a fatal abort's report
 // walks the frame-pointer chain under its cause line. On unless
 // FERN_BACKTRACE switches it off.
@@ -6698,7 +6704,7 @@ pub function is_prim_recv_name(name: string, s: EmitState): boolean {
   if (name == "string" || name == "bool" || name == "boolean") {
     return true;
   }
-  if (name == "f64" || name == "f32" || name == "float") {
+  if (name == "f64" || name == "f32") {
     return true;
   }
   return false;
@@ -7682,7 +7688,7 @@ pub function ty_from_ref(t: parser.TypeRef): Ty {
   if (t.base == "usize") {
     return ty_usize();
   }
-  if (t.base == "f64" || t.base == "f32" || t.base == "float") {
+  if (t.base == "f64" || t.base == "f32") {
     return ty_f64();
   }
   if (t.base == "bool" || t.base == "boolean") {
@@ -8612,7 +8618,7 @@ function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
   }
   if (u.op.len() >= 3 && slice_unchecked(u.op, 0, 3) == "as_") {
     let ct: str = slice_unchecked(u.op, 3, u.op.len());
-    if (ct == "f64" || ct == "f32" || ct == "float") {
+    if (ct == "f64" || ct == "f32") {
       return ty_f64();
     }
     // A cast HAS the named type. u32/i64/u64 used to erase to
@@ -8877,7 +8883,7 @@ pub struct LabelOut { state: EmitState, name: string }
 // prefix keeps the symbol out of the symtab; it does not make two definitions
 // in one file legal. An f64 literal is the common way to reach here, so a
 // program with one in both a library module and its entry (`import
-// "std/float"` plus a float literal in main) failed to assemble. Empty ns —
+// "std/f64"` plus a float literal in main) failed to assemble. Empty ns —
 // the whole-program path — keeps `.L<n>` byte-identical.
 pub function fresh_label(s: EmitState): LabelOut {
   let name: string = ".L" + util.i32_to_string(s.label_n);

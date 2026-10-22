@@ -32,7 +32,7 @@ func TestFloatShortestRoundTrip(t *testing.T) {
 	}
 
 	var b strings.Builder
-	b.WriteString("import \"std/float\";\nfunction main(): i32 {\n")
+	b.WriteString("import \"std/f64\";\nfunction main(): i32 {\n")
 	for _, v := range vals {
 		// f64_from_bits takes an i64; convert the bit pattern to its signed form.
 		bi := int64(math.Float64bits(v))

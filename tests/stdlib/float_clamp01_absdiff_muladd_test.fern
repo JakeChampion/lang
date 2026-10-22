@@ -1,8 +1,8 @@
 import "std/test";
-import "std/float" as float;
+import "std/f64";
 
 // tests/stdlib/float_clamp01_absdiff_muladd_test.fern — pure-Fern coverage of
-// std/float.clamp01 / abs_diff / mul_add: three purely-arithmetic helpers
+// std/f64.clamp01 / abs_diff / mul_add: three purely-arithmetic helpers
 // (restrict to [0,1]; absolute difference |a-b|; a*b+c, not a fused FMA). No
 // libm primitive, so unlike the transcendentals these lower on all four
 // backends. Both f64 and f32. The Go-side TestFloatClamp01AbsDiffMulAdd pins
@@ -54,7 +54,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/float clamp01/abs_diff/mul_add");
+  let r: test.TestRunner = test.test_new("std/f64 clamp01/abs_diff/mul_add");
   r = r.it("clamp01", test_clamp01);
   r = r.it("abs_diff", test_abs_diff);
   r = r.it("mul_add", test_mul_add);

@@ -208,7 +208,15 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
 // TodoSite is where a `todo` stub was written; `-check` warns at each one.
 pub struct TodoSite { line: i32, col: i32 }
 
-pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[] }
+// ModuleSight is what one bundled module, by prefix ("" for the entry), can
+// reach: the paths it imports, and the prefix of every module its import
+// closure loads. A stdlib module reaches every other stdlib module the bundle
+// loads, as native's moduleSees has it, since the stdlib's own import graph
+// has cycles the loader breaks rather than records.
+pub struct ModuleSight { module: string, imports: string[], reaches: string[] }
+
+// `sights` is set on a bundle, one per module; a module parsed alone has none.
+pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[], sights: ModuleSight[] }
 
 // Only a loading driver supplies this provenance after resolving a standard
 // library import. Parsing source, including mangled-looking names, never does.
@@ -1861,6 +1869,40 @@ function (p: Par) advance(): Par {
 // required: native's P001 "expected a type, got X".
 function (p: Par) expected_type(): Par {
   return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected a type, got " + tok_desc(p.peek()))) };
+}
+
+// refused_type records native's P001 for a type spelling the language does
+// not have, naming the one it does; the caller parses on as that spelling.
+function (p: Par) refused_type(msg: string): Par {
+  return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:" + msg)) };
+}
+
+function unit_type_message(): string {
+  return "`()` is not a type; the unit type is written `void`";
+}
+
+// at_float_type reports `float` written as a type name, which the language
+// refuses in favour of `f64`: not the head of a module path (`float.x`), not a
+// segment of one (`m.float`), not a union member, not the type an `impl`
+// names, and not the trait or resource name after `dyn`, a `dyn`
+// continuation's `+`, `own` or `borrow`.
+function at_float_type(p: Par, seg: string): boolean {
+  if (seg != "float" || p.peek_punct_at(1) == ".") {
+    return false;
+  }
+  if (p.pos == 0) {
+    return true;
+  }
+  let prev: string = tok_spelling(p.toks[p.pos - 1]);
+  // A union member is a struct name: `type A = float | B;`.
+  if (prev == "|" || prev == "=" && p.peek_punct_at(1) == "|") {
+    return false;
+  }
+  return !util.has_str([".", "dyn", "+", "own", "borrow", "impl"], prev);
+}
+
+function float_type_message(): string {
+  return "`float` is not a type; the 64-bit float is written `f64`";
 }
 
 // handle_word_misuse records native's P001 for `own` / `borrow` at the cursor
@@ -8332,11 +8374,10 @@ function fn_ret_admitted(rr_name: string): string {
   return "";
 }
 
-// at_unit_type reports whether the cursor sits on the unit type `()`. Native's
-// type parser resolves the empty parens to the void type and its printer writes
-// `void`, so the self-host records the same name rather than the written parens
-// (#8759). `() => R` is a function type with an empty parameter list, not the
-// unit, and is left for the collectors that build a fn-type spelling.
+// at_unit_type reports whether the cursor sits on `()` written as a type, which
+// the language refuses in favour of `void`. `() => R` is a function type with
+// an empty parameter list and is left for the collectors that build a fn-type
+// spelling.
 function at_unit_type(p: Par): boolean {
   return p.peek_punct() == "(" && p.peek_punct_at(1) == ")" && p.peek_punct_at(2) != "=>";
 }
@@ -8471,10 +8512,10 @@ function enclosing_opener(p: Par, from: i32): i32 {
 }
 
 function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Par) {
-  // The unit type `()`, folded to `void` before the collect loop can record
-  // its parens as a spelling.
-  if (at_unit_type(p)) {
-    let up: Par = p.advance();
+  // `()` as a type is refused; it parses on as `void`. With the arrow reserved
+  // for a lambda's own, `() =>` is a unit annotation, not a function type.
+  if (at_unit_type(p) || !top_arrow && p.peek_punct() == "(" && p.peek_punct_at(1) == ")") {
+    let up: Par = p.refused_type(unit_type_message()).advance();
     up = up.advance();
     return consume_array_suffix(up, "void");
   }
@@ -8519,11 +8560,10 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
   let telem_after_comma: boolean = false;
   while (!p.at_end()) {
     let tpk: string = p.peek_punct();
-    // A unit ELEMENT of a tuple type — `((), i32)`. The head `()` never
-    // reaches here (folded above), so this is always a nested one.
+    // `()` as an ELEMENT of a tuple type — `((), i32)`.
     if (at_unit_type(p)) {
       tbuf = tbuf + "void";
-      p = p.advance();
+      p = p.refused_type(unit_type_message()).advance();
       p = p.advance();
       tprev_word = false;
       tprev_prefix = false;
@@ -8624,6 +8664,10 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
     }
     // Word prefixes must stay separate from their type: dyn Speak, own T,
     // and borrow Socket. The formatter preserves every word boundary.
+    if (at_float_type(p, tseg)) {
+      p = p.refused_type(float_type_message());
+      tseg = "f64";
+    }
     if (tprev_word && (p.verbatim || tprev_prefix)) {
       tbuf = tbuf + " ";
     }
@@ -8920,6 +8964,9 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
   // `"dyn Error"` spelling. Without it the payload type is stored as
   // `"dynError"` and the dyn-dispatch guard (`rty[0:4] == "dyn "`) misses.
   let prev_ident: boolean = false;
+  // The bracket depth a `dyn` opened at, whose `+` continues it until the
+  // argument ends; -1 outside one.
+  let dyn_depth: i32 = 0 - 1;
   while (depth > 0 && !p.at_end()) {
     let pk: string = p.peek_punct();
     if (pk == "[") {
@@ -8934,12 +8981,18 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
       if (depth == 0) {
         break;
       }
+      if (dyn_depth > depth) {
+        dyn_depth = 0 - 1;
+      }
       inner = inner + "]";
       p = p.advance();
       prev_ident = false;
       continue;
     }
     if (pk == ",") {
+      if (dyn_depth == depth) {
+        dyn_depth = 0 - 1;
+      }
       p = p.advance();
       // A tuple type takes no trailing comma; a type-argument list does.
       if (p.peek_punct() == ")") {
@@ -8955,17 +9008,20 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
     // top-level `parse_type` spelling (` + ` joined) so the dyn payload
     // type round-trips identically.
     if (pk == "+") {
+      if (dyn_depth != depth) {
+        p = p.expect("]");
+      }
       inner = inner + " + ";
       p = p.advance();
       prev_ident = false;
       continue;
     }
-    // The unit type as a generic ARGUMENT — `Result[(), E]`, `Option[()]`.
-    // Folded to `void` here too: this collector reads the brackets a token
-    // at a time and never calls back into the type parser.
+    // `()` written as a generic ARGUMENT — `Result[(), E]` — is refused here
+    // too: this collector reads the brackets a token at a time and never
+    // calls back into the type parser.
     if (at_unit_type(p)) {
       inner = inner + "void";
-      p = p.advance();
+      p = p.refused_type(unit_type_message()).advance();
       p = p.advance();
       prev_ident = false;
       continue;
@@ -9024,8 +9080,15 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
     if (seg.len() == 0) {
       break;
     }
+    if (seg == "dyn") {
+      dyn_depth = depth;
+    }
     if (misused_handle_word(p, seg)) {
       p = p.handle_word_misuse(seg);
+    }
+    if (at_float_type(p, seg)) {
+      p = p.refused_type(float_type_message());
+      seg = "f64";
     }
     if (prev_ident) {
       inner = inner + " ";
@@ -9150,6 +9213,9 @@ function parse_type_name_nested(p: Par): (string, string, Par) {
   }
   if (base.len() == 0) {
     return parse_type_punct_led(p);
+  }
+  if (at_float_type(p, base)) {
+    return parse_type_ident_led(p.refused_type(float_type_message()), "f64");
   }
   return parse_type_ident_led(p, base);
 }
@@ -9460,44 +9526,34 @@ function parse_type_param_list(p: Par): (TpList, Par) {
           }
         }
         // A parametrised-trait bound (`T: Iterator[i32]`) carries a
-        // bracketed type-arg list after the trait name — consume the
-        // balanced `[ … ]` (possibly nested) so the bound parses and
-        // the function stays on the monomorphisation / IR path rather
-        // than mis-parsing at the `[` and bailing.
+        // A bound's type arguments are types, read by the type parser as
+        // native reads them, so a refused spelling in one is refused here.
         if (p.peek_punct() == "[") {
-          let depth: i32 = 0;
-          let bgo: boolean = true;
+          p = p.advance();
           let bargs: string = "";
-          while (bgo && !p.at_end()) {
-            let bpk: string = p.peek_punct();
-            if (bpk == "[") {
-              depth = depth + 1;
-              bargs = bargs + "[";
-              p = p.advance();
-            } else if (bpk == "]") {
-              depth = depth - 1;
-              bargs = bargs + "]";
-              p = p.advance();
-              if (depth == 0) {
-                bgo = false;
-              }
-            } else if (bpk == ",") {
+          while (!p.at_end() && p.peek_punct() != "]") {
+            let barg_at: i32 = p.pos;
+            let (barg, barg_ret, barg_p) = parse_type_name(p);
+            p = barg_p;
+            if (p.pos == barg_at) {
+              p = p.expected_type().advance();
+              continue;
+            }
+            if (bargs.len() > 0) {
               bargs = bargs + ", ";
+            }
+            bargs = bargs + barg;
+            if (p.peek_punct() == ",") {
               p = p.advance();
-            } else if (bpk == "=") {
+            } else if (p.peek_punct() != "]") {
               // An associated-type pin belongs to a `dyn` type, not a bound.
-              p = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \"]\", got " + tok_desc(p.peek()))) };
-              p = p.advance();
-            } else {
-              let bseg: string = p.peek_ident();
-              if (bseg.len() == 0) {
-                bseg = p.peek_keyword();
-              }
-              bargs = bargs + bseg;
-              p = p.advance();
+              p = p.expect("]").advance();
             }
           }
-          tname = tname + bargs;
+          if (p.peek_punct() == "]") {
+            p = p.advance();
+          }
+          tname = tname + "[" + bargs + "]";
         }
         if (tname.len() > 0) {
           if (this_bounds.len() > 0) {
@@ -12901,21 +12957,13 @@ function func_ret_of(funcs: FuncDecl[], name: string): string {
 
 // func_param_type_at returns the declared type spelling of parameter `idx`
 // of the receiver-less function named `name`, or "" (name not found, or idx
-// out of range). The generic-enum monomorphiser uses it to pin a bare
-// unit-variant call argument (`get(Non)`) from the callee's parameter type —
-// the call-site analogue of the `let o: Opt[i32] = Non` annotation.
+// out of range).
 function func_param_type_at(funcs: FuncDecl[], name: string, idx: i32): string {
-  let i: i32 = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) {
-      if (idx >= 0 && idx < funcs[i].params.len()) {
-        return funcs[i].params[idx].type_name;
-      }
-      return "";
-    }
-    i = i + 1;
+  let at: i32 = free_decl_at(funcs, name);
+  if (at < 0 || idx < 0 || idx >= funcs[at].params.len()) {
+    return "";
   }
-  return "";
+  return funcs[at].params[idx].type_name;
 }
 
 // me_method_arg_types: the type spelling each argument of `recv.name(...)`
@@ -12925,8 +12973,8 @@ function func_param_type_at(funcs: FuncDecl[], name: string, idx: i32): string {
 // methods take its key and value; a declared method its parameters, with
 // the receiver's type arguments substituted. An entry is "" where nothing
 // pins it.
-function me_method_arg_types(fa: ast.ExprFieldAccess, argc: i32, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): string[] {
-  let rty: string = me_scrutinee_type(fa.obj, env, enums, structs, funcs);
+function me_method_arg_types(fa: ast.ExprFieldAccess, argc: i32, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): string[] {
+  let rty: string = me_scrutinee_type(fa.obj, env, enums, structs, funcs, ins);
   if (rty.len() == 0) {
     return [];
   }
@@ -14602,7 +14650,7 @@ function mono_stmts(stmts: ast.Stmt[], env: MEnv, funcs: MFns, ins: Insts, ret_t
 // param coarsens to "fn", "fn[]" or "[fn]" with its signature held in the
 // fn_ret / fn_param_types sidecars; the env holds the spelling rebuilt from
 // them, so lambda_ret_of can bind a callee's return-position type var from a
-// fn PARAM passed on (`map_values(f)` calling `__om_map_values(t, f)` with
+// fn PARAM passed on (`map_values(f)` calling `node_map_values(t, f)` with
 // `f: (V) => W`), and an array of callables passed on binds the callee's
 // variable the same way (`drive(start(entries))` with
 // `entries: (() => T)[]`).
@@ -17712,8 +17760,8 @@ pub function monomorphize_enum_structs(mod: Module): Module {
   return ms_module(mod);
 }
 
-// The generic enums whose variant payloads or method signatures name a
-// generic struct.
+// The generic enums whose variant payloads or methods name a generic struct:
+// a method's signature, a type its body spells, or a generic function it calls.
 function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
   let out: string[] = [];
   for sd in mod.structs {
@@ -17730,6 +17778,13 @@ function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
       }
     }
   }
+  // The generic free functions a method can reach as templates.
+  let generics: string[] = [];
+  for g in mod.funcs {
+    if (g.receiver_type.len() == 0 && g.type_params.len() > 0) {
+      generics = generics.append(g.name);
+    }
+  }
   for fd in mod.funcs {
     let owner: string = strip_struct_base(fd.receiver_type);
     if (fd.receiver_type.len() == 0 || genum_index(mod.enums, owner) < 0 || str_in(out, owner)) {
@@ -17738,17 +17793,109 @@ function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
     if (mod.enums[genum_index(mod.enums, owner)].type_params.len() == 0) {
       continue;
     }
-    let names: boolean = ms_names_gstruct(fd.ret_type, gstructs) || ms_names_gstruct(fd.ret_fn_ret, gstructs);
-    for p in fd.params {
-      if (ms_names_gstruct(p.type_name, gstructs) || ms_names_gstruct(p.fn_ret, gstructs)) {
-        names = true;
-      }
-    }
-    if (names) {
+    if (ms_fn_names_gstruct(fd, gstructs) || ms_callees_name_gstruct(fd, mod.funcs, generics, gstructs)) {
       out = out.append(owner);
     }
   }
   return out;
+}
+
+// ms_enum_clone_ty spells each generic-enum instantiation in `ty` as the clone
+// the enum pass made of it (`Tree[i32]` as `Tree__i32`), and leaves `ty` as it
+// is while any of them has no clone: a struct deferred past enum cloning is
+// instantiated after the pass that would otherwise respell its fields.
+function ms_enum_clone_ty(ty: string, enums: EnumDecl[]): string {
+  let insts: Insts = me_collect_anno(ty, enums, Insts { inames: [], itypes: [], iargs: [] });
+  if (insts.inames.len() == 0) {
+    return ty;
+  }
+  let k: i32 = 0;
+  while (k < insts.inames.len()) {
+    if (!enum_clone_exists(enums, insts.inames[k] + "__" + insts.itypes[k])) {
+      return ty;
+    }
+    k = k + 1;
+  }
+  return me_rewrite_ty(ty, enums);
+}
+
+function enum_clone_exists(enums: EnumDecl[], name: string): boolean {
+  for ed in enums {
+    if (ed.name == name && ed.type_params.len() == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ms_fn_names_gstruct reports whether `fd` names a generic struct in its
+// signature or in a type its body spells.
+function ms_fn_names_gstruct(fd: FuncDecl, gstructs: StructDecl[]): boolean {
+  let names: boolean = ms_names_gstruct(fd.ret_type, gstructs) || ms_names_gstruct(fd.ret_fn_ret, gstructs);
+  for p in fd.params {
+    if (ms_names_gstruct(p.type_name, gstructs) || ms_names_gstruct(p.fn_ret, gstructs)) {
+      names = true;
+    }
+  }
+  let u: MsNames = MsNames { gstructs: gstructs, hit: names };
+  for st in fd.body {
+    u = astwalk.fold_stmt_nodes(st, u, ms_names_stmt, ms_names_expr, astwalk.descend_all);
+  }
+  return u.hit;
+}
+
+// ms_callees_name_gstruct reports whether a generic free function `fd` calls,
+// directly or through another, names a generic struct: a generic enum's
+// method reaches it as a template, so a struct it builds is keyed only per
+// enum clone.
+function ms_callees_name_gstruct(fd: FuncDecl, funcs: FuncDecl[], generics: string[], gstructs: StructDecl[]): boolean {
+  let refs: BgRefs = bg_refs_body(fd.body, BgRefs { names: generics, hit: [] });
+  let i: i32 = 0;
+  while (i < refs.hit.len()) {
+    for g in funcs {
+      if (g.name == refs.hit[i] && g.receiver_type.len() == 0 && g.type_params.len() > 0) {
+        if (ms_fn_names_gstruct(g, gstructs)) {
+          return true;
+        }
+        refs = bg_refs_body(g.body, refs);
+      }
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+struct MsNames { gstructs: StructDecl[], hit: boolean }
+
+function ms_names_stmt(st: ast.Stmt, own u: MsNames): MsNames {
+  if let ast.StmtVar(v) = st {
+    if (ms_names_gstruct(v.type_name, u.gstructs) || ms_names_gstruct(v.fn_ret, u.gstructs)) {
+      return MsNames { ...u, hit: true };
+    }
+  }
+  return u;
+}
+
+function ms_names_expr(e: ast.Expr, own u: MsNames): MsNames {
+  match (e) {
+    ast.ExprStructLit(sl) => {
+      if (gstruct_index(u.gstructs, strip_struct_base(sl.type_name)) >= 0) {
+        return MsNames { ...u, hit: true };
+      }
+    },
+    ast.ExprLambda(lm) => {
+      for p in lm.params {
+        if (ms_names_gstruct(p.type_name, u.gstructs)) {
+          return MsNames { ...u, hit: true };
+        }
+      }
+      if (ms_names_gstruct(lm.ret_type, u.gstructs)) {
+        return MsNames { ...u, hit: true };
+      }
+    },
+    _ => {}
+  }
+  return u;
 }
 
 function ms_names_gstruct(ty: string, gstructs: StructDecl[]): boolean {
@@ -17909,7 +18056,7 @@ function ms_module(mod: Module): Module {
   // Phase 2: generate clones; a worklist covers clones whose own field
   // types / method bodies reference further instantiations. The same
   // worklist carries the bounded-generic instantiations a method clone's
-  // body makes (`__om_insert(m.root, k, v)` under `OrdMap__i32__i32`):
+  // body makes (`__ps_add_all(s, xs)` under `PSet__i32`):
   // those are cloned here from the templates monomorphize_module passed
   // through, and a clone's own annotations feed back struct instantiations.
   let done: Insts = Insts { inames: [], itypes: [], iargs: [] };
@@ -17952,10 +18099,10 @@ function ms_module(mod: Module): Module {
       let cf: StructFieldDecl[] = [];
       let cfi: i32 = 0;
       while (cfi < gd.fields.len()) {
-        let subbed: string = subst_ty(gd.fields[cfi].type_name, gd.type_params, cts);
+        let subbed: string = ms_enum_clone_ty(subst_ty(gd.fields[cfi].type_name, gd.type_params, cts), mod.enums);
         let ft2: TyIns = mg_ty(subbed, gstructs, ins);
-        let gfr: TyIns = mg_ty(subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts), gstructs, ft2.mins);
-        let gfl: TyIns = mg_ty_list(subst_ty_list(gd.fields[cfi].fn_param_types, gd.type_params, cts), gstructs, gfr.mins);
+        let gfr: TyIns = mg_ty(ms_enum_clone_ty(subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts), mod.enums), gstructs, ft2.mins);
+        let gfl: TyIns = mg_ty_list(ms_enum_clone_ty(subst_ty_list(gd.fields[cfi].fn_param_types, gd.type_params, cts), mod.enums), gstructs, gfr.mins);
         ins = gfl.mins;
         cf = cf.append(StructFieldDecl { name: gd.fields[cfi].name, type_name: ft2.ty, fn_ret: gfr.ty, fn_param_types: gfl.ty });
         cfi = cfi + 1;
@@ -18465,7 +18612,9 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], exp
   let j: i32 = 0;
   while (j < ed.type_params.len()) {
     let b: string = binds.elook(ed.type_params[j]);
-    if (b.len() == 0) {
+    // A payload typed by a type variable inside a template, as in `Bin(k, 1)`
+    // in a method of `Tree[K]`, names no instantiation either.
+    if (b.len() == 0 || mono_ty_mentions_var(b)) {
       return "";
     }
     if (j > 0) {
@@ -18664,11 +18813,13 @@ function me_env_from_params(params: ast.ParamDecl[]): MEnv {
   return e;
 }
 
-// me_call_arg_type is the type argument i of a plain call to `fname` is
-// expected at: its declared parameter's, or for a built-in Option / Result
+// me_call_arg_types is the type each argument of a plain call to `fname` is
+// expected at: its declared parameter's, with the type variables the call's
+// arguments bind substituted in (`bin(Tip, k)` with `bin[K](l: Tree[K], k: K)`
+// and `k: i32` expects `Tree[i32]`), or for a built-in Option / Result
 // constructor, the payload the expected type gives it (`Ok(Nn)` under
 // `Result[Opt[i32], string]` is `Opt[i32]`).
-function me_call_arg_type(funcs: MFns, fname: string, i: i32, expected: string): string {
+function me_call_arg_types(funcs: MFns, fname: string, args: ast.Expr[], env: MEnv, expected: string, ins: Insts): string[] {
   let at: i32 = 0 - 1;
   if (fname == "Some" && strip_struct_base(expected) == "Option" || fname == "Ok" && strip_struct_base(expected) == "Result") {
     at = 0;
@@ -18676,10 +18827,57 @@ function me_call_arg_type(funcs: MFns, fname: string, i: i32, expected: string):
     at = 1;
   }
   let targs: string[] = type_args_of(expected);
-  if (i == 0 && at >= 0 && at < targs.len()) {
-    return targs[at];
+  if (at >= 0 && at < targs.len()) {
+    return [targs[at]];
   }
-  return func_param_type_at(funcs.decls, fname, i);
+  let d: i32 = me_call_decl_at(funcs, fname, ins);
+  if (d < 0) {
+    return [];
+  }
+  let fd: FuncDecl = funcs.decls[d];
+  let binds: MEnv = MEnv { mnames: [], mtypes: [] };
+  if (fd.type_params.len() > 0) {
+    binds = full_ret_binds(fd, args, env, funcs, fd.type_params);
+  }
+  let out: string[] = [];
+  for p in fd.params {
+    out = out.append(subst_ty(p.type_name, binds.mnames, binds.mtypes));
+  }
+  return out;
+}
+
+// me_call_decl_at is the free function a call to `fname` runs (me_called_name).
+function me_call_decl_at(funcs: MFns, fname: string, ins: Insts): i32 {
+  return free_decl_at(funcs.decls, me_called_name(funcs, fname, ins));
+}
+
+// me_called_name is the free function a call to `fname` names: `fname` when it
+// is declared, or, for an instance the function pass keyed inside an enum
+// method's clone (`find__i32`, recorded in `ins` and cloned only later), its
+// template, which the call's arguments bind as they bound the key.
+function me_called_name(funcs: MFns, fname: string, ins: Insts): string {
+  if (free_decl_at(funcs.decls, fname) >= 0 || util.index_of_sub(fname, "__") <= 0) {
+    return fname;
+  }
+  let k: i32 = 0;
+  while (k < ins.inames.len()) {
+    if (ins.inames[k] + "__" + sanitize_key(ins.itypes[k]) == fname) {
+      return ins.inames[k];
+    }
+    k = k + 1;
+  }
+  return fname;
+}
+
+function free_decl_at(funcs: FuncDecl[], name: string): i32 {
+  let i: i32 = 0;
+  while (i < funcs.len()) {
+    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // me_ident rewrites an identifier the enum pass can key. A type parameter
@@ -18781,16 +18979,15 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       // `Non` stayed un-rewritten, then monomorphize_enums dropped the
       // generic `Non` struct and the dangling reference bailed the module
       // (#5247).
-      let calleeFn: string = "";
       let mexps: string[] = [];
       if (owner < 0) {
         if let ast.ExprIdent(cid) = c.callee {
           if (!str_list_contains(env.mnames, cid.name)) {
-            calleeFn = cid.name;
+            mexps = me_call_arg_types(funcs, cid.name, c.args, env, expected, ins);
           }
         }
         if let ast.ExprFieldAccess(cfa) = c.callee {
-          mexps = me_method_arg_types(cfa, c.args.len(), env, enums, structs, funcs);
+          mexps = me_method_arg_types(cfa, c.args.len(), env, enums, structs, funcs, ins);
         }
       }
       let nargs: ast.Expr[] = [];
@@ -18800,8 +18997,6 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
         let ae: string = "";
         if (i < fexps.len()) {
           ae = fexps[i];
-        } else if (calleeFn.len() > 0) {
-          ae = me_call_arg_type(funcs, calleeFn, i, expected);
         } else if (i < mexps.len()) {
           ae = mexps[i];
         }
@@ -18991,6 +19186,11 @@ function me_field_type_of(structs: StructDecl[], sname: string, fname: string): 
       let j: i32 = 0;
       while (j < fs.len()) {
         if (fs[j].name == fname) {
+          // A generic struct's field reads at the instance's arguments.
+          let targs: string[] = type_args_of(sname);
+          if (structs[i].type_params.len() > 0 && targs.len() == structs[i].type_params.len()) {
+            return subst_ty(fs[j].type_name, structs[i].type_params, targs);
+          }
           return fs[j].type_name;
         }
         j = j + 1;
@@ -19126,7 +19326,7 @@ function me_tuple_elem_type(ty: string, field: string): string {
   return "";
 }
 
-function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): string {
+function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): string {
   match (e) {
     ast.ExprIdent(id) => {
       return env.elook(id.name);
@@ -19160,7 +19360,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
           if (fr.len() > 0) {
             return fr;
           }
-          let crt: string = call_ret_type(funcs, cid.name, c.args, env);
+          let crt: string = call_ret_type(funcs, me_called_name(funcs, cid.name, ins), c.args, env);
           if (crt.len() > 0) {
             return crt;
           }
@@ -19175,7 +19375,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
           // function's return was recovered), so the arms stayed
           // un-mangled against the concrete enum and the match read the
           // wrong variant.
-          let rt: string = me_scrutinee_type(cfa.obj, env, enums, structs, funcs);
+          let rt: string = me_scrutinee_type(cfa.obj, env, enums, structs, funcs, ins);
           if (rt.len() > 0) {
             return me_method_ret_type(rt, cfa.field, funcs);
           }
@@ -19193,14 +19393,14 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
       return "";
     },
     ast.ExprIndex(ix) => {
-      let at: string = me_scrutinee_type(ix.array, env, enums, structs, funcs);
+      let at: string = me_scrutinee_type(ix.array, env, enums, structs, funcs, ins);
       if (type_ends_arr(at)) {
         return slice_unchecked(at, 0, at.len() - 2) + "";
       }
       return "";
     },
     ast.ExprFieldAccess(fa) => {
-      let ot: string = me_scrutinee_type(fa.obj, env, enums, structs, funcs);
+      let ot: string = me_scrutinee_type(fa.obj, env, enums, structs, funcs, ins);
       if (ot.len() == 0) {
         return "";
       }
@@ -19331,10 +19531,10 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
         }
       }
       if (vty.len() == 0) {
-        vty = me_scrutinee_type(v.init, env, enums, structs, funcs);
+        vty = me_scrutinee_type(v.init, env, enums, structs, funcs, ins);
       }
       let ninit: ast.Expr = retype_enum_assoc(iv.rexpr, nslot.ty, enums, funcs);
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: ninit, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: me_bind_var(env, v, vty, enums, structs, funcs), rins2: cins };
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: ninit, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: me_bind_var(env, v, vty, enums, structs, funcs, ins), rins2: cins };
     },
     ast.StmtReturn(r) => {
       let rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
@@ -19368,7 +19568,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       // in the body recovers a generic-enum element's instantiation
       // (`for o in xs` over `Opt[i32][]` → o: `Opt[i32]`). Strip one `[]`
       // off the iterable's tracked type.
-      let itty: string = me_scrutinee_type(fr.iter, env, enums, structs, funcs);
+      let itty: string = me_scrutinee_type(fr.iter, env, enums, structs, funcs, ins);
       let elty: string = "";
       if (type_ends_arr(itty)) {
         elty = slice_unchecked(itty, 0, itty.len() - 2) + "";
@@ -19383,7 +19583,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       // Recover the scrutinee's generic-enum instantiation: an annotated
       // ident / param / for-loop var, a call result (the callee's return
       // type), or an index into a generic-enum array.
-      let sty: string = me_scrutinee_type(m.scrutinee, env, enums, structs, funcs);
+      let sty: string = me_scrutinee_type(m.scrutinee, env, enums, structs, funcs, ins);
       let gi: GEInst = ge_inst_of(sty, enums);
       let arms: ast.MatchArm[] = [];
       let i: i32 = 0;
@@ -19393,8 +19593,8 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
         // on the bound value recovers its instantiation: each binding
         // takes its declared field type under the scrutinee's
         // original-spelling type args (`Sm(n)` over `Opt[Opt[i32]]` →
-        // n: `Opt[i32]`; `Bin(l, k, v, r, s)` over `OrdNode[i32,
-        // string]` → l: `OrdNode[i32, string]`, k: i32, v: string).
+        // n: `Opt[i32]`; `Bin(l, k, v, r, s)` over `OrdMap[i32,
+        // string]` → l: `OrdMap[i32, string]`, k: i32, v: string).
         let armenv: MEnv = mono_arm_env(env, m.arms[i].pattern, sty, funcs);
         if (gi.ok) {
           let gidx: i32 = genum_index(enums, gi.base);
@@ -19432,12 +19632,12 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
 // tuple destructure (`let (m2, had) = m.without(k)`, one StmtVar whose name
 // is the comma-joined list), each plain name to its element of the init's
 // tuple type.
-function me_bind_var(env: MEnv, v: ast.StmtVar, vty: string, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): MEnv {
+function me_bind_var(env: MEnv, v: ast.StmtVar, vty: string, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): MEnv {
   let names: string[] = split_top_commas(v.name);
   if (names.len() < 2) {
     return env.ebind(v.name, vty);
   }
-  let tty: string = me_scrutinee_type(v.init, env, enums, structs, funcs);
+  let tty: string = me_scrutinee_type(v.init, env, enums, structs, funcs, ins);
   let out: MEnv = env;
   let i: i32 = 0;
   while (i < names.len()) {
@@ -29215,9 +29415,9 @@ function skip_decl_modifier(p: Par, name: string, before: string): Par {
 // that shape still behaves as it did before this pass existed.
 
 // is_float_type_name reports whether a declared type name denotes a float
-// scalar. `float` is the unsuffixed spelling; f32 is f64-shaped downstream.
+// scalar; f32 is f64-shaped downstream.
 function is_float_type_name(t: string): boolean {
-  return t == "f64" || t == "f32" || t == "float";
+  return t == "f64" || t == "f32";
 }
 
 // is_unsettled_int_literal reports whether `e` is an integer literal whose type
@@ -30375,14 +30575,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         trait_defaults = trait_defaults.append(tpr_defaults[tdi]);
         tdi = tdi + 1;
       }
-      // Retain the trait's required (abstract) method set for E021 (#4347).
-      // Retain a trait's requirement record when it has abstract methods
-      // OR supertraits — a supertrait-only trait (`trait Num: Add + …{}`)
-      // has no methods but still drives the E021 supertrait-impl check —
-      // OR defaults, which a `dyn` of the trait calls.
-      if (tpr_req.methods.len() > 0 || tpr_req.supertraits.len() > 0 || tpr_req.assoc_sigs.len() > 0 || tpr_req.default_sigs.len() > 0) {
-        trait_reqs = trait_reqs.append(tpr_req);
-      }
+      // Every declared trait keeps its requirement record, a member-less one
+      // included: it is how the checker knows the trait exists.
+      trait_reqs = trait_reqs.append(tpr_req);
       continue;
     }
     if (kw == "impl") {
@@ -30474,7 +30669,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     },
     None => {}
   }
-  let parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [], todo_sites: p.todos };
+  let parsed: Module = Module { funcs: funcs, structs: structs, aliases: aliases, imports: imports, top_stmts: top_stmts, enums: enums, resources: resources, exports: exports, impls: impl_infos, trait_reqs: trait_reqs, trait_decls: traits, inferred_consts: [], todo_sites: p.todos, sights: [] };
   if (!verbatim) {
     let inferred: string[] = unannotated_const_names(funcs);
     let nothing: string[] = [];
@@ -30520,7 +30715,7 @@ function coded_kind(code: string, msg: string): string {
 
 // lex_error_module is a module holding nothing but the lex error `le`.
 function lex_error_module(le: lexer.TokError): (Module, TraitDecl[], ImplDecl[], FieldLines[], FunctionInlineHint[]) {
-  let m: Module = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [] };
+  let m: Module = Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [s_unknown_at(lex_error_kind(le), le.line, le.col)], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [], sights: [] };
   let traits: TraitDecl[] = [];
   let impls: ImplDecl[] = [];
   let flines: FieldLines[] = [];
