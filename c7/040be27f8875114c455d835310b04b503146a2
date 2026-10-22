@@ -121,3 +121,15 @@ bootstrap/x86-64-linux/stage2.size_bytes	13197328
 bootstrap/x86-64-linux/stage3.wall_s	21
 bootstrap/x86-64-linux/stage3.peak_rss_mb	2066
 bootstrap/x86-64-linux/stage3.size_bytes	13197328
+
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	236.3
+tls/client/openssl.handshakes_per_s	79.7
+tls/client/go.bulk_mbytes_per_s	209.7
+tls/client/go.handshakes_per_s	78.4
+tls/client/rustls.handshakes_per_s	80.3
+tls/client/bssl.handshakes_per_s	80.6
+tls/server/go.bulk_mbytes_per_s	229.8
+tls/server/curl.bulk_mbytes_per_s	386.2
+tls/server/handshakes_per_s	811.3
+tls/server/resumed_handshakes_per_s	874.3
