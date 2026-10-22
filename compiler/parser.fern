@@ -2069,7 +2069,9 @@ function (p: Par) with_map_kind(v: i32): Par {
 // native's maxNestDepth puts the two acceptance thresholds on top of each
 // other — pinned by TestSelfHostDeepNestingMatchesNativeAndDoesNotCrash. The
 // deepest source in this repository nests 183 levels.
-const MAX_NEST_DEPTH: i32 = 5000;
+pub const MAX_NEST_DEPTH: i32 = 5000;
+
+pub const BLOCK_VALUE_REQUIRED_MESSAGE: string = "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value";
 
 // BLOCK_NEST_UNITS is what one nested block costs against MAX_NEST_DEPTH. A
 // unit has to cost about the same stack whichever construct spends it, and a
@@ -4548,6 +4550,12 @@ function build_tuple_match(scrut: ast.Expr, arms: ast.TupArm[], mkline: i32, mkc
     }
     ai = ai + 1;
   }
+  return build_tuple_match_sized(scrut, arms, n_elems, mkline, mkcol);
+}
+
+// The checker supplies the actual tuple size for a match with an invalid arm.
+// That arm's body has no pattern bindings, as in the Go checker.
+pub function build_tuple_match_sized(scrut: ast.Expr, arms: ast.TupArm[], n_elems: i32, mkline: i32, mkcol: i32): ast.Stmt {
   if (n_elems < 2) {
     return s_unknown_at("tuple match with no tuple arm", mkline, mkcol);
   }
@@ -4576,9 +4584,14 @@ function build_tuple_match(scrut: ast.Expr, arms: ast.TupArm[], mkline: i32, mkc
     outer = outer.append(s_var_at(names, "", scrut, mkline, mkcol));
   }
   outer = outer.append(s_var(done, "", e_bool(false)));
-  ai = 0;
+  let ai: i32 = 0;
   while (ai < arms.len()) {
     let a: ast.TupArm = arms[ai];
+    if (!a.is_wild && a.elem_kinds.len() != n_elems) {
+      outer = outer.append(s_if(e_bool(false), a.body, []));
+      ai = ai + 1;
+      continue;
+    }
     let cond: ast.Expr = e_unary("!", e_ident(done));
     let inner: ast.Stmt[] = [];
     if (a.is_wild) {
@@ -5315,6 +5328,8 @@ function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
 }
 
 function parse_branch_body_written(p: Par): (ast.Stmt[], string, boolean, Par) {
+  let open_line: i32 = p.peek_line();
+  let open_col: i32 = p.peek_col();
   let rt: string = "i32";
   let (bi_leading, bi_have_tail, bi_tail, bi_ok, bi_p) = parse_block_items(p);
   if (!bi_ok) {
@@ -5340,7 +5355,7 @@ function parse_branch_body_written(p: Par): (ast.Stmt[], string, boolean, Par) {
   // the lowering reads (leading statements + a trailing value).
   if (!have_tail) {
     if (!branch_stmts_diverge(leading)) {
-      leading = leading.append(s_unknown(p, "value branch has no trailing expression"));
+      leading = leading.append(s_unknown_at("value branch has no trailing expression", open_line, open_col));
       return (leading, rt, false, p);
     }
     let dead: ast.Expr = branch_dead_tail(leading);
@@ -7913,9 +7928,16 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     // ANY arity. The names are encoded comma-joined ("x,y,z"); the emitter
     // splits them and binds from the tuple's element slots.
     if (p.peek_punct() == "(") {
+      let tuple_start: Par = p;
       let (tdnames, tdcount, tdok, tdp) = parse_destructure_names(p);
       p = tdp;
-      if (!tdok || tdcount < 2) {
+      if (!tdok) {
+        let problem: ast.Stmt = s_unknown_at("decl:" + refutable_binding_message("a literal tuple element", "destructuring binding"), vline, vcol);
+        p = tuple_start.advance().skip_to_close(")").expect("=");
+        let (ignored, recovered) = parse_expr(p);
+        return (problem, recovered.end_of(ignored));
+      }
+      if (tdcount < 2) {
         return (s_unknown(p, "a tuple destructuring pattern binds names, not literals"), p);
       }
       p = p.expect("=");
@@ -9382,15 +9404,22 @@ function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
   let names: string = "";
   let marker: string = "";
   if (p.peek_punct() == "(") {
+    let tuple_start: Par = p;
     // The binding list is the same production a `let` destructure takes, so a
     // nested position works here too — `((a, b), c): ((i32, i32), i32)`.
     let (tnames, names_count, names_ok, names_p) = parse_destructure_names(p);
     p = names_p;
     // At least 2 positions (no-singleton-tuples rule).
-    if (!names_ok || names_count < 2) {
+    if (!names_ok) {
+      let refused: Par = tuple_start.refused_type(refutable_binding_message("a literal tuple element", "parameter"));
+      let recovered: Par = tuple_start.advance().skip_to_close(")");
+      p = Par { ...recovered, type_errs: refused.type_errs };
+      names = "__invalid_pattern";
+    } else if (names_count < 2) {
       return (bad_param, bad, p);
+    } else {
+      names = tnames;
     }
-    names = tnames;
   } else {
     let struct_name: string = p.peek_ident();
     if (struct_name.len() == 0 || p.peek_punct_at(1) != "{") {
@@ -9446,9 +9475,24 @@ function prepend_param_destrs(body: ast.Stmt[], destrs: ParamDestr[]): ast.Stmt[
   return out;
 }
 
-// parse_param reads one `[own] NAME: TYPE [= DEFAULT]` parameter; `nth` is its
-// position in the list, which is what tells two discarded parameters apart.
+function refutable_binding_message(kind: string, site: string): string {
+  return kind + " can fail to match, so it cannot be a " + site + " pattern — there is no else branch here; destructure with a tuple `(a, b)` or struct `S { x, y }` pattern, or `match` on the value in the body";
+}
+
+function refused_variant_param(p: Par): (ast.ParamDecl, Par) {
+  let refused: Par = p.refused_type(refutable_binding_message("an enum variant pattern", "parameter"));
+  let (pattern, parsed) = parse_pattern(p);
+  p = Par { ...parsed, type_errs: refused.type_errs };
+  p = p.expect(":");
+  let (tr, next) = parse_decl_type(p);
+  return (ast.ParamDecl { name: "__invalid_pattern", type_name: tr.name, own: false, has_default: false, default_value: e_unknown(""), fn_ret: tr.fn_ret, fn_param_types: tr.fn_params }, next);
+}
+
+// parse_param reads one parameter after its caller handles destructure heads.
 function parse_param(p: Par, nth: i32): (ast.ParamDecl, Par) {
+  if (p.peek_ident().len() > 0 && (p.peek_punct_at(1) == "(" || p.peek_punct_at(1) == ".")) {
+    return refused_variant_param(p);
+  }
   let name: string = p.peek_ident();
   if (name.len() == 0) {
     return (ast.ParamDecl { name: "", type_name: "", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }, p);
