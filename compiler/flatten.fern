@@ -137,12 +137,8 @@ function declname_index_of(name: string, ctx: RewriteCtx): i32 {
 // function ONE way, so the two compilers have to agree about the symbol. They
 // did not: `map.__map_pow2_ceil` resolved here and nowhere else (#9608).
 //
-// Native also exempts `__method_*`; this does not, and the difference is
-// deliberate. The self-host resolves an auto-discovered `__method_Array_<f>`
-// by SUFFIX over both the bare and the `<mod>__`-mangled spelling (checker's
-// `am_prefix` family), so exempting it would move every stdlib method's symbol
-// for no gain here. That is a divergence to close when something needs it, not
-// a side effect to take now.
+// Native also exempts `__method_*`; this does not, because exempting it would
+// move every stdlib method's symbol for no gain here.
 pub function is_runtime_helper_name(name: string): boolean {
   if (name == "map_new_impl") {
     return true;
@@ -831,7 +827,7 @@ function serve_ref(qual: string, name: string): ast.Expr {
   if (qual.len() == 0) {
     return ast.ExprIdent { name: name, line: 0, col: 0, ty: "" };
   }
-  return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "" }, field: name, line: 0, col: 0, ty: "" };
+  return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "" }, field: name, line: 0, col: 0, ty: "", path_sep: false, const_read: false };
 }
 
 // index_of_str returns the position of `want` in `list`, or -1.
@@ -1188,24 +1184,12 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
           // of the same name shadows the enum, so the reference is then
           // an ordinary field access.
           if (!is_in(id.name, ctx.locals) && is_in(id.name, ctx.enumnames)) {
-            return ast.ExprFieldAccess {
-              obj: ast.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col, ty: id.ty },
-              field: mangle_bare(fa.field, ctx),
-              line: fa.line,
-              col: fa.col,
-              ty: fa.ty,
-            };
+            return ast.ExprFieldAccess { ...fa, obj: ast.ExprIdent { name: mangle_bare(id.name, ctx), line: id.line, col: id.col, ty: id.ty }, field: mangle_bare(fa.field, ctx) };
           }
         },
         _ => {}
       }
-      return ast.ExprFieldAccess {
-        obj: rewrite_expr(fa.obj, ctx),
-        field: fa.field,
-        line: fa.line,
-        col: fa.col,
-        ty: fa.ty,
-      };
+      return ast.ExprFieldAccess { ...fa, obj: rewrite_expr(fa.obj, ctx) };
     },
     ast.ExprCall(c) => {
       let args: ast.Expr[] = [];
@@ -1493,11 +1477,8 @@ function canon_derives(derives: string[], ctx: RewriteCtx): string[] {
 }
 
 // The module that declares the trait `im` implements, as canon_trait resolves
-// it: "" for the entry's own, and for an inherent impl.
+// it: "" for the entry's own.
 function trait_module_of(im: parser.ImplInfo, ctx: RewriteCtx): string {
-  if (im.trait_name.len() == 0) {
-    return "";
-  }
   let spelling: string = im.trait_spelling;
   if (spelling.len() == 0) {
     spelling = im.trait_name;
@@ -2276,7 +2257,7 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
     inferred_consts: inferred,
     todo_sites: e.todo_sites,
   };
-  return parser.lower_stream_signatures(parser.route_inherited_defaults(parser.resolve_dyn_traits(parser.settle_module(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred))))));
+  return parser.lower_stream_signatures(parser.route_inherited_defaults(parser.resolve_dyn_traits(parser.settle_module(parser.rewrite_assoc_const_reads(parser.substitute_const_refs(merged, merged_const_table(funcs, inferred)))))));
 }
 
 // mangled_inferred_consts names every const written without a type, across
@@ -2419,10 +2400,10 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
   let out: PerModule[] = [];
   let j: i32 = 0;
   while (j < imports.len()) {
-    out = out.append(PerModule { ns: pfxs[j], ident: imports[j].ident, mod: parser.lower_stream_signatures(parser.substitute_const_refs(mods[j], table)), is_entry: false });
+    out = out.append(PerModule { ns: pfxs[j], ident: imports[j].ident, mod: parser.lower_stream_signatures(parser.rewrite_assoc_const_reads(parser.substitute_const_refs(mods[j], table))), is_entry: false });
     j = j + 1;
   }
-  out = out.append(PerModule { ns: "__entry", ident: "", mod: parser.lower_stream_signatures(parser.substitute_const_refs(e, table)), is_entry: true });
+  out = out.append(PerModule { ns: "__entry", ident: "", mod: parser.lower_stream_signatures(parser.rewrite_assoc_const_reads(parser.substitute_const_refs(e, table))), is_entry: true });
   return out;
 }
 

@@ -70,10 +70,8 @@ function main(): i32 {
 `, 7},
 	{"method-parameter", `struct Same[T] { a: T, b: T }
 struct S { xs: Same[i64][] }
-impl S {
-    function take(self: S, xs: Same[i64][]): i32 {
-        return (xs[0].b / 1073741824 + xs[0].a) as i32;
-    }
+function (self: S) take(xs: Same[i64][]): i32 {
+    return (xs[0].b / 1073741824 + xs[0].a) as i32;
 }
 function main(): i32 {
     let y: i64 = 4294967296;

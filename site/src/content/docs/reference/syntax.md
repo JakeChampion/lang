@@ -243,9 +243,8 @@ function main(): i32 {
   leave those trailing arguments out.
 - **Named arguments** (`area(3, h = 4)`) may follow the positional ones.
 - **Methods** are functions with a receiver clause:
-  `function (p: Point) norm(): f64 { … }`, called as `p.norm()`. An
-  `impl Type { … }` block is the other spelling — see
-  [Traits](../traits/#methods-and-inherent-impls).
+  `function (p: Point) norm(): f64 { … }`, called as `p.norm()`. See
+  [Traits](../traits/#methods-without-a-trait).
 - **Generic** functions take type parameters in `[...]` after the name;
   see [Generics](../types/#generics).
 - **`const NAME: T = expr;`** declares a top-level constant. It may be

@@ -120,7 +120,8 @@ function pick[T](n: T): i32 {
 function main(): i32 { return pick(1); }
 `, 1},
 	{"module-struct-shadows-type-param-assoc-call", `struct T { x: i32 }
-impl T { function get(): i32 { return 1; } }
+trait G { function get(): i32; }
+impl G for T { function get(): i32 { return 1; } }
 function pick[T](n: T): i32 { return T.get(); }
 function main(): i32 { return pick(1); }
 `, 1},

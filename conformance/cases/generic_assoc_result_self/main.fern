@@ -7,7 +7,12 @@ import "std/json";
 @derive(json.FromJson)
 struct Box[T] { v: T }
 
-impl[T] Box[T] {
+trait Wrap[T] {
+    function wrap(v: T): Result[Self, string];
+    function wrap_opt(v: T): Option[Self];
+}
+
+impl[T] Wrap[T] for Box[T] {
     function wrap(v: T): Result[Self, string] {
         return Ok(Box { v: v });
     }

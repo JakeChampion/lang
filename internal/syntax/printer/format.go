@@ -743,6 +743,20 @@ func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
 // (Assoc) has no `self` receiver — its params are emitted verbatim.
 func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 	f.indent(1)
+	if m.Const {
+		f.b.WriteString("const ")
+		f.b.WriteString(m.Name)
+		f.b.WriteString(": ")
+		f.b.WriteString(formatType(m.Result))
+		if v := constBodyValue(m.Body); v != nil {
+			f.b.WriteString(" = ")
+			f.formatExpr(v, precLowest)
+		}
+		f.b.WriteByte(';')
+		f.emitTrailing(m.P.Line)
+		f.b.WriteByte('\n')
+		return
+	}
 	f.b.WriteString("function ")
 	f.b.WriteString(m.Name)
 	f.writeTypeParams(m.TypeParams, m.Bounds, m.BoundArgs)
@@ -774,27 +788,25 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 	f.b.WriteByte('\n')
 }
 
-// formatImplDecl emits `impl[T] Trait[Args] for Type { … }` (or an
-// inherent `impl Type { … }`), with associated-type bindings first
-// (sorted for a stable, idempotent order) then the methods.
+// formatImplDecl emits `impl[T] Trait[Args] for Type { … }`, with
+// associated-type bindings first (sorted for a stable, idempotent order)
+// then the methods.
 func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 	f.b.WriteString("impl")
 	f.writeTypeParams(id.TypeParams, id.Bounds, id.BoundArgs)
 	f.b.WriteByte(' ')
-	if id.Trait != "" {
-		f.b.WriteString(id.Trait)
-		if len(id.TraitArgs) > 0 {
-			f.b.WriteByte('[')
-			for i, a := range id.TraitArgs {
-				if i > 0 {
-					f.b.WriteString(", ")
-				}
-				f.b.WriteString(formatType(a))
+	f.b.WriteString(id.Trait)
+	if len(id.TraitArgs) > 0 {
+		f.b.WriteByte('[')
+		for i, a := range id.TraitArgs {
+			if i > 0 {
+				f.b.WriteString(", ")
 			}
-			f.b.WriteByte(']')
+			f.b.WriteString(formatType(a))
 		}
-		f.b.WriteString(" for ")
+		f.b.WriteByte(']')
 	}
+	f.b.WriteString(" for ")
 	f.b.WriteString(formatType(id.Type))
 	if len(id.AssocTypeBindings) == 0 && len(id.Methods) == 0 {
 		f.b.WriteString(" {}\n")
@@ -833,8 +845,36 @@ func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 // it was written with: an ordinary method's receiver is its first
 // parameter again. Type params are respelled only for a non-parametric
 // impl.
+// constBodyValue is the value an associated constant's one-return body
+// holds, or nil for an abstract declaration.
+func constBodyValue(b *ast.Block) ast.Expr {
+	if b == nil || len(b.Stmts) != 1 {
+		return nil
+	}
+	if r, ok := b.Stmts[0].(*ast.Return); ok {
+		return r.Value
+	}
+	return nil
+}
+
 func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 	f.indent(1)
+	if fn.AssocConst {
+		f.b.WriteString("const ")
+		f.b.WriteString(fn.Name)
+		f.b.WriteString(": ")
+		if fn.ImplWritten != nil {
+			f.b.WriteString(formatType(fn.ImplWritten.Result))
+		} else {
+			f.b.WriteString(formatType(fn.ReturnType))
+		}
+		if v := constBodyValue(fn.Body); v != nil {
+			f.b.WriteString(" = ")
+			f.formatExpr(v, precLowest)
+		}
+		f.b.WriteString(";\n")
+		return
+	}
 	f.b.WriteString("function ")
 	f.b.WriteString(fn.Name)
 	if !parametric {
@@ -2247,11 +2287,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(')')
 	case *ast.FieldAccess:
 		f.formatExpr(x.Target, precPrimary)
-		if x.PathSep {
-			f.b.WriteString("::")
-		} else {
-			f.b.WriteByte('.')
-		}
+		f.b.WriteByte('.')
 		f.b.WriteString(x.Field)
 	case *ast.Lambda:
 		// A lambda: `(p: T): R => …`. Without this case formatExpr fell

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Literate Fern",
+  "scopeName": "text.html.markdown.fern",
+  "patterns": [
+    {
+      "include": "#fern-block"
+    },
+    {
+      "include": "text.html.markdown"
+    }
+  ],
+  "repository": {
+    "fern-block": {
+      "begin": "^(\\s*)(`{3,})\\s*(fern)\\b.*$",
+      "beginCaptures": {
+        "2": {
+          "name": "punctuation.definition.markdown"
+        },
+        "3": {
+          "name": "fenced_code.block.language.markdown"
+        }
+      },
+      "end": "^\\1(\\2)\\s*$",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.definition.markdown"
+        }
+      },
+      "contentName": "meta.embedded.block.fern",
+      "patterns": [
+        {
+          "include": "source.fern"
+        }
+      ]
+    }
+  }
+}

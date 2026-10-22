@@ -106,11 +106,11 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// makes them observable.
 		{"rawmem-i32", `function main(): i32 { let buf: u8[] = __alloc_u8(8); let p: usize = buf as usize; __store_i32(p, 1234567); return __load_i32(p); }`, 135},
 		{"rawmem-ptr-i64", `function main(): i32 { let buf: u8[] = __alloc_u8(16); let p: usize = buf as usize; __store_ptr(p, 9999); __store_i32(p + 8, 4242); let c: usize = __load_ptr(p); let b: i64 = __load_i64(p + 8); if ((c as i32) == 9999 && (b % 100000) as i32 == 4242) { return 7; } return 1; }`, 7},
-		// Array-receiver method call `arr.<m>(args)` -> the std/array auto-discovered
-		// helper `__method_Array_<m>(arr, args)`, not a prim `i32.<m>`. This is the
+		// Array-receiver method call `arr.<m>(args)` -> the pinned array receiver
+		// `(arr: i32[]) <m>(args)`, not a prim `i32.<m>`. This is the
 		// shape std/array distinct/distinct_count/mode use (calling index_of via
 		// method syntax). dedup of [x,y,x,z,y] over i32 -> 3.
-		{"arr-method-dispatch", `function __method_Array_idx_i(arr: i32[], v: i32): i32 { let i = 0; while (i < arr.len()) { if (arr[i] == v) { return i; } i = i + 1; } return 0 - 1; } function distinct_n(arr: i32[]): i32 { let seen: i32[] = []; let i = 0; while (i < arr.len()) { if (seen.idx_i(arr[i]) < 0) { seen = seen.append(arr[i]); } i = i + 1; } return seen.len(); } function main(): i32 { let a: i32[] = []; a = a.append(3); a = a.append(7); a = a.append(3); a = a.append(9); a = a.append(7); return distinct_n(a); }`, 3},
+		{"arr-method-dispatch", `function (arr: i32[]) idx_i(v: i32): i32 { let i = 0; while (i < arr.len()) { if (arr[i] == v) { return i; } i = i + 1; } return 0 - 1; } function distinct_n(arr: i32[]): i32 { let seen: i32[] = []; let i = 0; while (i < arr.len()) { if (seen.idx_i(arr[i]) < 0) { seen = seen.append(arr[i]); } i = i + 1; } return seen.len(); } function main(): i32 { let a: i32[] = []; a = a.append(3); a = a.append(7); a = a.append(3); a = a.append(9); a = a.append(7); return distinct_n(a); }`, 3},
 		// Chained method call `recv.m().n()` — a method on a method-call RESULT:
 		// the inner `s.m()` is a string, so `.n()` dispatches `string.n`, not
 		// `i32.n` (the shape i32.to_rgb_hex uses: r.to_hex().pad_start(...)).
@@ -122,10 +122,10 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// f(64): 64+1 -> char 65 'A' -> s[0] -> 65.
 		{"method-name-collision", `function (n: i32) bump(): i32 { return n + 1; } function (s: string) bump(): string { return s + "!"; } function (n: i32) chr(): string { let a: u8[] = __alloc_u8(1); a = a.with(0, n as u8); return string_from_bytes_unchecked(a); } function f(b: i32): i32 { let s: string = b.bump().chr(); return s[0] as i32; } function main(): i32 { return f(64); }`, 65},
 		// Chained ARRAY-method call `arr.m().n()` where the inner m returns an
-		// array — `__method_Array_rev` (-> i32[]) then `.sum2()` on the result.
+		// array — `rev` (-> i32[]) then `.sum2()` on the result.
 		// This is the std/string reverse_words shape (`words.reverse().join(" ")`).
 		// rev([1,2,3])=[3,2,1], sum2 -> 6.
-		{"chained-arr-method", `function __method_Array_rev(xs: i32[]): i32[] { let out: i32[] = []; let i = xs.len() - 1; while (i >= 0) { out = out.append(xs[i]); i = i - 1; } return out; } function __method_Array_sum2(xs: i32[]): i32 { let s = 0; let i = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function f(xs: i32[]): i32 { return xs.rev().sum2(); } function main(): i32 { let a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return f(a); }`, 6},
+		{"chained-arr-method", `function (xs: i32[]) rev(): i32[] { let out: i32[] = []; let i = xs.len() - 1; while (i >= 0) { out = out.append(xs[i]); i = i - 1; } return out; } function (xs: i32[]) sum2(): i32 { let s = 0; let i = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; } function f(xs: i32[]): i32 { return xs.rev().sum2(); } function main(): i32 { let a: i32[] = []; a = a.append(1); a = a.append(2); a = a.append(3); return f(a); }`, 6},
 		// f32 method dispatch: an f32 receiver dispatches "f32.<m>", NOT the f64
 		// twin — they can differ (e.g. to_string precision). Here f32.tag returns
 		// 32, f64.tag returns 64; an f32 value must pick 32 and an f64 value 64.

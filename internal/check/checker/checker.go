@@ -214,6 +214,11 @@ type Info struct {
 	// conformance pass. resolveProj uses it to resolve a concrete-base
 	// `Foo::Item` projection to its bound type. See docs/ASSOCIATED-TYPES.md.
 	AssocBindings map[string]map[string]ast.Type
+	// AssocConsts marks each associated constant by its hoisted name
+	// (`__assoc_<Type>_<NAME>`): an impl's `const NAME: T = expr;`, or a
+	// trait's defaulted one synthesised onto an impl. A `Base::NAME` read is
+	// a call of one of these and nothing else may call one.
+	AssocConsts map[string]bool
 	// TryShapes records every enum the `?` operator accepts, keyed by enum
 	// name: the two builtins plus every `@try` declaration that passed the
 	// shape check. THE single place anything asks "is this `?`-able, and
@@ -1213,6 +1218,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			ImplTraitArgs:       map[string]map[string][]ast.Type{},
 			ImplForPattern:      map[string]map[string]ast.Type{},
 			AssocBindings:       map[string]map[string]ast.Type{},
+			AssocConsts:         map[string]bool{},
 			TryShapes:           map[string]TryShape{},
 			AssocBindingPattern: map[string]map[string]ast.Type{},
 		},
@@ -4607,35 +4613,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.VoidType{},
 	}
 
-	// Auto-discover the remaining Array methods from the
-	// `__method_Array_<name>` naming convention. std/array declares its
-	// concrete-element verbs (`join` over `string[]`, `gcd_all` over
-	// `i32[]`) this way and this loop is what makes `arr.<name>(…)` reach
-	// them.
-	//
-	// It is a compiler-known name pattern, and it exists only because the
-	// receiver form that would replace it — `pub function (arr: i32[])
-	// gcd_all()`, now accepted below — does not yet lower on the
-	// self-hosted compiler: one such declaration anywhere in the bundle
-	// costs an unrelated generic its type-parameter substitution
-	// (`num.sum`'s `T.zero()` lowers to a `const_func "T"`). Migrating
-	// std/array onto receivers and deleting this loop waits on that.
-	//
-	// FuncSigs for these functions get populated by the normal
-	// FuncDecl processing in `Check` — we only need to wire the
-	// Methods map here.
-	for _, fn := range prog.Funcs {
-		if !strings.HasPrefix(fn.Name, "__method_Array_") {
-			continue
-		}
-		suffix := fn.Name[len("__method_Array_"):]
-		if suffix == "" || suffix == "push" {
-			continue
-		}
-		c.info.Methods["Array."+suffix] = fn.Name
-		c.info.MethodSources[fn.Name] = fn.SourceModule
-	}
-
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which
 	// flow through the same dispatch-path substitution. The
@@ -5197,6 +5174,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			owns[i] = p.Own
 		}
 		c.info.FuncSigs[fn.Name] = &ast.FuncType{Params: params, ParamOwn: ast.OwnFlags(owns, len(params)), Result: fn.ReturnType}
+		if fn.AssocConst {
+			c.info.AssocConsts[fn.Name] = true
+		}
 		// Method dispatch already checks visibility, including calls from a
 		// trait default to methods on its implementing type. The trait's
 		// module need not import that type's module.
@@ -5236,14 +5216,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 	}
 	for _, impl := range prog.Impls {
-		// Inherent impl (`impl Type { … }`, #2700): no trait, so there is
-		// nothing to check for conformance/coherence here. Its methods and
-		// associated functions were already desugared into ordinary
-		// FuncDecls (hoisted as `__method_*` / `__assoc_*`) by the parser,
-		// so they register and check through the normal paths.
-		if impl.Trait == "" {
-			continue
-		}
 		typeName, ok := methodTypeName(impl.Type)
 		if !ok {
 			c.errfCode(impl.TypePos, "E021", "`impl … for %s`: type must be a struct, enum, or built-in type", impl.Type)
@@ -5341,7 +5313,24 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				continue
 			}
 			if !ok {
-				c.errfCode(impl.P, "E021", "%s does not implement %s: missing method %q", demangle(typeName), demangle(impl.Trait), m.Name)
+				if m.Const {
+					c.errfCode(impl.P, "E021", "%s does not implement %s: missing associated constant %q", demangle(typeName), demangle(impl.Trait), m.Name)
+				} else {
+					c.errfCode(impl.P, "E021", "%s does not implement %s: missing method %q", demangle(typeName), demangle(impl.Trait), m.Name)
+				}
+				conforms = false
+				continue
+			}
+			// A constant is bound with `const`, a function with `function`;
+			// the two are not interchangeable even at the same signature.
+			if m.Const != c.info.AssocConsts[mangled] {
+				if m.Const {
+					c.errfCode(impl.P, "E021", "%s.%s is an associated constant of trait %s; bind it with `const %s: %s = …;`, not a function",
+						demangle(typeName), m.Name, demangle(impl.Trait), m.Name, c.resolveProjWith(ast.SubstSelf(m.Result, impl.Type), impl.AssocTypeBindings))
+				} else {
+					c.errfCode(impl.P, "E021", "%s.%s is an associated function of trait %s; provide it with `function`, not a const",
+						demangle(typeName), m.Name, demangle(impl.Trait))
+				}
 				conforms = false
 				continue
 			}
@@ -5684,6 +5673,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// bodies below are checked.
 	c.computeResultBorrows(prog)
 
+	c.rewriteAssocConstReads(prog)
 	for _, fn := range prog.Funcs {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -7374,6 +7364,7 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 				// `__assoc_<Type>_<name>`. Use methodTypeName so the hoist
 				// key matches what the conformance pass looks up.
 				method.Params = append([]ast.Param(nil), m.Params...)
+				method.AssocConst = m.Const
 				if tn, ok := methodTypeName(impl.Type); ok {
 					method.AssocType = tn
 				} else {
@@ -8560,6 +8551,83 @@ func containsString(xs []string, s string) bool {
 // checked. Returns the matching trait-method signature and the trait
 // name. Used by the deferred-dispatch path for trait-bounded generics.
 // See docs/TRAITS.md.
+// rewriteAssocConstReads turns every `Base::NAME` read — a field access
+// whose target names a type rather than a value — into the argument-less
+// associated call it is, marked AssocConst so the call site may only name a
+// constant. The target is a struct, a primitive, a type parameter of the
+// function, `Self` in an impl method, or an enum with an associated function
+// of that name; a local shadowing the name keeps the field access.
+func (c *checker) rewriteAssocConstReads(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		tps := map[string]bool{}
+		for _, tp := range fn.TypeParams {
+			tps[tp] = true
+		}
+		w := ast.ScopeWalker{}
+		w.Visit = func(slot *ast.Expr, w *ast.ScopeWalker) bool {
+			// A call's callee is `Base.f(...)`, never a read: only its target
+			// and arguments are candidates.
+			if call, ok := (*slot).(*ast.Call); ok {
+				if fa, ok := call.Callee.(*ast.FieldAccess); ok {
+					w.WalkExpr(&fa.Target)
+					for i := range call.Args {
+						w.WalkExpr(&call.Args[i])
+					}
+					return false
+				}
+				return true
+			}
+			fa, ok := (*slot).(*ast.FieldAccess)
+			if !ok {
+				return true
+			}
+			tid, ok := fa.Target.(*ast.Ident)
+			if !ok || w.IsBound(tid.Name) || !c.assocConstBase(tid.Name, fa.Field, tps, fn.MethodRecv != "") {
+				return true
+			}
+			*slot = &ast.Call{P: fa.P, Callee: fa, AssocConst: true}
+			return false
+		}
+		w.WalkFunc(fn)
+	}
+}
+
+func (c *checker) assocConstBase(name, field string, tps map[string]bool, inMethod bool) bool {
+	if name == "Self" {
+		return inMethod
+	}
+	if tps[name] || isPrimitiveTypeName(name) {
+		return true
+	}
+	if _, ok := c.info.Structs[name]; ok {
+		return true
+	}
+	// An enum's field is a variant unless an impl gives the enum an
+	// associated function of that name, so a misspelt variant stays E036.
+	if c.info.Enums[name] != nil {
+		got, _, found := c.resolveMethod(name, field, nil)
+		return found && strings.HasPrefix(got, "__assoc_")
+	}
+	return false
+}
+
+// assocConstReadOK holds a `Base::NAME` read to a constant and a
+// `Base.f(...)` call to a function, reporting the mismatch at n.
+func (c *checker) assocConstReadOK(n *ast.Call, base, field string, isConst bool) bool {
+	if n.AssocConst == isConst {
+		return true
+	}
+	if n.AssocConst {
+		c.errfCode(n.P, "E043", "%s::%s is an associated function, not a constant; call it as %s::%s(...)", demangle(base), field, demangle(base), field)
+	} else {
+		c.errfCode(n.P, "E043", "%s::%s is an associated constant; read it as %s::%s without an argument list", demangle(base), field, demangle(base), field)
+	}
+	return false
+}
+
 func (c *checker) resolveTraitMethodForParam(paramName, field string) (ast.TraitMethod, string, bool) {
 	decl := c.typeParamDecl(paramName)
 	if decl == nil {
@@ -10484,7 +10552,16 @@ func (c *checker) resolveProjWith(t ast.Type, bindings map[string]ast.Type) ast.
 	switch x := t.(type) {
 	case ast.ProjType:
 		if b, ok := bindings[x.Name]; ok {
-			return c.resolveProjWith(b, bindings)
+			// A binding may itself project the same name off a type
+			// parameter (`type Elem = T::Elem;`); that projection is the
+			// answer, not another use of the binding.
+			rest := make(map[string]ast.Type, len(bindings))
+			for k, v := range bindings {
+				if k != x.Name {
+					rest[k] = v
+				}
+			}
+			return c.resolveProjWith(b, rest)
 		}
 		return ast.ProjType{Base: c.resolveProjWith(x.Base, bindings), Name: x.Name}
 	case ast.ArrayType:
@@ -19049,7 +19126,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// `Concrete.f()` to `__assoc_<Concrete>_f`. Mirrors the
 					// deferred bounded-*method* path below.
 					if c.typeParamDecl(tid.Name) != nil {
-						if tm, boundTrait, found := c.resolveTraitMethodForParam(tid.Name, fa.Field); found && tm.Assoc {
+						tm, boundTrait, found := c.resolveTraitMethodForParam(tid.Name, fa.Field)
+						if n.AssocConst && !(found && tm.Assoc) {
+							c.errfCode(n.P, "E043", "%s has no associated constant %q", demangle(tid.Name), fa.Field)
+							return nil
+						}
+						if found && tm.Assoc {
+							if !c.assocConstReadOK(n, tid.Name, fa.Field, tm.Const) {
+								return nil
+							}
 							tp := ast.ParamType{Name: tid.Name}
 							if len(n.Args) != len(tm.Params) {
 								c.errfCode(n.P, "E004", "%s", arityMsg(fmt.Sprintf("associated function %q", fa.Field), len(tm.Params), len(n.Args), "argument"))
@@ -19085,6 +19170,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 								c.errAmbiguousMethod(fa.FieldPos, tid.Name, fa.Field, c.info.methodCands(tid.Name, fa.Field, tied))
 							}
 							if strings.HasPrefix(mangled, "__assoc_") {
+								if !c.assocConstReadOK(n, tid.Name, fa.Field, c.info.AssocConsts[mangled]) {
+									return nil
+								}
 								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 							} else {
 								// A type-qualified call onto a method that
@@ -19094,6 +19182,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 									demangle(tid.Name), fa.Field, fa.Field, demangle(tid.Name), fa.Field)
 								return nil
 							}
+						} else if n.AssocConst {
+							c.errfCode(n.P, "E043", "%s has no associated constant %q", demangle(tid.Name), fa.Field)
+							return nil
 						}
 					}
 				}

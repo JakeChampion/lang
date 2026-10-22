@@ -1752,6 +1752,10 @@ type Call struct {
 	P      Position
 	Callee Expr
 	Args   []Expr
+	// AssocConst marks a read of an associated constant, `Base::NAME`: the
+	// checker rewrites the field access to this argument-less call of the
+	// impl's `__assoc_<Base>_NAME`, and only such a call may name a constant.
+	AssocConst bool
 	// SourceCallee preserves the written builtin name when target adaptation
 	// rewrites Callee. It is diagnostic metadata, not the resolved call target.
 	SourceCallee string
@@ -2124,11 +2128,6 @@ type FieldAccess struct {
 	Target   Expr
 	Field    string
 	FieldPos Position
-	// PathSep records that the source used the path separator `::`
-	// (`Type::method`, `mod::func`) rather than `.`. Purely cosmetic — the
-	// checker / modload treat both identically; it only lets the printer
-	// round-trip the separator the author wrote. See #2700.
-	PathSep bool
 }
 
 // Lambda is an anonymous function expression: `(x: i32): i32 => x`. It's
@@ -3274,8 +3273,7 @@ type FuncDecl struct {
 	MethodSimpleName string
 	// ImplTrait names the trait an `impl Trait for Type` block provided
 	// this method (or associated function) through, in its mangled form.
-	// Empty for an inherent method, an inherent `impl Type` block, and a
-	// plain function. The checker uses it to key Info.TraitMethods /
+	// Empty for a receiver method and a plain function. The checker uses it to key Info.TraitMethods /
 	// Info.MethodOwners so two traits offering the same method name for
 	// one type stay distinguishable.
 	ImplTrait string
@@ -3294,6 +3292,10 @@ type FuncDecl struct {
 	// signature is substituted to the impl type at parse time, exactly
 	// like an ordinary impl method.
 	AssocType string
+	// AssocConst marks an impl's `const NAME: T = expr;` — an associated
+	// function (AssocType set, no parameters) whose body returns expr and
+	// whose reads are spelled `Base::NAME`.
+	AssocConst bool
 	// ImplWritten is an impl method's signature as written, before `Self`
 	// became the impl type and `self` the receiver, for the formatter.
 	// Nil outside an impl block.
@@ -3703,6 +3705,10 @@ type TraitMethod struct {
 	Params []Param
 	Result Type
 	Assoc  bool
+	// Const marks an associated constant — `const NAME: T;` or, with a
+	// Body holding its default, `const NAME: T = expr;`. It is an
+	// associated function with no parameters, read as `Base::NAME`.
+	Const bool
 	// Body, when non-nil, is a default implementation: the trait method
 	// was written `function f(self: Self): T { … }` rather than ending
 	// at a `;`. An `impl` that omits a defaulted method inherits a copy

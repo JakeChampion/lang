@@ -1458,7 +1458,7 @@ function splice_leaves(r: irtables.LowerResult, self: string, reg: irtables.SigR
 }
 
 function captured_leaf_word(o: ir.Op, word: i32, scalar_words: i32[]): i32 {
-  if (o.kind_tag != ir.op_call_word().kind_tag) {
+  if (o.kind_tag != ir.K_CALL_WORD) {
     return 0 - 1;
   }
   if (o.width == 64) {
@@ -1481,7 +1481,7 @@ struct SpliceBody { ops: ir.Op[], word: i32, scalar_words: i32[] }
 
 function splice_leaf_body(leaf: irtables.LowerResult, base: i32, ret: i32, word: i32, scalar_words: i32[]): SpliceBody {
   let out: ir.Op[] = [];
-  let k_ret_word: i32 = ir.op_ret_word().kind_tag;
+  let k_ret_word: i32 = ir.K_RET_WORD;
   let depth: i32 = 0;
   for b in leaf.ops {
     let k: i32 = b.kind_tag;

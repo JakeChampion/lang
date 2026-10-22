@@ -16,7 +16,7 @@ func TestMethodCallArgumentNumbering(t *testing.T) {
 		{"cell set", `function main(): i32 { let c = cell_new(1); c.set("x"); return 0; }`,
 			"argument 1 to \"set\": expected i32, got string"},
 		{"user method", `struct P { x: i32 }
-impl P { function add(self: Self, y: i32, z: string): i32 { return self.x + y; } }
+function (self: P) add(y: i32, z: string): i32 { return self.x + y; }
 function main(): i32 { let p = P { x: 1 }; return p.add(2, 3); }`,
 			"argument 2 to \"add\": expected string, got i32"},
 		{"plain call", `function f(a: i32, b: string): i32 { return a; }
