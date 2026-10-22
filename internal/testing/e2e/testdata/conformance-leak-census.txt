@@ -140,6 +140,7 @@ char_cast_receiver                                   0
 char_eq_ord_hash                                     0
 checked_int_conversion                               0
 closure_adder                                        0
+closure_capture_rebind_enum_variant                  0
 closure_capture_shared_cell                          0
 closure_captures_builtin_record_binding              0
 closure_captures_defining_scope                      0
