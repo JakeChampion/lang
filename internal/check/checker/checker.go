@@ -5023,6 +5023,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// prepended to the parameter list, so codegen never has to know
 	// about methods.
 	for _, fn := range prog.Funcs {
+		// Before any receiver is hoisted, a method is still told apart from
+		// the entry point.
+		if fn.Name == "main" && fn.Receiver == nil && fn.AssocType == "" && fn.Body != nil {
+			c.checkMainSignature(fn)
+		}
 		if fn.AssocType != "" {
 			// Associated function (`impl … for T { function f(): Self }`):
 			// no receiver, called as `T.f(args)`. Hoist to a flat
@@ -13283,9 +13288,6 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	// `(x: i32) => e` has no annotation slot at all.)
 	if fn.ReturnUnannotated {
 		c.errfCode(fn.P, "E081", "missing return type on function %q; declare it explicitly (use `: void` if it returns nothing)", fn.Name)
-	}
-	if fn.Name == "main" {
-		c.checkMainSignature(fn)
 	}
 
 	// Return-type inference: a plain (non-method, non-generic) function

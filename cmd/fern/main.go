@@ -916,9 +916,14 @@ func runInterp(srcPath string, argv []string) (int, error) {
 		return 1, err
 	}
 	// Clamp main's return value to a process exit code. The AST
-	// interpreter wraps i32 in interp.Number; void main returns
-	// interp.Void. Anything else is a misuse — return 0 + a warning
-	// rather than panic.
+	// interpreter wraps an integer in interp.Number and a boolean in
+	// interp.Bool; a void main returns interp.Void, status 0.
+	if b, ok := v.(interp.Bool); ok {
+		if b {
+			return 1, nil
+		}
+		return 0, nil
+	}
 	if n, ok := v.(interp.Number); ok {
 		// POSIX exit status is the low 8 bits of the value passed to
 		// exit() — two's complement for a negative value — so the compiled
