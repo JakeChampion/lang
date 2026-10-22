@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -937,6 +938,33 @@ func TestAssignmentIsAStatement(t *testing.T) {
 		if _, err := Parse(src); err != nil {
 			t.Errorf("assignment statement refused: %s: %v", src, err)
 		}
+	}
+}
+
+// A compound assignment stands alone: joined to another assignment, either
+// side, it is a P001 at the operator that joins them.
+func TestCompoundAssignmentStandsAlone(t *testing.T) {
+	for _, tc := range []struct {
+		stmt string
+		col  int
+	}{
+		{"a += b = 1;", 10},
+		{"a = b += 5;", 9},
+		{"a += b += 5;", 10},
+		{"a = b = c += 2;", 13},
+	} {
+		src := "function f(): i32 {\n  let a = 0; let b = 0; let c = 0;\n  " + tc.stmt + "\n  return a;\n}"
+		_, err := Parse(src)
+		if err == nil || !hasParseCode(err, "P001") || !strings.Contains(err.Error(), chainedCompoundMessage) {
+			t.Errorf("%s: want P001 %q, got %v", tc.stmt, chainedCompoundMessage, err)
+			continue
+		}
+		if at := "at 3:" + strconv.Itoa(tc.col) + ":"; !strings.Contains(err.Error(), at) {
+			t.Errorf("%s: want the error %s, got %v", tc.stmt, at, err)
+		}
+	}
+	if _, err := Parse("function f(): i32 { let a = 0; let b = 0; a = b = 1; a += 2; return a; }"); err != nil {
+		t.Errorf("a plain chain and a lone compound assignment: %v", err)
 	}
 }
 

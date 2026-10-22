@@ -198,6 +198,10 @@ isn't significant.
 - **`let name: T = expr;`** / **`let name = expr;`** — a binding, with or
   without a type annotation. `let` is the only binding keyword, and every
   binding can be reassigned with `=`.
+- **`a = b = expr;`** / **`a += expr;`** — assignment is a statement, and
+  a chain of `=` assigns every target the one value. A compound assignment
+  (`+=`, `-=`, `<<=`, …) stands alone: it neither joins a chain nor
+  carries one.
 - **`let Pat = expr;`** — irrefutable destructure, the third site taking
   that same pattern. A refutable head belongs to the `let … else` form
   above, which has a branch for the miss.

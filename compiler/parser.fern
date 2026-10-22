@@ -8006,6 +8006,9 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     p = p.advance();  // consume the assign-op token
     let (av_expr, av_p) = parse_expr(p);
     p = av_p;
+    if (is_compound_assign_op(p.peek_punct()) || is_compound && p.peek_punct() == "=") {
+      return chained_compound(p);
+    }
     if (is_assign && p.peek_punct() == "=") {
       return parse_assign_chain(p, [e_expr, av_expr], [aline], [acol]);
     }
@@ -8040,6 +8043,9 @@ function parse_assign_chain(p0: Par, exprs0: ast.Expr[], lines0: i32[], cols0: i
     p = np;
     exprs = exprs.append(nx);
   }
+  if (is_compound_assign_op(p.peek_punct())) {
+    return chained_compound(p);
+  }
   p = p.end_of(exprs[exprs.len() - 1]);
   let stmts: ast.Stmt[] = [];
   let i: i32 = exprs.len() - 2;
@@ -8056,6 +8062,29 @@ function parse_assign_chain(p0: Par, exprs0: ast.Expr[], lines0: i32[], cols0: i
     i = i - 1;
   }
   return (s_if_tagged(stmts, "chain_assign"), p);
+}
+
+// chained_compound refuses a compound assignment joined to another assignment,
+// at the operator that joins them, and skips the rest of the statement.
+function chained_compound(p: Par): (ast.Stmt, Par) {
+  let st: ast.Stmt = s_unknown(p, coded_kind("P001", "a compound assignment stands alone: it cannot be part of an assignment chain"));
+  let depth: i32 = 0;
+  while (!p.at_end()) {
+    let pc: string = p.peek_punct();
+    if (depth == 0 && (pc == ";" || pc == "}")) {
+      break;
+    }
+    if (pc == "(" || pc == "[" || pc == "{") {
+      depth = depth + 1;
+    } else if (pc == ")" || pc == "]" || pc == "}") {
+      depth = depth - 1;
+    }
+    p = p.advance();
+  }
+  if (p.peek_punct() == ";") {
+    p = p.advance();
+  }
+  return (st, p);
 }
 
 // assign_to is the statement `target = rhs` for the `=` at line:col. An array
@@ -29006,7 +29035,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
       }
       // An associated constant: `const NAME: T;` is required of every impl,
       // `const NAME: T = expr;` is a default. Both are receiver-less
-      // functions with no parameters, read as `Base::NAME`.
+      // functions with no parameters, read as `Base.NAME`.
       if (p.peek_keyword() == "const") {
         let (ac_func, ac_p) = parse_assoc_const_decl(p, false);
         p = ac_p;
@@ -29897,7 +29926,7 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
   return Module { ...mod, funcs: funcs, top_stmts: astwalk.substitute_consts(mod.top_stmts, [], t.names, t.values) };
 }
 
-// rewrite_assoc_const_reads turns every `Base::NAME` read — a field access
+// rewrite_assoc_const_reads turns every `Base.NAME` read — a field access
 // whose object names a type rather than a value — into the argument-less
 // associated call it is, its callee marked const_read so the checker holds it
 // to a constant. The object is a struct, an enum (when an impl gives it an

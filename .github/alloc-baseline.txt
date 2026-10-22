@@ -61,5 +61,8 @@
 # on main 53442b39 on the dev container); the leaf inliner no longer builds an
 # Op per op it walks and semreach's walk no longer returns a record per step,
 # 4.5% fewer again.
-x86_64/checker.allocs	25361399
-x86_64/checker.frees	25361399
+# Re-pinned 2026-10-22: main's merges since moved it 3.7% (26,298,117 on main
+# ddc5b110 on the dev container); const_propagate's known table starts on one
+# placeholder op, 0.5% fewer.
+x86_64/checker.allocs	26156335
+x86_64/checker.frees	26156335
