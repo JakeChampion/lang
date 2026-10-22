@@ -308,6 +308,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"dyn-unknown-trait", "function g(x: dyn Nope): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		// `float` after `dyn` or `own` names a trait or a resource, so it is
 		// an unknown name (E021), not the refused type spelling (P001).
+		{"dyn-memberless-trait", "trait Marker {}\nfunction g(x: dyn Marker): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"bound-memberless-trait", "trait Marker {}\nfunction g[T: Marker](x: T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"union-member-named-float", "struct float { n: i32 }\nstruct B { n: i32 }\ntype A = float | B;\nfunction main(): i32 { return 0; }\n", nil},
+		{"union-member-float-undeclared", "struct B { n: i32 }\ntype A = float | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"dyn-float-is-a-trait-name", "function g(x: dyn float): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"own-float-is-a-resource-name", "function g(x: own float): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"dyn-undefined-method", "trait Speak { function say(self: Self): i32; }\nimpl Speak for i32 { function say(self: Self): i32 { return self + 100; } }\nfunction f(s: dyn Speak): i32 { return s.nope(); }\nfunction main(): i32 { return f(1); }\n", []string{"E021"}},

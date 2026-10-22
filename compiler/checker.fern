@@ -25231,32 +25231,60 @@ function e021_unknown_dyn_trait_diags(mod: parser.Module, focus: util.NameIndex)
     if (!in_focus(focus, fn)) {
       continue;
     }
-    for base in e021_dyn_trait_names(fn) {
+    for site in e021_dyn_trait_sites(fn) {
+      let base: string = site.spelling;
       if (!util.has_str(seen, base) && !bound_import_unloaded(base, imports, mod.trait_reqs) && bound_trait_req(base, fn.module, mod.trait_reqs) < 0) {
         seen = seen.append(base);
-        out = out.append(dg_at("E021", "unknown trait \"" + util.demangle(bound_trait_display(base, fn.module, mod.trait_reqs)) + "\" in `dyn` type", fn.line, fn.col));
+        out = out.append(dg_at("E021", "unknown trait \"" + util.demangle(bound_trait_display(base, fn.module, mod.trait_reqs)) + "\" in `dyn` type", site.line, site.col));
       }
     }
   }
   return out;
 }
 
-// e021_dyn_trait_names is every trait a `dyn` type in fn's parameters, return
-// type or local annotations names, each `+` entry separately.
-function e021_dyn_trait_names(fn: parser.FuncDecl): string[] {
-  let spells: string[] = e021_dyn_locals_of(fn.body).append(fn.ret_type);
+// DynSite is a `dyn` spelling and where native reports it: the function for a
+// parameter or the return type, the `let` for a local annotation.
+struct DynSite { spelling: string, line: i32, col: i32 }
+
+// e021_dyn_trait_sites is every trait a `dyn` type in fn's parameters, return
+// type or local annotations names, each `+` entry separately, in the order
+// native visits them.
+function e021_dyn_trait_sites(fn: parser.FuncDecl): DynSite[] {
+  let sites: DynSite[] = [];
   for param in fn.params {
-    spells = spells.append(param.type_name);
+    sites = sites.append(DynSite { spelling: param.type_name, line: fn.line, col: fn.col });
   }
-  let names: string[] = [];
-  for sp in spells {
-    if (e021_dyn_target(sp).len() > 0) {
-      for entry in parser.split_plus_bounds(e021_dyn_element(sp)) {
-        names = names.append(parser.parse_type_ref(util.trim(entry)).base);
+  sites = sites.append(DynSite { spelling: fn.ret_type, line: fn.line, col: fn.col });
+  for stmt in fn.body {
+    sites = astwalk.fold_stmt_nodes(stmt, sites, e021_dyn_site_at, e021_no_site, astwalk.descend_all);
+  }
+  let out: DynSite[] = [];
+  for site in sites {
+    if (e021_dyn_target(site.spelling).len() > 0) {
+      for entry in parser.split_plus_bounds(e021_dyn_element(site.spelling)) {
+        out = out.append(DynSite { spelling: parser.parse_type_ref(util.trim(entry)).base, line: site.line, col: site.col });
       }
     }
   }
-  return names;
+  return out;
+}
+
+function e021_dyn_site_at(st: ast.Stmt, own a: DynSite[]): DynSite[] {
+  match (st) {
+    ast.StmtVar(v) => {
+      if (e021_dyn_target(v.type_name).len() > 0) {
+        return a.append(DynSite { spelling: v.type_name, line: v.line, col: v.col });
+      }
+      return a;
+    },
+    _ => {
+      return a;
+    }
+  }
+}
+
+function e021_no_site(e: ast.Expr, own a: DynSite[]): DynSite[] {
+  return a;
 }
 
 // --- E060 / E062 / E021: dyn downcast target, ambiguous dyn method (#4347),

@@ -1865,13 +1865,21 @@ function unit_type_message(): string {
 
 // at_float_type reports `float` written as a type name, which the language
 // refuses in favour of `f64`: not the head of a module path (`float.x`), not a
-// segment of one (`m.float`), and not the trait or resource name after `dyn`,
-// `+`, `own` or `borrow`.
+// segment of one (`m.float`), not a union member, and not the trait or
+// resource name after `dyn`, a `dyn` continuation's `+`, `own` or `borrow`.
 function at_float_type(p: Par, seg: string): boolean {
   if (seg != "float" || p.peek_punct_at(1) == ".") {
     return false;
   }
-  return p.pos == 0 || !util.has_str([".", "dyn", "+", "own", "borrow"], tok_spelling(p.toks[p.pos - 1]));
+  if (p.pos == 0) {
+    return true;
+  }
+  let prev: string = tok_spelling(p.toks[p.pos - 1]);
+  // A union member is a struct name: `type A = float | B;`.
+  if (prev == "|" || prev == "=" && p.peek_punct_at(1) == "|") {
+    return false;
+  }
+  return !util.has_str([".", "dyn", "+", "own", "borrow"], prev);
 }
 
 function float_type_message(): string {
@@ -8867,6 +8875,9 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
   // `"dyn Error"` spelling. Without it the payload type is stored as
   // `"dynError"` and the dyn-dispatch guard (`rty[0:4] == "dyn "`) misses.
   let prev_ident: boolean = false;
+  // The bracket depth a `dyn` opened at, whose `+` continues it until the
+  // argument ends; -1 outside one.
+  let dyn_depth: i32 = 0 - 1;
   while (depth > 0 && !p.at_end()) {
     let pk: string = p.peek_punct();
     if (pk == "[") {
@@ -8881,12 +8892,18 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
       if (depth == 0) {
         break;
       }
+      if (dyn_depth > depth) {
+        dyn_depth = 0 - 1;
+      }
       inner = inner + "]";
       p = p.advance();
       prev_ident = false;
       continue;
     }
     if (pk == ",") {
+      if (dyn_depth == depth) {
+        dyn_depth = 0 - 1;
+      }
       p = p.advance();
       // A tuple type takes no trailing comma; a type-argument list does.
       if (p.peek_punct() == ")") {
@@ -8902,6 +8919,9 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
     // top-level `parse_type` spelling (` + ` joined) so the dyn payload
     // type round-trips identically.
     if (pk == "+") {
+      if (dyn_depth != depth) {
+        p = p.expect("]");
+      }
       inner = inner + " + ";
       p = p.advance();
       prev_ident = false;
@@ -8970,6 +8990,9 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
     }
     if (seg.len() == 0) {
       break;
+    }
+    if (seg == "dyn") {
+      dyn_depth = depth;
     }
     if (misused_handle_word(p, seg)) {
       p = p.handle_word_misuse(seg);
@@ -9414,44 +9437,34 @@ function parse_type_param_list(p: Par): (TpList, Par) {
           }
         }
         // A parametrised-trait bound (`T: Iterator[i32]`) carries a
-        // bracketed type-arg list after the trait name — consume the
-        // balanced `[ … ]` (possibly nested) so the bound parses and
-        // the function stays on the monomorphisation / IR path rather
-        // than mis-parsing at the `[` and bailing.
+        // A bound's type arguments are types, read by the type parser as
+        // native reads them, so a refused spelling in one is refused here.
         if (p.peek_punct() == "[") {
-          let depth: i32 = 0;
-          let bgo: boolean = true;
+          p = p.advance();
           let bargs: string = "";
-          while (bgo && !p.at_end()) {
-            let bpk: string = p.peek_punct();
-            if (bpk == "[") {
-              depth = depth + 1;
-              bargs = bargs + "[";
-              p = p.advance();
-            } else if (bpk == "]") {
-              depth = depth - 1;
-              bargs = bargs + "]";
-              p = p.advance();
-              if (depth == 0) {
-                bgo = false;
-              }
-            } else if (bpk == ",") {
+          while (!p.at_end() && p.peek_punct() != "]") {
+            let barg_at: i32 = p.pos;
+            let (barg, barg_ret, barg_p) = parse_type_name(p);
+            p = barg_p;
+            if (p.pos == barg_at) {
+              p = p.expected_type().advance();
+              continue;
+            }
+            if (bargs.len() > 0) {
               bargs = bargs + ", ";
+            }
+            bargs = bargs + barg;
+            if (p.peek_punct() == ",") {
               p = p.advance();
-            } else if (bpk == "=") {
+            } else if (p.peek_punct() != "]") {
               // An associated-type pin belongs to a `dyn` type, not a bound.
-              p = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \"]\", got " + tok_desc(p.peek()))) };
-              p = p.advance();
-            } else {
-              let bseg: string = p.peek_ident();
-              if (bseg.len() == 0) {
-                bseg = p.peek_keyword();
-              }
-              bargs = bargs + bseg;
-              p = p.advance();
+              p = p.expect("]").advance();
             }
           }
-          tname = tname + bargs;
+          if (p.peek_punct() == "]") {
+            p = p.advance();
+          }
+          tname = tname + "[" + bargs + "]";
         }
         if (tname.len() > 0) {
           if (this_bounds.len() > 0) {
@@ -30189,14 +30202,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         trait_defaults = trait_defaults.append(tpr_defaults[tdi]);
         tdi = tdi + 1;
       }
-      // Retain the trait's required (abstract) method set for E021 (#4347).
-      // Retain a trait's requirement record when it has abstract methods
-      // OR supertraits — a supertrait-only trait (`trait Num: Add + …{}`)
-      // has no methods but still drives the E021 supertrait-impl check —
-      // OR defaults, which a `dyn` of the trait calls.
-      if (tpr_req.methods.len() > 0 || tpr_req.supertraits.len() > 0 || tpr_req.assoc_sigs.len() > 0 || tpr_req.default_sigs.len() > 0) {
-        trait_reqs = trait_reqs.append(tpr_req);
-      }
+      // Every declared trait keeps its requirement record, a member-less one
+      // included: it is how the checker knows the trait exists.
+      trait_reqs = trait_reqs.append(tpr_req);
       continue;
     }
     if (kw == "impl") {
