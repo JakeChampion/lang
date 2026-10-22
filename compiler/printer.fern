@@ -5227,7 +5227,7 @@ function check_const_and_for_sugar(): i32 {
   // The map form stores its two binders comma-joined in the one field;
   // reprinting that bare gives `for k,v in m`, which does not parse.
   let outMap: string = print_module(parser.parse_module(lexer.tokenize(
-    "function main(m: map[string, i32]): i32 { let t: i32 = 0; for (k, v) in m { t = t + v; } return t; }",
+    "function f(m: map[string, i32]): i32 { let t: i32 = 0; for (k, v) in m { t = t + v; } return t; }",
   )));
   if (!util.contains(outMap, "for (k, v) in m {")) {
     return 269;

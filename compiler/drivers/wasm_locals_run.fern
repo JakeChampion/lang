@@ -42,7 +42,7 @@ function list(xs: i32[]): string {
 }
 
 function show(name: string, ops: ir.Op[], n_params: i32, n_locals: i32, i64_slots: i32[], f64_slots: i32[]): string {
-  let f: wasmlocals.Frame = wasmlocals.coalesce(ops, n_params, n_locals, i64_slots, f64_slots);
+  let f: wasmlocals.Frame = wasmlocals.coalesce(ops, n_params, n_locals, i64_slots, f64_slots, []);
   return name + ": " + render(f.ops) + " | n_locals=" + util.i32_to_string(f.n_locals)
     + " i64=" + list(f.i64_slots) + " f64=" + list(f.f64_slots) + "\n";
 }
