@@ -22,7 +22,7 @@ type Version struct{ Major, Minor, Patch int }
 
 // ParseVersion parses "MAJOR.MINOR.PATCH". Each part must be a plain run of
 // decimal digits: the signed spellings strconv.Atoi also accepts ("1.+2.3",
-// "1.-0.3") are rejected here, matching manifest.isVersion. Admitting them
+// "1.-0.3") are rejected here, matching manifest.IsVersion. Admitting them
 // let an index key parse as a version whose String() spelled it differently,
 // so the entry could never be looked up again.
 func ParseVersion(s string) (Version, error) {

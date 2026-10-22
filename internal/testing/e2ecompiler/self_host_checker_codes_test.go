@@ -1608,6 +1608,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// needs core/iter, which these single-file rows do not load: the
 		// for_over_* conformance cases cover it.
 		{"e083-unbounded-type-parameter", "function each[T](v: T): i32 { for x in v { } return 0; }\nfunction main(): i32 { return each(1); }\n", []string{"E083"}},
+		// E084: main takes no parameters and returns an integer, a boolean or
+		// void; an i64 or boolean result is accepted.
+		{"e084-main-parameter", "function main(argv: string[]): i32 { return argv.len(); }\n", []string{"E084"}},
+		{"e084-main-string-result", "function main(): string { return \"hi\"; }\n", []string{"E084"}},
+		{"e084-main-both", "function main(argv: string[]): f64 { return 1.5; }\n", []string{"E084", "E084"}},
+		{"e084-main-i64-ok", "function main(): i64 { return 1 as i64; }\n", nil},
+		{"e084-main-boolean-ok", "function main(): boolean { return true; }\n", nil},
+		{"e084-method-named-main-ok", "struct P { x: i32 }\nfunction (p: P) main(n: i32): string { return \"m\"; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e083-iter-returns-no-iterator", "struct Counter { n: i32 }\nfunction (c: Counter) iter(): i32 { return c.n; }\nfunction main(): i32 { let k: Counter = Counter { n: 3 }; for n in k { } return 0; }\n", []string{"E083"}},
 		{"e082-parameter-shadows-a-view", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (v: i32): i32 => v + 1; return g(v.len()); }\nfunction main(): i32 { return f(\"ab\"); }\n", nil},
 		{"e082-shared-struct-graph", e082SharedChain("i32"), nil},
@@ -3162,8 +3170,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// ast.EnumType), so a match / if-let on the value draws E023 at the
 		// scrutinee — alongside the E064 the annotation itself draws. A
 		// known enum / builtin Option match stays clean.
-		{"e023-match-unknown-enum", "function main(s: Statuus[i32]): i32 {\n    match (s) {\n        _ => { return 0; }\n    }\n}\n", []string{"E023", "E064"}},
-		{"e023-iflet-unknown-enum", "function main(s: Statuus[i32]): i32 {\n    if let Some(v) = s {\n        return 0;\n    }\n    return 0;\n}\n", []string{"E023", "E064"}},
+		{"e023-match-unknown-enum", "function f(s: Statuus[i32]): i32 {\n    match (s) {\n        _ => { return 0; }\n    }\n}\nfunction main(): i32 { return 0; }\n", []string{"E023", "E064"}},
+		{"e023-iflet-unknown-enum", "function f(s: Statuus[i32]): i32 {\n    if let Some(v) = s {\n        return 0;\n    }\n    return 0;\n}\nfunction main(): i32 { return 0; }\n", []string{"E023", "E064"}},
 		{"e023-known-enum-match-ok", "enum Color { Red, Green }\nfunction f(c: Color): i32 { match (c) { Red => { return 1; }, Green => { return 2; } } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e023-option-match-ok", "function main(): i32 { let o: Option[i32] = Some(3); match (o) { Some(v) => { return v; }, None => { return 0; } } }\n", nil},
 		// E044 (unsupported capture type): a lambda capturing a value with
@@ -4249,6 +4257,10 @@ function main(): i32 { return 0; }`},
 		// trait, so conformance fails and the self-host refuses what native
 		// accepts. This is what pins dyn_trait_set's bracket depth.
 		{"dyn-assoc-pin-holds-a-multi-trait-set", "trait A { function f(self: Self): i32; }\ntrait B { function g(self: Self): i32; }\ntrait Holder { type Item; function get(self: Self): i32; }\nstruct S { n: i32 }\nimpl A for S { function f(self: Self): i32 { return 1; } }\nimpl B for S { function g(self: Self): i32 { return 2; } }\nstruct H { n: i32 }\nimpl Holder for H { type Item = dyn A + B; function get(self: Self): i32 { return 7; } }\nfunction main(): i32 { let h: dyn Holder[Item = dyn A + B] = H { n: 0 }; return h.get(); }\n"},
+		// The same `+` inside a bound's trait argument: `Conv[dyn A + B]` is one
+		// bound, so M needs Conv and A but not B, and B's method is not T's.
+		{"bound-argument-holds-a-multi-trait-set", "trait A { function a(self: Self): i32; }\ntrait B { function b(self: Self): i32; }\ntrait Conv[T] { function conv(self: Self): i32; }\nstruct M { n: i32 }\nimpl A for M { function a(self: Self): i32 { return self.n; } }\nimpl Conv[dyn A + B] for M { function conv(self: Self): i32 { return 2; } }\nfunction via[T: Conv[dyn A + B] + A](x: T): i32 { return x.conv() + x.a(); }\nfunction main(): i32 { return via(M { n: 4 }); }\n"},
+		{"bound-argument-trait-is-not-a-bound-e021", "trait A { function a(self: Self): i32; }\ntrait B { function b(self: Self): i32; }\ntrait Conv[T] { function conv(self: Self): i32; }\nstruct M { n: i32 }\nimpl A for M { function a(self: Self): i32 { return self.n; } }\nimpl B for M { function b(self: Self): i32 { return 1; } }\nimpl Conv[dyn A + B] for M { function conv(self: Self): i32 { return 2; } }\nfunction via[T: Conv[dyn A + B] + A](x: T): i32 { return x.b(); }\nfunction main(): i32 { return via(M { n: 4 }); }\n"},
 		{"dyn-coerce-enum-and-primitive-ok", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction describe(s: dyn Shape): i32 { return s.area(); }\nenum E { A, B(i32) }\nimpl Shape for E { function area(self: Self): i32 { return 1; } }\nimpl Shape for i32 { function area(self: Self): i32 { return self; } }\nimpl Shape for string { function area(self: Self): i32 { return self.len(); } }\nfunction main(): i32 { let s: string = \"ab\"; return describe(E.A) + describe(E.B(2)) + describe(7) + describe(s); }\n"},
 		{"dyn-coerce-two-traits", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nstruct Other { x: i32 }\nfunction describe(s: dyn Shape): i32 { return s.area(); }\ntrait Named { function name(self: Self): string; }\nimpl Named for Square { function name(self: Self): string { return \"sq\"; } }\nimpl Named for Other { function name(self: Self): string { return \"o\"; } }\nfunction both(x: dyn Shape + Named): i32 { return x.area(); }\nfunction main(): i32 { return both(Square { side: 1 }) + both(Other { x: 1 }); }\n"},
 		// A `dyn` argument of an enum takes a concrete payload only where the

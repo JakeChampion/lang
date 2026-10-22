@@ -67,7 +67,14 @@ error; change an existing source by hand.
 fern -add helper path:../helper
 fern -add webkit url:https://example.com/webkit.tar.gz   # fetches, records the hash
 fern -add lexer  workspace
+fern -add json   version:1.2.0                           # "1.2.0", resolved by -resolve
+fern -grant net,time -add kv path:../kv                  # { path = "../kv", capabilities = ["net", "time"] }
 ```
+
+`-grant` writes a `capabilities` list on any form; `-grant none` writes an
+empty one, which denies every capability. A package named with a `-` is
+imported by that name and qualified with `_` in its place:
+`import "my-lib";` then `my_lib.f()`.
 
 ## The hash is the identity
 

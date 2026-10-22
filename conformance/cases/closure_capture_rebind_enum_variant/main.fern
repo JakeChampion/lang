@@ -1,0 +1,29 @@
+// A closure reads a captured value its enclosing body rebinds, so the closure
+// sees the new value. A variant keeps the enum it was built as through that
+// rebind: B.X dispatches to B's impl although A declares an X too, and a
+// struct keeps the type arguments it was built at.
+import "std/i32";
+
+trait Named { function name(self: Self): i32; }
+
+enum A { X(i32), Y }
+enum B { X(i32), Z }
+
+impl Named for A { function name(self: Self): i32 { return 100; } }
+impl Named for B { function name(self: Self): i32 { return 200; } }
+
+struct Box[T] { v: T }
+
+function main(): i32 {
+    let v: B = B.X(1);
+    let f: () => i32 = (): i32 => { return v.name(); };
+    let b: Box[i32] = Box { v: 1 };
+    let g: () => i32 = (): i32 => { return b.v; };
+    let i: i32 = 0;
+    while (i < 3) {
+        v = B.X(i);
+        b = Box { v: i + 10 };
+        i = i + 1;
+    }
+    return f() / 10 + g();
+}

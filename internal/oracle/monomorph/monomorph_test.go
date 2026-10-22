@@ -394,11 +394,12 @@ function main(): i32 {
 struct P { x: i32 }
 function main(): i32 { return id(P { x: 7 }).x; }`},
 		{node: "TryOp", src: `function id[T](x: T): T { return x; }
-function main(): Option[i32] {
+function run(): Option[i32] {
     let o: Option[i32] = id(Some(7));
     let v: i32 = o?;
     return Some(v);
-}`},
+}
+function main(): i32 { if let Some(v) = run() { return v; } return 0; }`},
 		{node: "IfExpr", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
     return if (id(true)) { id(1) } else { id(2) };

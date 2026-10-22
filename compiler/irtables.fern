@@ -1076,6 +1076,10 @@ pub struct LowerResult {
   // f64_slots: the local slots holding f64 values; the wasm backend declares
   // these (local f64). The register backends ignore it (f64 shares the slot).
   f64_slots: i32[],
+  // v128_slots: the local slots holding lane values (ir.is_lane_kind); the
+  // wasm backend declares these (local v128). The register backends read
+  // the lane values off the SSA instead (ssa.lane_values).
+  v128_slots: i32[],
   // str_slots: the local slots holding strings. Carried for the verifier
   // (#6639), not for emission — a string is one operand slot on the
   // registers and two on wasm32, so a stack model needs the distinction.
