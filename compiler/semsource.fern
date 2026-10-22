@@ -2651,9 +2651,19 @@ function builtin_concat(c: ast.ExprCall, s: State): Value {
 
 // `xs.join(sep)` on a string array, which the parser folds to std/array's
 // `__carrm_string__join(xs, sep)`, is the runtime's one-allocation join rather
-// than std/array's builder-backed body.
+// than std/array's builder-backed body. A program's own `(xs: string[]) join`
+// takes the same name, so the declaration must have std/array's shape: a
+// string separator and a string result.
 function join_kernel(name: string, c: ast.ExprCall, s: State): boolean {
-  return c.args.len() == 2 && name == parser.concrete_array_method_name("string[]", "join") && is_string_array(checked(c.args[0], s));
+  if (c.args.len() != 2 || name != parser.concrete_array_method_name("string[]", "join") || !is_string_array(checked(c.args[0], s))) {
+    return false;
+  }
+  let at: i32 = ssasem.find_contract(s.contracts, name);
+  if (at < 0) {
+    return true;
+  }
+  let ct: ssasem.Contract = s.contracts.list[at];
+  return ct.params.len() == 2 && semtypes.equal(ct.params[1], t_string()) && semtypes.equal(ct.result, t_string());
 }
 
 function folded_join(c: ast.ExprCall, s: State): Value {
