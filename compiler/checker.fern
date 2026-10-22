@@ -7114,6 +7114,9 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
   if (n.suffix == "u8") {
     return t_u8();
   }
+  if (n.suffix == "usize") {
+    return t_usize();
+  }
   // An `i32` suffix names i32 even past i32-max, where the magnitude rule
   // below would call the literal i64 and the assignment would fail E003
   // instead of the range check's E047. parser.if_expr_rt and
@@ -7510,7 +7513,7 @@ function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
 // index_result_type is check_index_expr over the checked array and index types.
 function index_result_type(at: typeinfo.Type, it: typeinfo.Type): typeinfo.Type {
   if (!is_integer(it)) {
-    return t_unknown("array index must be i32");
+    return t_unknown("array index must be an integer");
   }
   match (at) {
     typeinfo.TypeArray(ta) => {
@@ -16331,12 +16334,11 @@ function struct_name_of(t: typeinfo.Type): string {
 
 function call_diags_index(ix: ast.ExprIndex, s: Scope, out: util.Diag[]): util.Diag[] {
   out = util.append_diags(call_diags(ix.array, s), call_diags(ix.index, s));
-  // E034: an array / string index must be an i32. Mirrors the Go
-  // checker's Index case (index type != i32 -> E034 at the index
-  // position). A missing / unknown index type is skipped (no cascade).
+  // E034: an array / string index must be an integer. A missing / unknown
+  // index type is skipped (no cascade).
   let ixt: typeinfo.Type = check_expr(ix.index, s);
-  if (!is_unknown(ixt) && !type_eq(ixt, t_i32())) {
-    out = out.append(dg_at("E034", "index must be i32, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
+  if (!is_unknown(ixt) && !is_integer(ixt)) {
+    out = out.append(dg_at("E034", "index must be an integer, got " + type_label(ixt), expr_line(ix.index), expr_col(ix.index)));
   }
   // E034: the indexed value must be an array or string. Mirrors the Go
   // checker ("indexing non-array value"); a non-array/string (i32 /

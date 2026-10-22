@@ -1923,13 +1923,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"array-elem-i32-in-string", "function main(): i32 { let a = [\"a\", 1]; return 0; }\n", []string{"E034"}},
 		{"array-elem-homogeneous-i32-ok", "function main(): i32 { let a = [1, 2, 3]; return a[0]; }\n", nil},
 		{"array-elem-homogeneous-string-ok", "function main(): i32 { let a = [\"p\", \"q\"]; return 0; }\n", nil},
-		// E034 (index variant): an array / string index must be an i32.
+		// E034 (index variant): an array / string index must be an integer.
 		{"index-string", "function main(): i32 { let a = [1, 2, 3]; return a[\"x\"]; }\n", []string{"E034"}},
 		{"index-string-on-string", "function main(): i32 { let s = \"abc\"; return s[\"x\"] as i32; }\n", []string{"E034"}},
 		{"index-bool", "function main(): i32 { let a = [1, 2, 3]; let b = true; return a[b]; }\n", []string{"E034"}},
 		{"index-i32-ok", "function main(): i32 { let a = [1, 2, 3]; let i = 1; return a[i]; }\n", nil},
-		{"index-i64", "function main(): i32 { let a = [1, 2, 3]; let i: i64 = 1; return a[i]; }\n", []string{"E034"}},
-		{"index-u8-on-string", "function main(): i32 { let s = \"abc\"; let i: u8 = 1; return s[i] as i32; }\n", []string{"E034"}},
+		{"index-i64-ok", "function main(): i32 { let a = [1, 2, 3]; let i: i64 = 1; return a[i]; }\n", nil},
+		{"index-u8-on-string-ok", "function main(): i32 { let s = \"abc\"; let i: u8 = 1; return s[i] as i32; }\n", nil},
+		{"index-f64", "function main(): i32 { let a = [1, 2, 3]; let i: f64 = 1.0; return a[i]; }\n", []string{"E034"}},
 		// E034 / E037 (non-array/string source): indexing or slicing a value
 		// that isn't an array or string. Arrays / strings stay ok.
 		{"index-non-array", "function main(): i32 { let x = 5; return x[0]; }\n", []string{"E034"}},

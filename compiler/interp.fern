@@ -435,6 +435,33 @@ function is_vuint64(v: Value): boolean {
   }
 }
 
+function is_int_value(v: Value): boolean {
+  match (v) {
+    VInt(_) => {
+      return true;
+    },
+    VInt64(_) => {
+      return true;
+    },
+    VUint(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+// index_in is the integer `v` as an index into `n` elements, or -1 when it
+// falls outside [0, n), whatever its width and signedness.
+function index_in(v: Value, n: i32): i32 {
+  let wide: i64 = vint_as_i64(v);
+  if (wide < 0 || wide >= n as i64) {
+    return 0 - 1;
+  }
+  return wide as i32;
+}
+
 function vint_as_i64(v: Value): i64 {
   match (v) {
     VInt(i) => {
@@ -739,8 +766,8 @@ function v_abort(msg: string): Value {
 
 // index_abort is the out-of-range stop for an index into a `what` ("array"
 // or "string") of length n.
-function index_abort(what: string, i: i32, n: i32): Value {
-  return v_abort(what + " index " + util.i32_to_string(i) + " out of range [0, " + util.i32_to_string(n) + ")");
+function index_abort(what: string, i: string, n: i32): Value {
+  return v_abort(what + " index " + i + " out of range [0, " + util.i32_to_string(n) + ")");
 }
 
 // slice_abort is the stop for a slice [lo:hi] that does not fit a source of
@@ -5372,37 +5399,23 @@ function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
   if (is_err(iv)) {
     return iv;
   }
+  if (!is_int_value(iv)) {
+    return v_err("index must be an integer");
+  }
   match (av) {
     VArr(arr) => {
-      match (iv) {
-        VInt(ii) => {
-          if (ii.v < 0 || ii.v >= arr.elements.len()) {
-            return index_abort("array", ii.v, arr.elements.len());
-          }
-          return arr.elements[ii.v];
-        },
-        _ => {
-          return v_err("array index must be i32");
-        }
+      let i: i32 = index_in(iv, arr.elements.len());
+      if (i < 0) {
+        return index_abort("array", value_text(iv), arr.elements.len());
       }
+      return arr.elements[i];
     },
     VString(s) => {
-      // String indexing returns the byte at the
-      // given position as i32 — matches the Fern
-      // semantics in the Go pipeline. Useful for
-      // any text-processing code (the lexer's
-      // own implementation reads bytes this way).
-      match (iv) {
-        VInt(ii) => {
-          if (ii.v < 0 || ii.v >= s.v.len()) {
-            return index_abort("string", ii.v, s.v.len());
-          }
-          return v_int(s.v[ii.v] as i32);
-        },
-        _ => {
-          return v_err("string index must be i32");
-        }
+      let si: i32 = index_in(iv, s.v.len());
+      if (si < 0) {
+        return index_abort("string", value_text(iv), s.v.len());
       }
+      return v_int(s.v[si] as i32);
     },
     _ => {
       return v_err("can only index into an array or string");
@@ -6141,7 +6154,7 @@ function map_iter_method(it: VStruct, name: string): Value {
     return v_bool(pos < col.len());
   }
   if (pos >= col.len()) {
-    return index_abort("map iterator", pos, col.len());
+    return index_abort("map iterator", util.i32_to_string(pos), col.len());
   }
   return col[pos];
 }
@@ -6231,7 +6244,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         }
         let wi: i32 = vint_bits(args[0]);
         if (wi < 0 || wi >= av.elements.len()) {
-          return index_abort("array", wi, av.elements.len());
+          return index_abort("array", util.i32_to_string(wi), av.elements.len());
         }
         let wout: Value[] = [];
         let wj: i32 = 0;

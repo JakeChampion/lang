@@ -1,0 +1,16 @@
+// spec: AB-01
+//
+// A wide index out of bounds aborts even where its low 32 bits name an
+// element: 4294967297 is 2^32 + 1, so an index narrowed by truncation
+// would read xs[1] (#12707).
+import "std/i32";
+
+function at(xs: i32[], i: i64): i32 {
+    return xs[i];
+}
+
+function main(): i32 {
+    let xs: i32[] = [10, 20, 30];
+    print(at(xs, 4294967297i64).to_string());
+    return 0;
+}
