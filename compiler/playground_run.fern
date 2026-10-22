@@ -187,26 +187,23 @@ function check(merged: parser.Module, files: string[], target: string, target_gi
 }
 
 // interpret evaluates the bundle and reports the program's own exit code, the
-// same mapping fern.fern uses: an i32 result is the code, a boolean is 1/0,
-// the program's own abort (an index out of range) is 1 with its message, and
-// anything else is 254, which is outside the range a Fern `main` can
-// return and so cannot be confused with one. The evaluator's own error says
+// same mapping fern.fern uses: interp.exit_status for main's result (an
+// integer's low byte, a boolean's 1 or 0), the program's own fatal abort (an
+// index out of range) is 134 with its cause line, and anything else is 254,
+// which is outside the range a Fern `main` can return and so cannot be
+// confused with one. The evaluator's own error says
 // why it stopped, on stderr, where the page shows it: a silent 254 is an
 // empty output pane.
 //
 // The program's output has already gone to stdout/stderr by the time this
 // returns: interp.eval_module runs the builtins as it goes.
 function interpret(merged: parser.Module): i32 {
-  match (interp.eval_module(merged)) {
-    interp.VInt(i) => {
-      return i.v;
-    },
-    interp.VBool(b) => {
-      if (b.v) {
-        return 1;
-      }
-      return 0;
-    },
+  let v: interp.Value = interp.eval_module(merged);
+  let (is_status, status) = interp.exit_status(v);
+  if (is_status) {
+    return status;
+  }
+  match (v) {
     interp.VErr(e) => {
       if (e.abort) {
         eprint(e.msg);

@@ -129,6 +129,14 @@ pub struct EmitState {
   // function uses, between the frame record and the slots.
   ssa_frame: i32,
   ssa_save: i32,
+  // lane_consts: the x86-64 lane ops read a 16-byte constant from .rodata
+  // (the sign and magnitude masks, 1.0 and 0.5); set once a function used
+  // one, so the module's tail lays them down.
+  lane_consts: boolean,
+  // ssa_lane_slots marks, per frame slot unit of the SSA function being
+  // emitted, the units a 128-bit lane value occupies (ssa.lane_values: a pair
+  // at an even index), which move as 16 bytes.
+  ssa_lane_slots: boolean[],
   // ssa_trap_suffix is the suffix of the traps the function being emitted reaches,
   // "" for the traps themselves: one that keeps no %rbp traps through the
   // stubs that build the frame it did not (asm_ir.leaf_trap).
@@ -543,6 +551,8 @@ pub function new_state(): EmitState {
     const_agg_ix: util.name_index([]),
     ssa_frame: 0,
     ssa_save: 0,
+    lane_consts: false,
+    ssa_lane_slots: [],
     ssa_trap_suffix: "",
     ssa_x0: 0 - 1,
     reg_entries: irtables.sig_reg_of([]),

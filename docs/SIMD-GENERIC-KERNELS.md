@@ -328,8 +328,8 @@ of them. No PR leaves a type on main that a backend refuses.
 | 1 | This brief | this PR |
 | 2 | Associated constants, both compilers | this PR |
 | 3 | `std/simd`: `Lanes`, `Math`, scalar impls, `Dual`, `DoubleDouble`, benchmark | this PR |
-| 4a | Lane types: the instruction vocabulary on x86-64, arm64 and wasm | this PR (§6 has the file-level plan) |
-| 4b | Lane types: IR ops, the 128-bit register class and spill slot, emission on every backend | after 4a |
+| 4a | Lane types: the instruction vocabulary on x86-64, arm64 and wasm | done (#12945) |
+| 4b | Lane types: IR ops, the 128-bit register class and spill slot, emission on every backend | this PR (§6 has the file-level plan) |
 | 4c | Lane types: `f64x2` / `f32x4` in both front ends, the builtins, the capability tables, both interpreters | after 4b |
 | 5 | `impl Lanes` / `impl Math` for `f64x2` / `f32x4`; array fusion picks the lane instance for a packed `f64[]` map | after 4 |
 | 6 | Const generics; `Vec[N, T]` | follow-on project |

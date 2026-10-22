@@ -19,7 +19,7 @@ pub function f(): A { return Hit; }
 pub function g(): B { return Data(7); }`,
 				"main.fern": "import \"./a\";\n" + decl + `
 function Data(x: string): string { return x; }
-function main(): i32 { let a: a.A = a.f(); let b: a.B = a.g(); return 0; }`,
+function main(): i32 { let x: a.A = a.f(); let y: a.B = a.g(); return 0; }`,
 			}, "main.fern")
 			if err != nil {
 				t.Fatalf("an imported module cannot see the entry's values: %v", err)

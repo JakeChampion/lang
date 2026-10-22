@@ -465,7 +465,7 @@ function __string(st: Decoder, block: u8[]): Decoder {
   if (st.at >= st.end) {
     return __failed(st, Truncated);
   }
-  let huffman: boolean = block[st.at] as i32 >= 128;
+  let coded: boolean = block[st.at] as i32 >= 128;
   st = __integer(st, block, 7);
   if (st.failed) {
     return st;
@@ -476,7 +476,7 @@ function __string(st: Decoder, block: u8[]): Decoder {
     return __failed(st, Truncated);
   }
   let room: i32 = st.max_list - st.total - 32;
-  if (!huffman) {
+  if (!coded) {
     if (n > room) {
       return __failed(st, TooLarge(st.max_list));
     }

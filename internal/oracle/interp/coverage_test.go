@@ -43,11 +43,11 @@ func TestInterpHandlesEveryASTNode(t *testing.T) {
 		{node: "NumberLit", src: `function main(): i32 { return 42; }`},
 		{node: "CastExpr", src: `function main(): i64 { let n: i32 = 7; return n as i64; }`},
 		{node: "BoolLit", src: `function main(): boolean { return true; }`},
-		{node: "StringLit", src: `function main(): string { return "hi"; }`},
+		{node: "StringLit", src: `function main(): i32 { let s: string = "hi"; return s.len(); }`},
 		{node: "FString", src: `
 import "std/i32";
-function main(): string { return f"x={42}"; }`},
-		{node: "FloatLit", src: `function main(): f64 { return 1.5; }`},
+function main(): i32 { let s: string = f"x={42}"; return s.len(); }`},
+		{node: "FloatLit", src: `function main(): i32 { let x: f64 = 1.5; return x as i32; }`},
 		{node: "Ident", src: `function main(): i32 { let x: i32 = 7; return x; }`},
 		{node: "ArrayLit", src: `function main(): i32 { let a: i32[] = [1, 2, 3]; return a[0]; }`},
 		{node: "Index", src: `function main(): i32 { let a: i32[] = [10, 20]; return a[1]; }`},

@@ -1764,14 +1764,13 @@ type rewriter struct {
 	ownTraits  map[string]bool    // names of traits declared in this module (pre-mangle)
 	imports    map[string]*module // local name → imported module
 	errs       []error            // visibility / unresolved-name errors collected during the walk
-	// localVars is the set of identifier names bound as local
-	// variables / parameters in the currently-walking function
-	// body. Populated by `rewriteFuncBody` from the function's
-	// params + a pre-walk that collects `let` declarations. The
-	// Ident rewriter consults the set so a local `let range: u32`
-	// inside a function whose enclosing module also declares
-	// `function range(…)` doesn't get the module-prefix mangling
-	// applied to its uses.
+	// localVars is the set of names a local binds at the point being
+	// rewritten: the parameters, and each `let`, destructure, loop
+	// binder and match-arm binder whose scope the walk is inside, from
+	// its binding on. A local shadows a module-level decl of its name
+	// (`let range: u32` beside `function range(…)`) and an import's
+	// qualifier (`let util = "abc"; util.len()`), so neither is
+	// rewritten under it.
 	localVars map[string]bool
 	// flatNamespace, when true, drops the `<mod>__` prefix on
 	// cross-module references — `int.foo()` becomes `foo()`
@@ -2033,31 +2032,64 @@ func (r *rewriter) importedModule(localName string) (*module, string, bool) {
 	return mod, mod.manglePrefix, true
 }
 
-// rewriteFuncBody walks fn's body with a fresh local-var set
-// scoped to that function. The set is the union of fn's
-// parameters + any `let` declared anywhere in the body,
-// including in nested blocks. The granularity is intentionally
-// coarse — we collect at function granularity, not lexical
-// scope — because we only need to answer "is this Ident a
-// local at *all* in this function?" so the Ident rewriter can
-// skip the module-prefix mangling for local variable
-// references that happen to share a name with a module-level
-// function or const. A var declared inside a block that
-// shadows a function with the same name correctly suppresses
-// the rewrite for *every* use of that name inside the
-// function — that's not lexically precise but it matches the
-// "if there's any local binding, treat it as a local" rule
-// that's correct for our purposes (we'd never want to silently
-// mangle a name that has a local binding somewhere in scope).
+// rewriteFuncBody walks fn's body in a scope holding its parameters.
 func (r *rewriter) rewriteFuncBody(fn *ast.FuncDecl) {
 	prev := r.localVars
 	r.localVars = map[string]bool{}
-	for _, p := range fn.Params {
-		r.localVars[p.Name] = true
-	}
-	collectLocals(fn.Body, r.localVars)
-	r.rewriteBlock(fn.Body)
+	r.withScope(paramNames(fn.Params), func() { r.rewriteBlock(fn.Body) })
 	r.localVars = prev
+}
+
+// withScope runs f with the local set extended by names, restoring it
+// after, so what f binds stays inside its scope.
+func (r *rewriter) withScope(names []string, f func()) {
+	prev := r.localVars
+	locals := make(map[string]bool, len(prev)+len(names))
+	for k := range prev {
+		locals[k] = true
+	}
+	for _, n := range names {
+		locals[n] = true
+	}
+	r.localVars = locals
+	f()
+	r.localVars = prev
+}
+
+// bindStmt adds the names s binds to the current scope, for the
+// statements after it.
+func (r *rewriter) bindStmt(s ast.Stmt) {
+	switch x := s.(type) {
+	case *ast.Var:
+		r.localVars[x.Name] = true
+	case *ast.Destructure:
+		for _, name := range destructureNames(x) {
+			r.localVars[name] = true
+		}
+	}
+}
+
+// destructureNames is every name d binds: its `@` name, its elements, and
+// those of each nested level.
+func destructureNames(d *ast.Destructure) []string {
+	names := append([]string{}, d.Names...)
+	if d.AtName != "" {
+		names = append(names, d.AtName)
+	}
+	for _, sub := range d.Nested {
+		if sub != nil {
+			names = append(names, destructureNames(sub)...)
+		}
+	}
+	return names
+}
+
+func paramNames(params []ast.Param) []string {
+	names := make([]string, len(params))
+	for i, p := range params {
+		names[i] = p.Name
+	}
+	return names
 }
 
 // rewriteTraitDefaultBody mangles a trait method's default body in the
@@ -2074,68 +2106,20 @@ func (r *rewriter) rewriteTraitDefaultBody(m *ast.TraitMethod) {
 	}
 	prev := r.localVars
 	r.localVars = map[string]bool{}
-	for _, p := range m.Params {
-		r.localVars[p.Name] = true
-	}
-	collectLocals(m.Body, r.localVars)
-	r.rewriteBlock(m.Body)
+	r.withScope(paramNames(m.Params), func() { r.rewriteBlock(m.Body) })
 	r.localVars = prev
-}
-
-// collectLocals adds to dst every name b binds — a `let`, a
-// destructure, a `for` binder, and everything a match arm's pattern
-// binds (statement or expression form) — at any depth, INCLUDING
-// inside a block sitting in expression position (`defer { … }`, a
-// value `if`). It runs over ast.Walk rather than its own switch so a
-// new binding form is reachable here the moment the shared walk
-// reaches it.
-//
-// A nested function or lambda is its own scope and is pruned:
-// rewriteNestedFuncBody seeds one from this set and adds its own
-// binders there, so letting them escape would suppress the
-// rewrite of a module name the enclosing body legitimately uses.
-func collectLocals(b *ast.Block, dst map[string]bool) {
-	if b == nil {
-		return
-	}
-	for _, s := range b.Stmts {
-		ast.Walk(s, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.FuncDecl, *ast.Lambda:
-				return false
-			case *ast.Var:
-				dst[x.Name] = true
-			case *ast.Destructure:
-				for _, name := range x.Names {
-					dst[name] = true
-				}
-			case *ast.ForEach:
-				dst[x.Var] = true
-			case *ast.Match:
-				for _, arm := range x.Arms {
-					for _, name := range arm.Binders() {
-						dst[name] = true
-					}
-				}
-			case *ast.MatchExpr:
-				for _, arm := range x.Arms {
-					for _, name := range arm.Binders() {
-						dst[name] = true
-					}
-				}
-			}
-			return true
-		})
-	}
 }
 
 func (r *rewriter) rewriteBlock(b *ast.Block) {
 	if b == nil {
 		return
 	}
-	for _, s := range b.Stmts {
-		r.rewriteStmt(s)
-	}
+	r.withScope(nil, func() {
+		for _, s := range b.Stmts {
+			r.rewriteStmt(s)
+			r.bindStmt(s)
+		}
+	})
 }
 
 func (r *rewriter) rewriteStmt(s ast.Stmt) {
@@ -2154,20 +2138,27 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 	case *ast.Loop:
 		r.rewriteStmt(x.Body)
 	case *ast.For:
-		if x.Init != nil {
-			r.rewriteStmt(x.Init)
-		}
-		r.rewriteExpr(&x.Cond)
-		if x.Step != nil {
-			r.rewriteStmt(x.Step)
-		}
-		r.rewriteStmt(x.Body)
+		r.withScope(nil, func() {
+			if x.Init != nil {
+				r.rewriteStmt(x.Init)
+				r.bindStmt(x.Init)
+			}
+			r.rewriteExpr(&x.Cond)
+			if x.Step != nil {
+				r.rewriteStmt(x.Step)
+			}
+			r.rewriteStmt(x.Body)
+		})
 	case *ast.ForEach:
 		if x.Pattern != nil {
 			r.rewriteDestructureStructNames(x.Pattern)
 		}
 		r.rewriteExpr(&x.Iter)
-		r.rewriteStmt(x.Body)
+		names := []string{x.Var}
+		if x.Pattern != nil {
+			names = append(names, destructureNames(x.Pattern)...)
+		}
+		r.withScope(names, func() { r.rewriteStmt(x.Body) })
 	case *ast.Return:
 		if x.Value != nil {
 			r.rewriteExpr(&x.Value)
@@ -2185,10 +2176,12 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 		for _, arm := range x.Arms {
 			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.P)
 			r.rewritePatElems(arm.Payloads, arm.TupleElems, arm.P)
-			if arm.Guard != nil {
-				r.rewriteExpr(&arm.Guard)
-			}
-			r.rewriteBlock(arm.Body)
+			r.withScope(arm.Binders(), func() {
+				if arm.Guard != nil {
+					r.rewriteExpr(&arm.Guard)
+				}
+				r.rewriteBlock(arm.Body)
+			})
 		}
 	case *ast.Defer:
 		r.rewriteExpr(&x.Expr)
@@ -2207,26 +2200,11 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 	}
 }
 
-// rewriteNestedFuncBody rewrites the body of a nested function
-// (a Lambda expression or a local FuncDecl statement) with the
-// nested function's params and body locals ADDED to the enclosing
-// local-shadow set. Unlike rewriteFuncBody (top-level functions),
-// the enclosing locals stay in the set: a nested function can
-// capture them, and a captured local that shares a module-level
-// function's name must keep resolving to the local.
+// rewriteNestedFuncBody rewrites the body of a nested function (a
+// Lambda or a local FuncDecl) in a scope adding its parameters to the
+// enclosing locals, which it can capture.
 func (r *rewriter) rewriteNestedFuncBody(params []ast.Param, body *ast.Block) {
-	prev := r.localVars
-	locals := make(map[string]bool, len(prev)+len(params))
-	for k := range prev {
-		locals[k] = true
-	}
-	for _, p := range params {
-		locals[p.Name] = true
-	}
-	collectLocals(body, locals)
-	r.localVars = locals
-	r.rewriteBlock(body)
-	r.localVars = prev
+	r.withScope(paramNames(params), func() { r.rewriteBlock(body) })
 }
 
 // rewriteExpr does most of the work — checks every expression node for
@@ -2260,7 +2238,7 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		// FieldAccess shouldn't be visited as a normal field
 		// access because mod isn't a struct.
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok {
-			if id, ok := fa.Target.(*ast.Ident); ok {
+			if id, ok := fa.Target.(*ast.Ident); ok && !r.localVars[id.Name] {
 				if mod, prefix, ok := r.importedModule(id.Name); ok {
 					if en, handled := r.qualifiedVariant(mod, prefix, fa.Field, fa.P); handled {
 						if en != "" {
@@ -2321,7 +2299,7 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 				id.Name = r.selfPrefix + id.Name
 				return
 			}
-			if mod, prefix, ok := r.importedModule(id.Name); ok {
+			if mod, prefix, ok := r.importedModule(id.Name); ok && !r.localVars[id.Name] {
 				if en, handled := r.qualifiedVariant(mod, prefix, x.Field, x.P); handled {
 					if en != "" {
 						*slot = &ast.Ident{P: id.P, Name: x.Field, EnumName: en}
@@ -2408,18 +2386,23 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		for _, arm := range x.Arms {
 			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.P)
 			r.rewritePatElems(arm.Payloads, arm.TupleElems, arm.P)
-			if arm.Guard != nil {
-				r.rewriteExpr(&arm.Guard)
-			}
-			r.rewriteExpr(&arm.Body)
+			r.withScope(arm.Binders(), func() {
+				if arm.Guard != nil {
+					r.rewriteExpr(&arm.Guard)
+				}
+				r.rewriteExpr(&arm.Body)
+			})
 		}
 	case *ast.BlockExpr:
-		for _, st := range x.Stmts {
-			r.rewriteStmt(st)
-		}
-		if x.Tail != nil {
-			r.rewriteExpr(&x.Tail)
-		}
+		r.withScope(nil, func() {
+			for _, st := range x.Stmts {
+				r.rewriteStmt(st)
+				r.bindStmt(st)
+			}
+			if x.Tail != nil {
+				r.rewriteExpr(&x.Tail)
+			}
+		})
 	case *ast.StructLit:
 		// Three shapes here:
 		//   - `Foo { … }` where Foo lives in this module → prefix

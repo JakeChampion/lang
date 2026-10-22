@@ -27,7 +27,7 @@ func writeManifest(t *testing.T, body string) string {
 
 func TestAddPathDependency(t *testing.T) {
 	dir := writeManifest(t, "[package]\nname = \"app\"\n# keep me\n[dependencies]\nx = { path = \"../x\" }\n")
-	if err := runAdd("helper", "path:../helper", dir); err != nil {
+	if err := runAdd("helper", "path:../helper", "", dir); err != nil {
 		t.Fatal(err)
 	}
 	m, err := manifest.Load(dir)
@@ -48,7 +48,7 @@ func TestAddPathDependency(t *testing.T) {
 // to, not a reason to append a second one (#11841).
 func TestAddIntoCommentedTable(t *testing.T) {
 	dir := writeManifest(t, "[package]\nname = \"app\"\n[dependencies]  # deps\nx = { path = \"../x\" }\n")
-	if err := runAdd("helper", "path:../helper", dir); err != nil {
+	if err := runAdd("helper", "path:../helper", "", dir); err != nil {
 		t.Fatal(err)
 	}
 	src, _ := os.ReadFile(filepath.Join(dir, manifest.FileName))
@@ -60,7 +60,7 @@ func TestAddIntoCommentedTable(t *testing.T) {
 
 func TestAddWorkspaceDependencyCreatesTable(t *testing.T) {
 	dir := writeManifest(t, "[package]\nname = \"app\"\n")
-	if err := runAdd("lexer", "workspace", dir); err != nil {
+	if err := runAdd("lexer", "workspace", "", dir); err != nil {
 		t.Fatal(err)
 	}
 	m, err := manifest.Load(dir)
@@ -92,7 +92,7 @@ func TestAddURLComputesAndRecordsHash(t *testing.T) {
 	defer srv.Close()
 
 	dir := writeManifest(t, "[package]\nname = \"app\"\n")
-	if err := runAdd("remote", "url:"+srv.URL+"/pkg.tar.gz", dir); err != nil {
+	if err := runAdd("remote", "url:"+srv.URL+"/pkg.tar.gz", "", dir); err != nil {
 		t.Fatal(err)
 	}
 	m, err := manifest.Load(dir)
@@ -107,17 +107,17 @@ func TestAddURLComputesAndRecordsHash(t *testing.T) {
 
 func TestAddDuplicateRejected(t *testing.T) {
 	dir := writeManifest(t, "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n")
-	if err := runAdd("helper", "path:../other", dir); err == nil {
+	if err := runAdd("helper", "path:../other", "", dir); err == nil {
 		t.Fatal("adding an existing dep should error")
 	}
 }
 
 func TestAddInvalidNameRejected(t *testing.T) {
 	dir := writeManifest(t, "[package]\nname = \"app\"\n")
-	if err := runAdd("1bad", "path:../x", dir); err == nil {
+	if err := runAdd("1bad", "path:../x", "", dir); err == nil {
 		t.Fatal("invalid dep name should error")
 	}
-	if err := runAdd("bad name", "workspace", dir); err == nil {
+	if err := runAdd("bad name", "workspace", "", dir); err == nil {
 		t.Fatal("dep name with a space should error")
 	}
 }
@@ -125,7 +125,7 @@ func TestAddInvalidNameRejected(t *testing.T) {
 func TestAddBadSpecRejected(t *testing.T) {
 	dir := writeManifest(t, "[package]\nname = \"app\"\n")
 	for _, spec := range []string{"1.2", "git:foo", "url:ftp://x", "path:"} {
-		if err := runAdd("dep", spec, dir); err == nil {
+		if err := runAdd("dep", spec, "", dir); err == nil {
 			t.Errorf("spec %q should be rejected", spec)
 		}
 	}
@@ -137,7 +137,7 @@ func TestAddBadSpecRejected(t *testing.T) {
 }
 
 func TestAddNoManifestErrors(t *testing.T) {
-	if err := runAdd("x", "workspace", t.TempDir()); err == nil {
+	if err := runAdd("x", "workspace", "", t.TempDir()); err == nil {
 		t.Fatal("add without a fern.toml should error")
 	}
 }

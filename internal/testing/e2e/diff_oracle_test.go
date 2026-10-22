@@ -279,9 +279,9 @@ func interpRunExit(t *testing.T, src string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	n, ok := v.(interp.Number)
+	status, ok := interp.ExitStatus(v)
 	if !ok {
-		return 0, fmt.Errorf("main returned %T, want a number", v)
+		return 0, fmt.Errorf("main returned %T, want a number, a boolean or void", v)
 	}
-	return int(int64(n) & 0xFF), nil
+	return status, nil
 }

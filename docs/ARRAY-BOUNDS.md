@@ -107,10 +107,8 @@ The cause lines live in `compiler/aborts.fern`, which both emitters and
 the self-host interpreter read; the Go interpreter's copies are pinned to
 it by `TestAbortCausesMatchTheCompiler`. A string's byte index reports the
 string cause, as `slice_unchecked` does; an array, a byte view and `.with`
-report the array cause. Two reads abort only in the interpreters so far: a
-map cursor read past its end (the array cause) and an out-of-range
-`buf_push_range` (the slice cause). The natives read past the end there
-(#12962).
+report the array cause, as does a map cursor's `key()` or `value()` past
+its last entry; an out-of-range `buf_push_range` reports the slice cause.
 
 Under the header is a frame-pointer walk (the `x29` / `rbp` chain,
 bounded to 64 frames). The addresses are raw; build with `-g` and
