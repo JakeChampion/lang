@@ -91,12 +91,15 @@ TypeDecl    = 'type' IDENT [ TypeParams ] '=' Type '|' Type { '|' Type } ';' ;
 
 TraitDecl   = 'trait' IDENT [ TypeParams ] [ ':' Bounds ] '{' { TraitItem } '}' [ ';' ] ;
 TraitItem   = 'type' IDENT [ ':' Bounds ] ';'
+            | 'const' IDENT ':' Type [ '=' Expr ] ';'
             | { FuncMod } 'function' [ Receiver ] IDENT [ TypeParams ]
               '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' )
             ;
 
 ImplDecl    = 'impl' [ TypeParams ] Type 'for' Type '{' { ImplItem } '}' [ ';' ] ;
-ImplItem    = 'type' IDENT '=' Type ';' | Attribute | FuncDecl ;
+ImplItem    = 'type' IDENT '=' Type ';'
+            | 'const' IDENT ':' Type '=' Expr ';'
+            | Attribute | FuncDecl ;
 
 ConstDecl   = 'const' IDENT [ ':' Type ] '=' Expr ';' ;
 
