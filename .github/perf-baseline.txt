@@ -92,7 +92,7 @@ x86_64/ordmap_insert.ir	107976333
 x86_64/pmap_insert.text	2700
 x86_64/pmap_insert.ir	59526732
 x86_64/pvec_with.text	2744
-x86_64/pvec_with.ir	57131286
+x86_64/pvec_with.ir	56311395
 x86_64/record_update.ir	109849111
 x86_64/record_update.text	1479
 x86_64/sort_inplace.text	1268
@@ -263,6 +263,12 @@ x86_64/utf8_ingest_validated.ir	5916089
 # longer; `.ir` moved +0.05% on x86_64. Both figures are the static count of
 # the cross-emitted assembly, which is what the lanes count.
 #
+# Re-pinned 2026-10-22 (#12947) on pvec_with.ir (x86_64 -1.44%, aarch64
+# -1.61%): an array element's take survives the record update that keeps its
+# array, so std/pvec's rebuilds move the element where they copied it. The
+# x86_64 figure is the dev container's perf-bench run, the aarch64 one the
+# perf lane's.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -304,7 +310,7 @@ aarch64/ordmap_insert.ir	115601873
 aarch64/pmap_insert.text	2975
 aarch64/pmap_insert.ir	69269531
 aarch64/pvec_with.text	3007
-aarch64/pvec_with.ir	60838467
+aarch64/pvec_with.ir	59861409
 aarch64/record_update.text	1658
 aarch64/record_update.ir	104947544
 aarch64/sort_inplace.text	1462
