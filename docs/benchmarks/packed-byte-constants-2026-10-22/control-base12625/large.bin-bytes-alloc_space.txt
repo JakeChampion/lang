@@ -1,0 +1,47 @@
+Main binary filename not available.
+Fern bounded reservoir: retained=8192 dropped=399357
+Type: alloc_space
+Showing nodes accounting for 1.49GB, 100% of 1.49GB total
+Dropped 26 nodes (cum <= 0.01GB)
+Showing top 40 nodes out of 93
+      flat  flat%   sum%        cum   cum%
+    1.34GB 90.35% 90.35%     1.34GB 90.35%  __fern_arr_box
+    0.09GB  6.27% 96.62%     0.09GB  6.27%  __fn___fern_str_concat
+    0.05GB  3.38%   100%     0.05GB  3.38%  __fn___fern_string_from_bytes_u8
+         0     0%   100%     0.07GB  4.68%  __fern_alloc_bytes
+         0     0%   100%     0.01GB  0.68%  __fern_alloc_u8
+         0     0%   100%     0.10GB  6.55%  __fn_asm_ir__emit_function_via_ir_named
+         0     0%   100%     0.10GB  6.55%  __fn_asm_ir__emit_function_via_ir_pre
+         0     0%   100%     0.13GB  8.74%  __fn_asm_ir__emit_module_or_error_sub
+         0     0%   100%     0.03GB  2.09%  __fn_asm_ir__emit_ssa_allocated_x86
+         0     0%   100%     0.03GB  2.07%  __fn_asm_ir__ssa_block_inst
+         0     0%   100%     0.03GB  2.07%  __fn_asm_ir__ssa_inst
+         0     0%   100%     0.07GB  4.46%  __fn_asmcore__EmitState__lift
+         0     0%   100%     0.03GB  2.07%  __fn_asmcore__const_agg_pack
+         0     0%   100%     0.03GB  1.99%  __fn_asmcore__emit_const_agg_blocks
+         0     0%   100%     0.03GB  1.99%  __fn_asmcore__emit_const_agg_data
+         0     0%   100%     0.03GB  1.99%  __fn_asmcore__emit_const_agg_data_from
+         0     0%   100%     0.05GB  3.21%  __fn_astwalk__map_expr_acc__constfold__TargetAcc
+         0     0%   100%     0.13GB  8.79%  __fn_astwalk__map_expr_acc__embed__FoldAcc
+         0     0%   100%     0.04GB  2.70%  __fn_astwalk__map_expr_acc__i32
+         0     0%   100%     0.04GB  2.98%  __fn_astwalk__map_expr_acc__lexical__Scope
+         0     0%   100%     0.05GB  3.21%  __fn_astwalk__map_exprs_acc__constfold__TargetAcc
+         0     0%   100%     0.04GB  2.70%  __fn_astwalk__map_exprs_acc__i32
+         0     0%   100%     0.04GB  2.98%  __fn_astwalk__map_exprs_acc__lexical__Scope
+         0     0%   100%     0.05GB  3.21%  __fn_astwalk__map_stmt_acc__constfold__TargetAcc
+         0     0%   100%     0.13GB  8.79%  __fn_astwalk__map_stmt_acc__embed__FoldAcc
+         0     0%   100%     0.04GB  2.70%  __fn_astwalk__map_stmt_acc__i32
+         0     0%   100%     0.04GB  2.98%  __fn_astwalk__map_stmt_acc__lexical__Scope
+         0     0%   100%     0.05GB  3.21%  __fn_astwalk__map_stmts_acc__constfold__TargetAcc
+         0     0%   100%     0.13GB  8.79%  __fn_astwalk__map_stmts_acc__embed__FoldAcc
+         0     0%   100%     0.05GB  3.21%  __fn_astwalk__map_stmts_acc_changed__constfold__TargetAcc
+         0     0%   100%     0.13GB  8.79%  __fn_astwalk__map_stmts_acc_changed__embed__FoldAcc
+         0     0%   100%     0.04GB  2.70%  __fn_astwalk__map_stmts_acc_changed__i32
+         0     0%   100%     0.05GB  3.42%  __fn_checker__annotate_block
+         0     0%   100%     0.05GB  3.42%  __fn_checker__annotate_expr
+         0     0%   100%     0.05GB  3.42%  __fn_checker__annotate_module
+         0     0%   100%     0.05GB  3.42%  __fn_checker__annotate_module_in
+         0     0%   100%     0.05GB  3.42%  __fn_checker__annotate_stmt
+         0     0%   100%     0.05GB  3.42%  __fn_checker__annotate_typed
+         0     0%   100%     0.05GB  3.42%  __fn_checker__unsettled
+         0     0%   100%     0.05GB  3.21%  __fn_constfold__fold_target_name

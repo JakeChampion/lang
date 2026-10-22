@@ -62,8 +62,14 @@ function check(n: i32): i32 {
         for text in ["256", "-1", "01", "1,", ",1", "1,,2", "a"] {
           if (!refused(p.func, bi, at, ssa.SInst { ...ins, imm: 1, str: text })) { return 7; }
         }
-        let wrong = ssasem.Func { ...p.func, values: p.func.values.with(ins.result, typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false }) };
-        if (ssasem.analyze(wrong).ok) { return 8; }
+        let integer: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+        let byte: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
+        let bad_types: typeinfo.Type[] = [integer, typeinfo.TypeArray { elem: integer, view: false }, typeinfo.TypeArray { elem: byte, view: true }];
+        for ty in bad_types {
+          let wrong = ssasem.Func { ...p.func, result: ty, values: p.func.values.with(ins.result, ty) };
+          let verdict = ssasem.analyze(wrong);
+          if (verdict.ok || verdict.why != "constant byte array type") { print(verdict.why); return 8; }
+        }
       }
       at = at + 1;
     }
