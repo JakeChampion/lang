@@ -109,6 +109,7 @@ audit_std_time                                       0
 audit_std_uuid                                       0
 audit_strings_arrays_maps                            0
 audit_types_match                                    0
+bare_enum_map_payloads                               0
 base64_roundtrip                                     0
 binding_site_pattern_grammar                         0
 bool_in_tuple_with_i64                               0
