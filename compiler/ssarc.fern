@@ -3897,6 +3897,9 @@ function negation_zero(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
 // A construction the plan found constant is a static box: its operands were
 // loaded for the ordinary construction and are dropped unread.
 function static_box(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
+  if (ins.kind_tag == ssasem.bytes_new()) {
+    return emit(r, ir.op_const_bytes(ins.str));
+  }
   for a in ins.args {
     r = emit(r, ir.op_drop());
   }
@@ -3946,7 +3949,11 @@ function static_values(f: ssasem.Func, p: ssaunits.Plan, words: string): string 
     }
     if (w.len() > 0 && w[0] == b'@') {
       let v: i32 = util.lit_to_i32(slice_unchecked(w, 1, w.len()) + "");
-      out = out + "{" + static_name(f, p.defs[v]) + "|" + static_values(f, p, p.constants[v]) + "}";
+      let payload: string = p.defs[v].str;
+      if (p.defs[v].kind_tag != ssasem.bytes_new()) {
+        payload = static_values(f, p, p.constants[v]);
+      }
+      out = out + "{" + static_name(f, p.defs[v]) + "|" + payload + "}";
     } else if (w.len() > 0 && w[0] == b'$') {
       out = out + ir.const_str_word(p.defs[util.lit_to_i32(slice_unchecked(w, 1, w.len()) + "")].str);
     } else {

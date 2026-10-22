@@ -2927,6 +2927,17 @@ pub function const_struct_type(packed: string): string {
   return slice_unchecked(packed, 0, i) + "";
 }
 
+pub function const_struct_payload(packed: string): string {
+  let i: i32 = 0;
+  while (i < packed.len() && packed[i] != 124 as u8) {
+    i = i + 1;
+  }
+  if (i == packed.len()) {
+    return "";
+  }
+  return slice_unchecked(packed, i + 1, packed.len()) + "";
+}
+
 pub function const_struct_values(packed: string): string[] {
   let out: string[] = [];
   let i: i32 = 0;
