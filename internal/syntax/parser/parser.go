@@ -282,6 +282,11 @@ func (p *parser) errorf(pos ast.Position, format string, args ...any) *Error {
 // surfacing them in the header lets users search for the
 // error + look up the long-form explanation via
 // `fern -explain CODE`.
+// inherentImplMessage is the P001 for an `impl Type { … }` with no trait.
+func inherentImplMessage(typ string) string {
+	return "`impl " + typ + "` needs a trait, as in `impl cmp.Eq for " + typ + "`; declare a method as `function (self: " + typ + ") name(…)` and a constructor as a plain function"
+}
+
 func (p *parser) errorfCode(pos ast.Position, code, format string, args ...any) *Error {
 	return &Error{Pos: pos, Msg: fmt.Sprintf(format, args...), ErrCode: code}
 }
@@ -955,6 +960,25 @@ func (p *parser) syncToTopLevel() {
 	}
 }
 
+// skipBraced advances past a balanced `{ … }` at the cursor, if one is there.
+func (p *parser) skipBraced() {
+	depth := 0
+	for !p.match(lexer.EOF, "") {
+		switch {
+		case p.match(lexer.Punct, "{"):
+			depth++
+		case p.match(lexer.Punct, "}"):
+			depth--
+		case depth == 0:
+			return
+		}
+		p.advance()
+		if depth == 0 {
+			return
+		}
+	}
+}
+
 // syncToStmt advances past a `;` or stops at `}` / EOF — the natural
 // boundaries between statements. Used by parseBlock after a per-stmt
 // error so the next statement still gets parsed.
@@ -1173,11 +1197,9 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 		return nil, nil, err
 	}
 	tname := p.maybeQualify(tnameTok.Text)
-	// A `[…]` after the name is either the trait's type arguments
-	// (`impl From[i32] for Celsius`) or, for an inherent impl
-	// (`impl Box[T] { … }`), the impl type's own generic arguments. We
-	// can't tell which until we see whether `for` follows, so parse the
-	// list now and assign once the form is known.
+	// A `[…]` after the name is the trait's type arguments
+	// (`impl From[i32] for Celsius`), or the type's own in an inherent
+	// `impl Box[T] { … }`, which is refused once no `for` follows.
 	var bracketTypes []ast.Type
 	if p.match(lexer.Punct, "[") {
 		p.advance() // consume `[`
@@ -1195,37 +1217,27 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			return nil, nil, err
 		}
 	}
-	var trait string
-	var traitArgs []ast.Type
-	var implType ast.Type
-	var typePos ast.Position
-	if p.match(lexer.Keyword, "for") {
-		// Trait impl: `impl Trait[args] for Type { … }`. The name is the
-		// trait; the bracket list (if any) is its type arguments.
-		trait = tname
-		traitArgs = bracketTypes
-		p.advance() // consume `for`
-		typePos = p.peek().Pos
-		implType, err = p.parseType()
-		if err != nil {
-			return nil, nil, err
-		}
-		if _, ok := implType.(ast.SelfType); ok {
-			return nil, nil, p.errorf(typePos, "`impl … for Self` is not allowed; name a concrete type")
-		}
-	} else {
-		// Inherent impl: `impl Type { … }` / `impl[T] Box[T] { … }`. There
-		// is no trait — the name (plus any generic args) is the impl type
-		// itself, and its receiver-less functions are associated functions
-		// (`Type.f(args)`) while `self`-taking ones are ordinary methods.
-		// See #2700.
-		trait = ""
-		typePos = tnameTok.Pos
+	if !p.match(lexer.Keyword, "for") {
+		spelling := tname
 		if len(bracketTypes) > 0 {
-			implType = ast.EnumType{Name: tname, Args: bracketTypes}
-		} else {
-			implType = ast.StructType{Name: tname}
+			spelling = ast.EnumType{Name: tname, Args: bracketTypes}.String()
 		}
+		err := p.errorfCode(tnameTok.Pos, "P001", "%s", inherentImplMessage(spelling))
+		p.skipBraced()
+		return nil, nil, err
+	}
+	// `impl Trait[args] for Type { … }`: the name is the trait and the
+	// bracket list (if any) its type arguments.
+	trait := tname
+	traitArgs := bracketTypes
+	p.advance() // consume `for`
+	typePos := p.peek().Pos
+	implType, err := p.parseType()
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, ok := implType.(ast.SelfType); ok {
+		return nil, nil, p.errorf(typePos, "`impl … for Self` is not allowed; name a concrete type")
 	}
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, nil, err
@@ -1330,7 +1342,6 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			fn.Params[i].Type = ast.SubstSelf(fn.Params[i].Type, implType)
 		}
 		fn.ReturnType = ast.SubstSelf(fn.ReturnType, implType)
-		// Empty for an inherent `impl Type { … }` block.
 		fn.ImplTrait = trait
 		if assoc {
 			if st, ok := implType.(ast.StructType); ok {
@@ -5852,27 +5863,7 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			}
 			expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos}
 		case p.match(lexer.Punct, "::"):
-			// `Type::method` / `mod::func` / `Type::CONST` — the
-			// path-style namespaced access. Produces the SAME FieldAccess
-			// node as the `.` form, so an associated-function call
-			// (`Point::origin()`), a module-qualified call (`json::encode()`),
-			// and a qualified const all resolve through the existing
-			// modload + checker paths. `::` is pure surface syntax; the AST
-			// carries no record of which separator was written. See #2700.
-			colons := p.advance()
-			fname, err := p.expect(lexer.Ident, "")
-			if err != nil {
-				return nil, err
-			}
-			// `mod::Foo { … }` is a path-qualified struct literal, mirroring
-			// the `mod.Foo { … }` form (suppressed in noStructLit positions).
-			if id, ok := expr.(*ast.Ident); ok && !p.noStructLit && p.match(lexer.Punct, "{") {
-				if expr, err = p.parseStructLit(id.P, id.Name+"."+fname.Text, nil); err != nil {
-					return nil, err
-				}
-				continue
-			}
-			expr = &ast.FieldAccess{P: colons.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos, PathSep: true}
+			return nil, p.errorfCode(p.peek().Pos, "P001", "`::` is not a path separator; write `.`")
 		case p.match(lexer.Punct, "?"):
 			// Postfix `?` — Option-try operator. `expr?` evaluates
 			// to the Some payload and early-returns None when the

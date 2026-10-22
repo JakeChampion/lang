@@ -4613,35 +4613,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.VoidType{},
 	}
 
-	// Auto-discover the remaining Array methods from the
-	// `__method_Array_<name>` naming convention. std/array declares its
-	// concrete-element verbs (`join` over `string[]`, `gcd_all` over
-	// `i32[]`) this way and this loop is what makes `arr.<name>(…)` reach
-	// them.
-	//
-	// It is a compiler-known name pattern, and it exists only because the
-	// receiver form that would replace it — `pub function (arr: i32[])
-	// gcd_all()`, now accepted below — does not yet lower on the
-	// self-hosted compiler: one such declaration anywhere in the bundle
-	// costs an unrelated generic its type-parameter substitution
-	// (`num.sum`'s `T.zero()` lowers to a `const_func "T"`). Migrating
-	// std/array onto receivers and deleting this loop waits on that.
-	//
-	// FuncSigs for these functions get populated by the normal
-	// FuncDecl processing in `Check` — we only need to wire the
-	// Methods map here.
-	for _, fn := range prog.Funcs {
-		if !strings.HasPrefix(fn.Name, "__method_Array_") {
-			continue
-		}
-		suffix := fn.Name[len("__method_Array_"):]
-		if suffix == "" || suffix == "push" {
-			continue
-		}
-		c.info.Methods["Array."+suffix] = fn.Name
-		c.info.MethodSources[fn.Name] = fn.SourceModule
-	}
-
 	// MapIter[K, V] — paired with Map's iter() above. The
 	// receiver has K + V from the map's TypeArgs which
 	// flow through the same dispatch-path substitution. The
@@ -5245,14 +5216,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 	}
 	for _, impl := range prog.Impls {
-		// Inherent impl (`impl Type { … }`, #2700): no trait, so there is
-		// nothing to check for conformance/coherence here. Its methods and
-		// associated functions were already desugared into ordinary
-		// FuncDecls (hoisted as `__method_*` / `__assoc_*`) by the parser,
-		// so they register and check through the normal paths.
-		if impl.Trait == "" {
-			continue
-		}
 		typeName, ok := methodTypeName(impl.Type)
 		if !ok {
 			c.errfCode(impl.TypePos, "E021", "`impl … for %s`: type must be a struct, enum, or built-in type", impl.Type)

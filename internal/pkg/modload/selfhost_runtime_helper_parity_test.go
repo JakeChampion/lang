@@ -70,12 +70,10 @@ func TestSelfHostRuntimeHelperRowsMatch(t *testing.T) {
 	}
 }
 
-// The one row this side has and the self-host deliberately does not. The
-// self-host resolves an auto-discovered `__method_Array_<f>` by SUFFIX over
-// both the bare and the `<mod>__`-mangled spelling, so exempting it there would
-// move every stdlib method's symbol and buy nothing for Map. Asserted rather
-// than left as prose, so closing the gap is a deliberate edit here and not a
-// surprise.
+// The one row this side has and the self-host deliberately does not:
+// exempting `__method_*` there would move every stdlib method's symbol and buy
+// nothing for Map. Asserted rather than left as prose, so closing the gap is a
+// deliberate edit here and not a surprise.
 func TestSelfHostRuntimeHelperMethodRowIsNativeOnly(t *testing.T) {
 	if !isRuntimeHelperName("__method_Array_len") {
 		t.Fatal("this side stopped exempting __method_*; the self-host parity note above is now stale")

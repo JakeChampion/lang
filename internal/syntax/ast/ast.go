@@ -2128,11 +2128,6 @@ type FieldAccess struct {
 	Target   Expr
 	Field    string
 	FieldPos Position
-	// PathSep records that the source used the path separator `::`
-	// (`Type::method`, `mod::func`) rather than `.`. Purely cosmetic — the
-	// checker / modload treat both identically; it only lets the printer
-	// round-trip the separator the author wrote. See #2700.
-	PathSep bool
 }
 
 // Lambda is an anonymous function expression: `(x: i32): i32 => x`. It's
@@ -3278,8 +3273,7 @@ type FuncDecl struct {
 	MethodSimpleName string
 	// ImplTrait names the trait an `impl Trait for Type` block provided
 	// this method (or associated function) through, in its mangled form.
-	// Empty for an inherent method, an inherent `impl Type` block, and a
-	// plain function. The checker uses it to key Info.TraitMethods /
+	// Empty for a receiver method and a plain function. The checker uses it to key Info.TraitMethods /
 	// Info.MethodOwners so two traits offering the same method name for
 	// one type stay distinguishable.
 	ImplTrait string

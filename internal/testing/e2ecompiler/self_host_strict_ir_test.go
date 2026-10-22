@@ -490,11 +490,11 @@ function main(): i32 {
 	// inline and the bound form are pinned, since it is the pair that identifies
 	// the gap as a missing type recovery rather than missing lowering.
 	{"arr-user-method-option-inline", `
-function __method_Array_pick(arr: i32[]): Option[i32] {
+function (arr: i32[]) pick(): Option[i32] {
     if (arr.len() == 0) { return None; }
     return Some(arr[0]);
 }
-function __method_Array_tail_str(arr: string[]): Option[string] {
+function (arr: string[]) tail_str(): Option[string] {
     if (arr.len() < 2) { return None; }
     return Some(arr[arr.len() - 1]);
 }

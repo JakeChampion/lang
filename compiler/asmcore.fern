@@ -6354,7 +6354,7 @@ pub function rt_src_str_cmp(): string {
 }
 
 // rt_src_arr_str_join backs `xs.join(sep)` on string arrays (#2649). TWO PASSES
-// OVER AN EXACT-SIZE BUFFER, which is native's `__method_Array_join` algorithm:
+// OVER AN EXACT-SIZE BUFFER, which is std/array's `join` algorithm:
 // sum the lengths, allocate once, memcpy each piece in. The result is a fresh
 // __raw_string, so it is still a normal owned value with clean Perceus RC and
 // still does not alias xs[0] — the property the accumulator form was written
