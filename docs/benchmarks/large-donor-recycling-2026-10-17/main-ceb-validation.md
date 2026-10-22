@@ -16,5 +16,15 @@ go test ./internal/testing/e2ecompiler \
   -count=1 -timeout=12m -v
 ```
 
+The broader reuse, WASI, certification, call ABI, sanitizer, heap-class,
+inventory and complexity checks pass in 115.717 seconds.
+CI lane coverage checks pass in 1.552 seconds.
+
+Bootstrap stages 2 and 3 match at 13,305,712 bytes, SHA-256
+1cc403e4384a86fe41f30d49f7505e99296f022eba3c08d15c4f457966fa8978.
+Stage 1 differs. The bootstrap record contains all three stages and the source fingerprint.
+All eleven strict size checks pass with complete coverage and unchanged limits.
+The driver build takes 113.514 seconds.
+
+The main-ceb/ directory contains the complete logs, hashes and size report.
 The earlier measurements retain their recorded source scope.
-Broader reuse checks, a fresh bootstrap, and strict size checks are in progress.
