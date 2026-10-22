@@ -1,0 +1,5 @@
+Source: 9cdaa5686786a46942bdae989bbcbd8472b0af6f
+Go: 1.27.3
+Stage0 SHA-256: 80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee
+
+go test ./internal/testing/e2ecompiler -run '^(TestSelfHostTailArrayAllocation|TestSelfHostRawWordConstantOffsets|TestSelfHostAllocReuseLargeDonor|TestSelfHostHardenArm64|TestSelfHostFeatureCensus|TestSelfHostLaneParamPastRegisters|TestSelfHostSSASemantic)$' -count=1 -timeout 15m

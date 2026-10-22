@@ -1,6 +1,7 @@
 # Native word offsets and allocator tail calls
 
-The [integrated validation record](main-12625-validation.md) covers main 12625f42b and the current lane-call ABI.
+The [current validation record](main-c96d-validation.md) covers main c96d9524d.
+The [earlier integrated record](main-12625-validation.md) covers main 12625f42b and the lane-call ABI.
 The measurements below retain their earlier source scope.
 
 Base: d669f557c1e75db6baa7473c4e8323b77400df95.
