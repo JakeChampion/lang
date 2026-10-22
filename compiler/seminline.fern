@@ -17,7 +17,9 @@
 // literals, is spliced into the calls whose arguments are all literals, so
 // the construction is a constant there (`constructor_leaves`). A function
 // called from a few places that returns a box at every return is spliced
-// into the callers that read it apart (`shared_spliceable`).
+// into the callers that read it apart (`shared_spliceable`). An updater,
+// which rebuilds a record parameter with array fields updated, is spliced
+// like a leaf (`updater`).
 import "./ssa";
 import "./sourcepos";
 import "./util";
@@ -138,7 +140,7 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let small: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs0.len()) {
-    let is_leaf: boolean = !size && inlinable[i] && leaf(funcs0[i]);
+    let is_leaf: boolean = !size && inlinable[i] && (leaf(funcs0[i]) || updater(funcs0[i]));
     let is_shared: boolean = !size && !is_leaf && inlinable[i] && unnamed[i] && shared_spliceable(funcs0[i], calls[i], cycle[i]);
     small = small.append(is_shared && count_insts(funcs0[i].graph) <= max_shared_insts());
     leaves = leaves.append(is_leaf);
@@ -347,7 +349,7 @@ function grown_leaves(sofar: Inlined, sp: Spliceable): Spliceable {
   let leaves: boolean[] = sp.leaves;
   let i: i32 = 0;
   while (i < sofar.funcs.len()) {
-    if (!leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && leaf(sofar.funcs[i])) {
+    if (!leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && (leaf(sofar.funcs[i]) || updater(sofar.funcs[i]))) {
       leaves = leaves.with(i, true);
     }
     i = i + 1;
@@ -683,6 +685,50 @@ function void_type(t: typeinfo.Type): boolean {
 
 function leaf(f: ssasem.Func): boolean {
   return leaf_body(f, 0 - 1);
+}
+
+// An updater rebuilds a record parameter with fields replaced, in one block:
+// it reads the parameter's fields, updates arrays among them with `with` or
+// `append`, and returns the record update, as `Session { ...s, reqs:
+// s.reqs.with(i, r) }` does. It is spliced like a leaf, into every caller, so
+// the caller's count planner sees the element read, the element stored and
+// the update that keeps the array together, which is where an element's
+// take is decided.
+function updater(f: ssasem.Func): boolean {
+  if (!straight(f) || f.graph.takes_env || lends_view(f) || !record(f.result)) {
+    return false;
+  }
+  let b: ssa.SBlock = f.graph.blocks[0];
+  let built: i32 = 0 - 1;
+  let n: i32 = 0;
+  for ins in b.insts {
+    let k: i32 = ins.kind_tag;
+    if (k == ssasem.param() || line_mark(k)) {
+      continue;
+    }
+    n = n + 1;
+    if (literal_kind(k) || k == 7 || k == ssasem.record_get() || k == ssasem.with() || k == ssasem.append()) {
+      continue;
+    }
+    if (k != ssasem.record_new() || built >= 0 || !record_param(f, ssasem.update_base(ins))) {
+      return false;
+    }
+    built = ins.result;
+  }
+  return built >= 0 && b.term.value == built && n <= max_leaf_insts();
+}
+
+// Whether `v` is a record parameter of `f`.
+function record_param(f: ssasem.Func, v: i32): boolean {
+  if (v < 0 || v >= f.values.len() || !record(f.values[v])) {
+    return false;
+  }
+  for ins in f.graph.blocks[f.graph.entry].insts {
+    if (ins.kind_tag == ssasem.param() && ins.result == v) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // A constructor leaf builds its result from its parameters and literals and

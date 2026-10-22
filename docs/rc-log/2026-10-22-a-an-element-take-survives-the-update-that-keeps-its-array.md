@@ -70,12 +70,10 @@ Its ceiling is 226. The multiplexed row did not move (130.54, from 130.25).
 
 ## Next
 
-`h3.__on_request` still copies two boxes a request. Its `r.fin || fin` puts a
-branch between the element read and the store-back. `semsink` re-reads
-`cur.reqs` in the join block, where `cur` dies. The re-read is a second read
-of the field the take nulls, so the field's take is refused, and the
-element's with it. A read dominated by a live read of the same slot must
-reuse it rather than read again.
+`h3.__on_request` puts a branch between the element read and the
+store-back. The next entry,
+`2026-10-22-b-an-updater-is-spliced-and-a-repeated-read-is-reused.md`,
+takes the element across it.
 
 `FERN_SEM_DUMP=<function>` prints the semantic graph as the planner reads it,
 with the parameter modes. `FERN_RC_CERTIFY_DUMP` prints the lowered one. A
