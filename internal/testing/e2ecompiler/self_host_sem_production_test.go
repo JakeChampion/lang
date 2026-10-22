@@ -1226,7 +1226,7 @@ function main(): i32 {
 	// phi could only be supplied on that edge by retaining a view; a literal
 	// carries the same immortal rc a view's box does, so producing it at the
 	// destination's own type makes the edge a move.
-	{name: "a-string-literal-is-already-a-view", atLeast: 4, want: "68|", wasm: "out-of-range|", src: `
+	{name: "a-string-literal-is-already-a-view", atLeast: 4, want: "68|", src: `
 function span(fmt: string, take: boolean): i32 {
     let spec: str = "";
     if (take) { spec = slice_unchecked(fmt, 1, 4); }
@@ -3829,7 +3829,7 @@ function main(): i32 {
 	// element width the copy distinguishes is here: u8 and i32 (4-byte on
 	// wasm), i64 and f64 (8-byte). The slices handed straight to `sum` are
 	// released too (#9843).
-	{name: "array-slice-of-scalars", atLeast: 2, want: "125|", wasm: "out-of-range|", src: `
+	{name: "array-slice-of-scalars", atLeast: 2, want: "125|", src: `
 function sum(xs: [u8]): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -4365,7 +4365,7 @@ function main(): i32 {
 	// and the anchor passes through `pick`, whose result is `tail`'s. Each
 	// trip allocates the next string where the released one was, so a
 	// dangling view prints it (conformance/cases/alloc_flat_method_identity_return).
-	{name: "a-view-result-is-anchored-to-its-argument", atLeast: 3, want: "0|abcdefghijklmnopqrstuvwxyz01234567890\n23456789012345678901234567890ab0\nbcdefghijklmnopqrstuvwxyz01234567891\n23456789012345678901234567890ab1\ncdefghijklmnopqrstuvwxyz01234567892\n23456789012345678901234567890ab2\n", wasm: "out-of-range|abcdefghijklmnopqrstuvwxyz01234567890\n23456789012345678901234567890ab0\nbcdefghijklmnopqrstuvwxyz01234567891\n23456789012345678901234567890ab1\ncdefghijklmnopqrstuvwxyz01234567892\n23456789012345678901234567890ab2\n", src: `
+	{name: "a-view-result-is-anchored-to-its-argument", atLeast: 3, want: "0|abcdefghijklmnopqrstuvwxyz01234567890\n23456789012345678901234567890ab0\nbcdefghijklmnopqrstuvwxyz01234567891\n23456789012345678901234567890ab1\ncdefghijklmnopqrstuvwxyz01234567892\n23456789012345678901234567890ab2\n", src: `
 import "std/i32";
 function (s: string) tail(n: i32): str {
     if (n <= 0) { return s; }

@@ -377,19 +377,10 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		{"float-range-p002",
 			"function main(): i32 {\n  let big: f64 = 1e999;\n  return 0;\n}\n",
 			"error[P002]: in fn 'main': invalid float literal \"1e999\": value out of range (2:18)"},
-		// A nameless function: this gate leaves its P001 to check_decl_names
-		// (asmcore.parse_errors runs both), and reports nothing after it
-		// either, since the parser skips the rest of the declaration, as
-		// native does.
-		//
-		// `function (…)` here is a malformed DECLARATION, not the anonymous
-		// function expression #2673 retired, so it does not migrate to an
-		// arrow lambda: `(): i32 => {…}` at top level parses cleanly into
-		// top_stmts and raises neither diagnostic. Native still rejects this
-		// source with `expected a name, got "("`.
+		// A nameless declaration reports its P001 at the expected name.
 		{"malformed-fn-decl",
 			"function (): i32 {\n  return 1;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
-			""},
+			"error[P001]: at top level: expected a name, got \"(\" (1:10)"},
 		// The parse errors with a code of their own, worded as native words
 		// them (#12689).
 		{"own-code-p003-p004-p006",

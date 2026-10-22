@@ -442,6 +442,25 @@ pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots
   return lift_impl(kt, name, nparams, nslots, ops, track_slots);
 }
 
+// lift_with_lanes is lift_from_ir_prod for an emitter: the parameters among
+// `lane_slots` are marked lane values (ssa.lane_result).
+pub function lift_with_lanes(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean, lane_slots: i32[]): LResult {
+  let l: LResult = lift_impl(kt, name, nparams, nslots, ops, track_slots);
+  if (lane_slots.len() == 0 || l.func.blocks.len() == 0) {
+    return l;
+  }
+  let entry: ssa.SBlock = l.func.blocks[0];
+  let insts: ssa.SInst[] = [];
+  for ins in entry.insts {
+    if (ins.kind_tag == 6 && util.index_of_i32(lane_slots, ins.imm) >= 0) {
+      ins = ssa.SInst { ...ins, str: ssa.lane_param_mark() };
+    }
+    insts = insts.append(ins);
+  }
+  let blocks: ssa.SBlock[] = l.func.blocks.with(0, ssa.SBlock { ...entry, insts: insts });
+  return LResult { ...l, func: ssa.SFunc { ...l.func, blocks: blocks } };
+}
+
 // lift_lane_prod lifts one lane op (ir.is_lane_kind) as one instruction:
 // kind 10 with one operand, 9 with two, 61 with three, and 62 for the store,
 // whose effect keeps it where the pure kinds may be pruned. The operands come
@@ -2371,6 +2390,9 @@ function call_mark(op: ir.Op): i32 {
   }
   if (ir.is_lent(op)) {
     return 3;
+  }
+  if (ir.is_lane_call(op)) {
+    return 6;
   }
   return 0;
 }

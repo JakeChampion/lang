@@ -56,6 +56,8 @@ import "std/utf8";
 import "std/array";
 import "std/option";
 import "std/deflate";
+import "std/error";
+import "core/cmp";
 
 // `Options` — the session's bounds: `max_message`, the largest message
 // taken whole (1009 past it); `backpressure`, the corked bytes past which
@@ -87,6 +89,14 @@ pub enum SendResult { Sent, Backpressure, Dropped }
 // handshake (426, naming the upgrade), a `Sec-WebSocket-Version` other
 // than 13 (426, naming it), no usable `Sec-WebSocket-Key` (400).
 pub enum UpgradeError { NotWebSocket, WrongVersion, KeyMissing }
+
+pub function (e: UpgradeError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for UpgradeError {}
+
+impl cmp.Display for UpgradeError {}
 
 pub function (e: UpgradeError) message(): string {
   match (e) {

@@ -434,6 +434,9 @@ A lane op (`ir.lane_kind_names`, `docs/SIMD-GENERIC-KERNELS.md` §6) lifts
 to one instruction. The kind is 10 with one operand, 9 with two, 61 with
 three and 62 for the store. The op name is in `str` and the element width
 (64 or 32) in `imm`. Its 128-bit result is a lane value (`ssa.lane_values`).
+A parameter is a lane value when the lift marks it from the body's
+`v128_slots` (`ssa_lift.lift_with_lanes`), and a call result when the
+lowering marks the call (`ir.lane_call`).
 
 A phi that joins a lane value and a copy of one are lane values too
 (`lane_carriers`). An inlined leaf's result is such a copy
@@ -466,6 +469,13 @@ emitter declares a `(local v128)` for each `LowerResult.v128_slots` entry.
 It takes two `v128` scratch locals in a body with a lane op.
 `TestSelfHostLaneIR` runs a program built from the IR constructors over
 every op on all three targets.
+
+A lane value crosses a call only through the register ABI. The unit's call
+shapes (`asmcore.FloatAbi`) mark a lane parameter `v` and a lane result `|v`.
+Parameter p arrives in the float class's location p: `%xmm3` up on x86-64,
+`q<p>` on arm64. The result returns in `%xmm3` or `q0`. A call that must
+pass a lane value on the stack stops the compile (`ssa_lane_refuse`). The
+checkers keep lane values out of function values (E085).
 
 ## Gates
 

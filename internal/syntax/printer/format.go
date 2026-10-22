@@ -2598,6 +2598,8 @@ func formatType(t ast.Type) string {
 			return x.Spelling
 		}
 		return x.String()
+	case ast.LanesType:
+		return x.String()
 	case ast.StructType:
 		return x.Name
 	case ast.EnumType:

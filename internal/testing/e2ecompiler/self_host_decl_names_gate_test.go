@@ -10,22 +10,9 @@ import (
 	"testing"
 )
 
-// TestSelfHostDeclNamesGate pins that the self-host drivers REJECT a declaration
-// with no name, or a parameter with no type, rather than carrying a nameless function through the pipeline.
-//
-// The self-host parser is deliberately permissive — `Par` has no error channel,
-// so a token it cannot use is skipped and the drivers' gates catch the
-// consequences. A declaration NAME leaves no consequence to catch:
-// `peek_ident` returns "" for a keyword, `parse_func_decl` returns a
-// FuncDecl with an empty name, and the module parses "successfully".
-//
-// `function use()` is the motivating case: `use` is in the lexer's keyword set,
-// so the function comes out nameless and every downstream stage reports
-// verdicts about a malformed module.
-//
-// The Go parser rejects the same source, which is what makes this worth a
-// test: the divergence is the bug. Each case below asserts `bin/fern -check`
-// AND the self-host driver both refuse, so the two cannot drift apart.
+// Every self-host driver must refuse a declaration with no name or parameter type.
+// The parser now records the failed token. The drivers must report that finding
+// before they emit code, including on paths that bypass the checker.
 func TestSelfHostDeclNamesGate(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -45,24 +32,24 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 	}{
 		// `use` is the one that actually cost us. The others are keywords a
 		// reasonable person might reach for as an identifier.
-		{"keyword-use", "function use(): i32 { return 1; }\nfunction main(): i32 { return use(); }", true, "its name or signature could not be read"},
-		{"keyword-type", "function type(): i32 { return 1; }\nfunction main(): i32 { return type(); }", true, "its name or signature could not be read"},
-		{"keyword-match", "function match(): i32 { return 1; }\nfunction main(): i32 { return match(); }", true, "its name or signature could not be read"},
-		{"keyword-impl", "function impl(): i32 { return 1; }\nfunction main(): i32 { return impl(); }", true, "its name or signature could not be read"},
+		{"keyword-use", "function use(): i32 { return 1; }\nfunction main(): i32 { return use(); }", true, "expected a name, got"},
+		{"keyword-type", "function type(): i32 { return 1; }\nfunction main(): i32 { return type(); }", true, "expected a name, got"},
+		{"keyword-match", "function match(): i32 { return 1; }\nfunction main(): i32 { return match(); }", true, "expected a name, got"},
+		{"keyword-impl", "function impl(): i32 { return 1; }\nfunction main(): i32 { return impl(); }", true, "expected a name, got"},
 
 		// A parameter with no type (#10260): the parser records it with an
 		// empty type, on a free function, a method and a trait requirement.
-		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", true, "has no type"},
-		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", true, "has no type"},
-		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }", true, "has no type"},
-		{"keyword-trait-requirement", "trait Conv { function use(): i32; }\nfunction main(): i32 { return 0; }", true, "its name or signature could not be read"},
+		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", true, "expected \":\", got"},
+		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", true, "expected \":\", got"},
+		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }", true, "expected \":\", got"},
+		{"keyword-trait-requirement", "trait Conv { function use(): i32; }\nfunction main(): i32 { return 0; }", true, "expected a name, got"},
 		// A local function's FuncDecl is desugared to a closure, so the parser
 		// reports its untyped parameter through a sentinel instead.
-		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }", true, "has no type"},
+		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }", true, "expected \":\", got"},
 		// The same arm refuses a local declaration parse_func_decl returns
 		// nameless: a keyword name, or any destructured parameter
 		// parse_pattern_param rejects (a missing type, a singleton tuple).
-		{"keyword-local-fn", "function outer(): i32 {\n    function use(): i32 { return 0; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "its name or signature could not be read"},
+		{"keyword-local-fn", "function outer(): i32 {\n    function use(): i32 { return 0; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "expected a name, got"},
 		{"untyped-destructure-local-fn", "function outer(): i32 {\n    function g((a, b)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "its name or signature could not be read"},
 		{"singleton-destructure-local-fn", "function outer(): i32 {\n    function g((a): (i32)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "its name or signature could not be read"},
 		// Declaration parts the parser discards rather than records (#10290):
@@ -146,9 +133,9 @@ func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 	for _, tc := range []struct{ name, src, cause string }{
-		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", "has no type"},
-		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", "has no type"},
-		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }", "has no type"},
+		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", "expected \":\", got"},
+		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", "expected \":\", got"},
+		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }", "expected \":\", got"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, stderr, code := runDeclGate(t, runner, driverBin, []byte(tc.src+"\n"))
@@ -180,7 +167,7 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	const sentinel = "function main(): i32 { return @; }\n"
 	const both = "function f(x): i32 { return @; }\nfunction main(): i32 { return f(1); }\n"
 	for _, tc := range []struct{ name, src, cause string }{
-		{"untyped", untyped, "has no type"},
+		{"untyped", untyped, "expected \":\", got"},
 		{"sentinel", sentinel, "expected an expression, got"},
 		{"sentinel-and-untyped", both, "expected an expression, got"},
 	} {
@@ -233,23 +220,21 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			}
 		})
 		for _, tc := range []struct{ name, src, cause string }{
-			{"untyped", untyped, "has no type"},
-			{"sentinel-and-untyped", both, "has no type"},
+			{"untyped", untyped, "expected \":\", got"},
+			{"sentinel-and-untyped", both, "expected \":\", got"},
 			{"sentinel", sentinel, "expected an expression, got"},
-			// A nameless declaration derails the parse, so a stdin driver
-			// reports the parser's sentinels first; the loaders run the
-			// declaration gate first, which is where its text and position show.
-			{"keyword-function", "function use(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", "its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:1)"},
-			{"keyword-trait-requirement", "trait Conv { function use(): i32; }\nfunction main(): i32 { return 0; }\n", "its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:14)"},
-			{"numeric-trait-name", "trait 123 { }\nfunction main(): i32 { return 0; }\n", "malformed trait declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
-			{"keyword-trait-name", "trait use { function conv(self: Self): i32; }\nfunction main(): i32 { return 0; }\n", "malformed trait declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
-			{"keyword-struct", "struct match { x: i32 }\nfunction main(): i32 { return 0; }\n", "malformed struct declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
-			{"numeric-struct-name", "struct 123 { x: i32 }\nfunction main(): i32 { return 0; }\n", "malformed struct declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
-			{"keyword-enum", "enum match { A, B }\nfunction main(): i32 { return 0; }\n", "malformed enum declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
-			{"keyword-const", "const use: i32 = 1;\nfunction main(): i32 { return 0; }\n", "malformed const declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
+			// The loaders report the parser's message at the failed token.
+			{"keyword-function", "function use(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", "expected a name, got \"use\" (1:10)"},
+			{"keyword-trait-requirement", "trait Conv { function use(): i32; }\nfunction main(): i32 { return 0; }\n", "expected a name, got \"use\" (1:23)"},
+			{"numeric-trait-name", "trait 123 { }\nfunction main(): i32 { return 0; }\n", "expected a name, got \"123\" (1:7)"},
+			{"keyword-trait-name", "trait use { function conv(self: Self): i32; }\nfunction main(): i32 { return 0; }\n", "expected a name, got \"use\" (1:7)"},
+			{"keyword-struct", "struct match { x: i32 }\nfunction main(): i32 { return 0; }\n", "expected a name, got \"match\" (1:8)"},
+			{"numeric-struct-name", "struct 123 { x: i32 }\nfunction main(): i32 { return 0; }\n", "expected a name, got \"123\" (1:8)"},
+			{"keyword-enum", "enum match { A, B }\nfunction main(): i32 { return 0; }\n", "expected a name, got \"match\" (1:6)"},
+			{"keyword-const", "const use: i32 = 1;\nfunction main(): i32 { return 0; }\n", "expected a name, got \"use\" (1:7)"},
 			{"pathless-import", "import;\nfunction main(): i32 { return 0; }\n", "malformed import: its path could not be read (1:7)"},
-			{"keyword-alias", "type match = i32;\nfunction main(): i32 { return 0; }\n", "malformed type alias declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
-			{"numeric-alias-name", "type 123 = i32;\nfunction main(): i32 { return 0; }\n", "malformed type alias declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
+			{"keyword-alias", "type match = i32;\nfunction main(): i32 { return 0; }\n", "expected a name, got \"match\" (1:6)"},
+			{"numeric-alias-name", "type 123 = i32;\nfunction main(): i32 { return 0; }\n", "expected a name, got \"123\" (1:6)"},
 			// The one sentinel with a native code names it on every driver,
 			// whether or not a checker runs before the gate.
 			{"valueless-block", "function side(): i32 { return 1; }\nfunction main(): i32 {\n    let x: i32 = { side(); };\n    return x;\n}\n", "E061"},
@@ -291,10 +276,10 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 	}
 	drivers[2].bin = drivers[1].bin
 	cases := []struct{ name, src, cause string }{
-		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n", "has no type"},
-		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }\n", "has no type"},
+		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n", "expected \":\", got"},
+		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }\n", "expected \":\", got"},
 		{"sentinel", "function main(): i32 { return @; }\n", "expected an expression, got"},
-		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }\n", "has no type"},
+		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }\n", "expected \":\", got"},
 	}
 	for _, d := range drivers {
 		for _, tc := range cases {
