@@ -43,6 +43,7 @@ which ones.
 | `TRAITS.md` | [reference] | Traits: static ad-hoc polymorphism, bounded generics and cross-module coherence; phases 1–3 shipped. |
 | `TRY.md` | [reference] | The `?` operator on any enum marked `@try`, and the shape rule the checker enforces (E078). |
 | `SIMD-GENERIC-KERNELS.md` | [plan] | One numeric kernel over a `Lanes` trait: scalar, `f64x2` / `f32x4`, `Dual` autodiff, `DoubleDouble`; associated constants now, const generics after the lane type. Revises `ATLAS-PLATFORM-PLAN.md` §1.2. |
+| `CONST-GENERICS.md` | [plan] | Const parameters (`const N: i32`) in generic parameter lists, and `Vec[N, T]` as the second spelling of the lane types; three slices. |
 | `COMPTIME-BRIEF.md` | [research] | Rules (from Zig) and architecture (from Lean 4) any future comptime must follow; comptime remains deferred. |
 | `EFFECT-SYSTEMS-PRIOR-ART.md` | [research] | Prior-art survey of effect systems (Koka, Effekt, Unison, Scala CC, OCaml 5, Roc, Flix, Haskell, Rust, WASI); input to #5320. |
 | `NICHE-LANGUAGE-RESEARCH.md` | [research] | 2026-07 survey of niche and research languages for mechanisms Fern could borrow, with a ranked shortlist. |
