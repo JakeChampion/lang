@@ -1,0 +1,5 @@
+import "text";
+
+pub function has_x(s: string): boolean {
+    return text.ready() && s.contains("x");
+}

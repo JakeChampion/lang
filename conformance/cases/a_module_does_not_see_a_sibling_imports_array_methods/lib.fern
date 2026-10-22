@@ -1,0 +1,3 @@
+pub function joined(xs: string[]): string {
+    return xs.join(123);
+}
