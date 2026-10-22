@@ -417,7 +417,7 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
     },
     ast.ExprFieldAccess(fa) => {
       let faor: LiftExpr = lift_expr_walk(fa.obj, acc, gfns);
-      return LiftExpr { expr: ast.ExprFieldAccess { obj: faor.expr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, acc: faor.acc };
+      return LiftExpr { expr: ast.ExprFieldAccess { ...fa, obj: faor.expr }, acc: faor.acc };
     },
     _ => {
       return LiftExpr { expr: e, acc: acc };
@@ -4392,7 +4392,7 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: ir
     },
     ast.ExprFieldAccess(fa) => {
       let o: WCapExpr = wcap_expr(fa.obj, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapExpr { expr: ast.ExprFieldAccess { obj: o.expr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, caps: o.caps, changed: o.changed };
+      return WCapExpr { expr: ast.ExprFieldAccess { ...fa, obj: o.expr }, caps: o.caps, changed: o.changed };
     },
     _ => {
       return WCapExpr { expr: e, caps: acc, changed: false };

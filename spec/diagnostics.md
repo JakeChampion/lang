@@ -130,7 +130,7 @@ language does not have. It is deleted.
 | `E056` | cannot assign to an array element | `diag_e056` |
 | `E057` | `Cell[T]` element type is not allowed | `diag_e057` |
 | `E058` | labelled `break` / `continue` names no enclosing loop | `diag_e058` |
-| `E059` | `as?` downcast requires a `dyn Trait` value | `diag_e059` |
+| `E059` | `as?` requires a `dyn Trait` value or an integer | `diag_e059` |
 | `E060` | invalid `as?` downcast target | `diag_e060` |
 | `E061` | block-expression has no trailing value | `diag_e061` |
 | `E062` | ambiguous method on a multi-trait object | — |

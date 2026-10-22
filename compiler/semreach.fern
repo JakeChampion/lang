@@ -50,7 +50,7 @@ pub function reach(funcs: ssasem.Func[], names: string[], usable: boolean[], blo
   // widened after would have queued it again.
   let walks: Walk[] = [];
   while (walks.len() < funcs.len()) {
-    walks = walks.append(Walk { vals: [], exec: [], edges: [], stale: [], keys: [] });
+    walks = walks.append(Walk { vals: [], exec: [], edges: [], stale: [], keys: [], changed: false });
   }
   while (w.next < w.queue.len()) {
     let i: i32 = w.queue[w.next];
@@ -633,22 +633,21 @@ function reached_name(ctx: Ctx, w: World, name: string): World {
 // Each value's lattice, which blocks run, and which of each block's incoming
 // edges do, parallel to its preds. `stale[pos]` marks a block entered along
 // an edge its preds do not list, whose phis are then any value.
-struct Walk { vals: i64[], exec: boolean[], edges: boolean[][], stale: boolean[], keys: i32[] }
+// `changed` says a round of the walk moved a value, executed a block or took
+// an edge; walk clears it at each round's start.
+struct Walk { vals: i64[], exec: boolean[], edges: boolean[][], stale: boolean[], keys: i32[], changed: boolean }
 
 function walk(ctx: Ctx, w: World, i: i32): Walk {
   let f: ssasem.Func = ctx.funcs[i];
   let g: ssa.SFunc = f.graph;
   let at: i32[] = ssadeps.position_of(g);
-  let wk: Walk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: no_edges(g), stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i] };
-  let changed: boolean = true;
-  while (changed) {
-    changed = false;
+  let wk: Walk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: no_edges(g), stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i], changed: true };
+  while (wk.changed) {
+    wk = Walk { ...wk, changed: false };
     let pos: i32 = 0;
     while (pos < g.blocks.len()) {
       if (wk.exec[pos]) {
-        let stepped: Stepped = walked_block(ctx, w, f, at, wk, pos);
-        wk = stepped.wk;
-        changed = changed || stepped.changed;
+        wk = walked_block(ctx, w, f, at, wk, pos);
       }
       pos = pos + 1;
     }
@@ -679,36 +678,31 @@ function no_edges(g: ssa.SFunc): boolean[][] {
 
 // One pass over the block at `pos`: its values, then the edges its branch
 // takes.
-function walked_block(ctx: Ctx, w: World, f: ssasem.Func, at: i32[], wk: Walk, pos: i32): Stepped {
+function walked_block(ctx: Ctx, w: World, f: ssasem.Func, at: i32[], wk: Walk, pos: i32): Walk {
   let g: ssa.SFunc = f.graph;
   let b: ssa.SBlock = g.blocks[pos];
-  let changed: boolean = false;
   for ins in b.insts {
     if (ins.result >= 0 && ins.result < g.nvals) {
       let next: i64 = join(wk.vals[ins.result], eval(ctx, w, f, wk, pos, ins));
       if (next != wk.vals[ins.result]) {
-        wk = Walk { ...wk, vals: wk.vals.with(ins.result, next) };
-        changed = true;
+        wk = Walk { ...wk, vals: wk.vals.with(ins.result, next), changed: true };
       }
     }
   }
-  let stepped: Stepped = followed(g, at, wk, pos, b);
-  return Stepped { wk: stepped.wk, changed: changed || stepped.changed };
+  return followed(g, at, wk, pos, b);
 }
 
-struct Stepped { wk: Walk, changed: boolean }
-
-function followed(g: ssa.SFunc, at: i32[], wk: Walk, pos: i32, b: ssa.SBlock): Stepped {
+function followed(g: ssa.SFunc, at: i32[], wk: Walk, pos: i32, b: ssa.SBlock): Walk {
   let t: ssa.STerm = b.term;
   if (t.kind_tag == 2) {
     return entered(g, at, wk, b.id, t.target);
   }
   if (t.kind_tag != 3) {
-    return Stepped { wk: wk, changed: false };
+    return wk;
   }
   let c: i64 = wk.vals[t.cond];
   if (c == top()) {
-    return Stepped { wk: wk, changed: false };
+    return wk;
   }
   if (known(c)) {
     if (c as i32 != 0) {
@@ -716,17 +710,13 @@ function followed(g: ssa.SFunc, at: i32[], wk: Walk, pos: i32, b: ssa.SBlock): S
     }
     return entered(g, at, wk, b.id, t.f);
   }
-  let one: Stepped = entered(g, at, wk, b.id, t.t);
-  let two: Stepped = entered(g, at, one.wk, b.id, t.f);
-  return Stepped { wk: two.wk, changed: one.changed || two.changed };
+  return entered(g, at, entered(g, at, wk, b.id, t.t), b.id, t.f);
 }
 
-function entered(g: ssa.SFunc, at: i32[], wk: Walk, from: i32, to: i32): Stepped {
+function entered(g: ssa.SFunc, at: i32[], wk: Walk, from: i32, to: i32): Walk {
   let tp: i32 = at[to];
-  let changed: boolean = false;
   if (!wk.exec[tp]) {
-    wk = Walk { ...wk, exec: wk.exec.with(tp, true) };
-    changed = true;
+    wk = Walk { ...wk, exec: wk.exec.with(tp, true), changed: true };
   }
   let preds: i32[] = g.blocks[tp].preds;
   let j: i32 = 0;
@@ -735,15 +725,15 @@ function entered(g: ssa.SFunc, at: i32[], wk: Walk, from: i32, to: i32): Stepped
   }
   if (j == preds.len()) {
     if (!wk.stale[tp]) {
-      return Stepped { wk: Walk { ...wk, stale: wk.stale.with(tp, true) }, changed: true };
+      return Walk { ...wk, stale: wk.stale.with(tp, true), changed: true };
     }
-    return Stepped { wk: wk, changed: changed };
+    return wk;
   }
   if (!wk.edges[tp][j]) {
     let row: boolean[] = wk.edges[tp].with(j, true);
-    return Stepped { wk: Walk { ...wk, edges: wk.edges.with(tp, row) }, changed: true };
+    return Walk { ...wk, edges: wk.edges.with(tp, row), changed: true };
   }
-  return Stepped { wk: wk, changed: changed };
+  return wk;
 }
 
 function eval(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.SInst): i64 {

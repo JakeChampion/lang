@@ -31,9 +31,7 @@ impl[T] memory.Drop for Leaf[T] {
     function drop(self: Self): void { print("drop Leaf"); }
 }
 struct Plain[T] { n: T }
-impl[T] Plain[T] {
-    function drop(self: Self): void { print("unexpected inherent drop"); }
-}
+function (self: Plain[T]) drop(): void { print("unexpected inherent drop"); }
 @noinline function make(n: i32): Leaf[i32] { return Leaf { n: n }; }
 @noinline function read(l: Leaf[i32]): i32 { return l.n; }
 @noinline function text(s: string): Leaf[string] { return Leaf { n: s }; }

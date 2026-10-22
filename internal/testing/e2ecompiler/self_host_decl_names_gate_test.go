@@ -16,7 +16,7 @@ import (
 // The self-host parser is deliberately permissive — `Par` has no error channel,
 // so a token it cannot use is skipped and the drivers' gates catch the
 // consequences. A declaration NAME leaves no consequence to catch:
-// `peek_member_name` returns "" for a keyword, `parse_func_decl` returns a
+// `peek_ident` returns "" for a keyword, `parse_func_decl` returns a
 // FuncDecl with an empty name, and the module parses "successfully".
 //
 // `function use()` is the motivating case: `use` is in the lexer's keyword set,
@@ -89,17 +89,13 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		// A parser sentinel: wasm_run has no checked prologue to report it.
 		{"sentinel", "function main(): i32 { return @; }", true, "expected an expression, got"},
 
-		// Controls: ordinary names, a name that merely CONTAINS a keyword, and a
-		// receiver method — the gate must not fire on any of them.
-		//
-		// NOT covered here: `function (s: S) default()`. The self-host parser
-		// accepts `default` as a member name (peek_member_name allows it
-		// deliberately) and the native parser rejects it. That is a real
-		// divergence, but a different one — the name is present, not empty — so
-		// asserting agreement on it here would fail for an unrelated reason.
+		// Controls: ordinary names, a name that merely CONTAINS a keyword, a
+		// receiver method, and `default`, an identifier rather than a keyword —
+		// the gate must not fire on any of them.
 		{"ordinary-name", "function helper(): i32 { return 42; }\nfunction main(): i32 { return helper(); }", false, ""},
 		{"name-containing-keyword", "function usenow(): i32 { return 42; }\nfunction main(): i32 { return usenow(); }", false, ""},
 		{"receiver-method", "struct S { }\nfunction (s: S) twice(): i32 { return 42; }\nfunction main(): i32 { let s = S { }; return s.twice(); }", false, ""},
+		{"default-name", "struct S { }\nfunction (s: S) default(): i32 { return 42; }\nfunction main(): i32 { let s = S { }; return s.default(); }", false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")

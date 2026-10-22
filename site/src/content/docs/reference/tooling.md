@@ -11,7 +11,7 @@ sidebar:
 fern [-target TARGET] [-o OUTPUT] [-run] FILE.fern [-- ARGS...]
 fern -check FILE.fern            # type-check only
 fern -interp FILE.fern           # run through the interpreter, no binary
-fern -fmt [-w | -d | -o OUT] FILE...
+fern -fmt [-w | -d | -o OUT] PATH...
 fern -lint PATH...
 fern -repl
 ```
@@ -134,6 +134,8 @@ fern -fmt foo.fern              # print the formatted file
 fern -fmt -w foo.fern           # rewrite in place
 fern -fmt -d foo.fern           # show the diff; exits 1 if the file would change
 fern -fmt -o out.fern foo.fern  # write to another file
+fern -fmt -w src/               # every .fern and .fern.md file under src/
+fern -fmt - < foo.fern          # stdin to stdout, as an editor pipes a buffer
 ```
 
 The formatter is idempotent: formatting its own output changes nothing.
@@ -148,6 +150,7 @@ error still lints, and a whole directory costs one parse per file.
 
 ```bash
 fern -lint src/                 # every .fern file under src/
+fern -lint - < foo.fern         # a buffer on stdin
 fern -lint-rules                # the rules, their default severity and options
 fern -lint -lint-set cyclomatic-complexity=deny \
            -lint-opt cyclomatic-complexity.max=15 src/
@@ -163,7 +166,9 @@ reports those over 30: the complex code nothing tests. It runs only when
 run names each file as the compile was given it, so compile and lint from
 the same directory.
 
-A finding at `warn` prints and exits 0; one at `deny` exits 1. Set
+A finding at `warn` prints and exits 0; one at `deny` exits 1, as does a file
+that does not parse or, as a literate document, does not tangle. A directory
+walk skips a chunk library, a document with no root chunk. Set
 severities and options for a whole package in its `fern.toml`:
 
 ```toml

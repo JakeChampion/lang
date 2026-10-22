@@ -448,10 +448,10 @@ func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 		defAsk("stdlib-method", "std.fern", 4, 10, stringFern, declAt(stringFern, "pub function (s: string) starts_with(", "starts_with")),
 		documented(hoverAsk("stdlib-function", "std.fern", 3, 28, "(from string) function repeat_char(char, i32): string", rng(3, 18, 36)), stringFern, "pub function repeat_char("),
 		defAsk("stdlib-function", "std.fern", 3, 28, stringFern, declAt(stringFern, "pub function repeat_char(", "repeat_char")),
-		// std/array's `__method_Array_avg`, and the built-in `len`, which has
+		// std/array's pinned receiver `avg`, and the built-in `len`, which has
 		// no declaration.
-		documented(hoverAsk("array-method", "array.fern", 3, 27, "(method on Array) function avg(): Option[i32]", rng(3, 26, 29)), arrayFern, "pub function __method_Array_avg("),
-		defAsk("array-method", "array.fern", 3, 27, arrayFern, declAt(arrayFern, "pub function __method_Array_avg(", "__method_Array_avg")),
+		documented(hoverAsk("array-method", "array.fern", 3, 27, "(method on Array) function avg(): Option[i32]", rng(3, 26, 29)), arrayFern, "pub function (arr: i32[]) avg("),
+		defAsk("array-method", "array.fern", 3, 27, arrayFern, declAt(arrayFern, "pub function (arr: i32[]) avg(", "avg")),
 		hoverAsk("array-len", "array.fern", 4, 13, "(method on Array) function len(): i32", rng(4, 12, 15)),
 		defAsk("array-len", "array.fern", 4, 13, "", lspRange{}),
 	})

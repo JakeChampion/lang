@@ -1102,6 +1102,39 @@ func TestRadixLiteralValue(t *testing.T) {
 	}
 }
 
+// `_` separators drop out of the value and stay in Raw, so -fmt keeps them
+// (#12707).
+func TestDigitSeparatorLiteralValue(t *testing.T) {
+	cases := map[string]int64{
+		"1_000_000":   1000000,
+		"0xff_ff":     65535,
+		"0o7_7":       63,
+		"0b1010_0101": 165,
+	}
+	for src, wantVal := range cases {
+		prog, err := Parse(`function f(): i32 { return ` + src + `; }`)
+		if err != nil {
+			t.Errorf("%s: parse: %v", src, err)
+			continue
+		}
+		lit, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.NumberLit)
+		if !ok {
+			t.Errorf("%s: not a *NumberLit", src)
+			continue
+		}
+		if lit.Value != wantVal || lit.Raw != src {
+			t.Errorf("%s: Value = %d, Raw = %q, want %d, %q", src, lit.Value, lit.Raw, wantVal, src)
+		}
+	}
+	prog, err := Parse(`function f(): f64 { return 1_000.25e0_1; }`)
+	if err != nil {
+		t.Fatalf("float: parse: %v", err)
+	}
+	if lit := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.FloatLit); lit.Value != 10002.5 || lit.Raw != "1_000.25e0_1" {
+		t.Errorf("float: Value = %v, Raw = %q", lit.Value, lit.Raw)
+	}
+}
+
 // Typed numeric literal suffixes: lexer captures the suffix, the
 // parser stamps Width / IsUnsigned at parse time so the checker
 // sees a non-polymorphic type from the start.
@@ -1112,13 +1145,14 @@ func TestNumericLiteralSuffixes(t *testing.T) {
 		isUnsigned bool
 	}
 	cases := map[string]want{
-		"42i32":  {false, 32, false},
-		"42i64":  {false, 64, false},
-		"42u8":   {false, 8, true},
-		"42u32":  {false, 32, true},
-		"42u64":  {false, 64, true},
-		"1.5f32": {true, 32, false},
-		"1.5f64": {true, 64, false},
+		"42i32":   {false, 32, false},
+		"42i64":   {false, 64, false},
+		"42u8":    {false, 8, true},
+		"42u32":   {false, 32, true},
+		"42u64":   {false, 64, true},
+		"42usize": {false, ast.WidthPtr, true},
+		"1.5f32":  {true, 32, false},
+		"1.5f64":  {true, 64, false},
 		// Integer-shaped text + float suffix promotes to float.
 		"42f64": {true, 64, false},
 	}
@@ -1429,7 +1463,6 @@ func TestStructLitTypeArgsParse(t *testing.T) {
 		{"nested arg", `Box[i32[]] { val: [1] }`, "Box", []string{"i32[]"}, false},
 		{"trailing comma", `Box[i32,] { val: 1 }`, "Box", []string{"i32"}, false},
 		{"qualified", `m.Box[i32] { val: 1 }`, "m.Box", []string{"i32"}, false},
-		{"path qualified", `m::Box[i32] { val: 1 }`, "m.Box", []string{"i32"}, false},
 		{"spread", `Box[i32] { ...b, val: 1 }`, "Box", []string{"i32"}, true},
 		{"no args", `Box { val: 1 }`, "Box", nil, false},
 		{"named arg", `Box[Loc] { val: l }`, "Box", []string{"Loc"}, false},
@@ -2090,42 +2123,42 @@ function g(xs: Option[string][]): i32 { return 0; }`)
 	}
 }
 
-// `stream[T]` parses to the built-in ast.StreamType (the WASI Preview-3 async
+// `Stream[T]` parses to the built-in ast.StreamType (the WASI Preview-3 async
 // data channel — docs/STREAM-TYPE-SURFACE.md), NOT a generic enum
 // instantiation, distinguished contextually by the name `stream`. A bare
-// `stream` (no bracket arg) and a generic `stream[A, B]` (two args) stay an
+// `stream` (no bracket arg) and a generic `Stream[A, B]` (two args) stay an
 // ordinary struct/enum reference, so `stream` remains a usable identifier.
 func TestStreamTypeParse(t *testing.T) {
-	prog, err := Parse(`function f(s: stream[u8]): i32 { return 0; }
-function g(): stream[string] { return None; }
-function h(xs: stream[u8][]): i32 { return 0; }`)
+	prog, err := Parse(`function f(s: Stream[u8]): i32 { return 0; }
+function g(): Stream[string] { return None; }
+function h(xs: Stream[u8][]): i32 { return 0; }`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	st, ok := prog.Funcs[0].Params[0].Type.(ast.StreamType)
 	if !ok {
-		t.Fatalf("f's param should be stream[u8]; got %+v", prog.Funcs[0].Params[0].Type)
+		t.Fatalf("f's param should be Stream[u8]; got %+v", prog.Funcs[0].Params[0].Type)
 	}
 	if n, ok := st.Elem.(ast.NumberType); !ok || n.NormalWidth() != 8 {
 		t.Errorf("stream element should be u8; got %+v", st.Elem)
 	}
-	if st.String() != "stream[u8]" {
-		t.Errorf("StreamType.String() = %q, want stream[u8]", st.String())
+	if st.String() != "Stream[u8]" {
+		t.Errorf("StreamType.String() = %q, want Stream[u8]", st.String())
 	}
 	rt, ok := prog.Funcs[1].ReturnType.(ast.StreamType)
 	if !ok {
-		t.Fatalf("g's return type should be stream[string]; got %+v", prog.Funcs[1].ReturnType)
+		t.Fatalf("g's return type should be Stream[string]; got %+v", prog.Funcs[1].ReturnType)
 	}
 	if _, ok := rt.Elem.(ast.StringType); !ok {
 		t.Errorf("stream element should be string; got %+v", rt.Elem)
 	}
-	// `stream[u8][]` is an array of streams (the array suffix wraps the stream).
+	// `Stream[u8][]` is an array of streams (the array suffix wraps the stream).
 	at, ok := prog.Funcs[2].Params[0].Type.(ast.ArrayType)
 	if !ok {
 		t.Fatalf("h's param should be an array; got %+v", prog.Funcs[2].Params[0].Type)
 	}
 	if _, ok := at.Elem.(ast.StreamType); !ok {
-		t.Errorf("h's array element should be stream[u8]; got %+v", at.Elem)
+		t.Errorf("h's array element should be Stream[u8]; got %+v", at.Elem)
 	}
 }
 
@@ -2816,44 +2849,23 @@ func TestTraitDefaultMethodParses(t *testing.T) {
 	}
 }
 
-// The path separator `::` in expression position parses to the same
-// FieldAccess node as `.`, with PathSep set so the printer round-trips it.
-// `Type::method(args)`, `mod::func()`, and `mod::CONST` all work. See #2700.
-func TestPathSepParse(t *testing.T) {
-	prog, err := Parse(`function main(): i32 {
-    let a: i32 = Point::origin().x;
-    let b: i32 = helpers::add5(10);
-    let c: i32 = helpers::BONUS;
-    return a + b + c;
-}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := prog.Funcs[0].Body.Stmts
-	fieldOf := func(e ast.Expr) *ast.FieldAccess {
-		switch x := e.(type) {
-		case *ast.FieldAccess:
-			return x
-		case *ast.Call:
-			if fa, ok := x.Callee.(*ast.FieldAccess); ok {
-				return fa
-			}
+// `::` is only an associated-type projection; as a path separator it is a
+// P001 at the `::` naming `.` (#12698).
+func TestPathSepRejected(t *testing.T) {
+	for _, src := range []string{
+		"function main(): i32 { return Point::origin().x; }",
+		"function main(): i32 { return helpers::add5(10); }",
+		"function main(): i32 { return helpers::BONUS; }",
+		"function main(): i32 { let b = m::Box[i32] { val: 1 }; return 0; }",
+	} {
+		_, err := Parse(src)
+		var pe *Error
+		if errs, ok := err.(diag.Errors); ok && len(errs) > 0 {
+			pe, _ = errs[0].(*Error)
 		}
-		return nil
-	}
-	// a = Point::origin().x → outer `.x` (dot) on Call(Point::origin()).
-	ax := body[0].(*ast.Var).Init.(*ast.FieldAccess)
-	if ax.PathSep {
-		t.Errorf("`.x` should not be a path separator")
-	}
-	if origin := fieldOf(ax.Target); origin == nil || origin.Field != "origin" || !origin.PathSep {
-		t.Errorf("Point::origin should be FieldAccess{Field:origin, PathSep:true}, got %#v", ax.Target)
-	}
-	if fa := fieldOf(body[1].(*ast.Var).Init); fa == nil || !fa.PathSep || fa.Field != "add5" {
-		t.Errorf("helpers::add5 should be a PathSep FieldAccess, got %#v", body[1].(*ast.Var).Init)
-	}
-	if fa := fieldOf(body[2].(*ast.Var).Init); fa == nil || !fa.PathSep || fa.Field != "BONUS" {
-		t.Errorf("helpers::BONUS should be a PathSep FieldAccess, got %#v", body[2].(*ast.Var).Init)
+		if pe == nil || pe.ErrCode != "P001" || pe.Pos.Col != strings.Index(src, "::")+1 || !strings.Contains(pe.Msg, "write `.`") {
+			t.Errorf("%s: got %v, want a P001 at the `::` naming `.`", src, err)
+		}
 	}
 }
 
@@ -2911,70 +2923,25 @@ impl From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg:
 	}
 }
 
-// An inherent impl block (`impl Type { … }`, no `for Trait`, #2700) records an
-// ImplDecl with an empty Trait and the named type as Type. A receiver-less
-// function becomes an associated function (AssocType set); a `self`-taking one
-// becomes a method (Receiver set).
-func TestInherentImplParse(t *testing.T) {
-	prog, err := Parse(`struct Pt { x: i32, y: i32 }
-impl Pt {
-	function make(a: i32, b: i32): Pt { return Pt { x: a, y: b }; }
-	function sum(self: Self): i32 { return self.x + self.y; }
-}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(prog.Impls) != 1 {
-		t.Fatalf("expected 1 impl decl; got %d", len(prog.Impls))
-	}
-	impl := prog.Impls[0]
-	if impl.Trait != "" {
-		t.Errorf("inherent impl Trait = %q, want empty", impl.Trait)
-	}
-	st, ok := impl.Type.(ast.StructType)
-	if !ok || st.Name != "Pt" {
-		t.Errorf("inherent impl Type = %#v, want StructType{Pt}", impl.Type)
-	}
-	// Find the desugared functions among prog.Funcs.
-	var assoc, method *ast.FuncDecl
-	for _, fn := range prog.Funcs {
-		if fn.AssocType == "Pt" && fn.Name == "make" {
-			assoc = fn
+// An impl names a trait; an inherent `impl Type { … }` is a P001 at the type
+// that spells the receiver form, and the parser skips its block rather than
+// reporting each member (#12699).
+func TestInherentImplRejected(t *testing.T) {
+	for _, tc := range []struct{ src, typ string }{
+		{"struct Pt { x: i32 }\nimpl Pt {\n\tfunction sum(self: Self): i32 { return self.x; }\n}\nfunction main(): i32 { return 0; }", "Pt"},
+		{"struct Box[T] { v: T }\nimpl[T] Box[T] {\n\tfunction of(v: T): Box[T] { return Box { v: v }; }\n}\nfunction main(): i32 { return 0; }", "Box[T]"},
+	} {
+		_, err := Parse(tc.src)
+		errs, _ := err.(diag.Errors)
+		if len(errs) != 1 {
+			t.Errorf("%q: got %v, want exactly one error", tc.src, err)
+			continue
 		}
-		if fn.Receiver != nil && fn.Name == "sum" {
-			method = fn
+		pe, _ := errs[0].(*Error)
+		want := "declare a method as `function (self: " + tc.typ + ") name(…)`"
+		if pe == nil || pe.ErrCode != "P001" || pe.Pos.Line != 2 || !strings.Contains(pe.Msg, want) {
+			t.Errorf("%q: got %v, want a P001 on line 2 containing %q", tc.src, err, want)
 		}
-	}
-	if assoc == nil {
-		t.Error("associated function `make` not desugared with AssocType=Pt")
-	}
-	if method == nil {
-		t.Error("method `sum` not desugared with a receiver")
-	} else if _, ok := method.Receiver.Type.(ast.StructType); !ok {
-		t.Errorf("method `sum` receiver type = %#v, want StructType{Pt}", method.Receiver.Type)
-	}
-}
-
-// A generic inherent impl (`impl[T] Box[T] { … }`) records the impl type's
-// generic args and carries the type params onto its functions.
-func TestGenericInherentImplParse(t *testing.T) {
-	prog, err := Parse(`struct Box[T] { v: T }
-impl[T] Box[T] {
-	function of(v: T): Box[T] { return Box { v: v }; }
-}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(prog.Impls) != 1 {
-		t.Fatalf("expected 1 impl decl; got %d", len(prog.Impls))
-	}
-	impl := prog.Impls[0]
-	if impl.Trait != "" {
-		t.Errorf("generic inherent impl Trait = %q, want empty", impl.Trait)
-	}
-	et, ok := impl.Type.(ast.EnumType)
-	if !ok || et.Name != "Box" || len(et.Args) != 1 {
-		t.Errorf("generic inherent impl Type = %#v, want Box[T]", impl.Type)
 	}
 }
 
@@ -4262,7 +4229,6 @@ func TestIntegerLiteralPastU64ParsesFlagged(t *testing.T) {
 func TestQualifiedStructLitTakesPostfix(t *testing.T) {
 	for _, src := range []string{
 		`function main(): i32 { return lib.Thing { v: 1 }.v; }`,
-		`function main(): i32 { return lib::Thing { v: 1 }.v; }`,
 		`function main(): i32 { return Box[i32] { v: 1 }.v; }`,
 	} {
 		prog, err := Parse(src)

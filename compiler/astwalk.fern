@@ -1509,20 +1509,32 @@ pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], own acc: QualR
 // ConstSubst replaces a reference to a named const with the const's value
 // wherever no local binding of that name is in scope. `bound` is the names in
 // scope; `names` and `values` are parallel.
-pub struct ConstSubst { names: string[], values: ast.Expr[], bound: string[] }
+pub struct ConstSubst { names: string[], values: ast.Expr[], bound: string[], types: string[], enums: string[], enum_assoc: string[] }
 
 pub function substitute_consts(stmts: ast.Stmt[], bound: string[], names: string[], values: ast.Expr[]): ast.Stmt[] {
   if (names.len() == 0) {
     return stmts;
   }
-  return cs_body(stmts, ConstSubst { names: names, values: values, bound: bound });
+  return cs_body(stmts, ConstSubst { names: names, values: values, bound: bound, types: [], enums: [], enum_assoc: [] });
 }
 
 pub function substitute_consts_expr(e: ast.Expr, names: string[], values: ast.Expr[]): ast.Expr {
   if (names.len() == 0) {
     return e;
   }
-  return cs_expr(e, ConstSubst { names: names, values: values, bound: [] });
+  return cs_expr(e, ConstSubst { names: names, values: values, bound: [], types: [], enums: [], enum_assoc: [] });
+}
+
+// rewrite_assoc_const_reads is substitute_consts's sibling for the reads of
+// associated constants: a field access `Base::NAME` whose object, unshadowed
+// by a binder, names one of `types` becomes the argument-less call of the
+// associated function, its callee marked const_read. An enum's field is a
+// variant unless `enum_assoc` lists `Enum.field` as an associated function.
+pub function rewrite_assoc_const_reads(stmts: ast.Stmt[], bound: string[], types: string[], enums: string[], enum_assoc: string[]): ast.Stmt[] {
+  if (types.len() == 0) {
+    return stmts;
+  }
+  return cs_body(stmts, ConstSubst { names: [], values: [], bound: bound, types: types, enums: enums, enum_assoc: enum_assoc });
 }
 
 function cs_bind(c: ConstSubst, packed: string): ConstSubst {
@@ -1567,9 +1579,46 @@ function cs_expr_at(e: ast.Expr, c: ConstSubst): (ast.Expr, ConstSubst, boolean)
       }
       return (ast.ExprLambda { ...lm, body: cs_body(lm.body, inner) }, c, true);
     },
+    ast.ExprCall(call) => {
+      return cs_call_at(e, call, c);
+    },
+    ast.ExprFieldAccess(fa) => {
+      return cs_field_read_at(e, fa, c);
+    },
     _ => {
       return (e, c, false);
     }
+  }
+  return (e, c, false);
+}
+
+// cs_call_at walks a call whose callee is `Base.f(…)`: the callee is never a
+// read, so only its object and the arguments are candidates.
+function cs_call_at(e: ast.Expr, call: ast.ExprCall, c: ConstSubst): (ast.Expr, ConstSubst, boolean) {
+  if let ast.ExprFieldAccess(cfa) = call.callee {
+    let args: ast.Expr[] = [];
+    for a in call.args {
+      args = args.append(cs_expr(a, c));
+    }
+    return (ast.ExprCall { ...call, callee: ast.ExprFieldAccess { ...cfa, obj: cs_expr(cfa.obj, c) }, args: args }, c, true);
+  }
+  return (e, c, false);
+}
+
+// cs_field_read_at turns a field access on an unshadowed type name into the
+// associated-constant read it is (rewrite_assoc_const_reads).
+function cs_field_read_at(e: ast.Expr, fa: ast.ExprFieldAccess, c: ConstSubst): (ast.Expr, ConstSubst, boolean) {
+  if (c.types.len() == 0) {
+    return (e, c, false);
+  }
+  if let ast.ExprIdent(oid) = fa.obj {
+    if (util.has_str(c.bound, oid.name) || !util.has_str(c.types, oid.name)) {
+      return (e, c, false);
+    }
+    if (util.has_str(c.enums, oid.name) && !util.has_str(c.enum_assoc, oid.name + "." + fa.field)) {
+      return (e, c, false);
+    }
+    return (ast.ExprCall { callee: ast.ExprFieldAccess { ...fa, const_read: true }, args: [], line: fa.line, col: fa.col, type_args: [], ty: "" }, c, true);
   }
   return (e, c, false);
 }

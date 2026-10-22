@@ -403,7 +403,7 @@ function source(mode: i32): string {
       finalizer = "trait Other { function drop(self: Self): void; }\nimpl[T] Other for Leaf[T] { function drop(self: Self): void {} }\n" + finalizer;
     }
     if (mode == 8) {
-      finalizer = "impl[T] Leaf[T] { function drop(self: Self): void {} }\n";
+      finalizer = "function (self: Leaf[T]) drop(): void {}\n";
     }
     return "struct Leaf[T] { n: T, a:T, b:T, c:T, d:T }\nstruct Parent { child: Leaf[i32] }\n" + finalizer
       + "@noinline\nfunction extract(own p: Parent): Leaf[i32] { return p.child; }\n"

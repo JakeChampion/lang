@@ -289,22 +289,12 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
 }
 
 // ts_called_method appends what a call through `fa` names: every function
-// with that simple name. An array-method call `arr.<m>(...)` (`.join` /
-// `.concat` / `.reverse` / `.flat_map` / `.sort_by` / std/array's distinct,
-// mode, …) dispatches to the auto-discovered `__method_Array_<m>` helper,
-// but the syntax names only `<m>` — so without this the helper looks
-// unreachable and gets pruned, bailing the whole module (the IR path then
-// fails on `i32.<m>`). util.array_method_helper_name matches those helpers
-// against this bare `<m>` rather than against a reconstructed
-// `__method_Array_<m>` token, which lets the walk stay allocation-free: the
-// token had to be BUILT, by a string concatenation at every field access in
-// the program, and the bare `<m>` is already in `refs`.
+// with that simple name.
 //
 // A method whose receiver carries a stamped named type contributes the
 // qualified root instead, so `q.to_string()` — the call the checker's Display
 // rewrite spells for `print(q)` — keeps Q's method and not every type's. A
-// receiver with no stamp, a `dyn` one (`dyn Display`) or an array, whose
-// methods are the helpers above, stays bare.
+// receiver with no stamp, a `dyn` one (`dyn Display`) or an array stays bare.
 function ts_called_method(fa: ast.ExprFieldAccess, own acc: string[]): string[] {
   let tag: string = ts_recv_tag(fa.obj);
   let ft: string = util.base_type_name(tag);
@@ -485,9 +475,8 @@ pub function body_refs(fd: parser.FuncDecl): BodyRefs {
     return method_name_of(e, lt, acc);
   }
   let methods: string[] = [];
-  // The bare spellings too: an array-method helper (`__method_Array_join`)
-  // and an interposed trait method (`B.scale`) are reached by `.join` and
-  // `.scale` alone, which no qualified root names.
+  // The bare spellings too: an interposed trait method (`B.scale`) is
+  // reached by `.scale` alone, which no qualified root names.
   let bare: string[] = [];
   let i: i32 = 0;
   while (i < fd.body.len()) {
@@ -664,10 +653,6 @@ pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {
   if (refset_has(br.any, ts_free_root(fd.name))) {
     return true;
   }
-  let m: string = util.array_method_helper_name(fd.name);
-  if (m.len() > 0 && refset_has(br.any, m)) {
-    return true;
-  }
   let im: string = ts_interposed_method_name(fd.name);
   return im.len() > 0 && refset_has(br.any, im);
 }
@@ -721,19 +706,15 @@ function refset_add(rs: RefSet, name: string): RefSet {
   return RefSet { names: names, head: head, next: next };
 }
 
-// ts_kept_name reports whether `fd` is reachable: by exact name, by the method
-// name an array-method helper dispatches from, by the one an interposed method
-// was renamed away from — each a name the syntax spells where the FUNCTION does
-// not — or, for a receiver-rooted method only, by its receiver type.
+// ts_kept_name reports whether `fd` is reachable: by exact name, by the one an
+// interposed method was renamed away from — a name the syntax spells where the
+// FUNCTION does not — or, for a receiver-rooted method only, by its receiver
+// type.
 function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
   if (refset_has(refs, fd.name)) {
     return true;
   }
   if (fd.receiver_type.len() == 0 && refset_has(refs, ts_free_root(fd.name))) {
-    return true;
-  }
-  let m: string = util.array_method_helper_name(fd.name);
-  if (m.len() > 0 && refset_has(refs, m)) {
     return true;
   }
   let im: string = ts_interposed_method_name(fd.name);

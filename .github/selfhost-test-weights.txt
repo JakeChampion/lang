@@ -705,7 +705,6 @@ TestSelfHostImportedGenericDrop 2
 TestSelfHostImportedMethodCollisionWasm 12
 TestSelfHostIncomingCapacityBoundary 40
 TestSelfHostInferredReuseIsIdentical 13
-TestSelfHostInherentImplIR 2
 TestSelfHostInlineLeaf 16
 TestSelfHostInnerMulAddBits 3
 TestSelfHostInnerMulAddEmissionAndShadow 2
@@ -1038,7 +1037,6 @@ TestSelfHostParserX86_64 3
 TestSelfHostPartialEnumInference 9
 TestSelfHostPartialEnumSubstitution 3
 TestSelfHostPasteBytes 3
-TestSelfHostPathSepIR 2
 TestSelfHostPayloadTakeIR 2
 TestSelfHostPegExample 6
 TestSelfHostPegText 3

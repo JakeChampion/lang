@@ -558,24 +558,6 @@ pub function is_all_digits(s: string): boolean {
 // has_str reports whether the string array `xs` contains `s`
 // (linear scan). The single home for the membership helper that
 // existed as has_str / name_in / name_in_list / contains_name.
-// array_method_helper_name returns the `<m>` of an array-method helper name —
-// whatever follows the last `__method_Array_`, past any `<mod>__` mangling
-// prefix modload added — or "" if `name` is not such a helper.
-pub function array_method_helper_name(name: string): string {
-  let marker: string = "__method_Array_";
-  if (name.len() < marker.len()) {
-    return "";
-  }
-  let i: i32 = 0;
-  while (i <= name.len() - marker.len()) {
-    if (slice_unchecked(name, i, i + marker.len()) == marker) {
-      return slice_unchecked(name, i + marker.len(), name.len()) + "";
-    }
-    i = i + 1;
-  }
-  return "";
-}
-
 pub function has_str(xs: string[], s: string): boolean {
   let i: i32 = 0;
   while (i < xs.len()) {

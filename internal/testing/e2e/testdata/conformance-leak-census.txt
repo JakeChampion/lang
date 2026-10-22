@@ -138,6 +138,7 @@ chained_methods                                      0
 char_byte_literals                                   0
 char_cast_receiver                                   0
 char_eq_ord_hash                                     0
+checked_int_conversion                               0
 closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_builtin_record_binding              0
@@ -172,6 +173,7 @@ csv_fields                                           0
 date_iso                                             0
 default_args                                         0
 default_args_const                                   0
+default_is_an_identifier                             0
 defer_binding_action_write                           0
 defer_binding_conditional                            0
 defer_binding_early_exit                             0
@@ -195,6 +197,7 @@ derive_multi_payload                                 0
 destructure_repeated_discards                        0
 destructure_repeated_discards_in_param               0
 destructure_tuple_and_struct_forms                   0
+digit_separators_and_usize_suffix                    0
 div_modulo                                           0
 divmod_inline                                        0
 dyn_bound_satisfied                                  0
@@ -326,6 +329,7 @@ if_let_tuple_literal_elem_else                       0
 if_let_variant_pattern_rename_rest                   0
 inclusive_range                                      0
 inclusive_range_type_max                             0
+index_takes_any_integer_type                         0
 indirect_call_owned_param                            0
 inline_hints                                         0
 insert_dedup                                         0
@@ -456,6 +460,7 @@ none_branch                                          0
 none_equal_none                                      0
 oob_index_negative                                   0
 oob_index_read                                       0
+oob_index_wide_integer                               0
 oob_index_write                                      1
 oob_slice_range                                      0
 op_overload_nested                                   0

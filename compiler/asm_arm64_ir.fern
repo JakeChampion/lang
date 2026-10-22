@@ -6313,7 +6313,7 @@ function emit_arm64_op_dyn_box(o: ir.Op, own s: asmcore.EmitState): asmcore.Emit
 // Caller must have judged the module eligible (ircore.gate) and seeded `s`
 // (struct_decls / funcs).
 // emit_ir_start writes the program entry: capture argc / argv / envp, push a
-// frame, call __fn_main, exit with its result. Both IR emitters use it — the
+// frame, call __fn_main, exit with its result (0 when there is no `main`). Both IR emitters use it — the
 // whole-program emit_body and the per-module emit_module_ir_unit_arm64_flat, which
 // carried a verbatim copy.
 //
@@ -6525,6 +6525,10 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
       s = emit_vdso_scan(s);
     }
   }
+  // A shared object's host owns the stack and the signal handlers.
+  if (!s.shared) {
+    s = emit_stack_switch(s, darwin);
+  }
   if (s.profile > 0) {
     s = s.write("    adrp x0, .Lprofile_ring\n    add x0, x0, :lo12:.Lprofile_ring\n");
     if (darwin) {
@@ -6534,17 +6538,124 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   }
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
-  s = s.write("    bl __fn_main\n");
-  if (s.leak_check) {
-    // Census (#5362): the exit() builtin bypasses this epilogue and
-    // reports at its own site; a returning main reports here.
-    s = s.write("    mov x19, x0\n");
-    s = s.write("    bl __fern_lc_report\n");
-    s = s.write("    mov x0, x19\n");
+  // A module with no `main` is a library compiled on its own, and its
+  // `_start` exits 0, as x86-64's does.
+  if (asmcore.declares_main(s.funcs)) {
+    s = s.write("    bl __fn_main\n");
+    if (s.leak_check) {
+      // Census (#5362): the exit() builtin bypasses this epilogue and
+      // reports at its own site; a returning main reports here.
+      s = s.write("    mov x19, x0\n");
+      s = s.write("    bl __fern_lc_report\n");
+      s = s.write("    mov x0, x19\n");
+    }
+  } else {
+    if (s.leak_check) {
+      s = s.write("    bl __fern_lc_report\n");
+    }
+    s = s.write("    mov x0, #0\n");
   }
   s = s.write(profile_exit_asm(s.profile));
   s = s.write("    mov x8, #94\n");  // exit_group (Linux arm64); darwinize remaps the number + svc
   s = s.write("    svc #0\n");
+  return s;
+}
+
+// emit_stack_switch moves the process onto the stack asmcore.stack_size
+// describes, and makes running into its guard — or below the stack the
+// process started on, when the mapping is refused — a reported stack overflow
+// rather than a bare SIGSEGV. The handler runs on a stack of its own, since
+// the one that overflowed has no room left; when that cannot be mapped either,
+// no handler is installed. Darwin numbers the calls and lays out the records
+// differently; darwinize remaps the numbers.
+function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #30\n", darwin);
+  s = s.write("    tbnz x0, #63, .Lfern_stack_kept\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n    svc #0\n");
+  // Two zero words above the first frame end the backtrace walk there.
+  s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n.Lfern_stack_kept:\n");
+  s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #16\n", darwin);
+  // The sigaltstack and sigaction records are built below the stack pointer
+  // rather than held as data, so an image with no data of its own has none.
+  s = s.write("    tbnz x0, #63, .Lfern_segv_skip\n    mov x9, #1\n    lsl x9, x9, #16\n    sub sp, sp, #32\n");
+  if (darwin) {
+    s = s.write("    stp x0, x9, [sp]\n    str xzr, [sp, #16]\n");
+  } else {
+    s = s.write("    stp x0, xzr, [sp]\n    str x9, [sp, #16]\n");
+  }
+  s = s.write("    mov x0, sp\n    mov x1, #0\n    mov x8, #132\n    svc #0\n    adrp x9, __fern_segv\n    add x9, x9, :lo12:__fern_segv\n");
+  if (darwin) {
+    s = s.write("    adrp x10, __fern_segv_trampoline\n    add x10, x10, :lo12:__fern_segv_trampoline\n    mov x11, #0x41\n    lsl x11, x11, #32\n");
+  } else {
+    s = s.write("    mov x10, #4\n    movk x10, #0x800, lsl #16\n    mov x11, #0\n");
+  }
+  s = emit_segv_install(s.write("    stp x9, x10, [sp]\n    stp x11, xzr, [sp, #16]\n"), darwin);
+  return s.write("    add sp, sp, #32\n.Lfern_segv_skip:\n");
+}
+
+// emit_stack_map maps an anonymous read-write region of the size x1 is set to
+// by `size`, leaving its address, or a negative errno, in x0.
+function emit_stack_map(s: asmcore.EmitState, size: string, darwin: boolean): asmcore.EmitState {
+  let flags: string = "    mov x3, #0x4022\n    orr x3, x3, #0x20000\n";
+  if (darwin) {
+    flags = "    mov x3, #0x1002\n";
+  }
+  return s.write("    mov x0, #0\n" + size + "    mov x2, #3\n" + flags + "    mov x4, #0\n    sub x4, x4, #1\n    mov x5, #0\n    mov x8, #222\n    svc #0\n");
+}
+
+// landing_pad is the `bti c` a -harden build's indirect-call target needs.
+function landing_pad(s: asmcore.EmitState): string {
+  if (s.harden) {
+    return "    bti c\n";
+  }
+  return "";
+}
+
+// emit_segv_install sets SIGSEGV's action, and on Darwin SIGBUS's, since its
+// stack guard can raise either, from the record at sp.
+function emit_segv_install(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  let install: string = "    mov x1, sp\n    mov x2, #0\n    mov x3, #8\n    mov x8, #134\n    svc #0\n";
+  s = s.write("    mov x0, #11\n" + install);
+  if (darwin) {
+    s = s.write("    mov x0, #10\n" + install);
+  }
+  return s;
+}
+
+// emit_stack_overflow_runtime is emit_stack_switch's handler. A fault within 1 MiB of the interrupted
+// stack pointer is the stack running out: it is reported as a fatal abort
+// (exit 134), its backtrace walked from a frame record naming the faulting
+// instruction. Any other fault puts the default action back and returns, so
+// the access faults again and the process dies of the signal as it would have.
+function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+  let msg: string = asmcore.msg_stack_overflow();
+  // The fault address is in the siginfo; the interrupted sp, fp and pc in
+  // the context, which on Darwin is reached through uc_mcontext.
+  let addr: string = "    ldr x9, [x1, #16]\n";
+  let ctx: string = "    ldr x10, [x2, #432]\n";
+  let frame: string = "    ldr x11, [x2, #440]\n    ldr x12, [x2, #416]\n";
+  if (darwin) {
+    addr = "    ldr x9, [x1, #24]\n";
+    ctx = "    ldr x13, [x2, #48]\n    ldr x10, [x13, #264]\n    and x10, x10, #0x0000ffffffffffff\n";
+    frame = "    ldr x11, [x13, #272]\n    ldr x12, [x13, #248]\n    and x11, x11, #0x0000ffffffffffff\n    and x12, x12, #0x0000ffffffffffff\n";
+  }
+  s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
+  s = s.write("__fern_segv:\n" + landing_pad(s) + addr + ctx + "    sub x9, x9, x10\n    mov x10, #1\n    lsl x10, x10, #20\n    add x9, x9, x10\n    lsl x10, x10, #1\n    cmp x9, x10\n    b.hs .Lfern_segv_other\n" + frame);
+  s = s.write("    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n    adrp x1, .Lmsg_stack_overflow\n    add x1, x1, :lo12:.Lmsg_stack_overflow\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #134\n    b __fern_report\n");
+  // The default action's record: no handler, and on Darwin the trampoline.
+  let tramp: string = "xzr";
+  if (darwin) {
+    s = s.write(".Lfern_segv_other:\n    adrp x10, __fern_segv_trampoline\n    add x10, x10, :lo12:__fern_segv_trampoline\n");
+    tramp = "x10";
+  } else {
+    s = s.write(".Lfern_segv_other:\n");
+  }
+  s = emit_segv_install(s.write("    stp x29, x30, [sp, #-16]!\n    sub sp, sp, #32\n    stp xzr, " + tramp + ", [sp]\n    stp xzr, xzr, [sp, #16]\n"), darwin);
+  s = s.write("    add sp, sp, #32\n    ldp x29, x30, [sp], #16\n    ret\n");
+  if (darwin) {
+    // Darwin calls the handler through this trampoline, which returns
+    // through sigreturn: handler, style, signal, siginfo, context, token.
+    s = s.write("__fern_segv_trampoline:\n" + landing_pad(s) + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    stp x1, x4, [sp, #-16]!\n    stp x5, xzr, [sp, #-16]!\n    mov x16, x0\n    mov x0, x2\n    mov x1, x3\n    mov x2, x4\n    blr x16\n    ldp x2, xzr, [sp], #16\n    ldp x1, x0, [sp], #16\n    ldp x29, x30, [sp], #16\n    mov x16, #184\n    svc #0x80\n    brk #0\n");
+  }
   return s;
 }
 
@@ -10384,13 +10495,12 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   // __fern_lc_report in every program under FERN_LEAKCHECK, and a heap-free
   // program must still link. Emits nothing when the flag is off.
   s = emit_lc_report(s);
-  // The abort reporter (#11405): with the heap runtime, whose traps branch
-  // to it, and under either sanitizer flag, whose reports below end in its
-  // walk even when the program allocates nothing. A build that has neither
-  // carries no reporter, so its rodata stays empty.
-  if (s.has_need("heap") || s.rc_free_debug || s.sanitize || s.shared) {
-    s = emit_rt_report(s);
+  // The abort reporter (#11405), which the heap runtime's traps, the
+  // sanitizer reports and the stack-overflow handler all end in.
+  if (!s.shared) {
+    s = emit_stack_overflow_runtime(s, darwin);
   }
+  s = emit_rt_report(s);
   // A -shared build's busy flag: set while this thread runs the object's
   // code, so a second thread entering an export aborts rather than racing the
   // non-atomic counts. The export entries and the __c_call shims keep it.
@@ -12680,6 +12790,9 @@ function darwin_sysno(n: i32): i32 {
   if (n == 222) {  // mmap
     return 197;
   }
+  if (n == 226) {  // mprotect
+    return 74;
+  }
   return darwin_profile_process_sysno(n);
 }
 
@@ -12699,6 +12812,9 @@ function darwin_profile_signal_sysno(n: i32): i32 {
   }
   if (n == 134) {  // rt_sigaction -> sigaction
     return 46;
+  }
+  if (n == 132) {  // sigaltstack
+    return 53;
   }
   if (n == 135) {  // rt_sigprocmask -> sigprocmask
     return 48;

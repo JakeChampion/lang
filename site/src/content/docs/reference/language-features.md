@@ -44,8 +44,8 @@ for (species, count) in readings {
 ```
 
 Maps take the same header, binding each entry's key and value. Iteration
-order is insertion order, and it's part of the contract rather than an
-accident:
+order is insertion order, except that removing a key moves the last entry
+into its place, and it's part of the contract rather than an accident:
 
 ```fern
 import "core/map";
