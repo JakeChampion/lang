@@ -17043,6 +17043,11 @@ function fn_value_settles(e: ast.Expr, want: typeinfo.TypeFunc, s: Scope): boole
       i = i + 1;
     }
     let result: typeinfo.Type = type_from_ref_subst(sig_ret_ref(sig), bn, bt, s.type_names());
+    // A result the callable leaves open, as a method's own type parameter
+    // is, takes what the function gives.
+    if (is_unknown(want.ret_type)) {
+      result = want.ret_type;
+    }
     let actual: typeinfo.Type = t_func_own(params, sig.param_own, result);
     return type_assignable(actual, want, s.unions.unions);
   }
@@ -17411,11 +17416,30 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
         if (mfa.field == "with") {
           return [t_i32(), at.elem];
         }
+        return s.array_method_param_types(c, rt, mfa.field, at.view);
       }
     },
     _ => {}
   }
   return [];
+}
+
+// array_method_param_types is the parameter types of the array receiver
+// method `field` that the call `c` names, with the receiver's element type and
+// the call's type arguments bound. Empty when no such method is imported.
+function (s: Scope) array_method_param_types(c: ast.ExprCall, recv: typeinfo.Type, field: string, view: boolean): typeinfo.Type[] {
+  let asig: MethodSig = s.array_recv_method(field, view);
+  let out: typeinfo.Type[] = [];
+  if (asig.name.len() == 0) {
+    return out;
+  }
+  let mb: MethodBinding = method_binding(c, asig, recv, s);
+  let i: i32 = 0;
+  while (i < asig.param_types.len()) {
+    out = out.append(receiver_bound(asig.param_types[i], param_type_name_at(asig, i), mb, s));
+    i = i + 1;
+  }
+  return out;
 }
 
 // for_iter_diags reports E083 for a `for` over a value it cannot walk: no

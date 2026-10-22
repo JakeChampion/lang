@@ -285,6 +285,7 @@ generic_char_ordering                                0
 generic_float_compare_ieee                           0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
+generic_fn_value_array_methods                       0
 generic_fnarg_typevar                                0
 generic_fold_accumulator_reclaim                     0
 generic_id                                           0

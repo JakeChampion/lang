@@ -20025,11 +20025,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if sub != nil {
 					if id, isName := n.Args[i].(*ast.Ident); isName && len(id.TypeArgs) > 0 {
 						// A generic named as the argument was typed from this
-						// parameter (instantiateFuncValue): unifying the two
-						// would only bind the callee's own parameters to
-						// themselves. The other arguments pin them, and
-						// monomorph substitutes them into the value's type
-						// arguments with the call's.
+						// parameter (instantiateFuncValue). A concrete type binds
+						// what the parameter left open, as the result `U` of
+						// `xs.map(f)`. One still in type parameters would only
+						// bind the callee's own parameters to themselves: the
+						// other arguments pin them, and monomorph substitutes
+						// them into the value's type arguments with the call's.
+						if !containsParamType(at) {
+							c.unifyType(expected, at, sub)
+						}
 					} else if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
 						// Report what the parameter came to MEAN here, not how
 						// it was declared: `Box[U, E]` says nothing to a reader
