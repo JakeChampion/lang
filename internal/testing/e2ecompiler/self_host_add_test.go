@@ -155,8 +155,9 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 			}
 			cmd := exec.Command(bin, "-add", "kv", "path:../kv", dir, "-grant", "net")
 			out, _ := cmd.CombinedOutput()
-			if code := cmd.ProcessState.ExitCode(); code != 2 || !strings.Contains(string(out), ": -grant comes after the source file") {
-				t.Errorf("%s: exit %d, want 2 and the refusal\n%s", filepath.Base(bin), code, out)
+			const want = "fern: -grant comes after -add's arguments, where flags are no longer parsed; put it before -add\n"
+			if code := cmd.ProcessState.ExitCode(); code != 2 || strings.ReplaceAll(string(out), "fern-oracle: ", "fern: ") != want {
+				t.Errorf("%s: exit %d, want 2 and %q\n%s", filepath.Base(bin), code, want, out)
 			}
 			if man, _ := os.ReadFile(filepath.Join(dir, "fern.toml")); string(man) != noTable {
 				t.Errorf("%s: refused add still rewrote the manifest:\n%q", filepath.Base(bin), man)

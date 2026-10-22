@@ -193,6 +193,21 @@ function owner_ident(src: parser.Module, qual: string): string {
   return "";
 }
 
+// module_name_of is the name of the loaded module `qual` reaches from the module
+// being checked: its file's base name, which the private keys use and which an
+// alias or a `-` in the name makes differ from the qualifier.
+function module_name_of(cx: VisCtx, qual: string): string {
+  let owner: string = owner_ident(cx.src, qual);
+  if (owner.len() > 0) {
+    for lm in cx.loaded {
+      if (lm.ident == owner) {
+        return lm.name;
+      }
+    }
+  }
+  return qual;
+}
+
 // package_scope reports whether `qual.name` names a `pub(package)`
 // declaration, and whether the module being checked is outside its package.
 function package_scope(cx: VisCtx, qual: string, name: string): (boolean, boolean) {
@@ -232,7 +247,7 @@ function module_diags(cx: VisCtx): util.Diag[] {
     }
   }
   for r in refs {
-    let key: string = r.qual + "." + r.name;
+    let key: string = module_name_of(cx, r.qual) + "." + r.name;
     let (scoped, refused) = package_scope(cx, r.qual, r.name);
     if (scoped) {
       if (refused) {
@@ -399,10 +414,11 @@ function check_type_name(tn: string, cx: VisCtx, line: i32, col: i32, acc: util.
     }
     return acc;
   }
-  if (!cx.priv.has(q + "." + base)) {
+  let m: string = module_name_of(cx, q);
+  if (!cx.priv.has(m + "." + base)) {
     return acc;
   }
-  let mi: i32 = module_named(cx.loaded, q);
+  let mi: i32 = module_named(cx.loaded, m);
   if (mi < 0) {
     return acc;
   }
@@ -415,7 +431,7 @@ function check_type_name(tn: string, cx: VisCtx, line: i32, col: i32, acc: util.
   return acc.append(util.Diag {
     related: [],
     code: "",
-    message: q + "." + base + " is not exported (declare it as `pub " + kind + " " + base + " …` to make it accessible from other modules)",
+    message: m + "." + base + " is not exported (declare it as `pub " + kind + " " + base + " …` to make it accessible from other modules)",
     line: line,
     col: col,
     fix: None,

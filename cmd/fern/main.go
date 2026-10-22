@@ -657,9 +657,9 @@ func main() {
 	}
 
 	if *doAdd {
-		for i := range flag.Args() {
-			if _, err := programArgs(flag.Args()[i:]); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+		for _, a := range flag.Args() {
+			if len(a) > 1 && strings.HasPrefix(a, "-") {
+				fmt.Fprintf(os.Stderr, "fern-oracle: %s comes after -add's arguments, where flags are no longer parsed; put it before -add\n", a)
 				os.Exit(2)
 			}
 		}

@@ -2134,12 +2134,13 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
 // The manifest is edited TEXTUALLY, so existing formatting and comments
 // survive: a dependency is a line spliced into `[dependencies]`, not a
 // re-render of a parsed tree.
-function run_add(pos: string[], grant: string, fetcher: Fetcher, embedded: boolean): i32 {
+function run_add(pos: string[], grant: string, fetcher: Fetcher): i32 {
   // `-add` runs no program, so a `-x` among its arguments is a driver flag
   // written too late, never data.
   for a in pos {
     if (is_flag(a)) {
-      return flag_after_entry(a, embedded);
+      eprint("fern: " + a + " comes after -add's arguments, where flags are no longer parsed; put it before -add");
+      return 2;
     }
   }
   if (pos.len() < 2 || pos.len() > 3) {
@@ -5890,7 +5891,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
 
   // `-add` edits a manifest and compiles nothing.
   if (mode_add) {
-    return run_add(pos, grant, fetcher, embedded);
+    return run_add(pos, grant, fetcher);
   }
 
   let bad_target: string = target_refusal(target);

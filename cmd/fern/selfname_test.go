@@ -31,7 +31,7 @@ func TestOracleNamesItselfFernOracle(t *testing.T) {
 		{"fmt -o with two files", []string{"-fmt", "-o", filepath.Join(dir, "out.fern"), src, src}, "fern-oracle: -fmt -o takes a single input file"},
 		{"flag after file", []string{"-interp", src, "-o", "x"}, "fern-oracle: -o comes after the source file"},
 		{"add refusal", []string{"-add", "9bad", "path:../x", dir}, "fern-oracle: -add: invalid dependency name"},
-		{"grant after add's arguments", []string{"-add", "kv", "path:../kv", dir, "-grant", "net"}, "fern-oracle: -grant comes after the source file"},
+		{"grant after add's arguments", []string{"-add", "kv", "path:../kv", dir, "-grant", "net"}, "fern-oracle: -grant comes after -add's arguments"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := exec.Command(bin, tc.argv...).CombinedOutput()
