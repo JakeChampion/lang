@@ -92,6 +92,7 @@ import "std/crypto";
 import "std/envflag";
 import "std/http/h2";
 import "core/int";
+import "core/cmp";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -139,6 +140,8 @@ pub enum FetchError {
   Host(string),
   Cancelled,
 }
+
+impl cmp.Display for FetchError {}
 
 pub function (p: Phase) message(): string {
   match (p) {

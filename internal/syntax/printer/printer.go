@@ -602,6 +602,8 @@ func printType(t ast.Type) string {
 			return "f64"
 		}
 		return "f32"
+	case ast.LanesType:
+		return x.String()
 	case ast.StructType:
 		return x.Name
 	case ast.ArrayType:

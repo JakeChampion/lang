@@ -1,0 +1,29 @@
+// The f32x4 operators and builtins. Each lane computes in single precision,
+// so a third is the f32 nearest a third and three of them do not sum to one.
+import "std/f64";
+
+function show(tag: string, v: f32x4): void {
+  print(tag + " " + (__f32x4_lane(v, 0) as f64).to_string() + " " + (__f32x4_lane(v, 1) as f64).to_string() + " " + (__f32x4_lane(v, 2) as f64).to_string() + " " + (__f32x4_lane(v, 3) as f64).to_string());
+}
+
+function main(): i32 {
+  let t: f32x4 = __f32x4_of(1.0, 2.0, 3.0, 7.0);
+  let third: f32x4 = __f32x4_splat(1.0) / t;
+  show("t", t);
+  show("third", third);
+  show("sum", third + third + third);
+  show("sub", t - third);
+  show("mul", t * third);
+  show("neg", -t);
+  show("sqrt", __f32x4_sqrt(t));
+  show("round", __f32x4_round(__f32x4_of(2.5, -2.5, 0.49999997, -0.5)));
+  show("floor", __f32x4_floor(__f32x4_of(1.5, -1.5, 0.0, -0.25)));
+  show("abs", __f32x4_abs(__f32x4_of(-1.0, 2.0, -0.0, -3.5)));
+  show("min", __f32x4_min(t, __f32x4_splat(2.5)));
+  show("max", __f32x4_max(t, __f32x4_splat(2.5)));
+  show("lt", __f32x4_select(__f32x4_splat(9.0), t, __f32x4_lt(t, __f32x4_splat(2.5))));
+  show("ne", __f32x4_select(__f32x4_splat(9.0), t, __f32x4_ne(t, __f32x4_splat(2.0))));
+  show("fma", __f32x4_mul_add(third, t, __f32x4_splat(-1.0)));
+  show("big", __f32x4_splat(16777217.0));
+  return 0;
+}

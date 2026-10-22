@@ -28,6 +28,8 @@ import "std/tls/message";
 import "std/tls/record";
 import "std/tls/verify";
 import "std/tls/x509";
+import "std/error";
+import "core/cmp";
 
 // Config — the name the certificate must carry, the protocols to offer by
 // ALPN in preference order, the roots to trust, a ticket to resume from,
@@ -82,6 +84,14 @@ pub enum TlsError {
   // errno: Linux before 6.14 takes one key per direction.
   KeysRefused(i32),
 }
+
+pub function (e: TlsError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for TlsError {}
+
+impl cmp.Display for TlsError {}
 
 // One arm per variant.
 // fern-lint: allow cyclomatic-complexity

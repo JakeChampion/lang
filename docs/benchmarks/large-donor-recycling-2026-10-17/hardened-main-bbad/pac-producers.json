@@ -1,0 +1,30 @@
+{
+  "compiler_source_git": "457382f7af98fa731ae77aa9acac0f1b8f75083e",
+  "compiler_source_sha256": "c6e04ae13edfb1d3979fdab36c7b6de14532d9090cacfe9da3ba9e40e9aeae14",
+  "self_built_producer_sha256": "f80d5b3c0de1a56a97f3089a0cc98bf3bced4a66ca95c04fd39c1b7e2f415d3f",
+  "test_sha256": "ffbaa3a90748e0a301277ae85e14753ea8359adbd3a572fe430c5d7b0c8beba5",
+  "command": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHost(AllocReuseLargeDonor|HardenArm64)$",
+    "-v",
+    "-count=1",
+    "-timeout",
+    "15m"
+  ],
+  "runs": [
+    {
+      "producer": "pinned stage0",
+      "result": "pass",
+      "seconds": 3.765
+    },
+    {
+      "STAGE0": "/workspace/scratch/lang-large-donor-hardened/stage3",
+      "result": "pass",
+      "seconds": 3.777
+    }
+  ],
+  "negative_control": "Flip saved PAC bit 54; authentication faults. Replacing authentication with XPACLRI strips the corrupted signature and restores a balanced normal return."
+}

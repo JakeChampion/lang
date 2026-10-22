@@ -1,0 +1,14 @@
+// E038: a lane index is an integer literal below the lane count, so the lane
+// a builtin names is fixed where it is written.
+import "std/f64";
+
+function main(): i32 {
+  let v: f64x2 = __f64x2_splat(1.0);
+  let q: f32x4 = __f32x4_splat(1.0);
+  let i: i32 = 1;
+  let a: f64 = __f64x2_lane(v, 1);
+  let b: f64 = __f64x2_lane(v, i);
+  let c: f64 = __f64x2_lane(v, 2);
+  let d: f32 = __f32x4_lane(q, 4);
+  return 0;
+}

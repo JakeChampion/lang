@@ -1,0 +1,61 @@
+// Lane values cross direct calls as parameters and results: mixed with
+// integer, float and string arguments, through recursion, from a function
+// with no parameters, and as a branch's or a loop's value.
+import "std/f64";
+
+function show(tag: string, v: f64x2): void {
+  print(tag + " " + __f64x2_lane(v, 0).to_string() + " " + __f64x2_lane(v, 1).to_string());
+}
+
+function unit(): f64x2 {
+  return __f64x2_of(1.0, -1.0);
+}
+
+function mix(n: i32, a: f64x2, k: f64, b: f32x4, s: string, c: f64x2): f64x2 {
+  let t: f64 = (__f32x4_lane(b, 2) as f64) + (s.len() as f64) + k + (n as f64);
+  return a * c + __f64x2_splat(t);
+}
+
+function pick(flag: boolean, a: f64x2, b: f64x2): f64x2 {
+  if (flag) {
+    return a + b;
+  }
+  return a - b;
+}
+
+function power(v: f64x2, n: i32): f64x2 {
+  if (n == 0) {
+    return __f64x2_splat(1.0);
+  }
+  return v * power(v, n - 1);
+}
+
+function swap(v: f64x2): f64x2 {
+  return __f64x2_of(__f64x2_lane(v, 1), __f64x2_lane(v, 0));
+}
+
+function same(v: f32x4): f32x4 {
+  return v;
+}
+
+function main(): i32 {
+  let a: f64x2 = __f64x2_of(0.5, 2.0);
+  let b: f64x2 = __f64x2_of(-1.25, 4.0);
+  show("unit", unit());
+  show("mix", mix(3, a, 0.25, __f32x4_of(0.5, 1.5, 2.5, -3.5), "abcd", b));
+  show("pick1", pick(true, a, b));
+  show("pick0", pick(false, a, b));
+  show("pow", power(__f64x2_of(1.5, -2.0), 5));
+  show("swap", swap(swap(swap(a))));
+  let acc: f64x2 = __f64x2_splat(0.0);
+  let i: i32 = 0;
+  while (i < 5) {
+    acc = pick(i % 2 == 0, acc, unit());
+    i = i + 1;
+  }
+  show("loop", acc);
+  let q: f32x4 = same(__f32x4_of(1.5, -2.5, 3.5, -4.5));
+  print((__f32x4_lane(q, 0) as f64).to_string() + " " + (__f32x4_lane(q, 3) as f64).to_string());
+  show("after", a + b);
+  return 0;
+}

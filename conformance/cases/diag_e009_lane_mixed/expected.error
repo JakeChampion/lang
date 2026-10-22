@@ -1,0 +1,2 @@
+operator "+" requires matching numeric or string operands, got f64x2 and f64
+operator "*" requires matching numeric operands, got f64x2 and f32x4
