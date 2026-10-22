@@ -555,11 +555,6 @@
 # backend, the lane register class and its spill pairs), merged with main
 # at 826a5d0. The other ten baselines and the 5% tolerance are unchanged.
 #
-# 2026-10-22 — fern.fern/stage2 12672208 -> 13310144 (+5.0%), measured by
-# the driver-sizes lane on #12988 merged with main at 4426eac. Main's growth:
-# main at 0b88710 self-builds at 13201616 (+4.2%), and #12988's short-string
-# str_hash adds 4368 bytes (+0.03%). The other ten baselines and the 5%
-# tolerance are unchanged.
 # 2026-10-22 (#12969) — every row from a local TestSelfHostWarmStockDriver run
 # on the merge with main at 3c69b38a, which includes #12961. fern.fern/stage2
 # 12672208 -> 14037248 (+10.8%) and fern.fern 13273088 -> 13289616 (+0.1%).
