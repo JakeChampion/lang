@@ -6648,6 +6648,9 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irtables.StructTab): stri
   if (irtables.is_f64_scalar_type_name(fd.ret_type)) {
     return " (result f64)\n";
   }
+  if (fd.ret_type == "f64x2" || fd.ret_type == "f32x4") {
+    return " (result v128)\n";
+  }
   if (irtables.erased_passthrough_safe(fd)) {
     return " (result i64)\n";
   }
@@ -6672,6 +6675,9 @@ function produced_result_wat(r: irtables.LowerResult): string {
   if (r.result_kind == irtables.result_f64()) {
     return " (result f64)\n";
   }
+  if (r.result_kind == irtables.result_v128()) {
+    return " (result v128)\n";
+  }
   eprint("error: produced body " + r.name + " carries no result kind");
   exit(3);
   return "";
@@ -6683,6 +6689,9 @@ function fallthrough_filler(result_wat: string): string {
   }
   if (util.contains(result_wat, "f64")) {
     return "    f64.const 0)\n";
+  }
+  if (util.contains(result_wat, "v128")) {
+    return "    f64.const 0\n    f64x2.splat)\n";
   }
   return "    i32.const 0)\n";
 }
