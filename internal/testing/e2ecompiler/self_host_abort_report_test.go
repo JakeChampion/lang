@@ -277,36 +277,45 @@ func TestSelfHostAbortBacktraceArm64(t *testing.T) {
 	checkAbortBacktrace(t, frames, stderr)
 }
 
-// helperTrapSrc makes a request the runtime helper refuses before it builds a
-// frame of its own; args() keeps the size from folding.
-const helperTrapSrc = `@noinline function mk(n: i32): i32 { let b: u8[] = __alloc_u8(n); return b.len() + 1; }
+// helperTrapSrcs each make a request a runtime helper refuses before it
+// builds a frame of its own, from mk; args() keeps the operands from folding.
+var helperTrapSrcs = []struct{ name, src, cause string }{
+	{"alloc_u8", `@noinline function mk(n: i32): i32 { let b: u8[] = __alloc_u8(n); return b.len() + 1; }
 function main(): i32 { return mk(args().len() - 6) + 1; }
-`
+`, "fern: allocation size out of range"},
+	{"buf_push_range", `@noinline function mk(n: i32): i32 { let b: usize = buf_new(8); buf_push_range(b, "abc", 1, n); return buf_take(b).len() + 1; }
+function main(): i32 { return mk(args().len() + 8) + 1; }
+`, "fern: slice range out of bounds"},
+}
 
-// A size abort in a runtime helper lists the function that made the request
-// first, on both targets (#12981). mk and main keep no frame pointer on
-// x86-64, so its walk ends at mk; on arm64 a function that calls keeps a
-// frame record, so main follows.
+// A helper's abort lists the function that made the request first, on both
+// targets (#12981). mk and main keep no frame pointer on x86-64, so its walk
+// ends at mk; on arm64 a function that calls keeps a frame record, so main
+// follows.
 func TestSelfHostAbortHelperFrameAgrees(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
-	x86 := compileAbortSrc(t, cli, helperTrapSrc, "x86-64-linux", nil)
-	x86Frames, x86Stderr := abortFrames(t, x86, runX86_64Bin(cli.runner, x86))
-	arm := compileAbortSrc(t, cli, helperTrapSrc, "arm64-linux", nil)
-	armFrames, armStderr := abortFrames(t, arm, runArm64Bin(qemu, arm))
-	for _, leg := range []struct {
-		name, stderr string
-		frames, want []string
-	}{
-		{"x86-64", x86Stderr, x86Frames, []string{"mk"}},
-		{"arm64", armStderr, armFrames, []string{"mk", "main", "_start"}},
-	} {
-		if !strings.HasPrefix(leg.stderr, "fern: allocation size out of range\n") {
-			t.Errorf("%s: stderr does not open with the size cause:\n%s", leg.name, leg.stderr)
-		}
-		if len(leg.frames) < len(leg.want) || strings.Join(leg.frames[:len(leg.want)], " ") != strings.Join(leg.want, " ") {
-			t.Errorf("%s: frames %v, want %v first\nstderr:\n%s", leg.name, leg.frames, leg.want, leg.stderr)
-		}
+	for _, tc := range helperTrapSrcs {
+		t.Run(tc.name, func(t *testing.T) {
+			x86 := compileAbortSrc(t, cli, tc.src, "x86-64-linux", nil)
+			x86Frames, x86Stderr := abortFrames(t, x86, runX86_64Bin(cli.runner, x86))
+			arm := compileAbortSrc(t, cli, tc.src, "arm64-linux", nil)
+			armFrames, armStderr := abortFrames(t, arm, runArm64Bin(qemu, arm))
+			for _, leg := range []struct {
+				name, stderr string
+				frames, want []string
+			}{
+				{"x86-64", x86Stderr, x86Frames, []string{"mk"}},
+				{"arm64", armStderr, armFrames, []string{"mk", "main", "_start"}},
+			} {
+				if !strings.HasPrefix(leg.stderr, tc.cause+"\n") {
+					t.Errorf("%s: stderr does not open with %q:\n%s", leg.name, tc.cause, leg.stderr)
+				}
+				if len(leg.frames) < len(leg.want) || strings.Join(leg.frames[:len(leg.want)], " ") != strings.Join(leg.want, " ") {
+					t.Errorf("%s: frames %v, want %v first\nstderr:\n%s", leg.name, leg.frames, leg.want, leg.stderr)
+				}
+			}
+		})
 	}
 }
 
