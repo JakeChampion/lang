@@ -293,6 +293,33 @@ sequenced after this PR rather than started at its tail: a lane type whose
 backends refuse it, or one that spills a 128-bit value into an 8-byte slot,
 is worse than none.
 
+So the slice lands bottom-up, in three PRs, and the type itself is the last
+of them. No PR leaves a type on main that a backend refuses.
+
+- **4a, the instruction vocabulary.** Each assembler learns the forms the
+  lane ops need. Nothing emits them yet. On x86-64 the new forms are `cmppd`
+  and `cmpps` (the predicate in the imm8), `roundpd` and `roundps`, and the
+  FMA3 `vfmadd213pd` and `vfmadd213ps`, which carry VEX.W. The packed
+  arithmetic, `andpd`, `unpcklpd`, `pextrq` and `movupd` were already
+  encodable. On arm64 the new forms are `fmla` and `fmls`, the seven `frint*`
+  roundings and `bsl`, `bit` and `bif`. The `.2d` arithmetic, `fcmeq`, `dup`
+  and the `q` loads were already there.
+- **4a on wasm.** `watbin` learns the f64x2 and f32x4 arithmetic, compares,
+  roundings, lane reads and writes, the `v128` bitwise ops and `bitselect`.
+  The native gates are the GNU as differentials
+  (`TestSelfHostX86TableRowsMatchGas`, `TestSelfHostX86FormsMatchGas`,
+  `TestSelfHostArm64AsmEncodingMatchesGas`). The wasm gate is
+  `TestSelfHostWatbinSimdLanes`, a module that computes with every new op
+  and exits 0 only on the spec's answers.
+- **4b, the IR ops and the register class.** The `v*` ops of §4 join
+  `ir.fern`. Both SSA emitters get a 16-byte spill slot and the lane moves,
+  and the wasm emitter a `v128` local class. Each backend emits every op,
+  gated by IR-level programs on all three targets.
+- **4c, the type.** `f64x2` / `f32x4` in both lexers and checkers, the
+  `__f64x2_*` / `__f32x4_*` builtins through the contracts, the lowering, the
+  four capability tables and both interpreters, with the differential
+  against the scalar reference.
+
 ## 7. Slices
 
 | # | Slice | State |
@@ -300,7 +327,9 @@ is worse than none.
 | 1 | This brief | this PR |
 | 2 | Associated constants, both compilers | this PR |
 | 3 | `std/simd`: `Lanes`, `Math`, scalar impls, `Dual`, `DoubleDouble`, benchmark | this PR |
-| 4 | Lane types `f64x2` / `f32x4`: type, interpreters, IR ops, wasm, x86-64, arm64, capability tables | next PR (§6 has the file-level plan) |
+| 4a | Lane types: the instruction vocabulary on x86-64, arm64 and wasm | this PR (§6 has the file-level plan) |
+| 4b | Lane types: IR ops, the 128-bit register class and spill slot, emission on every backend | after 4a |
+| 4c | Lane types: `f64x2` / `f32x4` in both front ends, the builtins, the capability tables, both interpreters | after 4b |
 | 5 | `impl Lanes` / `impl Math` for `f64x2` / `f32x4`; array fusion picks the lane instance for a packed `f64[]` map | after 4 |
 | 6 | Const generics; `Vec[N, T]` | follow-on project |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |

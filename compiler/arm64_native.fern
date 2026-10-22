@@ -2644,6 +2644,15 @@ function arm64_vlogical_entry(mnem: string): i32 {
     "eor" => {
       return arm64_vec_entry(true, 0, 1);
     },
+    "bsl" => {
+      return arm64_vec_entry(true, 1, 1);
+    },
+    "bit" => {
+      return arm64_vec_entry(true, 2, 1);
+    },
+    "bif" => {
+      return arm64_vec_entry(true, 3, 1);
+    },
     _ => {
       return 0 - 1;
     }
@@ -2792,6 +2801,12 @@ function arm64_vfp3_entry(mnem: string): i32 {
     "fcmgt" => {
       return arm64_vec_entry(true, 28, 1);
     },
+    "fmla" => {
+      return arm64_vec_entry(false, 25, 0);
+    },
+    "fmls" => {
+      return arm64_vec_entry(false, 25, 1);
+    },
     _ => {
       return 0 - 1;
     }
@@ -2824,6 +2839,27 @@ function arm64_vfp2_entry(mnem: string): i32 {
     },
     "fcvtzu" => {
       return arm64_vec_entry(true, 27, 1);
+    },
+    "frintn" => {
+      return arm64_vec_entry(false, 24, 0);
+    },
+    "frintm" => {
+      return arm64_vec_entry(false, 25, 0);
+    },
+    "frintp" => {
+      return arm64_vec_entry(false, 24, 1);
+    },
+    "frintz" => {
+      return arm64_vec_entry(false, 25, 1);
+    },
+    "frinta" => {
+      return arm64_vec_entry(true, 24, 0);
+    },
+    "frintx" => {
+      return arm64_vec_entry(true, 25, 0);
+    },
+    "frinti" => {
+      return arm64_vec_entry(true, 25, 1);
     },
     _ => {
       return 0 - 1;

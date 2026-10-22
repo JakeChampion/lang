@@ -1352,31 +1352,52 @@ function sat_trunc_opcode(op: string): i32 {
 // than the access is a VALIDATION error where a smaller one is always legal —
 // so simd_load_align answers 0 rather than reusing memarg_align's natural one.
 function simd_opcode(op: string): i32 {
-  if (op == "v128.load") {
-    return 0;
+  let i: i32 = index_of_str(simd_op_names(), op);
+  if (i < 0) {
+    return 0 - 1;
   }
-  if (op == "v128.store") {
-    return 11;
-  }
-  if (op == "i8x16.splat") {
-    return 15;
-  }
-  if (op == "f64x2.splat") {
-    return 20;
-  }
-  if (op == "i8x16.eq") {
-    return 35;
-  }
-  if (op == "i8x16.bitmask") {
-    return 100;
-  }
-  if (op == "f64x2.mul") {
-    return 242;
-  }
-  if (op == "f64x2.add") {
-    return 240;
-  }
-  return 0 - 1;
+  return simd_op_codes()[i];
+}
+
+// simd_op_names and simd_op_codes are one table in two columns: the SIMD ops
+// the byte kernels and the lane type (docs/SIMD-GENERIC-KERNELS.md §6) emit,
+// each with its 0xFD sub-opcode. The two arrays are kept in the same order.
+function simd_op_names(): string[] {
+  return [
+    "v128.load", "v128.store", "i8x16.splat", "i8x16.eq", "i8x16.bitmask",
+    "v128.not", "v128.and", "v128.andnot", "v128.or", "v128.xor", "v128.bitselect",
+    "f64x2.splat", "f64x2.extract_lane", "f64x2.replace_lane",
+    "f64x2.eq", "f64x2.ne", "f64x2.lt", "f64x2.gt", "f64x2.le", "f64x2.ge",
+    "f64x2.ceil", "f64x2.floor", "f64x2.trunc", "f64x2.nearest",
+    "f64x2.abs", "f64x2.neg", "f64x2.sqrt", "f64x2.add", "f64x2.sub", "f64x2.mul", "f64x2.div",
+    "f64x2.min", "f64x2.max", "f64x2.pmin", "f64x2.pmax",
+    "f32x4.splat", "f32x4.extract_lane", "f32x4.replace_lane",
+    "f32x4.eq", "f32x4.ne", "f32x4.lt", "f32x4.gt", "f32x4.le", "f32x4.ge",
+    "f32x4.ceil", "f32x4.floor", "f32x4.trunc", "f32x4.nearest",
+    "f32x4.abs", "f32x4.neg", "f32x4.sqrt", "f32x4.add", "f32x4.sub", "f32x4.mul", "f32x4.div",
+    "f32x4.min", "f32x4.max", "f32x4.pmin", "f32x4.pmax",
+    "f32x4.demote_f64x2_zero", "f64x2.promote_low_f32x4",
+    "i32x4.extract_lane", "i64x2.extract_lane",
+  ];
+}
+
+function simd_op_codes(): i32[] {
+  return [
+    0, 11, 15, 35, 100,
+    77, 78, 79, 80, 81, 82,
+    20, 33, 34,
+    71, 72, 73, 74, 75, 76,
+    116, 117, 122, 148,
+    236, 237, 239, 240, 241, 242, 243,
+    244, 245, 246, 247,
+    19, 31, 32,
+    65, 66, 67, 68, 69, 70,
+    103, 104, 105, 106,
+    224, 225, 227, 228, 229, 230, 231,
+    232, 233, 234, 235,
+    94, 95,
+    27, 29,
+  ];
 }
 
 // simd_has_memarg says whether a SIMD op carries the (align, offset) pair
@@ -1385,14 +1406,49 @@ function simd_has_memarg(op: string): boolean {
   return op == "v128.load" || op == "v128.store";
 }
 
+// simd_has_lane says whether a SIMD op carries a lane index byte after its
+// sub-opcode: the extract and replace forms, whose index is written first
+// (`f64x2.extract_lane 1`), before the operands.
+function simd_has_lane(op: string): boolean {
+  return str_ends_with(op, ".extract_lane") || str_ends_with(op, ".replace_lane");
+}
+
 // simd_arity gives how many stack operands a SIMD op takes, so enc_instr can
 // encode them post-order without a per-op branch.
 function simd_arity(op: string): i32 {
-  // v128.store takes the address then the value, like the scalar stores.
-  if (op == "i8x16.eq" || op == "f64x2.mul" || op == "f64x2.add" || op == "v128.store") {
+  if (op == "v128.bitselect") {
+    return 3;
+  }
+  // v128.store takes the address then the value, like the scalar stores; a
+  // replace_lane takes the vector then the scalar.
+  if (op == "v128.store" || op == "i8x16.eq" || str_ends_with(op, ".replace_lane")) {
+    return 2;
+  }
+  let dot: i32 = index_of_str(["add", "sub", "mul", "div", "min", "max", "pmin", "pmax", "eq", "ne", "lt", "gt", "le", "ge", "and", "andnot", "or", "xor"], simd_op_verb(op));
+  if (dot >= 0) {
     return 2;
   }
   return 1;
+}
+
+function str_ends_with(s: string, suffix: string): boolean {
+  if (suffix.len() > s.len()) {
+    return false;
+  }
+  return slice_unchecked(s, s.len() - suffix.len(), s.len()) == suffix;
+}
+
+// simd_op_verb is the part of a SIMD op after its shape prefix: "add" of
+// "f64x2.add".
+function simd_op_verb(op: string): string {
+  let k: i32 = 0;
+  while (k < op.len()) {
+    if (op[k] == b'.') {
+      return slice_unchecked(op, k + 1, op.len()) + "";
+    }
+    k = k + 1;
+  }
+  return op;
 }
 
 // bulk_mem_opcode maps a bulk-memory op to its 0xFC-prefixed sub-opcode index,
@@ -1720,8 +1776,12 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
   let sop: i32 = simd_opcode(op);
   if (sop >= 0) {
     let sa: i32 = simd_arity(op);
-    let sk: i32 = 1;
-    while (sk <= sa) {
+    let first: i32 = 1;
+    if (simd_has_lane(op)) {
+      first = 2;
+    }
+    let sk: i32 = first;
+    while (sk < first + sa) {
       out = wcat(out, enc_instr(node.items[sk], lnames, fnames, gnames, labels, tnames));
       sk = sk + 1;
     }
@@ -1730,6 +1790,9 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     if (simd_has_memarg(op)) {
       out = leb_u32(out, 0);  // align: see simd_opcode's note
       out = leb_u32(out, 0);  // offset
+    }
+    if (simd_has_lane(op)) {
+      out = out.append(parse_dec(node.items[1].text) & 255);
     }
     return out;
   }
@@ -1908,12 +1971,17 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
         out = leb_u32(out, 0);
       } else if (sop >= 0) {
         // Fixed-width SIMD: `0xFD idx` (operands already on the stack in
-        // the flat form), plus the load/store memarg.
+        // the flat form), plus the load/store memarg or the lane index,
+        // which is the next atom.
         out = out.append(253);  // 0xFD
         out = leb_u32(out, sop);
         if (simd_has_memarg(op)) {
           out = leb_u32(out, 0);
           out = leb_u32(out, 0);
+        }
+        if (simd_has_lane(op)) {
+          out = out.append(parse_dec(instrs[i + 1].text) & 255);
+          i = i + 1;
         }
       } else if (stf >= 0) {
         // Saturating float->int truncation: two-byte `0xFC idx` (operand

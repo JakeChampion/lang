@@ -419,6 +419,23 @@ _start:
     fcmeq v23.4s, v9.4s, v28.4s
     fcmge v23.2d, v9.2d, v28.2d
     fcmgt v23.4s, v9.4s, v28.4s
+    // The lane-type vocabulary (docs/SIMD-GENERIC-KERNELS.md §6): the fused
+    // multiply-adds, the roundings and the bitwise selects.
+    fmla v23.2d, v9.2d, v28.2d
+    fmla v3.4s, v4.4s, v5.4s
+    fmls v23.2d, v9.2d, v28.2d
+    fmls v1.2s, v2.2s, v3.2s
+    frintn v23.2d, v9.2d
+    frintm v23.2d, v9.2d
+    frintp v3.4s, v4.4s
+    frintz v23.2d, v9.2d
+    frinta v3.4s, v4.4s
+    frintx v23.2d, v9.2d
+    frinti v1.2s, v2.2s
+    bsl v23.16b, v9.16b, v28.16b
+    bsl v0.8b, v1.8b, v2.8b
+    bit v23.16b, v9.16b, v28.16b
+    bif v3.16b, v4.16b, v5.16b
     fcmeq v23.4s, v9.4s, #0.0
     fcmle v23.4s, v9.4s, #0.0
     fcmlt v23.2d, v9.2d, #0.0
