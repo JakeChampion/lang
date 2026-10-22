@@ -15,6 +15,8 @@
 import "core/int";
 import "std/hex";
 import "std/utf8";
+import "std/error";
+import "core/cmp";
 
 // HandshakeType codes.
 pub const CLIENT_HELLO: i32 = 1;
@@ -83,6 +85,14 @@ pub enum MsgError {
   // unexpected_message.
   TooLarge(i32, i32),
 }
+
+pub function (e: MsgError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for MsgError {}
+
+impl cmp.Display for MsgError {}
 
 pub function (e: MsgError) message(): string {
   match (e) {

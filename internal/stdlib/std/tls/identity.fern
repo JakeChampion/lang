@@ -16,6 +16,8 @@ import "std/crypto/ed25519";
 import "std/tls/der";
 import "std/tls/pem";
 import "std/tls/x509";
+import "std/error";
+import "core/cmp";
 
 // PrivateKey — a P-256 or P-384 scalar, or an Ed25519 seed.
 pub enum PrivateKey {
@@ -46,6 +48,14 @@ pub enum KeyError {
   // The key does not make the scheme asked for.
   CannotSign(i32),
 }
+
+pub function (e: KeyError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for KeyError {}
+
+impl cmp.Display for KeyError {}
 
 // One arm per variant.
 // fern-lint: allow cyclomatic-complexity

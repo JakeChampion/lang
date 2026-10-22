@@ -14,6 +14,8 @@ import "std/crypto";
 import "std/crypto/montgomery" as mont;
 import "std/crypto/p256";
 import "std/hex";
+import "std/error";
+import "core/cmp";
 
 pub enum Curve {
   P256,
@@ -38,6 +40,14 @@ pub enum EcdsaError {
   // Signing over SHA-512, which TLS never asks of these curves.
   SigningHash,
 }
+
+pub function (e: EcdsaError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for EcdsaError {}
+
+impl cmp.Display for EcdsaError {}
 
 pub function (e: EcdsaError) message(): string {
   match (e) {
