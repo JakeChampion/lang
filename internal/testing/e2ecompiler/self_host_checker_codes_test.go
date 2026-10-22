@@ -183,6 +183,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		{"char-lt", "function f(a: char, b: char): boolean { return a < b; }", nil},
+		{"char-le", "function f(a: char, b: char): boolean { return a <= b; }", nil},
+		{"char-gt", "function f(a: char, b: char): boolean { return a > b; }", nil},
+		{"char-ge", "function f(a: char, b: char): boolean { return a >= b; }", nil},
+		{"char-int-order-refused", "function f(a: char, b: i32): boolean { return a < b; }", []string{"E009"}},
+		{"int-char-order-refused", "function f(a: i32, b: char): boolean { return a >= b; }", []string{"E009"}},
 		// E073: a `core/mem.Drop` finalizer called by hand runs twice; a
 		// method named `drop` on a type with no Drop impl is an ordinary one.
 		{"drop-finalizer-called-e073", "import \"core/mem\";\nstruct Sink { n: i32 }\nimpl mem.Drop for Sink { function drop(self: Self): void { print(\"closed\"); } }\nfunction main(): i32 { let w: Sink = Sink { n: 1 }; w.drop(); return 0; }\n", []string{"E073"}},
