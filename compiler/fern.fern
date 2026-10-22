@@ -3271,6 +3271,21 @@ function report_checked(st: DiagStyle, c: Checked): i32 {
 
 // check_bundle type-checks a loaded program: what `-check` reports for it,
 // and whether it is accepted — well-typed and within every capability grant.
+function executable_entry_diags(mod: parser.Module, target: string, shared: boolean, form: string): util.Diag[] {
+  if (shared || form == "asm" || mod.top_stmts.len() > 0 || platforms.for_target(target).environment == "wasi-http") {
+    return [];
+  }
+  if (platforms.for_target(target).isa == "wasm32" && mod.exports.len() > 0) {
+    return [];
+  }
+  for fd in mod.funcs {
+    if (fd.name == "main" && fd.receiver_name.len() == 0) {
+      return [];
+    }
+  }
+  return [util.Diag { code: "E001", message: "an executable requires a top-level `main` or `handle`", line: 1, col: 1, length: 0, related: [], fix: None }];
+}
+
 function check_bundle(b: Bundle, entry_path: string, target: string, target_given: boolean): Checked {
   let merged: parser.Module = b.merged;
   // Native stops at its parse error and prints only that, so reporting the
@@ -3279,6 +3294,10 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   let parsed: Finding[] = util.append_all(parse_findings(merged), imported_parse_findings(b));
   if (parsed.len() > 0) {
     return Checked { findings: parsed, entry: entry_path, files: b.files, maps: b.maps, ok: false };
+  }
+  let entry_diags: Finding[] = errors_of(flatten.handler_serve_diags(b.entry, target));
+  if (entry_diags.len() > 0) {
+    return Checked { findings: entry_diags, entry: entry_path, files: b.files, maps: b.maps, ok: false };
   }
   // The coded diagnostics are the same E0XX codes the Go checker emits — see
   // docs/SELFHOST-CHECKER-PORT.md.
@@ -6137,7 +6156,13 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   }
 
   if (mode_interp) {
-    if (eprint_findings(st, util.append_all(imported_parse_findings(b), interp_findings(merged, pkgs)), entry_path, b.files, b.maps)) {
+    if (eprint_findings(st, util.append_all(parse_findings(merged), imported_parse_findings(b)), entry_path, b.files, b.maps)) {
+      return 1;
+    }
+    if (eprint_findings(st, errors_of(flatten.handler_serve_diags(b.entry, target)), entry_path, b.files, b.maps)) {
+      return 1;
+    }
+    if (eprint_findings(st, interp_findings(merged, pkgs), entry_path, b.files, b.maps)) {
       return 1;
     }
     let argv: string[] = [entry_path];
@@ -6162,6 +6187,11 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
     return 1;
   }
 
+  // Handler programs need their serve import before the compiler emits code.
+  if (eprint_findings(st, errors_of(flatten.handler_serve_diags(b.entry, target)), entry_path, b.files, b.maps)) {
+    return 1;
+  }
+
   // Build gate: reject what the checker rejects BEFORE codegen, so the
   // compiler is not MORE permissive than the native compiler / `-check`
   // (issue #2825 — the codegen paths previously compiled forbidden field
@@ -6174,6 +6204,9 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // and a hit is reported with the same `line:col: error[CODE]: message`
   // shape as `-check`.
   if (eprint_findings(st, errors_of(checker.build_gate_diags(merged)), entry_path, b.files, b.maps)) {
+    return 1;
+  }
+  if (eprint_findings(st, errors_of(executable_entry_diags(merged, target, shared, emit)), entry_path, b.files, b.maps)) {
     return 1;
   }
 

@@ -626,7 +626,21 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
 // mispaired `init`, `handle` and `shutdown` is left alone: E075 is the
 // checker's, and a main calling the wrong serve would only add a second
 // error.
+pub function handler_serve_diags(entry: parser.Module, target: string): util.Diag[] {
+  if (top_fn_index(entry, "main") >= 0 || platforms.for_target(target).environment == "wasi-http") {
+    return [];
+  }
+  let hi: i32 = top_fn_index(entry, "handle");
+  if (hi < 0 || parser.std_qualifier(entry, "serve").len() > 0 || top_fn_index(entry, "serve__config") >= 0) {
+    return [];
+  }
+  return [util.Diag { code: "E001", message: "a top-level `handle` requires `std/serve`: add `import \"std/serve\";`", line: entry.funcs[hi].line, col: entry.funcs[hi].col, length: 0, related: [], fix: None }];
+}
+
 pub function with_handler_main(entry: parser.Module, target: string): parser.Module {
+  if (handler_serve_diags(entry, target).len() > 0) {
+    return entry;
+  }
   if (top_fn_index(entry, "main") >= 0) {
     return entry;
   }
