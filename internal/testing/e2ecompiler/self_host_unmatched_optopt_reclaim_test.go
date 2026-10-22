@@ -89,10 +89,11 @@ function round(i: i32): i32 {
 			// THE REBIND HALF (#7716): reassigned, every rebind allocating its own
 			// inner box. Was 600/0 live 24000.
 			name: "reassigned_unmatched",
-			src: `function round(i: i32): i32 {
+			src: `@noinline function hold(o: Option[Option[i32]]): i32 { return 0; }
+function round(i: i32): i32 {
     let o: Option[Option[i32]] = Some(Some(i));
     if (i % 2 == 0) { o = Some(Some(i + 1)); }
-    return i % 7;
+    return i % 7 + hold(o);
 }` + unmatchedOptoptMain,
 			want: 13,
 		},

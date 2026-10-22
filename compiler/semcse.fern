@@ -27,11 +27,16 @@ pub function merge(f: ssasem.Func): Merged {
   if (same.merged == 0) {
     return Merged { f: f, merged: 0 };
   }
+  return Merged { f: replaced(f, same.of), merged: same.merged };
+}
+
+// `f` without the reads `same` replaces, every use naming its stand-in.
+pub function replaced(f: ssasem.Func, same: i32[]): ssasem.Func {
   let blocks: ssa.SBlock[] = [];
   for b in f.graph.blocks {
-    blocks = blocks.append(rewritten(b, same.of));
+    blocks = blocks.append(rewritten(b, same));
   }
-  return Merged { f: ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } }, merged: same.merged };
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
 }
 
 function identity(n: i32): i32[] {
@@ -67,10 +72,26 @@ function rewritten(b: ssa.SBlock, same: i32[]): ssa.SBlock {
   let insts: ssa.SInst[] = [];
   for ins in b.insts {
     if (ins.result < 0 || ins.result >= same.len() || same[ins.result] == ins.result) {
-      insts = insts.append(ssa.SInst { ...ins, args: renamed(ins.args, same) });
+      insts = insts.append(renamed_inst(ins, same));
     }
   }
   return ssa.SBlock { ...b, insts: insts, term: renamed_term(b.term, same) };
+}
+
+// A record update names its donor in `imm`, which is a use like an operand.
+function renamed_inst(ins: ssa.SInst, same: i32[]): ssa.SInst {
+  let base: i32 = ssasem.update_base(ins);
+  if (base >= 0) {
+    return ssa.SInst { ...ins, args: renamed(ins.args, same), imm: stand_in(same, base) + 1 };
+  }
+  return ssa.SInst { ...ins, args: renamed(ins.args, same) };
+}
+
+// Whether `a` and `b` read the same slot of the same value, their operands
+// named through `same`.
+pub function same_slot(a: ssa.SInst, b: ssa.SInst, same: i32[], values: typeinfo.Type[]): boolean {
+  return read(a.kind_tag) && a.kind_tag == b.kind_tag && a.imm == b.imm && a.str == b.str
+    && same_args(renamed(a.args, same), renamed(b.args, same)) && semtypes.equal(values[a.result], values[b.result]);
 }
 
 function read(kind: i32): boolean {
@@ -114,7 +135,7 @@ function renamed(args: i32[], same: i32[]): i32[] {
   return out;
 }
 
-function stand_in(same: i32[], v: i32): i32 {
+pub function stand_in(same: i32[], v: i32): i32 {
   if (v < 0 || v >= same.len()) {
     return v;
   }

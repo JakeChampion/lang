@@ -14,7 +14,8 @@ import (
 // runs under the sanitizer and the leak census on every target, and pins
 // how many boxes it allocates. The operands of a removed construction are
 // still released, a construction that is read is still built, and one whose
-// type has a finalizer is built so the finalizer runs.
+// type has a finalizer is built so the finalizer runs. A cycle of phis and
+// constructions that read only one another goes the same way.
 func TestSelfHostDeadConstruction(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	cases := []struct {
@@ -62,6 +63,32 @@ struct G { n: i32 }
 impl mem.Drop for G { function drop(self: Self): void { eprint("dropped"); } }
 @noinline function f(i: i32): i32 { let g: G = G { n: i }; return i * 2; }
 function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 4, "dropped\ndropped\ndropped\ndropped\n"},
+		// A record two loops carry and only read field by field: the spliced
+		// updater splits it into one phi a field, and the record's own phis
+		// and update read only one another, so none of them is built (28
+		// boxes while the cycle stood).
+		{"loop-carried-unread", `struct P { xs: i32[], note: string, n: i32 }
+function put(p: P, i: i32, v: i32): P { return P { ...p, xs: p.xs.with(i, v) }; }
+@noinline function f(k: i32): i32 {
+    let p: P = P { xs: [0, 0, 0, 0], note: "carried", n: k };
+    let s: i32 = 0;
+    let r: i32 = 0;
+    while (r < 3) {
+        let i: i32 = 0;
+        while (i < 4) { p = put(p, i, i + r + k); i = i + 1; }
+        s = s + p.xs[r];
+        r = r + 1;
+    }
+    return s;
+}
+function main(): i32 { return f(1) + f(2); }`, 21, 2, ""},
+		// The same cycle of a type with a finalizer is built, so each round's
+		// value is dropped.
+		{"loop-carried-finalizer-kept", `import "core/mem";
+struct G { n: i32 }
+impl mem.Drop for G { function drop(self: Self): void { eprint("dropped"); } }
+@noinline function f(k: i32): i32 { let g: G = G { n: k }; let s: i32 = 0; let i: i32 = 0; while (i < 2) { g = G { ...g, n: g.n + 1 }; s = s + g.n; i = i + 1; } return s; }
+function main(): i32 { return f(1) + f(2); }`, 12, 6, "dropped\ndropped\ndropped\ndropped\ndropped\ndropped\n"},
 	}
 	// Debug bindings must not keep otherwise unread allocations alive.
 	t.Run("debug-binding-eliminated", func(t *testing.T) {
