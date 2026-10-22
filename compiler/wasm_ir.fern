@@ -11060,7 +11060,7 @@ function lc_exit_report(lc: boolean): string {
 // is wrapped to its low 32 bits.
 function main_result_wat(mod: parser.Module): string {
   for fd in mod.funcs {
-    if (fd.name == "main" && (fd.ret_type == "i64" || fd.ret_type == "u64")) {
+    if (fd.name == "main" && fd.receiver_type.len() == 0 && (fd.ret_type == "i64" || fd.ret_type == "u64")) {
       return "(i32.wrap_i64 (call $main))";
     }
   }
