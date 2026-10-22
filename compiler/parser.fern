@@ -7183,18 +7183,6 @@ function parse_loop_stmt(p: Par): (ast.Stmt, Par) {
 // (array / range foreach), and the range form `for i in LOW..HIGH` /
 // `for i in LOW..=HIGH` — the latter two encode the interval as a
 // synthetic `__range` / `__range_incl` call (see below).
-// refused_for is a `for` header the parser refused, the cursor past the loop
-// body it heads, so the body is not read as statements of its own.
-function refused_for(p: Par, why: string): (ast.Stmt, Par) {
-  let bad: ast.Stmt = s_unknown(p, why);
-  let open: Par = p.skip_to_open();
-  if (open.peek_punct() != "{") {
-    return (bad, p);
-  }
-  let (skipped, past) = parse_block(open);
-  return (bad, past);
-}
-
 function parse_for_stmt(p: Par): (ast.Stmt, Par) {
   // `for VAR in EXPR { body }`. `in` arrives as a plain
   // TokIdent (not in the lexer's keyword set), so peek
@@ -7350,12 +7338,12 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
   } else {
     fvar = p.peek_ident();
     if (fvar.len() == 0) {
-      return refused_for(p, "missing for-let name");
+      return (s_unknown(p, "missing for-let name"), p);
     }
     p = p.advance();
   }
   if (p.peek_ident() != "in") {
-    return refused_for(p, "missing `in` in for");
+    return (s_unknown(p, "missing `in` in for"), p);
   }
   p = p.advance();  // consume `in`
   // Suppress trailing struct-literal parsing on the iter so that
@@ -7931,7 +7919,8 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       let (lel_at, lel_atp) = take_at_binding(p);
       let (lel_lits, lel_his, lel_hrs, lel_incs, lel_p) = parse_lit_alts(lel_atp);
       let (lel_init, lel_ip) = parse_expr(lel_p.expect("=").with_no_struct(true));
-      let (lel_else, lel_rest, lel_restp) = parse_let_else_tail(lel_ip.with_no_struct(p.no_struct));
+      lel_ip = lel_ip.with_no_struct(p.no_struct);
+      let (lel_else, lel_rest, lel_restp) = parse_let_else_tail(lel_ip);
       p = lel_restp;
       let lel_arms: ast.LitArm[] = [];
       let lel_i: i32 = 0;
@@ -7975,7 +7964,8 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         lsp_pats = lsp_pats.append(lsp_alt);
       }
       let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("=").with_no_struct(true));
-      let (lsp_else, lsp_rest, lsp_restp) = parse_let_else_tail(lsp_ip.with_no_struct(p.no_struct));
+      lsp_ip = lsp_ip.with_no_struct(p.no_struct);
+      let (lsp_else, lsp_rest, lsp_restp) = parse_let_else_tail(lsp_ip);
       p = lsp_restp;
       let lsp_arms: ast.MatchArm[] = [];
       let lsp_written: ast.MatchArm[] = [];
@@ -9339,10 +9329,11 @@ pub function is_struct_destr_marker(type_name: string): boolean {
 }
 
 pub function is_destr_marker(type_name: string): boolean {
-  return util.str_has_prefix(type_name, "@pp;")
+  return type_name.len() > 0 && type_name[0] == b'@'
+    && (util.str_has_prefix(type_name, "@pp;")
     || util.str_has_prefix(type_name, "@at:")
     || util.str_has_prefix(type_name, "@rest;")
-    || util.str_has_prefix(type_name, "@sd:");
+    || util.str_has_prefix(type_name, "@sd:"));
 }
 
 // parse_pattern_param consumes a destructuring parameter — `(a, b): (T, U)`

@@ -11358,8 +11358,8 @@ function macho_lcstr_cmd_len(cmd: i32, path: string): i32 {
 }
 
 // macho_load_cmds_len is the total size of all load commands: __PAGEZERO
-// + __TEXT (__text, and __const when the text holds read-only constants)
-// + optional __DATA (1 section) + optional __DWARF
+// + __TEXT (__text, then optional __const and __eh_frame) + optional __DATA
+// (1 section) + optional __DWARF
 // (macho_dwarf_sects sections, under `-g`) + __LINKEDIT +
 // LC_DYLD_INFO_ONLY + LC_SYMTAB + LC_DYSYMTAB + LC_BUILD_VERSION +
 // LC_LOAD_DYLINKER + LC_LOAD_DYLIB + LC_MAIN + LC_CODE_SIGNATURE.
@@ -11370,7 +11370,7 @@ function macho_lcstr_cmd_len(cmd: i32, path: string): i32 {
 // command and the first code byte, the layout the retired native writer
 // fixed (it counted dyldInfoCmdLen twice). It fixes text_off and so every
 // address; dropping it is a layout change of its own.
-function macho_load_cmds_len(has_data: boolean, has_eh: boolean, dwarf: boolean, has_const: boolean): i32 {
+function macho_load_cmds_len(has_data: boolean, has_eh: boolean, has_const: boolean, dwarf: boolean): i32 {
   let n: i32 = 72 + (72 + 80) + 72;  // PAGEZERO + TEXT(1 sect) + LINKEDIT
   if (has_const) {
     n = n + 80;  // __TEXT's __const section header
@@ -11395,8 +11395,9 @@ function macho_load_cmds_len(has_data: boolean, has_eh: boolean, dwarf: boolean,
 // macho_text_off is the file offset of code within __TEXT (after the
 // Mach-O header + load commands). A native assembler needs this to
 // resolve @PAGE / @PAGEOFF references before the same blobs are laid out
-// here at the same address. Reserve the optional DWARF command space in
-// both builds so debug metadata never changes linked instructions.
+// here at the same address. The optional DWARF commands and the __const
+// section header have space reserved in every build, so neither debug
+// metadata nor read-only constants change the linked instructions.
 function macho_text_off(has_data: boolean, has_eh: boolean, dwarf: boolean): i32 {
   return 32 + macho_load_cmds_len(has_data, has_eh, true, true);
 }
@@ -11936,7 +11937,7 @@ function macho_text_seg(buf: i32[], text_vmsize: i32, text_off: i32, code_len: i
   // flags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
   buf = macho_sect(buf, "__text", "__TEXT", text_vaddr, code_len, text_off, 2, 0x80000400);
   if (code_len < text_len) {
-    // 16-aligned, as the assembler lays the constants.
+    // S_REGULAR, 16-aligned as the assembler placed it.
     buf = macho_sect(buf, "__const", "__TEXT", text_vaddr + code_len as i64, text_len - code_len, text_off + code_len, 4, 0);
   }
   if (eh_len > 0) {
@@ -11967,6 +11968,7 @@ pub function macho_executable(text: u8[], eh: i32[], data: i32[], ident: string,
 // straight from the executable, with no dSYM.
 pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[], dwarf: i32[][]): i32[] {
   let text_len: i32 = text.len();
+  // The read-only constants follow the code inside the text, at code_len.
   let has_const: boolean = code_len < text_len;
   let eh_len: i32 = eh.len();
   let has_eh: boolean = eh_len > 0;
@@ -12035,7 +12037,7 @@ pub function macho_executable_binds(text: u8[], code_len: i32, eh: i32[], data: 
   }
   // sizeofcmds is the size of the commands ACTUALLY written, which is
   // macho_load_cmds_len minus its 48 bytes of layout slack.
-  let sizeofcmds: i32 = macho_load_cmds_len(has_data, has_eh, has_dwarf, has_const) - 48;
+  let sizeofcmds: i32 = macho_load_cmds_len(has_data, has_eh, has_const, has_dwarf) - 48;
 
   let buf: i32[] = [];
 
