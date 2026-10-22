@@ -1,0 +1,36 @@
+import "core/map";
+
+enum Box[T] { Keyed(Map[string, T]), Count(i32), Empty }
+function size(b: Box): i32 {
+  match (b) {
+    Keyed(m) => { return m.len() + m.keys().len() + m.values().len(); },
+    Count(n) => { return n; },
+    Empty => { return 0; }
+  }
+  return 0;
+}
+enum Keys[T] { MapKeys(Map[T, i32]), KeyCount(i32), NoKeys }
+function key_size(b: Keys): i32 {
+  match (b) {
+    MapKeys(m) => { return m.len() + m.keys().len() + m.values().len(); },
+    KeyCount(n) => { return n; },
+    NoKeys => { return 0; }
+  }
+  return 0;
+}
+enum Both[K, V] { MapBoth(Map[K, V]), BothCount(i32), NoBoth }
+function both_size(b: Both): i32 {
+  match (b) {
+    MapBoth(m) => { return m.len() + m.keys().len() + m.values().len(); },
+    BothCount(n) => { return n; },
+    NoBoth => { return 0; }
+  }
+  return 0;
+}
+function main(): i32 {
+  if (size(Count(6)) + size(Empty) != 6) { return 1; }
+  if (key_size(KeyCount(7)) + key_size(NoKeys) != 7) { return 2; }
+  if (both_size(BothCount(8)) + both_size(NoBoth) != 8) { return 3; }
+  print("bare map payload ok");
+  return 0;
+}
