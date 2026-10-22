@@ -1,5 +1,8 @@
 # Native word offsets and allocator tail calls
 
+The [integrated validation record](main-12625-validation.md) covers main 12625f42b and the current lane-call ABI.
+The measurements below retain their earlier source scope.
+
 Base: d669f557c1e75db6baa7473c4e8323b77400df95.
 Source: c140fe8ea9bf8bc189e4cc034599f2e12f0f1baa.
 The Go test runner is the current pin, Go 1.27.3.
