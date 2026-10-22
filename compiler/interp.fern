@@ -1045,7 +1045,10 @@ function interp_char_boundary(s: string, i: i32): boolean {
 // untyped, so a static type — which `dyn Trait` dispatch needs and no runtime
 // value carries — can only enter through the annotation a binding was made
 // under; this is the slot the checker's Scope holds a Type in.
-pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable }
+// `ret` is the declared result of the function whose body this is, "" outside
+// one: a `return f()` pins f's type parameters from it, as a `let`'s
+// annotation does.
+pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable, ret: string }
 
 // new_env seeds a declaration-free scope: the bare-statement driver
 // (eval_program) has no module around it, so the only declarations in reach are
@@ -1057,14 +1060,14 @@ function new_env(): Env {
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), outs: builtin_outs() };
+  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), outs: builtin_outs(), ret: "" };
 }
 
 function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[], outs: OutTable): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
-  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, outs: outs };
+  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, outs: outs, ret: "" };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
@@ -5233,9 +5236,12 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
           is_method = true;
           if (static_type.len() > 0) {
             // The binding's annotation applies the type the call is made on
-            // (`let s: G[f64] = G.splat(2.5)` reads `T.LANES` at T = f64).
-            if (expect.len() > 0 && util.base_type_name(expect) == static_type) {
-              static_type = expect;
+            // (`let s: G[f64] = G.splat(2.5)` reads `T.LANES` at T = f64), as
+            // itself or inside the result it is returned in (`Result[G[f64],
+            // string]`).
+            let applied: string = applied_type_in(expect, static_type);
+            if (applied.len() > 0) {
+              static_type = applied;
             }
             recv = v_type(static_type);
           } else {
@@ -5817,7 +5823,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
   }
-  let env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, outs: outs };
+  let env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, outs: outs, ret: "" };
   let j: i32 = 0;
   while (j < fv.params.len()) {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
@@ -5859,6 +5865,39 @@ function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string):
 // impl type (`Self` was rewritten to it at parse time), so coercing the result
 // to it gives `i64.zero()` a 64-bit zero rather than the i32 its `return 0`
 // body literally evaluates to.
+// applied_type_in is the first application of `base` in the type spelling
+// `t`, `t` itself included, or "" when `t` names none.
+function applied_type_in(t: string, base: string): string {
+  if (t.len() == 0) {
+    return "";
+  }
+  return applied_in_ref(parser.parse_type_ref(t), base);
+}
+
+function applied_in_ref(r: parser.TypeRef, base: string): string {
+  if (r.base == base) {
+    return parser.render_type_ref(r);
+  }
+  for a in r.args {
+    let hit: string = applied_in_ref(a, base);
+    if (hit.len() > 0) {
+      return hit;
+    }
+  }
+  return "";
+}
+
+// struct_type_params is the declared type parameters of struct `name`.
+function struct_type_params(decls: parser.StructDecl[], name: string): string[] {
+  for d in decls {
+    if (d.name == name) {
+      return d.type_params;
+    }
+  }
+  let none: string[] = [];
+  return none;
+}
+
 function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
   let ai: i32 = assoc_index(funcs, type_name, name);
   if (ai < 0) {
@@ -5870,11 +5909,16 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
   }
   let env: Env = new_module_env(funcs, aliases, type_decls, outs);
   // The applied type's arguments bind a parametric impl's type parameters
-  // (`Dual[f64].LANES()` reads `T.LANES` at T = f64).
+  // (`Dual[f64].LANES()` reads `T.LANES` at T = f64), or the struct's own
+  // where the function declares none, as a derived `default()` does.
   let targs: parser.TypeRef[] = parser.parse_type_ref(type_name).args;
+  let tps: string[] = fd.type_params;
+  if (tps.len() == 0) {
+    tps = struct_type_params(type_decls, util.base_type_name(type_name));
+  }
   let t: i32 = 0;
-  while (t < fd.type_params.len() && t < targs.len()) {
-    env = env.bind(fd.type_params[t], v_type(parser.render_type_ref(targs[t])));
+  while (t < tps.len() && t < targs.len()) {
+    env = env.bind(tps[t], v_type(parser.render_type_ref(targs[t])));
     t = t + 1;
   }
   let j: i32 = 0;
@@ -6432,7 +6476,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling method `" + name + "`");
       }
-      let env: Env = new_module_env(funcs, aliases, type_decls, outs);
+      let env: Env = Env { ...new_module_env(funcs, aliases, type_decls, outs), ret: fd.ret_type };
       env = bind_tyargs(env, fd, true, recv, args, type_args, "");
       // No declared type on the receiver: an array receiver is always the
       // abstract `T[]`, whose element spelling would self-pin an empty
@@ -8014,7 +8058,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
-      let env: Env = new_module_env(funcs, aliases, type_decls, outs);
+      let env: Env = Env { ...new_module_env(funcs, aliases, type_decls, outs), ret: fd.ret_type };
       let no_recv: Value = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
       let j: i32 = 0;
@@ -8571,6 +8615,9 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
     ast.StmtReturn(r) => {
       if (parser.bare_return(r.value)) {
         return step_stop(env, v_void());
+      }
+      if let ast.ExprCall(rc) = r.value {
+        return step_stop(env, eval_expr_call_expect(rc, env, bound_type_spelling(env.ret, env)));
       }
       let val: Value = eval_expr(r.value, env);
       return step_stop(env, val);
