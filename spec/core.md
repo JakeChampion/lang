@@ -493,6 +493,8 @@ is the number of slots it leaves.
 | `vselect` | 474 | 3 | 1 |
 | `vload` | 475 | 1 | 1 |
 | `vstore` | 476 | 2 | 0 |
+| `vget` | 477 | 2 | 1 |
+| `vset` | 478 | 3 | 0 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

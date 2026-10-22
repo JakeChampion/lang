@@ -2921,11 +2921,8 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
   if (b == "vfma" || b == "vselect") {
     return ssa_vternary(ins, reg_of, s);
   }
-  if (b == "vload") {
-    return ssa_vload(ins, reg_of, s);
-  }
-  if (b == "vstore") {
-    return ssa_vstore(ins, reg_of, s);
+  if (ssa.lane_memory(b)) {
+    return ssa_lane_memory(ins, reg_of, b, s);
   }
   if (ins.args.len() == 2) {
     return ssa_vbin(ins, reg_of, s);
@@ -3106,6 +3103,16 @@ function ssa_vternary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
+function ssa_lane_memory(ins: ssa.SInst, reg_of: i32[], b: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (b == "vload") {
+    return ssa_vload(ins, reg_of, s);
+  }
+  if (b == "vstore") {
+    return ssa_vstore(ins, reg_of, s);
+  }
+  return ssa_vgroup(ins, reg_of, b == "vset", s);
+}
+
 // ssa_vload / ssa_vstore: 16 bytes at an address in a general register.
 function ssa_vload(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_read(reg_of, ins.args[0], "x4", s);
@@ -3118,6 +3125,42 @@ function ssa_vstore(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
   s = ssa_read(reg_of, ins.args[0], "x4", s);
   s = ssa_fread(reg_of, ins.args[1], "d1", s);
   return s.write("    str " + ssa_vq(ssa_fsrc(reg_of, ins.args[1], "d1")) + ", [" + ssa_src(reg_of, ins.args[0], "x4") + "]\n");
+}
+
+// ssa_vgroup is vget or vset: the group of elements from index b of the
+// array at a, after a check of its first and last index, through x17 at the
+// group's first element. An f64 lane is one q move. An f32 lane narrows or
+// widens the two f64 pairs of its group.
+function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.EmitState): asmcore.EmitState {
+  let a: string = ssa_src(reg_of, ins.args[0], "x4");
+  s = ssa_load(reg_of, ins.args[0], a, s);
+  let b: string = ssa_src(reg_of, ins.args[1], "x5");
+  s = ssa_load(reg_of, ins.args[1], b, s);
+  s = s.need("heap");
+  s = ssa_ldst0(s, true, "x6", a);
+  s = ssa_cmp_rr(s, b, "x6");
+  s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
+  s = s.write("    add x16, " + b + ", #" + util.i32_to_string(128 / ins.imm - 1) + "\n");
+  s = ssa_cmp_rr(s, "x16", "x6");
+  s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
+  s = s.write("    add x17, " + a + ", " + b + ", lsl #3\n");
+  if (set) {
+    s = ssa_fread(reg_of, ins.args[2], "d1", s);
+    let v: string = ssa_fsrc(reg_of, ins.args[2], "d1");
+    if (ins.imm == 64) {
+      return s.write("    str " + ssa_vq(v) + ", [x17, #8]\n");
+    }
+    let n: str = slice_unchecked(v, 1, v.len());
+    return s.write("    fcvtl v2.2d, v" + n + ".2s\n    str q2, [x17, #8]\n    fcvtl2 v2.2d, v" + n + ".4s\n    str q2, [x17, #24]\n");
+  }
+  let d: string = ssa_fdst(reg_of, ins.result);
+  if (ins.imm == 64) {
+    s = s.write("    ldr " + ssa_vq(d) + ", [x17, #8]\n");
+  } else {
+    let n: str = slice_unchecked(d, 1, d.len());
+    s = s.write("    ldr q1, [x17, #8]\n    fcvtn v" + n + ".2s, v1.2d\n    ldr q1, [x17, #24]\n    fcvtn2 v" + n + ".4s, v1.2d\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
 }
 
 // ssa_fcc is a float compare's condition code: the ordered forms, so a NaN

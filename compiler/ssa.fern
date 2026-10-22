@@ -1124,8 +1124,13 @@ pub function lane_param_mark(): string {
   return "v128";
 }
 
+// lane_memory names the lane ops that read or write memory.
+pub function lane_memory(b: string): boolean {
+  return util.has_str(["vload", "vstore", "vget", "vset"], b);
+}
+
 // lane_result reports an instruction whose result is a lane value: a lane op
-// other than vextract (an f64) and vstore (a dead result), a lane parameter,
+// other than vextract (an f64), vstore and vset (dead results), a lane parameter,
 // and a call marked as returning one (call mark 6, ir.lane_call).
 pub function lane_result(ins: SInst): boolean {
   if (ins.kind_tag == 6 && ins.str == lane_param_mark() || ins.kind_tag == 11 && ins.imm == 6) {
@@ -1135,7 +1140,7 @@ pub function lane_result(ins: SInst): boolean {
     return false;
   }
   let b: string = lane_base(ins.str);
-  return b != "vextract" && b != "vstore";
+  return b != "vextract" && b != "vstore" && b != "vset";
 }
 
 // lane_values marks the lane values: the lane ops' results, and the phis and
