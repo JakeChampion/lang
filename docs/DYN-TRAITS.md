@@ -1187,9 +1187,10 @@ The match is on the *exact* concrete type, not on "also implements `Trait`"
 or any subtyping relation (there is no trait inheritance in v1). `as?`
 always returns an `Option`, distinct from `as`, which never does.
 
-**Type rules (checker).** `e` must have type `dyn Trait` — a non-`dyn`
-left operand is `error[E059]` (`'as?' downcast requires a 'dyn Trait'
-value on the left`). `T` must implement `Trait` (the same
+**Type rules (checker).** `e` must have type `dyn Trait` — any other left
+operand but an integer is `error[E059]` (`'as?' requires a 'dyn Trait' value
+or an integer on the left`); an integer `as?` is the checked numeric
+conversion, `Some` when the value fits the target integer type. `T` must implement `Trait` (the same
 `Info.Impls[Trait][T]` gate coercion uses) — otherwise `error[E060]`
 (`T does not implement Trait, so a 'dyn Trait' cannot downcast to it`).
 The checker records the inner's trait on the node (`DowncastExpr.Trait`)

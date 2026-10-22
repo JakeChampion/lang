@@ -146,7 +146,7 @@ A program with an async export always composes against the `fern` world, never
 a fixed framing. Tests: `TestSelfHostWasmAsyncExport{,Refusals}`
 (`internal/testing/e2ecompiler`), with `TestParseAsyncModifier` for the keyword.
 
-**Status — async imports, DONE in the self-host** (`stream[T]` too, see `docs/STREAM-TYPE-SURFACE.md`). On
+**Status — async imports, DONE in the self-host** (`Stream[T]` too, see `docs/STREAM-TYPE-SURFACE.md`). On
 `-target wasm32-wasi`, an `@import(iface, name) async function` of an
 interface the `fern` world does not declare makes the component import that
 interface, as an instance of async funcs typed from the Fern signatures. Each

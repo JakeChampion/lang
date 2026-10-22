@@ -541,7 +541,8 @@ function main(): i32 {
 }
 ```
 
-`as?` applies only to a `dyn` value (`E059`). Bounded generics stay the better choice when the type IS
+As a downcast, `as?` applies only to a `dyn` value; its other use is the
+checked integer conversion, and any other operand is `E059`. Bounded generics stay the better choice when the type IS
 known at each call site — they monomorphise, so there is no box and no
 indirect call. See [`docs/DYN-TRAITS.md`][dyn] for the design, the
 representation per backend, and the remaining gaps.
