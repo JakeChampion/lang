@@ -137,7 +137,7 @@ function self_checks(): i32 {
   if (ferndoc.module_summary("Arbitrary-precision integers.") != "Arbitrary-precision integers.") {
     return 47;
   }
-  if (ferndoc.module_summary("std/float — f32 / f64 to-string formatting.") != "f32 / f64 to-string formatting.") {
+  if (ferndoc.module_summary("std/f64 — f32 / f64 to-string formatting.") != "f32 / f64 to-string formatting.") {
     return 48;
   }
   if (ferndoc.module_summary("") != "") {

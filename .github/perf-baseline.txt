@@ -87,10 +87,10 @@ x86_64/map_probe_chain.text	5761
 x86_64/map_probe_chain.ir	354691233
 x86_64/map_string.text	6681
 x86_64/map_string.ir	62112069	2
-x86_64/ordmap_insert.text	2853
-x86_64/ordmap_insert.ir	107976333
-x86_64/pmap_insert.text	2734
-x86_64/pmap_insert.ir	59526732
+x86_64/ordmap_insert.text	2828
+x86_64/ordmap_insert.ir	105979300
+x86_64/pmap_insert.text	2600
+x86_64/pmap_insert.ir	56484087
 x86_64/pvec_with.text	2778
 x86_64/pvec_with.ir	57131286
 x86_64/record_update.ir	109849111
@@ -299,10 +299,10 @@ aarch64/map_probe_chain.text	6123
 aarch64/map_probe_chain.ir	353848242
 aarch64/map_string.text	7204
 aarch64/map_string.ir	63502584	2
-aarch64/ordmap_insert.text	3233
-aarch64/ordmap_insert.ir	115601873
-aarch64/pmap_insert.text	3009
-aarch64/pmap_insert.ir	69269531
+aarch64/ordmap_insert.text	3193
+aarch64/ordmap_insert.ir	114061180
+aarch64/pmap_insert.text	2868
+aarch64/pmap_insert.ir	66572386
 aarch64/pvec_with.text	3041
 aarch64/pvec_with.ir	60838467
 aarch64/record_update.text	1692

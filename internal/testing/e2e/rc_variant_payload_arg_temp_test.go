@@ -83,8 +83,8 @@ function round(i: i32): i32 {
 `
 
 // The ordered-map insert chain: a recursive insert binds its result to a local
-// and hands it to a node-building helper — the `let nl = __om_insert(l, k, v);
-// return __om_balance(nl, ..)` shape. Four inserts build a left spine of depth 4.
+// and hands it to a node-building helper — the `let nl = node_insert(l, k, v);
+// return node_balance(nl, ..)` shape. Four inserts build a left spine of depth 4.
 const variantPayloadInsertBody = variantPayloadPrelude + `
 function round(i: i32): i32 {
     let t: T = Leaf;

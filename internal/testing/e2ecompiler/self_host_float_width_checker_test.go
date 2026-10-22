@@ -16,7 +16,7 @@ func TestSelfHostFloatTypeContracts(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/float_types_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/float_types_run.fern", "float_types")
 	want := strings.Join([]string{
-		"f32:concrete", "f64:concrete", "f64:concrete",
+		"f32:concrete", "f64:concrete",
 		"array<array<f32:concrete>>", "tuple(f32:concrete,tuple(f64:concrete,f32:concrete))",
 		"fn(f32:concrete)->array<f64:concrete>",
 		"f64:literal", "f32:concrete", "f64:concrete", "f32:concrete",

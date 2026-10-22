@@ -23,7 +23,7 @@
 // round trip alone would pass on a decoder that shifted consistently but
 // wrongly; this one pins the fields to what they are supposed to mean.
 //
-// `std/float`'s own predicates (`is_nan`, `is_finite`, `is_inf`,
+// `std/f64`'s own predicates (`is_nan`, `is_finite`, `is_inf`,
 // `is_sign_negative`) are the independent oracle for the classifier: they
 // reach the same facts by different routes, so a disagreement is a real one.
 //
@@ -33,7 +33,7 @@ import "std/test";
 import "std/i32";
 import "std/i64";
 import "std/u64";
-import "std/float";
+import "std/f64";
 import "std/string";
 
 // Stored fields, exactly as they sit in the 64 bits — `exp` is the RAW
@@ -284,7 +284,7 @@ function test_the_fields_reproduce_the_value(): test.TestOutcome {
   return test.pass();
 }
 
-// The classifier against std/float's predicates, which reach the same facts
+// The classifier against std/f64's predicates, which reach the same facts
 // through comparisons rather than bits. Both must agree on all five classes,
 // for every value in the corpus.
 function test_the_classifier_agrees_with_the_stdlib(): test.TestOutcome {
@@ -295,17 +295,17 @@ function test_the_classifier_agrees_with_the_stdlib(): test.TestOutcome {
     let x: f64 = xs[i];
     if (c == CLASS_NAN() != x.is_nan()) {
       return test.fail(ns[i] + ": bits say " + class_name(c)
-        + ", std/float says is_nan=" + x.is_nan().to_string());
+        + ", std/f64 says is_nan=" + x.is_nan().to_string());
     }
     if (c == CLASS_INFINITE() != x.is_inf()) {
       return test.fail(ns[i] + ": bits say " + class_name(c)
-        + ", std/float says is_inf=" + x.is_inf().to_string());
+        + ", std/f64 says is_inf=" + x.is_inf().to_string());
     }
     let finite: boolean = c == CLASS_ZERO() || c == CLASS_SUBNORMAL()
       || c == CLASS_NORMAL();
     if (finite != x.is_finite()) {
       return test.fail(ns[i] + ": bits say " + class_name(c)
-        + ", std/float says is_finite=" + x.is_finite().to_string());
+        + ", std/f64 says is_finite=" + x.is_finite().to_string());
     }
   }
   return test.pass();
@@ -340,12 +340,12 @@ function test_the_sign_bit_survives_where_comparison_cannot(): test.TestOutcome 
   for i in 0..xs.len() {
     if (decode(xs[i]).sign == 1) {
       if (!xs[i].is_sign_negative()) {
-        return test.fail(ns[i] + ": sign bit set, but std/float says"
+        return test.fail(ns[i] + ": sign bit set, but std/f64 says"
           + " is_sign_negative=false");
       }
     } else {
       if (xs[i].is_sign_negative()) {
-        return test.fail(ns[i] + ": sign bit clear, but std/float says"
+        return test.fail(ns[i] + ": sign bit clear, but std/f64 says"
           + " is_sign_negative=true");
       }
     }

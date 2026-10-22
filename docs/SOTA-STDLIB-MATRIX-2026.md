@@ -124,13 +124,13 @@ to make an algorithmic claim measurable end-to-end.
 
 | # | Primitive | Site | Today | Target | Verdict | Phase |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | f64 → shortest | `std/float` | Dragonbox (#6161) | Dragonbox / Schubfach | **SHIPPED** | — |
-| 2 | f32 → shortest | `std/float` | Dragonbox, 64-bit cache | Dragonbox | **SHIPPED** | — |
-| 3 | decimal → f64 | `std/float` | Eisel–Lemire + exact fallback (#6167) | Eisel–Lemire | **SHIPPED** | — |
-| 4 | decimal → f32 | `std/float` | Via f64 then narrow | Direct f32 path | GAP (double-rounding, see §B) | 4 |
-| 5 | hard float parse | `std/float` | Exact fallback present | Big-int fallback | **SHIPPED** | — |
-| 6 | f64 → fixed | `std/float` | `to_string_prec` | Ryū Printf | GAP, low value | 4 |
-| 7 | f64 → scientific | `std/float` | `to_string_prec` | Ryū Printf | GAP, low value | 4 |
+| 1 | f64 → shortest | `std/f64` | Dragonbox (#6161) | Dragonbox / Schubfach | **SHIPPED** | — |
+| 2 | f32 → shortest | `std/f64` | Dragonbox, 64-bit cache | Dragonbox | **SHIPPED** | — |
+| 3 | decimal → f64 | `std/f64` | Eisel–Lemire + exact fallback (#6167) | Eisel–Lemire | **SHIPPED** | — |
+| 4 | decimal → f32 | `std/f64` | Via f64 then narrow | Direct f32 path | GAP (double-rounding, see §B) | 4 |
+| 5 | hard float parse | `std/f64` | Exact fallback present | Big-int fallback | **SHIPPED** | — |
+| 6 | f64 → fixed | `std/f64` | `to_string_prec` | Ryū Printf | GAP, low value | 4 |
+| 7 | f64 → scientific | `std/f64` | `to_string_prec` | Ryū Printf | GAP, low value | 4 |
 | 8 | u64 → decimal | `core/int` | 2-digit table, exact-size buffer | Lemire multiply-shift | GAP — needs #12 | 1 |
 | 9 | decimal → integer | `std/string` | Byte-at-a-time accumulate | SWAR 8-digit chunks | BLOCKED:raw-load (#6200) | 2 |
 | 10 | hex → integer | `std/hex` | Byte-at-a-time | SWAR nibble fold | BLOCKED:raw-load (#6200) | 2 |
@@ -173,19 +173,19 @@ is waiting on a caller.
 
 | # | Primitive | Site | Today | Target | Verdict | Phase |
 | --- | --- | --- | --- | --- | --- | --- |
-| 21 | sqrt | `std/float` | `__sqrt_f64` builtin | Hardware sqrt | **SHIPPED** | — |
+| 21 | sqrt | `std/f64` | `__sqrt_f64` builtin | Hardware sqrt | **SHIPPED** | — |
 | 22 | fma | — | Absent | Hardware FMA | GAP | 4 |
-| 23 | sin | `std/float` | fdlibm in Fern, one source for every lane | RLibm | DECIDE:accuracy-contract | 4 |
-| 24 | cos | `std/float` | same | RLibm | DECIDE:accuracy-contract | 4 |
-| 25 | tan | `std/float` | **`sin(x)/cos(x)`** | Direct approximation | **GAP — accuracy bug, not a speed row** | 4 |
-| 26 | exp | `std/float` | fdlibm in Fern, one source for every lane | RLibm | DECIDE:accuracy-contract | 4 |
-| 27 | log | `std/float` | same | RLibm | DECIDE:accuracy-contract | 4 |
-| 28 | log2 | `std/float` | **`log(x) / ln2`** | Direct range reduction | **GAP — accuracy bug** | 4 |
-| 29 | log10 | `std/float` | **`log(x) / ln10`** | Direct | **GAP — accuracy bug** | 4 |
-| 30 | pow | `std/float` | glibc / ARM double-double log and exp in Fern, within 1 ulp, exact when x^y is a double | Specialised exp/log | DECIDE:accuracy-contract | 4 |
-| 31 | cbrt | `std/float` | Fern-level implementation | Correctly rounded | GAP | 4 |
-| 32 | hypot | `std/float` | Fern-level, plus `hypot3` | Scaled, overflow-safe | Audit for overflow | 4 |
-| — | f32 transcendentals | `std/float` | **Every one widens to f64, computes, narrows** | Direct f32 | **GAP — double rounding** | 4 |
+| 23 | sin | `std/f64` | fdlibm in Fern, one source for every lane | RLibm | DECIDE:accuracy-contract | 4 |
+| 24 | cos | `std/f64` | same | RLibm | DECIDE:accuracy-contract | 4 |
+| 25 | tan | `std/f64` | **`sin(x)/cos(x)`** | Direct approximation | **GAP — accuracy bug, not a speed row** | 4 |
+| 26 | exp | `std/f64` | fdlibm in Fern, one source for every lane | RLibm | DECIDE:accuracy-contract | 4 |
+| 27 | log | `std/f64` | same | RLibm | DECIDE:accuracy-contract | 4 |
+| 28 | log2 | `std/f64` | **`log(x) / ln2`** | Direct range reduction | **GAP — accuracy bug** | 4 |
+| 29 | log10 | `std/f64` | **`log(x) / ln10`** | Direct | **GAP — accuracy bug** | 4 |
+| 30 | pow | `std/f64` | glibc / ARM double-double log and exp in Fern, within 1 ulp, exact when x^y is a double | Specialised exp/log | DECIDE:accuracy-contract | 4 |
+| 31 | cbrt | `std/f64` | Fern-level implementation | Correctly rounded | GAP | 4 |
+| 32 | hypot | `std/f64` | Fern-level, plus `hypot3` | Scaled, overflow-safe | Audit for overflow | 4 |
+| — | f32 transcendentals | `std/f64` | **Every one widens to f64, computes, narrows** | Direct f32 | **GAP — double rounding** | 4 |
 
 This section is the one place where the published list and Fern's actual
 problem genuinely diverge in *kind*. The list frames these as performance rows
@@ -200,7 +200,7 @@ obvious:
    double rounding: a value that should round one way at f32 can round the
    other because it passed through f64 first.
 3. **f64 transcendentals agree across backends and are gated on it.** They are
-   std/float's own Fern, so every backend compiles one definition and the
+   std/f64's own Fern, so every backend compiles one definition and the
    interpreter runs it; `TestF64TranscendentalBackendsAgree` and
    `TestF64TranscendentalLanesAgree` pin interp / x86-64 / arm64 / wasm bit
    for bit. What is still open is the *contract*: Fern has not said
@@ -720,7 +720,7 @@ FALLBACK    what happens for pathological input
 DISPATCH    how the specialisation is selected
 ```
 
-Worked example, `parse_float` (`std/float`) — real, not hypothetical:
+Worked example, `parse_float` (`std/f64`) — real, not hypothetical:
 
 ```
 FAST PATH   Eisel-Lemire: 128-bit multiply against a power-of-ten cache

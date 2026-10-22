@@ -7,13 +7,13 @@ import (
 	"testing"
 )
 
-// f64MethodCases exercise std/float's f64 RECEIVER methods (`x.sqrt()`,
+// f64MethodCases exercise std/f64's f64 RECEIVER methods (`x.sqrt()`,
 // `.floor()`, `.pow(y)`, …) through the self-host x86-64 native-binary track
 // (#4361): each primitive-receiver method body
 // (`(x: f64) sqrt() { return __sqrt_f64(x); }`) must be emitted alongside its
 // call, or the link fails on an undefined reference. The float-intrinsic suites
 // cover the `__*_f64` FREE functions and the f64-recv IR suite covers USER
-// methods; this covers std/float's own method forms.
+// methods; this covers std/f64's own method forms.
 //
 // Each case asserts `-decide` reports "ir" and oracle-checks the result
 // against the interpreter.
@@ -34,10 +34,10 @@ var f64MethodCases = []struct {
 
 // f64MethodSrc builds a minimal program calling an f64 method.
 func f64MethodSrc(body string) string {
-	return "import \"std/float\";\nfunction main(): i32 { " + body + " }\n"
+	return "import \"std/f64\";\nfunction main(): i32 { " + body + " }\n"
 }
 
-// TestSelfHostF64MethodIR_X86_64 pins std/float's f64 receiver methods
+// TestSelfHostF64MethodIR_X86_64 pins std/f64's f64 receiver methods
 // compiling + linking + running on the self-host x86-64 native-binary path
 // (#4361).
 func TestSelfHostF64MethodIR_X86_64(t *testing.T) {

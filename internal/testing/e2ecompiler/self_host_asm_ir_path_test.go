@@ -131,7 +131,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// 32, f64.tag returns 64; an f32 value must pick 32 and an f64 value 64.
 		// 32*100+64 = 3264 (exit 192 mod 256).
 		{"f32-vs-f64-dispatch", `function (x: f32) tag(): i32 { return 32; } function (x: f64) tag(): i32 { return 64; } function f(): i32 { let v: f32 = 1.0 as f32; let w: f64 = 1.0; return v.tag() * 100 + w.tag(); } function main(): i32 { return f(); }`, 192},
-		// f32-only methods (no f64 twin) on f32 locals — the std/float method
+		// f32-only methods (no f64 twin) on f32 locals — the std/f64 method
 		// shape (`__op_f64(x as f64) as f32`). myabs(-5)=5, myclamp via mymax(7,3)=7
 		// -> 5*10+7 = 57.
 		{"f32-methods", `function (x: f32) myabs(): f32 { let d: f64 = x as f64; if (d < 0.0) { return (0.0 - d) as f32; } return d as f32; } function (x: f32) mymax(y: f32): f32 { if ((x as f64) > (y as f64)) { return x; } return y; } function (x: f32) myclamp(lo: f32, hi: f32): f32 { return lo.mymax(x); } function f(): i32 { let a: f32 = 0.0 - 5.0 as f32; let b = a.myabs(); let c: f32 = 3.0 as f32; let m = c.myclamp(7.0 as f32, 9.0 as f32); return (b as i32) * 10 + (m as i32); } function main(): i32 { return f(); }`, 57},

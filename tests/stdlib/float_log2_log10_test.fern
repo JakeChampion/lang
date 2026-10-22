@@ -1,8 +1,8 @@
 import "std/test";
-import "std/float" as float;
+import "std/f64";
 
 // tests/stdlib/float_log2_log10_test.fern — pure-Fern coverage of
-// std/float.log2 / log10: base-2 and base-10 logarithms via change-of-base
+// std/f64.log2 / log10: base-2 and base-10 logarithms via change-of-base
 // (natural log ÷ ln2 / ÷ ln10). Powers of two / ten land on their integer
 // exponents up to rounding, so the checks are tolerance-banded with
 // assert_eq_f64_near. Both f64 and f32. The Go-side TestFloatLog2Log10 pins
@@ -54,7 +54,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/float log2/log10");
+  let r: test.TestRunner = test.test_new("std/f64 log2/log10");
   r = r.it("log2 power of two", test_log2_pow2);
   r = r.it("log2 large", test_log2_large);
   r = r.it("log2 below one", test_log2_below_one);

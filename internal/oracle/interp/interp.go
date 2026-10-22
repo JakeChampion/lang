@@ -110,7 +110,7 @@ func (*Cell) String() string { return "<cell>" }
 
 // Float carries f32 / f64 IEEE-754 values for the interp. The
 // width tag is preserved because the language distinguishes f32
-// from f64 in type errors and `to_string` rendering (std/float
+// from f64 in type errors and `to_string` rendering (std/f64
 // uses different digit budgets per width); the underlying
 // storage is float64 either way — for f32 we round-trip through
 // `float32` during arithmetic and at f32_bits boundary points
@@ -1716,9 +1716,9 @@ func New() *Interp {
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}
 	i.Builtins["f64_from_bits"] = &Builtin{Fn: builtinF64FromBits}
 	// f64 math primitives, each exact or correctly rounded in `math`.
-	// User code reaches these through receiver methods in `std/float`
+	// User code reaches these through receiver methods in `std/f64`
 	// (`(x).sqrt()`, `.floor()`, …); the underscore-prefixed bare names
-	// are the IR-level entry points. The transcendentals are std/float's
+	// are the IR-level entry points. The transcendentals are std/f64's
 	// own Fern, which this interprets like any other code.
 	i.Builtins["__sqrt_f64"] = mkUnaryF64Builtin("__sqrt_f64", math.Sqrt)
 	i.Builtins["__floor_f64"] = mkUnaryF64Builtin("__floor_f64", math.Floor)

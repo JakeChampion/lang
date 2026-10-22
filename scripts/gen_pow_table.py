@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the data behind f64 pow's non-integral path in std/float.
+"""Regenerate the data behind f64 pow's non-integral path in std/f64.
 
     uv run --no-project scripts/gen_pow_table.py
     uv run --no-project scripts/gen_pow_table.py --check

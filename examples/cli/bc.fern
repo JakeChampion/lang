@@ -20,7 +20,7 @@
 import "std/string";
 import "std/i32";
 import "std/i64";
-import "std/float";
+import "std/f64";
 import "std/io";
 
 // Parser state carried out of every parse function: the value parsed

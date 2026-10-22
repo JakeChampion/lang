@@ -54,7 +54,7 @@
     "internal/stdlib/std/errno.fern": "1627200f797b86ca267b087082f31450c05d6df8e3af5550240fd94a611f632f",
     "internal/stdlib/std/error.fern": "7ff8e1ef7a5875f45d58559d037e340865d9ddfb43b81f81f406cc4fff444503",
     "internal/stdlib/std/fetch.fern": "a5301df86401ef6828823c3dfe9d2eed4e29fdf939a710594b100bb68e5bab31",
-    "internal/stdlib/std/float.fern": "d745ef5e859e53c5497cda41e733de45450f87ed4460719b36ffcc4c4449fdb5",
+    "internal/stdlib/std/f64.fern": "d745ef5e859e53c5497cda41e733de45450f87ed4460719b36ffcc4c4449fdb5",
     "internal/stdlib/std/format.fern": "5393905c55883401d215bee45631a19da6fe1086adf4fa273f29366f75191dab",
     "internal/stdlib/std/fuzz.fern": "c2988f0ac7ec1cf1be8d04330eac6d724bf7d5eed5fe03f85ae0851f50cfcf35",
     "internal/stdlib/std/glob.fern": "37b9fd117b437d03481aaf0c556fa37460b76551a601fc6b5d502b35c1fe9022",

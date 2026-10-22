@@ -10,7 +10,7 @@ import (
 )
 
 // TestSelfHostRemoveFileIR pins `remove_file(path)` lowering on the self-host
-// x86-64 IR path. remove_file unlinks a file and returns Result[(), IoError]; it
+// x86-64 IR path. remove_file unlinks a file and returns Result[void, IoError]; it
 // lowers to op_remove_file, backed by the __fern_remove_file runtime. The
 // program makes a temp dir, writes a file, remove_file's it, then read_dir's the
 // dir and asserts it's empty (0 entries) -> exit 0; exercises temp_dir /
@@ -70,7 +70,7 @@ func TestSelfHostRemoveFileIR(t *testing.T) {
 // TestSelfHostRemoveFileIRWasm is the wasm mirror: remove_file now lowers through
 // the wasm IR path too (it was a wasm_eligible exclusion). The wasm op_remove_file
 // handler calls a fresh runtime ($__fern_remove_file: preview1 path_unlink_file ->
-// Result[(), IoError] box [tag@0, payload@4], Ok=0 on success / Err=1 on failure
+// Result[void, IoError] box [tag@0, payload@4], Ok=0 on success / Err=1 on failure
 // with the same null-IoError placeholder $__fern_stat's Err arm uses — the match
 // binds it with a wildcard). Unlike the x86 test this exercises remove_file alone
 // (temp_dir / read_dir are not yet wasm-eligible): it removes a known file (None)

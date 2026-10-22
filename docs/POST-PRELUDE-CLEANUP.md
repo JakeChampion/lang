@@ -99,7 +99,7 @@ self-contained.
 
 - **REPL imports.** `fern -repl` (`run_repl` in `compiler/fern.fern`,
   `interp.Session`) parses each line on its own, so a session can't `import`
-  a module: it starts with `std/float` loaded, for printing values, and
+  a module: it starts with `std/f64` loaded, for printing values, and
   nothing else. A qualified call needs the loader's renaming applied to the
   line, as a module's body gets it.
 - **Remove the dead `IsPrelude` field.** Nothing sets

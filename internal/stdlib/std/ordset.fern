@@ -21,16 +21,14 @@ import "core/cmp";
 import "core/iter";
 import "std/ordmap";
 
-// The public handle: the tree root directly (not an `OrdMap` inside a
-// struct, which would cost a box per operation). Construct one only
-// through `ordset_new` / `ordset_of`; the field is an implementation
-// detail.
-pub struct OrdSet[T] { root: ordmap.OrdNode[T, i32] }
+// The public handle: the map with unit values. Construct one only through
+// `ordset_new` / `ordset_of`; the field is an implementation detail.
+pub struct OrdSet[T] { root: ordmap.OrdMap[T, i32] }
 
 // `ordset_new()` — the empty set. The element type is fixed by the
 // annotation at the binding (`let s: OrdSet[string] = ordset_new();`).
 pub function ordset_new[T](): OrdSet[T] {
-  let e: ordmap.OrdNode[T, i32] = ordmap.__om_empty();
+  let e: ordmap.OrdMap[T, i32] = ordmap.ordmap_new();
   return OrdSet { root: e };
 }
 
@@ -47,51 +45,47 @@ pub function ordset_of[T: cmp.Ord](xs: T[]): OrdSet[T] {
 
 // `len()` — the number of elements. O(1).
 pub function (s: OrdSet[T]) len(): i32 {
-  return ordmap.__om_size(s.root);
+  return s.root.len();
 }
 
 // `is_empty()` — true when there are no elements.
 pub function (s: OrdSet[T]) is_empty(): boolean {
-  return ordmap.__om_size(s.root) == 0;
+  return s.root.is_empty();
 }
 
 // `add(x)` — the set with `x`; the receiver unchanged when present.
 pub function (s: OrdSet[T]) add[T: cmp.Ord](x: T): OrdSet[T] {
-  return OrdSet { root: ordmap.__om_insert(s.root, x, 0) };
+  return OrdSet { root: s.root.insert(x, 0) };
 }
 
 // `remove(x)` — the set without `x`; the receiver unchanged when absent.
 pub function (s: OrdSet[T]) remove[T: cmp.Ord](x: T): OrdSet[T] {
-  return OrdSet { root: ordmap.__om_delete(s.root, x) };
+  return OrdSet { root: s.root.remove(x) };
 }
 
 // `contains(x)` — is `x` a member?
 pub function (s: OrdSet[T]) contains[T: cmp.Ord](x: T): boolean {
-  let hit: ordmap.OrdNode[T, i32] = ordmap.__om_find(s.root, x);
-  return ordmap.__om_holds(hit);
+  return s.root.contains(x);
 }
 
 // `min()` / `max()` — the smallest / largest element. O(log n).
 pub function (s: OrdSet[T]) min(): Option[T] {
-  let node: ordmap.OrdNode[T, i32] = ordmap.__om_min_node(s.root);
-  return ordmap.__om_key(node);
+  return s.root.min_key();
 }
 
 pub function (s: OrdSet[T]) max(): Option[T] {
-  let node: ordmap.OrdNode[T, i32] = ordmap.__om_max_node(s.root);
-  return ordmap.__om_key(node);
+  return s.root.max_key();
 }
 
 // `at(i)` — the element of rank `i` (0-based, ascending); `None` when
 // out of range. O(log n).
 pub function (s: OrdSet[T]) at(i: i32): Option[T] {
-  let node: ordmap.OrdNode[T, i32] = ordmap.__om_at(s.root, i);
-  return ordmap.__om_key(node);
+  return s.root.key_at(i);
 }
 
 // `index_of(x)` — the rank of `x` in ascending order, or -1 when absent.
 pub function (s: OrdSet[T]) index_of[T: cmp.Ord](x: T): i32 {
-  return ordmap.__om_index_of(s.root, x);
+  return s.root.index_of(x);
 }
 
 // `iter()` — an Iterator over the elements in ascending order, which is
@@ -102,23 +96,21 @@ pub function (s: OrdSet[T]) iter(): iter.ArrayIter[T] {
 
 // `to_array()` — the elements in ascending order.
 pub function (s: OrdSet[T]) to_array(): T[] {
-  let acc: T[] = [];
-  acc = ordmap.__om_keys_into(s.root, acc);
-  return acc;
+  return s.root.keys();
 }
 
 // `union(other)` / `intersection(other)` / `difference(other)` — the
 // usual set algebra, each O(m log(n/m + 1)).
 pub function (s: OrdSet[T]) union[T: cmp.Ord](other: OrdSet[T]): OrdSet[T] {
-  return OrdSet { root: ordmap.__om_union(s.root, other.root) };
+  return OrdSet { root: s.root.union(other.root) };
 }
 
 pub function (s: OrdSet[T]) intersection[T: cmp.Ord](other: OrdSet[T]): OrdSet[T] {
-  return OrdSet { root: ordmap.__om_intersection(s.root, other.root) };
+  return OrdSet { root: s.root.intersection(other.root) };
 }
 
 pub function (s: OrdSet[T]) difference[T: cmp.Ord](other: OrdSet[T]): OrdSet[T] {
-  return OrdSet { root: ordmap.__om_difference(s.root, other.root) };
+  return OrdSet { root: s.root.difference(other.root) };
 }
 
 // `is_subset(other)` — is every element of this set in `other`?
@@ -126,8 +118,7 @@ pub function (s: OrdSet[T]) is_subset[T: cmp.Ord](other: OrdSet[T]): boolean {
   if (s.len() > other.len()) {
     return false;
   }
-  let d: ordmap.OrdNode[T, i32] = ordmap.__om_difference(s.root, other.root);
-  return ordmap.__om_size(d) == 0;
+  return s.root.difference(other.root).is_empty();
 }
 
 // `equals(other)` — the same elements?
@@ -137,21 +128,21 @@ pub function (s: OrdSet[T]) equals[T: cmp.Ord](other: OrdSet[T]): boolean {
 
 // `filter(pred)` — the elements `pred` accepts.
 pub function (s: OrdSet[T]) filter(pred: (T) => boolean): OrdSet[T] {
-  return OrdSet { root: ordmap.__om_filter(s.root, (k: T, v: i32) => pred(k)) };
+  return OrdSet { root: s.root.filter((k: T, v: i32) => pred(k)) };
 }
 
 // `fold(init, f)` — `f` over every element in ascending order.
 pub function (s: OrdSet[T]) fold[T, A](init: A, f: (A, T) => A): A {
-  return ordmap.__om_fold(s.root, init, (a: A, k: T, v: i32) => f(a, k));
+  return s.root.fold(init, (a: A, k: T, v: i32) => f(a, k));
 }
 
 // `for_each(f)` — call `f` on every element in ascending order.
 pub function (s: OrdSet[T]) for_each(f: (T) => void): void {
-  ordmap.__om_for_each(s.root, (k: T, v: i32) => f(k));
+  s.root.for_each((k: T, v: i32) => f(k));
 }
 
 // `is_valid()` — do the tree invariants hold? Always true for a set
 // built through this module; exposed for tests.
 pub function (s: OrdSet[T]) is_valid[T: cmp.Ord](): boolean {
-  return ordmap.__om_valid(s.root);
+  return s.root.is_valid();
 }

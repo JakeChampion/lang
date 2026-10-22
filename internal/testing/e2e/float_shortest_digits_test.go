@@ -42,7 +42,7 @@ func TestFloatShortestDigits(t *testing.T) {
 		vals = append(vals, v)
 	}
 	var b strings.Builder
-	b.WriteString("import \"std/float\";\nfunction show(d: (i64, i32)): void {\n")
+	b.WriteString("import \"std/f64\";\nfunction show(d: (i64, i32)): void {\n")
 	b.WriteString("    write(d.0.to_string()); write(\" \"); write(d.1.to_string()); write(\"\\n\");\n}\n")
 	b.WriteString("function main(): i32 {\n")
 	want := []string{}
@@ -79,14 +79,14 @@ func TestFloatShortestDigits(t *testing.T) {
 	}
 }
 
-// TestFloatPow10Table pins the power-of-ten words `std/float` exports
+// TestFloatPow10Table pins the power-of-ten words `std/f64` exports
 // to the exact definition: with l2 = floor(log2(10^k)), the 128-bit
 // value ceil(10^k × 2^(127 - l2)), high word first, and `pow10_log2` is
 // l2 itself. Every entry is checked, both ends of the range included.
 func TestFloatPow10Table(t *testing.T) {
 	var b strings.Builder
-	b.WriteString("import \"std/float\";\nfunction main(): i32 {\n    let k: i32 = 0 - 292;\n    while (k <= 326) {\n")
-	b.WriteString("        write(float.pow10_hi(k).to_string()); write(\" \"); write(float.pow10_lo(k).to_string()); write(\" \"); write(float.pow10_log2(k).to_string()); write(\"\\n\");\n")
+	b.WriteString("import \"std/f64\";\nfunction main(): i32 {\n    let k: i32 = 0 - 292;\n    while (k <= 326) {\n")
+	b.WriteString("        write(f64.pow10_hi(k).to_string()); write(\" \"); write(f64.pow10_lo(k).to_string()); write(\" \"); write(f64.pow10_log2(k).to_string()); write(\"\\n\");\n")
 	b.WriteString("        k = k + 1;\n    }\n    return 0;\n}\n")
 	out, code := compileAndRunX86_64(t, b.String())
 	if code != 0 {

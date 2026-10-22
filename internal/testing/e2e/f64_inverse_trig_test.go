@@ -1,6 +1,6 @@
 package e2e
 
-// The accuracy gate for std/float's inverse trig, expm1 and log1p (#5541):
+// The accuracy gate for std/f64's inverse trig, expm1 and log1p (#5541):
 // pure-Fern ports of fdlibm's e_asin, e_acos, s_atan, e_atan2, s_expm1 and
 // s_log1p, so every backend runs the same source and each must land within
 // maxULP of the reference.
@@ -635,7 +635,7 @@ func f64InverseTrigCases() []f64Case {
 
 func f64InverseTrigProg(cs []f64Case) string {
 	var b strings.Builder
-	b.WriteString("import \"std/i64\";\nimport \"std/float\";\n")
+	b.WriteString("import \"std/i64\";\nimport \"std/f64\";\n")
 	b.WriteString("function emit(v: f64): i32 { print(f64_bits(v).to_string()); return 0; }\n")
 	b.WriteString("function main(): i32 {\n")
 	for _, c := range cs {

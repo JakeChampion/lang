@@ -2,7 +2,7 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/float's convenience methods added atop the
+// Differential coverage for std/f64's convenience methods added atop the
 // existing abs/floor/…/clamp surface: signum (sign as a float, zero at zero,
 // NaN-preserving), lerp (precise a+(b-a)*t linear interpolation, incl.
 // extrapolation), and to_radians/to_degrees (degree↔radian conversion via a
@@ -11,7 +11,7 @@ import "testing"
 // use exact-representable values (halves / integers) so the four backends must
 // agree bit-for-bit; the conversion checks use tolerance bands.
 const floatSignumLerpProg = `
-import "std/float" as float;
+import "std/f64";
 function main(): i32 {
     // ---- signum f64 ----
     if ((5.0).signum() != 1.0) { return 1; }

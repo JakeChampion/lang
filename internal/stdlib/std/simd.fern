@@ -17,11 +17,11 @@
 //
 // `Lanes` is the arithmetic a kernel composes; `Math` adds the special
 // functions, which every type implements for itself: the scalars from
-// std/float, `Dual` by the chain rule, `DoubleDouble` by argument reduction
+// std/f64, `Dual` by the chain rule, `DoubleDouble` by argument reduction
 // and series at its own precision. A constant enters a kernel as an f64
 // (`T.splat(2.0)`), whatever the lane width.
 import "std/num" as num;
-import "std/float";
+import "std/f64";
 
 // Lanes is a value of LANES elements that supports the arithmetic, the
 // comparisons and the bit-exact helpers a numeric kernel needs. `lt` and `ne`
@@ -67,7 +67,7 @@ pub trait Math: Lanes {
 
 // ---- f64 ------------------------------------------------------------------
 
-// The scalar impls bind only what std/float does not already give the type:
+// The scalar impls bind only what std/f64 does not already give the type:
 // an impl adopts a method the type has (mul_add, sqrt, abs, floor, round,
 // min, max, and every special function of Math).
 impl Lanes for f64 {

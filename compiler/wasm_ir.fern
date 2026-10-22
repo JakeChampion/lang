@@ -5405,7 +5405,7 @@ function emit_host_op_wat(o: ir.Op): string {
   }
   if (o.kind_tag == 170) {  // write_file
     // stack: path ptr, content ptr -> write content to the named file,
-    // push a Result[(), IoError] box ptr. The helper ($__fern_write_file)
+    // push a Result[void, IoError] box ptr. The helper ($__fern_write_file)
     // opens the path for write (path_open) and writes via fd_write (the
     // import print already pulls in; wasm_ir_run extends its gate).
     return "    call $__fern_write_file\n";
@@ -5459,7 +5459,7 @@ function emit_host_op_wat(o: ir.Op): string {
     return tid_get("FileStat") + "    call $__fern_lstat\n";
   }
   if (o.kind_tag == 173) {  // remove_file
-    // stack: path strblock ptr -> unlink the file, push a Result[(), IoError]
+    // stack: path strblock ptr -> unlink the file, push a Result[void, IoError]
     // box (Ok(()) on success / Err(IoError) on failure). $__fern_remove_file
     // (param i32 path, result i32) wraps the preview1 path_unlink_file and
     // allocates the box; emitted caller-side in wasm_ir_run (with the
@@ -5469,7 +5469,7 @@ function emit_host_op_wat(o: ir.Op): string {
   }
   if (o.kind_tag == 260) {  // create_dir
     // stack: path strblock, mode -> ONE path_create_directory under the
-    // preopen, push a Result[(), IoError] box. WASI's call carries no
+    // preopen, push a Result[void, IoError] box. WASI's call carries no
     // mode, so $__fern_create_dir drops it (docs/FREESTANDING-CORE.md);
     // EEXIST reaches the caller, which is the whole difference from
     // create_dir_all.
@@ -5477,17 +5477,17 @@ function emit_host_op_wat(o: ir.Op): string {
   }
   if (o.kind_tag == 261) {  // remove_dir
     // stack: path strblock -> path_remove_directory, push a
-    // Result[(), IoError] box. A non-empty directory is ENOTEMPTY.
+    // Result[void, IoError] box. A non-empty directory is ENOTEMPTY.
     return "    call $__fern_remove_dir\n";
   }
   if (o.kind_tag == 262) {  // create_link
     // stack: target strblock, path strblock -> path_link with the
-    // lookupflags word 0, push a Result[(), IoError] box.
+    // lookupflags word 0, push a Result[void, IoError] box.
     return "    call $__fern_create_link\n";
   }
   if (o.kind_tag == 267) {  // rename
     // stack: old strblock, new strblock -> path_rename, push a
-    // Result[(), IoError] box. An existing `new` is replaced.
+    // Result[void, IoError] box. An existing `new` is replaced.
     return "    call $__fern_rename\n";
   }
   if (o.kind_tag == 263) {  // create_symlink
@@ -5498,13 +5498,13 @@ function emit_host_op_wat(o: ir.Op): string {
   if (o.kind_tag == 273) {  // truncate
     // stack: path strblock, an i64 length -> open the entry without
     // CREATE or TRUNCATE, fd_filestat_set_size, close; push a
-    // Result[(), IoError] box. Neither preview has a path-based
+    // Result[void, IoError] box. Neither preview has a path-based
     // set-size, so the descriptor exists only for the duration.
     return "    call $__fern_truncate\n";
   }
   if (o.kind_tag == 269) {  // set_file_times
     // stack: path strblock, the four i64 timestamp halves, the flags word
-    // -> path_filestat_set_times, push a Result[(), IoError] box.
+    // -> path_filestat_set_times, push a Result[void, IoError] box.
     return "    call $__fern_set_file_times\n";
   }
   if (o.kind_tag == 264) {  // read_link
@@ -5514,7 +5514,7 @@ function emit_host_op_wat(o: ir.Op): string {
   }
   if (o.kind_tag == 231) {  // create_dir_all
     // stack: path strblock ptr -> create the directory and every missing
-    // parent, push a Result[(), IoError] box. $__fern_create_dir_all
+    // parent, push a Result[void, IoError] box. $__fern_create_dir_all
     // (param i32 path, result i32) walks the path over the preview1
     // path_create_directory import; emitted caller-side in wasm_ir_run
     // (with that import + heap). No struct payload, so no type-id.
@@ -5544,7 +5544,7 @@ function emit_host_op_wat(o: ir.Op): string {
   }
   if (o.kind_tag == 172) {  // remove_dir_all
     // stack: path strblock ptr -> recursively rm -rf the path, push a
-    // Result[(), IoError] box. $__fern_remove_dir_all (param i32 path, result
+    // Result[void, IoError] box. $__fern_remove_dir_all (param i32 path, result
     // i32) wraps preview1 path_open + fd_readdir + path_unlink_file +
     // path_remove_directory and recurses; emitted caller-side in
     // wasm_ir_run (with those imports + heap + arr_push) when the module
@@ -7594,7 +7594,7 @@ function filestat_project_wat(): string {
   return o;
 }
 
-// remove_file_func emits $__fern_remove_file(path) -> Result[(), IoError] box.
+// remove_file_func emits $__fern_remove_file(path) -> Result[void, IoError] box.
 // path_unlink_file(preopen fd 3, path bytes @path+4 / len @[path]) unlinks the
 // file; on success (errno 0) push Result.Ok [tag0, unit payload 0], else push
 // Result.Err(IoError) [tag1, payload]. Result's tag convention matches the
@@ -7627,7 +7627,7 @@ pub function remove_file_func(): string {
 // and every path resolves under the preopen, so one that escapes it is
 // ENOTCAPABLE where a kernel would resolve it.
 
-// create_dir_func emits $__fern_create_dir(path, mode) -> Result[(), IoError].
+// create_dir_func emits $__fern_create_dir(path, mode) -> Result[void, IoError].
 // The mode is accepted and dropped; EEXIST is an ERROR here, unlike
 // create_dir_all's leaf.
 pub function create_dir_func(): string {
@@ -7639,7 +7639,7 @@ pub function create_dir_func(): string {
   return o;
 }
 
-// remove_dir_func emits $__fern_remove_dir(path) -> Result[(), IoError]:
+// remove_dir_func emits $__fern_remove_dir(path) -> Result[void, IoError]:
 // path_remove_directory, with ENOTEMPTY reaching the caller.
 pub function remove_dir_func(): string {
   let o: string = "";
@@ -7651,7 +7651,7 @@ pub function remove_dir_func(): string {
 }
 
 // create_link_func emits $__fern_create_link(target, path) ->
-// Result[(), IoError]: path_link with the lookupflags word 0, so the target's
+// Result[void, IoError]: path_link with the lookupflags word 0, so the target's
 // own final symlink is not followed. The IoError names the LINK, which is the
 // operand ln(1) and link(1) report.
 pub function create_link_func(): string {
@@ -7663,7 +7663,7 @@ pub function create_link_func(): string {
   return o;
 }
 
-// rename_func emits $__fern_rename(old, new) -> Result[(), IoError]:
+// rename_func emits $__fern_rename(old, new) -> Result[void, IoError]:
 // path_rename, which replaces an existing `new` of a compatible kind in one
 // step and follows neither final component. The IoError names `new`.
 pub function rename_func(): string {
@@ -7676,7 +7676,7 @@ pub function rename_func(): string {
 }
 
 // create_symlink_func emits $__fern_create_symlink(target, path) ->
-// Result[(), IoError]: path_symlink, with the target stored verbatim and
+// Result[void, IoError]: path_symlink, with the target stored verbatim and
 // never resolved — so it takes no dirfd of its own.
 pub function create_symlink_func(): string {
   let o: string = "";
@@ -7687,7 +7687,7 @@ pub function create_symlink_func(): string {
   return o;
 }
 
-// truncate_func emits $__fern_truncate(path, length) -> Result[(), IoError]:
+// truncate_func emits $__fern_truncate(path, length) -> Result[void, IoError]:
 // path_open under the preopen (fd 3) with NEITHER create NOR truncate in the
 // oflags, fd_filestat_set_size, fd_close. Preview 1 has no path-based
 // set-size at all — `path_filestat_set_size` is not an import it defines — so
@@ -7711,7 +7711,7 @@ pub function truncate_func(): string {
 }
 
 // set_file_times_func emits $__fern_set_file_times(path, atime_sec,
-// atime_nsec, mtime_sec, mtime_nsec, flags) -> Result[(), IoError]:
+// atime_nsec, mtime_sec, mtime_nsec, flags) -> Result[void, IoError]:
 // path_filestat_set_times under the preopen (fd 3). `chmod` has no twin here
 // and its absence is the point — neither WASI preview has permission bits, so
 // E066 refuses that builtin on this target rather than a backend stubbing it.
@@ -7814,7 +7814,7 @@ pub function read_link_func(): string {
   return o;
 }
 
-// create_dir_all_func emits $__fern_create_dir_all(path) -> Result[(), IoError]
+// create_dir_all_func emits $__fern_create_dir_all(path) -> Result[void, IoError]
 // box. path_create_directory(preopen fd 3, ...) is issued for every '/' in the
 // path and then for the whole path — WASI takes an explicit length, so a parent
 // prefix is the same buffer with a shorter length and nothing has to be
@@ -7975,7 +7975,7 @@ function read_dir_func_like(fname: string, skip_dots: boolean, ino: boolean): st
   return o;
 }
 
-// remove_dir_all_func emits $__fern_remove_dir_all(path) -> Result[(), IoError] box — a
+// remove_dir_all_func emits $__fern_remove_dir_all(path) -> Result[void, IoError] box — a
 // recursive rm -rf, the wasm sibling of asm_ir's __fern_remove_dir_all. It first
 // path_open(oflags = O_DIRECTORY 2, FD_READDIR right)s the path: success => it's a
 // directory; ENOTDIR (54) => it's a file, path_unlink_file it; ENOENT (44) => it
@@ -12476,13 +12476,13 @@ function path_fs_bodies(parts: string[], needs: string[], mode: i32): string[] {
   if (need(needs, "lstat")) {
     parts = parts.append(lstat_func());
   }
-  // $__fern_remove_file(path): path_unlink_file -> Result[(), IoError] box.
+  // $__fern_remove_file(path): path_unlink_file -> Result[void, IoError] box.
   // Heap-backed (allocates the box), so folded into the heap gate.
   if (need(needs, "remove_file")) {
     parts = parts.append(remove_file_func());
   }
   // $__fern_create_dir_all(path): path_create_directory per missing component
-  // -> Result[(), IoError] box. Heap-backed (allocates the box), so folded
+  // -> Result[void, IoError] box. Heap-backed (allocates the box), so folded
   // into the heap gate.
   if (need(needs, "create_dir_all")) {
     parts = parts.append(create_dir_all_func());
@@ -12523,7 +12523,7 @@ function path_fs_bodies(parts: string[], needs: string[], mode: i32): string[] {
   if (mode != 2 && (need(needs, "read_dir_ino") || need(needs, "read_dir_ino_all"))) {
     parts = parts.append(wasi_kind_func());
   }
-  // $__fern_remove_dir_all(path): recursive rm -rf -> Result[(), IoError] box.
+  // $__fern_remove_dir_all(path): recursive rm -rf -> Result[void, IoError] box.
   // Heap-backed + uses $__fern_arr_push (both folded into emit_ir_module_units' gates).
   if (need(needs, "remove_dir_all")) {
     parts = parts.append(remove_dir_all_func(mode == 2));
@@ -12948,7 +12948,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and
   // read/write the whole file, boxing a Result[string, IoError] /
-  // Result[(), IoError]. They alloc via the heap runtime (module_allocates
+  // Result[void, IoError]. They alloc via the heap runtime (module_allocates
   // pulls it in — op_allocates admits read_file/write_file). Emitted when
   // the module does the matching file op.
   if (need(needs, "read_file") || need(needs, "read_chunk")) {
@@ -13259,7 +13259,7 @@ pub function is_struct_type(structs: irtables.StructTab, t: string): boolean {
 // is_float_type names the floating-point spellings (all lowered to f64 —
 // matching the native backends, which carry no distinct f32).
 pub function is_float_type(t: string): boolean {
-  return t == "f64" || t == "f32" || t == "float";
+  return t == "f64" || t == "f32";
 }
 
 // wat_extern_valtype maps a Fern type spelling to the wasm value type used in
@@ -14301,7 +14301,7 @@ pub function extern_canon_field_size(ft: string): i32 {
   if (ft == "u8" || ft == "boolean") {
     return 1;
   }
-  if (ft == "i64" || ft == "u64" || ft == "f64" || ft == "float") {
+  if (ft == "i64" || ft == "u64" || ft == "f64") {
     return 8;
   }
   return 4;
@@ -16441,8 +16441,8 @@ pub function nth_tuple_type_elem(spelling: string, idx: i32): string {
 // stride and the wasm store/load instruction for an element kind.
 //
 // The float test is elem_ty_is_f64slot, not `== "f64"`: an f32 occupies the same
-// 8-byte slot, so a kind that reaches here spelled "f32" or "float" needs the
-// f64 stride and instruction. Spelling it literally is what left an f32 tuple
+// 8-byte slot, so a kind that reaches here spelled "f32" needs the f64 stride
+// and instruction. Spelling it literally is what left an f32 tuple
 // element storing through i32.store — `expected i32, found f64` at validation
 // (#7756).
 // extern_list_elem_size is a numeric element's size in a canonical list:
@@ -17263,7 +17263,7 @@ function emit_wasm_struct_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32
     if (emft == "i64" || emft == "u64") {
       parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n");
       parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
-    } else if (emft == "f64" || emft == "f32" || emft == "float") {
+    } else if (emft == "f64" || emft == "f32") {
       parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
       parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(emoff) + "\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
     } else {
@@ -17425,7 +17425,7 @@ function dyn_prim_valtype(name: string): string {
   if (name == "i64" || name == "u64") {
     return "i64";
   }
-  if (name == "f64" || name == "f32" || name == "float") {
+  if (name == "f64" || name == "f32") {
     return "f64";
   }
   return "i32";
