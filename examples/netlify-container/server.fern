@@ -53,7 +53,7 @@ function tile(s: Stats, params: router.Params): Result[HttpResponse, dyn http.To
     return Ok(http.bad_request("no such tile"));
   }
   let r: Rendered = s.render(z, x, y);
-  return Ok(http.bytes(200, r.tile.png).with_content_type("image/png").with_header("Cache-Control", "public, max-age=31536000, immutable").with_header("Server-Timing", "render;dur=" + millis(r.ns)).with_header("X-Fern-Instance", s.instance).with_header("X-Fern-Iterations", r.tile.iterations.to_string()));
+  return Ok(http.bytes(200, r.tile.png).with_content_type("image/png").with_header("Cache-Control", "public, max-age=31536000, immutable").with_header("Netlify-CDN-Cache-Control", "public, durable, max-age=31536000, immutable").with_header("Server-Timing", "render;dur=" + millis(r.ns)).with_header("X-Fern-Instance", s.instance).with_header("X-Fern-Iterations", r.tile.iterations.to_string()));
 }
 
 // `session(s)` — the WebSocket session. The client sends "id z x y" as
