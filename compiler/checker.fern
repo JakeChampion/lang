@@ -5288,6 +5288,7 @@ function settle_shared_literal_typevars(c: ast.ExprCall, nargs: ast.Expr[], s: S
 // typing special-cases ahead of it (print's Display argument, map_new's
 // element types, cell_new's T) are listed as native registers them all the
 // same; TestSelfHostBuiltinSigsMatch pins the list entry for entry.
+// The rows are in byte order, which builtin_row's binary search needs.
 function builtin_sigs(): string[] {
   return [
     "__c_call0(usize): usize",
@@ -5317,16 +5318,14 @@ function builtin_sigs(): string[] {
     "__method_Dir_stat(Dir, string): Result[FileStat, IoError]",
     "__method_Reader_close(Reader): Result[void, IoError]",
     "__method_Reader_copy_range_to(Reader, Writer, i32): Result[i64, IoError]",
+    "__method_Reader_drop_cache(Reader, i64, i64): Result[void, IoError]",
     "__method_Reader_dup_onto(Reader, i32): Result[void, IoError]",
     "__method_Reader_fdatasync(Reader): Result[void, IoError]",
-    "__method_Reader_drop_cache(Reader, i64, i64): Result[void, IoError]",
     "__method_Reader_flags(Reader): Result[i64, IoError]",
     "__method_Reader_fsync(Reader): Result[void, IoError]",
     "__method_Reader_isatty(Reader): boolean",
     "__method_Reader_read_chunk(Reader, i32): Result[string, IoError]",
     "__method_Reader_read_chunk_bytes(Reader, i32): Result[u8[], IoError]",
-    "__method_Writer_write_bytes(Writer, [u8]): Result[void, IoError]",
-    "__method_Writer_write_some_bytes(Writer, [u8]): Result[i64, IoError]",
     "__method_Reader_seek(Reader, i64, i32): Result[i64, IoError]",
     "__method_Reader_set_extproc(Reader, boolean): Result[void, IoError]",
     "__method_Reader_set_window_size(Reader, i32, i32): Result[void, IoError]",
@@ -5337,9 +5336,9 @@ function builtin_sigs(): string[] {
     "__method_Reader_termios_set(Reader, i32, i64[]): Result[void, IoError]",
     "__method_Reader_window_size(Reader): Result[WinSize, IoError]",
     "__method_Writer_close(Writer): Result[void, IoError]",
+    "__method_Writer_drop_cache(Writer, i64, i64): Result[void, IoError]",
     "__method_Writer_dup_onto(Writer, i32): Result[void, IoError]",
     "__method_Writer_fdatasync(Writer): Result[void, IoError]",
-    "__method_Writer_drop_cache(Writer, i64, i64): Result[void, IoError]",
     "__method_Writer_flags(Writer): Result[i64, IoError]",
     "__method_Writer_fsync(Writer): Result[void, IoError]",
     "__method_Writer_isatty(Writer): boolean",
@@ -5349,7 +5348,9 @@ function builtin_sigs(): string[] {
     "__method_Writer_syncfs(Writer): Result[void, IoError]",
     "__method_Writer_truncate(Writer, i64): Result[void, IoError]",
     "__method_Writer_write(Writer, string): Result[void, IoError]",
+    "__method_Writer_write_bytes(Writer, [u8]): Result[void, IoError]",
     "__method_Writer_write_some(Writer, string): Result[i64, IoError]",
+    "__method_Writer_write_some_bytes(Writer, [u8]): Result[i64, IoError]",
     "__method_boolean_to_string(boolean): string",
     "__method_string_as_bytes(string): [u8]",
     "__method_string_len(string): i32",
@@ -5380,24 +5381,15 @@ function builtin_sigs(): string[] {
     "chroot(string): Result[void, IoError]",
     "clock_resolution(): i64",
     "clock_set(i64, i64): Result[void, IoError]",
+    "clone_file(string, string): Result[void, IoError]",
+    "config_get(string): Option[string]",
     "cpu_count(): i32",
     "create_dir(string, i32): Result[void, IoError]",
     "create_dir_all(string): Result[void, IoError]",
     "create_link(string, string): Result[void, IoError]",
-    "clone_file(string, string): Result[void, IoError]",
     "create_symlink(string, string): Result[void, IoError]",
-    "rename_noreplace(string, string): Result[void, IoError]",
-    "getxattr(string, string): Result[string, IoError]",
-    "getxattr_bytes(string, string): Result[u8[], IoError]",
-    "lgetxattr(string, string): Result[string, IoError]",
-    "lgetxattr_bytes(string, string): Result[u8[], IoError]",
-    "setxattr(string, string, string): Result[void, IoError]",
-    "setxattr_bytes(string, string, u8[]): Result[void, IoError]",
-    "lsetxattr(string, string, string): Result[void, IoError]",
-    "lsetxattr_bytes(string, string, u8[]): Result[void, IoError]",
-    "rename_exchange(string, string): Result[void, IoError]",
+    "disable_core_dumps(): boolean",
     "env(string): Option[string]",
-    "config_get(string): Option[string]",
     "environ(): string[]",
     "eprint(string): void",
     "exit(i32): void",
@@ -5411,12 +5403,19 @@ function builtin_sigs(): string[] {
     "getgid(): u32",
     "getgroups(): i64[]",
     "getuid(): u32",
+    "getxattr(string, string): Result[string, IoError]",
+    "getxattr_bytes(string, string): Result[u8[], IoError]",
     "hostname(): string",
     "isatty(i32): boolean",
+    "lgetxattr(string, string): Result[string, IoError]",
+    "lgetxattr_bytes(string, string): Result[u8[], IoError]",
+    "lsetxattr(string, string, string): Result[void, IoError]",
+    "lsetxattr_bytes(string, string, u8[]): Result[void, IoError]",
     "lstat(string): Result[FileStat, IoError]",
     "map_new(i32): Map",
     "mknod(string, i32, i32, i32): Result[void, IoError]",
     "monotonic_ns(): i64",
+    "mounts(): Result[MountEntry[], IoError]",
     "now_ns(): i64",
     "now_unix_ms(): i64",
     "open_appender(string): Result[Writer, IoError]",
@@ -5426,21 +5425,23 @@ function builtin_sigs(): string[] {
     "open_reader_with(string, i32): Result[Reader, IoError]",
     "open_writer(string): Result[Writer, IoError]",
     "open_writer_with(string, i32): Result[Writer, IoError]",
+    "pipe(): Result[Pipe, IoError]",
     "poll(i32[], i32): i32",
     "print(string): void",
     "priority(): i32",
     "proc_exec(string, string[]): i32",
     "proc_exec_as(string, string[], string[]): i32",
-    "pipe(): Result[Pipe, IoError]",
     "proc_fork(): i32",
     "proc_waitpid(i32): i32",
-    "proc_waitpid_status(i32): i32",
-    "disable_core_dumps(): boolean",
     "proc_waitpid_nohang(i32): i32",
+    "proc_waitpid_status(i32): i32",
     "process_alive(i32): boolean",
     "putchar(i32): void",
     "random_bytes(i32): u8[]",
     "random_i32(): i32",
+    "reactor_ctl(i32, i32, i32, i32): i32",
+    "reactor_new(): i32",
+    "reactor_wait(i32, i32[], i32): i32",
     "read_dir(string): Result[string[], IoError]",
     "read_dir_all(string): Result[string[], IoError]",
     "read_dir_ino(string): Result[DirEntry[], IoError]",
@@ -5452,16 +5453,25 @@ function builtin_sigs(): string[] {
     "remove_dir_all(string): Result[void, IoError]",
     "remove_file(string): Result[void, IoError]",
     "rename(string, string): Result[void, IoError]",
+    "rename_exchange(string, string): Result[void, IoError]",
+    "rename_noreplace(string, string): Result[void, IoError]",
+    "ring_ctl(i64, i32, i32, i32): i32",
+    "ring_new(i32): i64",
+    "ring_recv(i64, i32, u8[]): i32",
+    "ring_send_zc(i64, i32, u8[], i32): i32",
+    "ring_wait(i64, i32[], i32): i32",
     "rlimit_nofile(): i64",
     "set_args(string[]): void",
+    "set_extproc(i32, boolean): Result[void, IoError]",
     "set_file_times(string, i64, i64, i64, i64, i32): Result[void, IoError]",
     "set_priority(i32): Result[void, IoError]",
     "set_process_group(i32, i32): Result[void, IoError]",
-    "set_extproc(i32, boolean): Result[void, IoError]",
     "set_window_size(i32, i32, i32): Result[void, IoError]",
     "setgid(i64): Result[void, IoError]",
     "setgroups(i64[]): Result[void, IoError]",
     "setuid(i64): Result[void, IoError]",
+    "setxattr(string, string, string): Result[void, IoError]",
+    "setxattr_bytes(string, string, u8[]): Result[void, IoError]",
     "signal_catch(i32): i32",
     "signal_catch_interrupting(i32): i32",
     "signal_default(i32): i32",
@@ -5476,43 +5486,34 @@ function builtin_sigs(): string[] {
     "slice_unchecked(string, i32, i32): str",
     "stat(string): Result[FileStat, IoError]",
     "statfs(string): Result[FsStat, IoError]",
-    "mounts(): Result[MountEntry[], IoError]",
-    "sysctl(i32[]): Result[u8[], IoError]",
     "stderr(): Writer",
     "stdin(): Reader",
     "stdout(): Writer",
-    "string_from_bytes_unchecked(u8[]): string",
     "string_from_bytes_range_unchecked(u8[], i32, i32): string",
+    "string_from_bytes_unchecked(u8[]): string",
     "subprocess(string, string[], string): ProcessResult",
     "sync(): void",
+    "sysctl(i32[]): Result[u8[], IoError]",
     "target_arch(): string",
     "target_os(): string",
     "tcp_accept(i32): i32",
     "tcp_close(i32): i32",
     "tcp_connect_with(u8[], i32, boolean): i32",
+    "tcp_ktls(i32, i32, i32, u8[]): i32",
     "tcp_listen(i32): i32",
     "tcp_listen_with(u8[], i32, i32, boolean): i32",
     "tcp_local_port(i32): i32",
     "tcp_pollable(i32): i32",
-    "tcp_send_bytes(i32, u8[]): i32",
-    "tcp_socket_ctl(i32, i32, i32): i32",
-    "tcp_sendfile(i32, i32, i32): i32",
+    "tcp_recv_into(i32, u8[]): i32",
     "tcp_send_buf(i32, usize, i32): i32",
+    "tcp_send_bytes(i32, u8[]): i32",
+    "tcp_sendfile(i32, i32, i32): i32",
+    "tcp_socket_ctl(i32, i32, i32): i32",
     "temp_dir(string): Result[string, IoError]",
-    "reactor_ctl(i32, i32, i32, i32): i32",
-    "reactor_new(): i32",
-    "ring_new(i32): i64",
-    "ring_ctl(i64, i32, i32, i32): i32",
-    "ring_wait(i64, i32[], i32): i32",
-    "ring_recv(i64, i32, u8[]): i32",
-    "ring_send_zc(i64, i32, u8[], i32): i32",
-    "reactor_wait(i32, i32[], i32): i32",
     "termios_get(i32): Result[i64[], IoError]",
     "termios_set(i32, i32, i64[]): Result[void, IoError]",
     "timer_fd(i32): i32",
     "truncate(string, i64): Result[void, IoError]",
-    "tcp_recv_into(i32, u8[]): i32",
-    "tcp_ktls(i32, i32, i32, u8[]): i32",
     "udp_bind(u8[], i32): i32",
     "udp_bind_with(u8[], i32, boolean): i32",
     "udp_connect(i32, u8[], i32): i32",
@@ -5520,9 +5521,9 @@ function builtin_sigs(): string[] {
     "udp_sendto(i32, u8[], i32, string): i32",
     "udp_sendto_bytes(i32, u8[], i32, u8[]): i32",
     "umask(i32): i32",
+    "uname_field(i32): string",
     "unix_connect(string): i32",
     "unix_listen(string, i32): i32",
-    "uname_field(i32): string",
     "wasm_block(i32): i32",
     "wasm_poll(i32[]): i32",
     "wasm_pollable_drop(i32): i32",
@@ -5535,24 +5536,44 @@ function builtin_sigs(): string[] {
   ];
 }
 
+// builtin_row is `name`'s row of builtin_sigs(), or "" when no surface builtin
+// has that name. `(` sorts below every byte of a name, so the first row not
+// below `name(` is the one that starts with it, if any does.
+function builtin_row(name: string): string {
+  let rows: string[] = builtin_sigs();
+  let head: string = name + "(";
+  let lo: i32 = 0;
+  let hi: i32 = rows.len();
+  while (lo < hi) {
+    let mid: i32 = (lo + hi) / 2;
+    if (util.str_less(rows[mid], head)) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  if (lo < rows.len() && util.str_has_prefix(rows[lo], head)) {
+    return rows[lo];
+  }
+  return "";
+}
+
 // builtin_sig is `name`'s signature from builtin_sigs() as a TypeFunc, or
 // unknown when no surface builtin has that name.
 pub function builtin_sig(name: string): typeinfo.Type {
-  let head: string = name + "(";
-  for row in builtin_sigs() {
-    if (row.len() > head.len() && row[0] == head[0] && util.str_has_prefix(row, head)) {
-      let close: i32 = util.index_of_sub(row, "): ");
-      let inner: string = slice_unchecked(row, head.len(), close) + "";
-      let params: typeinfo.Type[] = [];
-      if (inner.len() > 0) {
-        for p in parser.split_top_commas(inner) {
-          params = params.append(type_from_name(p));
-        }
-      }
-      return t_func(params, type_from_name(slice_unchecked(row, close + 3, row.len()) + ""));
+  let row: string = builtin_row(name);
+  if (row.len() == 0) {
+    return t_unknown("not a builtin: " + name);
+  }
+  let close: i32 = util.index_of_sub(row, "): ");
+  let inner: string = slice_unchecked(row, name.len() + 1, close) + "";
+  let params: typeinfo.Type[] = [];
+  if (inner.len() > 0) {
+    for p in parser.split_top_commas(inner) {
+      params = params.append(type_from_name(p));
     }
   }
-  return t_unknown("not a builtin: " + name);
+  return t_func(params, type_from_name(slice_unchecked(row, close + 3, row.len()) + ""));
 }
 
 // builtin_method_sig is a builtin method's callable without its receiver, or
@@ -19299,7 +19320,7 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
   }
   // A free function named like a builtin or an intrinsic redeclares it, as
   // native's pre-registered signature makes it there.
-  if (f2.receiver_type.len() == 0 && (!is_unknown(builtin_sig(f2.name)) || util.has_str(registered_intrinsics(), f2.name))) {
+  if (f2.receiver_type.len() == 0 && (builtin_row(f2.name).len() > 0 || util.has_str(registered_intrinsics(), f2.name))) {
     earlier = true;
   }
   return earlier;
