@@ -1407,7 +1407,7 @@ function __hash3(input: [u8], pos: i32): i32 {
 
 // __common(input, from, pos) — how many bytes from `pos` repeat those from
 // `from`, at most 258 and not past the end of the input.
-function __common(input: u8[], from: i32, pos: i32): i32 {
+function __common(input: [u8], from: i32, pos: i32): i32 {
   let n: i32 = input.len();
   let len: i32 = 0;
   while (len < 258 && pos + len < n && input[from + len] == input[pos + len]) {
