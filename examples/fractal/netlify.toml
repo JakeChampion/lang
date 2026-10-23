@@ -1,0 +1,13 @@
+# Set the site's base directory to examples/fractal.
+[build]
+  command = "./build.sh"
+  publish = "public"
+
+[functions]
+  directory = "netlify/functions"
+
+# Every request goes to the server. It sees the original path.
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/fern-server"
+  status = 200

@@ -1,0 +1,18 @@
+// A tuple `for` header destructures each element, so the element must be a
+// tuple of that many values; a Map binds a (key, value) pair.
+import "core/iter";
+import "core/map";
+
+function main(): i32 {
+    let t: i32 = 0;
+    for (a, b) in iter.of([1, 2]) { t = t + a; }
+    for (c, d) in [5, 6] { t = t + c; }
+    for (e, f, g) in [(1, 2)] { t = t + e; }
+    let m: Map[string, i32] = map_new(2);
+    for (k, v, w) in m { t = t + v; }
+    for (h, i) in 0..3 { t = t + h; }
+    for (j, l) in "ab" { t = t + 1; }
+    for (o, q) in iter.of([(1, 2)]) { t = t + o + q; }
+    for (key, value) in m { t = t + value; }
+    return t;
+}

@@ -86,8 +86,9 @@ func TestRunnerArithmeticExamplePasses(t *testing.T) {
 }
 
 // `tests/stdlib/simd_test.fern` is std/simd: one generic kernel evaluated on
-// f64 and f32, on Dual for its derivative, and on DoubleDouble for the bits
-// past f64 (docs/SIMD-GENERIC-KERNELS.md). TestSimdModule runs the same file
+// f64 and f32, on the lane types f64x2 and f32x4, on Dual for its
+// derivative, and on DoubleDouble for the bits past f64
+// (docs/SIMD-GENERIC-KERNELS.md). TestSimdModule runs the same file
 // on the self-host interpreter, x86-64 and wasm.
 func TestRunnerSimdExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -96,7 +97,7 @@ func TestRunnerSimdExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: simd", "ok 18 - sweep against std/f64", "1..18", "# fail 0"} {
+	for _, w := range []string{"# Suite: simd", "ok 18 - sweep against std/f64", "ok 23 - lane Math against the scalar", "1..23", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -240,7 +241,7 @@ func TestRunnerFormatExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/format", "# pass 46", "# fail 0", "1..46"} {
+	for _, w := range []string{"# Suite: std/format", "# pass 49", "# fail 0", "1..49"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1024,7 +1025,7 @@ func TestRunnerUtf8ExamplePasses(t *testing.T) {
 
 // `tests/stdlib/uuid_test.fern` covers std/uuid's generators by
 // shape — v4/v7 length, hyphen positions, version + variant nibbles,
-// is_uuid, and distinctness. The output is random but the assertions are
+// is_valid, and distinctness. The output is random but the assertions are
 // structural, so the TAP output is deterministic. Passing → exit 0.
 func TestRunnerUuidExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -4808,7 +4809,7 @@ func TestRunnerNdarrayExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/ndarray", "1..17", "# pass 17", "# fail 0"} {
+	for _, w := range []string{"# Suite: std/ndarray", "1..18", "# pass 18", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

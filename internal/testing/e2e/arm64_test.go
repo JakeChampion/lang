@@ -7309,11 +7309,12 @@ function main(): i32 {
 }
 
 // Eighteenth stdlib bundle: i32 ceil_div / round_up_to /
-// round_down_to, string remove_prefix / remove_suffix /
-// is_uuid, format_duration_ms. 7 helpers.
+// round_down_to, string remove_prefix / remove_suffix,
+// uuid.is_valid, format_duration_ms. 7 helpers.
 func TestArm64StdlibBundle18(t *testing.T) {
 	src := `
 import "std/format";
+import "std/uuid";
 function main(): i32 {
     // ceil_div
     if ((10).ceil_div(3) != 4) { return 1; }
@@ -7328,11 +7329,11 @@ function main(): i32 {
     if ((13).round_down_to(4) != 12) { return 8; }
     if ((3).round_down_to(4) != 0) { return 9; }
 
-    // is_uuid
-    if (!"550e8400-e29b-41d4-a716-446655440000".is_uuid()) { return 10; }
-    if ("550e8400-e29b-41d4-a716-44665544000".is_uuid()) { return 11; }
-    if ("550e8400+e29b-41d4-a716-446655440000".is_uuid()) { return 12; }
-    if ("550e8400-e29b-41d4-a716-44665544000g".is_uuid()) { return 13; }
+    // uuid.is_valid
+    if (!uuid.is_valid("550e8400-e29b-41d4-a716-446655440000")) { return 10; }
+    if (uuid.is_valid("550e8400-e29b-41d4-a716-44665544000")) { return 11; }
+    if (uuid.is_valid("550e8400+e29b-41d4-a716-446655440000")) { return 12; }
+    if (uuid.is_valid("550e8400-e29b-41d4-a716-44665544000g")) { return 13; }
 
     // remove_prefix / remove_suffix — unchanged on no-match
     if ("https://example.com".remove_prefix("https://") != "example.com") { return 14; }
@@ -7615,7 +7616,7 @@ function main(): i32 {
 }
 
 // Twelfth stdlib bundle: bit accessors (bit/set/clear/
-// toggle), byte newline predicate, count_lines, HTTP
+// toggle), byte newline predicate, line_count, HTTP
 // response builders, log_info/warn/error. 12 helpers.
 func TestArm64StdlibBundle12(t *testing.T) {
 	src := `
@@ -7644,12 +7645,12 @@ function main(): i32 {
     if (!(13 as u8).is_ascii_newline()) { return 14; }
     if ((32 as u8).is_ascii_newline()) { return 15; }
 
-    // count_lines
-    if ("a\nb\nc".count_lines() != 3) { return 16; }
-    if ("a\nb\nc\n".count_lines() != 3) { return 17; }
-    if ("".count_lines() != 0) { return 18; }
-    if ("solo".count_lines() != 1) { return 19; }
-    if ("\n".count_lines() != 1) { return 20; }
+    // line_count
+    if ("a\nb\nc".line_count() != 3) { return 16; }
+    if ("a\nb\nc\n".line_count() != 3) { return 17; }
+    if ("".line_count() != 0) { return 18; }
+    if ("solo".line_count() != 1) { return 19; }
+    if ("\n".line_count() != 1) { return 20; }
 
     // HTTP response builders
     let r1: HttpResponse = http.ok("hello");

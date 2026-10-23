@@ -60,11 +60,11 @@ function main(): i32 {
   let e: ndarray.NdArray[f64] = add_map(xs);
   let i: i32 = 0;
   while (i < 6) {
-    if (a.get([i / 3, i % 3]) != xs[i] * 2.0) { return 10 + i; }
-    if (b.get([i % 3, i / 3]) != xs[i] * 2.0) { return 20 + i; }
-    if (c.get([i / 3, i % 3]) != xs[i] * 0.5) { return 30 + i; }
-    if (d.get([i % 3, i / 3]) != xs[i] * 2.0) { return 40 + i; }
-    if (e.get([i / 3, i % 3]) != xs[i] + 2.0) { return 50 + i; }
+    if (a.get_unchecked([i / 3, i % 3]) != xs[i] * 2.0) { return 10 + i; }
+    if (b.get_unchecked([i % 3, i / 3]) != xs[i] * 2.0) { return 20 + i; }
+    if (c.get_unchecked([i / 3, i % 3]) != xs[i] * 0.5) { return 30 + i; }
+    if (d.get_unchecked([i % 3, i / 3]) != xs[i] * 2.0) { return 40 + i; }
+    if (e.get_unchecked([i / 3, i % 3]) != xs[i] + 2.0) { return 50 + i; }
     if (xs[i] != (i + 1) as f64) { return 60 + i; }
     i = i + 1;
   }
@@ -81,7 +81,7 @@ function main(): i32 {
     if (mapped.len() != n || mapped.shape()[0] != n || !mapped.is_packed()) { return 80; }
     j = 0;
     while (j < n) {
-      if (mapped.get([j]) != input[j] * 2.0 || input[j] != (j - 3) as f64) { return 81; }
+      if (mapped.get_unchecked([j]) != input[j] * 2.0 || input[j] != (j - 3) as f64) { return 81; }
       j = j + 1;
     }
     n = n + 1;

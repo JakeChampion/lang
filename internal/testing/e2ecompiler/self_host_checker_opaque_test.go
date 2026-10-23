@@ -23,7 +23,7 @@ pub function make(a: string): Email { return Email { addr: a, n: 1 }; }
 pub function open(a: string): Open { return Open { addr: a, n: 1 }; }
 pub function (e: Email) domain(): string { return e.addr; }
 pub function inside(e: Email): i32 {
-    let Email { n } = e;
+    let Email { n, .. } = e;
     let e2: Email = Email { ...e, n: 4 };
     let f = (x: Email): i32 => x.n;
     match (e2) { Email { addr, n: k } => { return n + k + addr.len() + f(e2); } }
@@ -59,7 +59,7 @@ pub trait Greet {
 		{"struct-update", "import \"./email\";\nfunction main(): i32 { let e: email.Email = email.make(\"x\"); let f: email.Email = email.Email { ...e, n: 2 }; return 0; }\n", e021},
 		// A destructure names the struct by its declared spelling, which an
 		// importer reaches only as the mangled one.
-		{"let-destructure", "import \"./email\";\nfunction main(): i32 { let e: email.Email = email.make(\"x\"); let email__Email { n } = e; return n; }\n", e021},
+		{"let-destructure", "import \"./email\";\nfunction main(): i32 { let e: email.Email = email.make(\"x\"); let email__Email { n, .. } = e; return n; }\n", e021},
 		{"factory-and-method", "import \"./email\";\nfunction main(): i32 { let e: email.Email = email.make(\"ab\"); return e.domain().len() + email.inside(e); }\n", nil},
 		{"generic-through-accessor", "import \"./gbox\";\nfunction main(): i32 { let b: gbox.Box[i32] = gbox.mk(3); return gbox.get(b); }\n", nil},
 		// A trait default body is checked as the trait module's own source.

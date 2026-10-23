@@ -1,0 +1,33 @@
+// E015: a struct pattern names every field of its struct, or ends in `..` to
+// leave the rest out, wherever it stands: a match arm, `if let`, `let` and a
+// parameter.
+struct P { x: i32, y: i32 }
+
+function arm(p: P): i32 {
+  match (p) {
+    P { x } => {
+      return x;
+    },
+  }
+}
+
+function binding(p: P): i32 {
+  let P { y } = p;
+  return y;
+}
+
+function param(P { x }: P): i32 {
+  return x;
+}
+
+function iflet(p: P): i32 {
+  if let P { x } = p {
+    return x;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let p: P = P { x: 1, y: 2 };
+  return arm(p) + binding(p) + param(p) + iflet(p);
+}
