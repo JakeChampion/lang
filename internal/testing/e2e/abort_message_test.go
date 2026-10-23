@@ -65,6 +65,24 @@ var abortCases = []abortCase{
 		wantErr:  "slice range out of bounds",
 	},
 	{
+		name:     "lane_load_negative_index",
+		src:      `function main(): i32 { let xs: f64[] = [1.0, 2.0]; return __f64x2_lane(__f64x2_load(xs, 0 - 1), 0) as i32; }`,
+		wantExit: 134,
+		wantErr:  "array index out of range",
+	},
+	{
+		name:     "lane_load_last_index_oob",
+		src:      `function main(): i32 { let xs: f32[] = [1.0, 2.0, 3.0]; return __f32x4_lane(__f32x4_load(xs, 0), 0) as i32; }`,
+		wantExit: 134,
+		wantErr:  "array index out of range",
+	},
+	{
+		name:     "lane_update_last_index_oob",
+		src:      `function main(): i32 { let xs: f64[] = [1.0, 2.0]; return __f64x2_with(xs, 1, __f64x2_splat(3.0)).len(); }`,
+		wantExit: 134,
+		wantErr:  "array index out of range",
+	},
+	{
 		name:     "in_bounds_ok",
 		src:      `function main(): i32 { let xs: i32[] = [10, 20, 30]; if (xs[1] != 20) { return 1; } return 0; }`,
 		wantExit: 0,
