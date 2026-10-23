@@ -18135,8 +18135,8 @@ func (c *checker) indexAsConstArg(e ast.Expr, s *scope) ast.Type {
 	return ast.StructType{}
 }
 
-// isConstArgLit reports whether n is written as plain decimal digits with no
-// suffix, the one spelling of a const argument.
+// isConstArgLit reports whether n is an unsuffixed integer literal, in any
+// base, which is the spelling of a const argument.
 func isConstArgLit(n *ast.NumberLit) bool {
 	return n.Width == 0 && !n.IsUnsigned && !n.IsFloat
 }

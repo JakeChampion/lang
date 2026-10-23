@@ -24869,7 +24869,7 @@ pub function is_const_tparam(fd: FuncDecl, name: string): boolean {
 }
 
 // is_const_arg reports whether a type-argument spelling is a const argument:
-// the digits of an integer literal.
+// the decimal digits that const_arg_text gives for an integer literal.
 pub function is_const_arg(spelling: string): boolean {
   if (spelling.len() == 0) {
     return false;
