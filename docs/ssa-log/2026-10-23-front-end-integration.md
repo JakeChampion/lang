@@ -6,7 +6,7 @@ One full CI run now checks their interaction.
 
 - Local array views accept owned storage in both checkers (#13007).
 - Imported enum qualifiers resolve in expressions and patterns (#12839).
-- Missing handler imports and executable entry points have positioned errors (#12602).
+- Missing handler imports and executable entry points report errors at their source locations (#12602).
 - The diagnostic corpus has no remaining checker exceptions (#12889).
 - Generated stdlib references have module introductions and current links (#12736, #12737).
 - Generic unit payloads support Result and Option combinators (#12845).
