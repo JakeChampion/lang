@@ -173,7 +173,7 @@ function report_diags(diags: util.Diag[], files: string[]): boolean {
 // With a `-target`, the CLI's target gate (E066) reports beside the checker,
 // and the handler gate (E080) always does, as `fern -check` reports them.
 function check(merged: parser.Module, files: string[], target: string, target_given: boolean): i32 {
-  if (report_diags(asmcore.parse_errors(merged), files)) {
+  if (report_diags(asmcore.parse_errors_before_check(merged), files)) {
     return 1;
   }
   let diags: util.Diag[] = checker.check_module(merged).diags;
