@@ -38,10 +38,9 @@ function main(): i32 {
   let sum: i64 = 0;
   let i: i32 = 0;
   while (i < count) {
-    match (peg.peg_match_pattern(p, input)) {
-      Ok(m) => { sum = sum + m.pos as i64 + m.caps.get_or("v", "").len() as i64 + 1000 as i64; },
-      Err(e) => { sum = sum + e.furthest as i64; },
-    }
+    let r: peg.PegResult = peg.peg_match_pattern(p, input);
+    sum = sum + r.pos as i64 + r.caps.get_or("v", "").len() as i64;
+    if (r.ok) { sum = sum + 1000 as i64; }
     i = i + 1;
   }
   print(sum.to_string());
