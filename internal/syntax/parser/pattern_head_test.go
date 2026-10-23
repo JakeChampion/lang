@@ -30,12 +30,47 @@ function f(p: P): i32 { let w @ P { x, y } = p; return w.x + x + y; }`},
 		{"var_at_tuple", `function f(t: (i32, i32)): i32 { let w @ (a, b) = t; return w.0 + a + b; }`},
 		{"param_at_struct", `struct P { x: i32, y: i32 }
 function f(w @ P { x, y }: P): i32 { return w.x + x + y; }`},
+		{"qualified_let", `function f(p: m.P): i32 { let m.P { x, .. } = p; return x; }`},
+		{"qualified_let_literal", `function f(): i32 { let m.P { x, .. } = m.P { x: 1, y: 2 }; return x; }`},
+		{"qualified_at_let", `function f(p: m.P): i32 { let w @ m.P { x, .. } = p; return w.x + x; }`},
+		{"qualified_parameter", `function f(m.P { x, .. }: m.P): i32 { return x; }`},
+		{"qualified_at_parameter", `function f(w @ m.P { x, .. }: m.P): i32 { return w.x + x; }`},
+		{"qualified_lambda_parameter", `function f(): i32 { let g = (m.P { x, .. }: m.P): i32 => x; return 0; }`},
+		{"qualified_for", `function f(ps: m.P[]): i32 { for m.P { x, .. } in ps { return x; } return 0; }`},
+		{"qualified_at_for", `function f(ps: m.P[]): i32 { for w @ m.P { x, .. } in ps { return w.x + x; } return 0; }`},
+		{"qualified_for_initializer", `function f(p: m.P): i32 { for (let m.P { x, .. } = p; false;) {} return 0; }`},
+		{"qualified_variant_else", `function f(e: m.E): i32 { let m.V { x } = e else { return 0; }; return x; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := Parse(tc.src); err != nil {
 				t.Errorf("parse: %v", err)
 			}
 		})
+	}
+}
+
+func TestQualifiedDestructureKeepsItsModule(t *testing.T) {
+	prog, err := Parse(`function f(m.P { x, .. }: m.P): i32 { let m.P { x: y, .. } = p; return x + y; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range prog.Funcs[0].Body.Stmts[:2] {
+		d, ok := stmt.(*ast.Destructure)
+		if !ok || d.StructName != "m.P" {
+			t.Fatalf("qualified destructure = %#v, want m.P", stmt)
+		}
+	}
+}
+
+func TestQualifiedDestructureRejectsRefutableField(t *testing.T) {
+	for _, source := range []string{
+		`function f(p: m.P): i32 { let m.P { x: 0 } = p; return 0; }`,
+		`function f(m.P { x: 0 }: m.P): i32 { return 0; }`,
+		`function f(ps: m.P[]): i32 { for m.P { x: 0 } in ps { return 0; } return 0; }`,
+	} {
+		if _, err := Parse(source); err == nil {
+			t.Fatalf("refutable field needs a miss branch: %s", source)
+		}
 	}
 }
 

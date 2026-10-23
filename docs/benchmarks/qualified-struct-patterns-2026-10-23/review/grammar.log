@@ -1,0 +1,5 @@
+=== RUN   TestGrammarDerivesEveryParsedSource
+    differential_test.go:101: grammar derived 2403/2403 parseable sources (18 unparseable, skipped)
+--- PASS: TestGrammarDerivesEveryParsedSource (12.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/syntax/grammar	11.999s

@@ -2861,7 +2861,11 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
         return out.append(dg_at("E024", "struct destructure pattern names " + named + ", but the expression is " + st.name, v.line, v.col));
       }
       let sig: StructSig = s.lookup_struct(st.name);
-      out = util.append_diags(out, opaque_access_diags(sig, s, "destructure a field of", v.line, v.col));
+      let access: string = "destructure a field of";
+      if (parser.destr_marker_split(v.type_name).struct_match) {
+        access = "destructure";
+      }
+      out = util.append_diags(out, opaque_access_diags(sig, s, access, v.line, v.col));
       for f in fields {
         if (sig.name.len() > 0 && !util.has_str(sig.field_names, f)) {
           let d: util.Diag = dg_at("E043", "struct " + util.demangle(st.name) + " has no field \"" + f + "\"", v.line, v.col);
@@ -29860,7 +29864,8 @@ function pretype_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
       }
       match (c.callee) {
         ast.ExprLambda(lm) => {
-          let inner: ast.Expr = ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: pretype_stmts(lm.body, s) } };
+          let body: ast.Stmt[] = struct_record_value_body(lm, s);
+          let inner: ast.Expr = ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: pretype_stmts(body, s) } };
           return (vb_retype(inner, s), s, true);
         },
         _ => {
@@ -29876,6 +29881,54 @@ function pretype_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
     }
   }
   return (x, s, false);
+}
+
+function pretype_tuple_if(f: ast.StmtIf, s: Scope): ast.StmtIf {
+  let ready: ast.StmtIf = f;
+  if (f.sugar.origin == "" && f.sugar.tup.len() > 0) {
+    if let typeinfo.TypeTuple(tuple) = check_expr(f.sugar.scrut, s) {
+      let wrong: boolean = false;
+      for arm in f.sugar.tup {
+        if (!arm.is_wild && arm.elem_kinds.len() != tuple.elements.len()) {
+          wrong = true;
+        }
+      }
+      if (wrong) {
+        if let ast.StmtIf(rebuilt) = parser.build_tuple_match_sized(f.sugar.scrut, f.sugar.tup, tuple.elements.len(), f.sugar.line, f.sugar.col) {
+          ready = rebuilt;
+        }
+      }
+    }
+  }
+  return ready;
+}
+
+function pretype_if(st: ast.Stmt, f: ast.StmtIf, s: Scope): ast.Stmt {
+  if let Some(m) = parser.struct_record_source(st) {
+    if (struct_record_match(m, s)) {
+      return pretype_stmt(parser.lower_struct_record_match(m, ""), s);
+    }
+  }
+  let ready: ast.StmtIf = pretype_tuple_if(f, s);
+  return ast.StmtIf { ...ready, cond: pretype_expr(ready.cond, s), then_body: pretype_stmts(ready.then_body, s), else_body: pretype_stmts(ready.else_body, s) };
+}
+
+function pretype_match(m: ast.StmtMatch, s: Scope): ast.Stmt {
+  if (struct_record_match(m, s)) {
+    return pretype_stmt(parser.lower_struct_record_match(m, ""), s);
+  }
+  let narms: ast.MatchArm[] = [];
+  let whole: typeinfo.Type = check_expr(m.scrutinee, s);
+  for arm0 in m.arms {
+    let arm: ast.MatchArm = ast.MatchArm { ...arm0, pattern: rescope_pattern(arm0.pattern, whole, s) };
+    let asc: Scope = annotate_arm_scope(arm, s, whole);
+    let g: ast.Expr = arm.guard;
+    if (arm.has_guard) {
+      g = pretype_expr(arm.guard, asc);
+    }
+    narms = narms.append(ast.MatchArm { ...arm, body: pretype_stmts(arm.body, asc), guard: g });
+  }
+  return ast.StmtMatch { ...m, scrutinee: pretype_expr(m.scrutinee, s), arms: narms };
 }
 
 function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
@@ -29897,23 +29950,7 @@ function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
       return ast.StmtAssign { ...a, value: pretype_expr(a.value, s) };
     },
     ast.StmtIf(f) => {
-      let ready: ast.StmtIf = f;
-      if (f.sugar.origin == "" && f.sugar.tup.len() > 0) {
-        if let typeinfo.TypeTuple(tuple) = check_expr(f.sugar.scrut, s) {
-          let wrong: boolean = false;
-          for arm in f.sugar.tup {
-            if (!arm.is_wild && arm.elem_kinds.len() != tuple.elements.len()) {
-              wrong = true;
-            }
-          }
-          if (wrong) {
-            if let ast.StmtIf(rebuilt) = parser.build_tuple_match_sized(f.sugar.scrut, f.sugar.tup, tuple.elements.len(), f.sugar.line, f.sugar.col) {
-              ready = rebuilt;
-            }
-          }
-        }
-      }
-      return ast.StmtIf { ...ready, cond: pretype_expr(ready.cond, s), then_body: pretype_stmts(ready.then_body, s), else_body: pretype_stmts(ready.else_body, s) };
+      return pretype_if(st, f, s);
     },
     ast.StmtWhile(w) => {
       return ast.StmtWhile { ...w, cond: pretype_expr(w.cond, s), body: pretype_stmts(w.body, s) };
@@ -29922,18 +29959,7 @@ function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
       return ast.StmtFor { ...fr, iter: pretype_expr(fr.iter, s), body: pretype_stmts(fr.body, for_body_scope(fr, s)) };
     },
     ast.StmtMatch(m) => {
-      let narms: ast.MatchArm[] = [];
-      let whole: typeinfo.Type = check_expr(m.scrutinee, s);
-      for arm0 in m.arms {
-        let arm: ast.MatchArm = ast.MatchArm { ...arm0, pattern: rescope_pattern(arm0.pattern, whole, s) };
-        let asc: Scope = annotate_arm_scope(arm, s, whole);
-        let g: ast.Expr = arm.guard;
-        if (arm.has_guard) {
-          g = pretype_expr(arm.guard, asc);
-        }
-        narms = narms.append(ast.MatchArm { ...arm, body: pretype_stmts(arm.body, asc), guard: g });
-      }
-      return ast.StmtMatch { ...m, scrutinee: pretype_expr(m.scrutinee, s), arms: narms };
+      return pretype_match(m, s);
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { ...d, action: pretype_stmt(d.action, s) };
@@ -30080,10 +30106,13 @@ function rescope_at_stmt(st: ast.Stmt, own a: RescopeScan): RescopeScan {
   if (a.found) {
     return a;
   }
+  if (pretype_needed_stmt(st, false)) {
+    return RescopeScan { ...a, found: true };
+  }
   if let ast.StmtMatch(m) = st {
     for arm in m.arms {
       if let ast.PatVariant(pv) = arm.pattern {
-        if (util.has_str(a.coll, variant_bare_name(pv.type_name))) {
+        if (parser.is_record_pattern(pv) || util.has_str(a.coll, variant_bare_name(pv.type_name))) {
           return RescopeScan { ...a, found: true };
         }
       }
@@ -30093,18 +30122,14 @@ function rescope_at_stmt(st: ast.Stmt, own a: RescopeScan): RescopeScan {
 }
 
 function rescope_at_expr(e: ast.Expr, own a: RescopeScan): RescopeScan {
+  if (!a.found && pretype_at(e, false)) {
+    return RescopeScan { ...a, found: true };
+  }
   return a;
 }
 
-// needs_pretype_or_rescope is needs_pretype, or a match arm whose variant name
-// is in `coll`.
+// One scan finds value blocks, unresolved record patterns, and colliding variant names.
 function needs_pretype_or_rescope(stmts: ast.Stmt[], coll: string[]): boolean {
-  if (needs_pretype(stmts)) {
-    return true;
-  }
-  if (coll.len() == 0) {
-    return false;
-  }
   let a: RescopeScan = RescopeScan { coll: coll, found: false };
   for stmt in stmts {
     a = astwalk.fold_stmt_nodes(stmt, a, rescope_at_stmt, rescope_at_expr, astwalk.descend_all);
@@ -30112,15 +30137,39 @@ function needs_pretype_or_rescope(stmts: ast.Stmt[], coll: string[]): boolean {
   return a.found;
 }
 
-// needs_pretype reports whether a body holds anything pretype_module rewrites.
-// It is the cheap syntactic test that keeps the scoped rewrite (and the module
-// tables it needs) off the modules that have none.
-function needs_pretype(stmts: ast.Stmt[]): boolean {
-  let found: boolean = false;
-  for stmt in stmts {
-    found = astwalk.fold_stmt_nodes(stmt, found, pretype_needed_stmt, pretype_at, astwalk.descend_all);
+// Record spelling also names enum variants. Resolve the scrutinee before this desugar.
+function struct_record_match(m: ast.StmtMatch, s: Scope): boolean {
+  let head: string = parser.struct_record_head(m);
+  if (head.len() == 0) {
+    return false;
   }
-  return found;
+  if let typeinfo.TypeStruct(st) = check_expr(m.scrutinee, s) {
+    let sig: StructSig = s.lookup_struct(st.name);
+    return sig.name == st.name && sig.enum_owner.len() == 0 && head == st.name;
+  }
+  return false;
+}
+
+function struct_record_value_body(lm: ast.ExprLambda, s: Scope): ast.Stmt[] {
+  if (lm.origin != parser.ORIGIN_MATCH_EXPR) {
+    return lm.body;
+  }
+  if (lm.body.len() == 1) {
+    if let Some(m) = parser.struct_record_source(lm.body[0]) {
+      if (struct_record_match(m, s)) {
+        return parser.struct_record_value_body(m, lm.ret_type);
+      }
+    }
+  }
+  let value: string = vb_local_name(lm.body);
+  if (value.len() > 0) {
+    if let Some(m) = parser.struct_record_source(lm.body[1]) {
+      if (struct_record_match(m, s)) {
+        return lm.body.with(1, parser.lower_struct_record_match(m, value));
+      }
+    }
+  }
+  return lm.body;
 }
 
 function pretype_needed_stmt(st: ast.Stmt, own found: boolean): boolean {

@@ -1,0 +1,526 @@
+=== RUN   TestSelfHostDeclNamesGate
+=== RUN   TestSelfHostDeclNamesGate/keyword-use
+=== RUN   TestSelfHostDeclNamesGate/keyword-type
+=== RUN   TestSelfHostDeclNamesGate/keyword-match
+=== RUN   TestSelfHostDeclNamesGate/keyword-impl
+=== RUN   TestSelfHostDeclNamesGate/untyped-param
+=== RUN   TestSelfHostDeclNamesGate/untyped-impl-self
+=== RUN   TestSelfHostDeclNamesGate/untyped-trait-requirement
+=== RUN   TestSelfHostDeclNamesGate/keyword-trait-requirement
+=== RUN   TestSelfHostDeclNamesGate/untyped-local-fn
+=== RUN   TestSelfHostDeclNamesGate/keyword-local-fn
+=== RUN   TestSelfHostDeclNamesGate/untyped-destructure-local-fn
+=== RUN   TestSelfHostDeclNamesGate/singleton-destructure-local-fn
+=== RUN   TestSelfHostDeclNamesGate/trait-assoc-type-nameless
+=== RUN   TestSelfHostDeclNamesGate/trait-stray-token
+=== RUN   TestSelfHostDeclNamesGate/impl-assoc-binding-nameless
+=== RUN   TestSelfHostDeclNamesGate/impl-stray-token
+=== RUN   TestSelfHostDeclNamesGate/import-alias-keyword
+=== RUN   TestSelfHostDeclNamesGate/pub-use-keyword
+=== RUN   TestSelfHostDeclNamesGate/import-resource-nameless
+=== RUN   TestSelfHostDeclNamesGate/unknown-attribute
+=== RUN   TestSelfHostDeclNamesGate/keyword-impl-trait
+=== RUN   TestSelfHostDeclNamesGate/pathless-import
+=== RUN   TestSelfHostDeclNamesGate/pathless-reexport
+=== RUN   TestSelfHostDeclNamesGate/pathless-import-list
+=== RUN   TestSelfHostDeclNamesGate/pathless-reexport-list
+=== RUN   TestSelfHostDeclNamesGate/primitive-impl-type
+=== RUN   TestSelfHostDeclNamesGate/sentinel
+=== RUN   TestSelfHostDeclNamesGate/ordinary-name
+=== RUN   TestSelfHostDeclNamesGate/name-containing-keyword
+=== RUN   TestSelfHostDeclNamesGate/receiver-method
+=== RUN   TestSelfHostDeclNamesGate/default-name
+--- PASS: TestSelfHostDeclNamesGate (15.01s)
+    --- PASS: TestSelfHostDeclNamesGate/keyword-use (0.01s)
+    --- PASS: TestSelfHostDeclNamesGate/keyword-type (0.01s)
+    --- PASS: TestSelfHostDeclNamesGate/keyword-match (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/keyword-impl (0.01s)
+    --- PASS: TestSelfHostDeclNamesGate/untyped-param (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/untyped-impl-self (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/untyped-trait-requirement (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/keyword-trait-requirement (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/untyped-local-fn (0.01s)
+    --- PASS: TestSelfHostDeclNamesGate/keyword-local-fn (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/untyped-destructure-local-fn (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/singleton-destructure-local-fn (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/trait-assoc-type-nameless (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/trait-stray-token (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/impl-assoc-binding-nameless (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/impl-stray-token (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/import-alias-keyword (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/pub-use-keyword (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/import-resource-nameless (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/unknown-attribute (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/keyword-impl-trait (0.01s)
+    --- PASS: TestSelfHostDeclNamesGate/pathless-import (0.01s)
+    --- PASS: TestSelfHostDeclNamesGate/pathless-reexport (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/pathless-import-list (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/pathless-reexport-list (0.01s)
+    --- PASS: TestSelfHostDeclNamesGate/primitive-impl-type (0.01s)
+    --- PASS: TestSelfHostDeclNamesGate/sentinel (0.00s)
+    --- PASS: TestSelfHostDeclNamesGate/ordinary-name (0.01s)
+    --- PASS: TestSelfHostDeclNamesGate/name-containing-keyword (0.01s)
+    --- PASS: TestSelfHostDeclNamesGate/receiver-method (0.01s)
+    --- PASS: TestSelfHostDeclNamesGate/default-name (0.01s)
+=== RUN   TestSelfHostDeclNamesGateNativeX86_64
+=== RUN   TestSelfHostDeclNamesGateNativeX86_64/untyped-param
+=== RUN   TestSelfHostDeclNamesGateNativeX86_64/untyped-impl-self
+=== RUN   TestSelfHostDeclNamesGateNativeX86_64/untyped-local-fn
+--- PASS: TestSelfHostDeclNamesGateNativeX86_64 (13.99s)
+    --- PASS: TestSelfHostDeclNamesGateNativeX86_64/untyped-param (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateNativeX86_64/untyped-impl-self (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateNativeX86_64/untyped-local-fn (0.00s)
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_ir_run/untyped
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_ir_run/sentinel
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_ir_run/sentinel-and-untyped
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/over-budget-sentinel
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/untyped/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/untyped/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/untyped/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/untyped/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel-and-untyped/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel-and-untyped/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel-and-untyped/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel-and-untyped/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-function/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-function/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-function/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-function/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-requirement/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-requirement/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-requirement/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-requirement/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-trait-name/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-trait-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-trait-name/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-trait-name/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-name/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-name/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-name/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-struct/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-struct/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-struct/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-struct/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-struct-name/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-struct-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-struct-name/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-struct-name/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-enum/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-enum/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-enum/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-enum/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-const/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-const/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-const/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-const/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/pathless-import/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/pathless-import/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/pathless-import/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/pathless-import/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-alias/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-alias/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-alias/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-alias/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-alias-name/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-alias-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-alias-name/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-alias-name/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/valueless-block/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/valueless-block/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/valueless-block/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/valueless-block/-decide
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/over-budget-sentinel
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/untyped/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/untyped/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/untyped/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel-and-untyped/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel-and-untyped/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel-and-untyped/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-function/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-function/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-function/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-requirement/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-requirement/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-requirement/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-trait-name/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-trait-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-trait-name/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-name/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-name/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-struct/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-struct/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-struct/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-struct-name/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-struct-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-struct-name/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-enum/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-enum/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-enum/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-const/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-const/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-const/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/pathless-import/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/pathless-import/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/pathless-import/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-alias/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-alias/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-alias/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-alias-name/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-alias-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-alias-name/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/valueless-block/
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/valueless-block/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/valueless-block/-ir-probe
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/over-budget-sentinel
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/untyped/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/untyped/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/sentinel-and-untyped/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/sentinel-and-untyped/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/sentinel/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/sentinel/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-function/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-function/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-trait-requirement/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-trait-requirement/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-trait-name/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-trait-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-trait-name/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-trait-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-struct/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-struct/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-struct-name/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-struct-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-enum/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-enum/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-const/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-const/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/pathless-import/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/pathless-import/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-alias/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-alias/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-alias-name/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-alias-name/-per-module-count
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/valueless-block/-per-module-emit0
+=== RUN   TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/valueless-block/-per-module-count
+--- PASS: TestSelfHostDeclNamesGateRawPathsX86_64 (47.24s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_ir_run/untyped (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_ir_run/sentinel (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_ir_run/sentinel-and-untyped (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/over-budget-sentinel (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/untyped/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/untyped/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/untyped/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/untyped/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel-and-untyped/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel-and-untyped/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel-and-untyped/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel-and-untyped/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/sentinel/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-function/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-function/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-function/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-function/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-requirement/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-requirement/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-requirement/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-requirement/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-trait-name/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-trait-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-trait-name/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-trait-name/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-name/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-name/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-trait-name/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-struct/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-struct/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-struct/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-struct/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-struct-name/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-struct-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-struct-name/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-struct-name/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-enum/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-enum/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-enum/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-enum/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-const/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-const/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-const/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-const/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/pathless-import/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/pathless-import/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/pathless-import/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/pathless-import/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-alias/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-alias/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-alias/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/keyword-alias/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-alias-name/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-alias-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-alias-name/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/numeric-alias-name/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/valueless-block/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/valueless-block/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/valueless-block/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_load_run/valueless-block/-decide (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/over-budget-sentinel (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/untyped/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/untyped/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/untyped/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel-and-untyped/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel-and-untyped/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel-and-untyped/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/sentinel/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-function/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-function/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-function/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-requirement/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-requirement/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-requirement/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-trait-name/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-trait-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-trait-name/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-name/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-trait-name/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-struct/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-struct/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-struct/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-struct-name/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-struct-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-struct-name/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-enum/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-enum/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-enum/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-const/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-const/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-const/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/pathless-import/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/pathless-import/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/pathless-import/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-alias/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-alias/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/keyword-alias/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-alias-name/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-alias-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/numeric-alias-name/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/valueless-block/ (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/valueless-block/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/asm_modload_run/valueless-block/-ir-probe (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/over-budget-sentinel (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/untyped/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/untyped/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/sentinel-and-untyped/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/sentinel-and-untyped/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/sentinel/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/sentinel/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-function/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-function/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-trait-requirement/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-trait-requirement/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-trait-name/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-trait-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-trait-name/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-trait-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-struct/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-struct/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-struct-name/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-struct-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-enum/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-enum/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-const/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-const/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/pathless-import/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/pathless-import/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-alias/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/keyword-alias/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-alias-name/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/numeric-alias-name/-per-module-count (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/valueless-block/-per-module-emit0 (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateRawPathsX86_64/wasm_modload_run/valueless-block/-per-module-count (0.00s)
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_ir_run/untyped-param
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_ir_run/untyped-trait-requirement
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_ir_run/sentinel
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_ir_run/untyped-local-fn
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run/untyped-param
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run/untyped-trait-requirement
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run/sentinel
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run/untyped-local-fn
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run-decide/untyped-param
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run-decide/untyped-trait-requirement
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run-decide/sentinel
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run-decide/untyped-local-fn
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run/untyped-param
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run/untyped-trait-requirement
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run/sentinel
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run/untyped-local-fn
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run-check/untyped-param
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run-check/untyped-trait-requirement
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run-check/sentinel
+=== RUN   TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run-check/untyped-local-fn
+--- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64 (84.23s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_ir_run/untyped-param (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_ir_run/untyped-trait-requirement (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_ir_run/sentinel (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_ir_run/untyped-local-fn (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run/untyped-param (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run/untyped-trait-requirement (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run/sentinel (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run/untyped-local-fn (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run-decide/untyped-param (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run-decide/untyped-trait-requirement (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run-decide/sentinel (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/wasm_runio_run-decide/untyped-local-fn (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run/untyped-param (0.01s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run/untyped-trait-requirement (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run/sentinel (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run/untyped-local-fn (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run-check/untyped-param (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run-check/untyped-trait-requirement (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run-check/sentinel (0.00s)
+    --- PASS: TestSelfHostDeclNamesGateWasmStdinX86_64/playground_run-check/untyped-local-fn (0.00s)
+=== RUN   TestSelfHostEmittingDriversRunDeclGates
+    self_host_decl_names_gate_test.go:351: fern.fern calls an emitter but never runs the parse gates
+--- FAIL: TestSelfHostEmittingDriversRunDeclGates (0.52s)
+=== RUN   TestSelfHostExportListParamRunsViaConsumer
+--- PASS: TestSelfHostExportListParamRunsViaConsumer (1.03s)
+=== RUN   TestSelfHostExportListResultRunsViaConsumer
+--- PASS: TestSelfHostExportListResultRunsViaConsumer (0.95s)
+=== RUN   TestSelfHostExportResourceHandleComposes
+--- PASS: TestSelfHostExportResourceHandleComposes (0.91s)
+=== RUN   TestSelfHostExportOptionResultRunsViaConsumer
+--- PASS: TestSelfHostExportOptionResultRunsViaConsumer (0.94s)
+=== RUN   TestSelfHostExportResultResultRunsViaConsumer
+--- PASS: TestSelfHostExportResultResultRunsViaConsumer (0.95s)
+=== RUN   TestSelfHostExportTupleResultRunsViaConsumer
+--- PASS: TestSelfHostExportTupleResultRunsViaConsumer (0.93s)
+=== RUN   TestSelfHostExternArrayParamCustomProvider
+--- PASS: TestSelfHostExternArrayParamCustomProvider (0.90s)
+=== RUN   TestSelfHostExternArrayResultCustomProvider
+--- PASS: TestSelfHostExternArrayResultCustomProvider (0.94s)
+=== RUN   TestSelfHostExternBoolArrayParamCustomProvider
+--- PASS: TestSelfHostExternBoolArrayParamCustomProvider (0.90s)
+=== RUN   TestSelfHostExternBoolRecordFieldCustomProvider
+--- PASS: TestSelfHostExternBoolRecordFieldCustomProvider (0.97s)
+=== RUN   TestSelfHostExternBoolArrayResultCustomProvider
+--- PASS: TestSelfHostExternBoolArrayResultCustomProvider (0.99s)
+=== RUN   TestSelfHostExternEnumParamCustomProvider
+--- PASS: TestSelfHostExternEnumParamCustomProvider (1.09s)
+=== RUN   TestSelfHostExternEnumResultCustomProvider
+--- PASS: TestSelfHostExternEnumResultCustomProvider (0.96s)
+=== RUN   TestSelfHostExternHeapResultCustomProvider
+--- PASS: TestSelfHostExternHeapResultCustomProvider (1.00s)
+=== RUN   TestSelfHostExternRecordParamDeepNestedCustomProvider
+--- PASS: TestSelfHostExternRecordParamDeepNestedCustomProvider (0.93s)
+=== RUN   TestSelfHostExternRecordParamNestedCustomProvider
+--- PASS: TestSelfHostExternRecordParamNestedCustomProvider (0.94s)
+=== RUN   TestSelfHostExternRecordParamSubwordCustomProvider
+--- PASS: TestSelfHostExternRecordParamSubwordCustomProvider (0.93s)
+=== RUN   TestSelfHostExternRecordParamCustomProvider
+--- PASS: TestSelfHostExternRecordParamCustomProvider (0.94s)
+=== RUN   TestSelfHostExternRecordResultDeepNestedCustomProvider
+--- PASS: TestSelfHostExternRecordResultDeepNestedCustomProvider (0.94s)
+=== RUN   TestSelfHostExternRecordResultNestedCustomProvider
+--- PASS: TestSelfHostExternRecordResultNestedCustomProvider (0.95s)
+=== RUN   TestSelfHostExternRecordResultSubwordCustomProvider
+--- PASS: TestSelfHostExternRecordResultSubwordCustomProvider (0.96s)
+=== RUN   TestSelfHostExternRecordResultCustomProvider
+--- PASS: TestSelfHostExternRecordResultCustomProvider (0.96s)
+=== RUN   TestSelfHostExternRecordResultWallClock
+--- PASS: TestSelfHostExternRecordResultWallClock (23.22s)
+=== RUN   TestSelfHostExternRecordWideFieldsCustomProvider
+--- PASS: TestSelfHostExternRecordWideFieldsCustomProvider (0.97s)
+=== RUN   TestSelfHostExternRecordOutsideTheBridgeIsRefused
+=== RUN   TestSelfHostExternRecordOutsideTheBridgeIsRefused/result
+=== RUN   TestSelfHostExternRecordOutsideTheBridgeIsRefused/param
+--- PASS: TestSelfHostExternRecordOutsideTheBridgeIsRefused (1.64s)
+    --- PASS: TestSelfHostExternRecordOutsideTheBridgeIsRefused/result (0.01s)
+    --- PASS: TestSelfHostExternRecordOutsideTheBridgeIsRefused/param (0.00s)
+=== RUN   TestSelfHostExternSingleFieldRecordResultCustomProvider
+--- PASS: TestSelfHostExternSingleFieldRecordResultCustomProvider (0.93s)
+=== RUN   TestSelfHostExternStringParamCustomProvider
+--- PASS: TestSelfHostExternStringParamCustomProvider (0.91s)
+=== RUN   TestSelfHostExternSumTypeParamCustomProvider
+--- PASS: TestSelfHostExternSumTypeParamCustomProvider (0.92s)
+=== RUN   TestSelfHostExternSumTypeResultCustomProvider
+--- PASS: TestSelfHostExternSumTypeResultCustomProvider (0.94s)
+=== RUN   TestSelfHostExternTupleParamCustomProvider
+--- PASS: TestSelfHostExternTupleParamCustomProvider (0.93s)
+=== RUN   TestSelfHostExternU8ArrayParamCustomProvider
+--- PASS: TestSelfHostExternU8ArrayParamCustomProvider (0.93s)
+=== RUN   TestSelfHostExternVariantF32ArmParamCustomProvider
+--- PASS: TestSelfHostExternVariantF32ArmParamCustomProvider (0.94s)
+=== RUN   TestSelfHostExternVariantF32ArmResultCustomProvider
+--- PASS: TestSelfHostExternVariantF32ArmResultCustomProvider (0.97s)
+=== RUN   TestSelfHostExternVariantF64ArmParamCustomProvider
+--- PASS: TestSelfHostExternVariantF64ArmParamCustomProvider (0.95s)
+=== RUN   TestSelfHostExternVariantF64ArmResultCustomProvider
+--- PASS: TestSelfHostExternVariantF64ArmResultCustomProvider (0.93s)
+=== RUN   TestSelfHostExternVariantMixedWidthParamCustomProvider
+--- PASS: TestSelfHostExternVariantMixedWidthParamCustomProvider (0.94s)
+=== RUN   TestSelfHostExternVariantMixedWidthResultCustomProvider
+--- PASS: TestSelfHostExternVariantMixedWidthResultCustomProvider (0.96s)
+=== RUN   TestSelfHostExternVariantMultiFieldParamCustomProvider
+--- PASS: TestSelfHostExternVariantMultiFieldParamCustomProvider (0.96s)
+=== RUN   TestSelfHostExternVariantMultiFieldResultCustomProvider
+--- PASS: TestSelfHostExternVariantMultiFieldResultCustomProvider (0.97s)
+=== RUN   TestSelfHostExternVariantParamCustomProvider
+--- PASS: TestSelfHostExternVariantParamCustomProvider (1.38s)
+=== RUN   TestSelfHostExternVariantResultMixedCustomProvider
+--- PASS: TestSelfHostExternVariantResultMixedCustomProvider (1.49s)
+=== RUN   TestSelfHostExternVariantResultCustomProvider
+--- PASS: TestSelfHostExternVariantResultCustomProvider (1.07s)
+=== RUN   TestSelfHostExternVariantUniformF64ParamCustomProvider
+--- PASS: TestSelfHostExternVariantUniformF64ParamCustomProvider (1.30s)
+=== RUN   TestSelfHostExternVariantUniformF64ResultCustomProvider
+--- PASS: TestSelfHostExternVariantUniformF64ResultCustomProvider (1.11s)
+=== RUN   TestSelfHostMainlessProgramRequiresEntry
+=== RUN   TestSelfHostMainlessProgramRequiresEntry/x86-64-linux
+=== RUN   TestSelfHostMainlessProgramRequiresEntry/arm64-linux
+=== RUN   TestSelfHostMainlessProgramRequiresEntry/wasm32-wasi
+--- PASS: TestSelfHostMainlessProgramRequiresEntry (1.78s)
+    --- PASS: TestSelfHostMainlessProgramRequiresEntry/x86-64-linux (0.02s)
+    --- PASS: TestSelfHostMainlessProgramRequiresEntry/arm64-linux (0.02s)
+    --- PASS: TestSelfHostMainlessProgramRequiresEntry/wasm32-wasi (0.01s)
+=== RUN   TestSelfHostExternResourceHandle
+--- PASS: TestSelfHostExternResourceHandle (1.07s)
+=== RUN   TestSelfHostExternResourceHandleTypes
+--- PASS: TestSelfHostExternResourceHandleTypes (1.00s)
+=== RUN   TestSelfHostExternResourceHandleDrop
+--- PASS: TestSelfHostExternResourceHandleDrop (0.95s)
+=== RUN   TestSelfHostExternResourceHandleAutoDrop
+--- PASS: TestSelfHostExternResourceHandleAutoDrop (0.93s)
+=== RUN   TestSelfHostExternResourceHandleAutoDropNestedBlock
+--- PASS: TestSelfHostExternResourceHandleAutoDropNestedBlock (0.96s)
+=== RUN   TestSelfHostExternResourceHandleMovedNoAutoDrop
+--- PASS: TestSelfHostExternResourceHandleMovedNoAutoDrop (0.96s)
+=== RUN   TestSelfHostExportAttributeCompiles
+--- PASS: TestSelfHostExportAttributeCompiles (0.88s)
+=== RUN   TestSelfHostExportScalarRunsViaConsumer
+--- PASS: TestSelfHostExportScalarRunsViaConsumer (0.97s)
+=== RUN   TestSelfHostExportStringResultRunsViaConsumer
+--- PASS: TestSelfHostExportStringResultRunsViaConsumer (0.96s)
+=== RUN   TestSelfHostExportStringParamRunsViaConsumer
+--- PASS: TestSelfHostExportStringParamRunsViaConsumer (1.01s)
+=== RUN   TestSelfHostSemanticSourcePrint
+--- PASS: TestSelfHostSemanticSourcePrint (0.59s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	239.443s
+FAIL
