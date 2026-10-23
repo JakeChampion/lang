@@ -1,3 +1,4 @@
+# 2026-10-23: source c703ab1451, Perf run 40037769986, after the main update.
 # Allocation baselines for the self-host compiler compiling one real module,
 # checked against every run by scripts/ci-check-perf.
 #
@@ -64,5 +65,5 @@
 # Re-pinned 2026-10-22: main's merges since moved it 3.7% (26,298,117 on main
 # ddc5b110 on the dev container); const_propagate's known table starts on one
 # placeholder op, 0.5% fewer.
-x86_64/checker.allocs	26156335
-x86_64/checker.frees	26156335
+x86_64/checker.allocs	28188626
+x86_64/checker.frees	28188626
