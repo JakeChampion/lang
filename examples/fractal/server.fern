@@ -1,5 +1,5 @@
-// server.fern — a Mandelbrot explorer served by Fern from a Netlify
-// container. Tiles render on demand as PNG images, over plain HTTP (where
+// server.fern — a Mandelbrot explorer served by Fern. Tiles render on
+// demand as PNG images, over plain HTTP (where
 // the CDN caches them) or over a WebSocket that streams them back with
 // their render times. The page and its script are files under `web/`.
 import "std/http";
@@ -13,8 +13,8 @@ import "./fractal";
 
 const PORT: i32 = 8080;
 
-// `Stats` — what this container has done since it started. Play runs as
-// many copies of the container as traffic needs, so each copy has its own.
+// `Stats` — what this server has done since it started. A host can run
+// several copies of the server, and each copy has its own.
 pub struct Stats { instance: string, started_ms: i64, binary_bytes: i64, tiles: Cell[i64], iterations: Cell[i64], render_ns: Cell[i64], sockets: Cell[i64] }
 
 @derive(json.Json)
