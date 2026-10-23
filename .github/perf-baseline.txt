@@ -105,9 +105,9 @@ x86_64/string_build.text	1833
 x86_64/string_build.ir	42429808
 x86_64/string_count_byte.text	1142
 x86_64/string_count_byte.ir	135589342
-x86_64/string_find_byte.text	1509
+x86_64/string_find_byte.text	1548
 x86_64/string_find_byte.ir	43567380
-x86_64/string_rfind_byte.text	1578
+x86_64/string_rfind_byte.text	1633
 x86_64/string_rfind_byte.ir	43576286
 x86_64/string_scan.text	2079
 x86_64/string_scan.ir	52603745
@@ -117,9 +117,9 @@ x86_64/struct_drop.text	2207
 x86_64/struct_drop.ir	191340574
 x86_64/tokenize.text	1037
 x86_64/tokenize.ir	36960087
-x86_64/utf8_ingest_unchecked.text	7145
+x86_64/utf8_ingest_unchecked.text	7062
 x86_64/utf8_ingest_unchecked.ir	2805309
-x86_64/utf8_ingest_validated.text	7393
+x86_64/utf8_ingest_validated.text	7310
 x86_64/utf8_ingest_validated.ir	5887911
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -310,6 +310,14 @@ x86_64/utf8_ingest_validated.ir	5887911
 # any input, while its code is longer. The x86_64 figures are a local
 # perf-bench run, the aarch64 ones the perf-aarch64 lane's.
 #
+# Re-pinned 2026-10-23 (#13059) on string_find_byte.text and
+# string_rfind_byte.text (x86_64 +2.6% and +3.5%, aarch64 +2.0% and +2.7%):
+# `index_of` and `last_index_of` answer an Option now, so each benchmark
+# matches on it, and that match is the new code. Their `.ir` rows held. The
+# utf8_ingest `.text` rows fell about 1.1% (x86_64 both, aarch64 unchecked)
+# with std/string's search verbs. Values are the perf-x86_64 and
+# perf-aarch64 lanes'.
+#
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
 # (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
@@ -364,9 +372,9 @@ aarch64/string_build.text	2242
 aarch64/string_build.ir	47221451
 aarch64/string_count_byte.text	1380
 aarch64/string_count_byte.ir	295207206
-aarch64/string_find_byte.text	1786
+aarch64/string_find_byte.text	1822
 aarch64/string_find_byte.ir	55801255
-aarch64/string_rfind_byte.text	1876
+aarch64/string_rfind_byte.text	1927
 aarch64/string_rfind_byte.ir	55803886
 aarch64/string_scan.text	2435
 aarch64/string_scan.ir	59783821
@@ -376,7 +384,7 @@ aarch64/struct_drop.text	2540
 aarch64/struct_drop.ir	221660842
 aarch64/tokenize.text	1278
 aarch64/tokenize.ir	38350102
-aarch64/utf8_ingest_unchecked.text	7577
+aarch64/utf8_ingest_unchecked.text	7500
 aarch64/utf8_ingest_unchecked.ir	2683450
 aarch64/utf8_ingest_validated.text	7828
 aarch64/utf8_ingest_validated.ir	6269853

@@ -180,7 +180,7 @@ function test_a_secret_is_logged_by_name_only(): test.TestOutcome {
     return test.fail("call: " + calls[0].name + " " + calls[0].args);
   }
   for c in calls {
-    if (c.args.index_of("s3cr3t") >= 0) {
+    if (c.args.contains("s3cr3t")) {
       return test.fail("the secret's value is in the call log");
     }
   }

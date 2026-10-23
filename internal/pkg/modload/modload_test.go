@@ -1033,7 +1033,7 @@ function main(): i32 { return 0; }`,
 	if f, ok := pe.(diag.Filed); !ok || f.File() != entry {
 		t.Errorf("want the error filed against %s; got %v", entry, pe)
 	}
-	if got := diag.Format("main.fern", "", pe); !strings.Contains(got, "main.fern:2:3: error: unknown stdlib module \"std/does_not_exist\"") {
+	if got := diag.Format("main.fern", "", pe); !strings.Contains(got, "main.fern:2:3: error[E086]: unknown stdlib module \"std/does_not_exist\"") {
 		t.Errorf("rendered %q", got)
 	}
 }

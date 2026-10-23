@@ -166,7 +166,10 @@ func Load(dir string) (*Manifest, error) {
 	}
 	m, err := Parse(string(b))
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", p, err)
+		if me, ok := err.(*Error); ok {
+			me.Path = p
+		}
+		return nil, err
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -199,6 +202,27 @@ func FindForDir(dir string) (*Manifest, error) {
 	}
 }
 
+// Error is a manifest the parser refuses (E088), at the line it is on.
+type Error struct {
+	Path string // the fern.toml, once Load has read it
+	Line int
+	Msg  string
+}
+
+func (e *Error) Error() string {
+	at := fmt.Sprintf("%d:1", e.Line)
+	if e.Path != "" {
+		at = e.Path + ":" + at
+	}
+	return at + ": error[E088]: " + e.Msg
+}
+
+func (e *Error) Code() string { return "E088" }
+
+func lineError(line int, format string, args ...any) *Error {
+	return &Error{Line: line, Msg: fmt.Errorf(format, args...).Error()}
+}
+
 // Parse parses manifest source. Exposed for tests and future tooling
 // (`fern add` will rewrite manifests; keeping parse round-trippable
 // and strict now is cheaper than loosening later).
@@ -209,6 +233,7 @@ func Parse(src string) (*Manifest, error) {
 	// silently overriding the first.
 	seenSections := map[string]bool{}
 	seenKeys := map[[2]string]bool{}
+	pkgLine := 1
 	for ln, raw := range strings.Split(src, "\n") {
 		line := Line(raw)
 		if line == "" {
@@ -216,9 +241,12 @@ func Parse(src string) (*Manifest, error) {
 		}
 		if strings.HasPrefix(line, "[") {
 			if !strings.HasSuffix(line, "]") {
-				return nil, fmt.Errorf("line %d: malformed section header %q", ln+1, line)
+				return nil, lineError(ln+1, "malformed section header %q", line)
 			}
 			section = strings.TrimSpace(line[1 : len(line)-1])
+			if section == "package" {
+				pkgLine = ln + 1
+			}
 			switch section {
 			case "package", "dependencies", "exclude", "lint", "lint.options":
 			case "workspace":
@@ -226,21 +254,21 @@ func Parse(src string) (*Manifest, error) {
 					m.Members = []string{}
 				}
 			default:
-				return nil, fmt.Errorf("line %d: unknown section [%s] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])", ln+1, section)
+				return nil, lineError(ln+1, "unknown section [%s] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])", section)
 			}
 			if seenSections[section] {
-				return nil, fmt.Errorf("line %d: duplicate section [%s]", ln+1, section)
+				return nil, lineError(ln+1, "duplicate section [%s]", section)
 			}
 			seenSections[section] = true
 			continue
 		}
 		key, val, ok := splitKeyValue(line)
 		if !ok {
-			return nil, fmt.Errorf("line %d: expected `key = value`, got %q", ln+1, line)
+			return nil, lineError(ln+1, "expected `key = value`, got %q", line)
 		}
 		if section != "" {
 			if seenKeys[[2]string{section, key}] {
-				return nil, fmt.Errorf("line %d: duplicate key %q in [%s]", ln+1, key, section)
+				return nil, lineError(ln+1, "duplicate key %q in [%s]", key, section)
 			}
 			seenKeys[[2]string{section, key}] = true
 		}
@@ -248,7 +276,7 @@ func Parse(src string) (*Manifest, error) {
 		case "package":
 			s, err := parseString(val)
 			if err != nil {
-				return nil, fmt.Errorf("line %d: %s: %w", ln+1, key, err)
+				return nil, lineError(ln+1, "%s: %w", key, err)
 			}
 			switch key {
 			case "name":
@@ -260,24 +288,24 @@ func Parse(src string) (*Manifest, error) {
 			case "index":
 				m.Index = filepath.FromSlash(s)
 			default:
-				return nil, fmt.Errorf("line %d: unknown [package] key %q (supported: name, version, lib, index)", ln+1, key)
+				return nil, lineError(ln+1, "unknown [package] key %q (supported: name, version, lib, index)", key)
 			}
 		case "dependencies":
 			dep, err := parseDep(val)
 			if err != nil {
-				return nil, fmt.Errorf("line %d: dependency %q: %w", ln+1, key, err)
+				return nil, lineError(ln+1, "dependency %q: %w", key, err)
 			}
 			if !validDepName(key) {
-				return nil, fmt.Errorf("line %d: invalid dependency name %q (letters, digits, `_`, `-`; must not start with a digit)", ln+1, key)
+				return nil, lineError(ln+1, "invalid dependency name %q (letters, digits, `_`, `-`; must not start with a digit)", key)
 			}
 			m.Deps[key] = dep
 		case "workspace":
 			if key != "members" {
-				return nil, fmt.Errorf("line %d: unknown [workspace] key %q (supported: members)", ln+1, key)
+				return nil, lineError(ln+1, "unknown [workspace] key %q (supported: members)", key)
 			}
 			ms, err := parseStringArray(val)
 			if err != nil {
-				return nil, fmt.Errorf("line %d: members: %w", ln+1, err)
+				return nil, lineError(ln+1, "members: %w", err)
 			}
 			m.Members = ms
 		case "lint", "lint.options":
@@ -286,22 +314,22 @@ func Parse(src string) (*Manifest, error) {
 			// value that is neither a quoted string nor a number, and an
 			// undotted [lint.options] key.
 			if _, err := parseScalar(val); err != nil {
-				return nil, fmt.Errorf("line %d: [%s] %s: %w", ln+1, section, key, err)
+				return nil, lineError(ln+1, "[%s] %s: %w", section, key, err)
 			}
 			if section == "lint.options" && !strings.Contains(key, ".") {
-				return nil, fmt.Errorf("line %d: [lint.options] key %q must be spelled <rule>.<option>", ln+1, key)
+				return nil, lineError(ln+1, "[lint.options] key %q must be spelled <rule>.<option>", key)
 			}
 		case "exclude":
 			if !validDepName(key) {
-				return nil, fmt.Errorf("line %d: invalid [exclude] package name %q (letters, digits, `_`, `-`; must not start with a digit)", ln+1, key)
+				return nil, lineError(ln+1, "invalid [exclude] package name %q (letters, digits, `_`, `-`; must not start with a digit)", key)
 			}
 			vs, err := parseStringArray(val)
 			if err != nil {
-				return nil, fmt.Errorf("line %d: exclude %s: %w", ln+1, key, err)
+				return nil, lineError(ln+1, "exclude %s: %w", key, err)
 			}
 			for _, v := range vs {
 				if !IsVersion(v) {
-					return nil, fmt.Errorf("line %d: exclude %s: version must be MAJOR.MINOR.PATCH digits, got %q", ln+1, key, v)
+					return nil, lineError(ln+1, "exclude %s: version must be MAJOR.MINOR.PATCH digits, got %q", key, v)
 				}
 			}
 			if m.Excludes == nil {
@@ -309,13 +337,13 @@ func Parse(src string) (*Manifest, error) {
 			}
 			m.Excludes[key] = vs
 		default:
-			return nil, fmt.Errorf("line %d: %q outside a section (start with [package], [dependencies], or [workspace])", ln+1, key)
+			return nil, lineError(ln+1, "%q outside a section (start with [package], [dependencies], or [workspace])", key)
 		}
 	}
 	// A workspace-only manifest (a virtual root that just lists members)
 	// needs no [package] name; a package manifest still does.
 	if m.Name == "" && !m.IsWorkspace() {
-		return nil, fmt.Errorf("missing [package] name")
+		return nil, &Error{Line: pkgLine, Msg: "missing [package] name"}
 	}
 	return m, nil
 }

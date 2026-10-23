@@ -2625,9 +2625,8 @@ type Destructure struct {
 	Names      []string
 	Fields     []string // struct destructure: field projected for Names[i]; nil = tuple mode
 	StructName string   // struct destructure: the named struct type in the pattern; "" = tuple mode
-	// RestWritten records the pattern's trailing `..`. A struct destructure
-	// binds only the fields it lists either way, so here only the printer
-	// reads it.
+	// RestWritten records the pattern's trailing `..`, without which the
+	// pattern must list every field of the struct (E015).
 	RestWritten bool
 	Init        Expr
 	// AtName is the `@` binding naming the WHOLE value beside the pattern —
@@ -2811,9 +2810,8 @@ type MatchArm struct {
 	// `S { x }`, FieldNames[i] == Bindings[i]. nil for non-named patterns.
 	FieldNames []string
 	// RestWritten records the trailing `..` of a named-field pattern
-	// (`Rect { w, .. }`). An enum variant pattern must name every field
-	// unless it ends in `..`; a struct pattern binds only the fields it
-	// lists either way, so there only the printer reads it.
+	// (`Rect { w, .. }`). A struct or record-variant pattern must name
+	// every field unless it ends in `..` (E015).
 	RestWritten bool
 	IsWildcard  bool // `_ => …`
 	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
@@ -2973,7 +2971,7 @@ type MatchExprArm struct {
 	BindingTypes  []Type
 	NamedFields   bool     // named-field pattern `Rect { w, h }` — see MatchArm.NamedFields
 	FieldNames    []string // parallel to Bindings for named-field patterns — see MatchArm.FieldNames
-	RestWritten   bool     // trailing `..`, for the printer — see MatchArm.RestWritten
+	RestWritten   bool     // trailing `..` — see MatchArm.RestWritten
 	IsWildcard    bool
 	Literal       Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
 	// RangeHi / RangeInclusive — range pattern `lo..hi` / `lo..=hi`; see
@@ -3423,8 +3421,12 @@ type FuncDecl struct {
 	// they stay universally visible. Anything that needs to say WHERE a
 	// function came from — the coverage report's per-file totals (#5548) —
 	// needs a stamp with no second meaning attached to it. Empty on a
-	// program built straight from the parser and on synthesised decls.
+	// program built straight from the parser; a materialised trait default
+	// carries the trait's file, where its body was written.
 	SourceFile string
+	// DeclName is the name as the source declares it, before modload adds
+	// the module's mangle prefix. Empty where SourceFile is.
+	DeclName string
 	// DefiningModule is the module whose source WROTE this function's
 	// body, when that differs from SourceModule. Only a trait default
 	// materialised into an impl sets it: the body was written beside the

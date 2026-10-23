@@ -637,7 +637,7 @@ function desugar_lambda_returns(body: ast.Stmt[], counter: i32, sig: RetSig): De
       ast.StmtFor(fo) => {
         let fod: DesugarRet = desugar_lambda_returns(fo.body, c, sig);
         c = fod.counter;
-        out = out.append(ast.StmtFor { var_name: fo.var_name, iter: fo.iter, body: fod.body, label: fo.label, line: 0 });
+        out = out.append(ast.StmtFor { var_name: fo.var_name, iter: fo.iter, body: fod.body, label: fo.label, line: 0, col: 0 });
       },
       ast.StmtMatch(m) => {
         let narms: ast.MatchArm[] = [];
@@ -751,7 +751,7 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
     ast.StmtFor(fo) => {
       let ie: LiftExpr = lift_expr_walk(fo.iter, acc, gfns);
       let b: LiftStmts = lift_stmts(fo.body, ie.acc, gfns);
-      let ns: ast.Stmt = ast.StmtFor { var_name: fo.var_name, iter: ie.expr, body: b.stmts, label: fo.label, line: fo.line };
+      let ns: ast.Stmt = ast.StmtFor { var_name: fo.var_name, iter: ie.expr, body: b.stmts, label: fo.label, line: fo.line, col: fo.col };
       return LiftStmts { stmts: [ns], acc: b.acc };
     },
     _ => {
@@ -1017,7 +1017,7 @@ function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, g
       ast.StmtFor(fr) => {
         let sf: ClosureLift = closure_lift_one(fr.body, fd, acc, gfns, structs, mfuncs);
         if (sf.changed) {
-          return ClosureLift { body: cl_replace_at(body, i, ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: sf.body, label: fr.label, line: 0 }), acc: sf.acc, changed: true };
+          return ClosureLift { body: cl_replace_at(body, i, ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: sf.body, label: fr.label, line: 0, col: 0 }), acc: sf.acc, changed: true };
         }
       },
       ast.StmtIf(f) => {
@@ -4444,7 +4444,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: i
     ast.StmtFor(fr) => {
       let itr: WCapExpr = wcap_expr(fr.iter, fd, gfns, structs, mfuncs, acc, atargets);
       let fb: WCapBody = box_wide_captures_stmts(fr.body, fd, gfns, structs, mfuncs, atargets);
-      return WCapStmt { stmt: ast.StmtFor { var_name: fr.var_name, iter: itr.expr, body: fb.stmts, label: fr.label, line: fr.line }, caps: itr.caps, changed: itr.changed || fb.changed };
+      return WCapStmt { stmt: ast.StmtFor { var_name: fr.var_name, iter: itr.expr, body: fb.stmts, label: fr.label, line: fr.line, col: fr.col }, caps: itr.caps, changed: itr.changed || fb.changed };
     },
     ast.StmtMatch(m) => {
       let sr: WCapExpr = wcap_expr(m.scrutinee, fd, gfns, structs, mfuncs, acc, atargets);

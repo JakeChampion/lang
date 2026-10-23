@@ -44,11 +44,11 @@ func TestSelfHostUnknownStdlibModule(t *testing.T) {
 		// want is the first line of stderr.
 		want string
 	}{
-		{"typo-check", []string{"-check"}, typo, typo + ":2:1: error: unknown stdlib module \"std/json2\""},
-		{"typo-build", []string{"-o", filepath.Join(dir, "a.out")}, typo, typo + ":2:1: error: unknown stdlib module \"std/json2\""},
-		{"typo-in-imported-module", []string{"-check"}, transitive, filepath.Join(dir, "mid.fern") + ":2:3: error: unknown stdlib module \"core/nosuch\""},
-		{"typo-in-reexport", []string{"-check"}, reexport, reexport + ":1:1: error: unknown stdlib module \"std/nosuch\""},
-		{"missing-subpath-with-namesake", []string{"-check"}, subpath, "fern: cannot resolve import \"./lib/nope/x\" in " + subpath + ": " + filepath.Join(dir, "lib", "nope", "x.fern") + ": not found"},
+		{"typo-check", []string{"-check"}, typo, typo + ":2:1: error[E086]: unknown stdlib module \"std/json2\""},
+		{"typo-build", []string{"-o", filepath.Join(dir, "a.out")}, typo, typo + ":2:1: error[E086]: unknown stdlib module \"std/json2\""},
+		{"typo-in-imported-module", []string{"-check"}, transitive, filepath.Join(dir, "mid.fern") + ":2:3: error[E086]: unknown stdlib module \"core/nosuch\""},
+		{"typo-in-reexport", []string{"-check"}, reexport, reexport + ":1:1: error[E086]: unknown stdlib module \"std/nosuch\""},
+		{"missing-subpath-with-namesake", []string{"-check"}, subpath, subpath + ":1:1: error[E086]: cannot resolve import \"./lib/nope/x\": not found"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

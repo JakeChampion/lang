@@ -2372,6 +2372,31 @@ func TestStringCmpFlagSet(t *testing.T) {
 	}
 }
 
+// With two candidates equally close, the suggestion is the nearest local,
+// then the first function by name, every run, as the self-host picks
+// (#13041). The candidates came from a map, so the pick changed run to run.
+func TestUndefinedIdentifierSuggestionBreaksTiesTheSameWay(t *testing.T) {
+	for _, c := range []struct{ src, want string }{
+		{"function f(): i32 {\n\tlet x: i32 = 1;\n\tlet y: i32 = 2;\n\treturn n;\n}", "y"},
+		{"function ab(): i32 { return 1; }\nfunction aa(): i32 { return 2; }\nfunction f(): i32 { return ac(); }", "aa"},
+	} {
+		for range 20 {
+			prog, err := parser.Parse(c.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = Check(prog)
+			es, ok := err.(diag.Errors)
+			if !ok || len(es) == 0 {
+				t.Fatalf("expected diag.Errors, got %v", err)
+			}
+			if ce, ok := es[0].(*Error); !ok || ce.Fix == nil || ce.Fix.Replacement != c.want {
+				t.Fatalf("%q: fix = %+v, want the replacement %q", c.src, es[0], c.want)
+			}
+		}
+	}
+}
+
 func TestUndefinedIdentifierSuggestsClosest(t *testing.T) {
 	prog, err := parser.Parse(`function f(): i32 {
 		let counter: i32 = 0;

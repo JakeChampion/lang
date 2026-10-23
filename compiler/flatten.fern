@@ -333,15 +333,16 @@ function is_stdlib_ident(ident: string): boolean {
   return util.str_has_prefix(ident, "std/") || util.str_has_prefix(ident, "core/") || util.index_of_sub(ident, "/std/") >= 0 || util.index_of_sub(ident, "/core/") >= 0;
 }
 
-// import_cycle returns the index in `imports` of the first module the
-// entry's imports reach again while it is still being loaded — an import
-// cycle, which native refuses — or -1 when there is none. A cycle inside the
-// stdlib (under `root`) is allowed, as native allows it: std/string and
-// std/i32 import each other.
-pub function import_cycle(entry: parser.Module, imports: LoadedModule[], root: string): i32 {
+// import_cycle is the import that closes a cycle among the program's own
+// modules, which native refuses: walking depth-first from the entry, in the
+// order native loads them, the first import that leads back to a module still
+// being loaded. The entry, `entry_ident`, is being loaded from the start. A
+// cycle inside the stdlib (under `root`) is allowed, as native allows it:
+// std/string and std/i32 import each other.
+pub function import_cycle(entry: parser.Module, entry_ident: string, imports: LoadedModule[], root: string): Option[parser.Import] {
   let ids: string[] = module_ids(imports);
   let pfxs: string[] = assign_prefixes(imports);
-  let g: ImportGraph = import_graph(imports, ids, pfxs);
+  let w: CycleWalk = CycleWalk { g: import_graph(imports, ids, pfxs), ids: ids, entry: entry_ident, root: root };
   let state: i32[] = [];
   while (state.len() < imports.len()) {
     state = state.append(0);
@@ -349,36 +350,40 @@ pub function import_cycle(entry: parser.Module, imports: LoadedModule[], root: s
   for p in import_prefixes(entry, ids, pfxs) {
     let t: i32 = index_of_str(p, pfxs);
     if (t >= 0 && state[t] == 0) {
-      let (found, st) = cycle_from(t, g, ids, root, state);
-      if (found >= 0) {
-        return found;
+      let (k, e, st) = cycle_from(t, w, state);
+      if (k >= 0) {
+        return Some(imports[k].mod.imports[e - w.g.starts[k]]);
       }
       state = st;
     }
   }
-  return 0 - 1;
+  return None;
 }
 
+// CycleWalk is what import_cycle's walk reads at every module.
+struct CycleWalk { g: ImportGraph, ids: string[], entry: string, root: string }
+
 // cycle_from walks module k depth-first. `state` is 0 for a module not yet
-// reached, 1 for one on the walk's path, 2 for one finished.
-function cycle_from(k: i32, g: ImportGraph, ids: string[], root: string, state: i32[]): (i32, i32[]) {
+// reached, 1 for one on the walk's path, 2 for one finished. A cycle comes
+// back as the module holding the closing import and that import's edge.
+function cycle_from(k: i32, w: CycleWalk, state: i32[]): (i32, i32, i32[]) {
   let st: i32[] = state.with(k, 1);
-  let e: i32 = g.starts[k];
-  while (e < g.starts[k + 1]) {
-    let t: i32 = g.edges[e];
-    if (t >= 0 && st[t] == 1 && !under_root(ids[t], root)) {
-      return (t, st);
+  let e: i32 = w.g.starts[k];
+  while (e < w.g.starts[k + 1]) {
+    let t: i32 = w.g.edges[e];
+    if (t >= 0 && (st[t] == 1 || w.ids[t] == w.entry) && !under_root(w.ids[t], w.root)) {
+      return (k, e, st);
     }
     if (t >= 0 && st[t] == 0) {
-      let (found, st2) = cycle_from(t, g, ids, root, st);
-      if (found >= 0) {
-        return (found, st2);
+      let (fk, fe, st2) = cycle_from(t, w, st);
+      if (fk >= 0) {
+        return (fk, fe, st2);
       }
       st = st2;
     }
     e = e + 1;
   }
-  return (0 - 1, st.with(k, 2));
+  return (0 - 1, 0 - 1, st.with(k, 2));
 }
 
 // under_root reports whether the module identity `ident` lies under the
@@ -1448,6 +1453,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
         body: rewrite_block(f.body, RewriteCtx { ...ctx, locals: astwalk.append_bound_name(loop_locals, f.var_name) }),
         label: f.label,
         line: f.line,
+        col: f.col,
       };
     },
     ast.StmtMatch(m) => {

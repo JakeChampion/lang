@@ -338,7 +338,7 @@ also pass the benchmark's prefix checks with both variants and fusion settings.
 
 A core/iter chain reaches the same fragments through its adapters:
 `it.map(f)`, `it.filter(p)`, `it.take(n)` and `it.flat_map(f)` are the
-stages above, and `it.fold(z, h)` and `it.count()` the sinks. `it.skip(n)`,
+stages above, and `it.fold(z, h)` and `it.len()` the sinks. `it.skip(n)`,
 like `it.enumerate()` and `it.zip(other)`, is outside the algebra: the
 chain runs unfused and the report says so. What it starts from sets the
 loop. `iter.of(xs)` is an array cursor exactly as the eager surface's

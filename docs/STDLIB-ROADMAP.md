@@ -514,9 +514,9 @@ think they're free additions to make.
   (computed as `abs(a*b)/gcd` with the gcd-first ordering
   to keep the intermediate multiply small).
 - **Rightmost string search**: `s.last_index_of(needle)`
-  (symmetric to index_of). Empty needle returns `len(s)`
-  per the Python rfind / Go LastIndex "match every gap"
-  convention.
+  (symmetric to index_of, `None` when absent). An empty needle
+  is found at `len(s)`, per the Python rfind / Go LastIndex
+  "match every gap" convention.
 - **`s.capitalize()`**: uppercase the first code point, leave the
   rest unchanged (`to_ascii_capitalize` is the byte-wise twin).
   Different from `to_upper` (which
@@ -621,7 +621,7 @@ think they're free additions to make.
   no-op for the mutators and false for the reader.
 - **`(b: i32).is_ascii_newline()`**: true for LF or CR. Companion
   to the existing is_ascii_white_space.
-- **`(s: string).count_lines()`**: count newline-separated
+- **`(s: string).line_count()`**: count newline-separated
   lines; a trailing newline doesn't add a phantom empty
   line.
 - **HTTP response builders**: `http.ok(body)`,
@@ -656,8 +656,7 @@ think they're free additions to make.
   modulo bias for `range << 2^32` is negligible; rejection
   sampling to remove it entirely is a follow-up.
 - **`format_bytes(n)`**: human-readable size — "N B" / "N
-  KiB" / "N MiB" / "N GiB". i32 input (caps at ~2 GiB
-  representable range).
+  KiB" / "N MiB" / "N GiB" / "N TiB", from an i64 count.
 - **`csv_escape(s)` / `csv_join(arr)`**: RFC 4180 CSV
   field escape + comma-join. Fields with `,` / `"` / `\n`
   / `\r` get wrapped in `"..."` with interior quotes
@@ -709,13 +708,13 @@ think they're free additions to make.
 - **String prefix/suffix removal**: `s.remove_prefix(p)` /
   `s.remove_suffix(s)`. Like strip_* but return s unchanged
   on no-match instead of `Option[None]`.
-- **`s.is_uuid()`**: shape check for canonical 8-4-4-4-12
+- **`uuid.is_valid(s)`**: shape check for canonical 8-4-4-4-12
   hex UUID. Doesn't validate version / variant nibbles.
 - **`format_duration_ms(ms)`**: human-readable durations
   like `"1h 23m 45s"` / `"500ms"`. Components only emitted
   when non-zero; `0` returns `"0ms"`.
-- **Byte digit/hex values**: `(b).digit_value()` / `(b).hex_value()`.
-  Return -1 on non-digits. Useful for hand-rolled parsers.
+- **Byte digit/hex values**: `(b).digit_value()` / `(b).hex_value()`, each `Option[i32]`,
+  `None` on a byte that is not a digit. Useful for hand-rolled parsers.
 - **`s.count_byte(b)`**: single-byte fast path on count.
 - **`http_url_path_only(path)`**: strip the `?query`
   suffix.

@@ -49,17 +49,17 @@ function unknown(a: ndarray.NdArray[f64]): ndarray.NdArray[f64] {
   let reduced: ndarray.NdArray[f64] = a.reduce_axis(1, 0.0, (x: f64, y: f64): f64 => x + y);
   let scanned: ndarray.NdArray[f64] = a.scan_axis(1, 0.0, (x: f64, y: f64): f64 => x + y);
   let ranked: ndarray.NdArray[f64] = a.map_rank(1, (cell: ndarray.NdArray[f64]): ndarray.NdArray[f64] => cell.map((x: f64): f64 => x * 2.0));
-  return zipped.get([1, 2]) == 12.0 && outer.get([1, 2, 2, 1]) == 36.0 && inner.get([0, 0]) == 14.0 && inner.get([1, 1]) == 77.0 && folded == 21.0 && reduced.get([1]) == 15.0 && scanned.get([1, 2]) == 15.0 && ranked.get([1, 2]) == 12.0;
+  return zipped.get_unchecked([1, 2]) == 12.0 && outer.get_unchecked([1, 2, 2, 1]) == 36.0 && inner.get_unchecked([0, 0]) == 14.0 && inner.get_unchecked([1, 1]) == 77.0 && folded == 21.0 && reduced.get_unchecked([1]) == 15.0 && scanned.get_unchecked([1, 2]) == 15.0 && ranked.get_unchecked([1, 2]) == 12.0;
 }
 function main(): i32 {
   let xs: f64[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
   let a: ndarray.NdArray[f64] = ndarray.from_flat(xs, [2, 3]);
-  if (packed(xs).get([1, 2]) != 12.0 || strided(xs).get([2, 1]) != 12.0) { return 1; }
-  if (row_major(xs).get([0]) != 8.0 || unknown(a.transpose()).get([2, 1]) != 12.0) { return 2; }
-  if (captured(xs, 2.0).get([1, 2]) != 12.0 || unresolved(xs, (x: f64): f64 => x * 2.0).get([1, 2]) != 12.0) { return 3; }
-  if (added(xs).get([1, 2]) != 8.0 || integers([1 as i64, 2 as i64]).get([1]) != 4 as i64) { return 4; }
-  if (!algebra(xs) || axes(a, 1).get([1]) != 15.0) { return 5; }
-  if (xs[5] != 6.0 || a.get([0, 1]) != 2.0) { return 6; }
+  if (packed(xs).get_unchecked([1, 2]) != 12.0 || strided(xs).get_unchecked([2, 1]) != 12.0) { return 1; }
+  if (row_major(xs).get_unchecked([0]) != 8.0 || unknown(a.transpose()).get_unchecked([2, 1]) != 12.0) { return 2; }
+  if (captured(xs, 2.0).get_unchecked([1, 2]) != 12.0 || unresolved(xs, (x: f64): f64 => x * 2.0).get_unchecked([1, 2]) != 12.0) { return 3; }
+  if (added(xs).get_unchecked([1, 2]) != 8.0 || integers([1 as i64, 2 as i64]).get_unchecked([1]) != 4 as i64) { return 4; }
+  if (!algebra(xs) || axes(a, 1).get_unchecked([1]) != 15.0) { return 5; }
+  if (xs[5] != 6.0 || a.get_unchecked([0, 1]) != 2.0) { return 6; }
   return 0;
 }
 `

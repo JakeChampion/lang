@@ -73,6 +73,7 @@ function main(): i32 {
 func NetUnixProbe() string {
 	return `import "core/int";
 import "std/net";
+import "std/errno";
 import "std/string";
 
 // recv reads once from fd within five seconds: the bytes, none at the end
@@ -89,11 +90,6 @@ function recv(fd: i32, max: i32): u8[] {
 function fail(n: i32): i32 {
     print(int.int_to_string(n));
     return n;
-}
-
-function enametoolong(): i32 {
-    if (target_os() == "darwin") { return 63; }
-    return 36;
 }
 
 function errno_of(r: Result[i32, net.NetError]): i32 {
@@ -134,9 +130,9 @@ function main(): i32 {
         Ok(_) => {},
         Err(e) => { return fail(8); },
     }
-    if (errno_of(net.connect_unix(path)) != 2) { return fail(9); }
+    if (errno_of(net.connect_unix(path)) != errno.ENOENT) { return fail(9); }
     let long: string = "/tmp/" + "a".repeat(120);
-    if (errno_of(net.listen_unix(long, 4)) != enametoolong()) { return fail(10); }
+    if (errno_of(net.listen_unix(long, 4)) != errno.ENAMETOOLONG) { return fail(10); }
     print("ok");
     return 42;
 }

@@ -228,7 +228,7 @@ function __is_tchar(b: i32): boolean {
   if (b < 33 || b > 126) {
     return false;
   }
-  return "\"(),/:;<=>?@[\\]{}".index_of(string_from_bytes_unchecked([b as u8])) < 0;
+  return !"\"(),/:;<=>?@[\\]{}".contains(string_from_bytes_unchecked([b as u8]));
 }
 
 // __is_cookie_value: cookie-octets, optionally between two quotes.
@@ -284,9 +284,10 @@ pub function (r: HttpRequest) cookie(name: string): Option[string] {
   for h in r.headers.get_all("cookie") {
     for pair in h.split(";") {
       let p: string = pair.trim();
-      let eq: i32 = p.index_of("=");
-      if (eq > 0 && p.slice_snap(0, eq) == name) {
-        return Some(p.slice_snap(eq + 1, p.len()));
+      if let Some(eq) = p.index_of("=") {
+        if (eq > 0 && p.slice_snap(0, eq) == name) {
+          return Some(p.slice_snap(eq + 1, p.len()));
+        }
       }
     }
   }
@@ -471,8 +472,7 @@ function __parse(s: string, now: i64): Result[__Parsed, Ignored] {
   let pair: string = parts[0].trim();
   let name: string = "";
   let value: string = pair;
-  let eq: i32 = pair.index_of("=");
-  if (eq >= 0) {
+  if let Some(eq) = pair.index_of("=") {
     name = pair.slice_snap(0, eq).trim();
     value = pair.slice_snap(eq + 1, pair.len()).trim();
   }
@@ -505,8 +505,7 @@ function __has_ctl(s: string): boolean {
 function __attribute(p: __Parsed, raw: string, now: i64): __Parsed {
   let name: string = raw.trim();
   let value: string = "";
-  let eq: i32 = raw.index_of("=");
-  if (eq >= 0) {
+  if let Some(eq) = raw.index_of("=") {
     name = raw.slice_snap(0, eq).trim();
     value = raw.slice_snap(eq + 1, raw.len()).trim();
   }
@@ -962,8 +961,10 @@ function __default_path(u: Url): string {
   if (!p.starts_with("/")) {
     return "/";
   }
-  let last: i32 = p.last_index_of("/");
-  if (last <= 0) {
+  let Some(last) = p.last_index_of("/") else {
+    return "/";
+  };
+  if (last == 0) {
     return "/";
   }
   return p.slice_snap(0, last);

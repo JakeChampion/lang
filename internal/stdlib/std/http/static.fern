@@ -107,7 +107,7 @@ function __clean(segs: string[], dotfiles: boolean): Option[string] {
     if (s.len() == 0 || s == ".") {
       continue;
     }
-    if (s == ".." || s.index_of("\x00") >= 0 || s.starts_with(".") && !dotfiles) {
+    if (s == ".." || s.contains("\x00") || s.starts_with(".") && !dotfiles) {
       return None;
     }
     out = out + "/" + s;
@@ -162,8 +162,16 @@ function __index(req: HttpRequest, d: Dir, path: string, plat: platform.Platform
 function __add_slash(target: string): HttpResponse {
   let path: string = http.http_url_path_only(target);
   let query: string = target.slice_snap(path.len(), target.len());
-  let base: string = path.slice_snap(path.last_index_of("/") + 1, path.len());
+  let base: string = __last_segment(path);
   return HttpResponse { ...http.redirect(url.url_encode(base) + "/" + query), status: 301 };
+}
+
+// `__last_segment(path)` — what follows the path's last `/`, or all of it.
+function __last_segment(path: string): string {
+  let Some(slash) = path.last_index_of("/") else {
+    return path;
+  };
+  return path.slice_snap(slash + 1, path.len());
 }
 
 // `__stat_failed(e)` — 403 for a path the server may not read, 404 for one
@@ -392,8 +400,10 @@ pub enum Range { Whole, Part(i64, i64), Parts(i64[]), Unsatisfiable }
 // more than the representation (heavy overlap), are declined as `Whole`,
 // as §14.2 lets a server decline them.
 pub function byte_range(value: string, size: i64, max: i32): Range {
-  let eq: i32 = value.index_of("=");
-  if (eq < 0 || !value.slice_snap(0, eq).trim().eq_ignore_ascii_case("bytes")) {
+  let Some(eq) = value.index_of("=") else {
+    return Whole;
+  };
+  if (!value.slice_snap(0, eq).trim().eq_ignore_ascii_case("bytes")) {
     return Whole;
   }
   let specs: string[] = headers.split_list(value.slice_snap(eq + 1, value.len()));
@@ -437,10 +447,9 @@ function __range_set(found: i64[], size: i64, max: i32): Range {
 // `__range_spec(spec, size)` — one `int-range` (`first-last`, `first-`) or
 // `suffix-range` (`-n`).
 function __range_spec(spec: string, size: i64): Range {
-  let dash: i32 = spec.index_of("-");
-  if (dash < 0) {
+  let Some(dash) = spec.index_of("-") else {
     return Whole;
-  }
+  };
   let last_text: string = spec.slice_snap(dash + 1, spec.len());
   if (dash == 0) {
     return __suffix_range(__digits(last_text), size);
@@ -498,11 +507,10 @@ function __digits(s: string): i64 {
 // extension, with `charset=utf-8` on the text types;
 // `application/octet-stream` for an extension the table does not hold.
 pub function content_type(path: string): string {
-  let name: string = path.slice_snap(path.last_index_of("/") + 1, path.len());
-  let dot: i32 = name.last_index_of(".");
-  if (dot < 0) {
+  let name: string = __last_segment(path);
+  let Some(dot) = name.last_index_of(".") else {
     return "application/octet-stream";
-  }
+  };
   let ext: string = name.slice_snap(dot + 1, name.len()).to_lower();
   let exts: string[] = ["html", "htm", "css", "js", "mjs", "json", "map", "txt", "md", "csv", "xml", "svg", "wasm", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "pdf", "woff", "woff2", "ttf", "otf", "mp4", "webm", "mp3", "ogg", "wav", "zip", "webmanifest"];
   let types: string[] = ["text/html; charset=utf-8", "text/html; charset=utf-8", "text/css; charset=utf-8", "text/javascript; charset=utf-8", "text/javascript; charset=utf-8", "application/json", "application/json", "text/plain; charset=utf-8", "text/markdown; charset=utf-8", "text/csv; charset=utf-8", "application/xml", "image/svg+xml", "application/wasm", "image/png", "image/jpeg", "image/jpeg", "image/gif", "image/webp", "image/avif", "image/vnd.microsoft.icon", "application/pdf", "font/woff", "font/woff2", "font/ttf", "font/otf", "video/mp4", "video/webm", "audio/mpeg", "audio/ogg", "audio/wav", "application/zip", "application/manifest+json"];

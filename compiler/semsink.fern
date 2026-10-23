@@ -41,7 +41,9 @@ pub function sink(f: ssasem.Func): Sunk {
 // A counted projection read off the same parent and slot as one a dominating
 // block read is that read when the first is one the plan must take out of
 // the box (child_used_above): a second read of the slot would find it
-// emptied. `reread` counts the reads replaced.
+// emptied. So is a read whose first read has a child live out of its block,
+// unless the plan can take it there (field_kept_apart). `reread` counts the
+// reads replaced.
 function reuse(f: ssasem.Func): Sunk {
   let g: ssa.SFunc = f.graph;
   let at: i32[] = projection_blocks(g, f.values);
@@ -93,17 +95,26 @@ function identity(n: i32): i32[] {
   return out;
 }
 
-// The read in a block strictly dominating the one at `bi` that `r` repeats
-// and that must be taken, -1 for none.
+// The read in a block strictly dominating the one at `bi` that `r` repeats,
+// when that read must be taken or has a child live out of `bi`. -1 for none.
 function earlier_read(rd: Reads, reads: ssa.SInst[], r: ssa.SInst, bi: i32, same: i32[], values: typeinfo.Type[]): i32 {
   for u in reads {
     let ub: i32 = rd.at[u.result];
     if (u.result != r.result && ub != bi && ssadeps.dom_holds(rd.dom, bi, ub) && semcse.same_slot(u, r, same, values)
-      && (child_used_above(rd, rd.spent, bi, u.result, 0) || child_live_out(rd, bi, u.result, 0))) {
+      && (child_used_above(rd, rd.spent, bi, u.result, 0) || child_live_out(rd, bi, u.result, 0) && !field_kept_apart(rd, r, bi))) {
       return semcse.stand_in(same, u.result);
     }
   }
   return 0 - 1;
+}
+
+// Whether `r`, a repeat of a read with a child live out of the block at
+// `bi`, stays apart from that first read. The plan takes a second read of a
+// record field past the live children of the first (`twin_holds`), so such a
+// read stays where its block uses it. One live out of its block is merged, and
+// sink_rereads reads it again where it is used.
+function field_kept_apart(rd: Reads, r: ssa.SInst, bi: i32): boolean {
+  return r.kind_tag == ssasem.record_get() && !ssalive.live_out_has(rd.flow, bi, r.result);
 }
 
 function sink_rereads(f: ssasem.Func): Sunk {
@@ -228,7 +239,7 @@ function spent_by(g: ssa.SFunc, parent: boolean[], deps: i32[][], pos: i32[]): i
   let bi: i32 = 0;
   for b in g.blocks {
     for ins in b.insts {
-      if (!projection(ins.kind_tag) && ins.kind_tag != ssasem.variant_is() && ins.kind_tag != 8) {
+      if (spends(ins.kind_tag)) {
         for a in ins.args {
           spent = spend(spent, parent, a, bi);
         }
@@ -243,6 +254,12 @@ function spent_by(g: ssa.SFunc, parent: boolean[], deps: i32[][], pos: i32[]): i
     bi = bi + 1;
   }
   return spent;
+}
+
+// Whether an instruction of kind `k` spends its operands: anything but a
+// read of a part, a variant test, a length or a phi.
+function spends(k: i32): boolean {
+  return !projection(k) && k != ssasem.variant_is() && k != ssasem.length() && k != 8;
 }
 
 // A phi input is spent at the end of the predecessor that passes it.
@@ -502,8 +519,8 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
 // re-read would hold the parent to here. Nor may anything spend the parent
 // while the child lives: a parent handed on, a record moved into a loop say,
 // would have to be kept for the re-read and copied by whoever it went to.
-// Nor may a child of the first read be live out of the block, which only the
-// first read lets the plan take.
+// Nor may a child of the first read be live out of the block. The plan takes
+// such a re-read only if it holds that child, at the cost of a count.
 function read_above(rd: Reads, bi: i32, v: i32): boolean {
   return read_above_for(rd, bi, v, v) && !child_used_above(rd, rd.grown, bi, v, 0) && !child_live_out(rd, bi, v, 0);
 }
@@ -533,7 +550,7 @@ function child_used_above(rd: Reads, by: i32[][], bi: i32, v: i32, depth: i32): 
 
 // Whether a projection read off `v`, at any depth, is still live out of the
 // block at `bi`. Such a projection reaches the parent through `v`, so the plan
-// refuses the take of a second read of `v`'s slot at `bi`.
+// must hold it to take a second read of `v`'s slot at `bi` (`twin_holds`).
 function child_live_out(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
   if (depth > 8) {
     return false;
