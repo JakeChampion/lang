@@ -1,0 +1,3 @@
+ok  	github.com/jakechampion/lang/internal/syntax/parser	(cached)
+ok  	github.com/jakechampion/lang/internal/check/checker	7.142s
+ok  	github.com/jakechampion/lang/internal/pkg/modload	1.149s
