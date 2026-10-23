@@ -42,7 +42,7 @@ function main(): i32 {
 `
 
 func TestSelfHostCountedStringView(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			stderr, code := cli.exitOf(t, countedStringViewProgram, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")

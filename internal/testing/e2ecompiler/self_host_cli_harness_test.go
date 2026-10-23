@@ -42,6 +42,14 @@ func buildSelfHostCLI(t *testing.T) *selfHostCLI {
 	return &selfHostCLI{gcc: gcc, stdlib: stdlib, runner: runner, bin: bin}
 }
 
+// buildRuntimeCLI selects explicit primitive admission for internal runtime probes.
+func buildRuntimeCLI(t *testing.T) *selfHostCLI {
+	t.Helper()
+	gcc, runner := x86_64Tooling(t)
+	return &selfHostCLI{gcc: gcc, runner: runner, stdlib: e2eharness.SelfHostStdlibRoot(t),
+		bin: e2eharness.CachedDriverBinFor(t, e2eharness.RepoPath("compiler"), "drivers/runtime_run.fern", e2eharness.TargetX86_64Linux)}
+}
+
 // emit compiles the entry file at src for target with env added to the
 // compiler's environment, and returns the path of the emitted asm or WAT.
 func (c *selfHostCLI) emit(t *testing.T, src, target string, env ...string) string {

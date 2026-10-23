@@ -1,0 +1,3 @@
+# scripts/cliff-bench report — arch x86_64, subject compiler/checker.fern
+x86_64/checker.cliff_bytes	30653856
+x86_64/checker.cliff_count	269474

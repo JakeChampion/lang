@@ -20,7 +20,7 @@ import (
 // bytes through `__store_u8`. A leg whose ISA this host cannot run is
 // skipped, as its siblings are; the CI matrix runs each on its own host.
 func TestNativeSyscallFloor(t *testing.T) {
-	fern := buildFernCLI(t)
+	fern := e2eharness.RuntimeCLI(t)
 	x86, x86ok := x86Runner()
 	arm, armok := arm64Runner()
 	for _, c := range []struct {
@@ -57,7 +57,7 @@ func TestArm64DarwinNativeSyscallFloor(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires the Apple Silicon execution lane")
 	}
-	fern := buildFernCLI(t)
+	fern := e2eharness.RuntimeCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "probe.fern")
 	if err := os.WriteFile(src, []byte(e2eharness.SyscallFloorProbe(t, dir, "arm64-darwin")), 0o644); err != nil {
@@ -75,7 +75,7 @@ func TestArm64DarwinNativeSyscallFloor(t *testing.T) {
 // wasm has no kernel: a program that reaches the syscall floor is refused
 // at compile time, naming the callee, rather than linked against nothing.
 func TestSyscallFloorRefusedOnWasm(t *testing.T) {
-	fern := buildFernCLI(t)
+	fern := e2eharness.RuntimeCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "probe.fern")
 	if err := os.WriteFile(src, []byte(e2eharness.SyscallFloorProbe(t, dir, "x86-64-linux")), 0o644); err != nil {

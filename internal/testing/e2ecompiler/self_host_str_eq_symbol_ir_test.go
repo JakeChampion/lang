@@ -95,17 +95,16 @@ func TestSelfHostStrEqSymbolIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrEqSymbolTypeChecks pins that the front end ACCEPTS the
+// TestSelfHostStrEqSymbolTypeChecks pins that the runtime checker ACCEPTS the
 // spelling, which the emit drivers cannot show: `asm_ir_run.fern` does not
 // type-check at all, so a program driven through it compiles whatever it is
 // handed. The controls below are what make this assertion mean something. The
 // typed path is pinned on and strict, so a program the checker accepts but the
 // typed path refuses fails here too.
 func TestSelfHostStrEqSymbolTypeChecks(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	runtimeCLI := buildRuntimeCLI(t)
+	runner, cli := runtimeCLI.runner, runtimeCLI.bin
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "fern.fern")
-	cli := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
 	check := func(t *testing.T, name, src string) (string, int) {
 		t.Helper()
