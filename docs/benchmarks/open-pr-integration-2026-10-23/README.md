@@ -40,3 +40,8 @@ The source growth adds 22,996 events, or 0.08 percent, to the earlier total.
 The source growth adds 5,712 bytes and nine crossings to the earlier report.
 The allocation and cliff baselines use these latest counts.
 `latest-selfhost-size-report.txt` retains the full emitted-size report.
+
+`selfhost-tls-http.txt` records the combined WASI HTTP emitted size of 19,593 bytes.
+This value comes from Perf run 40026009089 at source commit `160186731f229749a09aaaaf288e5e82c2767189`.
+The TLS branch moves this row relative to main.
+The full baseline update covers 29 distinct emitted-size rows.
