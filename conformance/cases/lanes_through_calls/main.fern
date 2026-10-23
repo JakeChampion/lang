@@ -1,0 +1,49 @@
+// A lane value keeps all of its lanes through each way the backends move it:
+// as the result of an inlined call, which is a copy of the callee's result,
+// as an argument to a call, and in a spill slot next to the scalars read out
+// of it. The kernels take their lanes through std/num's methods, so each one
+// is a chain of small calls.
+import "std/f64";
+import "std/num" as num;
+
+function poly[T: num.Mul + num.Sub](x: T): T {
+  return x.mul(x).sub(x);
+}
+
+function show4(tag: string, v: f32x4): void {
+  print(tag + " " + (__f32x4_lane(v, 0) as f64).to_string() + " " + (__f32x4_lane(v, 1) as f64).to_string() + " " + (__f32x4_lane(v, 2) as f64).to_string() + " " + (__f32x4_lane(v, 3) as f64).to_string());
+}
+
+function show2(tag: string, v: f64x2): void {
+  print(tag + " " + __f64x2_lane(v, 0).to_string() + " " + __f64x2_lane(v, 1).to_string());
+}
+
+// Each group of lanes goes out through poly and back with `__f32x4_with`,
+// whose four writes each read one lane of a spilled value.
+function run(xs: f32[]): f32[] {
+  let out: f32[] = xs;
+  let i: i32 = 0;
+  while (i + 4 <= out.len()) {
+    out = __f32x4_with(out, i, poly(__f32x4_load(out, i)));
+    i = i + 4;
+  }
+  return out;
+}
+
+function main(): i32 {
+  let fs: f32[] = [0.5, -2.0, 1.0, 3.0, 7.5, 2.0, -1.0, 4.0];
+  let v: f32x4 = __f32x4_load(fs, 0);
+  show4("once", poly(v));
+  show4("twice", poly(poly(__f32x4_load(fs, 4))));
+  let d: f64x2 = __f64x2_of(0.5, 3.0);
+  show2("f64x2", poly(poly(d)));
+  let r: f32[] = run(fs);
+  let k: i32 = 0;
+  let line: string = "loop";
+  while (k < r.len()) {
+    line = line + " " + (r[k] as f64).to_string();
+    k = k + 1;
+  }
+  print(line);
+  return 0;
+}

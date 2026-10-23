@@ -4,7 +4,7 @@ import "testing"
 
 // TestSelfHostFormatBytesIR covers std/format's format_bytes through the
 // self-hosted x86-64 compiler (a "self-host pending" audit gap): the if-ladder,
-// integer division, `i32.to_string()` and string concat. Each case checks the
+// integer division, `i64.to_string()` and string concat. Each case checks the
 // rendered bytes and returns 42; the interpreter agrees.
 func TestSelfHostFormatBytesIR(t *testing.T) {
 	cli := newStrictCLI(t)

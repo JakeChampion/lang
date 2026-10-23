@@ -137,7 +137,7 @@ func TestSelfHostNdarrayModuleOrigin(t *testing.T) {
 		}
 		entry := filepath.Join(dir, "main.fern")
 		out, err := runX86_64Bin(cli.runner, cli.bin, "-check", entry, t.TempDir()).CombinedOutput()
-		want := entry + ":1:1: error: unknown stdlib module \"std/ndarray\""
+		want := entry + ":1:1: error[E086]: unknown stdlib module \"std/ndarray\""
 		if err == nil || !strings.HasPrefix(string(out), want) {
 			t.Fatalf("-check against an empty stdlib: %v\n%s\nwant it refused with %q", err, out, want)
 		}

@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // TestSelfHostCLIX86_64 exercises compiler/fern.fern — the
@@ -2755,6 +2757,7 @@ function main(): i32 {
 	// Each is refused by the CLI's E066 target gate, on the capability no wasi
 	// profile grants.
 	t.Run("wasm-unsupported-builtin-names-the-builtin", func(t *testing.T) {
+		runtimeBin := e2eharness.RuntimeCLI(t)
 		for _, tc := range []struct {
 			name    string
 			src     string
@@ -2769,7 +2772,7 @@ function main(): i32 {
 				if err := os.WriteFile(srcPath, []byte(tc.src), 0o644); err != nil {
 					t.Fatalf("write src: %v", err)
 				}
-				cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", srcPath)
+				cmd := exec.Command(runtimeBin, "-target", "wasm32-wasi", "-emit", "asm", srcPath)
 				var stdout, stderr bytes.Buffer
 				cmd.Stdout = &stdout
 				cmd.Stderr = &stderr
@@ -2795,9 +2798,9 @@ function main(): i32 {
 		// backend through this very CLI, which is what makes the wasm refusal a
 		// backend limit rather than a rejected program.
 		srcPath := filepath.Join(dir, "unsupported_syscall-floor.fern")
-		out, code := runDriver(t, srcPath)
-		if code != 0 {
-			t.Fatalf("x86-64 refused a program it lowers: exit %d", code)
+		out, err := exec.Command(runtimeBin, "-target", "x86-64-linux", "-emit", "asm", srcPath).CombinedOutput()
+		if err != nil {
+			t.Fatalf("x86-64 refused a runtime program it lowers: %v\n%s", err, out)
 		}
 		if !strings.Contains(string(out), ".globl") {
 			t.Errorf("x86-64 emitted no assembly for the syscall program (%d bytes)", len(out))

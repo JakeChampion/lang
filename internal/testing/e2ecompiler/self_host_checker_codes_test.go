@@ -4765,7 +4765,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"bound-dest-return-e021", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction f(): string[] { return rest(iter.range(0, 5)); }\nfunction main(): i32 { return 0; }\n"},
 		{"bound-dest-option-e021", "import \"core/iter\";\nfunction main(): i32 { let m: Option[string] = iter.nth(iter.range(0, 5), 1); return 0; }\n"},
 		{"bound-dest-generic-impl-e021", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction main(): i32 { let xs: f64[] = [1.5]; let w: string[] = rest(iter.of(xs)); return 0; }\n"},
-		{"bound-lambda-binds-e021", "import \"core/iter\";\nfunction main(): i32 { return iter.count_by(iter.range(0, 5), (x: string): boolean => true); }\n"},
+		{"bound-lambda-binds-e021", "import \"core/iter\";\nfunction main(): i32 { return iter.count_where(iter.range(0, 5), (x: string): boolean => true); }\n"},
 		{"bound-qualified-infers-e003", "import \"core/iter\";\nfunction grab[T, I: iter.Iterator[T]](it: I): Option[T] { return iter.nth(it, 0); }\nfunction main(): i32 { let r = grab(iter.range(0, 3)); let x: string = r; return 0; }\n"},
 		{"bound-qualified-dest-e021", "import \"core/iter\";\nfunction grab[T, I: iter.Iterator[T]](it: I): Option[T] { return iter.nth(it, 0); }\nfunction main(): i32 { let y: Option[string] = grab(iter.range(0, 3)); return 0; }\n"},
 		// A value-`if` or value-`match` arm is read at the destination too

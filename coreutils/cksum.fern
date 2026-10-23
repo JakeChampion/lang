@@ -187,10 +187,10 @@ function plain_value(p: Plain): u32 {
 function plain_count(p: Plain): u64 {
   match (p) {
     PCrc(c) => {
-      return c.len();
+      return c.byte_count();
     },
     PCrc32(c) => {
-      return c.len();
+      return c.byte_count();
     },
     PBsd(c) => {
       return c.blocks();

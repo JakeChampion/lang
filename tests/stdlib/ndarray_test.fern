@@ -1,5 +1,6 @@
 import "std/test";
 import "std/ndarray" as ndarray;
+import "std/option";
 
 // tests/stdlib/ndarray_test.fern — pure-Fern coverage of std/ndarray:
 // every structural operation against the flat construction it was built
@@ -34,10 +35,22 @@ function test_from_flat_indexes_row_major(): test.TestOutcome {
   if (a.strides()[0] != 4 || a.strides()[1] != 1) {
     return test.fail("strides");
   }
-  if (a.get([2, 1]) != 9) {
+  if (a.get_unchecked([2, 1]) != 9) {
     return test.fail("get");
   }
   return test.assert_true(a.is_row_major() && a.is_packed());
+}
+
+// `get` answers None for a bad index rather than trapping.
+function test_get_is_none_out_of_range(): test.TestOutcome {
+  let a: ndarray.NdArray[i32] = grid();
+  if (a.get([2, 1]).unwrap_or(-1) != 9) {
+    return test.fail("in range");
+  }
+  if (a.get([3, 0]).is_some() || a.get([0, -1]).is_some()) {
+    return test.fail("out of bounds");
+  }
+  return test.assert_true(a.get([1]).is_none() && a.get([0, 0, 0]).is_none());
 }
 
 function test_transpose_swaps_indices(): test.TestOutcome {
@@ -45,13 +58,13 @@ function test_transpose_swaps_indices(): test.TestOutcome {
   if (t.shape()[0] != 4 || t.shape()[1] != 3) {
     return test.fail("shape");
   }
-  if (t.get([1, 2]) != 9) {
+  if (t.get_unchecked([1, 2]) != 9) {
     return test.fail("get");
   }
   if (t.is_row_major()) {
     return test.fail("a transpose is not row-major");
   }
-  return test.assert_eq(t.transpose().get([2, 1]), 9);
+  return test.assert_eq(t.transpose().get_unchecked([2, 1]), 9);
 }
 
 function test_permute_is_the_general_transpose(): test.TestOutcome {
@@ -60,15 +73,15 @@ function test_permute_is_the_general_transpose(): test.TestOutcome {
   if (p.shape()[0] != 4 || p.shape()[1] != 2 || p.shape()[2] != 3) {
     return test.fail("shape");
   }
-  return test.assert_eq(p.get([3, 1, 2]), a.get([1, 2, 3]));
+  return test.assert_eq(p.get_unchecked([3, 1, 2]), a.get_unchecked([1, 2, 3]));
 }
 
 function test_reverse_flips_one_axis(): test.TestOutcome {
   let r: ndarray.NdArray[i32] = grid().reverse(1);
-  if (r.get([0, 0]) != 3 || r.get([2, 3]) != 8) {
+  if (r.get_unchecked([0, 0]) != 3 || r.get_unchecked([2, 3]) != 8) {
     return test.fail("reversed reads");
   }
-  if (r.reverse(1).get([0, 0]) != 0) {
+  if (r.reverse(1).get_unchecked([0, 0]) != 0) {
     return test.fail("reversed twice");
   }
   // Materializing walks the negative stride from the far end.
@@ -77,37 +90,37 @@ function test_reverse_flips_one_axis(): test.TestOutcome {
     return test.fail("to_flat of a reverse");
   }
   let both: ndarray.NdArray[i32] = grid().reverse(0).reverse(1).packed();
-  if (!both.is_packed() || both.get([0, 0]) != 11) {
+  if (!both.is_packed() || both.get_unchecked([0, 0]) != 11) {
     return test.fail("packed of a double reverse");
   }
-  return test.assert_eq(both.get([2, 3]), 0);
+  return test.assert_eq(both.get_unchecked([2, 3]), 0);
 }
 
 function test_slice_and_select_are_partial_views(): test.TestOutcome {
   let a: ndarray.NdArray[i32] = grid();
   let s: ndarray.NdArray[i32] = a.slice(1, 1, 3);
-  if (s.shape()[1] != 2 || s.get([2, 1]) != 10) {
+  if (s.shape()[1] != 2 || s.get_unchecked([2, 1]) != 10) {
     return test.fail("slice");
   }
   let row: ndarray.NdArray[i32] = a.select(0, 2);
-  if (row.rank() != 1 || row.get([3]) != 11) {
+  if (row.rank() != 1 || row.get_unchecked([3]) != 11) {
     return test.fail("select a row");
   }
   let col: ndarray.NdArray[i32] = a.select(1, 1);
-  if (col.rank() != 1 || col.get([2]) != 9) {
+  if (col.rank() != 1 || col.get_unchecked([2]) != 9) {
     return test.fail("select a column");
   }
-  return test.assert_eq(a.transpose().select(0, 1).get([2]), 9);
+  return test.assert_eq(a.transpose().select(0, 1).get_unchecked([2]), 9);
 }
 
 function test_reshape_keeps_reading_order(): test.TestOutcome {
   let a: ndarray.NdArray[i32] = grid();
   let flat: ndarray.NdArray[i32] = a.reshape([12]);
-  if (flat.get([5]) != 5) {
+  if (flat.get_unchecked([5]) != 5) {
     return test.fail("row-major reshape");
   }
   let t: ndarray.NdArray[i32] = a.transpose().reshape([12]);
-  return test.assert_eq(t.get([1]), 4);
+  return test.assert_eq(t.get_unchecked([1]), 4);
 }
 
 function test_to_flat_and_packed(): test.TestOutcome {
@@ -121,7 +134,7 @@ function test_to_flat_and_packed(): test.TestOutcome {
     return test.fail("a transpose is not packed");
   }
   let p: ndarray.NdArray[i32] = t.packed();
-  if (!p.is_packed() || p.get([1, 2]) != 9) {
+  if (!p.is_packed() || p.get_unchecked([1, 2]) != 9) {
     return test.fail("packed");
   }
   return test.assert_eq(a.to_flat()[7], 7);
@@ -129,7 +142,7 @@ function test_to_flat_and_packed(): test.TestOutcome {
 
 function test_rank_zero_and_empty(): test.TestOutcome {
   let z: ndarray.NdArray[i32] = ndarray.from_flat([7], []);
-  if (z.rank() != 0 || z.len() != 1 || z.get([]) != 7) {
+  if (z.rank() != 0 || z.len() != 1 || z.get_unchecked([]) != 7) {
     return test.fail("rank 0");
   }
   let e: ndarray.NdArray[i32] = grid().slice(0, 1, 1);
@@ -146,14 +159,14 @@ function add(acc: i32, x: i32): i32 {
 function test_map_and_zip_with_are_elementwise(): test.TestOutcome {
   let a: ndarray.NdArray[i32] = grid();
   let m: ndarray.NdArray[i32] = a.transpose().map((x: i32): i32 => x * 2);
-  if (m.shape()[0] != 4 || !m.is_packed() || m.get([1, 2]) != 18) {
+  if (m.shape()[0] != 4 || !m.is_packed() || m.get_unchecked([1, 2]) != 18) {
     return test.fail("map of a transpose");
   }
   let z: ndarray.NdArray[i32] = a.zip_with(a.map((x: i32): i32 => x * 3), (x: i32, y: i32): i32 => y - x);
-  if (z.get([2, 3]) != 22) {
+  if (z.get_unchecked([2, 3]) != 22) {
     return test.fail("zip_with");
   }
-  return test.assert_eq(a.zip_with(a.reverse(1), add).get([0, 0]), 3);
+  return test.assert_eq(a.zip_with(a.reverse(1), add).get_unchecked([0, 0]), 3);
 }
 
 function test_fold_all_reads_in_order(): test.TestOutcome {
@@ -175,25 +188,25 @@ function test_fold_all_reads_in_order(): test.TestOutcome {
 function test_reduce_axis_drops_the_axis(): test.TestOutcome {
   let a: ndarray.NdArray[i32] = grid();
   let rows: ndarray.NdArray[i32] = a.reduce_axis(1, 0, add);
-  if (rows.rank() != 1 || rows.shape()[0] != 3 || rows.get([2]) != 38) {
+  if (rows.rank() != 1 || rows.shape()[0] != 3 || rows.get_unchecked([2]) != 38) {
     return test.fail("along axis 1");
   }
   let cols: ndarray.NdArray[i32] = a.reduce_axis(0, 0, add);
-  if (cols.shape()[0] != 4 || cols.get([1]) != 15) {
+  if (cols.shape()[0] != 4 || cols.get_unchecked([1]) != 15) {
     return test.fail("along axis 0");
   }
   // Increasing index order along the axis, on a strided handle too.
   let ordered: ndarray.NdArray[i32] = a.transpose().reduce_axis(0, 0, (acc: i32, x: i32): i32 => acc * 100 + x);
-  if (ordered.get([1]) != 4050607) {
+  if (ordered.get_unchecked([1]) != 4050607) {
     return test.fail("order along the axis");
   }
   // A reversed handle reads its axis against storage order.
   let backwards: ndarray.NdArray[i32] = a.reverse(1).reduce_axis(1, 0, (acc: i32, x: i32): i32 => acc * 10 + x);
-  if (backwards.get([0]) != 3210) {
+  if (backwards.get_unchecked([0]) != 3210) {
     return test.fail("order along a reversed axis");
   }
   let one: ndarray.NdArray[i32] = rows.reduce_axis(0, 0, add);
-  return test.assert_true(one.rank() == 0 && one.get([]) == 66);
+  return test.assert_true(one.rank() == 0 && one.get_unchecked([]) == 66);
 }
 
 function test_scan_axis_keeps_the_axis(): test.TestOutcome {
@@ -202,15 +215,15 @@ function test_scan_axis_keeps_the_axis(): test.TestOutcome {
   if (s.shape()[0] != 3 || s.shape()[1] != 4 || !s.is_packed()) {
     return test.fail("shape");
   }
-  if (s.get([1, 0]) != 4 || s.get([1, 3]) != 22) {
+  if (s.get_unchecked([1, 0]) != 4 || s.get_unchecked([1, 3]) != 22) {
     return test.fail("prefix along axis 1");
   }
   let s0: ndarray.NdArray[i32] = a.transpose().scan_axis(0, 0, add);
-  if (s0.get([3, 2]) != 38) {
+  if (s0.get_unchecked([3, 2]) != 38) {
     return test.fail("prefix along axis 0 of a transpose");
   }
   let sr: ndarray.NdArray[i32] = a.reverse(1).scan_axis(1, 0, (acc: i32, x: i32): i32 => acc * 10 + x);
-  return test.assert_eq(sr.get([0, 2]), 321);
+  return test.assert_eq(sr.get_unchecked([0, 2]), 321);
 }
 
 function test_broadcast_to_is_a_view(): test.TestOutcome {
@@ -219,7 +232,7 @@ function test_broadcast_to_is_a_view(): test.TestOutcome {
   if (wide.rank() != 2 || wide.strides()[0] != 0 || wide.strides()[1] != 1) {
     return test.fail("stretched axis");
   }
-  if (wide.get([0, 3]) != 3 || wide.get([2, 3]) != 3 || wide.get([2, 0]) != 0) {
+  if (wide.get_unchecked([0, 3]) != 3 || wide.get_unchecked([2, 3]) != 3 || wide.get_unchecked([2, 0]) != 0) {
     return test.fail("reads");
   }
   if (wide.is_row_major() || wide.is_packed()) {
@@ -244,14 +257,14 @@ function test_broadcast_to_is_a_view(): test.TestOutcome {
   if (f.len() != 12 || f[4] != 0 || f[11] != 3) {
     return test.fail("to_flat");
   }
-  if (wide.transpose().get([3, 1]) != 3) {
+  if (wide.transpose().get_unchecked([3, 1]) != 3) {
     return test.fail("transpose of a broadcast");
   }
   let bs: i32[] = ndarray.broadcast_shape([3, 1], [1, 4]);
   if (bs.len() != 2 || bs[0] != 3 || bs[1] != 4) {
     return test.fail("broadcast_shape");
   }
-  return test.assert_eq(wide.reduce_axis(0, 0, add).get([3]), 9);
+  return test.assert_eq(wide.reduce_axis(0, 0, add).get_unchecked([3]), 9);
 }
 
 function test_zip_with_broadcasts(): test.TestOutcome {
@@ -260,22 +273,22 @@ function test_zip_with_broadcasts(): test.TestOutcome {
   let col: ndarray.NdArray[i32] = ndarray.from_flat(build(3), [3, 1]);
   let scalar: ndarray.NdArray[i32] = ndarray.from_flat([10], []);
   let minus_row: ndarray.NdArray[i32] = a.zip_with(row, (x: i32, y: i32): i32 => x - y);
-  if (minus_row.shape()[0] != 3 || minus_row.get([2, 3]) != 8 || minus_row.get([1, 0]) != 4) {
+  if (minus_row.shape()[0] != 3 || minus_row.get_unchecked([2, 3]) != 8 || minus_row.get_unchecked([1, 0]) != 4) {
     return test.fail("row");
   }
   let minus_col: ndarray.NdArray[i32] = a.zip_with(col, (x: i32, y: i32): i32 => x - 4 * y);
-  if (minus_col.get([2, 3]) != 3 || minus_col.get([1, 1]) != 1) {
+  if (minus_col.get_unchecked([2, 3]) != 3 || minus_col.get_unchecked([1, 1]) != 1) {
     return test.fail("column");
   }
   let scaled: ndarray.NdArray[i32] = scalar.zip_with(a, (x: i32, y: i32): i32 => x * y);
-  if (scaled.rank() != 2 || scaled.get([2, 3]) != 110) {
+  if (scaled.rank() != 2 || scaled.get_unchecked([2, 3]) != 110) {
     return test.fail("scalar");
   }
   let outer: ndarray.NdArray[i32] = col.zip_with(row, (x: i32, y: i32): i32 => x * y);
   if (outer.shape()[0] != 3 || outer.shape()[1] != 4) {
     return test.fail("outer shape");
   }
-  return test.assert_eq(outer.get([2, 3]), 6);
+  return test.assert_eq(outer.get_unchecked([2, 3]), 6);
 }
 
 function mul(x: i32, y: i32): i32 {
@@ -289,34 +302,34 @@ function test_outer_pairs_every_element(): test.TestOutcome {
   if (o.rank() != 2 || o.shape()[0] != 3 || o.shape()[1] != 4 || !o.is_packed()) {
     return test.fail("shape");
   }
-  if (o.get([2, 3]) != 6 || o.get([1, 2]) != 2 || o.get([0, 3]) != 0) {
+  if (o.get_unchecked([2, 3]) != 6 || o.get_unchecked([1, 2]) != 2 || o.get_unchecked([0, 3]) != 0) {
     return test.fail("pairs");
   }
   let o3: ndarray.NdArray[i32] = grid().outer(v, add);
-  if (o3.rank() != 3 || o3.shape()[2] != 3 || o3.get([1, 2, 1]) != 7) {
+  if (o3.rank() != 3 || o3.shape()[2] != 3 || o3.get_unchecked([1, 2, 1]) != 7) {
     return test.fail("rank 2 by rank 1");
   }
-  return test.assert_eq(v.outer(v, (x: i32, y: i32): i32 => x - y).get([0, 2]), -2);
+  return test.assert_eq(v.outer(v, (x: i32, y: i32): i32 => x - y).get_unchecked([0, 2]), -2);
 }
 
 function test_inner_contracts_last_against_first(): test.TestOutcome {
   let a: ndarray.NdArray[i32] = grid();
   let v: ndarray.NdArray[i32] = ndarray.from_flat(build(4), [4]);
   let dot: ndarray.NdArray[i32] = v.inner(v, 0, mul, add);
-  if (dot.rank() != 0 || dot.get([]) != 14) {
+  if (dot.rank() != 0 || dot.get_unchecked([]) != 14) {
     return test.fail("dot product");
   }
   let rows: ndarray.NdArray[i32] = a.inner(ndarray.from_flat([1, 1, 1, 1], [4]), 0, mul, add);
-  if (rows.rank() != 1 || rows.shape()[0] != 3 || rows.get([2]) != 38) {
+  if (rows.rank() != 1 || rows.shape()[0] != 3 || rows.get_unchecked([2]) != 38) {
     return test.fail("matrix times vector");
   }
   let mm: ndarray.NdArray[i32] = a.inner(a.transpose(), 0, mul, add);
-  if (mm.rank() != 2 || mm.shape()[0] != 3 || mm.shape()[1] != 3 || mm.get([1, 2]) != 214 || mm.get([2, 1]) != 214) {
+  if (mm.rank() != 2 || mm.shape()[0] != 3 || mm.shape()[1] != 3 || mm.get_unchecked([1, 2]) != 214 || mm.get_unchecked([2, 1]) != 214) {
     return test.fail("matrix product");
   }
   // Increasing index order along the contracted axis, through a reversed operand.
   let ordered: ndarray.NdArray[i32] = v.inner(v.reverse(0), 0, add, (acc: i32, p: i32): i32 => acc * 10 + p);
-  return test.assert_eq(ordered.get([]), 3333);
+  return test.assert_eq(ordered.get_unchecked([]), 3333);
 }
 
 // map_rank splits the shape at rank - k: the leading axes are the frame, the
@@ -331,29 +344,29 @@ function test_map_rank_maps_every_cell(): test.TestOutcome {
   if (sums.rank() != 1 || sums.shape()[0] != 2) {
     return test.fail("map_rank frame shape");
   }
-  if (sums.get([0]) != reduced.get([0]) || sums.get([1]) != reduced.get([1])) {
+  if (sums.get_unchecked([0]) != reduced.get_unchecked([0]) || sums.get_unchecked([1]) != reduced.get_unchecked([1])) {
     return test.fail("map_rank agrees with reduce_axis");
   }
   // A cell result wider than one element brings its axis back.
   let pairs: ndarray.NdArray[i32] = a.map_rank(1, first_two);
-  if (pairs.rank() != 2 || pairs.shape()[1] != 2 || pairs.get([1, 0]) != 4) {
+  if (pairs.rank() != 2 || pairs.shape()[1] != 2 || pairs.get_unchecked([1, 0]) != 4) {
     return test.fail("map_rank cell result shape");
   }
   // k == rank is one cell, the whole handle; k == 0 gives every element its
   // own rank-0 cell. Neither is special-cased.
   let whole: ndarray.NdArray[i32] = a.map_rank(2, sum_cell);
-  if (whole.rank() != 0 || whole.get([]) != 21) {
+  if (whole.rank() != 0 || whole.get_unchecked([]) != 21) {
     return test.fail("map_rank at k == rank");
   }
   let each: ndarray.NdArray[i32] = a.map_rank(0, triple);
-  if (each.rank() != 2 || each.get([1, 2]) != 18) {
+  if (each.rank() != 2 || each.get_unchecked([1, 2]) != 18) {
     return test.fail("map_rank at k == 0");
   }
   // A reversed FRAME axis: cells must arrive in index order, not storage
   // order, so the first result is the reversed handle's first row.
   let rfr: ndarray.NdArray[i32] = a.reverse(0);
   let rvr: ndarray.NdArray[i32] = rfr.map_rank(1, first_one);
-  if (rvr.get([0]) != 4 || rvr.get([1]) != 1) {
+  if (rvr.get_unchecked([0]) != 4 || rvr.get_unchecked([1]) != 1) {
     return test.fail("map_rank walks cells in index order");
   }
   // No cells: f never runs, so there is no cell result shape to learn and
@@ -367,20 +380,21 @@ function sum_cell(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
 }
 
 function first_two(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
-  return ndarray.from_flat([c.get([0]), c.get([1])], [2]);
+  return ndarray.from_flat([c.get_unchecked([0]), c.get_unchecked([1])], [2]);
 }
 
 function first_one(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
-  return ndarray.from_flat([c.get([0])], []);
+  return ndarray.from_flat([c.get_unchecked([0])], []);
 }
 
 function triple(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
-  return ndarray.from_flat([c.get([]) * 3], []);
+  return ndarray.from_flat([c.get_unchecked([]) * 3], []);
 }
 
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/ndarray");
   r = r.it("from_flat indexes row-major", test_from_flat_indexes_row_major);
+  r = r.it("get is None out of range", test_get_is_none_out_of_range);
   r = r.it("transpose swaps indices", test_transpose_swaps_indices);
   r = r.it("permute is the general transpose", test_permute_is_the_general_transpose);
   r = r.it("reverse flips one axis", test_reverse_flips_one_axis);

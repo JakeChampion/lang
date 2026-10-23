@@ -283,7 +283,7 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 // takes no unit. For a recursive enum: `pick` hands back one tree and drops the
 // other, `depth` walks its tree and must not drop it, and neither may
 // `visit_depth`, which also hands each node to a function value that lends it;
-// `hand_to` gives its tree to a function value's `own` slot. `names_of` folds
+// `hand_to` gives its owned tree to a function value's `own` slot. `names_of` folds
 // a tree into a list of strings through its own recursive call: its result
 // holds references but never a tree, so it lends the tree too. And for a receiver:
 // `advance` builds a new cursor out of its parameter and must drop it, `peek`
@@ -316,7 +316,7 @@ function names_of(t: Tree, own acc: string[]): string[] {
     match (t) { Tip(_) => { return acc.append("tip"); }, Fork(l, r) => { return names_of(r, names_of(l, acc)); } }
 }
 @noinline
-function hand_to(t: Tree, f: (own Tree) => Tree): Tree { return f(t); }
+function hand_to(own t: Tree, f: (own Tree) => Tree): Tree { return f(t); }
 function keep_tree(own t: Tree): Tree { return t; }
 @noinline
 function pick(a: Tree, b: Tree, k: i32): Tree {

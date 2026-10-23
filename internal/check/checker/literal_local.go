@@ -182,7 +182,7 @@ func (c *checker) bindEnumLiteralPayloads(tag ast.Expr, ed *ast.EnumDecl, varian
 			set := func(w ast.NumberType) {
 				decl.Type = w
 				types[p] = w
-				armScope.names[decl.Name] = w
+				armScope.set(decl.Name, w)
 			}
 			if ll.fixed {
 				set(ll.width)
@@ -324,7 +324,7 @@ func (c *checker) fixLitLocal(ll *litLocal, w ast.NumberType, pos ast.Position) 
 			ll.decl.Type = nt
 			c.info.VarTypes[ll.decl] = nt
 			if ll.scope.vars[ll.decl.Name] == ll.decl {
-				ll.scope.names[ll.decl.Name] = nt
+				ll.scope.set(ll.decl.Name, nt)
 			}
 			c.settleNumeric(ll.decl.Init, nt)
 		} else {
@@ -334,7 +334,7 @@ func (c *checker) fixLitLocal(ll *litLocal, w ast.NumberType, pos ast.Position) 
 		ll.decl.Type = w
 		c.info.VarTypes[ll.decl] = w
 		if ll.scope.vars[ll.decl.Name] == ll.decl {
-			ll.scope.names[ll.decl.Name] = w
+			ll.scope.set(ll.decl.Name, w)
 		}
 		c.settleInt(ll.decl.Init, w)
 	}
@@ -355,7 +355,7 @@ func (c *checker) fixLitStructArg(ll *litLocal, w ast.NumberType) {
 	ll.decl.Type = nt
 	c.info.VarTypes[ll.decl] = nt
 	if ll.scope.vars[ll.decl.Name] == ll.decl {
-		ll.scope.names[ll.decl.Name] = nt
+		ll.scope.set(ll.decl.Name, nt)
 	}
 	sl, ok := ll.decl.Init.(*ast.StructLit)
 	sd := c.info.Structs[st.Name]

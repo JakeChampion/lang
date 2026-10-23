@@ -17,6 +17,7 @@ import "testing"
 
 const stringTwoWaySearchProg = `
 import "std/string";
+import "std/option";
 
 // Naive leftmost-match reference.
 function ref_find(s: string, needle: string): i32 {
@@ -92,7 +93,7 @@ function main(): i32 {
                     let first: i32 = ref_find(hay, nee);
                     let want: i32[] = ref_positions(hay, nee);
 
-                    if (hay.index_of(nee) != first) { return 1; }
+                    if (hay.index_of(nee).unwrap_or(-1) != first) { return 1; }
                     if (hay.contains(nee) != (first >= 0)) { return 2; }
 
                     let got: i32[] = hay.find_all(nee);
@@ -153,22 +154,22 @@ function main(): i32 {
     let a30: string = "";
     let i: i32 = 0;
     while (i < 30) { a30 = a30 + "a"; i = i + 1; }
-    if (a30.index_of(a30 + "b") != (0 - 1)) { return 20; }
-    if ((a30 + "b").index_of(a30 + "b") != 0) { return 21; }
-    if ((a30 + a30 + "b").index_of(a30 + "b") != 30) { return 22; }
-    if ("abababababab".index_of("ababab") != 0) { return 23; }
-    if ("xabababababab".index_of("bababa") != 2) { return 24; }
+    if (a30.index_of(a30 + "b").is_some()) { return 20; }
+    if ((a30 + "b").index_of(a30 + "b").unwrap_or(-1) != 0) { return 21; }
+    if ((a30 + a30 + "b").index_of(a30 + "b").unwrap_or(-1) != 30) { return 22; }
+    if ("abababababab".index_of("ababab").unwrap_or(-1) != 0) { return 23; }
+    if ("xabababababab".index_of("bababa").unwrap_or(-1) != 2) { return 24; }
     if ("mississippi".count_matches("ss") != 2) { return 25; }
     if ("mississippi".replace("ss", "SS") != "miSSiSSippi") { return 26; }
 
     // Empty-needle contracts, unchanged by the Two-Way rewrite.
-    if ("abc".index_of("") != 0) { return 30; }
+    if ("abc".index_of("").unwrap_or(-1) != 0) { return 30; }
     if (!"abc".contains("")) { return 31; }
     if ("abc".count("") != 0) { return 32; }
     if ("abc".find_all("").len() != 0) { return 33; }
     if ("abc".replace("", "X") != "abc") { return 34; }
-    if ("".index_of("a") != (0 - 1)) { return 35; }
-    if ("abc".last_index_of("") != 3) { return 36; }
+    if ("".index_of("a").is_some()) { return 35; }
+    if ("abc".last_index_of("").unwrap_or(-1) != 3) { return 36; }
 
     return 42;
 }

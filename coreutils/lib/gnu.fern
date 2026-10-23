@@ -1077,10 +1077,9 @@ function shell_quote(s: string, elide: boolean, escapes: boolean, extra: string)
 // all — which a parent writing environ directly can leave — is quoted
 // whole.
 pub function env_entry(entry: string, style: i32): string {
-  let eq: i32 = entry.index_of("=");
-  if (eq < 0) {
+  let Some(eq) = entry.index_of("=") else {
     return quote_style(entry, style);
-  }
+  };
   let name: string = quote_style(slice_unchecked(entry, 0, eq) + "", style);
   if (eq + 1 == entry.len()) {
     return name + "=";
@@ -1475,8 +1474,7 @@ function sys_write(s: Stdio, data: [u8]): Stdio {
 // whether a value was glued on.
 function long_parts(a: string): (string, boolean) {
   let body: str = slice_unchecked(a, 2, a.len());
-  let eq: i32 = body.index_of("=");
-  if (eq >= 0) {
+  if let Some(eq) = body.index_of("=") {
     return (slice_unchecked(body, 0, eq) + "", true);
   }
   return (body + "", false);
@@ -1872,9 +1870,10 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
   let name: string = parts.0;
   let glued: boolean = parts.1;
   let value: string = "";
-  if (glued) {
-    let eq: i32 = a.index_of("=");
-    value = slice_unchecked(a, eq + 1, a.len()) + "";
+  if let Some(eq) = a.index_of("=") {
+    if (glued) {
+      value = slice_unchecked(a, eq + 1, a.len()) + "";
+    }
   }
   let found: i32 = 0 - 1;
   let k: i32 = 0;
@@ -2324,7 +2323,7 @@ pub function resolve_command(cmd: string, envp: string[]): Exec {
   if (cmd.len() == 0) {
     return Exec { path: "", errno: 2 };
   }
-  if (cmd.index_of("/") >= 0) {
+  if (cmd.contains("/")) {
     return Exec { path: cmd, errno: 0 };
   }
   // An ABSENT PATH is not an empty one. execvp falls back to a built-in list

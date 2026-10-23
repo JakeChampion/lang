@@ -98,7 +98,7 @@ function test_answer_at_its_time(): test.TestOutcome {
     return test.fail("the connection was left open");
   }
   let sent: string = __sent_text(n, 0);
-  if (!sent.starts_with("GET / HTTP/1.1\r\n") || sent.index_of("Host: example.test\r\n") < 0) {
+  if (!sent.starts_with("GET / HTTP/1.1\r\n") || !sent.contains("Host: example.test\r\n")) {
     return test.fail("request: " + sent);
   }
   return test.assert_eq(d.now_ns(), 25 * MS);
@@ -250,10 +250,10 @@ function test_cross_origin_drops_credentials(): test.TestOutcome {
   if (__body(got) != "there") {
     return test.fail(__body(got));
   }
-  if (__sent_text(n, 0).index_of("Authorization: Bearer t") < 0) {
+  if (!__sent_text(n, 0).contains("Authorization: Bearer t")) {
     return test.fail("first request lost its credentials");
   }
-  if (__sent_text(n, 1).to_lower().index_of("authorization") >= 0) {
+  if (__sent_text(n, 1).to_lower().contains("authorization")) {
     return test.fail("credentials crossed origins: " + __sent_text(n, 1));
   }
   return test.assert_contains(__sent_text(n, 1), "X-Trace: kept");
@@ -416,7 +416,7 @@ function test_gzip_decoded(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzip_answer(__gzip_stored("unzipped text"))]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/"), __open());
-  if (__sent_text(n, 0).index_of("Accept-Encoding: gzip") < 0) {
+  if (!__sent_text(n, 0).contains("Accept-Encoding: gzip")) {
     return test.fail("the client did not ask for gzip");
   }
   return test.assert_eq(__body(got), "unzipped text");
@@ -634,7 +634,7 @@ function test_proxied(): test.TestOutcome {
   if (!sent.starts_with("GET http://example.test/ HTTP/1.1\r\nHost: example.test\r\n")) {
     return test.fail("request: " + sent);
   }
-  if (sent.index_of("Proxy-Authorization: Basic dTo=\r\n") < 0) {
+  if (!sent.contains("Proxy-Authorization: Basic dTo=\r\n")) {
     return test.fail("request: " + sent);
   }
   return test.pass();
@@ -660,7 +660,7 @@ function test_caller_proxy_credentials(): test.TestOutcome {
   let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "via proxy")]);
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_header("Proxy-Authorization", "Basic b3du"), __via_proxy(false, "", false));
   let sent: string = __sent_text(n, 0);
-  if (__body(got) != "via proxy" || sent.index_of("Basic b3du\r\n") < 0 || sent.index_of("dTo=") >= 0) {
+  if (__body(got) != "via proxy" || !sent.contains("Basic b3du\r\n") || sent.contains("dTo=")) {
     return test.fail("request: " + sent);
   }
   return test.pass();
@@ -678,7 +678,7 @@ function test_caller_fields_filtered(): test.TestOutcome {
   if (__body(got) != "ok") {
     return test.fail("body: " + __body(got));
   }
-  if (sent.index_of("X-Trace") >= 0 || sent.index_of("Connection") >= 0 || sent.index_of("other.test") >= 0 || sent.index_of("Content-Length") >= 0 || sent.index_of("TE:") >= 0) {
+  if (sent.contains("X-Trace") || sent.contains("Connection") || sent.contains("other.test") || sent.contains("Content-Length") || sent.contains("TE:")) {
     return test.fail("request: " + sent);
   }
   return test.assert_eq(sent, "GET / HTTP/1.1\r\nHost: example.test\r\nX-First: 1\r\nX-Last: 2\r\nAccept-Encoding: gzip, zstd, br\r\n\r\n");

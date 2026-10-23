@@ -49,8 +49,8 @@ func childFailure(err error) string {
 //
 // COST. Stage 1 is the expensive half and it runs NATIVELY (~3 min for 35 MB of
 // asm); the aarch64 link is ~5 s. Stage 2 is qemu, and the per-case cost is
-// dominated by stdlib LOADING rather than emit: ~55 s for a stdlib-importing
-// test against ~2 s for a bare compiler module. The `self` case — gen2
+// dominated by stdlib LOADING rather than emit, so each case loads the stdlib
+// and costs up to ~55 s. The `self` case — gen2
 // recompiling the whole compiler under qemu — is far heavier again and is gated
 // behind FERN_STAGE2_SELF=1 rather than paid on every run.
 func TestSelfHostStage2FixpointArm64(t *testing.T) {
@@ -83,17 +83,18 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 	t.Logf("stage 1: self-hosted arm64 compiler asm = %d bytes", len(stage1Asm))
 	mmcArm64 := buildBinArm64(t, armgcc, dir, "mmc_arm64_stage2", string(stage1Asm))
 
-	// A span, not a sample. `lexer.fern` is a compiler module with no stdlib
-	// (cheap, and the shape gen1 itself is made of); the three test suites are
-	// the survivors of the deleted test's four inputs and carry stdlib
-	// transitive imports, floats and process/string helpers between them.
+	// A span, not a sample. `lexer.fern` is a compiler module (cheap, and the
+	// shape gen1 itself is made of) that imports std/utf8; the three test
+	// suites are the survivors of the deleted test's four inputs and carry
+	// stdlib transitive imports, floats and process/string helpers between
+	// them.
 	cases := []struct {
 		name    string
 		src     string
 		stdlib  bool
 		selfEnv bool
 	}{
-		{name: "lexer", src: "compiler/lexer.fern"},
+		{name: "lexer", src: "compiler/lexer.fern", stdlib: true},
 		{name: "sort_wider", src: "tests/stdlib/sort_wider_test.fern", stdlib: true},
 		{name: "float_math", src: "tests/stdlib/float_math_test.fern", stdlib: true},
 		{name: "process_assertions", src: "tests/stdlib/process_assertions_test.fern", stdlib: true},

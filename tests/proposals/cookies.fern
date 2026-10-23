@@ -51,10 +51,9 @@ struct Cookie { name: string, value: string }
 // ignored, and the distinction matters: `a` and `a=` must not be the same
 // thing, because the second is a real cookie whose value happens to be empty.
 function parse_pair(seg: string): Option[Cookie] {
-  let at: i32 = seg.index_of("=");
-  if (at < 0) {
+  let Some(at) = seg.index_of("=") else {
     return None;
-  }
+  };
   let name: string = seg.take(at).trim().to_owned();
   let value: string = seg.drop(at + 1).trim().to_owned();
   if (name.len() == 0) {
@@ -185,9 +184,12 @@ function test_whitespace_is_tolerated_everywhere(): test.TestOutcome {
               if (s > 0) {
                 built = built + ";";
               }
-              let at: i32 = segs[s].index_of("=");
-              let nm: string = segs[s].take(at).to_owned();
-              let vl: string = segs[s].drop(at + 1).to_owned();
+              let nm: string = "";
+              let vl: string = segs[s].to_owned();
+              if let Some(at) = segs[s].index_of("=") {
+                nm = segs[s].take(at).to_owned();
+                vl = segs[s].drop(at + 1).to_owned();
+              }
               built = built + p[a] + nm + p[b] + "=" + p[c] + vl + p[d];
               s = s + 1;
             }

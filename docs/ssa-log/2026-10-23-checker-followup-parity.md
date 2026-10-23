@@ -35,3 +35,20 @@ The full code table, message table, bundle differential, and diagnostic sequence
 The error corpus has no known exceptions.
 The full leak census, formatter corpus, runtime-unit checks, and five execution modes pass.
 The source checks, feature census, Go vet, and source format checks pass.
+
+## Integration checks
+
+The diagnostic walk reads the rewritten literal-match chain and retains each pattern's source position.
+It handles the temporary binding for a scrutinee that is not an identifier.
+Body diagnostics follow statement order, after signature and trait-object validation.
+An unresolved use callback retains the enclosing result contract.
+Method arguments inherit the receiver's concrete type arguments before a nested generic call is checked.
+
+Internal runtime probes now use `fern.run_runtime` through `drivers/runtime_run.fern`.
+This entry selects the runtime checker explicitly and retains the target and sandbox gates.
+The public compiler continues to reject private primitives in source programs.
+
+The expanded header comparisons and declaration-order checks pass locally.
+The generic-call, native syscall, WebAssembly refusal, and user-world composition regressions pass on the available targets.
+The runtime probes cover native execution, WebAssembly execution, and assembly emission for the native targets.
+The complete PR run supplies the remaining platform and performance checks.

@@ -3,25 +3,31 @@ package e2eharness
 import (
 	"fmt"
 	"strings"
+
+	"github.com/jakechampion/lang/internal/tables/strerror"
 )
 
 // NetAddrProbe exercises std/net's address and error layer: IPv4 and IPv6
 // parsing against RFC 4291 text, RFC 5952 canonical rendering, the
 // bracketed socket-address form, the range predicates, IPv4-mapped
-// unwrapping, and the errno tables on every target. Each check prints its
-// index and exits 1 on the first failure; 42 means every check held.
+// unwrapping, and the errno translation on every target: a `NetError`
+// answers in Linux numbering whatever the target numbers its errnos. Each
+// check prints its index and exits 1 on the first failure; 42 means every
+// check held.
 //
 // `NetError.Interrupted` and `NetError.Other` share their names with
 // `IoError`'s variants and user code has no spelling that names the
 // `std/net` ones (#10430), so the probe reaches them through
-// `error_from_errno` and matches them unqualified on a typed scrutinee.
+// `error_from_host` and matches them unqualified on a typed scrutinee.
 func NetAddrProbe() string {
 	var src strings.Builder
 	src.WriteString(`import "std/net";
+import "std/errno";
 import "std/error";
 import "std/option";
 import "core/cmp";
 
+` + HostErrnoFern() + `
 function v6rt(s: string, want: string): boolean {
     match (net.ipv6_parse(s)) {
         Some(ip) => { return ip.is_v6() && ip.to_string() == want; },
@@ -59,8 +65,9 @@ function show[T: cmp.Display](v: T): string { return v.to_string(); }
 function same[T: cmp.Eq](a: T, b: T): boolean { return a.eq(b); }
 function describe[E: error.Error](e: E): string { return e.message(); }
 function roundtrips(e: net.NetError): boolean {
-    let back: net.NetError = net.error_from_errno(0 - e.errno());
-    return back.eq(e) && net.error_from_errno(e.errno()).eq(e) && back.errno() == e.errno();
+    let host: i32 = host_errno(e.errno());
+    let back: net.NetError = net.error_from_host(0 - host);
+    return back.eq(e) && net.error_from_host(host).eq(e) && back.errno() == e.errno();
 }
 function is_other(e: net.NetError, want: i32): boolean {
     match (e) {
@@ -77,9 +84,11 @@ function is_interrupted(e: net.NetError): boolean {
 function on_wasi(): boolean {
     return target_os() == "wasi" || target_os() == "wasi-http";
 }
+function linux_numbered(): boolean {
+    return target_os() != "darwin" && !on_wasi();
+}
 function intr(): net.NetError {
-    if (on_wasi()) { return net.error_from_errno(27); }
-    return net.error_from_errno(4);
+    return net.error_from_host(host_errno(errno.EINTR));
 }
 function main(): i32 {
     let addr_in_use: net.NetError = AddrInUse;
@@ -92,9 +101,9 @@ function main(): i32 {
     let in_progress: net.NetError = InProgress;
     let net_unreach: net.NetError = NetworkUnreachable;
     let host_unreach: net.NetError = HostUnreachable;
-    let other_a: net.NetError = net.error_from_errno(12345);
-    let other_b: net.NetError = net.error_from_errno(-12345);
-    let other_c: net.NetError = net.error_from_errno(12346);
+    let other_a: net.NetError = net.error_from_host(12345);
+    let other_b: net.NetError = net.error_from_host(-12345);
+    let other_c: net.NetError = net.error_from_host(12346);
 `)
 	index := 0
 	check := func(cond string) {
@@ -195,29 +204,44 @@ function main(): i32 {
 	check(`net.ipv6([0 as u8, 1 as u8]).is_none()`)
 	check(`net.ipv6(net.ipv6_loopback().bytes()).is_some()`)
 	check(`net.ipv6_loopback().bytes().len() == 16 && net.ipv4_loopback().bytes().len() == 4`)
-	// Errors: every named variant round-trips through its errno on this
-	// target, in both signs.
+	// Errors: every named variant round-trips through the errno this target
+	// numbers it, in both signs.
 	for _, v := range []string{"addr_in_use", "addr_not_available", "refused", "reset", "aborted", "timed_out", "would_block", "in_progress", "net_unreach", "host_unreach"} {
 		check(fmt.Sprintf("roundtrips(%s)", v))
 	}
 	check(`is_interrupted(intr()) && roundtrips(intr())`)
-	check(`is_other(other_a, 12345) && is_other(other_b, 12345) && !is_other(other_c, 12345)`)
 	check(`!is_other(addr_in_use, 12345) && !is_interrupted(addr_in_use)`)
-	check(`other_b.errno() == 12345 && net.error_from_errno(0).errno() == 0`)
-	check(`is_other(net.error_from_errno(0 - 2147483647 - 1), 2147483647) && roundtrips(net.error_from_errno(0 - 2147483647 - 1))`)
-	check(`other_a.eq(other_b) && !other_a.eq(other_c) && same(other_a, other_b)`)
+	check(`net.error_from_host(0).errno() == 0`)
+	// An errno the strerror table does not name keeps its number where the
+	// target numbers as Linux does, and carries 0 elsewhere.
+	check(`!linux_numbered() || (is_other(other_a, 12345) && is_other(other_b, 12345) && !is_other(other_c, 12345))`)
+	check(`!linux_numbered() || (other_b.errno() == 12345 && show(other_a) == "Network error (errno 12345)")`)
+	check(`!linux_numbered() || (is_other(net.error_from_host(0 - 2147483647 - 1), 2147483647) && roundtrips(net.error_from_host(0 - 2147483647 - 1)))`)
+	check(`!linux_numbered() || (other_a.eq(other_b) && !other_a.eq(other_c) && same(other_a, other_b))`)
+	check(`!linux_numbered() || is_other(net.error_from_host(27), 27)`)
+	check(`linux_numbered() || (is_other(other_a, 0) && is_other(other_b, 0) && is_other(net.error_from_host(0 - 2147483647 - 1), 0))`)
 	check(`!addr_in_use.eq(addr_not_available) && !addr_in_use.eq(other_a) && !other_a.eq(addr_in_use)`)
 	check(`addr_in_use.message() == "Address already in use"`)
 	check(`refused.to_string() == "Connection refused"`)
 	check(`describe(host_unreach) == "No route to host"`)
 	check(`intr().message() == "Interrupted system call"`)
-	check(`show(other_a) == "Network error (errno 12345)"`)
 	check(`same(timed_out, timed_out)`)
-	// The table in force is the compile target's.
-	check(`target_os() != "linux" || (addr_in_use.errno() == 98 && would_block.errno() == 11 && intr().errno() == 4 && refused.errno() == 111)`)
-	check(`target_os() != "darwin" || (addr_in_use.errno() == 48 && would_block.errno() == 35 && intr().errno() == 4 && refused.errno() == 61)`)
-	check(`!on_wasi() || (addr_in_use.errno() == 3 && would_block.errno() == 6 && intr().errno() == 27 && refused.errno() == 14)`)
-	check(`on_wasi() || is_other(net.error_from_errno(27), 27) || target_os() == "darwin"`)
+	// The numbering is Linux's on every target, so std/errno's constants
+	// compare equal.
+	check(`addr_in_use.errno() == errno.EADDRINUSE && would_block.errno() == errno.EAGAIN && intr().errno() == errno.EINTR && refused.errno() == errno.ECONNREFUSED`)
+	check(`addr_in_use.errno() == 98 && would_block.errno() == 11 && intr().errno() == 4 && reset.errno() == 104`)
+	// errno.from_host reads every row of the table as this target numbers it.
+	for _, e := range strerror.Table {
+		if e.Linux == 0 {
+			continue
+		}
+		cond := fmt.Sprintf("errno.from_host(host_errno(%d)) == %d && errno.from_host(0 - host_errno(%d)) == %d", e.Linux, e.Linux, e.Linux, e.Linux)
+		if e.Wasi == 0 {
+			cond = "on_wasi() || " + cond
+		}
+		check(cond)
+	}
+	check(`target_os() != "darwin" || (errno.from_host(93) == errno.ENODATA && errno.from_host(102) == errno.ENOTSUP)`)
 	src.WriteString("    return 42;\n}\n")
 	return src.String()
 }

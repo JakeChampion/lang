@@ -64,7 +64,7 @@ func runVendor(start string) error {
 			}
 			depMan, err := manifest.Load(depDir)
 			if err != nil {
-				return fmt.Errorf("dependency %q: %w", name, err)
+				return err
 			}
 			key := name
 			if depMan != nil && depMan.Name != "" {
@@ -90,7 +90,7 @@ func runVendor(start string) error {
 		for _, rel := range root.Members {
 			mm, err := manifest.Load(root.MemberDir(rel))
 			if err != nil {
-				return fmt.Errorf("vendor: member %q: %w", rel, err)
+				return err
 			}
 			if mm == nil {
 				return fmt.Errorf("vendor: workspace member %q has no %s", rel, manifest.FileName)

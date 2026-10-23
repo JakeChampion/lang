@@ -8,29 +8,30 @@ import (
 )
 
 // A loop reads two array fields of a record's member, rebuilds the record
-// around an update of that member, and then walks one of the two arrays: the
-// shape of std/http/h3q's applied loop. semsink keeps the walked array's
-// first read rather than read it again from the record after the update, and
-// takes the update's donor as spent there. So the record dies at its update
-// and is rebuilt in its own box. Before, each call copied the record as well
-// as the member: 2,000 allocations over 1,000 calls. The member's copy stays.
+// around an update of that member, and then walks one of the two arrays,
+// keeping each element: the shape of std/http/h3q's applied loop. semsink
+// keeps the walked array's first read rather than read it again from the
+// record after the update, and takes the update's donor as spent there. So
+// the record dies at its update and is rebuilt in its own box. The planner
+// holds the walked array, so the member's second read is taken out of the
+// record and `taken` rebuilds it in its own box too. No call allocates.
 const keptReadProg = `import "std/i64";
-struct S { id: i64, actions: i32[], events: i64[], name: string }
-struct C { session: S, total: i64, n: i64 }
+struct S { id: i64, actions: i32[], events: string[], name: string }
+struct C { session: S, total: i64, last: string }
 
 @noinline function (s: S) taken(): S {
   return S { ...s, actions: [], events: [] };
 }
 
-@noinline function (c: C) on_event(e: i64): C {
-  return C { ...c, n: c.n + e };
+@noinline function (c: C) on_event(e: string): C {
+  return C { ...c, last: e };
 }
 
 @noinline function (c: C) applied(): C {
   let cur: C = c;
   while (true) {
     let a: i32[] = cur.session.actions;
-    let evs: i64[] = cur.session.events;
+    let evs: string[] = cur.session.events;
     if (a.len() == 0 && evs.len() == 0) {
       return cur;
     }
@@ -42,14 +43,14 @@ struct C { session: S, total: i64, n: i64 }
   return cur;
 }
 
-@noinline function (c: C) feed(acts: i32[], evs: i64[]): C {
+@noinline function (c: C) feed(acts: i32[], evs: string[]): C {
   return C { ...c, session: S { ...c.session, actions: acts, events: evs } };
 }
 
 function main(): i32 {
   let acts: i32[] = [1, 2, 3];
-  let evs: i64[] = [4 as i64, 5 as i64];
-  let c: C = C { session: S { id: 1 as i64, actions: [], events: [], name: "x" }, total: 0 as i64, n: 0 as i64 };
+  let evs: string[] = ["four", "five"];
+  let c: C = C { session: S { id: 1 as i64, actions: [], events: [], name: "x" }, total: 0 as i64, last: "" };
   c = c.feed(acts, evs).applied();
   let before: i64 = __heap_alloc_count();
   let i: i32 = 0;
@@ -58,8 +59,8 @@ function main(): i32 {
     i = i + 1;
   }
   let allocs: i64 = __heap_alloc_count() - before;
-  if (c.total != 3003 as i64 || c.n != 9009 as i64) {
-    print("wrong " + c.total.to_string() + " " + c.n.to_string());
+  if (c.total != 3003 as i64 || c.last != "five") {
+    print("wrong " + c.total.to_string() + " " + c.last);
     return 1;
   }
   print(allocs.to_string());
@@ -94,8 +95,8 @@ func TestSelfHostKeptReadPastUpdate(t *testing.T) {
 					t.Fatalf("sanitize=%v: %v: stdout %q; stderr %s", sanitize, err, &stdout, &stderr)
 				}
 				if !sanitize {
-					if got := stdout.String(); got != "1000\n" {
-						t.Errorf("1000 calls allocate %q times, want 1000: one copy of the member each", got)
+					if got := stdout.String(); got != "0\n" {
+						t.Errorf("1000 calls allocate %q times, want 0", got)
 					}
 					continue
 				}

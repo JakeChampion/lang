@@ -59,7 +59,7 @@ function mul(x: i64, y: i64): i64 { return x * y; }
 function add(x: i64, y: i64): i64 { return x + y; }
 function main(): i32 {
   let v: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64], [2]);
-  return v.inner(v, 0 as i64, mul, add).get([]) as i32;
+  return v.inner(v, 0 as i64, mul, add).get_unchecked([]) as i32;
 }
 `, []string{
 		"array report: primary Fern compiler, ndarray kernels",
@@ -70,7 +70,7 @@ function main(): i32 {
 function add(x: i64, y: i64): i64 { return x + y; }
 function main(): i32 {
   let m: ndarray.NdArray[i64] = ndarray.from_flat([1 as i64, 2 as i64, 3 as i64, 4 as i64], [2, 2]);
-  return m.reduce_axis(1, 0 as i64, add).get([0]) as i32;
+  return m.reduce_axis(1, 0 as i64, add).get_unchecked([0]) as i32;
 }
 `, []string{
 		"main: reduce_axis; layout=packed; axis=1; element=add$wrap",

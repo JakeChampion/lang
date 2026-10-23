@@ -128,6 +128,7 @@ c2_consuming_reuse                                   0
 call_of_a_call_through_a_function_value              0
 call_result_arg_temp                                 0
 call_type_args_user_type                             0
+cast_generic_float_width                             0
 cast_in_tuple                                        0
 cast_int_arith_to_float                              0
 cast_narrow_binding                                  0
@@ -381,8 +382,11 @@ lanes_calls                                          0
 lanes_f32x4_ops                                      0
 lanes_f64x2_ops                                      0
 lanes_generic_instances                              0
+lanes_map_fusion                                     0
+lanes_methods                                        0
 lanes_receivers                                      0
 lanes_spill_pressure                                 0
+lanes_through_calls                                  0
 len_on_empty_u8                                      0
 let_else_at_binding                                  0
 let_else_chained                                     0

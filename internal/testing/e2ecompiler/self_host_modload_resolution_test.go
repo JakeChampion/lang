@@ -83,7 +83,7 @@ function main(): i32 { let a: i32 = h2.value(); let b: string = h3.value(); let 
 				"lib/a.fern": "import \"./gone\";\npub function f(): i32 { return 1; }\n",
 				"gone.fern":  "pub function x(): i32 { return 0; }\n",
 			},
-			want: `checker_modload_run: cannot resolve import "./gone" in DIR/lib/a.fern: DIR/lib/gone.fern: not found`,
+			want: `checker_modload_run: DIR/lib/a.fern:1:1: error[E086]: cannot resolve import "./gone": not found`,
 		},
 		{
 			// A stdlib import resolves under the stdlib root and nowhere else:
@@ -94,7 +94,7 @@ function main(): i32 { let a: i32 = h2.value(); let b: string = h3.value(); let 
 				"json2.fern":     "pub function y(): i32 { return 1; }\n",
 				"std/other.fern": "pub function x(): i32 { return 1; }\n",
 			},
-			want: `checker_modload_run: DIR/main.fern:2:3: error: unknown stdlib module "std/json2"`,
+			want: `checker_modload_run: DIR/main.fern:2:3: error[E086]: unknown stdlib module "std/json2"`,
 		},
 		{
 			name: "missing-subpath-with-local-namesake",
@@ -102,7 +102,7 @@ function main(): i32 { let a: i32 = h2.value(); let b: string = h3.value(); let 
 				"main.fern": "import \"./sub/x\";\nfunction main(): i32 { return x.f(); }\n",
 				"x.fern":    "pub function f(): i32 { return 1; }\n",
 			},
-			want: `checker_modload_run: cannot resolve import "./sub/x" in DIR/main.fern: DIR/sub/x.fern: not found`,
+			want: `checker_modload_run: DIR/main.fern:1:1: error[E086]: cannot resolve import "./sub/x": not found`,
 		},
 	}
 	for _, tc := range cases {

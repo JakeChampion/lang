@@ -1,0 +1,7 @@
+argument 1 to "repeat": expected i32, got string
+argument 1 to "twice": expected i32, got string
+variable "c": expected i32, got string
+variable "n": expected i32, got Option[i32]
+argument 1 to "f": expected i32, got string
+variable "m": expected i32, got string
+argument 1 to "g": expected i32, got string

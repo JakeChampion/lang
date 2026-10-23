@@ -19,6 +19,18 @@ func TestSelfHostCheckerFollowupPositions(t *testing.T) {
 		{"raw-store", `function main(): i32 { __raw_store8(0 as usize, 0, 0); return 0; }`},
 		{"unbound-result", `function mk[T](): T[] { return []; }
 function main(): i32 { let z = mk(); return 0; }`},
+		{"literal-pattern-binding", `function main(): i32 { match (true) { n @ 1 => { return 1; }, _ => { return 0; } } }`},
+		{"literal-pattern-alternatives", `function main(): i32 { match (true) { 1 | 2 => { return 1; }, _ => { return 0; } } }`},
+		{"range-pattern-bounds", `function main(): i32 { match (1) { "a".."b" => { return 1; }, _ => { return 0; } } }`},
+		{"use-after-body-error", `function take(n: i32): i32 { return n; }
+function main(): i32 {
+  let x: i32 = "s";
+  use n <- take(1);
+  return 0;
+}`},
+		{"unknown-dyn-before-body", `function f(x: dyn Bogus): i32 { let x: i32 = "s"; return 0; }`},
+		{"use-enclosing-result", `function each[T](cb: (T) => T): i32 { return 0; }
+function f(): string { use x <- each(); return 1; }`},
 		{"literal-pattern", `function main(): i32 { match (true) { 1 => { return 1; }, _ => { return 0; } } }`},
 		{"inferred-try", `function f(x: Option[i32]) { let y = x?; }
 function main(): i32 { return 0; }`},
@@ -75,6 +87,35 @@ function main(): i32 { let f = (): i32 => { use n <- add(1); return n; }; return
 			got := headers(t, exec.Command(cli, "-check", path, root))
 			if got != want {
 				t.Errorf("self-host:\n%s\noracle:\n%s", got, want)
+			}
+		})
+	}
+}
+
+func TestSelfHostCheckerSignatureDiagnosticsPrecedeDyn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "case.fern")
+	source := `trait Bad { function copy(self: Self): Self; }
+function g(x: Bogus): i32 { return 0; }
+function f(x: dyn Bad): i32 { return 0; }
+`
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, compiler := range []struct {
+		name    string
+		command *exec.Cmd
+	}{
+		{"oracle", exec.Command(buildLangBinForInterp(t), "-check", path)},
+		{"self-host", exec.Command(e2eharness.SelfHostCLI(t), "-check", path, e2eharness.SelfHostStdlibRoot(t))},
+	} {
+		t.Run(compiler.name, func(t *testing.T) {
+			out, err := compiler.command.CombinedOutput()
+			var codes []string
+			for _, m := range diagHeader.FindAllStringSubmatch(string(out), -1) {
+				codes = append(codes, m[2])
+			}
+			if err == nil || strings.Join(codes, ",") != "[E064],[E021]" {
+				t.Fatalf("declaration diagnostics before dyn validation: %v\n%s", err, out)
 			}
 		})
 	}
