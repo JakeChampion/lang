@@ -8378,6 +8378,10 @@ const INFERRED_RESULT: string = "inferred lambda result";
 // is spelled in: the pair a declaration's `ret_fn_ret` carries.
 function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   if (lm.ret_type.len() == 0) {
+    // A use callback inherits the declared result of its enclosing function.
+    if (lm.origin == parser.ORIGIN_USE && !is_unknown(s.ret_type)) {
+      return s.ret_type;
+    }
     return t_unknown(INFERRED_RESULT);
   }
   if (lm.ret_fn_ret.len() > 0 && parser.is_fn_contract_tag(lm.ret_type)) {
