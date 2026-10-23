@@ -17,5 +17,11 @@ The parser shares one local-struct classifier across its three callers.
 Separate statement handlers retain the previous bodies for conditionals, returns, loop exits, and expression statements.
 This keeps the complexity gate unchanged after the frontend integration.
 
-Bootstrap and strict driver-size checks are in progress for this source.
+Stages two and three match at 14,248,048 bytes.
+Their SHA-256 is ddc43d9e48eff314e03907680e7f4de18c10eae865ad526a6f8074ec35af7337.
+All eleven strict size rows pass without baseline changes.
+The report uses the measured bootstrap row and ten stock-driver builds.
+Those builds pass in 156.460 seconds.
+
+The broader checker, pattern, value-block, and semantic-execution suite passes in 170.691 seconds.
 The earlier archives retain their completed proofs and source scopes.
