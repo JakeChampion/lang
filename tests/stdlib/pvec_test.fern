@@ -73,6 +73,17 @@ function test_with_is_persistent(): test.TestOutcome {
   return test.assert_eq(v.with(5000, 1).len(), 1500);
 }
 
+function drop_last(v: pvec.PVec[i32]): pvec.PVec[i32] {
+  match (v.pop()) {
+    Some((rest, _)) => {
+      return rest;
+    },
+    None => {
+      return v;
+    }
+  }
+}
+
 function test_pop(): test.TestOutcome {
   let v: pvec.PVec[i32] = pvec.pvec_new();
   let i: i32 = 0;
@@ -83,7 +94,17 @@ function test_pop(): test.TestOutcome {
   let full: pvec.PVec[i32] = v;
   i = 0;
   while (i < 1100) {
-    v = v.pop();
+    match (v.pop()) {
+      Some((rest, x)) => {
+        if (x != 1099 - i) {
+          return test.fail("popped element " + i.to_string());
+        }
+        v = rest;
+      },
+      None => {
+        return test.fail("None while non-empty " + i.to_string());
+      }
+    }
     if (!v.is_valid()) {
       return test.fail("invalid after pop " + i.to_string());
     }
@@ -98,8 +119,10 @@ function test_pop(): test.TestOutcome {
   if (!v.is_empty() || full.len() != 1100 || !full.is_valid()) {
     return test.fail("snapshot after pops");
   }
-  // Popping past empty is a no-op; appending again works.
-  v = v.pop();
+  // Popping an empty vector is None; appending again works.
+  if (v.pop().is_some()) {
+    return test.fail("pop on empty");
+  }
   v = v.append(7);
   return test.assert_true(v.len() == 1 && v.get_or(0, -1) == 7 && v.is_valid());
 }
@@ -113,7 +136,7 @@ function test_pop_then_append(): test.TestOutcome {
   }
   i = 0;
   while (i < 1090) {
-    v = v.pop();
+    v = drop_last(v);
     i = i + 1;
   }
   if (v.len() != 13 || !v.is_valid() || v.get_or(12, -1) != 9 || v.first().unwrap_or(-1) != 1) {

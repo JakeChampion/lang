@@ -2556,30 +2556,6 @@ pub function (s: string) remove_suffix(suffix: string): string {
   return slice_unchecked(s, 0, k) + "";
 }
 
-// `s.is_uuid()` — true if s matches the canonical UUID
-// format: 8-4-4-4-12 hex digits separated by dashes,
-// total 36 characters. Doesn't validate the version or
-// variant nibble — just the shape.
-pub function (s: string) is_uuid(): boolean {
-  if (s.len() != 36) {
-    return false;
-  }
-  let i: i32 = 0;
-  while (i < 36) {
-    if (i == 8 || i == 13 || i == 18 || i == 23) {
-      if (s[i] != 45) {  // '-'
-        return false;
-      }
-    } else {
-      if (!s[i].is_ascii_hex_digit()) {
-        return false;
-      }
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
 // `__fill_lead_len(b)` — the byte length of the UTF-8 character a lead
 // byte opens. A continuation byte in lead position is not a character
 // start, so it counts as one byte and the fill stays byte-for-byte what
@@ -3480,11 +3456,11 @@ pub function (s: string) between(start: string, end: string): Option[string] {
   return None;
 }
 
-// `s.count_lines()` — number of lines in s. Empty string
+// `s.line_count()` — number of lines in s. Empty string
 // returns 0; lines are separated by '\n'. A trailing newline
 // is NOT counted as an extra empty line (matches Go's
 // bufio.Scanner ScanLines + lines() prelude function).
-pub function (s: string) count_lines(): i32 {
+pub function (s: string) line_count(): i32 {
   let n: i32 = s.len();
   if (n == 0) {
     return 0;

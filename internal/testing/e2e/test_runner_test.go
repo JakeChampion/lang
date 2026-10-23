@@ -240,7 +240,7 @@ func TestRunnerFormatExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/format", "# pass 46", "# fail 0", "1..46"} {
+	for _, w := range []string{"# Suite: std/format", "# pass 48", "# fail 0", "1..48"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1024,7 +1024,7 @@ func TestRunnerUtf8ExamplePasses(t *testing.T) {
 
 // `tests/stdlib/uuid_test.fern` covers std/uuid's generators by
 // shape — v4/v7 length, hyphen positions, version + variant nibbles,
-// is_uuid, and distinctness. The output is random but the assertions are
+// is_valid, and distinctness. The output is random but the assertions are
 // structural, so the TAP output is deterministic. Passing → exit 0.
 func TestRunnerUuidExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -4808,7 +4808,7 @@ func TestRunnerNdarrayExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/ndarray", "1..17", "# pass 17", "# fail 0"} {
+	for _, w := range []string{"# Suite: std/ndarray", "1..18", "# pass 18", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

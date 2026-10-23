@@ -23,14 +23,14 @@ function main(): i32 {
   let a: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3]);
   let m: ndarray.NdArray[f64] = a.map((x: f64): f64 => x * k);
   if (m.shape()[0] != 2 || m.shape()[1] != 3) { return 10; }
-  if (m.get([0, 0]) != 2.5) { return 11; }
-  if (m.get([1, 2]) != 15.0) { return 12; }
+  if (m.get_unchecked([0, 0]) != 2.5) { return 11; }
+  if (m.get_unchecked([1, 2]) != 15.0) { return 12; }
   if (!m.is_packed()) { return 13; }
 
   // Packed, literal factor.
   let b: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0], [2]);
   let c: ndarray.NdArray[f64] = b.map((x: f64): f64 => x * 3.0);
-  if (c.get([0]) != 3.0 || c.get([1]) != 6.0) { return 20; }
+  if (c.get_unchecked([0]) != 3.0 || c.get_unchecked([1]) != 6.0) { return 20; }
 
   // STRIDED receiver. The transpose of [[1,2],[3,4]] reads [[1,3],[2,4]],
   // so scaling by 10 reads [[10,30],[20,40]]. Taking the kernel here would
@@ -38,14 +38,14 @@ function main(): i32 {
   // — so these two indices are what a wrong gate fails on.
   let t: ndarray.NdArray[f64] = ndarray.from_flat([1.0, 2.0, 3.0, 4.0], [2, 2]).transpose();
   let s: ndarray.NdArray[f64] = t.map((x: f64): f64 => x * 10.0);
-  if (s.get([0, 1]) != 30.0) { return 30; }
-  if (s.get([1, 0]) != 20.0) { return 31; }
+  if (s.get_unchecked([0, 1]) != 30.0) { return 30; }
+  if (s.get_unchecked([1, 0]) != 20.0) { return 31; }
 
   // A handle from a helper is packed too, through #9950's return summary,
   // so the kernel reaches the spelling a program actually uses.
   let h: ndarray.NdArray[f64] = grid().map((x: f64): f64 => x * 2.0);
-  if (h.get([0, 1]) != 4.0) { return 40; }
-  if (h.get([1, 1]) != 12.0) { return 41; }
+  if (h.get_unchecked([0, 1]) != 4.0) { return 40; }
+  if (h.get_unchecked([1, 1]) != 12.0) { return 41; }
 
   // A NAMED element function, which reaches the call from its const_func
   // without being parked, so the replaced range ends at the call rather than
@@ -53,11 +53,11 @@ function main(): i32 {
   // that overshoots deletes an op the call still needs, and only running it
   // shows that.
   let n: ndarray.NdArray[f64] = ndarray.from_flat([2.0, 4.0, 6.0], [3]).map(half);
-  if (n.get([0]) != 1.0 || n.get([2]) != 3.0) { return 60; }
+  if (n.get_unchecked([0]) != 1.0 || n.get_unchecked([2]) != 3.0) { return 60; }
 
   // Every result read once more at the end, so nothing above is released
   // early and measured as free.
-  if (m.get([0, 1]) != 5.0 || c.get([1]) != 6.0 || s.get([0, 0]) != 10.0) { return 50; }
+  if (m.get_unchecked([0, 1]) != 5.0 || c.get_unchecked([1]) != 6.0 || s.get_unchecked([0, 0]) != 10.0) { return 50; }
   return 0;
 }
 
