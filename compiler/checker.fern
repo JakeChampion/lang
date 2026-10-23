@@ -17648,6 +17648,57 @@ function for_iter_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
   return [dg_at("E083", "cannot iterate over a value of type " + util.demangle_all(util.show_type_vars(type_label_or_tvar(it))) + ": `for` walks an array, a string, a Map, a range, an iter.Iterator, or a value whose iter() returns one", expr_line(fr.iter), expr_col(fr.iter))];
 }
 
+// tuple_destr_diags is E024 for a tuple pattern of `n` names over a value of
+// type `t`.
+function tuple_destr_diags(t: typeinfo.Type, n: i32, line: i32, col: i32): util.Diag[] {
+  match (t) {
+    typeinfo.TypeTuple(tt) => {
+      if (tt.elements.len() != n) {
+        return [dg_at("E024", "tuple has " + util.i32_to_string(tt.elements.len()) + " elements, but " + util.i32_to_string(n) + " names given", line, col)];
+      }
+    },
+    typeinfo.TypeUnknown(_) => {},
+    _ => {
+      return [dg_at("E024", "tuple destructure needs a tuple expression, got " + type_label(t), line, col)];
+    }
+  }
+  return [];
+}
+
+// for_pattern_diags is E024 for a `for (a, b) in X` header whose element is
+// not a tuple of that many values, or that walks a Map with other than two
+// names.
+function for_pattern_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
+  if (!name_has_comma(fr.var_name)) {
+    return [];
+  }
+  let n: i32 = split_pattern_names(fr.var_name).len();
+  if (for_iter_is_range(fr.iter)) {
+    return tuple_destr_diags(range_var_type(fr.iter, s), n, fr.line, fr.col);
+  }
+  let it: typeinfo.Type = check_expr(fr.iter, s);
+  match (it) {
+    typeinfo.TypeString(_) => {
+      return tuple_destr_diags(t_u8(), n, fr.line, fr.col);
+    },
+    typeinfo.TypeArray(ta) => {
+      return tuple_destr_diags(ta.elem, n, fr.line, fr.col);
+    },
+    typeinfo.TypeMap(_) => {
+      if (n != 2) {
+        return [dg_at("E024", "iterating a Map binds a (key, value) pair, but this pattern binds " + util.i32_to_string(n), fr.line, fr.col)];
+      }
+      return [];
+    },
+    _ => {}
+  }
+  let sub: IterSubject = iter_subject(it, s);
+  if (sub.ok) {
+    return tuple_destr_diags(sub.elem, n, fr.line, fr.col);
+  }
+  return [];
+}
+
 // builtin_iterable: the subjects `for` walks without the Iterator protocol.
 function builtin_iterable(t: typeinfo.Type): boolean {
   match (t) {
@@ -18316,6 +18367,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
       ast.StmtFor(fr) => {
         out = util.append_diags(out, call_diags(fr.iter, cur));
         out = util.append_diags(out, for_iter_diags(fr, cur));
+        out = util.append_diags(out, for_pattern_diags(fr, cur));
         out = util.append_diags(out, stmts_call_diags(fr.body, for_body_scope(fr, cur)));
       },
       ast.StmtMatch(m) => {
@@ -18810,19 +18862,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
         out = util.append_diags(out, struct_destr_diags(v, cur));
         let positions: string[] = split_pattern_names(v.name);
         if (positions.len() > 1 && !parser.is_struct_destr_marker(v.type_name)) {
-          let nnames: i32 = positions.len();
-          let dit: typeinfo.Type = check_expr(v.init, cur);
-          match (dit) {
-            typeinfo.TypeTuple(dtt) => {
-              if (dtt.elements.len() != nnames) {
-                out = out.append(dg_at("E024", "tuple has " + util.i32_to_string(dtt.elements.len()) + " elements, but " + util.i32_to_string(nnames) + " names given", v.line, v.col));
-              }
-            },
-            typeinfo.TypeUnknown(_) => {},
-            _ => {
-              out = out.append(dg_at("E024", "tuple destructure needs a tuple expression, got " + type_label(dit), v.line, v.col));
-            }
-          }
+          out = util.append_diags(out, tuple_destr_diags(check_expr(v.init, cur), positions.len(), v.line, v.col));
         }
       },
       ast.StmtAssign(a) => {
@@ -29108,7 +29148,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       if let Some(lowered) = iterator_lowering(fr, s) {
         return annotate_stmt(lowered, s, after);
       }
-      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line };
+      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line, col: fr.col };
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { action: annotate_stmt(d.action, s, after), on_error: d.on_error, line: d.line };
