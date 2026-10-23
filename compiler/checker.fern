@@ -5151,14 +5151,6 @@ function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
       if (c.args.len() != tf.param_types.len()) {
         return t_unknown("arity mismatch calling function value");
       }
-      let i: i32 = 0;
-      while (i < c.args.len()) {
-        let at: typeinfo.Type = check_expr(c.args[i], s);
-        if (!is_unknown(tf.param_types[i]) && !settles_to(c.args[i], tf.param_types[i], s) && !view_arg_borrow(at, tf.param_types[i]) && !coercible(at, tf.param_types[i], s)) {
-          return t_unknown("arg-type mismatch calling function value");
-        }
-        i = i + 1;
-      }
       return tf.ret_type;
     },
     _ => {}
@@ -5619,28 +5611,9 @@ pub function builtin_method_sig(recv_name: string, name: string): typeinfo.Type 
   return t_unknown("not a builtin method: " + recv_name + "." + name);
 }
 
-// builtin_args_fit reports whether `args` fit a builtin's parameters with a
-// user signature's allowances: a type parameter takes anything, a literal
-// settles, a view borrows its owned type, and a coercion applies.
-function builtin_args_fit(args: ast.Expr[], params: typeinfo.Type[], s: Scope): boolean {
-  let i: i32 = 0;
-  while (i < args.len()) {
-    let want: typeinfo.Type = params[i];
-    let at: typeinfo.Type = check_expr(args[i], s);
-    if (!is_unknown(want) && !settles_to(args[i], want, s) && !view_arg_borrow(at, want) && !coercible(at, want, s)) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
 function undeclared_call_type(name: string, s: Scope, args: ast.Expr[]): typeinfo.Type {
   if let typeinfo.TypeFunc(bf) = builtin_sig(name) {
     if (bf.param_types.len() == args.len()) {
-      if (!builtin_args_fit(args, bf.param_types, s)) {
-        return t_unknown("arg-type mismatch calling `" + name + "`");
-      }
       return bf.ret_type;
     }
   }
@@ -6110,9 +6083,6 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     if (msig.name.len() == 0) {
       if let typeinfo.TypeFunc(bm) = builtin_method_sig(recv_type_name, name) {
         if (bm.param_types.len() == c.args.len()) {
-          if (!builtin_args_fit(c.args, bm.param_types, s)) {
-            return t_unknown("arg-type mismatch calling `" + name + "`");
-          }
           return bm.ret_type;
         }
       }
@@ -6136,17 +6106,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     // concrete instantiation (`Box[i32]`, `Option[string]`) those parameters
     // are bound to the receiver's arguments throughout the parameter and
     // return spellings (#4346 piece 2); what stays unresolved is not checked.
-    let rmb: MethodBinding = method_binding(c, msig, recv_ty, s);
-    let mi: i32 = 0;
-    while (mi < c.args.len()) {
-      let want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
-      let mat: typeinfo.Type = check_expr(c.args[mi], s);
-      if (!is_unknown(want) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
-        return t_unknown("arg-type mismatch calling method `" + name + "`");
-      }
-      mi = mi + 1;
-    }
-    return generic_method_ret(c, msig, rmb, s);
+    return generic_method_ret(c, msig, method_binding(c, msig, recv_ty, s), s);
   }
   // If the ident is bound in scope to a TypeFunc,
   // dispatch as a closure call rather than a plain
@@ -6163,14 +6123,6 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       }
       if (c.args.len() != tf.param_types.len()) {
         return t_unknown("arity mismatch calling closure `" + name + "`");
-      }
-      let ci: i32 = 0;
-      while (ci < c.args.len()) {
-        let cat: typeinfo.Type = check_expr(c.args[ci], s);
-        if (!is_unknown(tf.param_types[ci]) && !settles_to(c.args[ci], tf.param_types[ci], s) && !view_arg_borrow(cat, tf.param_types[ci]) && !coercible(cat, tf.param_types[ci], s)) {
-          return t_unknown("arg-type mismatch calling closure `" + name + "`");
-        }
-        ci = ci + 1;
       }
       return tf.ret_type;
     }
@@ -6229,25 +6181,6 @@ function sig_call_type(sig: FuncSig, name: string, c: ast.ExprCall, s: Scope): t
     let (names, types) = call_type_bindings(sig, c, s);
     bn = names;
     bt = types;
-  }
-  let i: i32 = 0;
-  while (i < c.args.len()) {
-    let at: typeinfo.Type = check_expr(c.args[i], s);
-    // An unknown PARAM type is an opaque generic parameter (`f[T](x: T)`,
-    // where T erases to unknown) — the arg can't be checked against it, so
-    // skip rather than mis-flag a mismatch (mirrors the E038 diag pass,
-    // #4346 piece 2). A concrete param is still checked. A generic function
-    // named for a callable parameter whose spelling has the callee's own
-    // variables (`twice[A](f: (A) => i32, v: A)`) is checked against the
-    // parameter as the call binds it.
-    let want: typeinfo.Type = sig.param_types[i];
-    if (type_contains_unknown(want) && bn.len() > 0) {
-      want = type_from_ref_subst(sig_param_ref(sig, i), bn, bt, s.type_names());
-    }
-    if (!is_unknown(want) && !bound_arg_accepts(c.args[i], at, want, s) && !(bn.len() > 0 && generic_scalar_own_callback(at, want, sig_param_ref(sig, i), bn, s))) {
-      return t_unknown("arg-type mismatch calling `" + name + "`");
-    }
-    i = i + 1;
   }
   // Generic-call return-type inference (#4346 piece 2): a generic function's
   // declared return type erases to unknown here (it names a type parameter).
@@ -6511,14 +6444,20 @@ function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, 
 }
 
 // declared_method_diags checks a call to receiver method `method` declared on
-// the scalar type `recv`: E004 for the wrong number of arguments, else E040
-// for a type parameter nothing binds. Silent when no such method is declared.
-function declared_method_diags(c: ast.ExprCall, recv: string, method: string, s: Scope): util.Diag[] {
+// the scalar type `recv`: E004 for the wrong number of arguments, else E038
+// for an argument of the wrong type and E040 for a type parameter nothing
+// binds. Silent when no such method is declared.
+function declared_method_diags(c: ast.ExprCall, recv_ty: typeinfo.Type, recv: string, method: string, s: Scope): util.Diag[] {
   let msig: MethodSig = s.lookup_method(method, recv);
-  if (msig.name.len() > 0 && c.args.len() != msig.param_types.len()) {
+  if (msig.name.len() == 0) {
+    return uninferred_method_diags(c, recv, method, msig, s);
+  }
+  if (c.args.len() != msig.param_types.len()) {
     return [dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col)];
   }
-  return uninferred_method_diags(c, recv, method, msig, s);
+  let out: util.Diag[] = method_arg_diags(c, method, msig, recv_ty, s);
+  out = util.append_diags(out, method_type_arg_diags(c, method, msig, recv_ty, s));
+  return util.append_diags(out, uninferred_method_diags(c, recv, method, msig, s));
 }
 
 // uninferred_recv_diags reports E040 for a variable of the receiver's type
@@ -15834,19 +15773,19 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
-          out = util.append_diags(out, declared_method_diags(c, int_label(it), mfa.field, s));
+          out = util.append_diags(out, declared_method_diags(c, recv, int_label(it), mfa.field, s));
         },
         typeinfo.TypeFloat(f) => {
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
-          out = util.append_diags(out, declared_method_diags(c, float_label(f), mfa.field, s));
+          out = util.append_diags(out, declared_method_diags(c, recv, float_label(f), mfa.field, s));
         },
         typeinfo.TypeBool(_) => {
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("boolean", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
-          out = util.append_diags(out, declared_method_diags(c, "boolean", mfa.field, s));
+          out = util.append_diags(out, declared_method_diags(c, recv, "boolean", mfa.field, s));
         },
         typeinfo.TypeString(_) => {
           // E043: a string carries exactly two builtin methods
@@ -15869,7 +15808,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           if ((mfa.field == "len" || mfa.field == "as_bytes") && c.args.len() != 0 && s.lookup_method(mfa.field, "string").name.len() == 0) {
             out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", 0, c.args.len(), "argument"), c.line, c.col));
           }
-          out = util.append_diags(out, declared_method_diags(c, "string", mfa.field, s));
+          out = util.append_diags(out, declared_method_diags(c, recv, "string", mfa.field, s));
         },
         typeinfo.TypeArray(ar) => {
           // E038: a built-in array method whose argument must
