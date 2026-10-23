@@ -304,11 +304,11 @@ x86_64/utf8_ingest_validated.ir	5887911
 # the tolerance.
 #
 # Re-pinned 2026-10-23 (#13050) on sort_inplace (x86_64 .ir -2.9%, .text
-# +4.2%): std/sort's i32 insertion sort is gone and the benchmark runs
+# +4.2%; aarch64 .ir -5.3%, .text +4.9%): std/sort's i32 insertion sort is gone and the benchmark runs
 # `cmp.sort_in_place`, a heapsort that compares through `cmp` directly. It
 # runs fewer instructions on these 48-element arrays and is O(n log n) on
 # any input, while its code is longer. The x86_64 figures are a local
-# perf-bench run.
+# perf-bench run, the aarch64 ones the perf-aarch64 lane's.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
@@ -354,8 +354,8 @@ aarch64/pvec_with.text	3089
 aarch64/pvec_with.ir	59862559
 aarch64/record_update.text	1480
 aarch64/record_update.ir	31217543
-aarch64/sort_inplace.text	1492
-aarch64/sort_inplace.ir	52514536
+aarch64/sort_inplace.text	1565
+aarch64/sort_inplace.ir	49716529
 aarch64/sort_ints.text	2047
 aarch64/sort_ints.ir	33694974
 aarch64/sort_strings.text	3467
