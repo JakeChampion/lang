@@ -499,6 +499,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		// Unlike SourceModule this is never cleared — see the field's
 		// comment for why the two stamps cannot be one.
 		fn.SourceFile = path
+		fn.DeclName = fn.Name
 		if fn.Public {
 			mod.publicFuncs[fn.Name] = true
 			if fn.Receiver != nil {

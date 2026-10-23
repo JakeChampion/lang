@@ -4777,15 +4777,32 @@ function package_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
   let vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
   for v in vs {
     if (!v.governed) {
-      out = out.append(Finding { diag: util.Diag { related: [], length: 0, code: "", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: true, path: "" });
+      let shown: caps.Violation = caps.Violation { ...v, chain: caps.source_chain(merged, v.chain) };
+      out = out.append(Finding { diag: util.Diag { related: [], length: 0, code: "", message: caps.violation_message(shown), line: 0, col: 0, fix: None }, warning: true, path: "" });
     }
   }
   for v in vs {
     if (v.governed) {
-      out = out.append(Finding { diag: util.Diag { related: [], length: 0, code: "E070", message: caps.violation_message(v), line: 0, col: 0, fix: None }, warning: false, path: "" });
+      out = out.append(Finding { diag: violation_diag(merged, v), warning: false, path: "" });
     }
   }
   return out;
+}
+
+// violation_diag is E070 for `v`, at the package function its chain starts
+// from, with the chain spelled as the source declares each function.
+function violation_diag(merged: parser.Module, v: caps.Violation): util.Diag {
+  let line: i32 = 0;
+  let col: i32 = 0;
+  if (v.chain.len() > 0) {
+    let fi: i32 = caps.func_index(merged, v.chain[0]);
+    if (fi >= 0) {
+      line = merged.funcs[fi].line;
+      col = merged.funcs[fi].col;
+    }
+  }
+  let shown: caps.Violation = caps.Violation { ...v, chain: caps.source_chain(merged, v.chain) };
+  return util.Diag { related: [], length: 0, code: "E070", message: caps.violation_message(shown), line: line, col: col, fix: None };
 }
 
 // find_on_path is the first `$PATH` entry holding an executable `name`, or ""
