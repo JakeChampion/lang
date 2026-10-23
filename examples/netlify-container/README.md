@@ -17,18 +17,18 @@ Other paths get 404. A route with the wrong method gets 405.
 ## Files
 
 - `server.fern`: the server. It listens on port 8080 and stops cleanly on SIGTERM.
-- `Dockerfile`: downloads the nightly Fern release and compiles the server
-  for `x86-64-linux`. The result is a static binary of about 1.2 MB. The
-  image is `FROM scratch` and holds only that binary.
-- `build.sh`: builds the image for `linux/amd64` and saves it as
+- `build.sh`: downloads the nightly Fern release and compiles the server for
+  `x86-64-linux`. The result is a static binary of about 1.2 MB. The script
+  then builds the image for `linux/amd64` and saves it as
   `netlify/functions/fern-server.tar`. The Netlify build image has no Docker
   and no Podman, so the script installs a static, rootless Podman 4.9.5. It
   uses the same configuration as `netlify/php-on-netlify`.
+- `Dockerfile`: copies the binary into a `scratch` image. It has no `RUN`
+  step, because Podman cannot start a container in the Netlify build sandbox.
 - `netlify.toml`: runs `build.sh` and sends every request to the container.
 
-The compiler runs on the architecture of the build machine and
-cross-compiles. Thus a build on Apple Silicon does not run the compiler
-under x86-64 emulation.
+The compiler runs on the build machine and cross-compiles. Thus a build on
+Apple Silicon does not run the compiler under x86-64 emulation.
 
 ## Deploy
 

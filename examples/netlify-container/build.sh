@@ -1,16 +1,37 @@
 #!/usr/bin/env bash
-# Builds the container image and saves it where Netlify finds functions.
+# Compiles the server, builds the container image, and saves the image where
+# Netlify finds functions.
 #
 # Netlify's build image has no Docker and no Podman, so this installs a static,
 # rootless Podman, the same setup as netlify/php-on-netlify. Set
 # CONTAINER_TOOL=docker (or podman) to use a tool that is already installed.
+# Set FERN to use an installed compiler in place of the nightly release.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 IMAGE=fern-server
 OUTPUT=netlify/functions/fern-server.tar
+FERN_RELEASE="${FERN_RELEASE:-https://github.com/JakeChampion/lang/releases/download/nightly}"
 mkdir -p "$(dirname "$OUTPUT")" public
 rm -f "$OUTPUT"
+
+sha256_check() {
+  if command -v sha256sum > /dev/null; then sha256sum -c "$@"; else shasum -a 256 -c "$@"; fi
+}
+
+if [ -z "${FERN:-}" ]; then
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) release=fern-linux-x86_64 ;;
+    Linux-aarch64) release=fern-linux-arm64 ;;
+    Darwin-arm64) release=fern-darwin-arm64 ;;
+    *) echo "build.sh: no fern release for $(uname -s) $(uname -m); set FERN" >&2; exit 1 ;;
+  esac
+  dir="$(mktemp -d)"
+  (cd "$dir" && curl -sSfLO "$FERN_RELEASE/$release.tar.gz" && curl -sSfLO "$FERN_RELEASE/$release.tar.gz.sha256" &&
+    sha256_check "$release.tar.gz.sha256" && tar xzf "$release.tar.gz")
+  FERN="$dir/fern"
+fi
+"$FERN" -target x86-64-linux -O -o server server.fern
 
 if [ -n "${CONTAINER_TOOL:-}" ]; then
   "$CONTAINER_TOOL" build --platform linux/amd64 -t "$IMAGE" .
