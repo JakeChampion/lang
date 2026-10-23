@@ -1,0 +1,6 @@
+// Internal runtime compilation uses the explicit primitive-admission entry.
+import "../fern";
+
+function main(): i32 {
+  return fern.run_runtime(args());
+}

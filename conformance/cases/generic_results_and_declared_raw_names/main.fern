@@ -1,0 +1,22 @@
+// A destination binds the generic result. A declared function remains an
+// ordinary function even when its name matches a private runtime primitive.
+function empty[T](): T[] {
+  return [];
+}
+
+@noinline
+function __raw_data(text: string): i32 {
+  return text.len();
+}
+
+function main(): i32 {
+  let values: i64[] = empty();
+  let named: (string) => i32 = __raw_data;
+  if (__raw_data("abc") != 3) {
+    return 1;
+  }
+  if (named("abcd") != 4) {
+    return 2;
+  }
+  return values.len();
+}

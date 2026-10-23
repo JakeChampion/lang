@@ -31,7 +31,7 @@ function main(): i32 {
 // TestSelfHostRawIntrinsicsX86_64 runs the intrinsic probe through the x86-64
 // self-host backend and checks exit 75. arm64 is left to CI.
 func TestSelfHostRawIntrinsicsX86_64(t *testing.T) {
-	cli := newStrictCLI(t)
+	cli := newStrictRuntimeCLI(t)
 	if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", rawIntrinsicsProg)); code != 75 {
 		t.Errorf("raw-intrinsic probe exited %d, want 75 (s.len()=3 + s[0]=72)", code)
 	}

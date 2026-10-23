@@ -33,7 +33,7 @@ function main(): i32 {
 }`
 
 func TestSelfHostUnderflowCounted(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			stderr, code := cli.exitOf(t, underflowCountSrc, target, uncertified)

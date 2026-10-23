@@ -4272,7 +4272,7 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
           aguard = astwalk.subst_ident_expr(a.guard, a.at_binding, sid.name);
         }
       }
-      let cond: ast.Expr = e_binary("==", scrut, a.lit);
+      let cond: ast.Expr = ast.ExprBinary { op: "==", left: scrut, right: a.lit, line: a.line, col: a.col, ty: "" };
       if (a.has_range) {
         // `lo..hi` / `lo..=hi` → `scrut >= lo && scrut <op> hi`.
         // Built at parse time, so the self-host checker settles the
@@ -6156,7 +6156,7 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
           let newargs: ast.Expr[] = c.args.append(cb);
           // The return stands for the `use` line, so it carries the
           // keyword's position for comment and blank-line placement.
-          body = body.append(s_return_at(e_call(c.callee, newargs), uline, ucol));
+          body = body.append(s_return_at(ast.ExprCall { ...c, args: newargs }, uline, ucol));
         },
         _ => {
           body = body.append(s_unknown_at("use expression must be a function call (so the callback can be appended as the last arg)", uline, ucol));
