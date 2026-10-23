@@ -2,6 +2,9 @@
 
 Status: [record] audit from before the self-host compiled traits; its claim that `compiler/` cannot use traits is out of date.
 
+The current compiler supports trait declarations and implementations on every backend.
+The support limits below are historical. See [traits](TRAITS.md) for current behavior.
+
 *Audit only — no code changes. Surveys where Fern's own `.fern` code (the
 self-host compiler + the stdlib) could make better use of the trait system,
 ranked by value × feasibility, with a phased plan.*

@@ -724,7 +724,8 @@ The parser marks a receiver-less trait/impl method (`TraitMethod.Assoc` /
 receiver prepended, and — for a `T.f()` on a bounded type parameter —
 defers like a bounded method, with monomorph rewriting the target to the
 concrete type. `default` is an ordinary identifier, so `Type.default()`
-needs nothing special. This is what `@derive(Default)` builds on. Native-only so far; self-host parity is a follow-up.
+needs nothing special. This is what `@derive(Default)` builds on.
+Both front ends support associated functions and calls through bounded type parameters.
 
 ## 7. Phasing
 

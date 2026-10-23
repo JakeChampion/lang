@@ -1,0 +1,2 @@
+E001
+a top-level `handle` requires `std/serve`: add `import "std/serve";`

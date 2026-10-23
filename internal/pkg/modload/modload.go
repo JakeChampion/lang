@@ -305,6 +305,7 @@ type module struct {
 	publicStructs    map[string]bool
 	publicConsts     map[string]bool
 	publicEnums      map[string]bool
+	allEnums         map[string]bool
 	// publicVariants maps each variant of a `pub enum` to that enum's
 	// pre-mangle name, so a consumer's `mod.Variant` resolves to the
 	// variant in expression and pattern position. A variant two public
@@ -479,6 +480,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		publicStructs:    map[string]bool{},
 		publicConsts:     map[string]bool{},
 		publicEnums:      map[string]bool{},
+		allEnums:         map[string]bool{},
 		publicVariants:   map[string]string{},
 		allVariants:      map[string]string{},
 		allConsts:        map[string]bool{},
@@ -526,6 +528,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		}
 	}
 	for _, ed := range prog.Enums {
+		mod.allEnums[ed.Name] = true
 		ed.SourceModule = path
 		if ed.Public {
 			mod.publicEnums[ed.Name] = true
@@ -547,6 +550,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		}
 	}
 	for _, ud := range prog.Unions {
+		mod.allEnums[ud.Name] = true
 		ud.SourceModule = path
 		if ud.Public {
 			// `pub type Tok = A | B;` desugars to an enum later in the
@@ -1464,6 +1468,9 @@ func resolveReexports(loaded map[string]*module) error {
 				// check passes for `facade.SomeType`.
 				w.mod.reexportTypes[w.name] = mangled
 				w.mod.publicStructs[w.name] = true
+				if w.child.allEnums[w.name] {
+					w.mod.allEnums[w.name] = true
+				}
 			} else {
 				w.mod.reexports[w.name] = mangled
 				w.mod.publicFuncs[w.name] = true
@@ -2284,6 +2291,15 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 			r.rewriteExpr(&x.Args[i])
 		}
 	case *ast.FieldAccess:
+		// An imported enum is a type qualifier in module.Enum.Variant.
+		if qual, ok := x.Target.(*ast.FieldAccess); ok {
+			if id, ok := qual.Target.(*ast.Ident); ok && !r.localVars[id.Name] {
+				if mod, _, ok := r.importedModule(id.Name); ok && mod.allEnums[qual.Field] {
+					x.Target = &ast.Ident{P: qual.P, Name: r.rewriteStructNameAt(id.Name+"."+qual.Field, qual.P)}
+					return
+				}
+			}
+		}
 		// `mod.X` in non-callee position — either a function value
 		// or a const reference. Both rewrite to a flat Ident at
 		// the imported module's mangled name; the imported module
@@ -2456,6 +2472,10 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 // enum's SourceModule (module qualifier).
 func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos ast.Position) {
 	if *armModule != "" {
+		if indexByte(*armModule, '.') >= 0 {
+			*armModule = r.rewriteStructNameAt(*armModule, pos)
+			return
+		}
 		if r.ownEnums[*armModule] {
 			*armModule = r.selfPrefix + *armModule
 			return

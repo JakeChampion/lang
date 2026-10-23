@@ -1,34 +1,13 @@
-// core/iter.fern — a generic iterator protocol + a Range and an ArrayIter.
+// core/iter — value iterators and lazy adapters.
 //
-// The iterator trait (#2686 / the open tail of #2699). `Iterator[T]` is now
-// generic over the element type `T`: parametrised-trait bounds parse (#3558)
-// and a bound-only type parameter is recovered by bound-driven inference
-// (#3596), so a fully-generic free function such as
-// `nth[T, I: Iterator[T]]: Option[T]` works on every backend. The numeric reducers
-// are bounded on std/num's operator traits (`sum[T: Add + Zero]`,
-// `product[T: Mul + One]`) and the comparing ones on core/cmp's `Ord` / `Eq`,
-// so they work for every element type.
+// Iterator[T].next returns Some((value, advanced_iterator)), or None at the end.
+// Each step returns a new iterator value.
+// iter.of(xs) wraps an array. Range walks the integers in [lo, hi).
+// Map keys and values can use the same adapters through their array snapshots.
 //
-// Two iterators ship: `Range` over `[lo, hi)`, and `ArrayIter` over a `T[]`
-// (`iter.of(xs)`), the latter being the stdlib's first PARAMETRIC impl of a
-// GENERIC trait — `impl[T] Iterator[T] for ArrayIter[T]`. That shape needed a
-// Go checker fix (the conformance compare canonicalises the impl's type
-// params so a substituted `StructType("T")` matches the hoisted method's
-// `ParamType("T")`) and a monomorphiser fix (clone a parametric-impl method
-// per concrete `for`-type instantiation even when it is reached ONLY through a
-// trait bound, e.g. `it.next()` inside `sum[T, I: Iterator[T]]`). With it,
-// EVERY combinator below works on a plain array — and, via a map's `.keys()` /
-// `.values()` snapshot, on map keys and values too.
-//
-// `for x in it` walks any Iterator, calling `next` until it returns None, and
-// a type whose `iter()` returns one (the persistent collections) walks the
-// same way.
-//
-// Iteration is value-semantic: `next` returns `Some((value, advanced))` where
-// `advanced` is a FRESH iterator positioned just after `value`, or `None` at
-// the end. There is no interior mutation — advancing yields a new iterator —
-// which is the functional shape the self-host IR path already lowers (a
-// Cell-backed mutable cursor would be a later optimisation).
+// Lazy map, filter, take, skip, and flat_map adapters build no intermediate array.
+// Numeric reductions use the std/num traits. Comparisons use core/cmp.
+// A for loop accepts an iterator or a type whose iter() method returns one.
 
 import "core/cmp";
 import "std/num";
@@ -40,7 +19,7 @@ pub trait Iterator[T] {
   function next(self: Self): Option[(T, Self)];
 
   // The lazy adapters: each wraps the iterator and does its work as values
-  // are pulled, so `xs.iter().filter(p).map(f).fold(z, g)` reads left to
+  // are pulled, so `iter.of(xs).filter(p).map(f).fold(z, g)` reads left to
   // right and builds no intermediate array.
   function map[U](self: Self, f: (T) => U): Mapped[Self, T, U] {
     return Mapped { it: self, f: f };
