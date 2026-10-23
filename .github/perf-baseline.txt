@@ -327,6 +327,8 @@ aarch64/call_overhead.text	304
 aarch64/call_overhead.ir	11250819
 aarch64/closure_call.text	1086
 aarch64/closure_call.ir	72624168
+aarch64/deflate_decode.text	10385
+aarch64/deflate_encode.text	6625
 aarch64/enum_match.text	1206
 aarch64/enum_match.ir	41175097
 aarch64/http_hello.text	16675

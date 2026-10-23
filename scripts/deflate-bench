@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# deflate-bench — std/deflate against libdeflate on the Silesia corpus.
+#
+# Usage: deflate-bench [CSV]
+#
+#   CSV  where to write one row per implementation, level and file
+#        (default: a file in the cache directory). The summary goes to
+#        stdout.
+#
+# Environment:
+#
+#   FERN_DEFLATE_RUNS   runs per measurement; each time is the median.
+#                       Default: 5.
+#   FERN_DEFLATE_CACHE  where the corpus, libdeflate and the two harnesses
+#                       are kept. Default: ~/.cache/fern-deflate-bench.
+#
+# WHAT IS MEASURED. For each Silesia file: std/deflate's `deflate` and
+# `inflate`, built by bin/fern with -O for the host, and libdeflate's raw
+# DEFLATE compressor at levels 1 to 12 and its decompressor, built with -O2.
+# Each implementation also decodes the other's stream, and every decode is
+# compared with the original file, so a wrong stream fails the run. Times
+# are wall clock around the call alone, with the file already in memory.
+# This RECORDS: nothing compares the numbers with a baseline. The dated
+# reports are under docs/benchmarks/.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+ROOT=$PWD
+RUNS="${FERN_DEFLATE_RUNS:-5}"
+CACHE="${FERN_DEFLATE_CACHE:-$HOME/.cache/fern-deflate-bench}"
+CSV="${1:-$CACHE/results.csv}"
+
+SILESIA_URL=https://sun.aei.polsl.pl/~sdeor/corpus/silesia.zip
+SILESIA_SHA256=0626e25f45c0ffb5dc801f13b7c82a3b75743ba07e3a71835a41e3d9f63c77af
+LIBDEFLATE_VERSION=1.24
+LIBDEFLATE_SHA256=ad8d3723d0065c4723ab738be9723f2ff1cb0f1571e8bfcf0301ff9661f475e8
+
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) TARGET=arm64-darwin ;;
+  Linux-aarch64) TARGET=arm64-linux ;;
+  Linux-x86_64) TARGET=x86-64-linux ;;
+  *) echo "deflate-bench: unsupported host $(uname -s) $(uname -m)" >&2; exit 2 ;;
+esac
+
+sha256() {
+  if command -v sha256sum > /dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+fetch() {
+  local url=$1 sum=$2 out=$3
+  if [ ! -f "$out" ]; then
+    curl -sSfL "$url" -o "$out.part"
+    mv "$out.part" "$out"
+  fi
+  if [ "$(sha256 "$out")" != "$sum" ]; then
+    echo "deflate-bench: $out does not match its pinned sha256" >&2
+    exit 1
+  fi
+}
+
+mkdir -p "$CACHE"
+fetch "$SILESIA_URL" "$SILESIA_SHA256" "$CACHE/silesia.zip"
+if [ ! -d "$CACHE/silesia" ]; then
+  mkdir -p "$CACHE/silesia.tmp"
+  unzip -oq "$CACHE/silesia.zip" -d "$CACHE/silesia.tmp"
+  mv "$CACHE/silesia.tmp" "$CACHE/silesia"
+fi
+
+LD="$CACHE/libdeflate-$LIBDEFLATE_VERSION"
+fetch "https://github.com/ebiggers/libdeflate/archive/refs/tags/v$LIBDEFLATE_VERSION.tar.gz" "$LIBDEFLATE_SHA256" "$CACHE/libdeflate-$LIBDEFLATE_VERSION.tar.gz"
+if [ ! -f "$LD/build/libdeflate.a" ]; then
+  tar xzf "$CACHE/libdeflate-$LIBDEFLATE_VERSION.tar.gz" -C "$CACHE"
+  cmake -S "$LD" -B "$LD/build" -DCMAKE_BUILD_TYPE=Release -DLIBDEFLATE_BUILD_SHARED_LIB=OFF -DLIBDEFLATE_BUILD_GZIP=OFF > /dev/null
+  cmake --build "$LD/build" -j > /dev/null
+fi
+cc -O2 -I"$LD" scripts/deflate-bench.d/cbench.c "$LD/build/libdeflate.a" -o "$CACHE/cbench"
+
+make bin/fern >&2
+bin/fern -target "$TARGET" -O -o "$CACHE/fbench" scripts/deflate-bench.d/fbench.fern
+
+S="$CACHE/streams"
+mkdir -p "$S"
+fields() { sed -E 's/in=([0-9]+) out=([0-9]+) comp_ns=([0-9]+) decomp_ns=([0-9]+)/\1,\2,\3,\4/'; }
+{
+  echo "impl,level,file,in,out,comp_ns,decomp_ns,cross_decomp_ns"
+  for f in "$CACHE"/silesia/*; do
+    n=$(basename "$f")
+    row=$("$CACHE/fbench" c "$f" "$RUNS" "$S/$n.fern" | fields)
+    cross=$("$CACHE/cbench" d "$S/$n.fern" "$f" "$RUNS")
+    echo "fern,-,$n,$row,${cross#decomp_ns=}"
+    for level in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      row=$("$CACHE/cbench" c "$f" "$level" "$RUNS" "$S/$n.l$level" | fields)
+      cross=$("$CACHE/fbench" d "$S/$n.l$level" "$f" "$RUNS")
+      echo "libdeflate,$level,$n,$row,${cross#decomp_ns=}"
+    done
+  done
+} > "$CSV"
+
+echo "deflate-bench: $TARGET, commit $(git -C "$ROOT" rev-parse --short HEAD), libdeflate $LIBDEFLATE_VERSION, $RUNS runs each, $CSV"
+python3 scripts/deflate-bench.d/deflate_bench_rows.py "$CSV"
