@@ -57,7 +57,9 @@ changes let the session leave `cur` at the update.
   taken only if no read off the first read is still in hand past it.
   `twin_holds` holds each such read (`acts` before its loop, `evs`), and
   `takes_past_holds` asks the takes again over the chains the holds cut.
-  `slot_held` refuses a take whose slot a held read still loads.
+  `slot_held` refuses a take whose slot a held read still loads. A take out
+  of a read that `slot_held` refused is refused too: `units_of` accepts a
+  take only when its source is owned, and repeats until nothing changes.
 
 ## Measured
 
@@ -74,6 +76,10 @@ and 108.
 `TestSelfHostKeptReadPastUpdate` pins the shape on x86-64, arm64 and wasm.
 1,000 calls allocate no box, against 1,000 before. Its events are strings that
 `on_event` keeps, so the event loop consumes them as `__session_event` does.
+
+`TestSelfHostSecondTakeNeedsItsSource` pins the owned-source rule. Without
+it, `emit`'s next call reads an emptied slot of a list, and the x86-64 build
+crashes.
 
 `TestSelfHostRereadNotThroughSpentParent` pins `spent_under`. Without it, the
 re-read keeps the record alive past the call, and the call copies it: 30
@@ -92,3 +98,12 @@ is stage1, and the pinned stage0 builds it. Only a stage1 compile of
 `compiler/fern.fern` does that, and the test harness also makes one with the
 inliner off (`FERN_SEM_INLINE=`). Only that compile showed the re-read through
 `map_column`. Its plan does not certify, and #13045 holds that failure.
+
+The certifier passes a plan that moves an element out of a list that another
+holder still reads. `asm_ir.ssa_block_inst` held its first read of
+`blk.insts`, and `slot_held` refused the re-reads of that field. But the
+element takes out of those re-reads went in. `insts` is unique to its block,
+so each take emptied the slot in place, and the next call crashed.
+
+Only a stage2 compiler showed it: the stage1 build compiles, certifies and
+passes the fixtures. Build stage2 with stage1 and compile a program with it.

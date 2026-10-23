@@ -167,7 +167,8 @@ reads (`units_of`):
   not held as well. An update consumes its donor, so a read of the donor
   used past the update is held, and only that read: the donor is not a
   source that dies unconsumed there. A hold cuts a chain, so the payload
-  takes are then asked again over the cut chains (`takes_past_holds`). There
+  takes are then asked again over the cut chains (`takes_past_holds`). A
+  take from that ask goes in only when its source is owned. There
   the plan can take a second read of a record field. Each read off the first
   read of that field that is still in hand is held for it (`twin_holds`).
   Pinned by `TestSelfHostKeptReadPastUpdate`, `TestSelfHostCrossBlockReuse`'s

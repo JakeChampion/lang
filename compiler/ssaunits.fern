@@ -1946,17 +1946,25 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   let held: boolean[] = held_elements(f, a, owned, defs, sup);
   let asked: boolean[] = twin_holds(f, a, defs, owned, held);
   let past: PayloadTakes = takes_past_holds(f, a, owned, asked, defs);
+  // A second take out of a read the ask took but slot_held refused would
+  // move the value out of a box something still holds, so a take goes in
+  // only once its source is owned.
   let added: boolean = false;
-  i = 0;
-  while (i < past.taken.len()) {
-    if (past.taken[i] && !payloads[i] && !slot_held(defs, asked, i)) {
-      payloads = payloads.with(i, true);
-      likely = likely.with(i, past.likely[i]);
-      owned = owned.with(i, true);
-      pt = PayloadTakes { ...pt, crossing: pt.crossing || past.crossing };
-      added = true;
+  let grew: boolean = true;
+  while (grew) {
+    grew = false;
+    i = 0;
+    while (i < past.taken.len()) {
+      if (past.taken[i] && !payloads[i] && owned[defs[i].args[0]] && !slot_held(defs, asked, i)) {
+        payloads = payloads.with(i, true);
+        likely = likely.with(i, past.likely[i]);
+        owned = owned.with(i, true);
+        pt = PayloadTakes { ...pt, crossing: pt.crossing || past.crossing };
+        added = true;
+        grew = true;
+      }
+      i = i + 1;
     }
-    i = i + 1;
   }
   // The second takes stand on the holds they were asked over, so those stay.
   // A read of a newly taken value that outlives the use it is spent in is
