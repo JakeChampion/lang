@@ -37,8 +37,8 @@ that payload picks, without testing the scrutinee's variant again.
 in a block where a projection's parent dies, the counted projections the
 block uses that a dominating block read (a record, tuple or payload field,
 or an array element at the same index), so the plan takes them instead of
-borrowing them. It re-reads only a read that borrowed, of a parent nothing
-spends while the child, or the value the block reads through it, lives, so
+borrowing them. It re-reads only a read that borrowed, through parents
+nothing spends while the child, or the value the block reads through it, lives, so
 a re-read never holds a parent longer than the plan already does. Before
 that, it merges a repeated read into a read of the same slot in a block that
 dominates it, in two cases. A read off the first is spent, so the plan must take the first. Or

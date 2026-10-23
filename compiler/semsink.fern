@@ -572,7 +572,25 @@ function read_above_for(rd: Reads, bi: i32, v: i32, leaf: i32): boolean {
       return false;
     }
   }
-  return true;
+  return !spent_under(rd, p, leaf, 0);
+}
+
+// Whether a parent above the read `v` is spent where `leaf` is still live. A
+// re-read of `v` reads through that parent, and finds the slot gone.
+function spent_under(rd: Reads, v: i32, leaf: i32, depth: i32): boolean {
+  if (depth > 8) {
+    return true;
+  }
+  if (v < 0 || v >= rd.at.len() || rd.at[v] < 0) {
+    return false;
+  }
+  let p: i32 = rd.par[v];
+  for s in rd.spent[p] {
+    if (ssalive.live_out_has(rd.flow, s, leaf)) {
+      return true;
+    }
+  }
+  return spent_under(rd, p, leaf, depth + 1);
 }
 
 // `r` with `v` re-read in the block when it is read above, its parent first

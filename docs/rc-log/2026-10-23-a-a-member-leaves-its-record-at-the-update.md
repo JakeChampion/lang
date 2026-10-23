@@ -1,7 +1,8 @@
 # 2026-10-23 — a member leaves its record at the update
 
 `ssaunits.twin_holds`, `takes_past_holds` and `slot_held`, the donor rule in
-`hold_at`, and `semsink.spends` and `earlier_read`. Refs #12887.
+`hold_at`, and `semsink.spends`, `earlier_read` and `spent_under`. Refs
+#12887.
 
 ## The shape
 
@@ -37,6 +38,15 @@ changes let the session leave `cur` at the update.
   uses it. `Streams.__stream_data` needs that merge: `taken.list` is read
   where the update is made and used only at the final `with`.
 
+  The merge made a re-read that `read_above_for` let through.
+  `semsource.iterate_array` reads `m = s.values[it]`, gives `s` to
+  `map_column`, and uses `m` after. The merge made `m` the first read, and
+  sink then read it again from the produced value after the call.
+  `read_above_for` checked the spends of the direct parent only. `reread`
+  then read each parent again with that parent as its own leaf. Now
+  `spent_under` refuses a re-read when any parent above it is spent where
+  the leaf is still live.
+
 - **The donor is not a source that dies unconsumed.** At the update, the
   dying rule in `hold_at` held the first session read, because a read off it
   (an event) is consumed later. But the update consumes its donor, and the
@@ -65,6 +75,10 @@ and 108.
 1,000 calls allocate no box, against 1,000 before. Its events are strings that
 `on_event` keeps, so the event loop consumes them as `__session_event` does.
 
+`TestSelfHostRereadNotThroughSpentParent` pins `spent_under`. Without it, the
+re-read keeps the record alive past the call, and the call copies it: 30
+calls allocate 250 boxes on x86-64, against 210.
+
 ## Traps
 
 A semsink rule that helps one function can cost another one a take. With
@@ -72,3 +86,9 @@ A semsink rule that helps one function can cost another one a take. With
 `__applied` improved and `__stream_data` lost one. The list was read where
 `taken` is built and kept to the final `with`. So the planner did not take
 the stream out of the list. Compare the census row by row, not only the mean.
+
+`make build` does not run the new planner on the compiler. `bin/fern-selfhost`
+is stage1, and the pinned stage0 builds it. Only a stage1 compile of
+`compiler/fern.fern` does that, and the test harness also makes one with the
+inliner off (`FERN_SEM_INLINE=`). Only that compile showed the re-read through
+`map_column`. Its plan does not certify, and #13045 holds that failure.
