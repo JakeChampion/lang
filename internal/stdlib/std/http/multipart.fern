@@ -388,8 +388,10 @@ function __line(r: Reader, room: i32): Result[(string, Reader), MultipartError] 
 }
 
 function __header(h: HeaderMap, line: string): Result[HeaderMap, MultipartError] {
-  let colon: i32 = line.index_of(":");
-  if (colon <= 0) {
+  let Some(colon) = line.index_of(":") else {
+    return Err(MalformedMultipart("a part header has no name"));
+  };
+  if (colon == 0) {
     return Err(MalformedMultipart("a part header has no name"));
   }
   return Ok(h.append(line.slice_snap(0, colon).trim(), line.slice_snap(colon + 1, line.len()).trim()));
@@ -418,8 +420,7 @@ function __part(h: HeaderMap): Part {
 // __media_type is the type before any parameter, lowercased.
 function __media_type(ct: string): string {
   let kind: string = ct;
-  let semi: i32 = ct.index_of(";");
-  if (semi >= 0) {
+  if let Some(semi) = ct.index_of(";") {
     kind = ct.slice_snap(0, semi);
   }
   return kind.trim().to_lower();
@@ -434,9 +435,10 @@ function __param(value: string, name: string): string {
   while (i < bs.len()) {
     let end: i32 = __param_end(bs, i);
     let p: string = string_from_bytes_unchecked(array.slice(bs, i, end)).trim();
-    let eq: i32 = p.index_of("=");
-    if (eq > 0 && p.slice_snap(0, eq).trim().to_lower() == name) {
-      return __unquote(p.slice_snap(eq + 1, p.len()).trim());
+    if let Some(eq) = p.index_of("=") {
+      if (eq > 0 && p.slice_snap(0, eq).trim().to_lower() == name) {
+        return __unquote(p.slice_snap(eq + 1, p.len()).trim());
+      }
     }
     i = end + 1;
   }
@@ -468,7 +470,7 @@ function __unquote(v: string): string {
     return v;
   }
   let inner: string = v.slice_snap(1, v.len() - 1);
-  if (inner.index_of("\\") < 0) {
+  if (!inner.contains("\\")) {
     return inner;
   }
   let out: u8[] = [];

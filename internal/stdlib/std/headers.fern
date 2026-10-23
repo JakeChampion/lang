@@ -182,10 +182,9 @@ function __coding_weight(members: string[], coding: string): i32 {
 
 // `__member_token(m)` — a list member's value before its parameters.
 function __member_token(m: string): string {
-  let semi: i32 = m.index_of(";");
-  if (semi < 0) {
+  let Some(semi) = m.index_of(";") else {
     return m;
-  }
+  };
   return m.slice_snap(0, semi).trim();
 }
 

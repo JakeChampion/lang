@@ -10,8 +10,8 @@ function test_sum_range(): test.TestOutcome {
   return test.assert_eq(iter.sum(iter.range(0, 5)), 10);  // 0+1+2+3+4
 }
 
-function test_count_range(): test.TestOutcome {
-  return test.assert_eq(iter.range(2, 9).count(), 7);
+function test_len_range(): test.TestOutcome {
+  return test.assert_eq(iter.range(2, 9).len(), 7);
 }
 
 function test_of_sum(): test.TestOutcome {
@@ -73,9 +73,9 @@ function test_contains(): test.TestOutcome {
   return test.assert_true(iter.contains(iter.range(0, 5), 3));
 }
 
-function test_count_value(): test.TestOutcome {
+function test_count(): test.TestOutcome {
   let xs: i32[] = [1, 2, 2, 3, 2];
-  return test.assert_eq(iter.count_value(iter.of(xs), 2), 3);
+  return test.assert_eq(iter.count(iter.of(xs), 2), 3);
 }
 
 function test_fold(): test.TestOutcome {
@@ -105,7 +105,7 @@ function test_map_filter(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.test_new("core/iter");
   r = r.it("sum over a range", test_sum_range);
-  r = r.it("count over a range", test_count_range);
+  r = r.it("len over a range", test_len_range);
   r = r.it("of: array to iterator", test_of_sum);
   r = r.it("product", test_product);
   r = r.it("nth", test_nth);
@@ -113,7 +113,7 @@ function main(): i32 {
   r = r.it("min", test_min);
   r = r.it("max", test_max);
   r = r.it("contains", test_contains);
-  r = r.it("count_value", test_count_value);
+  r = r.it("count", test_count);
   r = r.it("fold", test_fold);
   r = r.it("any hit", test_any);
   r = r.it("all true", test_all);

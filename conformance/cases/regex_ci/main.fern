@@ -21,7 +21,7 @@ function main(): i32 {
   if (regex.regex_match("(?i)(cat|dog)", "DOG")) {  // alternation folds
     r = r + 16;
   }
-  if (regex.regex_find("(?i)world", "Hello World") == 6) {  // find folds
+  if let Some(6) = regex.regex_find("(?i)world", "Hello World") {  // find folds
     r = r + 32;
   }
   if (require_regex_text(regex.regex_replace_all("(?i)a", "AbAcad", "X")) == "XbXcXd") {  // replace folds

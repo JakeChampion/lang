@@ -359,7 +359,7 @@ function __resolved(b: Url, reference: string): Option[string] {
 // replaces the base's; any other is merged onto the base's directory.
 function __merged(b: Url, r: Url, reference: string): (string, string) {
   if (r.path.len() == 0) {
-    if (reference.index_of("?") >= 0) {
+    if (reference.contains("?")) {
       return (b.path, r.query);
     }
     return (b.path, b.query);
@@ -389,7 +389,7 @@ function __merged_path(base: string, rel: string): string {
 // query or fragment that has bytes.
 function __url_compose(scheme: string, host: string, port: i32, path: string, query: string, fragment: string): string {
   let out: string = scheme + "://";
-  if (host.index_of(":") >= 0) {
+  if (host.contains(":")) {
     out = out + "[" + host + "]";
   } else {
     out = out + host;

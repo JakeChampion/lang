@@ -262,8 +262,7 @@ function env_layer(vars: string[]): Layer {
   let es: Entry[] = [];
   let i: i32 = 0;
   while (i < vars.len()) {
-    let at: i32 = vars[i].index_of("=");
-    if (at >= 0) {
+    if let Some(at) = vars[i].index_of("=") {
       let name: string = slice_unchecked(vars[i], 0, at).to_owned();
       let val: string = slice_unchecked(vars[i], at + 1, vars[i].len()).to_owned();
       let m: MappedKey = env_to_key(name);

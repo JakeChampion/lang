@@ -6302,7 +6302,7 @@ function main(): i32 {
 // three dispatch via the constrained-string-receiver pattern
 // in the checker; bodies live in the prelude as plain loops.
 // Tests cover the happy paths plus boundary cases (empty
-// array, not-found returns -1 from index_of and false from
+// array, not-found returns None from index_of and false from
 // contains, separator edge cases for join).
 func TestArm64ArrayJoin(t *testing.T) {
 	src := `
@@ -7266,17 +7266,21 @@ function main(): i32 {
 func TestArm64StdlibBundle19(t *testing.T) {
 	src := `
 import "std/http";
+function is(o: Option[i32], want: i32): boolean {
+    if let Some(v) = o { return v == want; }
+    return false;
+}
 function main(): i32 {
     // digit_value
-    if ((48 as u8).digit_value() != 0) { return 1; }
-    if ((57 as u8).digit_value() != 9) { return 2; }
-    if ((65 as u8).digit_value() != (0 - 1)) { return 3; }
+    if (!is((48 as u8).digit_value(), 0)) { return 1; }
+    if (!is((57 as u8).digit_value(), 9)) { return 2; }
+    if let Some(_) = (65 as u8).digit_value() { return 3; }
 
     // hex_value
-    if ((48 as u8).hex_value() != 0) { return 4; }
-    if ((97 as u8).hex_value() != 10) { return 5; }
-    if ((70 as u8).hex_value() != 15) { return 6; }
-    if ((71 as u8).hex_value() != (0 - 1)) { return 7; }
+    if (!is((48 as u8).hex_value(), 0)) { return 4; }
+    if (!is((97 as u8).hex_value(), 10)) { return 5; }
+    if (!is((70 as u8).hex_value(), 15)) { return 6; }
+    if let Some(_) = (71 as u8).hex_value() { return 7; }
 
     // count_byte
     if ("hello".count_byte(108) != 2) { return 8; }
@@ -7798,11 +7802,12 @@ function main(): i32 {
 func TestArm64StdlibBundle9(t *testing.T) {
 	src := `
 import "std/string";
+import "std/option";
 function main(): i32 {
     // Case-insensitive search
-    if ("Hello World".index_of_ci("WORLD") != 6) { return 1; }
-    if ("Hello World".index_of_ci("world") != 6) { return 2; }
-    if ("Hello World".index_of_ci("xyz") != (0 - 1)) { return 3; }
+    if ("Hello World".index_of_ci("WORLD").unwrap_or(-1) != 6) { return 1; }
+    if ("Hello World".index_of_ci("world").unwrap_or(-1) != 6) { return 2; }
+    if ("Hello World".index_of_ci("xyz").is_some()) { return 3; }
     if (!"Hello".contains_ci("ELL")) { return 4; }
     if ("Hello".contains_ci("xyz")) { return 5; }
 
@@ -8012,6 +8017,7 @@ function main(): i32 {
 func TestArm64StdlibBundle5(t *testing.T) {
 	src := `
 import "std/i32";
+import "std/option";
 import "std/i64";
 function main(): i32 {
     // Parity i32 + i64
@@ -8046,10 +8052,10 @@ function main(): i32 {
     if ((0).lcm(5) != 0) { return 23; }
 
     // last_index_of — rightmost match
-    if ("hello hello".last_index_of("hello") != 6) { return 24; }
-    if ("aaa".last_index_of("a") != 2) { return 25; }
-    if ("hello".last_index_of("z") != (0 - 1)) { return 26; }
-    if ("hello".last_index_of("") != 5) { return 27; }
+    if ("hello hello".last_index_of("hello").unwrap_or(-1) != 6) { return 24; }
+    if ("aaa".last_index_of("a").unwrap_or(-1) != 2) { return 25; }
+    if ("hello".last_index_of("z").is_some()) { return 26; }
+    if ("hello".last_index_of("").unwrap_or(-1) != 5) { return 27; }
 
     // capitalize — first byte uppercased, rest preserved
     if ("hello".capitalize() != "Hello") { return 28; }

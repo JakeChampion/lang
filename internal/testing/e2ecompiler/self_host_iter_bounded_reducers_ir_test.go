@@ -33,9 +33,9 @@ function main(): i32 { let xs: i32[] = []; return iter.sum(iter.of(xs)); }`},
 	// product: 1*2*3*4 = 24.
 	{"product", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; return iter.product(iter.of(xs)); }`},
-	// The Iterator trait's count method over ArrayIter[i32]; yields 5.
-	{"count", `import "core/iter";
-function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; return iter.of(xs).count(); }`},
+	// The Iterator trait's len method over ArrayIter[i32]; yields 5.
+	{"len", `import "core/iter";
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5]; return iter.of(xs).len(); }`},
 	// rest[T, I: Iterator[T]]: T only in the bound, returns T[]; it collects
 	// the whole array, len 3.
 	{"rest-len", `import "core/iter";
@@ -67,7 +67,7 @@ function main(): i32 { let xs: i64[] = [9, 2]; let f = first_of(iter.of(xs)); ma
 	// contains[T: Eq, I: Iterator[T]] over i64 with target `2` is the i64
 	// instance, not an i32 one.
 	{"contains-literal-i64", `import "core/iter";
-function main(): i32 { let xs: i64[] = [3, 9, 2]; if (iter.contains(iter.of(xs), 2) && iter.count_value(iter.of(xs), 9) == 1) { return 5; } return 1; }`},
+function main(): i32 { let xs: i64[] = [3, 9, 2]; if (iter.contains(iter.of(xs), 2) && iter.count(iter.of(xs), 9) == 1) { return 5; } return 1; }`},
 	// max[T: Ord, I: Iterator[T]] over f64.
 	{"max-f64", `import "core/iter";
 function main(): i32 { let xs: f64[] = [1.5, 4.5, 2.0]; match (iter.max(iter.of(xs))) { Some(m) => { if (m == 4.5) { return 4; } return 1; }, None => { return 2; } } }`},

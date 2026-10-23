@@ -88,10 +88,10 @@ pub function is_valid(s: string): boolean {
 
 // `uuid_version(s)` — the version number a UUID encodes in the first
 // nibble of its 3rd group (index 14): `4` for `uuid_v4()`, `7` for
-// `uuid_v7()`, `0` for `uuid_nil()`; -1 unless `is_valid(s)`.
-pub function uuid_version(s: string): i32 {
+// `uuid_v7()`, `0` for `uuid_nil()`; None unless `is_valid(s)`.
+pub function uuid_version(s: string): Option[i32] {
   if (!is_valid(s)) {
-    return -1;
+    return None;
   }
   return s[14].hex_value();
 }
