@@ -8017,6 +8017,7 @@ function main(): i32 {
 func TestArm64StdlibBundle5(t *testing.T) {
 	src := `
 import "std/i32";
+import "std/option";
 import "std/i64";
 function main(): i32 {
     // Parity i32 + i64
