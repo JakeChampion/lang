@@ -472,7 +472,7 @@ planned order:
   With no root given, std/core imports are skipped — identical to the
   prior behaviour, so the file-driven fixpoint is untouched. Proven
   end-to-end by `self_host_stdlib_import_test.go`: a program
-  `import "std/math"` (leaf) and `import "std/sort"` (transitive →
+  `import "std/math"` (leaf) and `import "core/cmp"` (transitive →
   `std/string`) compile + run correctly through the self-host.
 - ✅ **Low-level memory + RC intrinsics** (`__alloc` / `__free` /
   `__load_i32` / `__store_i32` / `__load_i64` / `__load_ptr` /

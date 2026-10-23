@@ -1257,9 +1257,9 @@ pub function sort_by_in_place[T](own arr: T[], order: (T, T) => i32): T[] {
 }
 
 // sort_by_key_in_place is `sort_by_key` in `arr`'s own buffer: a heapsort
-// comparing `key(a)` with `key(b)`, not stable. It allocates nothing, so each
-// key is recomputed per comparison; when `key` is costly, `sort_by_key`
-// computes each one once.
+// comparing `key(a)` with `key(b)`, not stable. It allocates no output, only
+// the comparator closure, so each key is recomputed per comparison; when `key`
+// is costly, `sort_by_key` computes each one once.
 pub function sort_by_key_in_place[T, K: Ord](own arr: T[], key: (T) => K): T[] {
   return __cmp_heap_sort(arr, (a: T, b: T): i32 => key(a).cmp(key(b)));
 }

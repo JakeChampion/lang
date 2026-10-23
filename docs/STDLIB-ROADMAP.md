@@ -294,7 +294,8 @@ Reader/Writer plumbing decision.
 `sort_by[T](xs, order: (T, T) => i32)`, `sort_by_key[T, K: Ord](xs, key)`,
 and `is_sorted_by`. Each returns a new, stably sorted array (an adaptive
 natural-run merge sort); each has an `_in_place` twin that takes the array
-`own` and heapsorts it in its own buffer, allocating nothing and not stable.
+`own` and heapsorts it in its own buffer, allocating no output and not
+stable (`sort_by_key_in_place` boxes one comparator closure per call).
 Case-insensitive order is `cmp.sort_by(xs, f)` with `f` calling std/string's
 `a.cmp_ignore_ascii_case(b)`.
 
