@@ -63,3 +63,19 @@ libdeflate level 4 (3.051) and level 5 (3.109).
 and the decoder in the instruction-count corpus that CI compares on every
 pull request. On this host, a 64 KiB encode retires about 98 million
 instructions, which is about 1,500 instructions for each input byte.
+
+### Integrated CI baseline
+
+[Perf run 40010926319](https://github.com/JakeChampion/lang/actions/runs/40010926319)
+measured commit `49c290377dfe6a930d3939efa99126c32be79880`, after integrating main.
+The reports in `ci-perf-x86_64.txt` and `ci-perf-aarch64.txt` retain the exact
+instruction and emitted-text counts. The deflate baseline now banks those
+measurements; the strict comparator passes for both reports.
+
+| Architecture | Encode instructions | Decode instructions |
+| --- | ---: | ---: |
+| x86-64 | 95,861,038 | 237,885,657 |
+| aarch64 | 102,600,617 | 226,739,308 |
+
+These counts cover the CI benchmark inputs, separately from the Silesia wall
+time comparison above.
