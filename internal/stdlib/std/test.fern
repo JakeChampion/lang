@@ -2486,7 +2486,7 @@ function __json_value_eq(a: json.JsonValue, b: json.JsonValue): boolean {
           if (am.len() != bm.len()) {
             return false;
           }
-          let keys: string[] = am.keys;
+          let keys: string[] = am.keys();
           let i: i32 = 0;
           while (i < keys.len()) {
             let k: string = keys[i];
@@ -2683,7 +2683,7 @@ pub function assert_map_has[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](m:
 // `assert_map_lacks(m, k)` — key `k` is NOT present. Used
 // after a delete or in negative-result tests.
 pub function assert_map_lacks[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](m: Map[K, V], k: K): TestOutcome {
-  if (m.has(k)) {
+  if (m.contains(k)) {
     return Fail("assert_map_lacks: key " + k.to_string() + " unexpectedly present");
   }
   return Pass;
@@ -3651,7 +3651,7 @@ pub function assert_json_has_key(json_text: string, key: string): TestOutcome {
     Some(v) => {
       match (v) {
         JObject(m) => {
-          if (m.has(key)) {
+          if (m.contains(key)) {
             return Pass;
           }
           return Fail("assert_json_has_key: key \"" + key
@@ -3691,7 +3691,7 @@ pub function assert_json_lacks_key(json_text: string, key: string): TestOutcome 
     Some(v) => {
       match (v) {
         JObject(m) => {
-          if (!m.has(key)) {
+          if (!m.contains(key)) {
             return Pass;
           }
           return Fail("assert_json_lacks_key: key \"" + key
@@ -3825,7 +3825,7 @@ pub function assert_json_eq_field_string(json_text: string, key: string, expecte
     Some(v) => {
       match (v) {
         JObject(m) => {
-          if (!m.has(key)) {
+          if (!m.contains(key)) {
             return Fail("assert_json_eq_field_string: key \"" + key
               + "\" not present");
           }
@@ -3891,7 +3891,7 @@ pub function assert_json_eq_field_i32(json_text: string, key: string, expected: 
     Some(v) => {
       match (v) {
         JObject(m) => {
-          if (!m.has(key)) {
+          if (!m.contains(key)) {
             return Fail("assert_json_eq_field_i32: key \"" + key
               + "\" not present");
           }
@@ -3960,7 +3960,7 @@ pub function assert_json_eq_field_bool(json_text: string, key: string, expected:
     Some(v) => {
       match (v) {
         JObject(m) => {
-          if (!m.has(key)) {
+          if (!m.contains(key)) {
             return Fail("assert_json_eq_field_bool: key \"" + key
               + "\" not present");
           }

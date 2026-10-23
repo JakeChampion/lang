@@ -39,7 +39,6 @@ function main(): i32 {
     let b: Map[i32, i32] = map.from([(2, 999), (5, 500)]);
     let mg: Map[i32, i32] = a.merge(b);
     if (mg.len() != 3 || mg.get_or(2, 0) != 999 || mg.get_or(1, 0) != 100) { return 5; }
-    if (a.extend(b).len() != 3) { return 6; }
 
     // get_or_insert: present -> unchanged; absent -> inserted.
     let r1: (Map[i32, i32], i32) = m.get_or_insert(1, 99);

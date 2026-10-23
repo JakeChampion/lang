@@ -357,7 +357,7 @@ func TestGenFeatureCoverage(t *testing.T) {
 		"Status variant":               false,
 		"Status match expression":      false,
 		"Map literal":                  false,
-		"map .get() / .has() / .len()": false,
+		"map get / contains / len":     false,
 		"dynamic struct decl":          false,
 		"dynamic enum decl":            false,
 		"id[T] generic call":           false,
@@ -570,8 +570,8 @@ func TestGenFeatureCoverage(t *testing.T) {
 		if strings.Contains(src, "(Map {") || strings.Contains(src, "Map[i32, i32]") {
 			want["Map literal"] = true
 		}
-		if strings.Contains(src, ".get(") || strings.Contains(src, ".has(") || strings.Contains(src, ".len()") {
-			want["map .get() / .has() / .len()"] = true
+		if strings.Contains(src, ".get(") || strings.Contains(src, ".contains(") || strings.Contains(src, ".len()") {
+			want["map get / contains / len"] = true
 		}
 		// Dynamic structs use `struct S<N>` and dynamic enums
 		// `enum E<N>` with `__E<N>_V<M>` variants.

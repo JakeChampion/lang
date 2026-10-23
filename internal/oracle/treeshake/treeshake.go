@@ -169,25 +169,25 @@ var watHelperDeps = map[string][]string{
 	// these mutator results (issue #2763), and that injection — like
 	// __map_drop_values above — happens after lowering, so there's no
 	// AST reference for tree-shake to follow on its own.
-	"map_new":             {"map_new_impl", "__map_drop_values", "__map_drop_impl"},
-	"__method_Map_len":    {"__map_len_impl"},
-	"__method_Map_has":    {"__map_has_impl", "__map_lookup", "__map_hash"},
-	"__method_Map_get":    {"__map_get_impl", "__map_lookup", "__map_hash"},
-	"__method_Map_get_or": {"__map_get_or_impl", "__map_lookup", "__map_hash"},
-	"__method_Map_set":    {"__map_set_impl", "__map_grow", "__map_hash", "__map_lookup_val", "__map_clone"},
-	"__method_Map_delete": {"__map_delete_impl", "__map_hash", "__map_clone"},
+	"map_new":               {"map_new_impl", "__map_drop_values", "__map_drop_impl"},
+	"__method_Map_len":      {"__map_len_impl"},
+	"__method_Map_contains": {"__map_has_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_get":      {"__map_get_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_get_or":   {"__map_get_or_impl", "__map_lookup", "__map_hash"},
+	"__method_Map_set":      {"__map_set_impl", "__map_grow", "__map_hash", "__map_lookup_val", "__map_clone"},
+	"__method_Map_remove":   {"__map_delete_impl", "__map_hash", "__map_clone"},
 	// Struct/enum (keyKind-3) keys route through the `_keyed` runtime
 	// variants (#2671). These alias names aren't real functions; the
 	// entries pull in the keyed impls (whose bodies — including the
 	// hash_fn/eq_fn params — are then walked normally). Enqueued from a
 	// map-method Call / MapLit only when the key TypeArg is a
 	// struct/enum, alongside that key type's derived hash/eq methods.
-	"__method_Map_has_keyed":    {"__map_has_keyed_impl", "__map_lookup_keyed"},
-	"__method_Map_get_keyed":    {"__map_get_keyed_impl", "__map_lookup_keyed"},
-	"__method_Map_get_or_keyed": {"__map_get_or_keyed_impl", "__map_lookup_keyed"},
-	"__method_Map_set_keyed":    {"__map_set_keyed_impl", "__map_grow_keyed", "__map_lookup_val_keyed", "__map_clone"},
-	"__method_Map_delete_keyed": {"__map_delete_keyed_impl", "__map_clone"},
-	"__method_Map_clear":        {"__map_clear_impl", "__map_clone"},
+	"__method_Map_contains_keyed": {"__map_has_keyed_impl", "__map_lookup_keyed"},
+	"__method_Map_get_keyed":      {"__map_get_keyed_impl", "__map_lookup_keyed"},
+	"__method_Map_get_or_keyed":   {"__map_get_or_keyed_impl", "__map_lookup_keyed"},
+	"__method_Map_set_keyed":      {"__map_set_keyed_impl", "__map_grow_keyed", "__map_lookup_val_keyed", "__map_clone"},
+	"__method_Map_remove_keyed":   {"__map_delete_keyed_impl", "__map_clone"},
+	"__method_Map_clear":          {"__map_clear_impl", "__map_clone"},
 	// __map_u8_column is reached only for a one-byte K / V (#10000), which
 	// the IR decides from the type — after this walk. So it is rooted with
 	// the rest of the column machinery: a program that calls keys() or
@@ -209,7 +209,7 @@ var watHelperDeps = map[string][]string{
 func keyedMapMethod(name string) bool {
 	switch name {
 	case "__method_Map_set", "__method_Map_get", "__method_Map_get_or",
-		"__method_Map_has", "__method_Map_delete":
+		"__method_Map_contains", "__method_Map_remove":
 		return true
 	}
 	return false

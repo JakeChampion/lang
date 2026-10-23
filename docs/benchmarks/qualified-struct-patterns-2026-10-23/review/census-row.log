@@ -1,0 +1,4 @@
+=== RUN   TestConformanceCensusHasARowPerFixture
+--- PASS: TestConformanceCensusHasARowPerFixture (0.02s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/sourcelint	0.018s

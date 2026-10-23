@@ -44,8 +44,8 @@ function main(): i32 {
     m = m.insert(3, 99);
     ks = m.keys();
     if (ks[3] != 3) { return 40; }
-    let d: (Map[i32, i32], boolean) = m.without(1);
-    m = d.0;
+    let d: Map[i32, i32] = m.remove(1);
+    m = d;
     ks = m.keys();
     if (ks.len() != 11) { return 50; }
     if (ks[1] != 11) { return 51; }

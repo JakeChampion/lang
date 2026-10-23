@@ -34,8 +34,8 @@ function step(k: i32): i32 {
     m = m.insert(k + 3, "v" + "3");
     m = m.insert(k + 4, "v" + "4");
     let r: i32 = 0;
-    if (m.has(k)) { r = r + 1; }
-    if (m.has(k + 4)) { r = r + 1; }
+    if (m.contains(k)) { r = r + 1; }
+    if (m.contains(k + 4)) { r = r + 1; }
     return r;
 }
 function main(): i32 {
@@ -118,7 +118,7 @@ function main(): i32 {
     if (ks[0] != 1 || ks[1] != 2) { return 91; }
     if (vs.len() != 2) { return 92; }
     if (vs[0] != "ab" || vs[1] != "cd") { return 93; }
-    if (!m.has(7) || !m.has(1)) { return 94; }
+    if (!m.contains(7) || !m.contains(1)) { return 94; }
     if (m.get_or(6, "") != "kl") { return 95; }
     return 0;
 }`
@@ -177,7 +177,7 @@ function main(): i32 {
         m = m.insert(2, 22);
         m = m.insert(3, 33);
         if (m.get_or(2, 0) != 22) { return 121; }
-        if (m.has(3)) { acc = acc + 1; }
+        if (m.contains(3)) { acc = acc + 1; }
         i = i + 1;
     }
     if (acc != 200) { return 122; }

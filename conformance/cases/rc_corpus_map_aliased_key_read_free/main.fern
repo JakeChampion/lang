@@ -31,7 +31,7 @@ function mk(seed: i32): i32 {
     m = m.insert(key, stem + "-value-well-past-seven-bytes");
     let n: i32 = 0;
     if (m.get_or(key, "") == "a-value-well-past-seven-bytes") { n = n + 1; }
-    if (m.has(key)) { n = n + 2; }
+    if (m.contains(key)) { n = n + 2; }
     match (m.get(key)) { Some(v) => { if (v == "a-value-well-past-seven-bytes") { n = n + 4; } }, None => {} }
     return n;
 }

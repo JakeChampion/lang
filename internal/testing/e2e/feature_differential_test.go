@@ -152,8 +152,8 @@ function main(): i32 {
     print(m.get_or(1, 0).to_string());
     print(m.get_or(3, 0 - 1).to_string());
     print(m.len().to_string());
-    print(pb(m.has(2)));
-    print(pb(m.has(9)));
+    print(pb(m.contains(2)));
+    print(pb(m.contains(9)));
     return 0;
 }`},
 
@@ -398,7 +398,7 @@ import "core/map";
 function main(): i32 {
     let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); m = m.insert(4, 40);
-    m = m.without(1).0;
+    m = m.remove(1);
     let ks = m.keys();
     let i: i32 = 0;
     while (i < ks.len()) { print(ks[i].to_string()); i = i + 1; }

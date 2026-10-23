@@ -65,7 +65,7 @@ function main(): i32 { return 0; }`)
 
 // A builtin that lowers to instructions or a scan allocating nothing is a
 // legal `fip` and `fbip` callee (#9607); verifyFipAllocs (E068) checks what it
-// emits. Each call below is one admitted builtin.
+// emits. The calls below cover every admitted builtin.
 func TestFipAdmitsNonAllocatingBuiltins(t *testing.T) {
 	for _, call := range []string{
 		`__memchr(s, 44, 0)`, `__memchr_bytes(set, 44, 0)`, `__rmemchr_bytes(set, 44, 0)`, `__mismatch_bytes(set, 0, set, 0, 1)`, `__mismatch_bytes_str(set, 0, s, 0, 1)`, `__rmemchr(s, 44, s.len())`, `__ascii_run(s, 0)`,
@@ -73,14 +73,15 @@ func TestFipAdmitsNonAllocatingBuiltins(t *testing.T) {
 		`__count_runs(s, 0, set)`, `__crc32_cksum(0, s)`, `__str_hash(s, 0)`,
 		`__clz32(x)`, `__ctz32(x)`, `__popcount32(x)`, `__clz64(y)`, `__ctz64(y)`, `__popcount64(y)`, `(__mulhi_u64(y, y) as i32)`,
 		`__ptr_width()`, `(__heap_bump_bytes() as i32)`, `(__heap_alloc_count() as i32)`, `(monotonic_ns() as i32)`,
+		`(__f64x2_lane(__f64x2_of(1.0, 2.0), 1) as i32)`, `(__f64x2_lane(__f64x2_splat(3.0), 0) as i32)`,
 	} {
 		for _, kw := range []string{"fip", "fbip"} {
 			wantNoErr(t, kw+" "+call, kw+` function probe(s: string, set: u8[], x: u32, y: u64): i32 { return `+call+`; }
 function main(): i32 { return 0; }`)
 		}
 	}
-	if len(fipNonAllocBuiltins) != 31 {
-		t.Errorf("fipNonAllocBuiltins has %d entries and this test calls 31: add a row for the new one", len(fipNonAllocBuiltins))
+	if len(fipNonAllocBuiltins) != 34 {
+		t.Errorf("fipNonAllocBuiltins has %d entries and this test covers 34: add a row for the new one", len(fipNonAllocBuiltins))
 	}
 }
 

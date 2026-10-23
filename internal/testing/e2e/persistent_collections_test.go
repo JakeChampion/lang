@@ -33,7 +33,7 @@ function main(): i32 {
     }
     let half: ordmap.OrdMap[i32, i32] = m.filter((k: i32, v: i32) => k % 2 == 0);
     if (half.len() != 300 || !half.is_valid()) { return 4; }
-    if (half.union(snap).len() != 600 || snap.difference(half).len() != 300 || snap.intersection(half).len() != 300) { return 5; }
+    if (half.merge(snap).len() != 600 || snap.difference(half).len() != 300 || snap.intersection(half).len() != 300) { return 5; }
     i = 0;
     while (i < 600) { m = m.remove(i); if (!m.is_valid()) { return 6; } i = i + 1; }
     if (m.len() != 0 || snap.len() != 600 || !snap.is_valid()) { return 7; }
@@ -76,7 +76,7 @@ function main(): i32 {
     }
     let half: pmap.PMap[i32, i32] = m.filter((k: i32, v: i32) => k % 2 == 0);
     if (half.len() != 750 || !half.is_valid()) { return 4; }
-    if (half.union(snap).len() != 1500 || snap.difference(half).len() != 750 || snap.intersection(half).len() != 750) { return 5; }
+    if (half.merge(snap).len() != 1500 || snap.difference(half).len() != 750 || snap.intersection(half).len() != 750) { return 5; }
     i = 0;
     while (i < 1500) { m = m.remove(i); if (!m.is_valid()) { return 6; } i = i + 1; }
     if (m.len() != 0 || snap.len() != 1500 || !snap.is_valid()) { return 7; }
@@ -159,14 +159,14 @@ function main(): i32 {
     let s: pset.PSet[string] = pset.pset_of(["a", "b", "a", "c"]);
     if (s.len() != 3 || !s.is_valid() || !s.contains("b") || s.contains("z")) { return 6; }
     let before: pset.PSet[string] = s;
-    s = s.add("d");
+    s = s.insert("d");
     s = s.remove("a");
     if (s.len() != 3 || before.len() != 3 || !before.contains("a") || s.contains("a")) { return 7; }
     let t: pset.PSet[string] = pset.pset_of(["c", "d", "e"]);
     if (s.union(t).len() != 4 || s.intersection(t).len() != 2 || s.difference(t).len() != 1) { return 8; }
     let big: pset.PSet[i32] = pset.pset_new();
     let i: i32 = 0;
-    while (i < 3000) { big = big.add(i % 1000); i = i + 1; }
+    while (i < 3000) { big = big.insert(i % 1000); i = i + 1; }
     if (big.len() != 1000 || !big.is_valid()) { return 9; }
     return 42;
 }

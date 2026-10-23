@@ -176,8 +176,8 @@ function main(): i32 {
 function main(): i32 {
     let m = Map { true: 5, false: 9 };
     let s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
-    if (m.has(true)) { s = s + 1; }
-    if (!m.has(false)) { s = s + 100; }
+    if (m.contains(true)) { s = s + 1; }
+    if (!m.contains(false)) { s = s + 100; }
     return s + m.len();
 }
 `, 17},
@@ -188,7 +188,7 @@ function main(): i32 {
 function main(): i32 {
     let m = Map { true: 5 };
     let s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
-    if (!m.has(false)) { s = s + 100; }
+    if (!m.contains(false)) { s = s + 100; }
     return s + m.len();
 }
 `, 106},
@@ -200,7 +200,7 @@ function main(): i32 {
     m = m.insert('\u{1F600}', 9);
     m = m.insert('a', 6);
     let s: i32 = m.get_or('a', 0) + m.get_or('\u{1F600}', 0) + m.get_or('z', 0);
-    if (!m.has('z')) { s = s + 100; }
+    if (!m.contains('z')) { s = s + 100; }
     return s + m.len();
 }
 `, 117},
@@ -208,7 +208,7 @@ function main(): i32 {
 function main(): i32 {
     let m = Map { 'x': 5, 'y': 9 };
     let s: i32 = m.get_or('x', 0) + m.get_or('y', 0) + m.get_or('z', 0);
-    if (!m.has('z')) { s = s + 100; }
+    if (!m.contains('z')) { s = s + 100; }
     return s + m.len();
 }
 `, 116},
@@ -220,7 +220,7 @@ function main(): i32 {
     m = m.insert(true, 5);
     m = m.insert(false, 9);
     let s: i32 = m.get_or(true, 0) + m.get_or(false, 0);
-    if (m.has(true)) { s = s + 1; }
+    if (m.contains(true)) { s = s + 1; }
     return s + m.len();
 }
 `, 17},

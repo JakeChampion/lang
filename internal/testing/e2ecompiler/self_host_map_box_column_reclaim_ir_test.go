@@ -43,16 +43,16 @@ var mapBoxColumnCases = []struct {
 function build(n: i32): i32 {
     let m: Map[i32, i32[]] = Map { 1: [n, n + 1], 2: [n + 2, n + 3, n + 4] };
     let r: i32 = 0;
-    if (m.has(1)) { r = r + 1; }
-    if (m.has(2)) { r = r + 1; }
+    if (m.contains(1)) { r = r + 1; }
+    if (m.contains(2)) { r = r + 1; }
     return r;
 }
 
 function build_i32(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: n, 2: n + 1 };
     let r: i32 = 0;
-    if (m.has(1)) { r = r + 1; }
-    if (m.has(2)) { r = r + 1; }
+    if (m.contains(1)) { r = r + 1; }
+    if (m.contains(2)) { r = r + 1; }
     return r;
 }
 
@@ -76,8 +76,8 @@ struct Q { a: i32, b: i32 }
 function build(n: i32): i32 {
     let m: Map[i32, Q] = Map { 1: Q { a: n, b: n + 1 }, 2: Q { a: n + 2, b: n + 3 } };
     let r: i32 = 0;
-    if (m.has(1)) { r = r + 1; }
-    if (m.has(2)) { r = r + 1; }
+    if (m.contains(1)) { r = r + 1; }
+    if (m.contains(2)) { r = r + 1; }
     return r;
 }
 

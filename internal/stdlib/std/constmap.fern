@@ -161,7 +161,7 @@ function __check(keys: string[], values: u64[]): Result[boolean, string] {
   let seen: Map[string, i32] = Map { };
   let i: i32 = 0;
   while (i < keys.len()) {
-    if (seen.has(keys[i])) {
+    if (seen.contains(keys[i])) {
       return Err("constmap: duplicate key \"" + keys[i] + "\"");
     }
     seen = seen.insert(keys[i], i);
