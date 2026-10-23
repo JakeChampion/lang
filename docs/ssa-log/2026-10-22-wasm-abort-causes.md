@@ -25,3 +25,15 @@ The component integration tests now run the world composer as Wasm.
 A shared assembler replaces the duplicated drivers that assumed a fixed import list.
 Native and Wasm composition still produce identical bytes across the host-interface categories.
 The fixed stdout template retains a scalar putchar test.
+
+CI found two more effects of the reporter.
+The allocation probe now reads the linked runtime's heap base.
+Its old calculation omitted the reporter's static texts and counted them as allocations.
+Custom WIT test worlds now declare stderr alongside stdout.
+All WIT export and custom-provider tests pass with those imports.
+
+Canonical-ABI bridges can allocate without an allocating lowered instruction.
+Runtime emission, returned needs, and component framing now share that fact.
+Command components with string and list exports pass through the production CLI.
+Matrix output-size overflow also reports the allocation cause.
+Both matrix helpers have runnable overflow tests.

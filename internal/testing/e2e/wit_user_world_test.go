@@ -42,7 +42,7 @@ func TestComposeFromUserWorld(t *testing.T) {
 	}
 	const worldName = "stdout-only"
 	if err := os.WriteFile(filepath.Join(witDir, "byo.wit"),
-		[]byte("package local:byo@0.0.0;\nworld "+worldName+" {\n    import wasi:cli/stdout@0.2.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:byo@0.0.0;\nworld "+worldName+" {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write byo.wit: %v", err)
 	}
 

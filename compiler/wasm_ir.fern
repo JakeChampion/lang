@@ -3561,6 +3561,15 @@ pub function needs_abort(needs: string[]): boolean {
   return need(needs, "@allocates") || need(needs, "@abort_checks");
 }
 
+// Canonical-ABI bridges allocate even when no lowered instruction does.
+// Keep framing, metadata, and runtime emission on the same needs.
+function runtime_needs(mod: parser.Module, needs: string[]): string[] {
+  if (module_extern_needs_heap(mod) && !needs_abort(needs)) {
+    return needs.append("@abort_checks");
+  }
+  return needs;
+}
+
 // needs_wall_clock reports whether the module reads the WALL clock (now_ns /
 // now_unix_ms), the pair that shares wasi:clocks/wall-clock's `now`.
 // monotonic_ns is the separate interface, so the two are gated apart.
@@ -3825,7 +3834,7 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
   let g: ircore.Lowered = ircore.gate(lm, sub);
   let cache: irtables.LowerResult[] = g.cache;
   if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
-    return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical), needs: needs_of(cache) };
+    return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical), needs: runtime_needs(lm, needs_of(cache)) };
   }
   // A module the lowering took whole but the component framing cannot
   // import for is not an IR bail, so name the op rather than blame the IR.
@@ -6132,7 +6141,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
       parts = parts.append("    i32.popcnt\n");
     }
   } else if (o.kind_tag == 80) {  // heap_bump_bytes
-    parts = emit_wasm_heap_bump_bytes(cagg_vals, str_vals, parts);
+    parts = emit_wasm_heap_bump_bytes(parts);
   } else if (o.kind_tag == 315) {  // heap_alloc_count
     // The allocator's call count (#9596): an i64 global $__fern_alloc
     // ticks at its entry, so the freelist pop is counted exactly like
@@ -8920,7 +8929,7 @@ pub function inner_mul_add_f64_helper(): string {
   o = o + "    (if (i64.ne (i64.mul (i64.extend_i32_u (local.get $rows)) (i64.extend_i32_u (local.get $extent))) (i64.extend_i32_u (i32.load (local.get $a)))) (then (call $__fern_abort_arr) (unreachable)))\n";
   o = o + "    (if (i64.ne (i64.mul (i64.extend_i32_u (local.get $extent)) (i64.extend_i32_u (local.get $columns))) (i64.extend_i32_u (i32.load (local.get $b)))) (then (call $__fern_abort_arr) (unreachable)))\n";
   o = o + "    (local.set $size (i64.mul (i64.extend_i32_u (local.get $rows)) (i64.extend_i32_u (local.get $columns))))\n";
-  o = o + "    (if (i64.gt_u (local.get $size) (i64.const 2147483647)) (then (call $__fern_abort_arr) (unreachable)))\n";
+  o = o + "    (if (i64.gt_u (local.get $size) (i64.const 2147483647)) (then (call $__fern_abort_alloc) (unreachable)))\n";
   o = o + "    (local.set $out (call $__fern_arr_elems (i32.wrap_i64 (local.get $size)) (i32.const 8)))\n    (i32.store (local.get $out) (i32.wrap_i64 (local.get $size)))\n    (i32.store offset=4 (local.get $out) (i32.wrap_i64 (local.get $size)))\n";
   o = o + "    (if (i64.eqz (local.get $size)) (then (return (local.get $out))))\n    (local.set $p (i32.add (local.get $out) (i32.const 8)))\n";
   o = o + "    (block $done (loop $row_loop\n      (br_if $done (i32.ge_u (local.get $row) (local.get $rows)))\n      (local.set $col (i32.const 0))\n      (local.set $left (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (i32.mul (local.get $row) (local.get $extent)) (i32.const 8))))\n";
@@ -8939,7 +8948,7 @@ pub function outer_mul_f64_helper(): string {
   o = o + "    (local $n i32) (local $m i32) (local $size i64) (local $o i32) (local $p i32) (local $i i32) (local $j i32) (local $pairs i32) (local $left f64) (local $vv v128)\n";
   o = o + "    (local.set $n (i32.load (local.get $a)))\n    (local.set $m (i32.load (local.get $b)))\n";
   o = o + "    (local.set $size (i64.mul (i64.extend_i32_u (local.get $n)) (i64.extend_i32_u (local.get $m))))\n";
-  o = o + "    (if (i64.gt_u (local.get $size) (i64.const 2147483647)) (then (call $__fern_abort_arr) (unreachable)))\n";
+  o = o + "    (if (i64.gt_u (local.get $size) (i64.const 2147483647)) (then (call $__fern_abort_alloc) (unreachable)))\n";
   o = o + "    (local.set $o (call $__fern_arr_elems (i32.wrap_i64 (local.get $size)) (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $o) (i32.wrap_i64 (local.get $size)))\n";
   o = o + "    (i32.store offset=4 (local.get $o) (i32.wrap_i64 (local.get $size)))\n";
@@ -11302,6 +11311,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   // The over-release detector global lives here (before $__fern_arr_dec,
   // which bumps it, and before rc_runtime_helpers, which also reads it).
   o = o + "  (global $__fern_rc_underflow (mut i32) (i32.const 0))\n";
+  o = o + "  (global $__fern_heap_base i32 (i32.const " + hb + "))\n";
   o = o + "  (global $heap (mut i32) (i32.const " + hb + "))\n";
   if (count) {
     // The allocator's call count (#9596), read back by kind_tag 315. A
@@ -12718,9 +12728,7 @@ function path_fs_bodies(parts: string[], needs: string[], mode: i32): string[] {
 // parallel copy; this is not).
 pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: string[], fn_sigs: string[], mode: i32, sw: asmcore.Switches): string {
   let lc: boolean = census_on(sw);
-  if (module_extern_needs_heap(mod) && !needs_abort(needs)) {
-    needs = needs.append("@abort_checks");
-  }
+  needs = runtime_needs(mod, needs);
   let reports_abort: boolean = mode != 1 && needs_abort(needs);
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let parts: string[] = [];
@@ -16818,7 +16826,7 @@ function wait_builtins(): string[] {
 // Those cores use the world composer. An implicit exit also needs that path
 // when the fixed framing has no exit import.
 pub function lowered_shape(mod: parser.Module, sw: asmcore.Switches, bodies: irtables.LowerResult[]): i32 {
-  if (needs_abort(needs_of(bodies))) {
+  if (needs_abort(runtime_needs(mod, needs_of(bodies)))) {
     return 0 - 1;
   }
   let shape: i32 = component_shape(mod, sw);
@@ -17134,22 +17142,11 @@ function emit_wasm_temp_dir(parts: string[]): string[] {
   return parts;
 }
 
-function emit_wasm_heap_bump_bytes(cagg_vals: string[], str_vals: string[], parts: string[]): string[] {
-  // bump high-water mark = $heap − heap_base. The $heap global is
-  // initialised to heap_base (heap_alloc_helpers), so this reads 0
-  // before the first allocation — matching the register backends and
-  // native's __fern_heap_bump_bytes. heap_base is recomputed from the
-  // data-section layout (identical to heap_base_for(mod), since
-  // str_vals / cagg_vals are this unit's and whole-program emit is one
-  // unit).
-  //
-  // The op's declared result is i64 (asmcore types the builtin i64 so
-  // a >2 GiB mark cannot read back negative), so zero-extend the i32
-  // address difference. Zero-, not sign-extend: the cursor never sits
-  // below heap_base, so the difference is a non-negative byte count.
-  parts = parts.append("    global.get $heap\n    i32.const " + util.i32_to_string(heap_base_for_strs(str_vals, cagg_vals)) + "\n    i32.sub\n    i64.extend_i32_u\n");
-
-  return parts;
+function emit_wasm_heap_bump_bytes(parts: string[]): string[] {
+  // Read the linked runtime's base. Unit-local literal lists exclude other
+  // units and the abort reporter's static text, so they cannot derive it.
+  // Zero-extend the non-negative cursor difference to the declared i64.
+  return parts.append("    global.get $heap\n    global.get $__fern_heap_base\n    i32.sub\n    i64.extend_i32_u\n");
 }
 
 // The packed empty byte array, a constant block like any other.
