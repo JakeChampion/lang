@@ -12447,6 +12447,7 @@ function stmts_slit_diags(stmts: ast.Stmt[], structs: StructTable): util.Diag[] 
     match (stmt) {
       ast.StmtVar(v) => {
         out = util.append_diags(out, slit_diags(v.init, structs));
+        out = util.append_diags(out, destructure_covers_diags(v, structs));
       },
       ast.StmtReturn(r) => {
         out = util.append_diags(out, slit_diags(r.value, structs));
@@ -12459,6 +12460,7 @@ function stmts_slit_diags(stmts: ast.Stmt[], structs: StructTable): util.Diag[] 
       },
       ast.StmtIf(f) => {
         out = util.append_diags(out, slit_diags(f.cond, structs));
+        out = util.append_diags(out, struct_arms_cover_diags(f.sugar.strct, structs));
         out = util.append_diags(out, stmts_slit_diags(f.then_body, structs));
         out = util.append_diags(out, stmts_slit_diags(f.else_body, structs));
       },
@@ -13081,18 +13083,68 @@ function record_pattern_diags(pvin: ast.PatVariant, structs: StructTable, line: 
     }
   }
   if (bound.len() != decl.len() && !pv.rest_written) {
-    let listed: string = "";
-    let d: i32 = 0;
-    while (d < decl.len()) {
-      if (d > 0) {
-        listed = listed + ", ";
-      }
-      listed = listed + decl[d];
-      d = d + 1;
-    }
-    out = out.append(dg_at("E015", "named-field pattern for " + pv.type_name + " must bind all " + util.i32_to_string(decl.len()) + " field(s) (" + listed + "), or end in `..` to leave the rest out", line, col));
+    out = out.append(missing_pattern_fields_diag(pv.type_name, decl, line, col));
   }
   return out;
+}
+
+// missing_pattern_fields_diag is E015 for a named-field pattern that leaves a
+// field of `name` out without a trailing `..`.
+function missing_pattern_fields_diag(name: string, decl: string[], line: i32, col: i32): util.Diag {
+  let listed: string = "";
+  let d: i32 = 0;
+  while (d < decl.len()) {
+    if (d > 0) {
+      listed = listed + ", ";
+    }
+    listed = listed + decl[d];
+    d = d + 1;
+  }
+  return dg_at("E015", "named-field pattern for " + util.demangle(name) + " must bind all " + util.i32_to_string(decl.len()) + " field(s) (" + listed + "), or end in `..` to leave the rest out", line, col);
+}
+
+// destructure_covers_diags is struct_pattern_covers_diags for a `let`,
+// parameter or `for` destructure, which reaches here as its marker.
+function destructure_covers_diags(v: ast.StmtVar, structs: StructTable): util.Diag[] {
+  if (!parser.is_struct_destr_marker(v.type_name)) {
+    return [];
+  }
+  let (fields, _) = struct_destr_fields(v.type_name);
+  return struct_pattern_covers_diags(struct_destr_name(v.type_name), fields, parser.destr_marker_split(v.type_name).rest_written, structs, v.line, v.col);
+}
+
+// struct_arms_cover_diags is struct_pattern_covers_diags for each arm of a
+// desugared struct match.
+function struct_arms_cover_diags(arms: ast.StructArm[], structs: StructTable): util.Diag[] {
+  let out: util.Diag[] = [];
+  for sa in arms {
+    if (!sa.is_wild) {
+      out = util.append_diags(out, struct_pattern_covers_diags(sa.type_name, sa.fields, sa.rest_written, structs, sa.line, sa.col));
+    }
+  }
+  return out;
+}
+
+// struct_pattern_covers_diags holds a struct pattern to the rule a named-field
+// variant pattern keeps: it names every field of struct `name` unless it ends
+// in `..`.
+function struct_pattern_covers_diags(name: string, fields: string[], rest: boolean, structs: StructTable, line: i32, col: i32): util.Diag[] {
+  let sig: StructSig = find_struct_sig(structs, name);
+  if (rest || sig.name.len() == 0) {
+    return [];
+  }
+  // An unknown field is reported on its own; the count would only repeat it.
+  for f in fields {
+    if (!util.has_str(sig.field_names, f)) {
+      return [];
+    }
+  }
+  for f in sig.field_names {
+    if (!util.has_str(fields, f)) {
+      return [missing_pattern_fields_diag(name, sig.field_names, line, col)];
+    }
+  }
+  return [];
 }
 
 // payload_slot_type_name is the declared type SPELLING of a variant's payload
@@ -17592,6 +17644,57 @@ function for_iter_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
   return [dg_at("E083", "cannot iterate over a value of type " + util.demangle_all(util.show_type_vars(type_label_or_tvar(it))) + ": `for` walks an array, a string, a Map, a range, an iter.Iterator, or a value whose iter() returns one", expr_line(fr.iter), expr_col(fr.iter))];
 }
 
+// tuple_destr_diags is E024 for a tuple pattern of `n` names over a value of
+// type `t`.
+function tuple_destr_diags(t: typeinfo.Type, n: i32, line: i32, col: i32): util.Diag[] {
+  match (t) {
+    typeinfo.TypeTuple(tt) => {
+      if (tt.elements.len() != n) {
+        return [dg_at("E024", "tuple has " + util.i32_to_string(tt.elements.len()) + " elements, but " + util.i32_to_string(n) + " names given", line, col)];
+      }
+    },
+    typeinfo.TypeUnknown(_) => {},
+    _ => {
+      return [dg_at("E024", "tuple destructure needs a tuple expression, got " + type_label(t), line, col)];
+    }
+  }
+  return [];
+}
+
+// for_pattern_diags is E024 for a `for (a, b) in X` header whose element is
+// not a tuple of that many values, or that walks a Map with other than two
+// names.
+function for_pattern_diags(fr: ast.StmtFor, s: Scope): util.Diag[] {
+  if (!name_has_comma(fr.var_name)) {
+    return [];
+  }
+  let n: i32 = split_pattern_names(fr.var_name).len();
+  if (for_iter_is_range(fr.iter)) {
+    return tuple_destr_diags(range_var_type(fr.iter, s), n, fr.line, fr.col);
+  }
+  let it: typeinfo.Type = check_expr(fr.iter, s);
+  match (it) {
+    typeinfo.TypeString(_) => {
+      return tuple_destr_diags(t_u8(), n, fr.line, fr.col);
+    },
+    typeinfo.TypeArray(ta) => {
+      return tuple_destr_diags(ta.elem, n, fr.line, fr.col);
+    },
+    typeinfo.TypeMap(_) => {
+      if (n != 2) {
+        return [dg_at("E024", "iterating a Map binds a (key, value) pair, but this pattern binds " + util.i32_to_string(n), fr.line, fr.col)];
+      }
+      return [];
+    },
+    _ => {}
+  }
+  let sub: IterSubject = iter_subject(it, s);
+  if (sub.ok) {
+    return tuple_destr_diags(sub.elem, n, fr.line, fr.col);
+  }
+  return [];
+}
+
 // builtin_iterable: the subjects `for` walks without the Iterator protocol.
 function builtin_iterable(t: typeinfo.Type): boolean {
   match (t) {
@@ -18260,6 +18363,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
       ast.StmtFor(fr) => {
         out = util.append_diags(out, call_diags(fr.iter, cur));
         out = util.append_diags(out, for_iter_diags(fr, cur));
+        out = util.append_diags(out, for_pattern_diags(fr, cur));
         out = util.append_diags(out, stmts_call_diags(fr.body, for_body_scope(fr, cur)));
       },
       ast.StmtMatch(m) => {
@@ -18754,19 +18858,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
         out = util.append_diags(out, struct_destr_diags(v, cur));
         let positions: string[] = split_pattern_names(v.name);
         if (positions.len() > 1 && !parser.is_struct_destr_marker(v.type_name)) {
-          let nnames: i32 = positions.len();
-          let dit: typeinfo.Type = check_expr(v.init, cur);
-          match (dit) {
-            typeinfo.TypeTuple(dtt) => {
-              if (dtt.elements.len() != nnames) {
-                out = out.append(dg_at("E024", "tuple has " + util.i32_to_string(dtt.elements.len()) + " elements, but " + util.i32_to_string(nnames) + " names given", v.line, v.col));
-              }
-            },
-            typeinfo.TypeUnknown(_) => {},
-            _ => {
-              out = out.append(dg_at("E024", "tuple destructure needs a tuple expression, got " + type_label(dit), v.line, v.col));
-            }
-          }
+          out = util.append_diags(out, tuple_destr_diags(check_expr(v.init, cur), positions.len(), v.line, v.col));
         }
       },
       ast.StmtAssign(a) => {
@@ -18932,7 +19024,8 @@ function undefined_name(name: string, s: Scope, line: i32, col: i32): util.Diag 
 }
 
 // visible_names is every name `s` resolves: its bindings, innermost first,
-// then the module's functions and constants.
+// then the functions and builtins in name order. The Go checker lists them
+// the same way, so a tie in util.suggest picks the same name in both.
 function (s: Scope) visible_names(): string[] {
   let out: string[] = [];
   let i: i32 = s.names.len() - 1;
@@ -18940,12 +19033,17 @@ function (s: Scope) visible_names(): string[] {
     out = astwalk.append_bound_name(out, s.names[i]);
     i = i - 1;
   }
+  let funcs: string[] = parser.builtin_function_names();
   for sig in s.sigs.sigs {
     if (sig.receiver.len() == 0) {
-      out = out.append(sig.name);
+      funcs = funcs.append(sig.name);
     }
   }
-  return util.append_all(out, parser.builtin_function_names());
+  return util.append_all(out, util.sorted_by(funcs, name_after));
+}
+
+function name_after(a: string, b: string): boolean {
+  return a > b;
 }
 
 // scalar_match_exhaustive_diags: E030 for a `match` on a number / string /
@@ -29046,7 +29144,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       if let Some(lowered) = iterator_lowering(fr, s) {
         return annotate_stmt(lowered, s, after);
       }
-      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line };
+      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line, col: fr.col };
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { action: annotate_stmt(d.action, s, after), on_error: d.on_error, line: d.line };

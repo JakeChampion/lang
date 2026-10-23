@@ -33,6 +33,8 @@ func TestSelfHostCheckerPrintsFixes(t *testing.T) {
 		{"member", "struct Point { x: i32, y: i32 }\nfunction (p: Point) push(n: i32): i32 { return p.x + n; }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  return p.puzh(2) + p.yy;\n}\n", []string{"replace `puzh` with `push`", "replace `yy` with `y`"}},
 		{"pattern-field", "struct P { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: P = P { x: 1, y: 2 };\n  match (p) {\n    P { x, yy } => { return x; }\n  }\n}\n", []string{"replace `yy` with `y`"}},
 		{"destructure-field", "struct Point { x: i32, y: i32 }\nfunction main(): i32 {\n  let p: Point = Point { x: 1, y: 2 };\n  let Point { x, z } = p;\n  return x;\n}\n", []string{"replace `z` with `x`"}},
+		{"tie-takes-the-nearest-local", "function main(): i32 {\n  let x: i32 = 1;\n  let y: i32 = 2;\n  return n;\n}\n", []string{"replace `n` with `y`"}},
+		{"tie-takes-the-first-function-by-name", "function ab(): i32 { return 1; }\nfunction aa(): i32 { return 2; }\nfunction main(): i32 { return ac(); }\n", []string{"replace `ac` with `aa`"}},
 		{"nothing-close", "function main(): i32 { return zzzzzz; }\n", nil},
 		{"type-error", "function main(): i32 {\n  let x: i32 = \"s\";\n  return x;\n}\n", nil},
 	} {

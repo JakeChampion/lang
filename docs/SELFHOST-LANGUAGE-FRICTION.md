@@ -182,7 +182,7 @@ functions). Nothing else. The consequences:
 
 ### 2.3 A module is a file, and cycles are illegal
 
-`fern -check` on two mutually-importing files: `import cycle detected`. Combined
+`fern -check` on two mutually-importing files: E086, `closes an import cycle`. Combined
 with one-module-per-file and no package concept, a mutually-recursive compiler
 pass cannot be split at all. The deleted AST lowering's `lower_expr` ↔
 `lower_stmt` ↔ `lower_call_method` ↔ `lower_stmt_var` were irreducibly
@@ -911,7 +911,7 @@ commit, on `-interp` and `-target x86-64-linux`. Reproductions:
 | §4.3 derive hint | `@derive(Eq, Hash)` vs `@derive(cmp.Eq, cmp.Hash)` + `import "core/cmp"` |
 | §4.4 dead hints | `let t: str = s[1:3];` and `let b: u8 = 3;` both check clean |
 | §4.5 append cliff | the two loops in §4.5 at n = 25k/50k/100k |
-| §2.3 import cycles | two mutually-importing modules → `import cycle detected` |
+| §2.3 import cycles | two mutually-importing modules → E086 `closes an import cycle` |
 | §5 numeric semantics | `-7 % 3`, `-7 / 3`, `2147483647 + 1`, `0 / 0` — identical on both engines |
 | §3.7 field mutation | `s.n = 5` → E048; `S { ...s, n: v }` × 200k → 5 ms |
 | recursive ADTs, multi-payload enums, wide struct fields, fn-value arrays, `?` | all work natively — the self-host's non-use of them is not a capability gap |

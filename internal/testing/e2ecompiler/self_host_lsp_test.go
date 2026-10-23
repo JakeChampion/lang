@@ -406,7 +406,7 @@ var lspCases = []struct {
 	{"astral-before", map[string]string{"main.fern": "function main(): i32 {\n  let s: string = \"\U0001F600\"; let x: i32 = y;\n  return 0;\n}\n"}, []placed{{span(1, 37, 1, 38), 1, "fern", "E001"}}},
 	{"crlf", map[string]string{"main.fern": "function main(): i32 {\r\n  return y;\r\n}\r\n"}, []placed{{span(1, 9, 1, 10), 1, "fern", "E001"}}},
 	{"parse-marker", map[string]string{"main.fern": "function main(): i32 {\n  let x: i32 = ;\n  return 0;\n}\n"}, []placed{{span(1, 15, 1, 16), 1, "fern", "P001"}}},
-	{"unresolved-import", map[string]string{"main.fern": "import \"./nope\";\nfunction main(): i32 {\n  return 0;\n}\n"}, []placed{{span(0, 0, 0, 0), 1, "fern", ""}}},
+	{"unresolved-import", map[string]string{"main.fern": "import \"./nope\";\nfunction main(): i32 {\n  return 0;\n}\n"}, []placed{{span(0, 0, 0, 1), 1, "fern", "E086"}}},
 	{"sibling-import", map[string]string{
 		"main.fern": "import \"./lib\";\nfunction main(): i32 {\n  return lib.shown() + z;\n}\n",
 		"lib.fern":  "pub function shown(): i32 { return 2; }\n",
@@ -416,7 +416,7 @@ var lspCases = []struct {
 	{"private-in-sibling", map[string]string{
 		"main.fern": "import \"./lib\";\nfunction main(): i32 {\n  return lib.hidden();\n}\n",
 		"lib.fern":  "function hidden(): i32 { return 1; }\n",
-	}, []placed{{span(2, 12, 2, 13), 1, "fern", ""}}},
+	}, []placed{{span(2, 12, 2, 13), 1, "fern", "E087"}}},
 	{"todo-stub", map[string]string{"main.fern": "function f(): i32 {\n  todo;\n}\nfunction main(): i32 {\n  return 0;\n}\n"}, []placed{{span(1, 2, 1, 3), 2, "fern", ""}}},
 }
 

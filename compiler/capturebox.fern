@@ -209,7 +209,7 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
       // in the enclosing scope, so only the body takes the extra binding.
       let fb: string[] = bound;
       fb = astwalk.append_bound_name(fb, fr.var_name);
-      return ast.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed, btypes, bsites, bound), body: box_rewrite_stmts(fr.body, boxed, btypes, bsites, fb), label: fr.label, line: fr.line };
+      return ast.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed, btypes, bsites, bound), body: box_rewrite_stmts(fr.body, boxed, btypes, bsites, fb), label: fr.label, line: fr.line, col: fr.col };
     },
     ast.StmtMatch(m) => {
       let na: ast.MatchArm[] = [];
