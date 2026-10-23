@@ -25,7 +25,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$PWD
-RUNS="${FERN_DEFLATE_RUNS:-5}"
+RUNS="${FERN_DEFLATE_RUNS-5}"
+case "$RUNS" in
+  ''|*[!0-9]*) echo "deflate-bench: FERN_DEFLATE_RUNS must be a positive i32 integer" >&2; exit 2 ;;
+esac
+if ! [ "$RUNS" -ge 1 ] 2>/dev/null || ! [ "$RUNS" -le 2147483647 ] 2>/dev/null; then
+  echo "deflate-bench: FERN_DEFLATE_RUNS must be a positive i32 integer" >&2
+  exit 2
+fi
 CACHE="${FERN_DEFLATE_CACHE:-$HOME/.cache/fern-deflate-bench}"
 CSV="${1:-$CACHE/results.csv}"
 

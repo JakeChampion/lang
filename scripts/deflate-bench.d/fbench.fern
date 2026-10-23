@@ -88,7 +88,13 @@ function main(): i32 {
       times = times.append(now_ns() - t0);
       r = r + 1;
     }
-    write_file_bytes(argv[4], stream);
+    match (write_file_bytes(argv[4], stream)) {
+      Ok(_) => {},
+      Err(e) => {
+        eprint("fbench: cannot write " + argv[4]);
+        return 2;
+      }
+    }
     let d: i64 = decode_runs(stream, input, runs);
     print("in=" + input.len().to_string() + " out=" + stream.len().to_string() + " comp_ns=" + median(times).to_string() + " decomp_ns=" + d.to_string());
     return 0;
