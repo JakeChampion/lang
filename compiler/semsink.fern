@@ -53,11 +53,12 @@ function reuse(f: ssasem.Func): Sunk {
     return Sunk { f: f, reread: 0 };
   }
   let reads: ssa.SInst[] = counted_reads(g, f.values);
+  let slots: Slots = read_slots(reads);
   let same: i32[] = identity(f.values.len());
   let n: i32 = 0;
   for r in reads {
     let bi: i32 = rd.at[r.result];
-    let first: i32 = earlier_read(rd, reads, r, bi, same, f.values);
+    let first: i32 = earlier_read(rd, reads, slots, r, bi, same, f.values);
     if (first >= 0) {
       same = same.with(r.result, first);
       n = n + 1;
@@ -93,15 +94,47 @@ function identity(n: i32): i32[] {
   return out;
 }
 
+// The reads chained by the hash of their slot: head[b] is the first read in
+// bucket b, -1 when empty, and next[i] the next read in the same bucket, in
+// the order of `reads`.
+struct Slots { head: i32[], next: i32[] }
+
+// slot_hash is the hash of what semcse.same_slot compares before the parent:
+// the kind, the index and the name.
+function slot_hash(u: ssa.SInst): i32 {
+  return ((u.kind_tag & 1023) * 31 + (u.imm & 65535)) * 31 + (__str_hash(u.str, 0) & 65535);
+}
+
+function read_slots(reads: ssa.SInst[]): Slots {
+  let nb: i32 = 2;
+  while (nb <= reads.len() * 2) {
+    nb = nb * 2;
+  }
+  let head: i32[] = util.minus_ones(nb);
+  let next: i32[] = util.minus_ones(reads.len());
+  let k: i32 = reads.len() - 1;
+  while (k >= 0) {
+    let b: i32 = slot_hash(reads[k]) & nb - 1;
+    next = next.with(k, head[b]);
+    head = head.with(b, k);
+    k = k - 1;
+  }
+  return Slots { head: head, next: next };
+}
+
 // The read in a block strictly dominating the one at `bi` that `r` repeats
-// and that must be taken, -1 for none.
-function earlier_read(rd: Reads, reads: ssa.SInst[], r: ssa.SInst, bi: i32, same: i32[], values: typeinfo.Type[]): i32 {
-  for u in reads {
+// and that must be taken, -1 for none. Only the reads in `r`'s slot bucket
+// can repeat it.
+function earlier_read(rd: Reads, reads: ssa.SInst[], slots: Slots, r: ssa.SInst, bi: i32, same: i32[], values: typeinfo.Type[]): i32 {
+  let i: i32 = slots.head[slot_hash(r) & slots.head.len() - 1];
+  while (i >= 0) {
+    let u: ssa.SInst = reads[i];
     let ub: i32 = rd.at[u.result];
     if (u.result != r.result && ub != bi && ssadeps.dom_holds(rd.dom, bi, ub) && semcse.same_slot(u, r, same, values)
       && (child_used_above(rd, rd.spent, bi, u.result, 0) || child_live_out(rd, bi, u.result, 0))) {
       return semcse.stand_in(same, u.result);
     }
+    i = slots.next[i];
   }
   return 0 - 1;
 }
