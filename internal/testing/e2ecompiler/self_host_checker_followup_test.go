@@ -47,6 +47,10 @@ function main(): i32 { use x <- take(1); return 0; }`},
 		{"use-empty-callback", `function take(f: () => i32): i32 { return f(); }
 function main(): i32 { use x <- take(); return 0; }`},
 		{"use-nonsignature", `function main(): i32 { let take = 1; use x <- take(); return 0; }`},
+		{"use-repeated", `function add(x: i32, y: i32): i32 { return x + y; }
+function main(): i32 { use n <- add(1); use m <- add(2); return n + m; }`},
+		{"use-in-lambda", `function add(x: i32, y: i32): i32 { return x + y; }
+function main(): i32 { let f = (): i32 => { use n <- add(1); return n; }; return f(); }`},
 	}
 	headers := func(t *testing.T, cmd *exec.Cmd) string {
 		t.Helper()
