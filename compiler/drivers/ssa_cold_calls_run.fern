@@ -52,11 +52,13 @@ function main(): i32 {
   failures = check(!cold[0] && !cold[1] && !cold[2] && cold[3] && !cold[4] && !cold[5], "cold_blocks", failures);
   // Positions: block 0 at 0 (one inst, its terminator at 1), block 1 at 2,
   // block 2 at 5, block 3 at 7, block 4 at 9.
-  let kinds: i32[] = ssa.cold_positions(f);
+  let kinds: i32[] = ssa.cold_positions(f, false);
   failures = check(kinds[7] == ssa.COLD_BRANCH, "a call some iterations skip is COLD_BRANCH", failures);
   failures = check(kinds[9] == ssa.COLD_NONE, "a call every iteration makes is a call", failures);
   failures = check(kinds[10] == ssa.COLD_SLOW, "a push is COLD_SLOW", failures);
   failures = check(kinds[11] == ssa.COLD_INLINE, "an inline rc primitive is COLD_INLINE", failures);
+  let sized: i32[] = ssa.cold_positions(f, true);
+  failures = check(sized[11] == ssa.COLD_NONE, "a size-mode rc helper remains a call", failures);
   // A clobber at position 1 binds a value live across it under table_inside,
   // and a value that dies or is defined there too under table.
   let inside: ssafixed.Table = ssafixed.table_inside(0, 1, [0, 1, 0, 0]);
@@ -68,8 +70,10 @@ function main(): i32 {
   // keeps a caller register when those calls are cold, and is spilled when
   // every call is a call.
   let g: ssa.SFunc = cold_only();
-  let kept: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), true);
-  let spilled: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), false);
+  let kept: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, false));
+  let spilled: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), []);
+  let sized_alloc: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), ssa.cold_positions(g, true));
+  failures = check(sized_alloc.reg_of[1] < 0, "a size-mode rc call spills the hot phi", failures);
   failures = check(kept.reg_of[1] >= 0, "cold calls leave the hot phi a register", failures);
   failures = check(spilled.reg_of[1] < 0, "calls spill the hot phi", failures);
   print("failures=" + util.i32_to_string(failures));

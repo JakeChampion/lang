@@ -2261,9 +2261,9 @@ const COLD_SLOTS: i32 = 8;
 
 // ssa_cold_fixed marks COLD_CLOBBERS at every position `ssa.cold_positions`
 // names.
-function ssa_cold_fixed(f: ssa.SFunc): ssafixed.Table {
+function ssa_cold_fixed(cold: i32[]): ssafixed.Table {
   let masks: i32[] = [];
-  for kind in ssa.cold_positions(f) {
+  for kind in cold {
     let mask: i32 = 0;
     if (kind == ssa.COLD_SLOW || kind == ssa.COLD_BRANCH) {
       mask = COLD_CLOBBERS;
@@ -5353,7 +5353,8 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let formed: ssa.Formed = prepared.formed;
   let f: ssa.SFunc = formed.f;
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
-  let alloc: ssa.Alloc = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f), true);
+  let call_kinds: i32[] = ssa.cold_positions(f, s.size);
+  let alloc: ssa.Alloc = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(call_kinds), call_kinds);
   let reg_of: i32[] = alloc.reg_of;
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);

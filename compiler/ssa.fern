@@ -606,7 +606,7 @@ pub const COLD_INLINE: i32 = 3;
 
 // cold_positions classifies each instruction position, numbered as the
 // allocator numbers them (each block's instructions, then its terminator).
-pub function cold_positions(f: SFunc): i32[] {
+pub function cold_positions(f: SFunc, size: boolean): i32[] {
   let cold: boolean[] = cold_blocks(f);
   let out: i32[] = [];
   let bi: i32 = 0;
@@ -619,7 +619,9 @@ pub function cold_positions(f: SFunc): i32[] {
       if (cold_call(ins)) {
         kind = COLD_SLOW;
       } else if (rc_inlined(ins)) {
-        kind = COLD_INLINE;
+        if (!size) {
+          kind = COLD_INLINE;
+        }
       } else if (cold[bi] && inst_is_call(ins.kind_tag) && !returns_call(blk, k)) {
         kind = COLD_BRANCH;
       }
@@ -1688,17 +1690,18 @@ function count_false(fl: boolean[]): i32 {
 // for nothing. A value a block returns that names no register asks for
 // `abi_reg`, where the return reads it (`return_prefs`).
 pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32): Alloc {
-  return regalloc_linear_fixed(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, ssafixed.none(), false);
+  return regalloc_linear_fixed(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, ssafixed.none(), []);
 }
 
-// With `cold_calls`, a call `cold_positions` names is not a call to the
+// With a non-empty `cold` classification, a position it names is not a call to the
 // integer class: a value live across it may sit in a caller-saved register,
 // which `fixed` keeps off the registers the call itself writes and the
 // emitter saves around it. A value live across a call in a cold block still
 // takes a free callee-saved register first, so only a loop short of them
 // pays for the saves. Float values still count every call. `Alloc.cold` is
 // the classification, by position.
-pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold_calls: boolean): Alloc {
+pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[]): Alloc {
+  let cold_calls: boolean = cold.len() > 0;
   let wish: i32[] = return_prefs(f, pref, abi_reg);
   let big: i32 = 2000000000;
   let lo: i32[] = __alloc_i32(f.nvals);
@@ -1712,10 +1715,6 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
   let calls: i32[] = [];
   let all_calls: i32[] = [];
   let soft_calls: i32[] = [];
-  let cold: i32[] = [];
-  if (cold_calls) {
-    cold = cold_positions(f);
-  }
   let abi_cl: i32[] = [];
 
   // Number instructions and record each value's def/use positions.
