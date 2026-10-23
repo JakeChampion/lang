@@ -1,0 +1,8 @@
+=== RUN   TestSelfHostFmtNativeParityX86_64
+=== RUN   TestSelfHostFmtNativeParityX86_64/nested-whole-struct-pattern
+=== RUN   TestSelfHostFmtNativeParityX86_64/qualified-record-binding-sites
+--- PASS: TestSelfHostFmtNativeParityX86_64 (1.70s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/nested-whole-struct-pattern (0.00s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/qualified-record-binding-sites (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	1.714s
