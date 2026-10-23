@@ -10,6 +10,7 @@ import "std/platform";
 import "std/serve";
 import "./binary";
 import "./fractal";
+import "./source";
 
 const PORT: i32 = 8080;
 
@@ -76,12 +77,17 @@ function (state: Stats) render(z: i32, x: i64, y: i64): Rendered {
   return Rendered { tile: tile, elapsed_ns: elapsed_ns };
 }
 
-pub function routes[P: platform.Platform](state: Stats, web: string): router.Router[P] {
+pub function routes[P: platform.Platform](state: Stats, web: string, sources: source.Page[]): router.Router[P] {
   let app: router.Router[P] = router.new[P]();
   app = app.get("/tile/{z}/{x}/{y}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => tile(state, params));
   app = app.get("/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.respond(websocket.accept(req, websocket.options(), session(state)))));
   app = app.get("/api/stats", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.json_of(state.view(plat.now_ms())).with_header("Cache-Control", "no-store")));
   app = app.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
+  app = app.get("/_src", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect("/_src/")));
+  app = app.get("/_src/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
+    let path: string = params.param("path")?;
+    return Ok(source.serve(sources, path));
+  });
   return app.get("/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(static.serve(req, static.dir(web), plat)));
 }
 
@@ -201,6 +207,14 @@ function own_size(): i64 {
 
 function main(): i32 {
   let state: Stats = stats(hex6(random_i32()), now_unix_ms(), own_size());
-  let handler: (HttpRequest, platform.Host) => HttpResponse = routes[platform.Host](state, "web").handler();
-  return serve.run_shutdown(PORT, serve.config(), handler, (reason: string): void => eprint("server: stopped, " + reason));
+  match (source.load(".")) {
+    Ok(sources) => {
+      let handler: (HttpRequest, platform.Host) => HttpResponse = routes[platform.Host](state, "web", sources).handler();
+      return serve.run_shutdown(PORT, serve.config(), handler, (reason: string): void => eprint("server: stopped, " + reason));
+    },
+    Err(message) => {
+      eprint("server: " + message);
+      return 1;
+    }
+  }
 }

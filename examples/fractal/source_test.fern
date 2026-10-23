@@ -1,0 +1,97 @@
+import "std/test";
+import "std/http";
+import "std/platform";
+import "std/option";
+import "./source";
+import "./server";
+
+function test_highlight(): test.TestOutcome {
+  let html: string = source.highlight("pub fip function write(own value: u32): u32 { return 42; }");
+  return test.assert_true(
+    html.contains("<span class=\"k\">fip</span>") && html.contains("<span class=\"k\">own</span>")
+      && html.contains("<span class=\"t\">u32</span>") && html.contains("<span class=\"n\">42</span>"),
+  );
+}
+
+function test_imports(): test.TestOutcome {
+  let html: string = source.highlight("  import \"./fractal\" as tiles; // use the renderer");
+  return test.assert_true(
+    html.starts_with("  ") && html.contains("href=\"/_src/fractal.fern\"")
+      && html.contains("<span class=\"s\">&quot;./fractal&quot;</span></a>")
+      && html.contains("<span class=\"k\">as</span> tiles;") && html.contains("<span class=\"c\">// use the renderer</span>")
+      && source.highlight("import\t\"./binary\";").contains("href=\"/_src/binary.fern\""),
+  );
+}
+
+function test_import_targets(): test.TestOutcome {
+  return test.assert_true(
+    source.import_href("././binary.fern").unwrap_or("") == "/_src/binary.fern"
+      && source.import_href("std/http").unwrap_or("") == "https://github.com/JakeChampion/lang/blob/main/internal/stdlib/std/http.fern"
+      && source.import_href("../../compiler/weave").unwrap_or("") == "https://github.com/JakeChampion/lang/blob/main/compiler/weave.fern"
+      && source.import_href("./missing").is_none() && source.import_href("../../../etc/passwd").is_none(),
+  );
+}
+
+function test_fake_imports(): test.TestOutcome {
+  return test.assert_true(
+    !source.highlight("// import \"./fractal\";").contains("<a ")
+      && !source.highlight("let text: string = \"import ./fractal\";").contains("<a ")
+      && !source.highlight("import \"./fractal").contains("<a ")
+      && !source.highlight("important \"./fractal\";").contains("<a "),
+  );
+}
+
+function test_escape_html(): test.TestOutcome {
+  let html: string = source.render("<title>&", "// </code></pre><script>alert('x')</script>\nlet text: string = \"<&>\";\n");
+  return test.assert_true(
+    !html.contains("<script>") && html.contains("&lt;script&gt;") && html.contains("&lt;title&gt;&amp;")
+      && html.contains("&lt;&amp;&gt;"),
+  );
+}
+
+function test_line_links(): test.TestOutcome {
+  let html: string = source.render("fractal.fern", "// first\n\nlet count: i32 = 3;\n");
+  return test.assert_true(
+    html.contains("id=\"L1\"") && html.contains("id=\"L2\"") && html.contains("id=\"L3\"")
+      && html.contains("href=\"#L3\"") && !html.contains("id=\"L4\"")
+      && html.contains("aria-current=\"page\">fractal.fern"),
+  );
+}
+
+function test_routes(): test.TestOutcome {
+  let pages: source.Page[] = [source.Page { name: "fractal.fern", html: source.render("fractal.fern", "pub const SIZE: i32 = 256;\n") }];
+  let routes = server.routes[platform.Host](server.stats("test", 0, 0), "web", pages);
+  let index: HttpResponse = routes.handle(http.request("GET", "/_src/"), platform.host());
+  let file: HttpResponse = routes.handle(http.request("GET", "/_src/fractal.fern"), platform.host());
+  let missing: HttpResponse = routes.handle(http.request("GET", "/_src/missing.fern"), platform.host());
+  let redirect: HttpResponse = routes.handle(http.request("GET", "/_src"), platform.host());
+  return test.assert_true(
+    index.status == 200 && index.body_string().contains("Application source")
+      && file.status == 200 && file.body_string().contains("<span class=\"k\">const</span>")
+      && file.headers.get("Content-Type").unwrap_or("") == "text/html; charset=utf-8"
+      && file.headers.get("Cache-Control").unwrap_or("") == "no-cache"
+      && missing.status == 404 && redirect.headers.get("Location").unwrap_or("") == "/_src/",
+  );
+}
+
+function test_unknown_paths(): test.TestOutcome {
+  let pages: source.Page[] = [];
+  return test.assert_true(
+    source.serve(pages, "../server.fern").status == 404
+      && source.serve(pages, "/etc/passwd").status == 404
+      && source.serve(pages, "server.fern\x00").status == 404,
+  );
+}
+
+function main(): i32 {
+  let runner: test.TestRunner = test.test_new("fractal source browser");
+  runner = runner.it("Fern tokens", test_highlight);
+  runner = runner.it("import links and aliases", test_imports);
+  runner = runner.it("local and library targets", test_import_targets);
+  runner = runner.it("comments, strings, and malformed imports", test_fake_imports);
+  runner = runner.it("HTML escaping", test_escape_html);
+  runner = runner.it("line anchors and active file", test_line_links);
+  runner = runner.it("source routes before static files", test_routes);
+  runner = runner.it("unknown and traversal paths", test_unknown_paths);
+  return runner.finish();
+}
