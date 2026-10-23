@@ -28017,8 +28017,8 @@ function main(): i32 {
     return 600;
   }
 
-  // Map method `.has(k)` returns bool.
-  let src61: string = "function check(m: Map[string, i32], k: string): boolean { return m.has(k); } function main(): i32 { return 0; }";
+  // Map method `.contains(k)` returns bool.
+  let src61: string = "function check(m: Map[string, i32], k: string): boolean { return m.contains(k); } function main(): i32 { return 0; }";
   let mod61: parser.Module = parser.parse_module(lexer.tokenize(src61));
   let mt61: ModuleTypes = check_module(mod61);
   if (!mt61.all_well_typed) {
