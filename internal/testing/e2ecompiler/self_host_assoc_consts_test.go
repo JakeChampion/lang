@@ -104,11 +104,26 @@ function f[T: Lanes](): i32 { return T.WIDTH; }
 function main(): i32 { return V2.WIDTH + f[V2](); }`,
 	},
 	{
-		// An unbounded parameter's associated functions come from its
-		// instantiation; a constant read has no declaration to resolve.
+		// An associated member of a type parameter comes from its bounds, so
+		// an unbounded parameter has none to read.
 		name: "an unbounded parameter declares no constant",
 		src: `function f[T](x: T): i32 { return T.NOPE; }
 function main(): i32 { return f(1); }`,
+	},
+	{
+		// ... and none to call, whatever the instantiation provides (#12954).
+		name: "an unbounded parameter declares no associated function",
+		src: `import "core/cmp";
+struct Foo { a: i32 }
+impl cmp.Default for Foo { function default(): Foo { return Foo { a: 7 }; } }
+function f[T](x: T): T { return T.default(); }
+function main(): i32 { return f(Foo { a: 1 }).a; }`,
+	},
+	{
+		name: "a bound that does not declare the function",
+		src: `import "core/cmp";
+function f[T: cmp.Eq](x: T): T { return T.nope(); }
+function main(): i32 { return 0; }`,
 	},
 	{
 		// An enum's field is a variant unless an impl gives the enum an

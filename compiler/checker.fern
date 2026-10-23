@@ -9399,7 +9399,10 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
   // Without them `T.default()` in a `@derive(cmp.Default) struct Pair[T]`
   // body read `T` as a value and drew an undefined-name E001 (#8461).
   // A generic enum's derived methods are spelled the same way, and their
-  // parameters come from the enum's declaration (#11776).
+  // parameters come from the enum's declaration (#11776). Each is bounded by
+  // the trait being derived, as the Go checker's bindDeriveTypeParams does,
+  // so the body's `T.default()` resolves through that bound.
+  let declared_from: i32 = tps.len();
   if (fd.receiver_type.len() > 0) {
     let rbase: string = util.base_type_name(fd.receiver_type);
     let rtvs: string[] = s.lookup_struct(rbase).type_params;
@@ -9418,6 +9421,13 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
   }
   while (tbs.len() < tps.len()) {
     tbs = tbs.append("");
+  }
+  let k: i32 = declared_from;
+  while (k < tps.len()) {
+    if (tbs[k].len() == 0) {
+      tbs = tbs.with(k, fd.impl_trait);
+    }
+    k = k + 1;
   }
   // The unbounded parameters are type variables of the body too.
   for tv in fd.all_type_params {
@@ -14770,17 +14780,6 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope, const_read: bool
       if (ht.found) {
         return ht;
       }
-      // An UNBOUNDED parameter may get its associated function from its
-      // instantiation, which is the shape
-      // `@derive(cmp.Default) struct Pair[T]` reaches through `T.default()`.
-      // Only the qualifier position takes this: tp_assoc_req stays the
-      // bound-driven answer the E021 associated-vs-method rule reads. The
-      // return type is unrecoverable, as every erased parameter's is (#8461).
-      // A bounded parameter must resolve through its declared traits above:
-      // treating the qualifier alone as a hit also accepts T.nope().
-      if (!const_read && util.index_of_str(s.tparams, oid.name) >= 0 && tp_bound_for(oid.name, s.tparams, s.tbounds).len() == 0) {
-        return AssocHit { found: true, ret: "", owner: "", params: [], is_const: false };
-      }
       return assoc_miss();
     },
     _ => {
@@ -14788,6 +14787,19 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope, const_read: bool
     }
   }
   return assoc_miss();
+}
+
+// tparam_assoc_diag is E001 for `T.field(…)` where no bound on the type
+// parameter `T` declares `field`: an associated call goes through a bound,
+// never through what an instantiation happens to provide.
+function tparam_assoc_diag(tid: ast.ExprIdent, field: string, s: Scope): util.Diag {
+  let why: string = tid.name + " has no bound; bound it by a trait that declares " + field + "()";
+  let k: i32 = util.index_of_str(s.tparams, tid.name);
+  if (k < s.tbounds.len() && s.tbounds[k].len() > 0) {
+    why = "its bound " + util.demangle(s.tbounds[k]) + " declares none";
+  }
+  let d: util.Diag = dg_at("E001", "type parameter " + tid.name + " has no associated function \"" + field + "\": " + why, tid.line, tid.col);
+  return util.Diag { ...d, length: util.show_type_vars(tid.name).len() };
 }
 
 // assoc_hit_type is assoc_call_req's typing half: the associated call's
@@ -15411,6 +15423,15 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       }
       if (mfa.const_read) {
         return out.append(dg_at("E043", util.demangle(assoc_base_name(mfa.obj)) + " has no associated constant \"" + mfa.field + "\"", c.line, c.col));
+      }
+      if let ast.ExprIdent(tid) = mfa.obj {
+        if (!s.known(tid.name) && util.has_str(s.tparams, tid.name)) {
+          out = out.append(tparam_assoc_diag(tid, mfa.field, s));
+          for arg in c.args {
+            out = util.append_diags(out, call_diags(arg, s));
+          }
+          return out;
+        }
       }
       out = call_diags(mfa.obj, s);
       match (check_expr(mfa.obj, s)) {
@@ -18742,7 +18763,7 @@ function (s: Scope) method_fix(d: util.Diag, fa: ast.ExprFieldAccess, recv: type
 // in `s` declares it. Its fix is a retired name's replacement, or else the
 // closest name `s` can resolve.
 function undefined_name(name: string, s: Scope, line: i32, col: i32): util.Diag {
-  let d: util.Diag = util.Diag { ...dg_at("E001", "cannot find \"" + name + "\" in this scope", line, col), length: name.len() };
+  let d: util.Diag = util.Diag { ...dg_at("E001", "cannot find \"" + name + "\" in this scope", line, col), length: util.show_type_vars(name).len() };
   // A retired name is too far from its replacement for a respelling to find.
   if (name == "string_from_bytes") {
     return with_fix(d, name, line, col, "string_from_bytes_unchecked", " (or `std/utf8.from_bytes`, which validates and returns `Option[string]`)");
