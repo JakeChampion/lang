@@ -10852,7 +10852,7 @@ function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, struc
         // let-else (origin != "") mirrors the native IfLet/LetElse:
         // only the source-destructure consumes; its arms don't
         // participate in the all-arms path logic.
-        if (m.origin == "") {
+        if (ordinary_match_origin(m.origin)) {
           let all: boolean = m.arms.len() > 0;
           for arm in m.arms {
             let (ac, av, ad) = mc_seq(arm.body, 0, name, tname, structs, enums);
@@ -17925,7 +17925,7 @@ function sugar_rows(sg: ast.MatchSugar, t: typeinfo.Type, s: Scope): CoverPat[][
   }
   for a in sg.arms {
     if (!a.has_guard) {
-      rows = rows.append([pattern_cover(a.pattern)]);
+      rows = rows.append([typed_pattern_cover(a.pattern, t, s)]);
     }
   }
   return rows;
@@ -17974,7 +17974,7 @@ function struct_cover(a: ast.StructArm, t: typeinfo.Type, s: Scope): CoverPat {
       if (j >= 0 && j < a.field_kinds.len() && a.field_kinds[j] == 2) {
         p = literal_cover(a.field_lits[j]);
       } else if (j >= 0 && j < a.field_kinds.len() && a.field_kinds[j] == 3) {
-        p = pattern_cover(a.field_pats[j]);
+        p = typed_pattern_cover(a.field_pats[j], struct_field_type(st, name, s), s);
       }
       args = args.append(p);
     }
@@ -18025,6 +18025,48 @@ function pattern_cover(p: ast.Pattern): CoverPat {
       return CoverPat { ctor: variant_pattern_name(pv.type_name), opaque: false, args: args };
     }
   }
+}
+
+// Coverage follows each payload type, including a struct inside an enum slot.
+function typed_pattern_cover(p: ast.Pattern, t: typeinfo.Type, s: Scope): CoverPat {
+  if let ast.PatVariant(pv) = p {
+    if let typeinfo.TypeStruct(st) = t {
+      if (parser.is_record_pattern(pv) && pv.type_name == st.name) {
+        return record_pattern_cover(pv, st, s);
+      }
+    }
+    let base: CoverPat = pattern_cover(p);
+    if (pv.nested.len() == 0) {
+      return base;
+    }
+    let args: CoverPat[] = base.args;
+    let types: typeinfo.Type[] = cover_arg_types(t, base.ctor, args.len(), s);
+    let i: i32 = 0;
+    while (i < args.len() && i < pv.nested.len() && i < types.len()) {
+      if (nested_tests(pv.nested[i])) {
+        args = args.with(i, typed_pattern_cover(pv.nested[i], types[i], s));
+      }
+      i = i + 1;
+    }
+    return CoverPat { ...base, args: args };
+  }
+  return cover_any();
+}
+
+function record_pattern_cover(pv: ast.PatVariant, st: typeinfo.TypeStruct, s: Scope): CoverPat {
+  let args: CoverPat[] = [];
+  for field in s.lookup_struct(st.name).field_names {
+    let p: CoverPat = cover_any();
+    let i: i32 = util.index_of_str(pv.field_names, field);
+    if (i >= 0) {
+      p = slot_literal_cover(pv.lit_cond, parser.payload_binder(pv, i));
+      if (i < pv.nested.len() && nested_tests(pv.nested[i])) {
+        p = typed_pattern_cover(pv.nested[i], struct_field_type(st, field, s), s);
+      }
+    }
+    args = args.append(p);
+  }
+  return CoverPat { ctor: "{}", opaque: false, args: args };
 }
 
 function nested_tests(p: ast.Pattern): boolean {
@@ -18106,7 +18148,9 @@ function cover_arg_types(t: typeinfo.Type, ctor: string, arity: i32, s: Scope): 
       return tt.elements;
     },
     typeinfo.TypeStruct(st) => {
-      return s.lookup_struct(st.name).field_types;
+      for field in s.lookup_struct(st.name).field_names {
+        out = out.append(struct_field_type(st, field, s));
+      }
     },
     typeinfo.TypeUnion(u) => {
       let i: i32 = 0;
@@ -18268,6 +18312,10 @@ function cover_tail(r: CoverPat[]): CoverPat[] {
   return out;
 }
 
+function ordinary_match_origin(origin: string): boolean {
+  return origin == "" || origin == parser.ORIGIN_PATTERN_PROBE;
+}
+
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   let cur: Scope = bind_mutual_siblings(stmts, s);
@@ -18395,7 +18443,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
         // left here is a variant pattern over a value that has no variants.
         if let typeinfo.TypeStruct(msts) = mst {
           let msig: StructSig = cur.lookup_struct(msts.name);
-          if (m.origin == "" && msig.name == msts.name && msig.enum_owner.len() == 0) {
+          if (ordinary_match_origin(m.origin) && msig.name == msts.name && msig.enum_owner.len() == 0) {
             for sarm in m.arms {
               if let ast.PatVariant(spv) = sarm.pattern {
                 if (spv.type_name.len() > 0) {
@@ -18405,7 +18453,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             }
           }
         }
-        if (is_primitive_type(mst) && m.origin == "") {
+        if (is_primitive_type(mst) && ordinary_match_origin(m.origin)) {
           for arm in m.arms {
             match (arm.pattern) {
               ast.PatVariant(epv) => {
@@ -18437,7 +18485,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             // checkMatch/checkMatchExpr; the arm checks below are
             // skipped (usig missed). if-let / let-else report
             // theirs in the origin block above — don't double up.
-            if (usig.name.len() == 0 && !parser.is_reserved_enum_name(mun.name) && m.origin == "") {
+            if (usig.name.len() == 0 && !parser.is_reserved_enum_name(mun.name) && ordinary_match_origin(m.origin)) {
               out = out.append(dg_at("E023", "unknown enum \"" + mun.name + "\"", expr_line(m.scrutinee), expr_col(m.scrutinee)));
             }
             if (usig.name.len() > 0) {

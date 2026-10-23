@@ -16099,10 +16099,16 @@ func (c *checker) coverPatOf(el *ast.TuplePatElem) coverPat {
 	case el == nil:
 		return coverPat{}
 	case el.IsStruct:
-		if patElemRefutable(*el) {
+		sd := c.info.Structs[el.VariantName]
+		if sd == nil {
 			return coverPat{opaque: true}
 		}
-		return coverPat{}
+		fields := structArmPatOf(sd, el.VariantBindings, el.VariantFieldNames, el.VariantPayloads, el.VariantBindingTypes, false)
+		args := make([]coverPat, len(fields.payloads))
+		for i, field := range fields.payloads {
+			args[i] = c.coverPatOf(field)
+		}
+		return coverPat{ctor: "{}", args: args, argTypes: fields.types}
 	case el.Literal != nil:
 		if b, ok := el.Literal.(*ast.BoolLit); ok && el.RangeHi == nil {
 			return coverPat{ctor: strconv.FormatBool(b.Value)}
@@ -16149,6 +16155,10 @@ func (c *checker) coverCtors(t ast.Type) []coverCtor {
 		return out
 	case ast.TupleType:
 		return []coverCtor{{name: "()", arity: len(tt.Elems)}}
+	case ast.StructType:
+		if sd := c.info.Structs[tt.Name]; sd != nil {
+			return []coverCtor{{name: "{}", arity: len(sd.Fields)}}
+		}
 	case ast.BoolType:
 		return []coverCtor{{name: "false"}, {name: "true"}}
 	}
@@ -16479,6 +16489,14 @@ func (c *checker) errPayloadlessVariantBinder(pos ast.Position, name, enum, wher
 func (c *checker) checkTuplePatElem(pos ast.Position, elems []ast.TuplePatElem, bindingTypes []ast.Type, k int, elT ast.Type, s, armScope *scope, seen map[string]bool) bool {
 	el := &elems[k]
 	bindingTypes[k] = elT
+	if el.AtBinding != "" {
+		if seen[el.AtBinding] {
+			c.errfCode(pos, "E013", "variable %q already declared in this scope", el.AtBinding)
+		} else {
+			seen[el.AtBinding] = true
+			armScope.names[el.AtBinding] = elT
+		}
+	}
 	if el.Nested != nil {
 		return c.checkTuplePatNestedElem(pos, el, k, elT, s, armScope, seen)
 	}
@@ -16569,6 +16587,9 @@ func (c *checker) checkTuplePatStructElem(pos ast.Position, el *ast.TuplePatElem
 	}
 	c.checkStructPatternCovers(pos, sd, patternFields(el.VariantBindings, el.VariantFieldNames), el.RestWritten)
 	el.IsStruct = true
+	if len(el.VariantFieldNames) > 0 {
+		c.checkOpaqueAccess(sd, pos, "destructure")
+	}
 	el.VariantBindingTypes = make([]ast.Type, len(el.VariantBindings))
 	refutable := false
 	for i, b := range el.VariantBindings {

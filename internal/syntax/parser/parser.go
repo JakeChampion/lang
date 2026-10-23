@@ -4395,7 +4395,7 @@ func (p *parser) isNestedPatternStart() bool {
 	}
 	if t.Kind == lexer.Ident && t.Text != "_" {
 		n := p.peekAt(1)
-		if n.Kind == lexer.Punct && (n.Text == "(" || n.Text == "{" || n.Text == ".") {
+		if n.Kind == lexer.Punct && (n.Text == "(" || n.Text == "{" || n.Text == "." || n.Text == "@") {
 			return true
 		}
 	}
