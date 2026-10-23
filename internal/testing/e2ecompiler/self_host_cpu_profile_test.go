@@ -270,7 +270,7 @@ func TestSelfHostCPUProfileSamplerHasNoCalls(t *testing.T) {
 }
 
 func TestSelfHostCPUProfileRetainsLateSamples(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		getpid, gettid, tgkill := "39", "186", "234"
 		var qemu string
