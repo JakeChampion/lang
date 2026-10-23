@@ -5,3 +5,4 @@ a field or payload of type f64x2 holds a lane value
 function twice takes or returns a lane value and cannot be used as a value
 a lambda cannot take or return a lane value
 a lambda cannot capture "c" of type f64x2
+type argument T = f64x2 does not implement trait simd.Lanes required by simd.seed

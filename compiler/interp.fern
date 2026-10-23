@@ -9502,7 +9502,7 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
       match (body[k]) {
         ast.StmtExpr(x) => {
           let v: Value = eval_expr(x.value, env);
-          return (Session { ...s, env: env }, is_err(v) || !returns_void(env, x.value), v);
+          return (Session { ...s, env: session_env(env) }, is_err(v) || !returns_void(env, x.value), v);
         },
         _ => {}
       }
@@ -9510,11 +9510,21 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
     let r: StepResult = eval_out_stmt(body[k], env);
     env = r.env;
     if (r.sig != 0 && is_err(r.ret)) {
-      return (Session { ...s, env: env }, true, r.ret);
+      return (Session { ...s, env: session_env(env) }, true, r.ret);
     }
     k = k + 1;
   }
-  return (Session { ...s, env: env }, false, v_void());
+  return (Session { ...s, env: session_env(env) }, false, v_void());
+}
+
+// A session exposes top-level locals under their source names on the next line.
+// Closure values keep their resolved capture names inside their own environments.
+function session_env(env: Env): Env {
+  let names: string[] = [];
+  for name in env.names {
+    names = names.append(lexical.source_name(name));
+  }
+  return Env { ...env, names: names };
 }
 
 // returns_void reports a call with no value: to a function declared `void`,

@@ -376,29 +376,42 @@ function comma_joined(xs: string[]): string {
 }
 
 // read_source reads a source a tool takes as a path, stdin for `-`.
-function read_source(path: string): Result[string, string] {
-  if (path == "-") {
-    match (io.read_all_stdin()) {
-      Ok(s) => {
-        return Ok(s);
-      },
-      Err(e) => {
-        return Err(e.message());
-      }
-    }
+function read_source(path: string): Result[string, lexer.TokError] {
+  return read_source_file(path, true);
+}
+
+function read_source_file(path: string, stdin_allowed: boolean): Result[string, lexer.TokError] {
+  if (path == "-" && stdin_allowed) {
+    return decode_source_read(io.read_all_stdin_bytes());
   }
-  match (read_file(path)) {
-    Ok(s) => {
-      return Ok(s);
+  return decode_source_read(read_file_bytes(path));
+}
+
+function decode_source_read(input: Result[u8[], IoError]): Result[string, lexer.TokError] {
+  match (input) {
+    Ok(bytes) => {
+      return lexer.decode_source(bytes);
     },
     Err(e) => {
-      return Err(e.message());
+      return Err(lexer.TokError { msg: e.message(), code: "", line: 0, col: 0 });
     }
+  }
+  return Err(lexer.TokError { msg: "could not read source", code: "", line: 0, col: 0 });
+}
+
+function report_source_read_failure(st: DiagStyle, what: string, path: string, e: lexer.TokError): void {
+  if (e.code.len() > 0) {
+    let d: util.Diag = util.Diag { related: [], length: 0, code: e.code, message: e.msg, line: e.line, col: e.col, fix: None };
+    let no_files: string[] = [];
+    let no_maps: util.LineMap[] = [];
+    eprint_findings(st, errors_of([d]), entry_display(path), no_files, no_maps);
+  } else {
+    eprint(read_failure(what, path, e.msg));
   }
 }
 
 // read_failure is the one-line report for a file that could not be read:
-// `fern: cannot read entry file /abs/x.fern: invalid UTF-8`.
+// `fern: cannot read entry file /abs/x.fern: not found`.
 function read_failure(what: string, path: string, reason: string): string {
   return "fern: cannot read " + what + " " + path + ": " + reason;
 }
@@ -420,7 +433,7 @@ function fmt_file(st: DiagStyle, path: string, fmt_write: boolean, fmt_diff: boo
       esrc = s;
     },
     Err(e) => {
-      eprint(read_failure("file", path, e));
+      report_source_read_failure(st, "file", path, e);
       return 1;
     }
   }
@@ -4023,12 +4036,12 @@ function check_dir(st: DiagStyle, dir: string, root: string, target: string, tar
 // check_file loads one entry module and type-checks it — the single-package
 // half of `-check`, and the per-member step of the workspace half.
 function check_file(st: DiagStyle, entry_path: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {
-  match (read_file(entry_path)) {
+  match (read_source_file(entry_path, false)) {
     Ok(src) => {
       return report_checked(st, check_source(entry_path, src, modloader.no_buffers(), root, target, target_given, embed_dir));
     },
     Err(e) => {
-      eprint(read_failure("entry file", entry_path, e.message()));
+      report_source_read_failure(st, "entry file", entry_path, e);
       return 1;
     }
   }
@@ -5526,7 +5539,7 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
         src = t;
       },
       Err(e) => {
-        eprint("fern: " + f + ": " + e);
+        report_source_read_failure(st, "file", f, e);
         return 2;
       }
     }
@@ -6062,38 +6075,15 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   }
 
   let esrc: string = "";
-  let eok: boolean = false;
-  let eerr: string = "";
-  // `-` names stdin for the two modes native reads it in, and only those: a
-  // compile from `-` is a file error under native, and the self-host
-  // accepting it would be a divergence in the permissive direction — the one
-  // that lets a program build under one compiler only.
-  // A program on stdin is how a pipeline stage, an editor buffer, or a host
-  // with no filesystem to open names one with no file behind it (#6643).
-  if (entry_path == "-" && (mode_check || mode_interp)) {
-    match (io.read_all_stdin()) {
-      Ok(s) => {
-        esrc = s;
-        eok = true;
-      },
-      Err(e) => {
-        eerr = e.message();
-      }
+  // Only check and interpreter modes accept stdin as an entry source.
+  match (read_source_file(entry_path, mode_check || mode_interp)) {
+    Ok(src) => {
+      esrc = src;
+    },
+    Err(e) => {
+      report_source_read_failure(st, "entry file", entry_path, e);
+      return 1;
     }
-  } else {
-    match (read_file(entry_path)) {
-      Ok(s) => {
-        esrc = s;
-        eok = true;
-      },
-      Err(e) => {
-        eerr = e.message();
-      }
-    }
-  }
-  if (!eok) {
-    eprint(read_failure("entry file", entry_path, eerr));
-    return 1;
   }
   // -embed is folded as the program loads: the asset builtins become string
   // and u8[] literals before anything else reads the tree, so the
