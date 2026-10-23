@@ -5327,6 +5327,56 @@ function tail_item_at(p: Par, tail_value: boolean): (boolean, Par) {
   return (!is_stmt, q);
 }
 
+// valueless_branch_tail reads a `match` or `if … else` that the body's
+// closing `}` follows as a statement when none of its branches gives a value:
+// every arm is a block, and the whole parses as a statement, which a block
+// ending in a bare value does not. As the body's value it would have nothing
+// to give (E061), so a `void` lambda can end in one (#13063). Mirrors the Go
+// parser's valuelessBranchTail.
+function valueless_branch_tail(p: Par): (boolean, ast.Stmt, Par) {
+  let kw: string = p.peek_keyword();
+  if (kw != "match" && kw != "if" || kw == "match" && !match_arms_braced(p)) {
+    return (false, s_unknown(p, ""), p);
+  }
+  let (st, q) = parse_stmt(p);
+  if (q.type_errs.len() == p.type_errs.len() && q.peek_punct() == "}") {
+    return (true, st, q);
+  }
+  return (false, st, p);
+}
+
+// match_arms_braced reports whether every arm of the `match` at the cursor
+// has a block body: each `=>` directly inside its braces is followed by `{`.
+// A `=>` directly inside the scrutinee's parentheses also answers false,
+// which leaves the match to the trailing-value path.
+function match_arms_braced(p: Par): boolean {
+  let depth: i32 = 0;
+  let k: i32 = 1;
+  while (p.pos + k < p.toks.len()) {
+    let t: string = p.peek_punct_at(k);
+    if (t == "=>" && depth == 1 && p.peek_punct_at(k + 1) != "{") {
+      return false;
+    }
+    depth = depth + bracket_step(t);
+    if (depth == 0 && t == "}") {
+      return true;
+    }
+    k = k + 1;
+  }
+  return false;
+}
+
+// bracket_step is how the punctuation t moves the bracket depth.
+function bracket_step(t: string): i32 {
+  if (t == "(" || t == "[" || t == "{") {
+    return 1;
+  }
+  if (t == ")" || t == "]" || t == "}") {
+    return 0 - 1;
+  }
+  return 0;
+}
+
 function nested_block_tail(p: Par): (boolean, Par) {
   if (p.peek_punct() != "{") {
     return (false, p);
@@ -6111,6 +6161,14 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
         }
       }
       return (body, p);
+    }
+    if (tail_value) {
+      let (vb_ok, vb_stmt, vb_p) = valueless_branch_tail(p);
+      if (vb_ok) {
+        p = vb_p;
+        body = body.append(vb_stmt);
+        continue;
+      }
     }
     let (tail_item, tp) = tail_item_at(p, tail_value);
     p = tp;

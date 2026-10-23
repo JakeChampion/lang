@@ -147,7 +147,8 @@ TypeArg     = IDENT '=' Type | Type ;
 Block       = '{' { Stmt } '}' ;
 # A block in expression position may end in an unterminated expression,
 # which is its value. Statement blocks may not, so the two are distinct
-# rules rather than one permissive one.
+# rules rather than one permissive one. A trailing `match` or `if … else`
+# whose branches are all blocks that give no value is a Stmt, not the Expr.
 ValueBlock  = '{' { Stmt } [ Expr ] '}' ;
 
 Stmt        = Block

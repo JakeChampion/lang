@@ -2726,6 +2726,12 @@ func (p *parser) parseBlockStmts(block *ast.Block, tailValue bool) {
 			}
 			continue
 		}
+		if tailValue {
+			if s, ok := p.valuelessBranchTail(); ok {
+				block.Stmts = append(block.Stmts, s)
+				continue
+			}
+		}
 		if tailValue && (!p.branchStmtStart() || p.nestedBlockTail()) {
 			// A non-keyword item that the closing `}` follows is the body's
 			// trailing value. Anything else — including the same expression
@@ -3321,6 +3327,60 @@ func (p *parser) nestedBlockTail() bool {
 	}
 	p.nestedTails[mark] = yes
 	return yes
+}
+
+// valuelessBranchTail reads a `match` or `if … else` that the body's closing
+// `}` follows as a statement when none of its branches gives a value: every
+// arm is a block, and the whole parses as a statement, which a block ending
+// in a bare value does not. As the body's value it would have nothing to
+// give (E061), so a `void` lambda can end in one (#13063). Anything else is
+// left for the trailing-value path.
+func (p *parser) valuelessBranchTail() (ast.Stmt, bool) {
+	t := p.peek()
+	if t.Kind != lexer.Keyword || (t.Text != "match" && t.Text != "if") {
+		return nil, false
+	}
+	if t.Text == "match" && !p.matchArmsBraced() {
+		return nil, false
+	}
+	mark, nRefs, nTodo, nErr := p.i, len(p.typeRefs), len(p.todoSites), len(p.errors)
+	s, err := p.parseStmt()
+	if err == nil && len(p.errors) == nErr && p.match(lexer.Punct, "}") {
+		return s, true
+	}
+	p.i = mark
+	p.typeRefs, p.todoSites, p.errors = p.typeRefs[:nRefs], p.todoSites[:nTodo], p.errors[:nErr]
+	return nil, false
+}
+
+// matchArmsBraced reports whether every arm of the `match` at the cursor has
+// a block body: each `=>` directly inside its braces is followed by `{`. A
+// `=>` directly inside the scrutinee's parentheses also answers false, which
+// leaves the match to the trailing-value path.
+func (p *parser) matchArmsBraced() bool {
+	depth := 0
+	for j := p.i + 1; j < len(p.tokens); j++ {
+		t := p.tokens[j]
+		if t.Kind != lexer.Punct {
+			continue
+		}
+		if t.Text == "=>" && depth == 1 {
+			next := p.peekAt(j + 1 - p.i)
+			if next.Kind != lexer.Punct || next.Text != "{" {
+				return false
+			}
+		}
+		switch t.Text {
+		case "(", "[", "{":
+			depth++
+		case ")", "]", "}":
+			depth--
+			if depth == 0 && t.Text == "}" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // branchStmtStart reports whether the next token begins a statement
