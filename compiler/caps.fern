@@ -386,7 +386,7 @@ function has_i32(xs: i32[], v: i32): boolean {
 // name is its simple name, which several types can share — those are found by
 // method_edges instead, which is why this returns the first match rather than
 // pretending the name is unique.
-function func_index(mod: parser.Module, name: string): i32 {
+pub function func_index(mod: parser.Module, name: string): i32 {
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].name == name) {
@@ -707,6 +707,25 @@ pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
       }
     }
     ri = ri + 1;
+  }
+  return out;
+}
+
+// source_chain spells `chain` with each function's name as its module declares
+// it, without the bundle prefix flatten mangled it with; the builtin at the end
+// has none.
+pub function source_chain(mod: parser.Module, chain: string[]): string[] {
+  let out: string[] = [];
+  for name in chain {
+    let shown: string = name;
+    let fi: i32 = func_index(mod, name);
+    if (fi >= 0) {
+      let pre: string = mod.funcs[fi].module + "__";
+      if (mod.funcs[fi].module.len() > 0 && util.str_has_prefix(name, pre)) {
+        shown = slice_unchecked(name, pre.len(), name.len()) + "";
+      }
+    }
+    out = out.append(shown);
   }
   return out;
 }

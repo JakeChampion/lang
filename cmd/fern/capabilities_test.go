@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/check/checker"
 	"github.com/jakechampion/lang/internal/check/constfold"
+	"github.com/jakechampion/lang/internal/syntax/diag"
 	"github.com/jakechampion/lang/internal/tools/gates"
 )
 
@@ -128,9 +130,16 @@ function main(): i32 {
 	if err == nil {
 		t.Fatal("expected an E070 violation, got none")
 	}
-	want := `package "helper" reaches 'net' (tcp_close) without a capability grant: lib__save → tcp_close; add "net" to its capabilities in fern.toml or remove the call`
+	want := `package "helper" reaches 'net' (tcp_close) without a capability grant: save → tcp_close; add "net" to its capabilities in fern.toml or remove the call`
 	if got := err.Error(); !strings.Contains(got, want) {
 		t.Errorf("error:\ngot  %q\nwant substring %q", got, want)
+	}
+	// It is reported at the package function the chain starts from: its
+	// `function` keyword, after `pub`.
+	var ce *checker.Error
+	if errs, ok := err.(diag.Errors); !ok || len(errs) != 1 || !errors.As(errs[0], &ce) ||
+		!strings.HasSuffix(ce.Path, filepath.Join("helper", "lib.fern")) || ce.Pos.Line != 1 || ce.Pos.Col != 5 {
+		t.Errorf("E070 should sit at helper/lib.fern:1:5, got %+v", ce)
 	}
 	if warns != "" {
 		t.Errorf("governed package should error, not warn: %q", warns)
@@ -165,7 +174,7 @@ function main(): i32 {
 	if err != nil {
 		t.Fatalf("ungoverned usage must not error (warn-and-allow), got: %v", err)
 	}
-	want := "warning: package \"helper\" reaches 'fs' (write_file) but no capabilities key governs it: lib__save → write_file; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)\n"
+	want := "warning: package \"helper\" reaches 'fs' (write_file) but no capabilities key governs it: save → write_file; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)\n"
 	if warns != want {
 		t.Errorf("warnings:\ngot  %q\nwant %q", warns, want)
 	}
@@ -227,14 +236,14 @@ pub function fetch(s: string): void {
 	if err == nil {
 		t.Fatal("expected a's transitive net reach to violate, got none")
 	}
-	want := `package "a" reaches 'net' (tcp_close) without a capability grant: a__fetch → b__send → tcp_close; add "net" to its capabilities in fern.toml or remove the call`
+	want := `package "a" reaches 'net' (tcp_close) without a capability grant: fetch → send → tcp_close; add "net" to its capabilities in fern.toml or remove the call`
 	if got := err.Error(); !strings.Contains(got, want) {
 		t.Errorf("error:\ngot  %q\nwant substring %q", got, want)
 	}
 	if strings.Contains(err.Error(), `package "b"`) {
 		t.Errorf("b is ungoverned (warn-and-allow) and must not be an error: %q", err.Error())
 	}
-	wantWarn := "warning: package \"b\" reaches 'net' (tcp_close) but no capabilities key governs it: b__send → tcp_close; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)\n"
+	wantWarn := "warning: package \"b\" reaches 'net' (tcp_close) but no capabilities key governs it: send → tcp_close; add capabilities = [...] to its dependency entry in fern.toml (ungoverned packages will become errors once default-deny lands)\n"
 	if warns != wantWarn {
 		t.Errorf("warnings:\ngot  %q\nwant %q", warns, wantWarn)
 	}

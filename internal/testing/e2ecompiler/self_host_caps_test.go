@@ -106,23 +106,23 @@ func writeCapsProject(t *testing.T, dir, depEntry, helperBody string) string {
 }
 
 // capsDiagnostics reduces a compiler's output to its capability diagnostics,
-// one per line as `severity package capability builtin`.
-//
-// The example CHAIN is deliberately dropped. Its intermediate frames are the
-// bundle's mangled function names, and the two compilers mangle a dependency
-// differently: native by the dependency's lib FILE (`lib__save`), the
-// self-host by the name the import used (`helper__save`). Every part that
-// decides whether a program is refused — the severity, the package, the
-// capability, and the builtin that carries it — is compared exactly.
+// one per line as `severity package capability builtin chain at`, where `at`
+// is an E070's file name and line:col. The two compilers spell the file's
+// directory differently (absolute, or relative to the working directory), so
+// only its base name is compared.
 func capsDiagnostics(out string) []string {
-	re := regexp.MustCompile(`(error\[E070\]|warning): package "([^"]+)" reaches '([^']+)' \(([^)]+)\)`)
+	re := regexp.MustCompile(`(?:(\S+\.fern):(\d+):(\d+): )?(error\[E070\]|warning): package "([^"]+)" reaches '([^']+)' \(([^)]+)\)[^:]*: ([^;]+);`)
 	var got []string
 	for _, m := range re.FindAllStringSubmatch(out, -1) {
 		severity := "error"
-		if m[1] == "warning" {
+		if m[4] == "warning" {
 			severity = "warning"
 		}
-		got = append(got, severity+" "+m[2]+" "+m[3]+" "+m[4])
+		at := "-"
+		if m[1] != "" {
+			at = filepath.Base(m[1]) + ":" + m[2] + ":" + m[3]
+		}
+		got = append(got, strings.Join([]string{severity, m[5], m[6], m[7], m[8], at}, " "))
 	}
 	sort.Strings(got)
 	return got
@@ -202,6 +202,10 @@ func TestSelfHostPackageCapabilityDifferentialX86_64(t *testing.T) {
 			}
 			want := capsDiagnostics(string(nativeOut))
 			got := capsDiagnostics(string(shOut))
+			// A refusal is E070 at `save`, its chain spelled as declared.
+			if !c.wantBuild && strings.Join(want, "; ") != "error helper fs write_file save → write_file lib.fern:1:5" {
+				t.Errorf("native's E070 = %v\n%s", want, nativeOut)
+			}
 			if strings.Join(want, "; ") != strings.Join(got, "; ") {
 				t.Errorf("capability diagnostics differ:\nnative    %v\nself-host %v\n--- native ---\n%s\n--- self-host ---\n%s",
 					want, got, nativeOut, shOut)
@@ -216,8 +220,9 @@ func TestSelfHostPackageCapabilityDifferentialX86_64(t *testing.T) {
 //
 // The report is what a user reads before writing a grant, so a package missing
 // from one compiler's report is a grant nobody knows to write. Only the
-// example chain is normalised away (see capsDiagnostics on why the mangling
-// differs); the package names and their capability sets are compared exactly.
+// example chain is normalised away: its frames are bundle names, which the two
+// compilers mangle differently; the package names and their capability sets
+// are compared exactly.
 func TestSelfHostCapabilitiesReportAgreesWithNative(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
