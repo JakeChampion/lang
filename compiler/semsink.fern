@@ -41,8 +41,9 @@ pub function sink(f: ssasem.Func): Sunk {
 // A counted projection read off the same parent and slot as one a dominating
 // block read is that read when the first is one the plan must take out of
 // the box (child_used_above): a second read of the slot would find it
-// emptied. So is a read still live out of its block, which sink_rereads then
-// reads again where it is used. `reread` counts the reads replaced.
+// emptied. So is a read whose first read has a child live out of its block,
+// unless the plan can take it there (field_kept_apart). `reread` counts the
+// reads replaced.
 function reuse(f: ssasem.Func): Sunk {
   let g: ssa.SFunc = f.graph;
   let at: i32[] = projection_blocks(g, f.values);
@@ -95,16 +96,25 @@ function identity(n: i32): i32[] {
 }
 
 // The read in a block strictly dominating the one at `bi` that `r` repeats,
-// when that read must be taken or `r` is live out of `bi`. -1 for none.
+// when that read must be taken or has a child live out of `bi`. -1 for none.
 function earlier_read(rd: Reads, reads: ssa.SInst[], r: ssa.SInst, bi: i32, same: i32[], values: typeinfo.Type[]): i32 {
   for u in reads {
     let ub: i32 = rd.at[u.result];
     if (u.result != r.result && ub != bi && ssadeps.dom_holds(rd.dom, bi, ub) && semcse.same_slot(u, r, same, values)
-      && (child_used_above(rd, rd.spent, bi, u.result, 0) || ssalive.live_out_has(rd.flow, bi, r.result))) {
+      && (child_used_above(rd, rd.spent, bi, u.result, 0) || child_live_out(rd, bi, u.result, 0) && !field_kept_apart(rd, r, bi))) {
       return semcse.stand_in(same, u.result);
     }
   }
   return 0 - 1;
+}
+
+// Whether `r`, a repeat of a read with a child live out of the block at
+// `bi`, stays apart from that first read. The plan takes a second read of a
+// record field past the live children of the first (`twin_holds`), so such a
+// read stays where its block uses it. One live out of its block is merged, and
+// sink_rereads reads it again where it is used.
+function field_kept_apart(rd: Reads, r: ssa.SInst, bi: i32): boolean {
+  return r.kind_tag == ssasem.record_get() && !ssalive.live_out_has(rd.flow, bi, r.result);
 }
 
 function sink_rereads(f: ssasem.Func): Sunk {
@@ -572,25 +582,7 @@ function read_above_for(rd: Reads, bi: i32, v: i32, leaf: i32): boolean {
       return false;
     }
   }
-  return !spent_under(rd, p, leaf, 0);
-}
-
-// Whether a parent above the read `v` is spent where `leaf` is still live. A
-// re-read of `v` reads through that parent, and finds the slot gone.
-function spent_under(rd: Reads, v: i32, leaf: i32, depth: i32): boolean {
-  if (depth > 8) {
-    return true;
-  }
-  if (v < 0 || v >= rd.at.len() || rd.at[v] < 0) {
-    return false;
-  }
-  let p: i32 = rd.par[v];
-  for s in rd.spent[p] {
-    if (ssalive.live_out_has(rd.flow, s, leaf)) {
-      return true;
-    }
-  }
-  return spent_under(rd, p, leaf, depth + 1);
+  return true;
 }
 
 // `r` with `v` re-read in the block when it is read above, its parent first

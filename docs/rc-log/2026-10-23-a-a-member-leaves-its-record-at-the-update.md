@@ -1,8 +1,7 @@
 # 2026-10-23 — a member leaves its record at the update
 
 `ssaunits.twin_holds`, `takes_past_holds` and `slot_held`, the donor rule in
-`hold_at`, and `semsink.spends`, `earlier_read` and `spent_under`. Refs
-#12887.
+`hold_at`, and `semsink.spends` and `field_kept_apart`. Refs #12887.
 
 ## The shape
 
@@ -31,21 +30,13 @@ changes let the session leave `cur` at the update.
   `semsink.spends` leaves out `length`, and the second read stays where
   `taken` uses it.
 
-- **A live child does not force a merge.** `reuse` also merged a second read
-  when a child of the first was live out of the block (`child_live_out`).
-  `evs` is such a child. Now `reuse` merges when the second read itself is
-  live out of its block. Then `sink_rereads` reads it again in the block that
-  uses it. `Streams.__stream_data` needs that merge: `taken.list` is read
-  where the update is made and used only at the final `with`.
-
-  The merge made a re-read that `read_above_for` let through.
-  `semsource.iterate_array` reads `m = s.values[it]`, gives `s` to
-  `map_column`, and uses `m` after. The merge made `m` the first read, and
-  sink then read it again from the produced value after the call.
-  `read_above_for` checked the spends of the direct parent only. `reread`
-  then read each parent again with that parent as its own leaf. Now
-  `spent_under` refuses a re-read when any parent above it is spent where
-  the leaf is still live.
+- **A live child does not force a merge of a field read.** `reuse` also
+  merged a second read when a child of the first was live out of the block
+  (`child_live_out`). `evs` is such a child. Now `field_kept_apart` keeps
+  a record field read apart when only its own block uses it. The plan can
+  take it there. Other reads merge as before, and both
+  `Streams.__stream_data` (`taken.list`) and `rbtree.ins` (its payloads)
+  need those merges.
 
 - **The donor is not a source that dies unconsumed.** At the update, the
   dying rule in `hold_at` held the first session read, because a read off it
@@ -81,23 +72,27 @@ and 108.
 it, `emit`'s next call reads an emptied slot of a list, and the x86-64 build
 crashes.
 
-`TestSelfHostRereadNotThroughSpentParent` pins `spent_under`. Without it, the
-re-read keeps the record alive past the call, and the call copies it: 30
-calls allocate 250 boxes on x86-64, against 210.
-
 ## Traps
 
-A semsink rule that helps one function can cost another one a take. With
-`child_live_out` removed from both `reuse` and `read_above`,
-`__applied` improved and `__stream_data` lost one. The list was read where
-`taken` is built and kept to the final `with`. So the planner did not take
-the stream out of the list. Compare the census row by row, not only the mean.
+A semsink merge rule that helps one function can cost another one a take.
+Three rules were tried before `field_kept_apart`:
+
+- With `child_live_out` removed from both `reuse` and `read_above`,
+  `__applied` improved and `__stream_data` lost one take.
+- A merge whenever the repeat is live out of its block kept
+  `__stream_data`, but it re-read each payload of `rbtree.ins` in every arm.
+  The `perceus_rbtree` rows grew by 16% in `.text` and 17% in instructions
+  on aarch64.
+- That rule also made `semsource.iterate_array` read `m = s.values[it]`
+  again from the produced value after `s` went into `map_column`. With the
+  inliner off, the plan for it does not certify. #13045 holds that failure.
+
+Compare the census row by row and the perf rows, not only the mean.
 
 `make build` does not run the new planner on the compiler. `bin/fern-selfhost`
 is stage1, and the pinned stage0 builds it. Only a stage1 compile of
 `compiler/fern.fern` does that, and the test harness also makes one with the
-inliner off (`FERN_SEM_INLINE=`). Only that compile showed the re-read through
-`map_column`. Its plan does not certify, and #13045 holds that failure.
+inliner off (`FERN_SEM_INLINE=`).
 
 The certifier passes a plan that moves an element out of a list that another
 holder still reads. `asm_ir.ssa_block_inst` held its first read of
