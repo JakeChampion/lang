@@ -69,8 +69,6 @@ function main(): i32 {
     if (m.len() != 3) { return 1; }
     if (m.get_or(1, 0) != 10) { return 2; }
     if (m.get_or(2, 0) != 99) { return 3; }
-    let e: Map[i32, i32] = a.extend(b);
-    if (e.get_or(3, 0) != 30) { return 4; }
     let r: (Map[i32, i32], i32) = m.get_or_insert(5, 50);
     if (r.1 != 50) { return 5; }
     if (r.0.get_or(5, 0) != 50) { return 6; }

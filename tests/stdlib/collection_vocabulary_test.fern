@@ -1,0 +1,150 @@
+import "core/map";
+import "std/test";
+import "std/option";
+import "std/ordmap" as ordmap;
+import "std/pmap" as pmap;
+import "std/set" as set;
+import "std/ordset" as ordset;
+import "std/pset" as pset;
+import "std/json" as json;
+
+// tests/stdlib/collection_vocabulary_test.fern — the one vocabulary the maps
+// (Map, OrdMap, PMap, JsonObject) and the sets (Set, OrdSet, PSet) share
+// (#12711): `contains` / `remove`, `update(k, init, f)` inserting `f(init)`
+// when the key is absent, and `merge` letting the other map's value win.
+
+function bump(v: i32): i32 {
+  return v + 1;
+}
+
+function even_key(k: i32, v: i32): boolean {
+  return k % 2 == 0;
+}
+
+function add_kv(acc: i32, k: i32, v: i32): i32 {
+  return acc + k * v;
+}
+
+function test_map(): test.TestOutcome {
+  let m: Map[i32, i32] = map.from([(1, 10), (2, 20)]);
+  if (!m.contains(1) || m.contains(3) || m.is_empty()) {
+    return test.fail("contains");
+  }
+  let r: Map[i32, i32] = m.remove(1);
+  if (r.contains(1) || r.len() != 1 || !m.contains(1)) {
+    return test.fail("remove");
+  }
+  if (m.remove(9).len() != 2) {
+    return test.fail("remove absent");
+  }
+  let u: Map[i32, i32] = m.update(3, 100, bump).update(1, 100, bump);
+  if (u.get_or(3, -1) != 101 || u.get_or(1, -1) != 11) {
+    return test.fail("update");
+  }
+  let g: Map[i32, i32] = m.merge(map.from([(2, 99), (5, 50)]));
+  if (g.len() != 3 || g.get_or(2, -1) != 99 || g.get_or(1, -1) != 10) {
+    return test.fail("merge");
+  }
+  if (m.filter(even_key).len() != 1 || m.fold(0, add_kv) != 50 || m.map_values(bump).get_or(2, -1) != 21) {
+    return test.fail("filter / fold / map_values");
+  }
+  return test.assert_eq(m.entries().len(), 2);
+}
+
+function test_ordmap(): test.TestOutcome {
+  let m: ordmap.OrdMap[i32, i32] = ordmap.from([(2, 20), (1, 10)]);
+  if (!m.contains(1) || m.remove(1).contains(1)) {
+    return test.fail("contains / remove");
+  }
+  let u: ordmap.OrdMap[i32, i32] = m.update(3, 100, bump).update(1, 100, bump);
+  if (u.get_or(3, -1) != 101 || u.get_or(1, -1) != 11) {
+    return test.fail("update");
+  }
+  let g: ordmap.OrdMap[i32, i32] = m.merge(ordmap.from([(2, 99), (5, 50)]));
+  if (g.len() != 3 || g.get_or(2, -1) != 99 || g.get_or(1, -1) != 10) {
+    return test.fail("merge");
+  }
+  let es: (i32, i32)[] = m.entries();
+  return test.assert_true(es.len() == 2 && es[0].0 == 1 && es[1].1 == 20);
+}
+
+function test_pmap(): test.TestOutcome {
+  let m: pmap.PMap[i32, i32] = pmap.from([(1, 10), (2, 20)]);
+  if (!m.contains(1) || m.remove(1).contains(1)) {
+    return test.fail("contains / remove");
+  }
+  let u: pmap.PMap[i32, i32] = m.update(3, 100, bump).update(1, 100, bump);
+  if (u.get_or(3, -1) != 101 || u.get_or(1, -1) != 11) {
+    return test.fail("update");
+  }
+  // Both directions of merge, since it folds the smaller map into the larger.
+  let big: pmap.PMap[i32, i32] = pmap.from([(2, 99), (5, 50), (6, 60)]);
+  if (m.merge(big).get_or(2, -1) != 99 || big.merge(m).get_or(2, -1) != 20) {
+    return test.fail("merge");
+  }
+  return test.assert_eq(m.entries().len(), 2);
+}
+
+function plus_one(v: json.JsonValue): json.JsonValue {
+  match (v) {
+    json.JNumber(s) => {
+      return json.JNumber(s + "1");
+    },
+    _ => {
+      return v;
+    }
+  }
+}
+
+function ab(): json.JsonObject {
+  return json.object().insert("a", json.JNumber("1")).insert("b", json.JNumber("2"));
+}
+
+function test_json_object(): test.TestOutcome {
+  let o: json.JsonObject = ab();
+  if (!o.contains("a") || o.contains("z") || o.is_empty()) {
+    return test.fail("contains");
+  }
+  let r: json.JsonObject = o.remove("a");
+  if (r.contains("a") || r.len() != 1 || r.keys()[0] != "b") {
+    return test.fail("remove");
+  }
+  let u: json.JsonObject = ab().update("c", json.JNumber("7"), plus_one);
+  if (u.len() != 3 || json.json_encode(u.get_or("c", json.JNull)) != "71") {
+    return test.fail("update absent");
+  }
+  let g: json.JsonObject = ab().merge(json.object().insert("b", json.JString("x")));
+  if (g.len() != 2 || json.json_encode(g.get_or("b", json.JNull)) != "\"x\"") {
+    return test.fail("merge");
+  }
+  return test.assert_true(o.entries().len() == 2 && o.values().len() == 2);
+}
+
+function test_sets(): test.TestOutcome {
+  let a: set.Set[i32] = set.set_of([1, 2, 3]).insert(4).remove(1);
+  let b: set.Set[i32] = set.set_of([3, 4, 5]);
+  if (a.intersection(b).len() != 2 || a.symmetric_difference(b).len() != 2 || !a.union(b).is_superset(b)) {
+    return test.fail("set algebra");
+  }
+  if (a.filter((x: i32): boolean => x > 2).len() != 2 || a.fold(0, (acc: i32, x: i32): i32 => acc + x) != 9) {
+    return test.fail("set filter / fold");
+  }
+  let oa: ordset.OrdSet[i32] = ordset.ordset_of([1, 2, 3]).insert(4).remove(1);
+  let ob: ordset.OrdSet[i32] = ordset.ordset_of([3, 4, 5]);
+  if (oa.symmetric_difference(ob).len() != 2 || oa.is_disjoint(ob) || !oa.union(ob).is_superset(ob)) {
+    return test.fail("ordset algebra");
+  }
+  let pa: pset.PSet[i32] = pset.pset_of([1, 2, 3]).insert(4).remove(1);
+  let pb: pset.PSet[i32] = pset.pset_of([7, 8]);
+  return test.assert_true(pa.symmetric_difference(pb).len() == 5 && pa.is_disjoint(pb) && pa.union(pb).is_superset(pb));
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("collection vocabulary");
+  r = r.it("Map", test_map);
+  r = r.it("OrdMap", test_ordmap);
+  r = r.it("PMap", test_pmap);
+  r = r.it("JsonObject", test_json_object);
+  r = r.it("sets", test_sets);
+  return r.finish();
+}

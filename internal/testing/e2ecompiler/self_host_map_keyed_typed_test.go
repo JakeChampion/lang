@@ -45,7 +45,7 @@ function build(n: i32): i32 {
         m = m.insert(Name { first: "k" + "1", rank: 1 }, 100);
         if (m.len() != 6) { return 0 - 2; }
         if (m.get_or(Name { first: "k1", rank: 1 }, 0) != 100) { return 0 - 3; }
-        if (!m.has(Name { first: "k2", rank: 5 })) { return 0 - 4; }
+        if (!m.contains(Name { first: "k2", rank: 5 })) { return 0 - 4; }
         ks = m.keys();
         t = m.get_or(Name { first: "k0", rank: 3 }, 0);
     }

@@ -1267,8 +1267,8 @@ function main(): i32 {
     m = m.insert("a", 10);
     m = m.insert("b", 20);
     m = m.insert("c", 30);
-    m = m.without("b").0;
-    if (m.has("b")) { return 1; }
+    m = m.remove("b");
+    if (m.contains("b")) { return 1; }
     let total: i32 = 0;
     let it = m.iter();
     while (it.has_next()) {
@@ -2544,14 +2544,16 @@ function main(): i32 {
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
-    let (mb, hadb) = m.without("b");
+    let hadb: boolean = m.contains("b");
+    let mb = m.remove("b");
     if (!hadb) { return 1; }
     m = mb;
-    if (m.without("z").1)  { return 2; }
-    let (m2, ok) = m.without("a");
+    if (m.contains("z"))  { return 2; }
+    let ok: boolean = m.contains("a");
+    let m2 = m.remove("a");
     if (!ok) { return 3; }
-    if (m2.has("a")) { return 4; }
-    if (!m2.has("c")) { return 5; }
+    if (m2.contains("a")) { return 4; }
+    if (!m2.contains("c")) { return 5; }
     if (m2.len() != 1) { return 6; }
     return 0;
 }`
@@ -2571,7 +2573,7 @@ function main(): i32 {
     if (m.len() != 2) { return 1; }
     m = m.cleared();
     if (m.len() != 0) { return 2; }
-    if (m.has("x")) { return 3; }
+    if (m.contains("x")) { return 3; }
     m = m.insert("z", 99);
     if (m.len() != 1) { return 4; }
     if (m.get_or("z", 0) != 99) { return 5; }
@@ -2617,12 +2619,13 @@ function main(): i32 {
     m1 = m1.insert("a", 1);
     m1 = m1.insert("b", 2);
     let m2 = m1;                       // alias → rc=2
-    let (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
+    let ok: boolean = m2.contains("a");
+    let m3 = m2.remove("a");     // rc>1 → copy; m1/m2 intact
     if (!ok)            { return 1; }
     if (m1.len() != 2)  { return 2; }  // original keeps "a"
-    if (!m1.has("a"))   { return 3; }
+    if (!m1.contains("a"))   { return 3; }
     if (m3.len() != 1)  { return 4; }  // copy dropped "a"
-    if (m3.has("a"))    { return 5; }
+    if (m3.contains("a"))    { return 5; }
     let m4 = m1;                       // alias → rc=2
     m4 = m4.cleared();                   // rc>1 → copy; m1 intact
     if (m1.len() != 2)  { return 6; }
@@ -2710,7 +2713,7 @@ function main(): i32 {
     let b: Map[i32, string] = Map {};
     if (b.len() != 0) { return 3; }
     b = b.insert(7, "hello");
-    if (!b.has(7)) { return 4; }
+    if (!b.contains(7)) { return 4; }
     if (take(Map {}) != 0) { return 5; }
     let r = mkEmpty();
     if (r.len() != 0) { return 6; }

@@ -6,7 +6,7 @@ import "std/set" as set;
 // union/intersect/difference, subset/equals, insertion-order
 // to_array). The most important contract exercised here is VALUE
 // SEMANTICS: an operation returns a new set and never mutates its
-// receiver — asserted explicitly in test_add_is_pure, the regression
+// receiver — asserted explicitly in test_insert_is_pure, the regression
 // guard for the aliasing/CoW hazard a wrapper struct over a heap array
 // is prone to. Both i32 and string element types are covered.
 
@@ -24,25 +24,25 @@ function test_contains(): test.TestOutcome {
   return test.assert_true(s.contains(20) && !s.contains(25));
 }
 
-function test_add(): test.TestOutcome {
+function test_insert(): test.TestOutcome {
   let s: set.Set[i32] = set.set_new();
-  s = s.add(1);
-  s = s.add(2);
-  s = s.add(1);  // dup — no-op
+  s = s.insert(1);
+  s = s.insert(2);
+  s = s.insert(1);  // dup — no-op
   return test.assert_eq_array(s.to_array(), [1, 2]);
 }
 
 // The value-semantics contract: add returns a NEW set, the receiver is
 // untouched. Regression guard for in-place mutation of a shared array
 // field (the copy-on-write aliasing hazard).
-function test_add_is_pure(): test.TestOutcome {
+function test_insert_is_pure(): test.TestOutcome {
   let a: set.Set[i32] = set.set_of([1, 2]);
-  let b: set.Set[i32] = a.add(3);
+  let b: set.Set[i32] = a.insert(3);
   if (a.len() != 2) {
-    return test.fail("add mutated receiver: a.len = " + a.len().to_string());
+    return test.fail("insert mutated receiver: a.len = " + a.len().to_string());
   }
   if (b.len() != 3) {
-    return test.fail("add result wrong: b.len = " + b.len().to_string());
+    return test.fail("insert result wrong: b.len = " + b.len().to_string());
   }
   return test.assert_true(!a.contains(3) && b.contains(3));
 }
@@ -75,7 +75,7 @@ function test_union(): test.TestOutcome {
 function test_intersect(): test.TestOutcome {
   let a: set.Set[i32] = set.set_of([1, 2, 3, 4]);
   let b: set.Set[i32] = set.set_of([2, 4, 6]);
-  return test.assert_eq_array(a.intersect(b).to_array(), [2, 4]);
+  return test.assert_eq_array(a.intersection(b).to_array(), [2, 4]);
 }
 
 function test_difference(): test.TestOutcome {
@@ -165,8 +165,8 @@ function main(): i32 {
   let r: test.TestRunner = test.test_new("std/set");
   r = r.it("set_of dedup + order", test_set_of_dedup);
   r = r.it("contains", test_contains);
-  r = r.it("add dedup", test_add);
-  r = r.it("add is pure", test_add_is_pure);
+  r = r.it("insert dedup", test_insert);
+  r = r.it("insert is pure", test_insert_is_pure);
   r = r.it("remove", test_remove);
   r = r.it("remove absent", test_remove_absent);
   r = r.it("union", test_union);

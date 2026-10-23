@@ -684,14 +684,14 @@ function seen_twice(a: string, b: string): i32 {
     let m: Map[string, i32] = map_new(4);
     m = m.insert(a, 1);
     m = m.insert(b, m.get_or(a, 0) + 1);
-    if (m.has(b)) { return m.get_or(b, 0); }
+    if (m.contains(b)) { return m.get_or(b, 0); }
     return 0;
 }
 function flagged(ws: string[]): i32 {
     let m: Map[string, boolean] = map_new(ws.len() + 1);
     for w in ws { m = m.insert(w, true); }
     let n: i32 = 0;
-    for w in ws { if (m.has(w)) { n = n + 1; } }
+    for w in ws { if (m.contains(w)) { n = n + 1; } }
     return n;
 }
 // A column of records: the map owns a unit of every value, released through
@@ -2956,7 +2956,7 @@ struct Half { v: f32, n: i32 }
     m = m.insert(a + b, 2);
     m = m.insert(a, m.get_or(a, 0) + 10);
     let n: i32 = m.get_or(a, 0) + m.get_or(a + b, 0);
-    if (m.has(b)) { n = n + 100; }
+    if (m.contains(b)) { n = n + 100; }
     return n;
 }
 @noinline function map_words(a: string, b: string): i32 {
@@ -2964,7 +2964,7 @@ struct Half { v: f32, n: i32 }
     let m: Map[string, boolean] = map_new(ws.len() + 1);
     for w in ws { m = m.insert(w, true); }
     let n: i32 = 0;
-    for w in ws { if (m.has(w + "")) { n = n + 1; } }
+    for w in ws { if (m.contains(w + "")) { n = n + 1; } }
     return n;
 }
 // A map built in one frame and handed to another: the callee takes the unit
@@ -3096,7 +3096,7 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
     let t: i32 = 0;
     i = 0;
     while (i < n + 2) { t = t + m.get_or(i, 0 - 1); i = i + 1; }
-    if (m.has(n)) { t = t + 1000; }
+    if (m.contains(n)) { t = t + 1000; }
     return t + m.len() * 10000;
 }
 @noinline function map_int_words(a: string, b: string): i32 {

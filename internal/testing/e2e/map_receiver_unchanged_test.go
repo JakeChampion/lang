@@ -30,7 +30,8 @@ function main(): i32 {
     let n: Map[i32, i32] = m.insert(2, 20);
     let g: Map[i32, i32] = grown(n, 7);
     let t: Map[i32, i32] = threaded(n, 3);
-    let (rest, had) = n.without(2);
+    let had: boolean = n.contains(2);
+    let rest = n.remove(2);
     let c: Map[i32, i32] = n.cleared();
     let acc: Map[i32, i32] = map_new(8);
     let k: i32 = 0;
@@ -46,7 +47,7 @@ function main(): i32 {
     let a: i32 = size(m.insert(2, 20));
     let b: i32 = m.insert(3, 30).insert(4, 40).len();
     let c: i32 = m.cleared().len();
-    let d: boolean = m.without(1).1;
+    let d: boolean = m.contains(1);
     return m.len() + a * 2 + b * 4 + c * 8 + (if (d) { 16 } else { 0 });
 }`, 33},
 	{"fields", `import "core/map";
@@ -58,7 +59,8 @@ function main(): i32 {
     let b: Box = Box { m: m };
     let n: Map[i32, i32] = b.m.insert(2, 20);
     let p: Map[i32, i32] = peek(b);
-    let (rest, had) = b.m.without(1);
+    let had: boolean = b.m.contains(1);
+    let rest = b.m.remove(1);
     let c: Map[i32, i32] = b.m.cleared();
     let built: Box = Box { m: b.m.insert(3, 30) };
     return b.m.len() + n.len() * 2 + p.len() * 4 + rest.len() * 8 + c.len() * 16 + built.m.len() * 32;

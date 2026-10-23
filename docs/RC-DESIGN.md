@@ -151,9 +151,9 @@ reads (`units_of`):
   payload rows of `TestSelfHostSSAPhysicalRC` and
   `TestSelfHostRecordPathAllocs`.
 - **Tuple take** (`tuple_takes`, `takeable_root`): the untested form, for a
-  tuple this frame allocated (`tuple_new`, `map_delete`'s pair) whose other
-  elements are only read: the slot is nulled with no runtime test, since no
-  one else can see the box. It asks `needed_past_slot` strictly: the tuple
+  tuple this frame allocated (`tuple_new`) whose other elements are only
+  read: the slot is nulled with no runtime test, since no one else can see
+  the box. It asks `needed_past_slot` strictly: the tuple
   must die in the block. Pinned by `TestSelfHostMapTupleElemReclaim*`.
 - **Hold** (`held_elements`): a projection of a counted type that is still in
   hand where its source is consumed, or where its source dies unconsumed and

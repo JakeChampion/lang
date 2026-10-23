@@ -16762,7 +16762,7 @@ function call_name_of(e: ast.Expr, own acc: Map[string, boolean]): Map[string, b
   return acc;
 }
 
-function called_names(mod: parser.Module): Map[string, boolean] {
+function called_names(mod: parser.Module): util.NameIndex {
   let acc: Map[string, boolean] = map_new(64);
   let t: i32 = 0;
   while (t < mod.top_stmts.len()) {
@@ -16778,7 +16778,7 @@ function called_names(mod: parser.Module): Map[string, boolean] {
     }
     f = f + 1;
   }
-  return acc;
+  return util.name_index(acc.keys());
 }
 
 // component_shape classifies a program for the -target wasm32-wasi CLI.
@@ -16804,7 +16804,7 @@ pub function census_on(sw: asmcore.Switches): boolean {
 // `census` is a build with the leak census or the sanitizer on, whose report
 // goes to stderr whatever the program calls.
 function host_needs(mod: parser.Module, census: boolean): HostNeeds {
-  let calls: Map[string, boolean] = called_names(mod);
+  let calls: util.NameIndex = called_names(mod);
   // Building a Map imports get-random-u64 with no explicit random call in the
   // program: core/map draws its per-process string-hash seed from the same
   // CSPRNG. module_uses_random counts that seed on the lowered side, where it
@@ -16829,7 +16829,7 @@ function host_needs(mod: parser.Module, census: boolean): HostNeeds {
   };
 }
 
-function calls_any(calls: Map[string, boolean], names: string[]): boolean {
+function calls_any(calls: util.NameIndex, names: string[]): boolean {
   for name in names {
     if (calls.has(name)) {
       return true;

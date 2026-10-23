@@ -104,7 +104,7 @@ function get(s: Store, at: i32, k: string): Option[i32] {
     if (has_str(l.deletes, k)) {
       return None;
     }
-    if (l.writes.has(k)) {
+    if (l.writes.contains(k)) {
       return Some(l.writes.get_or(k, 0));
     }
     cur = l.parent;

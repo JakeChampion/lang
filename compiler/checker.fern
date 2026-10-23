@@ -4300,8 +4300,11 @@ function retired_collection_spelling(ns: string, method: string): string {
   if (ns == "Map" && method == "set") {
     return "insert";
   }
-  if (ns == "Map" && method == "delete") {
-    return "without";
+  if (ns == "Map" && method == "has") {
+    return "contains";
+  }
+  if (ns == "Map" && (method == "delete" || method == "without")) {
+    return "remove";
   }
   if (ns == "Map" && method == "clear") {
     return "cleared";
@@ -4428,7 +4431,7 @@ function preregistered_methods(ns: string): string[] {
     return ["as_bytes", "len"];
   }
   if (ns == "Map") {
-    return ["cleared", "get", "get_or", "has", "insert", "iter", "keys", "len", "values", "without"];
+    return ["cleared", "contains", "get", "get_or", "insert", "iter", "keys", "len", "remove", "values"];
   }
   if (ns == "MapIter") {
     return ["advance", "has_next", "key", "value"];
@@ -4500,6 +4503,9 @@ function (s: Scope) unknown_method_message(ns: string, method: string, label: st
   }
   if (view) {
     repl = "";
+  }
+  if (repl == "contains") {
+    return base + " — it was renamed; use \"contains\"";
   }
   if (repl.len() > 0) {
     return base + " — the in-place spelling was removed; use \"" + repl
@@ -6047,17 +6053,17 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         if (name == "get" && c.args.len() == 1) {
           return t_union_g("Option", [mt.value]);
         }
-        if (name == "has") {
+        if (name == "contains") {
           if (c.args.len() != 1) {
-            return t_unknown("map.has: 1 arg");
+            return t_unknown("map.contains: 1 arg");
           }
           return t_bool();
         }
-        if (name == "without") {
+        if (name == "remove") {
           if (c.args.len() != 1) {
-            return t_unknown("map.without: 1 arg");
+            return t_unknown("map.remove: 1 arg");
           }
-          return t_tuple([recv_ty, t_bool()]);
+          return recv_ty;
         }
         if (name == "len") {
           if (c.args.len() != 0) {
@@ -15369,7 +15375,7 @@ function map_method_receiver(c: ast.ExprCall, recv_ty: typeinfo.Type): typeinfo.
 }
 
 function map_method_takes_key(method: string): boolean {
-  return method == "insert" || method == "get_or" || method == "get" || method == "has" || method == "without";
+  return method == "insert" || method == "get_or" || method == "get" || method == "contains" || method == "remove";
 }
 
 // unbound_map_arg_diags reports E038 for each written key or value argument of
@@ -15418,7 +15424,7 @@ function map_arg_slots(method: string, mt: typeinfo.TypeMap): typeinfo.Type[] {
   if (method == "insert" || method == "get_or") {
     return [mt.key, mt.value];
   }
-  if (method == "get" || method == "has" || method == "without") {
+  if (method == "get" || method == "contains" || method == "remove") {
     return [mt.key];
   }
   return [];
@@ -15430,7 +15436,7 @@ function map_builtin_arity(method: string): i32 {
   if (method == "insert" || method == "get_or") {
     return 2;
   }
-  if (method == "get" || method == "has" || method == "without") {
+  if (method == "get" || method == "contains" || method == "remove") {
     return 1;
   }
   if (method == "len" || method == "cleared" || method == "keys" || method == "values" || method == "iter") {
@@ -17276,7 +17282,7 @@ function param_decl_names(params: ast.ParamDecl[]): string[] {
 // (docs/PURE-COLLECTION-API-PLAN.md §3a). Mirrors the Go checker's
 // pureCollectionMutators set.
 function is_collection_mutator(field: string): boolean {
-  return field == "insert" || field == "without" || field == "cleared" || field == "with" || field == "append";
+  return field == "insert" || field == "remove" || field == "cleared" || field == "with" || field == "append";
 }
 
 // e055_diag reports E055 when a bare statement is a value-returning collection

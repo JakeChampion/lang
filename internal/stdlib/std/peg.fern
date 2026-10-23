@@ -364,7 +364,7 @@ function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): string {
       return __peg_check_refs(sub, rules);
     },
     PRef(name) => {
-      if (rules.has(name)) {
+      if (rules.contains(name)) {
         return "";
       }
       return name;
@@ -380,7 +380,7 @@ function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): string {
 // must exist and every PRef in every rule must resolve. Returns
 // Err("unknown rule: NAME") naming the first offender.
 pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, string] {
-  if (!rules.has(start)) {
+  if (!rules.contains(start)) {
     return Err("unknown rule: " + start);
   }
   let names: string[] = rules.keys();

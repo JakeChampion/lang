@@ -71,7 +71,7 @@ function pretty(v: json.JsonValue, depth: i32): string {
         if (i > 0) {
           obj_out = obj_out + ",\n";
         }
-        obj_out = obj_out + pad_inner + json.json_encode(JString(m.keys[i])) + ": " + pretty(m.values[i], depth + 1);
+        obj_out = obj_out + pad_inner + json.json_encode(JString(m.keys()[i])) + ": " + pretty(m.values()[i], depth + 1);
         i = i + 1;
       }
       return obj_out + "\n" + pad + "}";

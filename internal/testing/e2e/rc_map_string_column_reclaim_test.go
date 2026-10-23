@@ -34,7 +34,7 @@ function main(): i32 {
         let m: Map[string, string] = map_new(4);
         m = m.insert(stem + "-key-long", stem + "-value-long");
         match (m.get(stem + "-key-long")) { Some(v) => { acc = acc + v.len(); }, None => {} }
-        if (m.has(stem + "-key-long")) { acc = acc + 1; }
+        if (m.contains(stem + "-key-long")) { acc = acc + 1; }
         acc = acc + m.get_or(stem + "-key-long", stem + "-fallback!").len();
         i = i + 1;
     }
@@ -197,7 +197,7 @@ func mapAliasedKeyReadSrc(verb string) string {
 	case "get":
 		read = `    match (m.get(k)) { Some(v) => { if (v == "a-value-long-one") { ok = ok + 1; } }, None => {} }`
 	case "has":
-		read = `    if (m.has(k)) { ok = ok + 1; }`
+		read = `    if (m.contains(k)) { ok = ok + 1; }`
 	}
 	return `import "core/map";
 function mk(): i32 {

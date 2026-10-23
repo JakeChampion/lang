@@ -35,7 +35,7 @@ function main(): i32 {
     if (m.get_or(big, 0) != 10) { return 2; }
     if (m.get_or(7 as i64, 0) != 20) { return 3; }
     if (m.get_or(0 - big, 0) != 30) { return 4; }
-    if (m.has(4294967296 as i64)) { return 5; }
+    if (m.contains(4294967296 as i64)) { return 5; }
     let ks: i64[] = m.keys();
     if (ks.len() != 3) { return 6; }
     if (ks[0] != big) { return 7; }
@@ -52,8 +52,8 @@ function main(): i32 {
     u = u.insert(18446744073709551615 as u64, 3);
     if (u.get_or(18446744073709551615 as u64, 0) != 3) { return 12; }
     match (m.get(big)) { Some(v) => { if (v != 10) { return 13; } }, None => { return 14; } }
-    let m2: Map[i64, i32] = m.without(big).0;
-    if (m2.has(big)) { return 15; }
+    let m2: Map[i64, i32] = m.remove(big);
+    if (m2.contains(big)) { return 15; }
     if (m2.len() != 2) { return 16; }
     return 42;
 }
@@ -104,9 +104,9 @@ function main(): i32 {
     if (m.len() != 40) { return 1; }
     let i: i32 = 0;
     while (i < 40) { if (m.get_or((i as i64) * 4294967296 + (i as i64), 0 - 1) != i) { return 2; } i = i + 1; }
-    if (m.has(1 as i64)) { return 3; }
+    if (m.contains(1 as i64)) { return 3; }
     i = 0;
-    while (i < 40) { m = m.without((i as i64) * 4294967296 + (i as i64)).0; i = i + 2; }
+    while (i < 40) { m = m.remove((i as i64) * 4294967296 + (i as i64)); i = i + 2; }
     if (m.len() != 20) { return 4; }
     i = 0;
     while (i < 40) { m = m.insert((i as i64) * 4294967296 + (i as i64), i * 10); i = i + 2; }
@@ -160,7 +160,7 @@ function main(): i32 {
     s = s.insert(big * 99, w(4));
     if (s2.len() != 20) { return 1; }
     if (s.len() != 21) { return 2; }
-    s = s.without(big + 1).0;
+    s = s.remove(big + 1);
     if (s.len() != 20) { return 3; }
     if (s.get_or(big * 99, "").len() != w(4).len()) { return 4; }
     let total: i32 = 0;
@@ -175,7 +175,7 @@ function main(): i32 {
     a = a.insert(big * 5, [w(6), w(7), w(8)]);
     if (a.get_or(big * 3, []).len() != 1) { return 6; }
     if (a2.len() != 1) { return 7; }
-    a = a.without(big * 3).0;
+    a = a.remove(big * 3);
     if (a.len() != 1) { return 8; }
     let t: Map[i64, Item] = map_new(2);
     t = t.insert(big * 7, Item { name: w(1), n: 1 });
@@ -183,7 +183,7 @@ function main(): i32 {
     let t2: Map[i64, Item] = t;
     t = t.insert(big * 8, Item { name: w(3), n: 3 });
     match (t.get(big * 7)) { Some(it) => { if (it.n != 2) { return 9; } }, None => { return 10; } }
-    t = t.without(big * 8).0;
+    t = t.remove(big * 8);
     if (t.len() != 1) { return 11; }
     if (t2.len() != 1) { return 12; }
     let f: Map[i64, f64] = map_new(2);

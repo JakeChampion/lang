@@ -492,7 +492,7 @@ function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); m
 		{"map-get-miss", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(999)) { Some(v) => { return v; }, None => { return 5; } } return 9; }`, 5},
 		{"map-has", `import "core/map";
-function main(): i32 { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 1); let r = 0; if (m.has(1)) { r = r + 1; } if (m.has(2)) { r = r + 10; } return r; }`, 1},
+function main(): i32 { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 1); let r = 0; if (m.contains(1)) { r = r + 1; } if (m.contains(2)) { r = r + 10; } return r; }`, 1},
 		{"map-get-strkey", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert("hi", 11); match (m.get("hi")) { Some(v) => { return v; }, None => { return 0; } } return 9; }`, 11},
 		{"map-get-or-hit", `import "core/map";
@@ -515,15 +515,15 @@ function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); let s = 0; for (k, v) in m { s = s + k * v; } return s; }`, 20},
 		{"map-forkv-strkey", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("ab", 1); m = m.insert("cde", 2); let s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }`, 8},
-		// m.without(k) -> (Map, existed) (#2926).
+		// m.remove(k) returns the map without k; m.contains(k) says whether it was there (#2926).
 		{"map-without-len", `import "core/map";
-function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); let (m2, e) = m.without(1); return m2.len(); }`, 1},
+function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); let e: boolean = m.contains(1); let m2 = m.remove(1); return m2.len(); }`, 1},
 		{"map-without-existed", `import "core/map";
-function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); let (m2, e) = m.without(1); if (e) { return 1; } return 0; }`, 1},
+function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); let e: boolean = m.contains(1); let m2 = m.remove(1); if (e) { return 1; } return 0; }`, 1},
 		{"map-without-survivor", `import "core/map";
-function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); let (m2, e) = m.without(1); return m2.get_or(2, 0); }`, 20},
+function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); let e: boolean = m.contains(1); let m2 = m.remove(1); return m2.get_or(2, 0); }`, 20},
 		{"map-without-strkey", `import "core/map";
-function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 1); m = m.insert("b", 2); let (m2, e) = m.without("a"); return m2.len() + m2.get_or("b", 0); }`, 3},
+function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 1); m = m.insert("b", 2); let e: boolean = m.contains("a"); let m2 = m.remove("a"); return m2.len() + m2.get_or("b", 0); }`, 3},
 		{"i64-cmp", `function main(): i32 { let x: i64 = 5000000000; let y: i64 = 4000000000; if (x > y) { return 7; } return 0; }`, 7},
 		{"i64-add", `function main(): i32 { let a: i64 = 3000000000; let b: i64 = 3000000000; let c: i64 = a + b; if (c > 5000000000) { return 11; } return 0; }`, 11},
 		{"i64-mul", `function main(): i32 { let a: i64 = 100000; let b: i64 = 100000; let c: i64 = a * b; if (c > 4000000000) { return 5; } return 0; }`, 5},
@@ -642,7 +642,7 @@ struct Cache { m: Map[i32, i32], hits: i32 } function main(): i32 { let c = Cach
 		{"map-field-method", `import "core/map";
 struct Cfg { table: Map[string, i32] } function (c: Cfg) lookup(k: string): i32 { return c.table.get_or(k, 0); } function main(): i32 { let c = Cfg{table: Map { "a": 3, "b": 4 }}; return c.lookup("a") + c.lookup("b"); }`, 7},
 		{"map-field-has-len", `import "core/map";
-struct Cache { m: Map[string, i32] } function main(): i32 { let c = Cache{m: Map { "a": 1, "b": 2 }}; let t = 0; if (c.m.has("a")) { t = t + c.m.len(); } return t; }`, 2},
+struct Cache { m: Map[string, i32] } function main(): i32 { let c = Cache{m: Map { "a": 1, "b": 2 }}; let t = 0; if (c.m.contains("a")) { t = t + c.m.len(); } return t; }`, 2},
 		// A Map[K,V] PARAMETER recovers its map type, so map methods on the param
 		// (`m.get_or(k, d)`) dispatch as map ops (the local-annotation path already
 		// did this; params lacked it). #map-param.

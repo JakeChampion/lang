@@ -33,7 +33,7 @@ function test_insert_get(): test.TestOutcome {
 }
 
 function test_insert_replaces(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.from_arrays([1, 2, 1], [10, 20, 11]);
+  let m: ordmap.OrdMap[i32, i32] = ordmap.from([(1, 10), (2, 20), (1, 11)]);
   if (m.len() != 2) {
     return test.fail("duplicate key grew the map");
   }
@@ -101,7 +101,7 @@ function test_remove(): test.TestOutcome {
 }
 
 function test_sorted_iteration(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.from_arrays([5, 1, 4, 2, 3], [50, 10, 40, 20, 30]);
+  let m: ordmap.OrdMap[i32, i32] = ordmap.from([(5, 50), (1, 10), (4, 40), (2, 20), (3, 30)]);
   let ks: i32[] = m.keys();
   let vs: i32[] = m.values();
   if (ks.len() != 5 || vs.len() != 5) {
@@ -138,7 +138,7 @@ function test_rank(): test.TestOutcome {
 }
 
 function test_min_max_remove(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.from_arrays([3, 1, 2], [0, 0, 0]);
+  let m: ordmap.OrdMap[i32, i32] = ordmap.from([(3, 0), (1, 0), (2, 0)]);
   let r: ordmap.OrdMap[i32, i32] = m.remove_min().remove_max();
   if (r.len() != 1 || !r.contains(2)) {
     return test.fail("remove_min/max");
@@ -147,12 +147,14 @@ function test_min_max_remove(): test.TestOutcome {
 }
 
 function test_update_map_filter(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.from_arrays([1, 2, 3, 4], [1, 2, 3, 4]);
-  let u: ordmap.OrdMap[i32, i32] = m.update(2, (v: i32) => v * 100);
+  let m: ordmap.OrdMap[i32, i32] = ordmap.from([(1, 1), (2, 2), (3, 3), (4, 4)]);
+  let u: ordmap.OrdMap[i32, i32] = m.update(2, 0, (v: i32) => v * 100);
   if (u.get_or(2, -1) != 200 || m.get_or(2, -1) != 2) {
     return test.fail("update");
   }
-  if (m.update(9, (v: i32) => v).len() != 4) {
+  // An absent key takes `f(init)`.
+  let a: ordmap.OrdMap[i32, i32] = m.update(9, 7, (v: i32) => v + 1);
+  if (a.len() != 5 || a.get_or(9, -1) != 8 || m.contains(9)) {
     return test.fail("update absent");
   }
   let d: ordmap.OrdMap[i32, i32] = m.map_values((v: i32) => v * 2);
@@ -179,9 +181,10 @@ function test_set_algebra(): test.TestOutcome {
     b = b.insert(i, 2);
     i = i + 1;
   }
-  let u: ordmap.OrdMap[i32, i32] = a.union(b);
-  if (u.len() != 750 || !u.is_valid() || u.get_or(300, -1) != 1 || u.get_or(600, -1) != 2) {
-    return test.fail("union (left-biased)");
+  // On a key in both, merge takes the other map's value.
+  let u: ordmap.OrdMap[i32, i32] = a.merge(b);
+  if (u.len() != 750 || !u.is_valid() || u.get_or(300, -1) != 2 || u.get_or(100, -1) != 1 || u.get_or(600, -1) != 2) {
+    return test.fail("merge (other wins)");
   }
   let x: ordmap.OrdMap[i32, i32] = a.intersection(b);
   if (x.len() != 250 || !x.is_valid() || x.get_or(300, -1) != 1 || x.contains(100)) {
@@ -228,7 +231,7 @@ function test_string_keys(): test.TestOutcome {
 }
 
 function test_for_each(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.from_arrays([2, 1], [20, 10]);
+  let m: ordmap.OrdMap[i32, i32] = ordmap.from([(2, 20), (1, 10)]);
   let seen: i32 = 0;
   // Key order: 1 then 2, so the running total is 110 then 110 * 3 + 220.
   function visit(k: i32, v: i32): void {

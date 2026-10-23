@@ -791,7 +791,7 @@ function fresh_unit(kind: i32): boolean {
 // which retains what it answers because the value may come from the column or
 // from the caller's default, a column snapshot, which semsource admits only
 // where the runtime hands back a copy the frame owns whole, a delete,
-// whose tuple is fresh and holds the map the receiver handed over, and a hole
+// which answers the map the receiver handed over, and a hole
 // fill, which hands back the chain it was given or the value it stored.
 function hands_out(kind: i32): boolean {
   return kind == ssasem.call() || kind == ssasem.call_value() || kind == ssasem.closure_new()
@@ -1809,11 +1809,8 @@ function other_tuple_get(ins: ssa.SInst, root: i32, field: i32): boolean {
 // `only_element_reads` are the whole of its safety: owning a unit is not
 // enough, the box has to be the frame's alone.
 //
-// Only two kinds of instruction can define a TUPLE and qualify:
-//
-//   - a construction — `tuple_new` builds the box here, refcount 1;
-//   - `map_delete`, whose result is the fresh two-word box the runtime
-//     allocates to pair the map with whether the key was there.
+// Only a construction can define a TUPLE and qualify: `tuple_new` builds the
+// box here, refcount 1.
 //
 // Everything else that can define a tuple hands back a box someone else still
 // names, and is excluded:
@@ -1834,7 +1831,7 @@ function other_tuple_get(ins: ssa.SInst, root: i32, field: i32): boolean {
 // closure box and so can never be a take's source; naming them here would
 // suggest a judgement about them that this predicate does not make.
 function takeable_root(kind: i32): boolean {
-  return construction(kind) || kind == ssasem.map_delete();
+  return construction(kind);
 }
 
 // The element index a tuple read at (`bi`, `pos`) TAKES rather than borrows,

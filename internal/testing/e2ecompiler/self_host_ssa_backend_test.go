@@ -594,8 +594,8 @@ function main(): i32 {
     let j: i32 = 0;
     while (j < 40) { ints = ints.insert(j * 7, j); j = j + 1; }
     let total: i32 = m.get_or("k7", 0) + m.get_or("zz", 100) + ints.get_or(21, 0) + ints.get_or(22, 1000);
-    if (m.has("k9")) { total = total + 1; }
-    if (!ints.has(5)) { total = total + 2; }
+    if (m.contains("k9")) { total = total + 1; }
+    if (!ints.contains(5)) { total = total + 2; }
     total = total + m.len() * 10 + ints.keys().len() + ints.values().len();
     for k in m.keys() { if (k.len() == 2) { total = total + 1; } }
     return total % 200;

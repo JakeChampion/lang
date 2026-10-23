@@ -306,7 +306,7 @@ pub function (a: CliArgs) value_or(name: string, fallback: string): string {
 // `.is_set(name)` — true if the flag (bool or valued) appeared,
 // queried by its long name.
 pub function (a: CliArgs) is_set(name: string): boolean {
-  return a.opts.has(name);
+  return a.opts.contains(name);
 }
 
 // `.operands()` — the positional arguments in order.

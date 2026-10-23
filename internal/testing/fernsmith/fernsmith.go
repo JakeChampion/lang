@@ -2409,7 +2409,7 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 			return true
 		}
 	}
-	// Map methods. `m.get(k)` returns Option[i32], `m.has(k)` =>
+	// Map methods. `m.get(k)` returns Option[i32], `m.contains(k)` =>
 	// bool, `m.len()` => i32. Each routes an in-scope Map into
 	// the requested type.
 	if t == tOptI32 {
@@ -2426,7 +2426,7 @@ func (g *Generator) tryCompositeProduction(b *strings.Builder, sc *scope, t gtyp
 		maps := sc.inScope(tMapI32I32)
 		if len(maps) > 0 {
 			name := maps[g.ch.intN(len(maps))]
-			fmt.Fprintf(b, "%s.has(", name)
+			fmt.Fprintf(b, "%s.contains(", name)
 			g.expr(b, sc, tI32, depth+1)
 			b.WriteByte(')')
 			return true

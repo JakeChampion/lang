@@ -1,14 +1,14 @@
 // std/ordset — a persistent, ordered set with structural sharing.
 //
 // `OrdSet[T]` is `std/ordmap`'s weight-balanced tree with unit values:
-// the same O(log n) membership / add / remove, O(m log(n/m + 1))
+// the same O(log n) membership / insert / remove, O(m log(n/m + 1))
 // union / intersection / difference, O(1) snapshots, sorted iteration,
 // and rank access — for any `core/cmp.Ord` element type. Every
 // operation is value-returning:
 //
 //   import "std/ordset";
 //   let s: ordset.OrdSet[i32] = ordset.ordset_of([3, 1, 2, 3]);
-//   s = s.add(0);
+//   s = s.insert(0);
 //   s.to_array();       // [0, 1, 2, 3]  (always ascending)
 //   s.contains(2);      // true
 //   s.union(ordset.ordset_of([9])).len();   // 5
@@ -37,7 +37,7 @@ pub function ordset_of[T: cmp.Ord](xs: T[]): OrdSet[T] {
   let s: OrdSet[T] = ordset_new();
   let i: i32 = 0;
   while (i < xs.len()) {
-    s = s.add(xs[i]);
+    s = s.insert(xs[i]);
     i = i + 1;
   }
   return s;
@@ -53,8 +53,8 @@ pub function (s: OrdSet[T]) is_empty(): boolean {
   return s.root.is_empty();
 }
 
-// `add(x)` — the set with `x`; the receiver unchanged when present.
-pub function (s: OrdSet[T]) add[T: cmp.Ord](x: T): OrdSet[T] {
+// `insert(x)` — the set with `x`; the receiver unchanged when present.
+pub function (s: OrdSet[T]) insert[T: cmp.Ord](x: T): OrdSet[T] {
   return OrdSet { root: s.root.insert(x, 0) };
 }
 
@@ -102,7 +102,7 @@ pub function (s: OrdSet[T]) to_array(): T[] {
 // `union(other)` / `intersection(other)` / `difference(other)` — the
 // usual set algebra, each O(m log(n/m + 1)).
 pub function (s: OrdSet[T]) union[T: cmp.Ord](other: OrdSet[T]): OrdSet[T] {
-  return OrdSet { root: s.root.union(other.root) };
+  return OrdSet { root: s.root.merge(other.root) };
 }
 
 pub function (s: OrdSet[T]) intersection[T: cmp.Ord](other: OrdSet[T]): OrdSet[T] {
@@ -145,4 +145,19 @@ pub function (s: OrdSet[T]) for_each(f: (T) => void): void {
 // built through this module; exposed for tests.
 pub function (s: OrdSet[T]) is_valid[T: cmp.Ord](): boolean {
   return s.root.is_valid();
+}
+
+// `is_superset(other)` — is every element of `other` in this set?
+pub function (s: OrdSet[T]) is_superset[T: cmp.Ord](other: OrdSet[T]): boolean {
+  return other.is_subset(s);
+}
+
+// `is_disjoint(other)` — do the two sets share no element?
+pub function (s: OrdSet[T]) is_disjoint[T: cmp.Ord](other: OrdSet[T]): boolean {
+  return s.intersection(other).is_empty();
+}
+
+// `symmetric_difference(other)` — the elements in exactly one of the two.
+pub function (s: OrdSet[T]) symmetric_difference[T: cmp.Ord](other: OrdSet[T]): OrdSet[T] {
+  return s.difference(other).union(other.difference(s));
 }

@@ -47,10 +47,11 @@ function main(): i32 {
     s = s + m.get_or(50, 0) + m.get_or(123456, -9);
     match (m.get(51)) { Some(v) => { s = s + v; }, None => { s = s - 1; } }
     match (m.get(99999)) { Some(v) => { s = s + v; }, None => { s = s - 1; } }
-    let r: (Map[i32, i32], boolean) = m.without(50);
-    let m2: Map[i32, i32] = r.0;
-    if (r.1) { s = s + 11; }
-    if (m.has(50) && !m2.has(50)) { s = s + 13; }
+    let r_had: boolean = m.contains(50);
+    let r: Map[i32, i32] = m.remove(50);
+    let m2: Map[i32, i32] = r;
+    if (r_had) { s = s + 11; }
+    if (m.contains(50) && !m2.contains(50)) { s = s + 13; }
     s = s + sum_iter(m2);
     let ks: i32[] = m2.keys();
     let vs: i32[] = m2.values();
@@ -81,7 +82,7 @@ function main(): i32 {
     while (i < 1000) { m = m.insert(i - 50, (i - 50) * 3); i = i + 1; }
     let got: string = "none";
     match (m.get(-49)) { Some(v) => { got = v.to_string(); }, None => {} }
-    print(m.get_or(-50, 7777).to_string() + " " + got + " " + m.get_or(949, 0).to_string() + " " + m.has(-51).to_string());
+    print(m.get_or(-50, 7777).to_string() + " " + got + " " + m.get_or(949, 0).to_string() + " " + m.contains(-51).to_string());
     return 0;
 }
 `
@@ -101,10 +102,10 @@ function main(): i32 {
     let b: Map[i32, i32] = a;
     b = b.insert(7, 1000);
     let c: Map[i32, i32] = a;
-    let r: (Map[i32, i32], boolean) = c.without(3);
-    c = r.0;
-    print(a.get_or(7, 0).to_string() + " " + b.get_or(7, 0).to_string() + " " + a.has(3).to_string() + " "
-        + c.has(3).to_string() + " " + a.len().to_string() + " " + b.len().to_string() + " " + c.len().to_string());
+    let r: Map[i32, i32] = c.remove(3);
+    c = r;
+    print(a.get_or(7, 0).to_string() + " " + b.get_or(7, 0).to_string() + " " + a.contains(3).to_string() + " "
+        + c.contains(3).to_string() + " " + a.len().to_string() + " " + b.len().to_string() + " " + c.len().to_string());
     return 0;
 }
 `
@@ -153,13 +154,14 @@ function main(): i32 {
     alias = alias.insert(key(6), 66);
     let s: i32 = m.len() * 1000 + alias.len();
     s = s + m.get_or(key(5), 0) + m.get_or("nope", -9) + alias.get_or(key(6), 0) + m.get_or(key(6), 0);
-    if (m.has("lit")) { s = s + 1; }
+    if (m.contains("lit")) { s = s + 1; }
     match (m.get(key(7))) { Some(v) => { s = s + v; }, None => { s = s - 1; } }
-    let r: (Map[string, i32], boolean) = m.without(key(8));
-    let m2: Map[string, i32] = r.0;
-    if (r.1 && !m2.has(key(8)) && m.has(key(8))) { s = s + 13; }
-    let r2: (Map[string, i32], boolean) = m2.without("absent");
-    m2 = r2.0;
+    let r_had: boolean = m.contains(key(8));
+    let r: Map[string, i32] = m.remove(key(8));
+    let m2: Map[string, i32] = r;
+    if (r_had && !m2.contains(key(8)) && m.contains(key(8))) { s = s + 13; }
+    let r2: Map[string, i32] = m2.remove("absent");
+    m2 = r2;
     let kl: i32 = 0;
     for k in m2.keys() { kl = kl + k.len(); }
     let it: i32 = 0;
@@ -193,9 +195,10 @@ function main(): i32 {
     a = a.insert(pt(7), 700);
     let alias: Map[Pt, i32] = a;
     a = a.insert(pt(8), 800);
-    let (a2, had) = a.without(pt(9));
+    let had: boolean = a.contains(pt(9));
+    let a2 = a.remove(pt(9));
     let s: i32 = a2.get_or(pt(7), 0) + a2.get_or(pt(8), 0) + alias.get_or(pt(8), 0) + a2.get_or(pt(9), -1) + a2.len() + alias.len();
-    if (a2.has(pt(10)) && !a2.has(pt(9)) && had) { s = s + 1; }
+    if (a2.contains(pt(10)) && !a2.contains(pt(9)) && had) { s = s + 1; }
     let b: Map[Shape, string] = Map { Dot: "dot", Sq(2): "sq2" };
     b = b.insert(Named("n" + "1"), "named");
     b = b.insert(Sq(2), "two");
@@ -205,7 +208,8 @@ function main(): i32 {
     i = 0;
     while (i < 20) { c = c.insert(("r" + i.to_string(), i % 3), Rec { name: "n" + i.to_string(), n: i }); i = i + 1; }
     c = c.insert(("r4", 1), Rec { name: "four" + "!", n: 4 });
-    let (c2, gone) = c.without(("r5", 2));
+    let gone: boolean = c.contains(("r5", 2));
+    let c2 = c.remove(("r5", 2));
     let cs: string = c2.get_or(("r4", 1), Rec { name: "", n: 0 }).name + " " + c2.len().to_string();
     let d: Map[i32[], i32] = Map { [1, 2]: 3 };
     d = d.insert([4], 5);
@@ -221,7 +225,8 @@ function main(): i32 {
     w = w.insert(pt(3), 1i64);
     let walias: Map[Pt, i64] = w;
     w = w.insert(pt(4), 2i64);
-    let (w2, wgone) = w.without(pt(5));
+    let wgone: boolean = w.contains(pt(5));
+    let w2 = w.remove(pt(5));
     let wsum: i64 = w2.get_or(pt(3), 0i64) + w2.get_or(pt(4), 0i64) + walias.get_or(pt(4), 0i64) + w2.get_or(pt(5), 7i64);
     match (w2.get(pt(6))) { Some(v) => { wsum = wsum + v; }, None => {} }
     let fl: Map[(i32, i32), f64] = Map { (1, 2): 1.5 };
@@ -254,9 +259,10 @@ function main(): i32 {
     p = p.insert(Pair[string] { a: "a3", b: "b3" }, 300);
     let palias: Map[Pair[string], i32] = p;
     p = p.insert(Pair[string] { a: "a4", b: "b4" }, 400);
-    let (p2, phad) = p.without(Pair[string] { a: "a5", b: "b5" });
+    let phad: boolean = p.contains(Pair[string] { a: "a5", b: "b5" });
+    let p2 = p.remove(Pair[string] { a: "a5", b: "b5" });
     let s: i32 = p2.get_or(Pair[string] { a: "a3", b: "b3" }, 0) + p2.get_or(Pair[string] { a: "a4", b: "b4" }, 0) + palias.get_or(Pair[string] { a: "a4", b: "b4" }, 0) + p2.len() + palias.len();
-    if (phad && !p2.has(Pair[string] { a: "a5", b: "b5" })) { s = s + 1; }
+    if (phad && !p2.contains(Pair[string] { a: "a5", b: "b5" })) { s = s + 1; }
     let q: Map[Slot[i32], string] = map_new(4);
     i = 0;
     while (i < 30) { q = q.insert(Slot.Two(i, i * 3), "t" + i.to_string()); i = i + 1; }
@@ -265,8 +271,9 @@ function main(): i32 {
     q = q.insert(Slot.Two(2, 6), "two");
     let qs: string = q.get_or(Slot.Two(2, 6), "-") + q.get_or(Slot.Empty, "-") + q.get_or(Slot.One(6), "-");
     match (q.get(Slot.One(5))) { Some(v) => { qs = qs + v; }, None => { qs = qs + "?"; } }
-    let (q2, qhad) = q.without(Slot.Empty);
-    if (qhad && !q2.has(Slot.Empty) && q.has(Slot.Empty)) { qs = qs + "!"; }
+    let qhad: boolean = q.contains(Slot.Empty);
+    let q2 = q.remove(Slot.Empty);
+    if (qhad && !q2.contains(Slot.Empty) && q.contains(Slot.Empty)) { qs = qs + "!"; }
     let ks: i32 = 0;
     for k in q2.keys() {
         match (k) { Empty => { ks = ks + 1000; }, One(x) => { ks = ks + x; }, Two(x, y) => { ks = ks + x + y; } }
@@ -304,8 +311,9 @@ function main(): i32 {
   let s: i32 = outer.get_or("k3", e).len() * 1000 + got.len();
   outer = outer.insert("k3", got);
   s = s + outer.get_or("k3", e).get_or(99, 0) * 100 + alias.get_or("k3", e).get_or(99, -1);
-  let (o2, had) = outer.without("k4");
-  if (had && !o2.has("k4") && outer.has("k4")) { s = s + 1; }
+  let had: boolean = outer.contains("k4");
+  let o2 = outer.remove("k4");
+  if (had && !o2.contains("k4") && outer.contains("k4")) { s = s + 1; }
   let t: i32 = 0;
   for (k, v) in o2 { t = t + v.len() + k.len(); }
   for v in o2.values() { t = t + v.get_or(0, 0); }
@@ -349,8 +357,9 @@ function main(): i32 {
     let alias: Map[i32, str] = m;
     alias = alias.insert(0, "over");
     alias = alias.insert(1, slice_unchecked(t, 6, 10));
-    let r: (Map[i32, str], boolean) = m.without(2);
-    let m2: Map[i32, str] = r.0;
+    let r_had: boolean = m.contains(2);
+    let r: Map[i32, str] = m.remove(2);
+    let m2: Map[i32, str] = r;
     m = m.insert(3, slice_unchecked(s, 7, 9));
     let m3: Map[i32, str] = grow(m, s);
     let junk: string[] = [];
@@ -358,7 +367,7 @@ function main(): i32 {
     while (j < 64) { junk = junk.append("zzzzzzzzz" + j.to_string()); j = j + 1; }
     let out: string = m.get_or(0, "q") + "," + alias.get_or(0, "q") + "," + alias.get_or(1, "q") + "," + m.get_or(3, "q")
         + "," + m.get_or(100, "q") + "," + m.get_or(101, "q") + "," + m.get_or(102, "q") + "," + m.get_or(999, "miss")
-        + "," + m2.get_or(2, "gone") + "," + m.get_or(2, "q") + "," + m3.get_or(200, "q") + "," + r.1.to_string();
+        + "," + m2.get_or(2, "gone") + "," + m.get_or(2, "q") + "," + m3.get_or(200, "q") + "," + r_had.to_string();
     match (m.get(102)) { Some(v) => { out = out + "," + v; }, None => { out = out + ",none"; } }
     match (m.get(998)) { Some(v) => { out = out + "," + v; }, None => { out = out + ",none"; } }
     let total: i32 = 0;
@@ -382,9 +391,9 @@ function main(): i32 {
     pts = pts.insert(Pt { x: 1, y: 2 }, "pt");
     pts = pts.insert(Pt { x: 3, y: 4 }, c);
     let pts2: Map[Pt, str] = pts;
-    let pr: (Map[Pt, str], boolean) = pts2.without(Pt { x: 3, y: 4 });
+    let pr: Map[Pt, str] = pts2.remove(Pt { x: 3, y: 4 });
     out = out + "," + named.get_or("ab", "q") + "," + named.get_or("k", "q") + "," + wide.get_or(5 as i64, "q")
-        + "," + pts.get_or(Pt { x: 1, y: 2 }, "q") + "," + pts.get_or(Pt { x: 3, y: 4 }, "q") + "," + pr.0.len().to_string();
+        + "," + pts.get_or(Pt { x: 1, y: 2 }, "q") + "," + pts.get_or(Pt { x: 3, y: 4 }, "q") + "," + pr.len().to_string();
     print(out);
     print((total + junk.len()).to_string());
     return 0;
@@ -404,21 +413,21 @@ function main(): i32 {
     m = m.insert(7, big + (1000 as usize));
     let alias: Map[i32, usize] = m;
     alias = alias.insert(8, 5 as usize);
-    let r: (Map[i32, usize], boolean) = m.without(9);
+    let r: Map[i32, usize] = m.remove(9);
     let hit: boolean = m.get_or(7, 0 as usize) == big + (1000 as usize) && alias.get_or(8, 0 as usize) == (5 as usize)
-        && m.get_or(8, 0 as usize) == big + (8 as usize) && m.get_or(999, 3 as usize) == (3 as usize) && !r.0.has(9) && m.has(9);
+        && m.get_or(8, 0 as usize) == big + (8 as usize) && m.get_or(999, 3 as usize) == (3 as usize) && !r.contains(9) && m.contains(9);
     let got: i32 = 0;
     match (m.get(299)) { Some(v) => { if (v == big + (299 as usize)) { got = 1; } }, None => {} }
     match (m.get(300)) { Some(v) => { got = 100; }, None => { got = got + 2; } }
     let n: i32 = 0;
-    for (k, v) in r.0 { if (v - big == (k as usize) || k == 7) { n = n + 1; } }
+    for (k, v) in r { if (v - big == (k as usize) || k == 7) { n = n + 1; } }
     for v in alias.values() { if (v >= big) { n = n + 1; } }
     let named: Map[string, usize] = Map {};
     named = named.insert("a" + 1.to_string(), big);
     named = named.insert("a1", big + (2 as usize));
     let e: Map[i32, usize] = m.cleared();
     print(hit.to_string() + " " + got.to_string() + " " + n.to_string() + " " + ((named.get_or("a1", 0 as usize) - big) as i32).to_string()
-        + " " + e.len().to_string() + " " + r.0.len().to_string());
+        + " " + e.len().to_string() + " " + r.len().to_string());
     return 0;
 }
 `
@@ -433,13 +442,14 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 300) { m = m.insert(big + (i as usize), i * 2); i = i + 1; }
     m = m.insert(big + (7 as usize), 1000);
-    let r: (Map[usize, i32], boolean) = m.without(big + (9 as usize));
-    let s: i32 = m.get_or(big + (7 as usize), 0) + m.get_or(5 as usize, -1) + r.0.len();
+    let r_had: boolean = m.contains(big + (9 as usize));
+    let r: Map[usize, i32] = m.remove(big + (9 as usize));
+    let s: i32 = m.get_or(big + (7 as usize), 0) + m.get_or(5 as usize, -1) + r.len();
     match (m.get(big + (299 as usize))) { Some(v) => { s = s + v; }, None => { s = s - 1; } }
     let n: i32 = 0;
-    for (k, v) in r.0 { if (k >= big) { n = n + 1; } }
+    for (k, v) in r { if (k >= big) { n = n + 1; } }
     let ks: usize[] = m.keys();
-    print(s.to_string() + " " + n.to_string() + " " + ks.len().to_string() + " " + r.1.to_string());
+    print(s.to_string() + " " + n.to_string() + " " + ks.len().to_string() + " " + r_had.to_string());
     return 0;
 }
 `
@@ -458,7 +468,7 @@ function main(): i32 {
     s = s + (m.get_or(2, '?') as i32).to_string() + "," + (m.get_or(3, '?') as i32).to_string();
     let n: i32 = 0;
     for c in m.values() { n = n + (c as i32); }
-    print(s + " " + n.to_string() + " " + m.has(2).to_string());
+    print(s + " " + n.to_string() + " " + m.contains(2).to_string());
     return 0;
 }
 `
@@ -484,9 +494,10 @@ function main(): i32 {
     let out: string = m.get_or("k7", "none") + " " + alias.get_or("k8", "none") + " " + m.get_or("k8", "none");
     out = out + " " + m.get_or("zz", "miss" + "ed");
     match (m.get("k9")) { Some(v) => { out = out + " " + v; }, None => { out = out + " none"; } }
-    let r: (Map[string, string], boolean) = m.without("k10");
-    let m2: Map[string, string] = r.0;
-    out = out + " " + r.1.to_string() + " " + m.has("k10").to_string() + " " + m2.has("k10").to_string();
+    let r_had: boolean = m.contains("k10");
+    let r: Map[string, string] = m.remove("k10");
+    let m2: Map[string, string] = r;
+    out = out + " " + r_had.to_string() + " " + m.contains("k10").to_string() + " " + m2.contains("k10").to_string();
     let total: i32 = 0;
     for (k, v) in m2 { total = total + k.len() + v.len(); }
     let vs: string[] = m2.values();
@@ -494,8 +505,8 @@ function main(): i32 {
     let by_id: Map[i32, string] = Map {};
     let j: i32 = 0;
     while (j < 50) { by_id = by_id.insert(j % 10, "n" + j.to_string()); j = j + 1; }
-    let r2: (Map[i32, string], boolean) = by_id.without(3);
-    by_id = r2.0;
+    let r2: Map[i32, string] = by_id.remove(3);
+    by_id = r2;
     out = out + " " + by_id.get_or(4, "") + " " + by_id.len().to_string();
     let e: Map[string, string] = m.cleared();
     out = out + " " + e.len().to_string();
@@ -533,9 +544,10 @@ function main(): i32 {
     let out: string = m.get_or("k7", []).len().to_string() + " " + alias.get_or("k8", []).len().to_string() + " " + m.get_or("k8", []).len().to_string();
     out = out + " " + m.get_or("zz", [9, 9, 9, 9]).len().to_string();
     match (m.get("k9")) { Some(v) => { out = out + " " + v[2].to_string(); }, None => { out = out + " none"; } }
-    let r: (Map[string, i32[]], boolean) = m.without("k10");
-    let m2: Map[string, i32[]] = r.0;
-    out = out + " " + r.1.to_string() + " " + m.has("k10").to_string() + " " + m2.has("k10").to_string();
+    let r_had: boolean = m.contains("k10");
+    let r: Map[string, i32[]] = m.remove("k10");
+    let m2: Map[string, i32[]] = r;
+    out = out + " " + r_had.to_string() + " " + m.contains("k10").to_string() + " " + m2.contains("k10").to_string();
     let total: i32 = 0;
     for (k, v) in m2 { total = total + k.len() + v.len() + v[0]; }
     let vs: i32[][] = m2.values();
@@ -544,8 +556,8 @@ function main(): i32 {
     let recs: Map[i32, Rec] = Map {};
     let j: i32 = 0;
     while (j < 50) { recs = recs.insert(j % 10, Rec { name: "n" + j.to_string(), n: j }); j = j + 1; }
-    let r2: (Map[i32, Rec], boolean) = recs.without(3);
-    recs = r2.0;
+    let r2: Map[i32, Rec] = recs.remove(3);
+    recs = r2;
     let hold: Map[i32, Rec] = recs;
     recs = recs.insert(4, Rec { name: "four" + "!", n: 4 });
     out = out + " " + recs.get_or(4, Rec { name: "", n: 0 }).name + " " + hold.get_or(4, Rec { name: "", n: 0 }).name + " " + recs.len().to_string();
@@ -576,15 +588,16 @@ function main(): i32 {
     while (i < 30) { m = m.insert("k" + (i % 7).to_string(), (i, "v" + i.to_string())); i = i + 1; }
     let alias: Map[string, (i32, string)] = m;
     alias = alias.insert("k1", (100, "over" + "ride"));
-    let r: (Map[string, (i32, string)], boolean) = m.without("k2");
-    let m2: Map[string, (i32, string)] = r.0;
+    let r_had: boolean = m.contains("k2");
+    let r: Map[string, (i32, string)] = m.remove("k2");
+    let m2: Map[string, (i32, string)] = r;
     let total: i32 = 0;
     for (k, v) in m2 { total = total + v.0 + v.1.len(); }
     for v in alias.values() { total = total + v.0; }
     let hit: (i32, string) = m.get_or("k3", (0, ""));
     let got: string = "none";
     match (alias.get("k1")) { Some(v) => { got = v.1; }, None => {} }
-    print(total.to_string() + " " + hit.1 + " " + got + " " + m2.len().to_string() + " " + r.1.to_string());
+    print(total.to_string() + " " + hit.1 + " " + got + " " + m2.len().to_string() + " " + r_had.to_string());
     return 0;
 }
 `
@@ -609,9 +622,9 @@ function main(): i32 {
     m = m.insert("d", Add(7));
     let alias: Map[string, dyn Show] = m;
     alias = alias.insert("b", Neg);
-    let r: (Map[string, dyn Show], boolean) = m.without("c");
+    let r: Map[string, dyn Show] = m.remove("c");
     let total: i32 = 0;
-    for (k, v) in r.0 { total = total + v.show(); }
+    for (k, v) in r { total = total + v.show(); }
     for v in alias.values() { total = total + v.show(); }
     match (m.get("b")) { Some(v) => { total = total + v.show() * 100; }, None => {} }
     print(total.to_string());
@@ -638,8 +651,8 @@ function main(): i32 {
         mb = mb.insert("k" + (i % 2).to_string(), Yb { t: "t" + i.to_string(), u: "u" + i.to_string() });
         i = i + 1;
     }
-    let r: (Map[string, dyn Bb], boolean) = mb.without("k0");
-    mb = r.0;
+    let r: Map[string, dyn Bb] = mb.remove("k0");
+    mb = r;
     let t: i32 = 0;
     for (k, v) in ma { t = t + v.a(); }
     for (k, v) in mb { t = t + v.b(); }
@@ -668,9 +681,9 @@ function main(): i32 {
         else { m = m.insert("k" + (i % 3).to_string(), Q { t: "q" + i.to_string() }); }
         i = i + 1;
     }
-    let r: (Map[string, dyn Tagged[i32, u32]], boolean) = m.without("k0");
+    let r: Map[string, dyn Tagged[i32, u32]] = m.remove("k0");
     let t: i32 = 0;
-    for (k, v) in r.0 { t = t + v.tag(); }
+    for (k, v) in r { t = t + v.tag(); }
     for v in m.values() { t = t + v.tag(); }
     let ds: dyn Tagged[i32, u32][] = [Q { t: "x" + "y" }];
     let flags: boolean[] = [true, false];
@@ -690,8 +703,9 @@ function main(): i32 {
     while (i < 40) { m = m.insert("k" + (i % 9).to_string(), ["a" + i.to_string(), "b", "c" + (i * 2).to_string()]); i = i + 1; }
     let alias: Map[string, string[]] = m;
     alias = alias.insert("k1", ["over" + "ride"]);
-    let r: (Map[string, string[]], boolean) = m.without("k2");
-    let m2: Map[string, string[]] = r.0;
+    let r_had: boolean = m.contains("k2");
+    let r: Map[string, string[]] = m.remove("k2");
+    let m2: Map[string, string[]] = r;
     let total: i32 = 0;
     for (k, v) in m2 { total = total + v.len() + v[0].len(); }
     for v in alias.values() { total = total + v[v.len() - 1].len(); }
@@ -699,7 +713,7 @@ function main(): i32 {
     let miss: string[] = m.get_or("zz", ["x" + "y"]);
     let got: string = "none";
     match (alias.get("k1")) { Some(v) => { got = v[0]; }, None => {} }
-    print(total.to_string() + " " + hit[0] + " " + miss[0] + " " + got + " " + m2.len().to_string() + " " + r.1.to_string());
+    print(total.to_string() + " " + hit[0] + " " + miss[0] + " " + got + " " + m2.len().to_string() + " " + r_had.to_string());
     return 0;
 }
 `
