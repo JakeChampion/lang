@@ -1613,7 +1613,7 @@ function exp_text(e: i32): string {
 }
 
 function trim_zeros(s: string): string {
-  if (s.index_of(".") < 0) {
+  if (!s.contains(".")) {
     return s;
   }
   let end: i32 = s.len();

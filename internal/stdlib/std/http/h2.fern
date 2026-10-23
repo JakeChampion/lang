@@ -409,9 +409,10 @@ function __preface(r: __Run): __Run {
 // starts with, a whole HEADERS frame with END_HEADERS and no padding or
 // priority, is read off the inbox without the record `frame.read` builds.
 function __next_frame(r: __Run): __Run {
-  let plain: i32 = frame.plain_headers_at(r.conn.inbox, r.conn.inbox_at, r.conn.config.max_frame_size);
-  if (plain >= 0 && r.conn.block_stream == 0 && r.conn.phase == RUNNING) {
-    return __plain_headers(r, plain);
+  if let Some(plain) = frame.plain_headers_at(r.conn.inbox, r.conn.inbox_at, r.conn.config.max_frame_size) {
+    if (r.conn.block_stream == 0 && r.conn.phase == RUNNING) {
+      return __plain_headers(r, plain);
+    }
   }
   match (frame.read(r.conn.inbox, r.conn.inbox_at, r.conn.config.max_frame_size)) {
     Ok(got) => {

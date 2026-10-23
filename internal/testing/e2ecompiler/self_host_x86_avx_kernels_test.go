@@ -22,7 +22,9 @@ func TestSelfHostX86ByteKernelsRunAVX2(t *testing.T) {
 	prog := `import "std/string";
 function main(): i32 {
     let s: string = "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789";
-    let n: i32 = s.count_byte(97) + s.index_of("z") + s.last_index_of("z") + __ascii_run(s, 0);
+    let n: i32 = s.count_byte(97) + __ascii_run(s, 0);
+    match (s.index_of("z")) { Some(i) => { n = n + i; }, None => {} }
+    match (s.last_index_of("z")) { Some(i) => { n = n + i; }, None => {} }
     return n % 100;
 }
 `

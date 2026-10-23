@@ -635,7 +635,7 @@ import "std/i32";
 import "std/i64";
 function strs(s: string): i32 {
     let n: i32 = 0;
-    n = n + s.index_of("fern");
+    match (s.index_of("fern")) { Some(i) => { n = n + i; }, None => { n = n - 1; } }
     if (s.starts_with("the")) { n = n + 100; }
     if (s.ends_with("end")) { n = n + 200; }
     if (s.contains("language")) { n = n + 400; }

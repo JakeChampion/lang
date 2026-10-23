@@ -367,8 +367,7 @@ function print_user(c: Ctx, e: utmp.Entry): string {
 function host_text(m: Mode, host: string): string {
   let name: string = host;
   let display: string = "";
-  let colon: i32 = host.index_of(":");
-  if (colon >= 0) {
+  if let Some(colon) = host.index_of(":") {
     name = slice_unchecked(host, 0, colon) + "";
     display = ":" + slice_unchecked(host, colon + 1, host.len());
   }

@@ -123,6 +123,7 @@ function main(): i32 {
 func NetSocketOptsProbe() string {
 	return `import "core/int";
 import "std/net";
+import "std/errno";
 import "std/async";
 
 function fail(n: i32): i32 {
@@ -140,7 +141,7 @@ function ok(r: Result[void, net.NetError]): boolean {
 function unsupported(r: Result[void, net.NetError]): boolean {
     match (r) {
         Ok(u) => { return false; },
-        Err(e) => { return e.errno() == 58; },
+        Err(e) => { return e.errno() == errno.ENOTSUP; },
     }
 }
 

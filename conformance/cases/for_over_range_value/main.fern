@@ -22,6 +22,6 @@ function main(): i32 {
   for w in empty {
     print(f"empty {w}");
   }
-  print(f"count {r.count()}");
+  print(f"count {r.len()}");
   return 0;
 }

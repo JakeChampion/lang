@@ -242,8 +242,7 @@ function __line(d: Decoder, line: string): (Decoder, Option[Event]) {
   }
   let field: string = line;
   let value: string = "";
-  let at: i32 = line.index_of(":");
-  if (at >= 0) {
+  if let Some(at) = line.index_of(":") {
     field = line.slice_snap(0, at);
     value = line.slice_snap(at + 1, line.len());
     if (value.starts_with(" ")) {

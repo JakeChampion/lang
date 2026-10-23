@@ -33,9 +33,18 @@ function test_is_alpha(): test.TestOutcome {
 }
 
 function test_hex_value(): test.TestOutcome {
-  // 'a'=97 → 10, '9'=57 → 9, 'F'=70 → 15, 'x'=120 → -1.
-  return test.assert_true((97 as u8).hex_value() == 10 && (57 as u8).hex_value() == 9
-    && (70 as u8).hex_value() == 15 && (120 as u8).hex_value() == 0 - 1);
+  // 'a'=97 → 10, '9'=57 → 9, 'F'=70 → 15, 'x'=120 → None.
+  if (!hex_is((97 as u8).hex_value(), 10) || !hex_is((57 as u8).hex_value(), 9) || !hex_is((70 as u8).hex_value(), 15)) {
+    return test.fail("hex digit value");
+  }
+  return test.assert_is_none_i32((120 as u8).hex_value());
+}
+
+function hex_is(o: Option[i32], want: i32): boolean {
+  if let Some(v) = o {
+    return v == want;
+  }
+  return false;
 }
 
 function test_to_lower(): test.TestOutcome {
