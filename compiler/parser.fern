@@ -5555,7 +5555,7 @@ function parse_match_expr(p: Par): IfChain {
   // (is_struct_pattern_arm; a record-form enum variant is spelled the same way
   // but needs the variant path's tag test): desugar to the field-bind flag
   // chain (build_struct_match).
-  if (is_struct_pattern_arm(p) && (p.peek_ident().len() > 0 && p.peek2_punct() == "{" || p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{")) {
+  if (at_local_struct_pattern(p)) {
     let (smarms, smrt, smok, smp) = parse_struct_match_arms(p, true);
     p = smp;
     if (!smok) {
@@ -7111,7 +7111,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
   }
   // An `Ident {` at the FIRST arm marks a STRUCT-pattern match (see
   // parse_match_expr) — desugar to the field-bind flag chain.
-  if (is_struct_pattern_arm(p) && (p.peek_ident().len() > 0 && p.peek2_punct() == "{" || p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{")) {
+  if (at_local_struct_pattern(p)) {
     let (smarms, smrt, smok, smp) = parse_struct_match_arms(p, false);
     p = smp;
     if (!smok) {
@@ -7790,6 +7790,359 @@ function parse_let_stmt(p: Par): (ast.Stmt, Par) {
   return parse_let_value(p, name, vline, vcol);
 }
 
+function at_local_struct_pattern(p: Par): boolean {
+  return is_struct_pattern_arm(p) && (p.peek_ident().len() > 0 && p.peek2_punct() == "{" || p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{");
+}
+
+function parse_if_stmt(p: Par): (ast.Stmt, Par) {
+  p = p.advance();
+  // `if let PAT = EXPR { then } else { else }` desugars to a
+  // `match (EXPR) { PAT => { then }, _ => { else } }` — the
+  // pattern arm plus a wildcard arm for the else (empty when
+  // there's no else). Parsed before the `(` check since if-let
+  // has no parenthesised condition.
+  if (p.peek_keyword() == "let") {
+    p = p.advance();  // consume `let`
+    // A STRUCT-pattern head (`if let P { x, y } = e`) takes the
+    // field-bind flag chain instead, the same build_struct_match the
+    // match arms use — parse_pattern's `IDENT {` is the record-form
+    // VARIANT pattern, a different shape. `structnames` is what tells
+    // the two apart, exactly as is_struct_pattern_arm does for arms.
+    // The pattern is irrefutable, so the wildcard arm carrying the
+    // else is unreachable; it is still emitted so an `else` written
+    // here parses and the shape matches the refutable path.
+    if (at_local_struct_pattern(p)) {
+      let ils_line: i32 = p.peek_line();
+      let ils_col: i32 = p.peek_col();
+      let ils_at: string = "";
+      if (p.peek_ident().len() > 0 && p.peek2_punct() == "@") {
+        ils_at = p.peek_ident();
+        p = p.advance();
+        p = p.advance();
+      }
+      let ils_type: string = p.peek_ident();
+      let (ils_sap, ils_pp) = parse_struct_arm_pattern(p);
+      let ils_binds: string[] = ils_sap.binds;
+      let ils_fields: string[] = ils_sap.fields;
+      let ils_field_kinds: i32[] = ils_sap.kinds;
+      let ils_field_lits: ast.Expr[] = ils_sap.lits;
+      let ils_field_pats: ast.Pattern[] = ils_sap.pats;
+      let ils_ok: boolean = ils_sap.ok;
+      p = ils_pp;
+      if (!ils_ok) {
+        return (s_unknown(p, "a struct pattern binds field names"), p);
+      }
+      p = p.expect("=");
+      let ils_saved: boolean = p.no_struct;
+      let (ils_scrut, ils_sp) = parse_expr(p.with_no_struct(true));
+      p = ils_sp.with_no_struct(ils_saved);
+      let (ils_then, ils_tp) = parse_block_or_stmt(p);
+      p = ils_tp;
+      let ils_else: ast.Stmt[] = [];
+      if (p.peek_keyword() == "else") {
+        p = p.advance();
+        let (ils_eb, ils_ep) = parse_block_or_stmt(p);
+        p = ils_ep;
+        ils_else = ils_eb;
+      }
+      let ils_arms: ast.StructArm[] = [];
+      ils_arms = ils_arms.append(ast.StructArm { is_wild: false, type_name: ils_type, binds: ils_binds, fields: ils_fields, field_kinds: ils_field_kinds, field_lits: ils_field_lits, field_pats: ils_field_pats, at_binding: ils_at, rest_written: ils_sap.rest_written, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
+      let ils_nb: string[] = [];
+      let ils_no_pats: ast.Pattern[] = [];
+      let ils_no_kinds: i32[] = [];
+      let ils_no_lits: ast.Expr[] = [];
+      let ils_nf: string[] = [];
+      ils_arms = ils_arms.append(ast.StructArm { is_wild: true, type_name: "", binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", rest_written: false, guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
+      return (with_sugar_origin(build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), "if_let"), p);
+    }
+    // A TUPLE-pattern head (`if let (a, b) = t`) takes the same
+    // parse_tuple_arm_pattern + build_tuple_match the tuple match
+    // arms use. parse_pattern has no tuple form, so without this the
+    // head read as a variant pattern and the checker rejected the
+    // tuple scrutinee (E022). The then-block is the tuple arm's body
+    // and the else-block the wildcard arm's, as in the struct branch.
+    if (p.peek_punct() == "(" || p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek_punct_at(1) == "@" && p.peek_punct_at(2) == "(") {
+      let ilt_line: i32 = p.peek_line();
+      let ilt_col: i32 = p.peek_col();
+      let ilt_at: string = "";
+      if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@") {
+        ilt_at = p.peek_ident();
+        p = p.advance();
+        p = p.advance();
+      }
+      let ilt_empty: ast.Stmt[] = [];
+      let ilt_pats: ast.TupArm[] = [];
+      let (ilt_kinds, ilt_binds, ilt_lits, ilt_elems, ilt_pp) = parse_tuple_arm_pattern(p);
+      p = ilt_pp;
+      if (ilt_kinds.len() == 0) {
+        return (s_unknown(p, "bad tuple pattern"), p);
+      }
+      ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilt_kinds, binds: ilt_binds, lits: ilt_lits, elem_pats: ilt_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
+      // Or-alternatives (`if let (1, 2) | (3, 4) = t`) expand one
+      // arm each, sharing the then-block — the same per-alternative
+      // shape the tuple match arms use.
+      while (p.peek_punct() == "|") {
+        p = p.advance();
+        let (ilo_kinds, ilo_binds, ilo_lits, ilo_elems, ilo_p) = parse_tuple_arm_pattern(p);
+        p = ilo_p;
+        if (ilo_kinds.len() == 0) {
+          return (s_unknown(p, "bad tuple pattern"), p);
+        }
+        ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilo_kinds, binds: ilo_binds, lits: ilo_lits, elem_pats: ilo_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
+      }
+      p = p.expect("=");
+      let ilt_saved: boolean = p.no_struct;
+      let (ilt_scrut, ilt_sp) = parse_expr(p.with_no_struct(true));
+      p = ilt_sp.with_no_struct(ilt_saved);
+      let (ilt_then, ilt_tp) = parse_block_or_stmt(p);
+      p = ilt_tp;
+      let ilt_else: ast.Stmt[] = [];
+      if (p.peek_keyword() == "else") {
+        p = p.advance();
+        let (ilt_eb, ilt_ep) = parse_block_or_stmt(p);
+        p = ilt_ep;
+        ilt_else = ilt_eb;
+      }
+      let ilt_arms: ast.TupArm[] = [];
+      let ilt_i: i32 = 0;
+      while (ilt_i < ilt_pats.len()) {
+        let ilt_a: ast.TupArm = ilt_pats[ilt_i];
+        ilt_arms = ilt_arms.append(ast.TupArm { is_wild: false, elem_kinds: ilt_a.elem_kinds, binds: ilt_a.binds, lits: ilt_a.lits, elem_pats: ilt_a.elem_pats, at_binding: ilt_at, guard: e_bool(true), has_guard: false, body: ilt_then, line: ilt_line, col: ilt_col, alt_cont: ilt_i > 0 });
+        ilt_i = ilt_i + 1;
+      }
+      let ilt_wk: i32[] = [];
+      let ilt_wb: string[] = [];
+      let ilt_wl: ast.Expr[] = [];
+      let ilt_wp: ast.Pattern[] = [];
+      ilt_arms = ilt_arms.append(ast.TupArm { is_wild: true, elem_kinds: ilt_wk, binds: ilt_wb, lits: ilt_wl, elem_pats: ilt_wp, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_else, line: ilt_line, col: ilt_col, alt_cont: false });
+      return (with_sugar_origin(build_tuple_match(ilt_scrut, ilt_arms, ilt_line, ilt_col), "if_let"), p);
+    }
+    // A LITERAL or RANGE head (`if let 3 = n`, `if let 1 | 2 = n`,
+    // `if let 3..5 = n`) takes parse_lit_alts + build_literal_match,
+    // the path a literal match arm already uses. parse_pattern reads
+    // only variant patterns, so these reached the checker as an enum
+    // match on a scalar scrutinee (E022).
+    if (p.peek_is_pat_literal() || p.peek_at_literal()) {
+      let ill_line: i32 = p.peek_line();
+      let ill_col: i32 = p.peek_col();
+      let (ill_at, ill_atp) = take_at_binding(p);
+      p = ill_atp;
+      let (ill_lits, ill_his, ill_hrs, ill_incs, ill_p) = parse_lit_alts(p);
+      p = ill_p;
+      p = p.expect("=");
+      let ill_saved: boolean = p.no_struct;
+      let (ill_scrut, ill_sp) = parse_expr(p.with_no_struct(true));
+      p = ill_sp.with_no_struct(ill_saved);
+      let (ill_then, ill_tp) = parse_block_or_stmt(p);
+      p = ill_tp;
+      let ill_else: ast.Stmt[] = [];
+      if (p.peek_keyword() == "else") {
+        p = p.advance();
+        let (ill_eb, ill_ep) = parse_block_or_stmt(p);
+        p = ill_ep;
+        ill_else = ill_eb;
+      }
+      let ill_arms: ast.LitArm[] = [];
+      let ill_i: i32 = 0;
+      while (ill_i < ill_lits.len()) {
+        ill_arms = ill_arms.append(ast.LitArm { is_wild: false, lit: ill_lits[ill_i], guard: e_bool(true), has_guard: false, body: ill_then, line: ill_line, col: ill_col, range_hi: ill_his[ill_i], has_range: ill_hrs[ill_i], range_inclusive: ill_incs[ill_i], alt_cont: ill_i > 0, at_binding: ill_at });
+        ill_i = ill_i + 1;
+      }
+      ill_arms = ill_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: ill_else, line: ill_line, col: ill_col, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
+      return (with_sugar_origin(build_literal_match(ill_scrut, ill_arms, ill_line, ill_col), "if_let"), p);
+    }
+    // The head's line/col, captured where the three shaped paths above
+    // capture theirs. Without it the desugared statement carries 0 and
+    // `-fmt`'s stmt_line reads 0, so print_block skips its drain and a
+    // comment written above the `if let` reappears inside the body.
+    let il_line: i32 = p.peek_line();
+    let il_col: i32 = p.peek_col();
+    let (ilpat_pattern, ilpat_p) = parse_pattern(p);
+    p = ilpat_p;
+    // Or-patterns: `if let A(x) | B(x) = e { … }` — one arm per
+    // alternative sharing the then-block, the same per-alternative
+    // expansion match arms use.
+    let ilpats: ast.Pattern[] = [ilpat_pattern];
+    while (p.peek_punct() == "|") {
+      p = p.advance();
+      let (ilalt_pattern, ilalt_p) = parse_pattern(p);
+      p = ilalt_p;
+      ilpats = ilpats.append(ilalt_pattern);
+    }
+    p = p.expect("=");
+    // The source expression is followed directly by the then-block's
+    // `{`, so struct-literal parsing must be suppressed while reading
+    // it (native sets p.noStructLit here) — otherwise a bare-ident
+    // source whose then-block starts with `}`, `...`, or `IDENT :`
+    // (e.g. a labeled loop) is swallowed as `ident { … }` (#4339
+    // item 4). Same save/restore shape as the for-in iterable.
+    let il_saved: boolean = p.no_struct;
+    let (ilscrut_expr, ilscrut_p) = parse_expr(p.with_no_struct(true));
+    p = ilscrut_p.with_no_struct(il_saved);
+    let (ilthen_body, ilthen_p) = parse_block_or_stmt(p);
+    p = ilthen_p;
+    let ilelse: ast.Stmt[] = [];
+    if (p.peek_keyword() == "else") {
+      p = p.advance();
+      let (ileb_body, ileb_p) = parse_block_or_stmt(p);
+      p = ileb_p;
+      ilelse = ileb_body;
+    }
+    let ilarms: ast.MatchArm[] = [];
+    let ilwritten: ast.MatchArm[] = [];
+    let ilpi: i32 = 0;
+    while (ilpi < ilpats.len()) {
+      ilwritten = ilwritten.append(ast.MatchArm { pattern: ilpats[ilpi], body: ilthen_body, line: il_line, col: il_col, guard: e_bool(true), has_guard: false, alt_cont: false });
+      let (fi_pat, fi_g, fi_hg) = fold_lit_cond(ilpats[ilpi], e_bool(true), false);
+      ilarms = ilarms.append(ast.MatchArm { pattern: fi_pat, body: ilthen_body, line: il_line, col: il_col, guard: fi_g, has_guard: fi_hg, alt_cont: false });
+      ilpi = ilpi + 1;
+    }
+    let ilwild: ast.MatchArm = ast.MatchArm { pattern: p_wildcard(), body: ilelse, line: il_line, col: il_col, guard: e_bool(true), has_guard: false, alt_cont: false };
+    ilarms = ilarms.append(ilwild);
+    ilwritten = ilwritten.append(ilwild);
+    // A nested head (`if let Some(Ok(n)) = e`) flattens the same way a
+    // match arm does; the wildcard arm above is the outer fallthrough
+    // desugar_nested_arms copies into the inner match, so a payload
+    // matching no inner pattern runs the else rather than falling off
+    // a non-exhaustive inner match.
+    // A head with payload sub-patterns takes the flag chain, so a
+    // multi-slot head (`if let P(Ok2(a), Ok2(b)) = v`) and an
+    // or-pattern whose alternatives nest both work; the merge read
+    // only the first slot. The origin tag keeps `-fmt` reprinting the
+    // `if let` rather than the chain.
+    if (arms_take_flag_chain(ilarms)) {
+      return (with_sugar_origin(build_nested_arm_match(ilscrut_expr, ilarms, ilwritten, il_line, il_col), "if_let"), p);
+    }
+    ilarms = desugar_nested_arms(ilarms, 0, "");
+    let ilsugar: ast.MatchArm[] = [];
+    if (arms_have_written_form(ilwritten)) {
+      ilsugar = ilwritten;
+    }
+    return (s_match_origin_sugared(ilscrut_expr, ilarms, ilsugar, il_line, il_col, "if_let"), p);
+  }
+  let (c_expr, c_p) = parse_paren_head(p);
+  p = c_p;
+  let (then_blk_body, then_blk_p) = parse_block_or_stmt(p);
+  p = then_blk_p;
+  let else_body: ast.Stmt[] = [];
+  // Whether the else was WRITTEN as a chain. `else if` and
+  // `else { if … }` produce the same one-element else_body, so the
+  // printer cannot tell them apart without this (#6779).
+  let else_chained: boolean = false;
+  if (p.peek_keyword() == "else") {
+    p = p.advance();
+    // `else if` — wrap as a nested StmtIf in the else
+    // branch so an else-chain reads as one shape.
+    if (p.peek_keyword() == "if") {
+      let (nested_stmt, nested_p) = parse_stmt(p);
+      p = nested_p;
+      else_body = else_body.append(nested_stmt);
+      else_chained = true;
+    } else {
+      let (else_blk_body, else_blk_p) = parse_block_or_stmt(p);
+      p = else_blk_p;
+      else_body = else_blk_body;
+    }
+  }
+  return (s_if_chained(c_expr, then_blk_body, else_body, else_chained), p);
+}
+
+function parse_return_stmt(p: Par): (ast.Stmt, Par) {
+  let rline: i32 = p.peek_line();
+  let rcol: i32 = p.peek_col();
+  p = p.advance();
+  if (p.peek_punct() == ";") {
+    let bare: ast.Expr = e_unknown_at(BARE_RETURN, p.peek_line(), p.peek_col());
+    return (s_return_at(bare, rline, rcol), p.advance());
+  }
+  let (val_expr, val_p) = parse_expr(p);
+  p = val_p;
+  p = p.end_of(val_expr);
+  return (s_return_at(val_expr, rline, rcol), p);
+}
+
+function parse_break_stmt(p: Par): (ast.Stmt, Par) {
+  // E011 is reported at the `break` keyword (Go's `Break{P}`).
+  let bkline: i32 = p.peek_line();
+  let bkcol: i32 = p.peek_col();
+  p = p.advance();
+  // Optional target label: `break outer;`. resolve_labels turns it into a
+  // relative loop depth in the tag. Only treat a trailing ident as the label
+  // when it is immediately followed by `;` — otherwise a `break` with no
+  // trailing semicolon followed by an identifier-led statement would wrongly
+  // swallow that statement's leading ident.
+  let blbl: string = "";
+  let bid: string = p.peek_ident();
+  if (bid.len() > 0 && p.advance().peek_punct() == ";") {
+    blbl = bid;
+    p = p.advance();
+  }
+  p = p.expect_semi();
+  return (ast.StmtBreak { tag: 0, line: bkline, col: bkcol, label: blbl }, p);
+}
+
+function parse_continue_stmt(p: Par): (ast.Stmt, Par) {
+  // E011 is reported at the `continue` keyword (Go's `Continue{P}`).
+  let ckline: i32 = p.peek_line();
+  let ckcol: i32 = p.peek_col();
+  p = p.advance();
+  // Optional target label: `continue outer;` (only when followed by `;`; see
+  // the break case for why).
+  let clbl: string = "";
+  let cid: string = p.peek_ident();
+  if (cid.len() > 0 && p.advance().peek_punct() == ";") {
+    clbl = cid;
+    p = p.advance();
+  }
+  p = p.expect_semi();
+  return (ast.StmtContinue { tag: 0, line: ckline, col: ckcol, label: clbl }, p);
+}
+
+function parse_expression_stmt(p: Par): (ast.Stmt, Par) {
+  // Expression statement — or (compound) assignment if `=`,
+  // `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
+  // follows. The parser doesn't accept any of these as binary
+  // operators (none of them are in the precedence table), so
+  // parse_expr stops at the ident; we peek for the assign-op
+  // here and either build a plain StmtAssign or desugar a
+  // compound to
+  //   StmtAssign { target, ExprBinary(<op>, ExprIdent(target), rhs) }
+  // so the rest of the pipeline sees only plain assigns. The
+  // bitwise / shift compound set (`&= |= ^= <<= >>=`) mirrors
+  // the native parser's compoundOps map exactly, so both
+  // front-ends desugar the same operators to the same binary op.
+  let (e_expr, e_p) = parse_expr(p);
+  p = e_p;
+  // Capture the assign-op position — the Go checker reports an
+  // assignment type error (E003) at the `=` token, not the lvalue.
+  let aline: i32 = p.peek_line();
+  let acol: i32 = p.peek_col();
+  let assign_op: string = p.peek_punct();
+  let is_assign: boolean = assign_op == "=";
+  let is_compound: boolean = is_compound_assign_op(assign_op);
+  if (is_assign || is_compound) {
+    p = p.advance();  // consume the assign-op token
+    let (av_expr, av_p) = parse_expr(p);
+    p = av_p;
+    if (is_compound_assign_op(p.peek_punct()) || is_compound && p.peek_punct() == "=") {
+      return chained_compound(p);
+    }
+    if (is_assign && p.peek_punct() == "=") {
+      return parse_assign_chain(p, [e_expr, av_expr], [aline], [acol]);
+    }
+    p = p.end_of(av_expr);
+    let rhs: ast.Expr = av_expr;
+    if (is_compound) {
+      // `x += y` desugars to `x = x + y`: strip the trailing `=` off the op
+      // to recover the operator.
+      rhs = e_binary(slice_unchecked(assign_op, 0, assign_op.len() - 1), read_back(e_expr), av_expr);
+    }
+    return (assign_to(e_expr, rhs, aline, acol), p);
+  }
+  p = p.end_of(e_expr);
+  return (s_expr(e_expr), p);
+}
+
 function parse_stmt_at(p: Par): (ast.Stmt, Par) {
   // A bare block `{ ... }` in statement position is its own scope. The
   // self-host Stmt union has no StmtBlock node, so desugar it to
@@ -7965,256 +8318,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     return (mr_stmt, mr_p);
   }
   if (kw == "if") {
-    p = p.advance();
-    // `if let PAT = EXPR { then } else { else }` desugars to a
-    // `match (EXPR) { PAT => { then }, _ => { else } }` — the
-    // pattern arm plus a wildcard arm for the else (empty when
-    // there's no else). Parsed before the `(` check since if-let
-    // has no parenthesised condition.
-    if (p.peek_keyword() == "let") {
-      p = p.advance();  // consume `let`
-      // A STRUCT-pattern head (`if let P { x, y } = e`) takes the
-      // field-bind flag chain instead, the same build_struct_match the
-      // match arms use — parse_pattern's `IDENT {` is the record-form
-      // VARIANT pattern, a different shape. `structnames` is what tells
-      // the two apart, exactly as is_struct_pattern_arm does for arms.
-      // The pattern is irrefutable, so the wildcard arm carrying the
-      // else is unreachable; it is still emitted so an `else` written
-      // here parses and the shape matches the refutable path.
-      if (is_struct_pattern_arm(p) && (p.peek_ident().len() > 0 && p.peek2_punct() == "{" || p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{")) {
-        let ils_line: i32 = p.peek_line();
-        let ils_col: i32 = p.peek_col();
-        let ils_at: string = "";
-        if (p.peek_ident().len() > 0 && p.peek2_punct() == "@") {
-          ils_at = p.peek_ident();
-          p = p.advance();
-          p = p.advance();
-        }
-        let ils_type: string = p.peek_ident();
-        let (ils_sap, ils_pp) = parse_struct_arm_pattern(p);
-        let ils_binds: string[] = ils_sap.binds;
-        let ils_fields: string[] = ils_sap.fields;
-        let ils_field_kinds: i32[] = ils_sap.kinds;
-        let ils_field_lits: ast.Expr[] = ils_sap.lits;
-        let ils_field_pats: ast.Pattern[] = ils_sap.pats;
-        let ils_ok: boolean = ils_sap.ok;
-        p = ils_pp;
-        if (!ils_ok) {
-          return (s_unknown(p, "a struct pattern binds field names"), p);
-        }
-        p = p.expect("=");
-        let ils_saved: boolean = p.no_struct;
-        let (ils_scrut, ils_sp) = parse_expr(p.with_no_struct(true));
-        p = ils_sp.with_no_struct(ils_saved);
-        let (ils_then, ils_tp) = parse_block_or_stmt(p);
-        p = ils_tp;
-        let ils_else: ast.Stmt[] = [];
-        if (p.peek_keyword() == "else") {
-          p = p.advance();
-          let (ils_eb, ils_ep) = parse_block_or_stmt(p);
-          p = ils_ep;
-          ils_else = ils_eb;
-        }
-        let ils_arms: ast.StructArm[] = [];
-        ils_arms = ils_arms.append(ast.StructArm { is_wild: false, type_name: ils_type, binds: ils_binds, fields: ils_fields, field_kinds: ils_field_kinds, field_lits: ils_field_lits, field_pats: ils_field_pats, at_binding: ils_at, rest_written: ils_sap.rest_written, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
-        let ils_nb: string[] = [];
-        let ils_no_pats: ast.Pattern[] = [];
-        let ils_no_kinds: i32[] = [];
-        let ils_no_lits: ast.Expr[] = [];
-        let ils_nf: string[] = [];
-        ils_arms = ils_arms.append(ast.StructArm { is_wild: true, type_name: "", binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", rest_written: false, guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
-        return (with_sugar_origin(build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), "if_let"), p);
-      }
-      // A TUPLE-pattern head (`if let (a, b) = t`) takes the same
-      // parse_tuple_arm_pattern + build_tuple_match the tuple match
-      // arms use. parse_pattern has no tuple form, so without this the
-      // head read as a variant pattern and the checker rejected the
-      // tuple scrutinee (E022). The then-block is the tuple arm's body
-      // and the else-block the wildcard arm's, as in the struct branch.
-      if (p.peek_punct() == "(" || p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek_punct_at(1) == "@" && p.peek_punct_at(2) == "(") {
-        let ilt_line: i32 = p.peek_line();
-        let ilt_col: i32 = p.peek_col();
-        let ilt_at: string = "";
-        if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@") {
-          ilt_at = p.peek_ident();
-          p = p.advance();
-          p = p.advance();
-        }
-        let ilt_empty: ast.Stmt[] = [];
-        let ilt_pats: ast.TupArm[] = [];
-        let (ilt_kinds, ilt_binds, ilt_lits, ilt_elems, ilt_pp) = parse_tuple_arm_pattern(p);
-        p = ilt_pp;
-        if (ilt_kinds.len() == 0) {
-          return (s_unknown(p, "bad tuple pattern"), p);
-        }
-        ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilt_kinds, binds: ilt_binds, lits: ilt_lits, elem_pats: ilt_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
-        // Or-alternatives (`if let (1, 2) | (3, 4) = t`) expand one
-        // arm each, sharing the then-block — the same per-alternative
-        // shape the tuple match arms use.
-        while (p.peek_punct() == "|") {
-          p = p.advance();
-          let (ilo_kinds, ilo_binds, ilo_lits, ilo_elems, ilo_p) = parse_tuple_arm_pattern(p);
-          p = ilo_p;
-          if (ilo_kinds.len() == 0) {
-            return (s_unknown(p, "bad tuple pattern"), p);
-          }
-          ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilo_kinds, binds: ilo_binds, lits: ilo_lits, elem_pats: ilo_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
-        }
-        p = p.expect("=");
-        let ilt_saved: boolean = p.no_struct;
-        let (ilt_scrut, ilt_sp) = parse_expr(p.with_no_struct(true));
-        p = ilt_sp.with_no_struct(ilt_saved);
-        let (ilt_then, ilt_tp) = parse_block_or_stmt(p);
-        p = ilt_tp;
-        let ilt_else: ast.Stmt[] = [];
-        if (p.peek_keyword() == "else") {
-          p = p.advance();
-          let (ilt_eb, ilt_ep) = parse_block_or_stmt(p);
-          p = ilt_ep;
-          ilt_else = ilt_eb;
-        }
-        let ilt_arms: ast.TupArm[] = [];
-        let ilt_i: i32 = 0;
-        while (ilt_i < ilt_pats.len()) {
-          let ilt_a: ast.TupArm = ilt_pats[ilt_i];
-          ilt_arms = ilt_arms.append(ast.TupArm { is_wild: false, elem_kinds: ilt_a.elem_kinds, binds: ilt_a.binds, lits: ilt_a.lits, elem_pats: ilt_a.elem_pats, at_binding: ilt_at, guard: e_bool(true), has_guard: false, body: ilt_then, line: ilt_line, col: ilt_col, alt_cont: ilt_i > 0 });
-          ilt_i = ilt_i + 1;
-        }
-        let ilt_wk: i32[] = [];
-        let ilt_wb: string[] = [];
-        let ilt_wl: ast.Expr[] = [];
-        let ilt_wp: ast.Pattern[] = [];
-        ilt_arms = ilt_arms.append(ast.TupArm { is_wild: true, elem_kinds: ilt_wk, binds: ilt_wb, lits: ilt_wl, elem_pats: ilt_wp, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_else, line: ilt_line, col: ilt_col, alt_cont: false });
-        return (with_sugar_origin(build_tuple_match(ilt_scrut, ilt_arms, ilt_line, ilt_col), "if_let"), p);
-      }
-      // A LITERAL or RANGE head (`if let 3 = n`, `if let 1 | 2 = n`,
-      // `if let 3..5 = n`) takes parse_lit_alts + build_literal_match,
-      // the path a literal match arm already uses. parse_pattern reads
-      // only variant patterns, so these reached the checker as an enum
-      // match on a scalar scrutinee (E022).
-      if (p.peek_is_pat_literal() || p.peek_at_literal()) {
-        let ill_line: i32 = p.peek_line();
-        let ill_col: i32 = p.peek_col();
-        let (ill_at, ill_atp) = take_at_binding(p);
-        p = ill_atp;
-        let (ill_lits, ill_his, ill_hrs, ill_incs, ill_p) = parse_lit_alts(p);
-        p = ill_p;
-        p = p.expect("=");
-        let ill_saved: boolean = p.no_struct;
-        let (ill_scrut, ill_sp) = parse_expr(p.with_no_struct(true));
-        p = ill_sp.with_no_struct(ill_saved);
-        let (ill_then, ill_tp) = parse_block_or_stmt(p);
-        p = ill_tp;
-        let ill_else: ast.Stmt[] = [];
-        if (p.peek_keyword() == "else") {
-          p = p.advance();
-          let (ill_eb, ill_ep) = parse_block_or_stmt(p);
-          p = ill_ep;
-          ill_else = ill_eb;
-        }
-        let ill_arms: ast.LitArm[] = [];
-        let ill_i: i32 = 0;
-        while (ill_i < ill_lits.len()) {
-          ill_arms = ill_arms.append(ast.LitArm { is_wild: false, lit: ill_lits[ill_i], guard: e_bool(true), has_guard: false, body: ill_then, line: ill_line, col: ill_col, range_hi: ill_his[ill_i], has_range: ill_hrs[ill_i], range_inclusive: ill_incs[ill_i], alt_cont: ill_i > 0, at_binding: ill_at });
-          ill_i = ill_i + 1;
-        }
-        ill_arms = ill_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: ill_else, line: ill_line, col: ill_col, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
-        return (with_sugar_origin(build_literal_match(ill_scrut, ill_arms, ill_line, ill_col), "if_let"), p);
-      }
-      // The head's line/col, captured where the three shaped paths above
-      // capture theirs. Without it the desugared statement carries 0 and
-      // `-fmt`'s stmt_line reads 0, so print_block skips its drain and a
-      // comment written above the `if let` reappears inside the body.
-      let il_line: i32 = p.peek_line();
-      let il_col: i32 = p.peek_col();
-      let (ilpat_pattern, ilpat_p) = parse_pattern(p);
-      p = ilpat_p;
-      // Or-patterns: `if let A(x) | B(x) = e { … }` — one arm per
-      // alternative sharing the then-block, the same per-alternative
-      // expansion match arms use.
-      let ilpats: ast.Pattern[] = [ilpat_pattern];
-      while (p.peek_punct() == "|") {
-        p = p.advance();
-        let (ilalt_pattern, ilalt_p) = parse_pattern(p);
-        p = ilalt_p;
-        ilpats = ilpats.append(ilalt_pattern);
-      }
-      p = p.expect("=");
-      // The source expression is followed directly by the then-block's
-      // `{`, so struct-literal parsing must be suppressed while reading
-      // it (native sets p.noStructLit here) — otherwise a bare-ident
-      // source whose then-block starts with `}`, `...`, or `IDENT :`
-      // (e.g. a labeled loop) is swallowed as `ident { … }` (#4339
-      // item 4). Same save/restore shape as the for-in iterable.
-      let il_saved: boolean = p.no_struct;
-      let (ilscrut_expr, ilscrut_p) = parse_expr(p.with_no_struct(true));
-      p = ilscrut_p.with_no_struct(il_saved);
-      let (ilthen_body, ilthen_p) = parse_block_or_stmt(p);
-      p = ilthen_p;
-      let ilelse: ast.Stmt[] = [];
-      if (p.peek_keyword() == "else") {
-        p = p.advance();
-        let (ileb_body, ileb_p) = parse_block_or_stmt(p);
-        p = ileb_p;
-        ilelse = ileb_body;
-      }
-      let ilarms: ast.MatchArm[] = [];
-      let ilwritten: ast.MatchArm[] = [];
-      let ilpi: i32 = 0;
-      while (ilpi < ilpats.len()) {
-        ilwritten = ilwritten.append(ast.MatchArm { pattern: ilpats[ilpi], body: ilthen_body, line: il_line, col: il_col, guard: e_bool(true), has_guard: false, alt_cont: false });
-        let (fi_pat, fi_g, fi_hg) = fold_lit_cond(ilpats[ilpi], e_bool(true), false);
-        ilarms = ilarms.append(ast.MatchArm { pattern: fi_pat, body: ilthen_body, line: il_line, col: il_col, guard: fi_g, has_guard: fi_hg, alt_cont: false });
-        ilpi = ilpi + 1;
-      }
-      let ilwild: ast.MatchArm = ast.MatchArm { pattern: p_wildcard(), body: ilelse, line: il_line, col: il_col, guard: e_bool(true), has_guard: false, alt_cont: false };
-      ilarms = ilarms.append(ilwild);
-      ilwritten = ilwritten.append(ilwild);
-      // A nested head (`if let Some(Ok(n)) = e`) flattens the same way a
-      // match arm does; the wildcard arm above is the outer fallthrough
-      // desugar_nested_arms copies into the inner match, so a payload
-      // matching no inner pattern runs the else rather than falling off
-      // a non-exhaustive inner match.
-      // A head with payload sub-patterns takes the flag chain, so a
-      // multi-slot head (`if let P(Ok2(a), Ok2(b)) = v`) and an
-      // or-pattern whose alternatives nest both work; the merge read
-      // only the first slot. The origin tag keeps `-fmt` reprinting the
-      // `if let` rather than the chain.
-      if (arms_take_flag_chain(ilarms)) {
-        return (with_sugar_origin(build_nested_arm_match(ilscrut_expr, ilarms, ilwritten, il_line, il_col), "if_let"), p);
-      }
-      ilarms = desugar_nested_arms(ilarms, 0, "");
-      let ilsugar: ast.MatchArm[] = [];
-      if (arms_have_written_form(ilwritten)) {
-        ilsugar = ilwritten;
-      }
-      return (s_match_origin_sugared(ilscrut_expr, ilarms, ilsugar, il_line, il_col, "if_let"), p);
-    }
-    let (c_expr, c_p) = parse_paren_head(p);
-    p = c_p;
-    let (then_blk_body, then_blk_p) = parse_block_or_stmt(p);
-    p = then_blk_p;
-    let else_body: ast.Stmt[] = [];
-    // Whether the else was WRITTEN as a chain. `else if` and
-    // `else { if … }` produce the same one-element else_body, so the
-    // printer cannot tell them apart without this (#6779).
-    let else_chained: boolean = false;
-    if (p.peek_keyword() == "else") {
-      p = p.advance();
-      // `else if` — wrap as a nested StmtIf in the else
-      // branch so an else-chain reads as one shape.
-      if (p.peek_keyword() == "if") {
-        let (nested_stmt, nested_p) = parse_stmt(p);
-        p = nested_p;
-        else_body = else_body.append(nested_stmt);
-        else_chained = true;
-      } else {
-        let (else_blk_body, else_blk_p) = parse_block_or_stmt(p);
-        p = else_blk_p;
-        else_body = else_blk_body;
-      }
-    }
-    return (s_if_chained(c_expr, then_blk_body, else_body, else_chained), p);
+    return parse_if_stmt(p);
   }
   if (kw == "while") {
     let (wc_expr, wc_p) = parse_paren_head(p.advance());
@@ -8239,95 +8343,15 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     return parse_let_stmt(p);
   }
   if (kw == "return") {
-    let rline: i32 = p.peek_line();
-    let rcol: i32 = p.peek_col();
-    p = p.advance();
-    if (p.peek_punct() == ";") {
-      let bare: ast.Expr = e_unknown_at(BARE_RETURN, p.peek_line(), p.peek_col());
-      return (s_return_at(bare, rline, rcol), p.advance());
-    }
-    let (val_expr, val_p) = parse_expr(p);
-    p = val_p;
-    p = p.end_of(val_expr);
-    return (s_return_at(val_expr, rline, rcol), p);
+    return parse_return_stmt(p);
   }
   if (kw == "break") {
-    // E011 is reported at the `break` keyword (Go's `Break{P}`).
-    let bkline: i32 = p.peek_line();
-    let bkcol: i32 = p.peek_col();
-    p = p.advance();
-    // Optional target label: `break outer;`. resolve_labels turns it into a
-    // relative loop depth in the tag. Only treat a trailing ident as the label
-    // when it is immediately followed by `;` — otherwise a `break` with no
-    // trailing semicolon followed by an identifier-led statement would wrongly
-    // swallow that statement's leading ident.
-    let blbl: string = "";
-    let bid: string = p.peek_ident();
-    if (bid.len() > 0 && p.advance().peek_punct() == ";") {
-      blbl = bid;
-      p = p.advance();
-    }
-    p = p.expect_semi();
-    return (ast.StmtBreak { tag: 0, line: bkline, col: bkcol, label: blbl }, p);
+    return parse_break_stmt(p);
   }
   if (kw == "continue") {
-    // E011 is reported at the `continue` keyword (Go's `Continue{P}`).
-    let ckline: i32 = p.peek_line();
-    let ckcol: i32 = p.peek_col();
-    p = p.advance();
-    // Optional target label: `continue outer;` (only when followed by `;`; see
-    // the break case for why).
-    let clbl: string = "";
-    let cid: string = p.peek_ident();
-    if (cid.len() > 0 && p.advance().peek_punct() == ";") {
-      clbl = cid;
-      p = p.advance();
-    }
-    p = p.expect_semi();
-    return (ast.StmtContinue { tag: 0, line: ckline, col: ckcol, label: clbl }, p);
+    return parse_continue_stmt(p);
   }
-  // Expression statement — or (compound) assignment if `=`,
-  // `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`
-  // follows. The parser doesn't accept any of these as binary
-  // operators (none of them are in the precedence table), so
-  // parse_expr stops at the ident; we peek for the assign-op
-  // here and either build a plain StmtAssign or desugar a
-  // compound to
-  //   StmtAssign { target, ExprBinary(<op>, ExprIdent(target), rhs) }
-  // so the rest of the pipeline sees only plain assigns. The
-  // bitwise / shift compound set (`&= |= ^= <<= >>=`) mirrors
-  // the native parser's compoundOps map exactly, so both
-  // front-ends desugar the same operators to the same binary op.
-  let (e_expr, e_p) = parse_expr(p);
-  p = e_p;
-  // Capture the assign-op position — the Go checker reports an
-  // assignment type error (E003) at the `=` token, not the lvalue.
-  let aline: i32 = p.peek_line();
-  let acol: i32 = p.peek_col();
-  let assign_op: string = p.peek_punct();
-  let is_assign: boolean = assign_op == "=";
-  let is_compound: boolean = is_compound_assign_op(assign_op);
-  if (is_assign || is_compound) {
-    p = p.advance();  // consume the assign-op token
-    let (av_expr, av_p) = parse_expr(p);
-    p = av_p;
-    if (is_compound_assign_op(p.peek_punct()) || is_compound && p.peek_punct() == "=") {
-      return chained_compound(p);
-    }
-    if (is_assign && p.peek_punct() == "=") {
-      return parse_assign_chain(p, [e_expr, av_expr], [aline], [acol]);
-    }
-    p = p.end_of(av_expr);
-    let rhs: ast.Expr = av_expr;
-    if (is_compound) {
-      // `x += y` desugars to `x = x + y`: strip the trailing `=` off the op
-      // to recover the operator.
-      rhs = e_binary(slice_unchecked(assign_op, 0, assign_op.len() - 1), read_back(e_expr), av_expr);
-    }
-    return (assign_to(e_expr, rhs, aline, acol), p);
-  }
-  p = p.end_of(e_expr);
-  return (s_expr(e_expr), p);
+  return parse_expression_stmt(p);
 }
 
 // parse_assign_chain finishes a chained assignment `t0 = t1 = … = e` with p at
