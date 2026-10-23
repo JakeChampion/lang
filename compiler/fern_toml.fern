@@ -60,7 +60,9 @@ pub struct Manifest {
   // `key = value` pairs, in file order; a dotted key is a rule option.
   lint_keys: string[],
   lint_vals: string[],
+  // err is the first diagnostic, at line err_line of the source.
   err: string,
+  err_line: i32,
 }
 
 // index_of returns the first index of the single-char needle `c` in `s`
@@ -144,8 +146,9 @@ function is_integer_text(s: string): boolean {
 pub function parse(src: string): Manifest {
   let m: Manifest = Manifest {
     name: "", lib: "lib.fern", index: "", deps: [], members: [],
-    excl_pkg: [], excl_ver: [], lint_keys: [], lint_vals: [], err: "",
+    excl_pkg: [], excl_ver: [], lint_keys: [], lint_vals: [], err: "", err_line: 0,
   };
+  let package_line: i32 = 1;
   let workspace: boolean = false;
   let section: string = "";
   // Every section header and `section\nkey` seen so far: TOML defines each
@@ -156,36 +159,48 @@ pub function parse(src: string): Manifest {
   while (li < lines.len() && m.err.len() == 0) {
     let line: string = line_content(lines[li]);
     li = li + 1;
-    let at: string = "line " + util.i32_to_string(li) + ": ";
     if (line.len() == 0) {
       continue;
     }
     if (line[0] == b'[') {
       if (line[line.len() - 1] != b']') {
-        return Manifest { ...m, err: at + "malformed section header " + docsummary.quote(line) };
+        return Manifest { ...m, err: "malformed section header " + docsummary.quote(line), err_line: li };
       }
       section = util.trim(slice_unchecked(line, 1, line.len() - 1));
+      if (section == "package") {
+        package_line = li;
+      }
       workspace = workspace || section == "workspace";
-      m = Manifest { ...m, err: section_error(section, seen, at) };
+      m = Manifest { ...m, err: section_error(section, seen), err_line: li };
       seen = seen.append("[" + section + "]");
       continue;
     }
-    m = with_entry(m, section, line, at, seen);
+    m = Manifest { ...with_entry(m, section, line, seen), err_line: li };
     seen = seen.append(section + "\n" + entry_key(line));
   }
   if (m.err.len() == 0 && m.name.len() == 0 && !workspace) {
-    return Manifest { ...m, err: "missing [package] name" };
+    return Manifest { ...m, err: "missing [package] name", err_line: package_line };
   }
   return m;
 }
 
-function section_error(section: string, seen: string[], at: string): string {
+// diagnostic renders the refusal `m` carries as native's manifest.Error does,
+// `path:line:1: error[E088]: message`, the path left off when it is empty.
+pub function diagnostic(path: string, m: Manifest): string {
+  let at: string = util.i32_to_string(m.err_line) + ":1";
+  if (path.len() > 0) {
+    at = path + ":" + at;
+  }
+  return at + ": error[E088]: " + m.err;
+}
+
+function section_error(section: string, seen: string[]): string {
   let known: string[] = ["package", "dependencies", "workspace", "exclude", "lint", "lint.options"];
   if (!util.has_str(known, section)) {
-    return at + "unknown section [" + section + "] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])";
+    return "unknown section [" + section + "] (supported: [package], [dependencies], [workspace], [exclude], [lint], [lint.options])";
   }
   if (util.has_str(seen, "[" + section + "]")) {
-    return at + "duplicate section [" + section + "]";
+    return "duplicate section [" + section + "]";
   }
   return "";
 }
@@ -204,38 +219,38 @@ function failed(m: Manifest, err: string): Manifest {
 }
 
 // with_entry is `m` with one `key = value` line of `section` applied.
-function with_entry(m: Manifest, section: string, line: string, at: string, seen: string[]): Manifest {
+function with_entry(m: Manifest, section: string, line: string, seen: string[]): Manifest {
   let eq: i32 = index_of(line, b'=', 0);
   if (eq < 0) {
-    return failed(m, at + "expected `key = value`, got " + docsummary.quote(line));
+    return failed(m, "expected `key = value`, got " + docsummary.quote(line));
   }
   let key: string = util.trim(slice_unchecked(line, 0, eq));
   let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
   if (section.len() > 0 && util.has_str(seen, section + "\n" + key)) {
-    return failed(m, at + "duplicate key " + docsummary.quote(key) + " in [" + section + "]");
+    return failed(m, "duplicate key " + docsummary.quote(key) + " in [" + section + "]");
   }
   if (section == "package") {
-    return with_package_key(m, key, val, at);
+    return with_package_key(m, key, val);
   }
   if (section == "dependencies") {
-    return with_dep(m, key, val, at);
+    return with_dep(m, key, val);
   }
   if (section == "workspace") {
-    return with_members(m, key, val, at);
+    return with_members(m, key, val);
   }
   if (section == "lint" || section == "lint.options") {
-    return with_lint(m, section, key, val, at);
+    return with_lint(m, section, key, val);
   }
   if (section == "exclude") {
-    return with_exclude(m, key, val, at);
+    return with_exclude(m, key, val);
   }
-  return failed(m, at + docsummary.quote(key) + " outside a section (start with [package], [dependencies], or [workspace])");
+  return failed(m, docsummary.quote(key) + " outside a section (start with [package], [dependencies], or [workspace])");
 }
 
-function with_package_key(m: Manifest, key: string, val: string, at: string): Manifest {
+function with_package_key(m: Manifest, key: string, val: string): Manifest {
   let s: Parsed = parse_string(val);
   if (s.err.len() > 0) {
-    return failed(m, at + key + ": " + s.err);
+    return failed(m, key + ": " + s.err);
   }
   if (key == "name") {
     return Manifest { ...m, name: s.value };
@@ -249,57 +264,57 @@ function with_package_key(m: Manifest, key: string, val: string, at: string): Ma
   if (key == "version") {
     return m;
   }
-  return failed(m, at + "unknown [package] key " + docsummary.quote(key) + " (supported: name, version, lib, index)");
+  return failed(m, "unknown [package] key " + docsummary.quote(key) + " (supported: name, version, lib, index)");
 }
 
-function with_dep(m: Manifest, key: string, val: string, at: string): Manifest {
+function with_dep(m: Manifest, key: string, val: string): Manifest {
   let d: DepResult = parse_dep(key, val);
   if (d.err.len() > 0) {
-    return failed(m, at + "dependency " + docsummary.quote(key) + ": " + d.err);
+    return failed(m, "dependency " + docsummary.quote(key) + ": " + d.err);
   }
   if (!valid_dep_name(key)) {
-    return failed(m, at + "invalid dependency name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
+    return failed(m, "invalid dependency name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
   }
   return Manifest { ...m, deps: m.deps.append(d.dep) };
 }
 
-function with_members(m: Manifest, key: string, val: string, at: string): Manifest {
+function with_members(m: Manifest, key: string, val: string): Manifest {
   if (key != "members") {
-    return failed(m, at + "unknown [workspace] key " + docsummary.quote(key) + " (supported: members)");
+    return failed(m, "unknown [workspace] key " + docsummary.quote(key) + " (supported: members)");
   }
   let ms: ParsedList = parse_str_array(val);
   if (ms.err.len() > 0) {
-    return failed(m, at + "members: " + ms.err);
+    return failed(m, "members: " + ms.err);
   }
   return Manifest { ...m, members: ms.values };
 }
 
 // with_lint keeps a [lint] or [lint.options] pair for the linter, which
 // reads the tables; under [lint.options] the key is `<rule>.<option>`.
-function with_lint(m: Manifest, section: string, key: string, val: string, at: string): Manifest {
+function with_lint(m: Manifest, section: string, key: string, val: string): Manifest {
   let v: Parsed = parse_scalar(val);
   if (v.err.len() > 0) {
-    return failed(m, at + "[" + section + "] " + key + ": " + v.err);
+    return failed(m, "[" + section + "] " + key + ": " + v.err);
   }
   if (section == "lint.options" && index_of(key, b'.', 0) < 0) {
-    return failed(m, at + "[lint.options] key " + docsummary.quote(key) + " must be spelled <rule>.<option>");
+    return failed(m, "[lint.options] key " + docsummary.quote(key) + " must be spelled <rule>.<option>");
   }
   return Manifest { ...m, lint_keys: m.lint_keys.append(key), lint_vals: m.lint_vals.append(v.value) };
 }
 
-function with_exclude(m: Manifest, key: string, val: string, at: string): Manifest {
+function with_exclude(m: Manifest, key: string, val: string): Manifest {
   if (!valid_dep_name(key)) {
-    return failed(m, at + "invalid [exclude] package name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
+    return failed(m, "invalid [exclude] package name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
   }
   let vs: ParsedList = parse_str_array(val);
   if (vs.err.len() > 0) {
-    return failed(m, at + "exclude " + key + ": " + vs.err);
+    return failed(m, "exclude " + key + ": " + vs.err);
   }
   let excl_pkg: string[] = m.excl_pkg;
   let excl_ver: string[] = m.excl_ver;
   for v in vs.values {
     if (!is_version(v)) {
-      return failed(m, at + "exclude " + key + ": version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(v));
+      return failed(m, "exclude " + key + ": version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(v));
     }
     excl_pkg = excl_pkg.append(key);
     excl_ver = excl_ver.append(v);

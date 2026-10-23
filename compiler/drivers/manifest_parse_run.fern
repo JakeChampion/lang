@@ -10,7 +10,7 @@ function verdict(path: string): string {
     Ok(src) => {
       let m: fern_toml.Manifest = fern_toml.parse(src);
       if (m.err.len() > 0) {
-        return "err " + m.err;
+        return "err " + fern_toml.diagnostic("", m);
       }
       return "ok";
     },
