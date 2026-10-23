@@ -10873,15 +10873,17 @@ function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: so
   }
   let srcs: i32[] = [];
   let dsts: i32[] = [];
-  let a: i32 = 0;
-  while (a < ins.args.len()) {
-    srcs = srcs.append(reg_of[ins.args[a]]);
-    let dst: i32 = a + 2;  // %rdi is the allocator's argument register.
-    if (!allocator) {
-      dst = ssa_arg_loc(mask, a);
+  if (allocator) {
+    // tail_allocator accepts one integer argument. Its runtime home is %rdi.
+    srcs = [reg_of[ins.args[0]]];
+    dsts = [ssa_rt_arg_reg(0)];
+  } else {
+    let a: i32 = 0;
+    while (a < ins.args.len()) {
+      srcs = srcs.append(reg_of[ins.args[a]]);
+      dsts = dsts.append(ssa_arg_loc(mask, a));
+      a = a + 1;
     }
-    dsts = dsts.append(dst);
-    a = a + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, ssa_x0_forget(s));
   if (pos.line > 0) {

@@ -1814,8 +1814,9 @@ function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: bool
 // registers and leaves through a branch to it.
 function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: sourcepos.SourcePos, s: asmcore.EmitState): asmcore.EmitState {
   let target: string = asmcore.tail_allocator(ins);
+  let allocator: boolean = target != "";
   let mask: string = "";
-  if (target == "") {
+  if (!allocator) {
     let name: string = asmcore.sanitize_label(ins.str);
     target = "__fn_" + name + ".r";
     mask = s.float_mask(name);
@@ -1824,11 +1825,17 @@ function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: so
   }
   let srcs: i32[] = [];
   let dsts: i32[] = [];
-  let a: i32 = 0;
-  while (a < ins.args.len()) {
-    srcs = srcs.append(reg_of[ins.args[a]]);
-    dsts = dsts.append(ssa_arg_loc(mask, a));
-    a = a + 1;
+  if (allocator) {
+    // tail_allocator accepts one integer argument. Its runtime home is x0.
+    srcs = [reg_of[ins.args[0]]];
+    dsts = [0];
+  } else {
+    let a: i32 = 0;
+    while (a < ins.args.len()) {
+      srcs = srcs.append(reg_of[ins.args[a]]);
+      dsts = dsts.append(ssa_arg_loc(mask, a));
+      a = a + 1;
+    }
   }
   s = ssa_parallel_moves(srcs, dsts, ssa_x0_forget(s));
   if (pos.line > 0) {
@@ -4383,8 +4390,8 @@ function ssa_view_off(fr: SsaFrame, v: i32): i32 {
 }
 
 // ssa_raw_inst selects the raw memory floor (52..55): unchecked 8-byte and
-// byte loads and stores at base + idx, a byte's constant idx read as the
-// unsigned immediate offset.
+// byte loads and stores at base + idx. A constant word index scales into its
+// byte displacement. A constant byte index is already a byte displacement.
 function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   let a: string = ssa_src(reg_of, ins.args[0], "x4");
