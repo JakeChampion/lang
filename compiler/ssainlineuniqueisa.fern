@@ -204,8 +204,10 @@ function branch_kind(name: string, arm: boolean): i32 {
 }
 
 pub function decode(line: string, arm: boolean): Op {
-  let at = line.index_of(" ");
-  if (at < 0) {
+  let at = 0;
+  if let Some(sp) = line.index_of(" ") {
+    at = sp;
+  } else {
     return op(0, "", "");
   }
   let name = slice_unchecked(line, 0, at) + "";

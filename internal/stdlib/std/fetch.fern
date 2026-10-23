@@ -77,6 +77,7 @@ import "std/http/cookie";
 import "std/url";
 import "std/dns";
 import "std/net";
+import "std/errno";
 import "std/error";
 import "std/base64";
 import "std/brotli";
@@ -451,7 +452,7 @@ function __http_url_checked(raw: string, u: Url): Result[Url, FetchError] {
 // (no top-level domain does) and that is not a dotted quad: a number a
 // resolver may read as an address.
 function __ambiguous_ipv4(host: string): boolean {
-  if (host.index_of(":") >= 0) {
+  if (host.contains(":")) {
     return false;
   }
   let end: i32 = host.len();
@@ -518,7 +519,7 @@ function __request_ok(req: Request): Result[void, FetchError] {
 // it is an IPv6 address, and the port when it is not the scheme's default.
 function __host_field(host: string, port: i32, tls: boolean): string {
   let h: string = host;
-  if (h.index_of(":") >= 0) {
+  if (h.contains(":")) {
     h = "[" + h + "]";
   }
   let default_port: i32 = 80;
@@ -884,14 +885,14 @@ pub function (sh: Shared) adopt(key: string, fd: i32, tls: client.Session, hc: h
 }
 
 // `(sh).pick(key)` — the socket of a driven connection to `key` with room
-// for a stream, -1 for none.
-pub function (sh: Shared) pick(key: string): i32 {
+// for a stream, or None.
+pub function (sh: Shared) pick(key: string): Option[i32] {
   for d in sh.rows.get() {
     if (d.key == key && d.streams < SHARED_STREAMS && !d.h2.closed() && !d.h2.going_away()) {
-      return d.fd;
+      return Some(d.fd);
     }
   }
-  return 0 - 1;
+  return None;
 }
 
 // `(sh).submit(fd, out)` — a request opened as a stream on the connection
@@ -1048,7 +1049,7 @@ pub function (sh: Shared) flush(): (i32[], i32[]) {
       let n: i32 = tcp_send_bytes(d.fd, d.wire);
       if (n < 0 && 0 - n != 11) {
         sh.rows.set(rows);
-        __driven_failed(sh, d.fd, Io(net.error_from_errno(0 - n)));
+        __driven_failed(sh, d.fd, Io(net.error_from_host(0 - n)));
         return sh.flush();
       }
       if (n > 0) {
@@ -1714,10 +1715,9 @@ function __allow_parts(e: string): Option[(string, string)] {
     }
     return Some((e, ""));
   }
-  let close: i32 = e.index_of("]");
-  if (close < 0) {
+  let Some(close) = e.index_of("]") else {
     return None;
-  }
+  };
   let host: string = e.take(close).drop(1);
   let rest: string = e.drop(close + 1);
   if (rest.len() > 0 && !rest.starts_with(":")) {
@@ -2012,7 +2012,7 @@ function __origin_checked[T: Transport](tr: T, t: __Target, policy: Policy): Res
 function __reset(e: FetchError): boolean {
   match (e) {
     Io(n) => {
-      return n.eq(net.ConnectionReset) || n.eq(net.ConnectionAborted) || n.eq(net.Other(32));
+      return n.eq(net.ConnectionReset) || n.eq(net.ConnectionAborted) || n.eq(net.Other(errno.EPIPE));
     },
     _ => {
       return false;
@@ -2096,8 +2096,7 @@ enum __SharedPick { OnLoop(i32), OnTask(__Conn) }
 // bounds, then the look again.
 function __shared_socket[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, guard: boolean, roots: Option[verify.Roots], sh: Shared): Result[__SharedPick, FetchError] {
   while (true) {
-    let fd: i32 = sh.pick(key);
-    if (fd >= 0) {
+    if let Some(fd) = sh.pick(key) {
       return Ok(OnLoop(fd));
     }
     if (sh.dialing(key)) {
@@ -2450,7 +2449,7 @@ function __kernel_record(sock: i32, s: client.Session, now: i64): __Record {
         Ok(step) => {
           let sent: i32 = ktls.send_records(sock, step.output);
           if (sent < 0) {
-            return RecordFailed(Io(net.error_from_errno(sent)));
+            return RecordFailed(Io(net.error_from_host(sent)));
           }
           let installed: i32 = ktls.install(sock, step.rekeyed);
           if (installed < 0) {
@@ -2908,7 +2907,7 @@ function __write_all[T: Transport](tr: T, conn: i32, payload: u8[]): Result[void
     }
     let n: i32 = tr.write(conn, rest);
     if (n < 0) {
-      return Err(Io(net.error_from_errno(0 - n)));
+      return Err(Io(net.error_from_host(0 - n)));
     }
     if (n == 0) {
       return Err(Io(net.ConnectionReset));
@@ -3394,7 +3393,7 @@ function __address_shaped(host: string): boolean {
     return false;
   }
   let b: u8 = host[0];
-  return b >= 48 as u8 && b <= 57 as u8 || host.index_of(":") >= 0;
+  return b >= 48 as u8 && b <= 57 as u8 || host.contains(":");
 }
 
 // `__never_proxied(host, ip)` — `localhost`, a name under it, or a
@@ -3477,7 +3476,7 @@ function __rule_of(entry: string): __Rule {
   }
   let split: (string, i32) = __entry_split(entry);
   let name: string = __host_name(split.0);
-  if (name.index_of("/") >= 0) {
+  if (name.contains("/")) {
     return __Rule { what: __block_of(name), port: split.1 };
   }
   match (__canonical_ip(name)) {
@@ -3495,7 +3494,9 @@ function __rule_of(entry: string): __Rule {
 // `__block_of(block)` — a CIDR entry's prefix bytes and length, or
 // `Nothing` when either does not read.
 function __block_of(block: string): __Match {
-  let slash: i32 = block.index_of("/");
+  let Some(slash) = block.index_of("/") else {
+    return Nothing;
+  };
   let bits: i32 = -1;
   match (int.parse_int_radix(slice_unchecked(block, slash + 1, block.len()).to_owned(), 10)) {
     Some(n) => {
@@ -3562,17 +3563,19 @@ function __entry_split(entry: string): (string, i32) {
   let name: string = entry;
   let rest: string = "";
   if (entry.starts_with("[")) {
-    let close: i32 = entry.index_of("]");
-    if (close < 0) {
+    let Some(close) = entry.index_of("]") else {
       return (entry, -1);
-    }
+    };
     name = slice_unchecked(entry, 1, close).to_owned();
     rest = slice_unchecked(entry, close + 1, entry.len()).to_owned();
   } else {
-    let colon: i32 = entry.index_of(":");
-    if (colon >= 0 && colon == entry.last_index_of(":")) {
-      name = slice_unchecked(entry, 0, colon).to_owned();
-      rest = slice_unchecked(entry, colon, entry.len()).to_owned();
+    if let Some(colon) = entry.index_of(":") {
+      if let Some(last) = entry.last_index_of(":") {
+        if (colon == last) {
+          name = slice_unchecked(entry, 0, colon).to_owned();
+          rest = slice_unchecked(entry, colon, entry.len()).to_owned();
+        }
+      }
     }
   }
   return (__without_zone(name), __rule_port(rest));
@@ -3581,15 +3584,13 @@ function __entry_split(entry: string): (string, i32) {
 // `__without_zone(name)` — `name` less its `%zone`, a `/bits` after the
 // zone kept.
 function __without_zone(name: string): string {
-  let zone: i32 = name.index_of("%");
-  if (zone < 0) {
+  let Some(zone) = name.index_of("%") else {
     return name;
-  }
+  };
   let after: string = slice_unchecked(name, zone, name.len()).to_owned();
-  let slash: i32 = after.index_of("/");
-  if (slash < 0) {
+  let Some(slash) = after.index_of("/") else {
     return slice_unchecked(name, 0, zone).to_owned();
-  }
+  };
   return slice_unchecked(name, 0, zone).to_owned() + slice_unchecked(after, slash, after.len()).to_owned();
 }
 
@@ -3673,7 +3674,7 @@ struct __Proxy { host: string, port: i32, auth: string }
 // can use.
 function __proxy_of(spec: string, name: string): Result[__Proxy, FetchError] {
   let full: string = spec;
-  if (full.index_of("://") < 0) {
+  if (!full.contains("://")) {
     full = "http://" + full;
   }
   let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
@@ -3736,19 +3737,20 @@ function __proxy_named(p: ProxyEnv, spec: string, tls: boolean): Result[__Proxy,
 // `user:password`, the colon supplied when the URL names no password; or
 // empty.
 function __proxy_auth(full: string): string {
-  let start: i32 = full.index_of("://") + 3;
+  let Some(scheme) = full.index_of("://") else {
+    return "";
+  };
+  let start: i32 = scheme + 3;
   let end: i32 = full.len();
-  let slash: i32 = slice_unchecked(full, start, end).to_owned().index_of("/");
-  if (slash >= 0) {
+  if let Some(slash) = slice_unchecked(full, start, end).to_owned().index_of("/") {
     end = start + slash;
   }
   let authority: string = slice_unchecked(full, start, end).to_owned();
-  let at: i32 = authority.last_index_of("@");
-  if (at < 0) {
+  let Some(at) = authority.last_index_of("@") else {
     return "";
-  }
+  };
   let userinfo: string = slice_unchecked(authority, 0, at).to_owned();
-  if (userinfo.index_of(":") < 0) {
+  if (!userinfo.contains(":")) {
     userinfo = userinfo + ":";
   }
   return "Basic " + base64.base64_encode(userinfo.bytes());

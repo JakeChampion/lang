@@ -120,10 +120,9 @@ function answered(raw: u8[]): string {
   }
   let (head, rest) = text.split_at(9);
   let (code, tail) = rest.split_at(3);
-  let at: i32 = tail.index_of("\r\n\r\n");
-  if (at < 0) {
+  let Some(at) = tail.index_of("\r\n\r\n") else {
     return code + " <no body>";
-  }
+  };
   let (headers, body) = tail.split_at(at + 4);
   return code + " " + first_line(body);
 }

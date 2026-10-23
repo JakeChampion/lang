@@ -7,7 +7,7 @@ import "core/iter";
 function main(): i32 {
     let s: i32 = iter.sum(0..10);        // 0+…+9   = 45
     s = s + iter.sum(0..=10);            // 0+…+10  = 55  -> 100
-    s = s + (2..7).count();              // 5 elems = 5   -> 105
+    s = s + (2..7).len();                // 5 elems = 5   -> 105
     let n: i32 = 3;
     s = s + iter.sum(0..n+1);            // `..` < `+`: 0..4 = 6 -> 111
     let r = 1..5;                        // range bound to a var, used as a value

@@ -378,7 +378,7 @@ struct __Listen { fd: i32, addr: string }
 // __listen_failed(l) — a refused listener: the address and the error's
 // text on stderr, and 98, the exit code a serve entry answers for it.
 function __listen_failed(l: __Listen): i32 {
-  eprint("serve: cannot listen on " + l.addr + ": " + net.error_from_errno(l.fd).message());
+  eprint("serve: cannot listen on " + l.addr + ": " + net.error_from_host(l.fd).message());
   return 98;
 }
 
@@ -402,26 +402,11 @@ function __listener_of(port: i32, opts: Config): __Listen {
   }
   if (target_os() != "wasi") {
     let both: i32 = tcp_listen_with(__every_v6(), port, opts.backlog, opts.reuse_port);
-    if (both >= 0 || !__no_v6(both)) {
+    if (both >= 0 || !net.error_from_host(both).ipv6_unavailable()) {
       return __Listen { fd: both, addr: net.socket_addr(net.ipv6_unspecified(), port).to_string() };
     }
   }
   return __Listen { fd: tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port), addr: net.socket_addr(net.ipv4_unspecified(), port).to_string() };
-}
-
-// __no_v6(r) — a `::` listener refused because the host has no IPv6:
-// -EAFNOSUPPORT from socket(2), or -EADDRNOTAVAIL from a bind where the
-// family exists but is switched off.
-function __no_v6(r: i32): boolean {
-  let e: net.NetError = net.error_from_errno(r);
-  return e.eq(net.AddrNotAvailable) || r == 0 - __eafnosupport();
-}
-
-function __eafnosupport(): i32 {
-  if (target_os() == "darwin") {
-    return 47;
-  }
-  return 97;
 }
 
 // run_with(port, opts, init, handler) — serve with a caller-owned
@@ -6101,8 +6086,8 @@ function __exporter(drv: async.RealDriver, opts: Config, snap: Option[Writer]): 
     Ok(e) => {
       return Some(e);
     },
-    Err(code) => {
-      eprint("serve: cannot listen for metrics on port " + int.int_to_string(opts.metrics_port) + ": " + net.error_from_errno(code).message());
+    Err(e) => {
+      eprint("serve: cannot listen for metrics on port " + int.int_to_string(opts.metrics_port) + ": " + e.message());
       return None;
     }
   }
@@ -6426,7 +6411,7 @@ function __quic_none(): __Quic {
 function __quic_socket(port: i32): i32 {
   if (target_os() != "wasi") {
     let both: i32 = udp_bind_with(__every_v6(), port, true);
-    if (both >= 0 || !__no_v6(both)) {
+    if (both >= 0 || !net.error_from_host(both).ipv6_unavailable()) {
       return both;
     }
   }

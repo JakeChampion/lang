@@ -36,12 +36,12 @@ var iterSingleParamIRCases = []struct {
 	{"max", "import \"core/iter\";\nfunction main(): i32 { match (iter.max(iter.range(3, 9))) { Some(v) => { return v; }, None => { return 0; }, } }\n"},
 	// contains 5 in 1..9 -> true -> 7.
 	{"contains", "import \"core/iter\";\nfunction main(): i32 { if (iter.contains(iter.range(1, 9), 5)) { return 7; } return 0; }\n"},
-	// count_value: how many 3s in 0..5 -> 1.
-	{"count-value", "import \"core/iter\";\nfunction main(): i32 { return iter.count_value(iter.range(0, 5), 3); }\n"},
-	// position of 13 in 10..20 -> index 3.
-	{"position", "import \"core/iter\";\nfunction main(): i32 { match (iter.position(iter.range(10, 20), 13)) { Some(p) => { return p; }, None => { return 99; }, } }\n"},
-	// count of 0..7 through the Iterator trait's count method = 7.
-	{"count", "import \"core/iter\";\nfunction main(): i32 { return iter.range(0, 7).count(); }\n"},
+	// count: how many 3s in 0..5 -> 1.
+	{"count", "import \"core/iter\";\nfunction main(): i32 { return iter.count(iter.range(0, 5), 3); }\n"},
+	// index_of 13 in 10..20 -> index 3.
+	{"index-of", "import \"core/iter\";\nfunction main(): i32 { match (iter.index_of(iter.range(10, 20), 13)) { Some(p) => { return p; }, None => { return 99; }, } }\n"},
+	// len of 0..7 through the Iterator trait's len method = 7.
+	{"len", "import \"core/iter\";\nfunction main(): i32 { return iter.range(0, 7).len(); }\n"},
 }
 
 // TestSelfHostIterSingleParamIRX86_64 compiles real `import "core/iter"`

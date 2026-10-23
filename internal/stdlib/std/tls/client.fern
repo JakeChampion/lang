@@ -558,7 +558,7 @@ pub function (c: Connection) offload(): Result[Connection, tls.TlsError] {
       ktls.Broken(e) => {
         tcp_close(c.fd);
         c.open.set(false);
-        return Err(tls.NetFailed(net.error_from_errno(e)));
+        return Err(tls.NetFailed(net.error_from_host(e)));
       }
     }
   }
@@ -676,7 +676,7 @@ function __kernel_next(c: Connection, read: ktls.Read): Result[Kerneled, tls.Tls
 // __kernel_failed is a read the kernel refused: a record that did not open
 // or overflowed gets its alert, and the socket is closed either way.
 function __kernel_failed(c: Connection, errno: i32): tls.TlsError {
-  let err: tls.TlsError = tls.NetFailed(net.error_from_errno(errno));
+  let err: tls.TlsError = tls.NetFailed(net.error_from_host(errno));
   if (errno == 74) {
     ktls.alert(c.fd, 20);
     err = tls.HandshakeFailed(handshake.Record(record.BadRecordMac));
@@ -743,7 +743,7 @@ function __send_out(fd: i32, s: Session, out: [u8]): Result[void, tls.TlsError] 
   }
   let r: i32 = ktls.send_records(fd, out);
   if (r < 0) {
-    return Err(tls.NetFailed(net.error_from_errno(0 - r)));
+    return Err(tls.NetFailed(net.error_from_host(0 - r)));
   }
   return Ok(());
 }
@@ -765,7 +765,7 @@ function __send_fd(fd: i32, data: [u8]): Result[void, tls.TlsError] {
   while (at < data.len()) {
     let n: i32 = tcp_send_bytes(fd, __cat([], data[at:data.len()]));
     if (n < 0) {
-      return Err(tls.NetFailed(net.error_from_errno(0 - n)));
+      return Err(tls.NetFailed(net.error_from_host(0 - n)));
     }
     if (n == 0) {
       return Err(tls.NetFailed(net.ConnectionReset));

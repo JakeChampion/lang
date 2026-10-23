@@ -98,10 +98,9 @@ pub function parse(s: string): Map[string, string] {
     if (line.starts_with("export ")) {
       line = __de_trim(__de_slice(line, 7, line.len()));
     }
-    let eq: i32 = line.index_of("=");
-    if (eq < 0) {
+    let Some(eq) = line.index_of("=") else {
       continue;
-    }
+    };
     let key: string = __de_trim(__de_slice(line, 0, eq));
     if (key.len() == 0) {
       continue;

@@ -304,11 +304,10 @@ pub function (m: MockPlatform) calls(): MockCall[] {
     if (line.len() == 0) {
       continue;
     }
-    let tab: i32 = line.index_of("\t");
-    if (tab < 0) {
+    let Some(tab) = line.index_of("\t") else {
       out = out.append(MockCall { name: line, args: "" });
       continue;
-    }
+    };
     if (slice_unchecked(line, 0, tab) + "" == "canned") {
       continue;
     }
@@ -512,10 +511,9 @@ function __file_stat(is_dir: boolean, size: i64, mtime: i64): FileStat {
 // `__canned_response(v)` — the canned `STATUS BODY` as a response, 200
 // when the status does not read.
 function __canned_response(v: string): HttpResponse {
-  let sp: i32 = v.index_of(" ");
   let code: string = v;
   let body: string = "";
-  if (sp >= 0) {
+  if let Some(sp) = v.index_of(" ") {
     code = slice_unchecked(v, 0, sp).to_owned();
     body = slice_unchecked(v, sp + 1, v.len()).to_owned();
   }

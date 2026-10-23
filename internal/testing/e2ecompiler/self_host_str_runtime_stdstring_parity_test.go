@@ -112,8 +112,11 @@ function main(): i32 {
     return u.len() * 10 + r;
 }`},
 	{"search_offsets_are_bytes", `import "std/string";
+function at(o: Option[i32]): i32 {
+    match (o) { Some(i) => { return i; }, None => { return 0 - 1; } }
+}
 function main(): i32 {
-    return "héllo".index_of("é") * 100 + "héllo".index_of("llo") * 10 + "abc".index_of("") + 1;
+    return at("héllo".index_of("é")) * 100 + at("héllo".index_of("llo")) * 10 + at("abc".index_of("")) + 1;
 }`},
 }
 

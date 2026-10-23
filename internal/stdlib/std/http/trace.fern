@@ -141,8 +141,10 @@ pub function parse_state(v: string): Option[string] {
     if (m.len() == 0) {
       continue;
     }
-    let eq: i32 = m.index_of("=");
-    if (eq <= 0 || !__state_key(m.take(eq)) || !__state_value(m.drop(eq + 1))) {
+    let Some(eq) = m.index_of("=") else {
+      return None;
+    };
+    if (eq == 0 || !__state_key(m.take(eq)) || !__state_value(m.drop(eq + 1))) {
       return None;
     }
     let key: string = m.take(eq);
@@ -165,10 +167,9 @@ pub function parse_state(v: string): Option[string] {
 // to 241 such characters led by a letter or digit and the system up to 14
 // led by a letter.
 function __state_key(k: string): boolean {
-  let at: i32 = k.index_of("@");
-  if (at < 0) {
+  let Some(at) = k.index_of("@") else {
     return k.len() <= 256 && __key_start(k[0], false) && __key_rest(k.drop(1));
-  }
+  };
   return __tenant_key(k.take(at), k.drop(at + 1));
 }
 

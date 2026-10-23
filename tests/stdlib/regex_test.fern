@@ -25,12 +25,14 @@ function test_alternation(): test.TestOutcome {
 }
 
 function test_search_span(): test.TestOutcome {
-  let m: regex.RMatch = regex.regex_search("\\d+", "order 123 shipped");
-  return test.assert_true(m.found && m.start == 6 && m.end == 9);
+  let Some(m) = regex.regex_search("\\d+", "order 123 shipped") else {
+    return test.fail("no match");
+  };
+  return test.assert_true(m.start == 6 && m.end == 9);
 }
 
 function test_find_index(): test.TestOutcome {
-  return test.assert_eq(regex.regex_find("world", "hello world"), 6);
+  return test.assert_is_some_eq_i32(regex.regex_find("world", "hello world"), 6);
 }
 
 function test_case_insensitive_flag(): test.TestOutcome {
@@ -66,13 +68,19 @@ function test_full_match(): test.TestOutcome {
 
 // --- captures --------------------------------------------------------------
 function test_captures_positional(): test.TestOutcome {
-  let m: regex.RCaps = regex.regex_captures("(\\d+)-(\\d+)", "id 12-34 x");
-  return test.assert_true(m.found && m.group_count() == 2 && require_regex_text(m.group(0)) == "12-34" && require_regex_text(m.group(1)) == "12" && require_regex_text(m.group(2)) == "34" && m.group_start(1) == 3 && m.group_end(1) == 5);
+  let Some(m) = regex.regex_captures("(\\d+)-(\\d+)", "id 12-34 x") else {
+    return test.fail("no match");
+  };
+  return test.assert_true(m.group_count() == 2 && require_regex_text(m.group(0)) == "12-34" && require_regex_text(m.group(1)) == "12" && require_regex_text(m.group(2)) == "34" && at(m.group_start(1), 3) && at(m.group_end(1), 5));
 }
 
 function test_captures_optional_group(): test.TestOutcome {
-  let absent: regex.RCaps = regex.regex_captures("a(bc)?d", "ad");
-  let present: regex.RCaps = regex.regex_captures("a(bc)?d", "abcd");
+  let Some(absent) = regex.regex_captures("a(bc)?d", "ad") else {
+    return test.fail("no match on ad");
+  };
+  let Some(present) = regex.regex_captures("a(bc)?d", "abcd") else {
+    return test.fail("no match on abcd");
+  };
   return test.assert_true(!absent.has_group(1) && require_regex_text(absent.group(1)) == "" && present.has_group(1) && require_regex_text(present.group(1)) == "bc");
 }
 
@@ -83,19 +91,28 @@ function test_captures_all(): test.TestOutcome {
 
 function test_captures_quantified_last_iteration(): test.TestOutcome {
   // a group under `+` reports its LAST iteration's span
-  let m: regex.RCaps = regex.regex_captures("(a|b)+", "ab");
+  let Some(m) = regex.regex_captures("(a|b)+", "ab") else {
+    return test.fail("no match");
+  };
   return test.assert_eq(require_regex_text(m.group(1)), "b");
 }
 
 // --- named groups ----------------------------------------------------------
 function test_named_groups(): test.TestOutcome {
-  let m: regex.RCaps = regex.regex_captures("(?<year>\\d{4})-(?<mon>\\d{2})", "date 2026-07");
-  return test.assert_true(require_regex_text(m.group_named("year")) == "2026" && require_regex_text(m.group_named("mon")) == "07" && m.group_index("year") == 1 && m.group_index("mon") == 2 && require_regex_text(m.group(1)) == "2026");
+  let Some(m) = regex.regex_captures("(?<year>\\d{4})-(?<mon>\\d{2})", "date 2026-07") else {
+    return test.fail("no match");
+  };
+  return test.assert_true(require_regex_text(m.group_named("year")) == "2026" && require_regex_text(m.group_named("mon")) == "07" && at(m.group_index("year"), 1) && at(m.group_index("mon"), 2) && require_regex_text(m.group(1)) == "2026");
 }
 
 function test_named_group_unknown(): test.TestOutcome {
-  let m: regex.RCaps = regex.regex_captures("(?<w>\\w+)", "hi");
-  return test.assert_true(require_regex_text(m.group_named("nope")) == "" && m.group_index("nope") == 0 - 1 && m.has_group_named("w") && !m.has_group_named("nope"));
+  let Some(m) = regex.regex_captures("(?<w>\\w+)", "hi") else {
+    return test.fail("no match");
+  };
+  if (require_regex_text(m.group_named("nope")) != "" || !m.has_group_named("w") || m.has_group_named("nope")) {
+    return test.fail("named accessors");
+  }
+  return test.assert_is_none_i32(m.group_index("nope"));
 }
 
 // --- $-template replacement ------------------------------------------------
@@ -149,6 +166,13 @@ function require_regex_parts(result: Option[string[]]): string[] {
     }
   }
   return [];
+}
+
+function at(o: Option[i32], want: i32): boolean {
+  if let Some(v) = o {
+    return v == want;
+  }
+  return false;
 }
 
 function require_regex_text(result: Option[string]): string {
