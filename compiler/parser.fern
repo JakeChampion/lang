@@ -5175,8 +5175,8 @@ function exiting_if_tail(e: ast.Expr): Option[ast.Stmt] {
 
 // branch_exits_early reports whether a value branch's statements before its
 // terminal `return` already exit, a `loop` counted as one that may break.
-function branch_exits_early(body: ast.Stmt[]): boolean {
-  return body.len() >= 2 && stmts_exit(without_last(body), false);
+pub function branch_exits_early(body: ast.Stmt[]): boolean {
+  return body.len() >= 2 && stmt_exits(body[body.len() - 2], false);
 }
 
 function without_last(body: ast.Stmt[]): ast.Stmt[] {

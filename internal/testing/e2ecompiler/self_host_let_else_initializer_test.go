@@ -43,6 +43,13 @@ function propagated(flag: boolean): Result[i32, string] {
   let n: i32 = { let source: Result[i32, string] = if (flag) { Err("failed") } else { Ok(6) }; source? };
   return Ok(n + 1);
 }
+function only_exit(flag: boolean): string {
+  loop {
+    let value: string = { if (flag) { return "done"; } break; };
+    return value;
+  }
+  return "break";
+}
 function main(): i32 {
   let Some(value) = { Some(7) } else { return 1; };
   let 3 = { 3 } else { return 2; };
@@ -65,6 +72,7 @@ function main(): i32 {
   if (captured_scope(10) != 23) { return 10; }
   if (!match (propagated(false)) { Ok(n) => n == 7, Err(_) => false }) { return 11; }
   if (!match (propagated(true)) { Err(message) => message == "failed", Ok(_) => false }) { return 12; }
+  if (only_exit(true) != "done" || only_exit(false) != "break") { return 13; }
   return 0;
 }`
 	cli := buildSelfHostCLI(t)

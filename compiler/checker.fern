@@ -4732,6 +4732,9 @@ function coercible(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
 }
 
 function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
+  if let typeinfo.TypeNever(_) = from {
+    return true;
+  }
   let traits: string = "";
   if let typeinfo.TypeDyn(d) = to {
     traits = d.traits;
@@ -4921,6 +4924,9 @@ function any_promotes_view(from: typeinfo.Type[], to: typeinfo.Type[]): boolean 
 }
 
 function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSig[]): boolean {
+  if let typeinfo.TypeNever(_) = from {
+    return true;
+  }
   if (integer_literal_widens(from, to)) {
     return true;
   }
@@ -27228,6 +27234,9 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
     if (u.kind == "value branch has no trailing expression") {
       return t_void();
     }
+  }
+  if (parser.branch_exits_early(body)) {
+    return typeinfo.TypeNever { tag: 0 };
   }
   if let ast.StmtReturn(r) = body[body.len() - 1] {
     if (parser.bare_return(r.value)) {
