@@ -1,0 +1,66 @@
+import "std/array" as array;
+import "std/i64";
+import "std/num";
+import "core/cmp";
+
+function identity[T](x: T): T {
+  return x;
+}
+
+function keep[T](x: T): boolean {
+  return true;
+}
+
+function first[T](a: T, b: T): T {
+  return a;
+}
+
+function (xs: [T]) transform[U](f: (T) => U): U {
+  return f(xs[0]);
+}
+
+function one_plus[T: num.Add + num.One](x: T): T {
+  return T.one().add(x);
+}
+
+function zero_plus[T: num.Add + num.Zero](x: T): T {
+  return T.zero().add(x);
+}
+
+function default_plus[T: num.Add + cmp.Default](x: T): T {
+  return T.default().add(x);
+}
+
+function main(): i32 {
+  let floats: f64[] = [0.5, -2.0, 1.0];
+  let free: f64[] = array.map(floats, identity);
+  let method: f64[] = floats.map(identity);
+  if (free[0] != method[0] || method[2] != 1.0) {
+    return 1;
+  }
+  let ints: i64[] = [4294967296, 9];
+  let mapped: i64[] = ints.map(identity);
+  let incremented: i64[] = ints.map(one_plus);
+  let kept: i64[] = ints.filter(keep);
+  if (mapped[0] != ints[0] || incremented[0] != 4294967297 || kept.len() != 2 || kept[0] != ints[0]) {
+    return 2;
+  }
+  let initial: i64 = 8589934592;
+  if (ints.fold(initial, first) != initial) {
+    return 3;
+  }
+  let view: [i64] = ints[:];
+  let picked: i64 = view.transform(identity);
+  if (picked != ints[0]) {
+    return 4;
+  }
+  if (one_plus(ints[0]) != 4294967297 || zero_plus(ints[0]) != ints[0] || default_plus(ints[0]) != ints[0]) {
+    return 5;
+  }
+  let f: f32 = 2.5;
+  if (one_plus(f) != 3.5 || zero_plus(f) != f || default_plus(f) != f) {
+    return 6;
+  }
+  print("generic callbacks retain their types");
+  return 0;
+}

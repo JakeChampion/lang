@@ -41,6 +41,25 @@ const ownEnumQualifierMain = `import "./enumlib";
 function main(): i32 { return enumlib.pick(); }
 `
 
+func TestImportedEnumQualifierKeepsVisibility(t *testing.T) {
+	for _, source := range []string{
+		`function main(): i32 { let x = m.HiddenUnit.SecretUnit; return 0; }`,
+		`function main(): i32 { let x = m.Hidden.Secret(1); return 0; }`,
+		`function f(x: m.Visible): i32 { match (x) { m.Hidden.Secret(n) => { return n; }, _ => { return 0; } } } function main(): i32 { return 0; }`,
+	} {
+		dir := writeFiles(t, map[string]string{
+			"main.fern": `import "./enumlib" as m;` + source,
+			"enumlib.fern": `enum Hidden { Secret(i32) }
+enum HiddenUnit { SecretUnit }
+pub enum Visible { Public }`,
+		})
+		_, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+		if err == nil || !strings.Contains(err.Error(), "is not exported") {
+			t.Fatalf("private enum qualifier: got %v", err)
+		}
+	}
+}
+
 // TestOwnEnumQualifierInImportedModule pins that both positions check
 // clean and that the match arm actually selects — a qualifier that
 // merely stopped erroring but no longer matched its variant would be a

@@ -1,11 +1,8 @@
 // std/headers — HTTP HeaderMap with case-insensitive lookup,
 // multi-valued entries, and insertion-ordered iteration.
 //
-// Backs the `headers: HeaderMap` field that's slated to land on
-// `HttpRequest` and `HttpResponse` (docs/STDLIB-DESIGN-RESEARCH.md
-// Rec §2). This PR lands the type + methods only; the HttpRequest
-// / HttpResponse wiring + the wasi-http canonical-ABI fields-
-// resource integration follow in their own reviewable units.
+// HeaderMap backs the headers field of HttpRequest and HttpResponse.
+// The WASI HTTP adapter converts it to and from the host's fields resource.
 //
 // Storage: two parallel arrays. `names` holds each name as it was
 // given, and lookups compare names ASCII-case-insensitively (field

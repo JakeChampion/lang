@@ -4359,13 +4359,16 @@ func (p *parser) parseTupleElemVariant(elem *ast.TuplePatElem) error {
 	nameTok := p.peek()
 	p.advance()
 	elem.VariantName = nameTok.Text
-	if p.match(lexer.Punct, ".") {
+	for p.match(lexer.Punct, ".") {
 		p.advance()
 		vt, err := p.expect(lexer.Ident, "")
 		if err != nil {
 			return err
 		}
-		elem.VariantModule = elem.VariantName
+		if elem.VariantModule != "" {
+			elem.VariantModule += "."
+		}
+		elem.VariantModule += elem.VariantName
 		elem.VariantName = vt.Text
 	}
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
@@ -4551,18 +4554,17 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 	} else if t.Kind == lexer.Ident {
 		p.advance()
 		pat.VariantName = t.Text
-		// Optional `mod.` qualifier: `lexer.TokA(x) => …`. When the
-		// next token is `.`, the ident we just consumed was the
-		// module name, not the variant — re-consume after the dot.
-		// The checker verifies the qualifier against the scrutinee
-		// enum's source module.
-		if p.match(lexer.Punct, ".") {
+		// A qualifier can name a module, an enum, or an imported enum.
+		for p.match(lexer.Punct, ".") {
 			p.advance()
 			nameTok, err := p.expect(lexer.Ident, "")
 			if err != nil {
 				return pat, err
 			}
-			pat.VariantModule = pat.VariantName
+			if pat.VariantModule != "" {
+				pat.VariantModule += "."
+			}
+			pat.VariantModule += pat.VariantName
 			pat.VariantName = nameTok.Text
 		}
 		if _, ok := p.accept(lexer.Punct, "("); ok {

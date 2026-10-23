@@ -92,7 +92,7 @@ costs a silent failure on the first target that lacks it.
   the whole math / string / array runtime that was never in either table.
   `target_os` and `target_arch` are purer still: each is a string literal by the
   time anything runs, folded from a half of the target's own name
-  (`docs/STDLIB.md`).
+  (see `docs/BACKEND-PARITY.md`).
 - **Readiness** — `poll`, `wasm_block`, `wasm_poll`, `wasm_pollable_drop`.
 - **`exit`** and **`isatty`** — see below.
 

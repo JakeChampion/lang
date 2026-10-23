@@ -94,23 +94,8 @@ import "std/utf8" as utf8;
 // non-capturing `(?:…)` group contributes no RGroup (its inner tree is
 // spliced in directly, like `( … )` did before captures existed).
 //
-// The group carries a single-field-struct payload (`RGroupData`) rather
-// than a two-payload `RGroup(i32, RNode)` because the self-host compiler's
-// enum variants are single-payload by design (parser.fern's PatVariant:
-// a multi-binding pattern is an E015 arity error). Boxing the two fields in
-// a struct keeps std/regex compilable on every backend. A `(?<name>…)` label
-// is NOT stored here; group names are recovered by a separate positional
-// scan of the pattern (`__rx_group_names`).
-//
-// This comment used to add that a trailing `string` field made the self-host
-// IR span matcher crash on `(ab)+c` — "a struct-layout codegen subtlety" the
-// two-field shape side-stepped. That diagnosis was wrong, and the workaround never
-// worked: `(ab)+c` and every other grouped pattern crashed at the two-field
-// shape too, and the cause was #6049 — two irlower reference-counting bugs
-// (an enum struct field stored into a container with no Perceus dup, and a
-// match arm's enum-payload array binding swept at every exit) that freed the
-// parse tree while `__rx_match` still walked it. Both are fixed. The field
-// count here is a parser constraint, not a codegen workaround.
+// RGroupData holds a capture group's index and child node.
+// __rx_group_names recovers group names from the pattern when they are needed.
 struct RGroupData { idx: i32, node: RNode }
 
 pub enum RNode {
@@ -991,10 +976,7 @@ pub function regex_replace_bytes(pattern: string, text: string, repl: string): u
 // text position in capture slot `s` (slot 2i = group i's start, 2i + 1 =
 // its end; group 0 is the whole match); `IMatch` accepts.
 //
-// ISplit's two targets are carried in a single-field-struct payload (`RSplit`)
-// for the same reason RGroup does: the self-host compiler's variants are
-// single-payload (see RGroupData above), so a two-payload `ISplit(i32,i32)`
-// wouldn't construct/bind on the legacy AST self-host backend.
+// RSplit names the two branch targets of an ISplit instruction.
 struct RSplit { a: i32, b: i32 }
 
 enum RInst {

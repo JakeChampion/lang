@@ -1,0 +1,47 @@
+Main binary filename not available.
+Fern bounded reservoir: retained=2686 dropped=0
+Type: alloc_space
+Showing nodes accounting for 21.80MB, 99.89% of 21.83MB total
+Dropped 221 nodes (cum <= 0.11MB)
+Showing top 40 nodes out of 47
+      flat  flat%   sum%        cum   cum%
+   13.80MB 63.22% 63.22%    13.80MB 63.22%  __fn___fern_str_grow_fresh_range
+    4.32MB 19.80% 83.02%     4.32MB 19.80%  __fn___fern_str_concat
+    3.68MB 16.87% 99.89%     3.68MB 16.87%  __fern_arr_box
+         0     0% 99.89%     1.30MB  5.93%  __fern_alloc_u8
+         0     0% 99.89%     1.22MB  5.58%  __fern_arr_push
+         0     0% 99.89%     0.98MB  4.50%  __fern_arr_push_owned
+         0     0% 99.89%     2.03MB  9.30%  __fn_asm_ir__emit_entry_runtime
+         0     0% 99.89%     2.03MB  9.29%  __fn_asm_ir__emit_ir_runtime
+         0     0% 99.89%     2.02MB  9.24%  __fn_asm_ir__emit_ir_runtime_fern_fn
+         0     0% 99.89%    20.78MB 95.18%  __fn_asm_ir__emit_module_or_error_sub
+         0     0% 99.89%     0.50MB  2.31%  __fn_asmcore__entry_check_errors
+         0     0% 99.89%     0.63MB  2.89%  __fn_asmcore__new_state
+         0     0% 99.89%     0.18MB  0.84%  __fn_checker__annotate_module
+         0     0% 99.89%     0.29MB  1.33%  __fn_checker__build_gate_diags
+         0     0% 99.89%     0.24MB  1.09%  __fn_checker__builtin_sig
+         0     0% 99.89%     0.29MB  1.33%  __fn_checker__check_module
+         0     0% 99.89%     0.16MB  0.71%  __fn_checker__check_module_pass
+         0     0% 99.89%     0.33MB  1.50%  __fn_checker__module_env
+         0     0% 99.89%     0.20MB  0.91%  __fn_checker__type_from_name
+         0     0% 99.89%     0.25MB  1.17%  __fn_checker__type_names
+         0     0% 99.89%     0.50MB  2.29%  __fn_irtables__fn_sig_index
+         0     0% 99.89%    15.82MB 72.48%  __fn_irverifygate__close_memo
+         0     0% 99.89%     0.60MB  2.77%  __fn_irverifygate__gate_unreported
+         0     0% 99.89%     2.08MB  9.55%  __fn_irverifygate__open_memo
+         0     0% 99.89%    21.83MB   100%  __fn_main
+         0     0% 99.89%     0.16MB  0.74%  __fn_parser__parse_type_ref
+         0     0% 99.89%    21.83MB   100%  __fn_run_with
+         0     0% 99.89%     0.57MB  2.61%  __fn_semlower__inferred_rows
+         0     0% 99.89%     1.20MB  5.50%  __fn_semlower__produced_rows
+         0     0% 99.89%     0.91MB  4.16%  __fn_semlower__runtime_lowering
+         0     0% 99.89%     0.91MB  4.16%  __fn_semlower__runtime_lowering$wrap
+         0     0% 99.89%     0.65MB  2.99%  __fn_semlower__substitution_of
+         0     0% 99.89%     0.69MB  3.14%  __fn_semlower__target_substitution
+         0     0% 99.89%     0.68MB  3.13%  __fn_semsource__builtin_contracts
+         0     0% 99.89%     0.24MB  1.10%  __fn_semsource__c_call_contracts
+         0     0% 99.89%     0.50MB  2.28%  __fn_semsource__intrinsic_contracts
+         0     0% 99.89%     0.12MB  0.54%  __fn_semsource__lane_contracts
+         0     0% 99.89%     0.60MB  2.74%  __fn_semsource__produce_module
+         0     0% 99.89%     0.50MB  2.28%  __fn_semsource__with_inferred_modes
+         0     0% 99.89%     0.77MB  3.53%  __fn_ssa_lift__kind_table

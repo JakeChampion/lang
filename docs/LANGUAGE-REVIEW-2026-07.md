@@ -2,6 +2,10 @@
 
 Status: [record] review snapshot at commit 577e2c8 (2026-07); the native compiler it reviews is since retired.
 
+The syntax examples below record that version.
+Current code uses typed arrow lambdas such as `(x: i32) => x + 1`.
+Anonymous `function` expressions and untyped lambda parameters are parse errors.
+
 A critical, evidence-based review of the Fern programming language, its
 standard library, its implementations, and its ecosystem. Written against
 the repository at commit `577e2c8` (2026-07). Every major claim cites the

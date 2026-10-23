@@ -63,13 +63,12 @@ pub function http_refused(why: string): string {
   return "fern: -target wasm32-wasi-http: the proxy world cannot take this handler: " + why;
 }
 
-// wasm_http_core is the handler's reactor core in text form: the component
-// core, with the host runtime (stdio, clocks, entropy) only when the program
-// reaches the host — a handler that only answers imports nothing beyond
-// wasi:http/types and wasi:io/streams, which is all the playground's browser
-// host implements.
+// wasm_http_core is the handler's reactor core in text form.
+// Runtime bounds and allocation guards need stderr, alongside explicit host calls.
 pub function wasm_http_core(full: parser.Module, sub: ircore.Sub): string {
-  return wasm_ir.emit_module_mode_or_error_sub(full, true, wasm_ir.component_needs_host(full, sub.switches), sub);
+  let needs: string[] = wasm_ir.needs_of(util.append_all(sub.bodies, sub.extra));
+  let host: boolean = wasm_ir.component_needs_host(full, sub.switches) || wasm_ir.needs_abort(needs) || wasm_ir.module_extern_needs_heap(full);
+  return wasm_ir.emit_module_mode_or_error_sub(full, true, host, sub);
 }
 
 // wasm_http_component is the wasi:http/incoming-handler component for `full`

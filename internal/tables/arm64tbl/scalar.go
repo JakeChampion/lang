@@ -225,9 +225,11 @@ var Scalar = []Family{
 			{Mnemonic: "sha1c", Probe: "sha1c q0, s1, v2.4s"}, {Mnemonic: "sha1p", Probe: "sha1p q0, s1, v2.4s"},
 			{Mnemonic: "sha1m", Probe: "sha1m q0, s1, v2.4s"}, {Mnemonic: "sha1h", Probe: "sha1h s0, s1"},
 			{Mnemonic: "sha1su0", Probe: "sha1su0 v0.4s, v1.4s, v2.4s"}, {Mnemonic: "sha1su1", Probe: "sha1su1 v0.4s, v1.4s"}}},
-	{Name: "narrow", Doc: "the narrowing moves and shifts", Probe: "%s v0.8b, v1.8h",
+	{Name: "narrow", Doc: "the narrowing moves and shifts, and the FP narrowing and lengthening conversions", Probe: "%s v0.8b, v1.8h",
 		Ops: []ScalarOp{{Mnemonic: "xtn"}, {Mnemonic: "xtn2", Probe: "xtn2 v0.16b, v1.8h"},
-			{Mnemonic: "shrn", Probe: "shrn v1.8b, v1.8h, #4"}, {Mnemonic: "shrn2", Probe: "shrn2 v0.16b, v1.8h, #3"}}},
+			{Mnemonic: "shrn", Probe: "shrn v1.8b, v1.8h, #4"}, {Mnemonic: "shrn2", Probe: "shrn2 v0.16b, v1.8h, #3"},
+			{Mnemonic: "fcvtn", Probe: "fcvtn v0.2s, v1.2d"}, {Mnemonic: "fcvtn2", Probe: "fcvtn2 v2.4s, v17.2d"},
+			{Mnemonic: "fcvtl", Probe: "fcvtl v3.2d, v1.2s"}, {Mnemonic: "fcvtl2", Probe: "fcvtl2 v0.2d, v18.4s"}}},
 	{Name: "shll", Doc: "the widening shifts; the word is the packed kind: bit 0 unsigned, bit 1 the `2` suffix, bit 2 an sxtl/uxtl alias",
 		Probe: "%s v0.8h, v1.8b, #3", Base: "arm64_gas_shll_kind",
 		Ops: []ScalarOp{

@@ -878,7 +878,7 @@ func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, 
 }
 
 // lastUseArgs is the E051 admission for a local handed over at its last use
-// (#9541): each ident argument of a direct call that CallArgDeaths marks dead
+// (#9541): each ident argument of a call that CallArgDeaths marks dead
 // there, names a `let` local of fn, and is read by no defer or lambda. Those
 // are the positions computeOwnedArgMoves moves into an owned parameter.
 // Calls inside a nested function or lambda are left out of fn's own walk:
@@ -928,7 +928,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 		return true
 	})
 	for call, dies := range d.Dies {
-		if _, direct := call.Callee.(*ast.Ident); !direct || nested[call] {
+		if nested[call] {
 			continue
 		}
 		for _, a := range call.Args {

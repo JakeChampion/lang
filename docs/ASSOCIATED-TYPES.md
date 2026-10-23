@@ -173,9 +173,10 @@ function chunk[T: Lanes](n: i32): i32 { return n / T.LANES; }
   constant "LANES"`) or a wrong type (the signature mismatch, as `() => T`).
 - `T.f` on an associated function and `T.NAME()` on a constant are both
   E043, each naming the other spelling. A name neither declares is E043
-  `T has no associated constant "X"`, on an unbounded parameter too (its
-  associated functions come from its instantiation, which a read cannot
-  resolve).
+  `T has no associated constant "X"`, on an unbounded parameter too. An
+  associated member of a type parameter comes only from its bounds, so
+  `T.f()` with no bound declaring `f` is E001 `type parameter T has no
+  associated function "f"`, whatever the instantiation provides (#12954).
 
 Implementation, in the compiler and the Go front end: an associated constant
 is an associated function with no parameters marked `const`

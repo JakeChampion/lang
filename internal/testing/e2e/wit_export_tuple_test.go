@@ -92,7 +92,7 @@ function make_pair(a: i32, b: i32): (i32, i32) { return (a + 1, b * 2); }`
 		t.Fatalf("write pairs dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
-		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import local:test/pairs@0.1.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/pairs@0.1.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write user world: %v", err)
 	}
 	run(wasmtools, "parse", mustWrite(t, dir, "ue.wat", "(module)"), "-o", filepath.Join(dir, "ue.wasm"))

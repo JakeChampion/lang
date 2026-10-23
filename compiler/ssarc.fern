@@ -130,6 +130,11 @@ function arr_make_op(elem: typeinfo.Type, n: i32): ir.Op {
 }
 
 function arr_get_op(elem: typeinfo.Type, unchecked: boolean): ir.Op {
+  // A lane read checks its whole group itself, whatever the bounds pass
+  // proved of its first index.
+  if let typeinfo.TypeLanes(l) = elem {
+    return ir.op_lane("vget", l.width);
+  }
   if (ssasem.is_wide(elem) && unchecked) {
     return ir.op_arr_get_i64_nc();
   }
@@ -1073,13 +1078,23 @@ function drop_variant_fields(own r: irtables.LowerResult, slot: i32, t: typeinfo
   return close_ifs(r, open);
 }
 
-// self_tail_field: the index of the variant's last field of the enum's own
-// type, or -1.
+// A recursive tail is the enum itself or an owned array of that enum.
+function self_tail_type(field: typeinfo.Type, whole: typeinfo.Type): boolean {
+  if (semtypes.equal(field, whole)) {
+    return true;
+  }
+  if let typeinfo.TypeArray(a) = field {
+    return !a.view && semtypes.equal(a.elem, whole);
+  }
+  return false;
+}
+
+// self_tail_field is the variant's last recursive field, or -1.
 function self_tail_field(v: semrecords.Variant, t: typeinfo.Type): i32 {
   let at: i32 = 0 - 1;
   let i: i32 = 0;
   while (i < v.fields.len()) {
-    if (semtypes.equal(v.fields[i].ty, t)) {
+    if (self_tail_type(v.fields[i].ty, t)) {
       at = i;
     }
     i = i + 1;
@@ -1101,7 +1116,7 @@ function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
 }
 
 // drop_variant_chain is drop_variant_fields for an enum whose variants reach
-// the enum itself (a list's tail): that one field is not a recursive drop but
+// the enum itself, directly or through an array: its final child becomes
 // the next node of a loop, so the helper's stack stays constant however long
 // the chain is (#9046). Each node after the first is released here once its
 // children are, exactly as drop_value would release it; a shared next node is
@@ -1136,7 +1151,10 @@ function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ss
       if (walked(v.fields[i].ty)) {
         r = emit(r, ir.op_load_local(node));
         r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
-        if (i == tail) {
+        if (i == tail && !semtypes.equal(v.fields[i].ty, t)) {
+          r = emit(r, ir.op_store_local(4));
+          r = drop_tail_array(r, t, v.fields[i].ty, f);
+        } else if (i == tail) {
           r = emit(r, ir.op_store_local(next));
         } else {
           r = emit(r, ir.op_store_local(4));
@@ -1174,6 +1192,52 @@ function drop_variant_chain(own r: irtables.LowerResult, t: typeinfo.Type, f: ss
   r = emit(r, ir.op_br(0));
   r = emit(r, ir.op_end());
   return emit(r, ir.op_end());
+}
+
+// The unique array's final element becomes the next node. Release every
+// earlier element and the array shell. A shared array keeps its children.
+// Slots 1 to 3 belong to drop_variant_chain, and slot 4 holds this array.
+function drop_tail_array(own r: irtables.LowerResult, elem: typeinfo.Type, array: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
+  r = reserve(r, 8);
+  r = emit(r, ir.op_load_local(4));
+  r = emit(r, aligned_unique());
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(4));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_store_local(6));
+  r = emit(r, ir.op_load_local(6));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("gt_s", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(5));
+  r = emit(r, ir.op_block(0));
+  r = emit(r, ir.op_loop(0));
+  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_const_i32(1));
+  r = emit(r, ir.op_bin("add", 0, false));
+  r = emit(r, ir.op_load_local(6));
+  r = emit(r, ir.op_bin("ge_s", 0, false));
+  r = emit(r, ir.op_brif(1));
+  r = emit(r, ir.op_load_local(4));
+  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(32)));
+  r = emit(r, ir.op_store_local(7));
+  r = drop_value(r, 7, elem, 8, f);
+  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.op_const_i32(1));
+  r = emit(r, ir.op_bin("add", 0, false));
+  r = emit(r, ir.op_store_local(5));
+  r = emit(r, ir.op_br(0));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(4));
+  r = emit(r, ir.op_load_local(5));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(32)));
+  r = emit(r, ir.op_store_local(3));
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_end());
+  return release(r, 4, array, f);
 }
 
 function drop_elements(own r: irtables.LowerResult, slot: i32, elem: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
@@ -2462,7 +2526,7 @@ function value_op(k: i32): boolean {
 function container_op(k: i32): boolean {
   return kind_in(
     [
-      ssasem.array_new(), ssasem.array_reserve(), ssasem.tuple_new(), ssasem.record_new(), ssasem.dyn_box(),
+      ssasem.array_new(), ssasem.bytes_new(), ssasem.array_reserve(), ssasem.tuple_new(), ssasem.record_new(), ssasem.dyn_box(),
       ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
       ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
       ssasem.str_bytes(), ssasem.str_byte_view(), ssasem.arr_join(), ssasem.arr_slice(), ssasem.arr_concat(),
@@ -3171,6 +3235,12 @@ function own_copied(own r: irtables.LowerResult, elem: typeinfo.Type, copy: i32,
 // backends store every field as 8 bytes, and every read takes its offset from
 // the field index alone.
 function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): irtables.LowerResult {
+  if (ins.kind_tag == ssasem.bytes_new()) {
+    r = emit(r, ir.op_const_bytes(ins.str));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_const_i32(ins.imm));
+    return emit(r, ir.op_array_literal_copy(8));
+  }
   if (ins.kind_tag == ssasem.array_reserve()) {
     return emit(r, ir.op_arr_reserve(elem_width(elem_type(f.values[ins.result]))));
   }
@@ -3891,11 +3961,14 @@ function negation_zero(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
 // A construction the plan found constant is a static box: its operands were
 // loaded for the ordinary construction and are dropped unread.
 function static_box(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
+  if (ins.kind_tag == ssasem.bytes_new()) {
+    return emit(r, ir.op_const_bytes(ins.str));
+  }
   for a in ins.args {
     r = emit(r, ir.op_drop());
   }
   let nfields: i32 = ins.args.len();
-  if (ins.kind_tag == ssasem.array_new()) {
+  if (ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.bytes_new()) {
     nfields = 0;
   }
   return emit(r, ir.op_const_struct(static_name(f, ins), nfields, static_values(f, p, p.constants[ins.result])));
@@ -3908,6 +3981,9 @@ function wide_elem(t: typeinfo.Type): boolean {
 }
 
 function static_name(f: ssasem.Func, ins: ssa.SInst): string {
+  if (ins.kind_tag == ssasem.bytes_new()) {
+    return "&bytes";
+  }
   if (ins.kind_tag == ssasem.array_new() && ssasem.is_u8(elem_type(f.values[ins.result]))) {
     return "&bytes";
   }
@@ -3937,7 +4013,11 @@ function static_values(f: ssasem.Func, p: ssaunits.Plan, words: string): string 
     }
     if (w.len() > 0 && w[0] == b'@') {
       let v: i32 = util.lit_to_i32(slice_unchecked(w, 1, w.len()) + "");
-      out = out + "{" + static_name(f, p.defs[v]) + "|" + static_values(f, p, p.constants[v]) + "}";
+      let payload: string = p.defs[v].str;
+      if (p.defs[v].kind_tag != ssasem.bytes_new()) {
+        payload = static_values(f, p, p.constants[v]);
+      }
+      out = out + "{" + static_name(f, p.defs[v]) + "|" + payload + "}";
     } else if (w.len() > 0 && w[0] == b'$') {
       out = out + ir.const_str_word(p.defs[util.lit_to_i32(slice_unchecked(w, 1, w.len()) + "")].str);
     } else {
@@ -4693,7 +4773,7 @@ function with_write(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   r = emit(r, ir.op_load_local(scratch));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[2]));
-  r = emit(r, with_set_op(p, ins, elem));
+  r = emit(r, with_set_op(f, p, ins, elem));
   return emit(r, ir.op_load_local(scratch));
 }
 
@@ -4744,13 +4824,16 @@ function with_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   r = emit(r, ir.op_load_local(res));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[2]));
-  r = emit(r, with_set_op(p, ins, elem));
+  r = emit(r, with_set_op(f, p, ins, elem));
   return emit(r, ir.op_load_local(res));
 }
 
 // A with writes a box of its receiver's length, so an index the plan saw
 // checked against the receiver, or one ssabounds proved, needs no check.
-function with_set_op(p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.Op {
+function with_set_op(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.Op {
+  if let typeinfo.TypeLanes(l) = f.values[ins.args[2]] {
+    return ir.op_lane("vset", l.width);
+  }
   if (ins.imm == 1 || p.checked_writes[ins.result]) {
     return ir.in_bounds(arr_set_op(elem));
   }

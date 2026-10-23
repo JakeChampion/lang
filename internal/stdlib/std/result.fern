@@ -5,15 +5,10 @@
 // them. Like std/option, each is an ordinary generic method (a small
 // `match`), enabled by the generic-methods support (#2692).
 //
-//   let parsed: Result[Config, string] = Config::from_json(body);
+//   let parsed: Result[Config, string] = Config.from_json(body);
 //   let cfg: Config = parsed.unwrap_or(default_config());
 //
-// NOTE: callback combinators invoke their function through an indirect
-// call. Composite callback parameter / return types (struct, enum,
-// `Option` / `Result`) work on every backend; a two-word `string`
-// callback parameter / return is still limited at the indirect-call
-// seam (#2753), so keep `string`-typed callbacks out of these for now.
-// Non-callback combinators work for every type on every backend.
+// Callback combinators accept strings and composite values on every backend.
 
 import "core/cmp";
 

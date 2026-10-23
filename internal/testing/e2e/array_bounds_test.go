@@ -151,6 +151,17 @@ function main(): i32 {
     print(s.len().to_string());
     return 0;
 }`},
+		// A lane group checks its last index as well as its first: the
+		// first index of each group below is in range.
+		{"lane_read_group_past_end", `import "std/f64";
+function at(xs: f64[], i: i32): f64x2 { return __f64x2_load(xs, i); }
+function main(): i32 { let xs: f64[] = [1.0, 2.0, 3.0]; print(__f64x2_lane(at(xs, 2), 0).to_string()); return 0; }`},
+		{"lane_write_negative", `import "std/i32";
+function put(xs: f32[], i: i32): f32[] { return __f32x4_with(xs, i, __f32x4_splat(1.0)); }
+function main(): i32 { let xs: f32[] = [1.0, 2.0, 3.0, 4.0, 5.0]; print(put(xs, 0 - 1).len().to_string()); return 0; }`},
+		{"lane_write_group_past_end", `import "std/i32";
+function put(xs: f32[], i: i32): f32[] { return __f32x4_with(xs, i, __f32x4_splat(1.0)); }
+function main(): i32 { let xs: f32[] = [1.0, 2.0, 3.0, 4.0, 5.0]; print(put(xs, 2).len().to_string()); return 0; }`},
 	}
 	for _, c := range oob {
 		t.Run(c.name, func(t *testing.T) { assertAborts(t, c.src) })

@@ -417,8 +417,8 @@ Migration sequence:
 2. Migrate all in-tree callers to the new names.
 3. Delete the void variants and rename `set_returning` → `set`
    (still Phase 2, end of the PR series).
-4. Document the API in `docs/STDLIB.md`'s `core/map` section once the
-   migration settles (Phase 6).
+4. Document the API in `internal/stdlib/core/map.fern` once the migration
+   settles (Phase 6). The generated reference reads these source comments.
 
 ### Considered and rejected
 

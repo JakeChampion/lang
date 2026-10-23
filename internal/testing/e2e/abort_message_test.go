@@ -20,6 +20,30 @@ type abortCase struct {
 
 var abortCases = []abortCase{
 	{
+		name:     "array_negative_index",
+		src:      `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[0 - 1]; }`,
+		wantExit: 134,
+		wantErr:  "array index out of range",
+	},
+	{
+		name:     "array_update_oob",
+		src:      `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs.with(9, 1).len(); }`,
+		wantExit: 134,
+		wantErr:  "array index out of range",
+	},
+	{
+		name:     "string_index_oob",
+		src:      `function main(): i32 { let s = "hi"; return s[9] as i32; }`,
+		wantExit: 134,
+		wantErr:  "string index out of range",
+	},
+	{
+		name:     "negative_allocation",
+		src:      `@noinline function alloc(n: i32): i32 { let b: u8[] = __alloc_u8(n); return b.len(); } function main(): i32 { return alloc(0 - 1); }`,
+		wantExit: 134,
+		wantErr:  "allocation size out of range",
+	},
+	{
 		name:     "array_oob",
 		src:      `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[7]; }`,
 		wantExit: 134,
@@ -41,9 +65,27 @@ var abortCases = []abortCase{
 		wantErr:  "slice range out of bounds",
 	},
 	{
+		name:     "lane_load_negative_index",
+		src:      `function main(): i32 { let xs: f64[] = [1.0, 2.0]; return __f64x2_lane(__f64x2_load(xs, 0 - 1), 0) as i32; }`,
+		wantExit: 134,
+		wantErr:  "array index out of range",
+	},
+	{
+		name:     "lane_load_last_index_oob",
+		src:      `function main(): i32 { let xs: f32[] = [1.0, 2.0, 3.0]; return __f32x4_lane(__f32x4_load(xs, 0), 0) as i32; }`,
+		wantExit: 134,
+		wantErr:  "array index out of range",
+	},
+	{
+		name:     "lane_update_last_index_oob",
+		src:      `function main(): i32 { let xs: f64[] = [1.0, 2.0]; return __f64x2_with(xs, 1, __f64x2_splat(3.0)).len(); }`,
+		wantExit: 134,
+		wantErr:  "array index out of range",
+	},
+	{
 		name:     "in_bounds_ok",
-		src:      `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[1]; }`,
-		wantExit: 20,
+		src:      `function main(): i32 { let xs: i32[] = [10, 20, 30]; if (xs[1] != 20) { return 1; } return 0; }`,
+		wantExit: 0,
 		wantErr:  "",
 	},
 }
@@ -113,4 +155,35 @@ func TestArm64AbortMessages(t *testing.T) {
 		}
 		return exec.Command(qemu, bin)
 	})
+}
+
+func TestWasmAbortMessages(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runAbortCases(t, "wasm32-wasi", "", func(bin string) *exec.Cmd {
+		return exec.Command(wasmtime, "run", bin)
+	})
+}
+
+func TestWasmAbortOutOfMemory(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "oom.fern")
+	if err := os.WriteFile(src, []byte(`function main(): i32 { let b: u8[] = __alloc_u8(16777216); return b.len(); }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wasm := filepath.Join(dir, "oom.wasm")
+	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", wasm, src).CombinedOutput(); err != nil {
+		t.Fatalf("compile: %v\n%s", err, out)
+	}
+	cmd := exec.Command("wasmtime", "run", "-W", "max-memory-size=8388608", wasm)
+	out, _ := cmd.CombinedOutput()
+	if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 134 {
+		t.Fatalf("want trap status 134:\n%s", out)
+	}
+	if !strings.HasPrefix(string(out), "fern: out of memory (heap arena exhausted)\n") {
+		t.Fatalf("out-of-memory abort must report without another allocation:\n%s", out)
+	}
 }
