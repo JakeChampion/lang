@@ -49,14 +49,14 @@ function main(): i32 {
   match (iter.min(iter.of(e))) { Some(v) => {}, None => { r = r + 8; } }
   return r;
 }`, 15},
-	// position / contains / count_value by Eq; the literal target settles at i64.
+	// index_of / contains / count by Eq; the literal target settles at i64.
 	{"eq-reducers", `import "core/iter";
 function main(): i32 {
   let s: string[] = ["a", "b", "a"];
   let w: i64[] = [3, 9, 2];
   let r = 0;
-  match (iter.position(iter.of(s), "b")) { Some(p) => { if (p == 1) { r = r + 1; } }, None => {} }
-  if (iter.count_value(iter.of(s), "a") == 2) { r = r + 2; }
+  match (iter.index_of(iter.of(s), "b")) { Some(p) => { if (p == 1) { r = r + 1; } }, None => {} }
+  if (iter.count(iter.of(s), "a") == 2) { r = r + 2; }
   if (iter.contains(iter.of(w), 2)) { r = r + 4; }
   if (!iter.contains(iter.of(w), 4)) { r = r + 8; }
   return r;

@@ -182,6 +182,7 @@ function main(): i32 {
 func NetUdpProbe() string {
 	return `import "core/int";
 import "std/net";
+import "std/errno";
 
 function fail(n: i32): i32 {
     print(int.int_to_string(n));
@@ -258,7 +259,7 @@ function main(): i32 {
     if (target_os() == "wasi") {
         match (net.set_nonblocking(a, true)) {
             Ok(u) => { return fail(18); },
-            Err(e) => { if (e.errno() != 58) { return fail(19); } },
+            Err(e) => { if (e.errno() != errno.ENOTSUP) { return fail(19); } },
         }
     } else {
         match (net.set_nonblocking(a, true)) {
@@ -384,6 +385,7 @@ function main(): i32 {
 func NetConnectProbe() string {
 	return `import "core/int";
 import "std/net";
+import "std/errno";
 
 // recv reads once from fd within five seconds: the bytes, none at the end
 // of the stream, when nothing came, or when the read failed.
@@ -419,8 +421,8 @@ function settle(c: i32): i32 {
     return 0 - 1;
 }
 
-function refused(errno: i32): boolean {
-    return net.error_from_errno(errno).eq(net.ConnectionRefused);
+function refused(code: i32): boolean {
+    return code == errno.ECONNREFUSED;
 }
 
 function main(): i32 {

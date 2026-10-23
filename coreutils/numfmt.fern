@@ -493,14 +493,13 @@ function parse_fields(v: string, o: Opts): Opts {
 }
 
 function add_range(out: i32[], tok: string): i32[] {
-  let dash: i32 = tok.index_of("-");
-  if (dash < 0) {
+  let Some(dash) = tok.index_of("-") else {
     let only: i32 = field_number(tok);
     return out.append(only).append(only);
-  }
+  };
   let lo_s: string = slice_unchecked(tok, 0, dash) + "";
   let hi_s: string = slice_unchecked(tok, dash + 1, tok.len()) + "";
-  if (hi_s.index_of("-") >= 0) {
+  if (hi_s.contains("-")) {
     gnu.die_usage("invalid field range", 1);
   }
   let lo: i32 = 1;

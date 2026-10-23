@@ -12,7 +12,7 @@ function main(): i32 {
   if (!regex.regex_match("\\bcat\\b", "scatter")) {  // inside a word: no
     r = r + 2;
   }
-  if (regex.regex_find("\\bcat\\b", "a cat") == 2) {  // boundary position
+  if let Some(2) = regex.regex_find("\\bcat\\b", "a cat") {  // boundary position
     r = r + 4;
   }
   if (regex.regex_match("\\bword\\b", "word")) {  // boundaries at edges

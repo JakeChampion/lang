@@ -118,11 +118,12 @@ function test_acl_keeps_longest_prefix_wins(): test.TestOutcome {
 // the right even when the left already decided.
 function test_and_short_circuits_via_a_branch(): test.TestOutcome {
   let out: string = gen_recv("if (req.url == \"/a\" && std.tolower(req.url) == \"/a\") { return (pass); } return (hash);");
-  let gate: i32 = out.index_of("if (value.to_bool(v");
-  let call: i32 = out.index_of("eval.call_builtin(t, \"std.tolower\"");
-  if (gate < 0 || call < 0) {
+  let Some(gate) = out.index_of("if (value.to_bool(v") else {
     return test.fail("expected a gate and a call:\n" + out);
-  }
+  };
+  let Some(call) = out.index_of("eval.call_builtin(t, \"std.tolower\"") else {
+    return test.fail("expected a gate and a call:\n" + out);
+  };
   if (call < gate) {
     return test.fail("the right operand is evaluated before the gate");
   }

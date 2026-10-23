@@ -62,7 +62,7 @@ pub trait Iterator[T] {
     }
     return acc;
   }
-  function count(self: Self): i32 {
+  function len(self: Self): i32 {
     return self.fold(0, (n: i32, v: T): i32 => n + 1);
   }
   function collect(self: Self): T[] {
@@ -301,11 +301,11 @@ impl Iterator[i32] for Range {
 // ArrayIter is an Iterator[T] over a T[]: it yields xs[0], xs[1], …, in
 // order. Iteration is value-semantic — `next` returns a fresh ArrayIter
 // advanced one element, never mutating — matching Range's shape. This is
-// what makes the whole combinator library (sum / count / map / filter /
+// what makes the whole combinator library (sum / len / map / filter /
 // fold / take / …) usable on a plain array, and (via a map's `.keys()` /
 // `.values()` snapshot) on map keys and values too:
 //   iter.sum(iter.of(xs))
-//   iter.of(m.keys()).count()
+//   iter.of(m.keys()).len()
 // Generic over the element type T, lowered through a parametric impl of the
 // generic Iterator trait.
 pub struct ArrayIter[T] { xs: T[], idx: i32 }
@@ -350,10 +350,9 @@ pub function sum[T: num.Add + num.Zero, I: Iterator[T]](it: I): T {
 // `Set[T]` in #2671, where the function's `K`/`V` don't unify with the `Map`
 // method's own type params. It lands once that compiler gap closes.)
 
-// position_by returns the 0-based index of the first value for which `pred` is
-// true, or -1 if none matches. The closure-taking counterpart to `position`
-// (which matches on `Eq` against a target).
-pub function position_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
+// position returns the 0-based index of the first value for which `pred` is
+// true, or `None` if none matches. `index_of` matches a value instead.
+pub function position[T, I: Iterator[T]](it: I, pred: (T) => boolean): Option[i32] {
   let cur = it;
   let i = 0;
   let go = true;
@@ -361,7 +360,7 @@ pub function position_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
     match (cur.next()) {
       Some(t) => {
         if (pred(t.0)) {
-          return i;
+          return Some(i);
         }
         i = i + 1;
         cur = t.1;
@@ -371,13 +370,12 @@ pub function position_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
       }
     }
   }
-  return 0 - 1;
+  return None;
 }
 
-// count_by returns how many of the iterator's values satisfy `pred`. The
-// closure-taking counterpart to `count_value` (which counts values `Eq` to a
-// target).
-pub function count_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
+// count_where returns how many of the iterator's values satisfy `pred`.
+// `count` counts the values equal to a target instead.
+pub function count_where[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
   let cur = it;
   let n = 0;
   let go = true;
@@ -518,9 +516,9 @@ pub function product[T: num.Mul + num.One, I: Iterator[T]](it: I): T {
   return p;
 }
 
-// position returns the 0-based index of the first value equal to `target`, or
-// `None` if no value matches. `position_by` is the closure-taking form.
-pub function position[T: cmp.Eq, I: Iterator[T]](it: I, target: T): Option[i32] {
+// index_of returns the 0-based index of the first value equal to `target`, or
+// `None` if no value matches. `position` is the closure-taking form.
+pub function index_of[T: cmp.Eq, I: Iterator[T]](it: I, target: T): Option[i32] {
   let cur = it;
   let i = 0;
   let go = true;
@@ -562,9 +560,9 @@ pub function contains[T: cmp.Eq, I: Iterator[T]](it: I, target: T): boolean {
   return false;
 }
 
-// count_value returns how many of the iterator's values equal `target`.
-// `count_by` is the closure-taking form.
-pub function count_value[T: cmp.Eq, I: Iterator[T]](it: I, target: T): i32 {
+// count returns how many of the iterator's values equal `target`.
+// `count_where` is the closure-taking form.
+pub function count[T: cmp.Eq, I: Iterator[T]](it: I, target: T): i32 {
   let n = 0;
   let cur = it;
   let go = true;

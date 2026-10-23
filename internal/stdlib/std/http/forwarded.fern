@@ -82,8 +82,10 @@ pub function parse_hop(el: string): Option[Hop] {
   let h: Hop = hop();
   let seen: string[] = [];
   for pair in __pairs(el) {
-    let eq: i32 = pair.index_of("=");
-    if (eq <= 0) {
+    let Some(eq) = pair.index_of("=") else {
+      return None;
+    };
+    if (eq == 0) {
       return None;
     }
     let name: string = pair.slice_snap(0, eq).trim().to_lower();
@@ -228,10 +230,9 @@ function __holds(xs: string[], x: string): boolean {
 // and a port, digits or obfuscated.
 pub function node_parse(s: string): Option[NodeId] {
   if (s.len() > 0 && s[0] == 91 as u8) {
-    let close: i32 = s.index_of("]");
-    if (close < 0) {
+    let Some(close) = s.index_of("]") else {
       return None;
-    }
+    };
     match (net.ipv6_parse(s.slice_snap(1, close))) {
       Some(ip) => {
         return __with_port(Ip(ip), s.slice_snap(close + 1, s.len()));
@@ -241,10 +242,9 @@ pub function node_parse(s: string): Option[NodeId] {
       }
     }
   }
-  let colon: i32 = s.index_of(":");
   let name: string = s;
   let rest: string = "";
-  if (colon >= 0) {
+  if let Some(colon) = s.index_of(":") {
     name = s.slice_snap(0, colon);
     rest = s.slice_snap(colon, s.len());
   }

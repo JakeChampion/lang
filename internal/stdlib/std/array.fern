@@ -1628,10 +1628,8 @@ pub function dedup[T: cmp.Eq](xs: T[]): T[] {
 // scans; fine for the small-n CLI / edge-handler workloads, reach for a
 // Map/Set at larger N.
 
-// `count(xs, target)` — how many elements equal `target`. The Eq-bounded
-// generic companion to the element-type-specific `.count()` / `.count_str()`
-// receiver methods (which dispatch on the array's element type by name). Empty
-// → 0.
+// `count(xs, target)` — how many elements equal `target`; the free form of
+// `xs.count(target)`. Empty → 0.
 pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
   let c: i32 = 0;
   for x in xs {

@@ -535,9 +535,9 @@ think they're free additions to make.
   (computed as `abs(a*b)/gcd` with the gcd-first ordering
   to keep the intermediate multiply small).
 - **Rightmost string search**: `s.last_index_of(needle)`
-  (symmetric to index_of). Empty needle returns `len(s)`
-  per the Python rfind / Go LastIndex "match every gap"
-  convention.
+  (symmetric to index_of, `None` when absent). An empty needle
+  is found at `len(s)`, per the Python rfind / Go LastIndex
+  "match every gap" convention.
 - **`s.capitalize()`**: uppercase the first code point, leave the
   rest unchanged (`to_ascii_capitalize` is the byte-wise twin).
   Different from `to_upper` (which
@@ -736,8 +736,8 @@ think they're free additions to make.
 - **`format_duration_ms(ms)`**: human-readable durations
   like `"1h 23m 45s"` / `"500ms"`. Components only emitted
   when non-zero; `0` returns `"0ms"`.
-- **Byte digit/hex values**: `(b).digit_value()` / `(b).hex_value()`.
-  Return -1 on non-digits. Useful for hand-rolled parsers.
+- **Byte digit/hex values**: `(b).digit_value()` / `(b).hex_value()`, each `Option[i32]`,
+  `None` on a byte that is not a digit. Useful for hand-rolled parsers.
 - **`s.count_byte(b)`**: single-byte fast path on count.
 - **`http_url_path_only(path)`**: strip the `?query`
   suffix.

@@ -708,7 +708,7 @@ function strip_failed(dest: string, w: io_buffered.BufWriter): StripOut {
 // along PATH, and an empty PATH entry means the working directory, both
 // of which is what execvp does.
 function spawnable(name: string): Option[string] {
-  if (name.index_of("/") >= 0) {
+  if (name.contains("/")) {
     match (executable(name)) {
       Some(e) => {
         return Some(gnu.io_error_text(e));

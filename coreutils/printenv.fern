@@ -94,7 +94,7 @@ pub function main(): i32 {
       // and hand back `b`. POSIX rules the character out of a name, so
       // the operand is refused before the environment is asked.
       let found: boolean = false;
-      if (operands[k].index_of("=") < 0) {
+      if (!operands[k].contains("=")) {
         match (env(operands[k])) {
           Some(v) => {
             let shown: string = v;

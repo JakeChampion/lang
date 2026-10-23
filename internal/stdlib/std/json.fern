@@ -154,8 +154,17 @@ function __json_index_of(keys: string[], n: i32): i32[] {
   return index;
 }
 
-// position is where `key` is among the object's members, or -1.
-pub function (o: JsonObject) position(key: string): i32 {
+// index_of is where `key` is among the object's members, or None.
+pub function (o: JsonObject) index_of(key: string): Option[i32] {
+  let at: i32 = __json_member_at(o, key);
+  if (at < 0) {
+    return None;
+  }
+  return Some(at);
+}
+
+// __json_member_at is `index_of` with -1 for absent.
+function __json_member_at(o: JsonObject, key: string): i32 {
   if (o.index.len() == 0) {
     return __json_linear_find(o.keys, o.keys.len(), key);
   }
@@ -167,11 +176,11 @@ pub function (o: JsonObject) len(): i32 {
 }
 
 pub function (o: JsonObject) has(key: string): boolean {
-  return o.position(key) >= 0;
+  return __json_member_at(o, key) >= 0;
 }
 
 pub function (o: JsonObject) get(key: string): Option[JsonValue] {
-  let at: i32 = o.position(key);
+  let at: i32 = __json_member_at(o, key);
   if (at < 0) {
     return None;
   }
@@ -179,7 +188,7 @@ pub function (o: JsonObject) get(key: string): Option[JsonValue] {
 }
 
 pub function (o: JsonObject) get_or(key: string, fallback: JsonValue): JsonValue {
-  let at: i32 = o.position(key);
+  let at: i32 = __json_member_at(o, key);
   if (at < 0) {
     return fallback;
   }
@@ -189,7 +198,7 @@ pub function (o: JsonObject) get_or(key: string, fallback: JsonValue): JsonValue
 // insert is the object with `key` bound to `value`: in place of its value when
 // the key is present, as a new last member otherwise.
 pub function (own o: JsonObject) insert(key: string, value: JsonValue): JsonObject {
-  let at: i32 = o.position(key);
+  let at: i32 = __json_member_at(o, key);
   if (at >= 0) {
     return JsonObject { ...o, values: o.values.with(at, value) };
   }
