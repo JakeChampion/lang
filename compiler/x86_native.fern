@@ -3272,6 +3272,8 @@ function x86_gas_is_movabs(mnem: string): boolean {
 }
 
 // x86_gas_extend_op: the zero- and sign-extending loads. Op is B6/B7 (movzx) or BE/BF (movsx) — a byte or word SOURCE — and Ext the destination size AT&T names in the suffix's second letter; packed as op*256 + size/8.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function x86_gas_extend_op(mnem: string): i32 {
   match (mnem) {
     "movzbw" => {
@@ -3326,6 +3328,8 @@ function x86_gas_is_imul(mnem: string): boolean {
 }
 
 // x86_gas_bitscan_op: the bit scans and counts: [Prefix] [REX.W] 0F Op /r, Ext the REX.W bit; packed as pfx*65536 + op*256 + w.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function x86_gas_bitscan_op(mnem: string): i32 {
   match (mnem) {
     "bsfl" => {
@@ -3478,6 +3482,8 @@ function x86_gas_cvt2s_op(mnem: string): i32 {
 }
 
 // x86_gas_cvt2si: scalar float to integer: Prefix 0F Op, 2C truncating and 2D rounding; the AT&T l/q suffix names the width the destination register carries; packed as pfx*256 + op.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function x86_gas_cvt2si(mnem: string): i32 {
   match (mnem) {
     "cvttsd2si" => {
@@ -3611,6 +3617,8 @@ function x86_gas_movmsk_op(mnem: string): i32 {
 }
 
 // x86_gas_vshift_op: the vector shifts BY IMMEDIATE, the 66 0F Op /Ext ib groups; the by-register spellings are the SSE table's. pslldq/psrldq exist only here; packed as ext*256 + op.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function x86_gas_vshift_op(mnem: string): i32 {
   match (mnem) {
     "psrlw" => {
@@ -3650,6 +3658,8 @@ function x86_gas_vshift_op(mnem: string): i32 {
 }
 
 // x86_gas_sse38_op: the 66 0F 38 Op /r forms with an xmm destination. SSSE3, SSE4.1 and AES-NI, all inside the declared baseline.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function x86_gas_sse38_op(mnem: string): i32 {
   match (mnem) {
     "pshufb" => {
@@ -4321,6 +4331,8 @@ function x86_gas_lockable(mnem: string): boolean {
 // code, shared by jcc 0F 80+cc, setcc 0F 90+cc and cmovcc 0F 40+cc. Returns
 // -1 for a spelling that is not a condition, which is what lets the three
 // families dispatch by matching their prefix and looking the rest up here.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function x86_gas_cc_code(cond: string): i32 {
   match (cond) {
     "o" => {
@@ -4760,6 +4772,8 @@ function x86_pack3(b0: i32, b1: i32, b2: i32): i32 {
 // with the byte count in the top byte; -1 when not fixed. gas accepts both
 // dialects' spellings of the sign-extend group (cltq and cdqe are one
 // instruction), so both are here.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function x86_gas_fixed_op(mnem: string): i32 {
   match (mnem) {
     "ret" => {
@@ -5643,6 +5657,8 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
 // x86_gas_sse_fp_op: the scalar/packed FLOAT half of the two-byte-opcode
 // SSE table (`[pfx] 0F op /r`, xmm destination), packed as pfx*256+op;
 // -1 when absent.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function x86_gas_sse_fp_op(mnem: string): i32 {
   match (mnem) {
     "addsd" => {
@@ -5823,6 +5839,8 @@ function x86_gas_sse_fp_op(mnem: string): i32 {
 // 66-prefixed). The psll/psrl/psra entries here are the by-%xmm-count
 // forms; the by-immediate forms are the 0F 71/72/73 groups
 // (x86_gas_vshift_op).
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function x86_gas_sse_int_op(mnem: string): i32 {
   match (mnem) {
     "pcmpeqb" => {
@@ -5984,6 +6002,12 @@ function x86_gas_sse_int_op(mnem: string): i32 {
   }
 }
 
+// x86_gas_sse_reg_only: an SSE table row whose source must be an xmm
+// register. Its opcode with a memory source is another instruction.
+function x86_gas_sse_reg_only(mnem: string): boolean {
+  return mnem == "movhlps" || mnem == "movlhps";
+}
+
 // END GENERATED SSE TABLES
 
 // x86_gas_sse_op consults both halves of the SSE table.
@@ -6016,7 +6040,7 @@ function x86_gas_sse_table(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: 
   }
   if (x86_gas_has_paren(src)) {
     let m: GasMem = x86_gas_parse_mem(src);
-    if (!x86_gas_mem_ok(m)) {
+    if (!x86_gas_mem_ok(m) || x86_gas_sse_reg_only(mnem)) {
       return x86_gas_bad(a, mnem + " " + src);
     }
     return x86_gas_sse_mem(a, pfx, op, xd, m, 0);

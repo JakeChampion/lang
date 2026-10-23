@@ -4507,6 +4507,13 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
 	progs := []struct{ name, src string }{
+		{"array-generic-value-map", "import \"std/array\";\nfunction ident[T](x: T): T { return x; }\nfunction main(): i32 { let xs: f64[] = [1.5]; let ys: f64[] = xs.map(ident); return ys.len(); }\n"},
+		{"array-generic-value-phantom", "import \"std/array\";\nfunction ident[T, U](x: T): T { return x; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.map(ident); return ys.len(); }\n"},
+		{"array-generic-value-missing-bound", "import \"std/array\";\ntrait Mark { function mark(self: Self): i32; }\nfunction ident[T: Mark](x: T): T { return x; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.map(ident); return ys.len(); }\n"},
+		{"array-generic-value-checks-instance", "import \"std/array\";\nfunction bad[T](x: T): T { let n: string = x; return x; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.map(bad); return ys.len(); }\n"},
+		{"array-generic-value-wrong-arity", "import \"std/array\";\nfunction pair[T](x: T, y: T): T { return x; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.map(pair); return ys.len(); }\n"},
+		{"array-generic-value-wrong-result", "import \"std/array\";\nfunction text[T](x: T): string { return \"x\"; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.map(text); return ys.len(); }\n"},
+		{"array-generic-value-filter-result", "import \"std/array\";\nfunction ident[T](x: T): T { return x; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.filter(ident); return ys.len(); }\n"},
 		// `char` is NOT an integer. Both directions must be rejected without an
 		// explicit cast — that distinctness is the type's whole point (#5629),
 		// since a byte and a code point sharing i32 is what made
