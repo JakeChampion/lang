@@ -1,3 +1,4 @@
+# 2026-10-23: integrated deflate/sort rows from 0b03aff204, Perf run 40015080180.
 # 2026-10-23: deflate rows measured at 49c290377 in Perf run 40010926319, after main integration.
 # Emitted-size baseline for the SELF-HOSTED compiler over bench,
 # checked against every run by scripts/ci-check-perf.
@@ -157,8 +158,8 @@ selfhost/arm64-linux/array_with.emit	1270
 selfhost/arm64-linux/ascii_scan.emit	1461
 selfhost/arm64-linux/call_overhead.emit	148
 selfhost/arm64-linux/closure_call.emit	1011
-selfhost/arm64-linux/deflate_decode.emit	10412
-selfhost/arm64-linux/deflate_encode.emit	6652
+selfhost/arm64-linux/deflate_decode.emit	10723
+selfhost/arm64-linux/deflate_encode.emit	6704
 selfhost/arm64-linux/enum_match.emit	1174
 selfhost/arm64-linux/http_hello.emit	17130
 selfhost/arm64-linux/int_loop.emit	90
@@ -169,7 +170,7 @@ selfhost/arm64-linux/ordmap_insert.emit	3184
 selfhost/arm64-linux/pmap_insert.emit	2899
 selfhost/arm64-linux/pvec_with.emit	3024
 selfhost/arm64-linux/record_update.emit	1578
-selfhost/arm64-linux/sort_inplace.emit	1565
+selfhost/arm64-linux/sort_inplace.emit	1573
 selfhost/arm64-linux/sort_ints.emit	1937
 selfhost/arm64-linux/sort_strings.emit	2847
 selfhost/arm64-linux/string_build.emit	1653
@@ -189,7 +190,7 @@ selfhost/wasm32-wasi/array_with.emit	513
 selfhost/wasm32-wasi/ascii_scan.emit	1224
 selfhost/wasm32-wasi/call_overhead.emit	158
 selfhost/wasm32-wasi/closure_call.emit	503
-selfhost/wasm32-wasi/deflate_decode.emit	15002
+selfhost/wasm32-wasi/deflate_decode.emit	15733
 selfhost/wasm32-wasi/deflate_encode.emit	9621
 selfhost/wasm32-wasi/enum_match.emit	616
 selfhost/wasm32-wasi/http_hello.emit	18505
@@ -221,7 +222,7 @@ selfhost/x86-64-linux/array_with.emit	1079
 selfhost/x86-64-linux/ascii_scan.emit	1187
 selfhost/x86-64-linux/call_overhead.emit	88
 selfhost/x86-64-linux/closure_call.emit	818
-selfhost/x86-64-linux/deflate_decode.emit	9659
+selfhost/x86-64-linux/deflate_decode.emit	9897
 selfhost/x86-64-linux/deflate_encode.emit	6015
 selfhost/x86-64-linux/enum_match.emit	980
 selfhost/x86-64-linux/http_hello.emit	16662
