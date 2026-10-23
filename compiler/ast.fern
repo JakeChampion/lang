@@ -754,7 +754,8 @@ pub struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean
 pub struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: Expr[], elem_pats: Pattern[], at_binding: string, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, alt_cont: boolean }
 
 // rest_written records the arm pattern's trailing `..` — see
-// PatVariant.rest_written; it binds nothing at either site.
+// PatVariant.rest_written; it binds nothing, and without it the arm must name
+// every field of the struct (E015).
 pub struct StructArm { is_wild: boolean, type_name: string, binds: string[], fields: string[], field_kinds: i32[], field_lits: Expr[], field_pats: Pattern[], at_binding: string, rest_written: boolean, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
 
 // operator_method is the method a binary operator dispatches through when its

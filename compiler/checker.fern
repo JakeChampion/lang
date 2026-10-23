@@ -12447,6 +12447,10 @@ function stmts_slit_diags(stmts: ast.Stmt[], structs: StructTable): util.Diag[] 
     match (stmt) {
       ast.StmtVar(v) => {
         out = util.append_diags(out, slit_diags(v.init, structs));
+        if (parser.is_struct_destr_marker(v.type_name)) {
+          let (dfields, _) = struct_destr_fields(v.type_name);
+          out = util.append_diags(out, struct_pattern_covers_diags(struct_destr_name(v.type_name), dfields, parser.destr_marker_split(v.type_name).rest_written, structs, v.line, v.col));
+        }
       },
       ast.StmtReturn(r) => {
         out = util.append_diags(out, slit_diags(r.value, structs));
@@ -12459,6 +12463,11 @@ function stmts_slit_diags(stmts: ast.Stmt[], structs: StructTable): util.Diag[] 
       },
       ast.StmtIf(f) => {
         out = util.append_diags(out, slit_diags(f.cond, structs));
+        for sa in f.sugar.strct {
+          if (!sa.is_wild) {
+            out = util.append_diags(out, struct_pattern_covers_diags(sa.type_name, sa.fields, sa.rest_written, structs, sa.line, sa.col));
+          }
+        }
         out = util.append_diags(out, stmts_slit_diags(f.then_body, structs));
         out = util.append_diags(out, stmts_slit_diags(f.else_body, structs));
       },
@@ -13081,18 +13090,46 @@ function record_pattern_diags(pvin: ast.PatVariant, structs: StructTable, line: 
     }
   }
   if (bound.len() != decl.len() && !pv.rest_written) {
-    let listed: string = "";
-    let d: i32 = 0;
-    while (d < decl.len()) {
-      if (d > 0) {
-        listed = listed + ", ";
-      }
-      listed = listed + decl[d];
-      d = d + 1;
-    }
-    out = out.append(dg_at("E015", "named-field pattern for " + pv.type_name + " must bind all " + util.i32_to_string(decl.len()) + " field(s) (" + listed + "), or end in `..` to leave the rest out", line, col));
+    out = out.append(missing_pattern_fields_diag(pv.type_name, decl, line, col));
   }
   return out;
+}
+
+// missing_pattern_fields_diag is E015 for a named-field pattern that leaves a
+// field of `name` out without a trailing `..`.
+function missing_pattern_fields_diag(name: string, decl: string[], line: i32, col: i32): util.Diag {
+  let listed: string = "";
+  let d: i32 = 0;
+  while (d < decl.len()) {
+    if (d > 0) {
+      listed = listed + ", ";
+    }
+    listed = listed + decl[d];
+    d = d + 1;
+  }
+  return dg_at("E015", "named-field pattern for " + util.demangle(name) + " must bind all " + util.i32_to_string(decl.len()) + " field(s) (" + listed + "), or end in `..` to leave the rest out", line, col);
+}
+
+// struct_pattern_covers_diags holds a struct pattern to the rule a named-field
+// variant pattern keeps: it names every field of struct `name` unless it ends
+// in `..`.
+function struct_pattern_covers_diags(name: string, fields: string[], rest: boolean, structs: StructTable, line: i32, col: i32): util.Diag[] {
+  let sig: StructSig = find_struct_sig(structs, name);
+  if (rest || sig.name.len() == 0) {
+    return [];
+  }
+  // An unknown field is reported on its own; the count would only repeat it.
+  for f in fields {
+    if (!util.has_str(sig.field_names, f)) {
+      return [];
+    }
+  }
+  for f in sig.field_names {
+    if (!util.has_str(fields, f)) {
+      return [missing_pattern_fields_diag(name, sig.field_names, line, col)];
+    }
+  }
+  return [];
 }
 
 // payload_slot_type_name is the declared type SPELLING of a variant's payload

@@ -23,7 +23,7 @@ pub function make(a: string): Email { return Email { addr: a, n: 1 }; }
 pub function open(a: string): Open { return Open { addr: a, n: 1 }; }
 pub function (e: Email) domain(): string { return e.addr; }
 pub function inside(e: Email): i32 {
-    let Email { n } = e;
+    let Email { n, .. } = e;
     let e2: Email = Email { ...e, n: 4 };
     let f = (x: Email): i32 => x.n;
     match (e2) { Email { addr, n: k } => { return n + k + addr.len() + f(e2); } }

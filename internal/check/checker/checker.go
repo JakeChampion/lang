@@ -15980,6 +15980,7 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 		return
 	}
 	c.checkOpaqueAccess(sd, n.P, "destructure a field of")
+	c.checkStructPatternCovers(n.P, sd, n.Fields, n.RestWritten)
 	var sub map[string]ast.Type
 	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
 		sub = make(map[string]ast.Type, len(sd.TypeParams))
@@ -16392,10 +16393,50 @@ func (c *checker) settleNamedVariantPattern(pos ast.Position, variant *ast.EnumV
 		}
 	}
 	if omitted && !rest {
-		c.errfCode(pos, "E015", "named-field pattern for %s must bind all %d field(s) (%s), or end in `..` to leave the rest out",
-			variant.Name, len(variant.FieldNames), strings.Join(variant.FieldNames, ", "))
+		c.errMissingPatternFields(pos, variant.Name, variant.FieldNames)
 	}
 	return outNames, outPayloads
+}
+
+// errMissingPatternFields is E015 for a named-field pattern that leaves a
+// field of `name` out without a trailing `..`.
+func (c *checker) errMissingPatternFields(pos ast.Position, name string, declared []string) {
+	c.errfCode(pos, "E015", "named-field pattern for %s must bind all %d field(s) (%s), or end in `..` to leave the rest out",
+		demangle(name), len(declared), strings.Join(declared, ", "))
+}
+
+// patternFields is the field each binding of a named-field pattern projects:
+// fieldNames[k] where the pattern renames, else the binding itself.
+func patternFields(bindings, fieldNames []string) []string {
+	out := make([]string, len(bindings))
+	for k, b := range bindings {
+		out[k] = b
+		if k < len(fieldNames) && fieldNames[k] != "" {
+			out[k] = fieldNames[k]
+		}
+	}
+	return out
+}
+
+// checkStructPatternCovers holds a struct pattern to the rule a named-field
+// variant pattern keeps: it names every field of `sd` unless it ends in `..`.
+func (c *checker) checkStructPatternCovers(pos ast.Position, sd *ast.StructDecl, fields []string, rest bool) {
+	if rest {
+		return
+	}
+	declared := make([]string, 0, len(sd.Fields))
+	for _, f := range sd.Fields {
+		declared = append(declared, f.Name)
+	}
+	// An unknown field is reported on its own; the count would only repeat it.
+	for _, f := range fields {
+		if !slices.Contains(declared, f) {
+			return
+		}
+	}
+	if slices.ContainsFunc(declared, func(f string) bool { return !slices.Contains(fields, f) }) {
+		c.errMissingPatternFields(pos, sd.Name, declared)
+	}
 }
 
 // errPayloadlessVariantBinder reports the bare-name-is-a-binder hazard: a
@@ -16509,6 +16550,7 @@ func (c *checker) checkTuplePatStructElem(pos ast.Position, el *ast.TuplePatElem
 			sub[tp] = st.Args[i]
 		}
 	}
+	c.checkStructPatternCovers(pos, sd, patternFields(el.VariantBindings, el.VariantFieldNames), el.RestWritten)
 	el.IsStruct = true
 	el.VariantBindingTypes = make([]ast.Type, len(el.VariantBindings))
 	refutable := false
@@ -17276,6 +17318,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 		if len(arm.Bindings) > 0 {
 			c.checkOpaqueAccess(sd, arm.P, "destructure")
 		}
+		c.checkStructPatternCovers(arm.P, sd, patternFields(arm.Bindings, arm.FieldNames), arm.RestWritten)
 		// `@` binding: the whole matched struct, bound at the scrutinee type.
 		if arm.AtBinding != "" {
 			armScope.names[arm.AtBinding] = st
@@ -17634,6 +17677,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 		if len(arm.Bindings) > 0 {
 			c.checkOpaqueAccess(sd, arm.P, "destructure")
 		}
+		c.checkStructPatternCovers(arm.P, sd, patternFields(arm.Bindings, arm.FieldNames), arm.RestWritten)
 		// `@` binding: the whole matched struct, bound at the scrutinee type.
 		if arm.AtBinding != "" {
 			armScope.names[arm.AtBinding] = st
