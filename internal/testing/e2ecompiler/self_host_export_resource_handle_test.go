@@ -86,6 +86,7 @@ interface handler {
 }
 world m {
   import wasi:cli/stdout@0.2.0;
+  import wasi:cli/stderr@0.2.0;
   import res;
   export handler;
 }
