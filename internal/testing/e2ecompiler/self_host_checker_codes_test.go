@@ -758,17 +758,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-tuple-elem-into-str-var-clean", "function main(): i32 { let p: (str, i32) = (\"abc\", 4); let v: str = p.0; return v.len() + p.1; }\n", nil},
 		{"str-tuple-result-elem-into-string-e003", "function mk(t: string): (str, i32) { return (slice_unchecked(t, 0, 2), 1); }\nfunction main(): i32 { let v: string = mk(\"abc\").0; return v.len(); }\n", []string{"E003"}},
 		{"str-receiver-method-clean", "function (s: str) first(): u8 { return s[0]; }\nfunction main(): i32 { let v: str = \"hey\"; return v.first() as i32; }\n", nil},
-		// `[T]`, the array view a slice or `.as_bytes()` yields (#9944). A view
-		// and an owned `T[]` convert in neither direction — var init, assignment,
-		// return, field, argument — except an owned argument lent to a `[T]`
-		// parameter. A `[T]` binding, a slice of a view, a `[T]`-returning
-		// function and a `[T]` parameter handed on to another stay clean.
+		// A [T] view can borrow an owned T[] at a parameter or local initializer.
+		// Other conversion sites keep their assignment rules. A slice of a view
+		// and a view parameter passed to another view parameter remain valid.
 		{"arr-view-into-array-var-e003", "function main(): i32 { let all: string[] = [\"a\", \"b\", \"c\"]; let mid: string[] = all[1:3]; return mid.len(); }\n", []string{"E003"}},
 		{"arr-view-assign-e003", "function main(): i32 { let x: i32[] = [1, 2]; let y: i32[] = [3]; y = x[0:1]; return y.len(); }\n", []string{"E003"}},
 		{"arr-view-return-e002", "function g(a: i32[]): i32[] { return a[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"arr-view-field-e043", "struct Q { xs: i32[] }\nfunction mk(a: i32[]): Q { return Q { xs: a[0:1] }; }\nfunction main(): i32 { return 0; }\n", []string{"E043"}},
 		{"arr-ret-fn-into-array-e003", "function first(a: [i32]): [i32] { return a[0:1]; }\nfunction main(): i32 { let x: i32[] = [1, 2]; let o: i32[] = first(x); return o.len(); }\n", []string{"E003"}},
-		{"arr-owned-into-view-var-e003", "function main(): i32 { let a: i32[] = [1]; let w: [i32] = a; return w.len(); }\n", []string{"E003"}},
+		{"arr-owned-into-view-var", "function main(): i32 { let a: i32[] = [1]; let w: [i32] = a; return w.len(); }\n", nil},
 		{"arr-owned-return-from-view-fn-e002", "function f(a: i32[]): [i32] { return a; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"arr-view-param-into-array-param-e038", "function h(x: i32[]): i32 { return x.len(); }\nfunction k(v: [i32]): i32 { return h(v); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
 		{"as-bytes-into-array-var-e003", "function main(): i32 { let s: string = \"ab\"; let b: u8[] = s.as_bytes(); return b.len(); }\n", []string{"E003"}},
@@ -3729,6 +3727,19 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"local-array-view-literal", `function first(b: [u8]): u8 { return b[0]; }
+function main(): i32 { let buf: [u8] = [3 as u8, 250 as u8, 7 as u8]; return first(buf) as i32; }`},
+		{"local-array-view-owner", `function main(): i32 { let xs: u8[] = [3, 250, 7]; let view: [u8] = xs; return view.len(); }`},
+		{"local-array-view-generic", `function count[T](xs: T[]): i32 { let view: [T] = xs; return view.len(); }
+function main(): i32 { return count([1, 2]); }`},
+		{"local-array-view-wrong-element", `function main(): i32 { let xs: i32[] = [3]; let view: [i64] = xs; return view.len(); }`},
+		{"local-array-view-owner-escape", `function bad(): [u8] { let xs: u8[] = [3]; let view: [u8] = xs; return view; }
+function main(): i32 { return 0; }`},
+		{"local-array-view-literal-escape", `function bad(): [u8] { let view: [u8] = [3]; return view; }
+function main(): i32 { return 0; }`},
+		{"local-array-view-temporary-escape", `function make(): u8[] { return [3]; }
+function bad(): [u8] { let view: [u8] = make(); return view; }
+function main(): i32 { return 0; }`},
 		{"record-variant-rename-and-rest", `enum S { Rect { w: i32, h: i32 }, Tag { name: string, n: i32 } }
 function f(s: S): i32 { match (s) { Rect { h: hh, w } => { return w - hh; }, Tag { n: count, .. } => { return count; } } }
 function g(o: Option[S]): i32 { return match (o) { Some(Rect { w: ww, .. }) => ww, Some(Tag { .. }) => 1, None => 0 }; }
@@ -4471,6 +4482,13 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 	_, runner, driverBin := buildCheckerModloadDriverX86(t)
 
 	progs := []struct{ name, src string }{
+		{"array-generic-value-map", "import \"std/array\";\nfunction ident[T](x: T): T { return x; }\nfunction main(): i32 { let xs: f64[] = [1.5]; let ys: f64[] = xs.map(ident); return ys.len(); }\n"},
+		{"array-generic-value-phantom", "import \"std/array\";\nfunction ident[T, U](x: T): T { return x; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.map(ident); return ys.len(); }\n"},
+		{"array-generic-value-missing-bound", "import \"std/array\";\ntrait Mark { function mark(self: Self): i32; }\nfunction ident[T: Mark](x: T): T { return x; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.map(ident); return ys.len(); }\n"},
+		{"array-generic-value-checks-instance", "import \"std/array\";\nfunction bad[T](x: T): T { let n: string = x; return x; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.map(bad); return ys.len(); }\n"},
+		{"array-generic-value-wrong-arity", "import \"std/array\";\nfunction pair[T](x: T, y: T): T { return x; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.map(pair); return ys.len(); }\n"},
+		{"array-generic-value-wrong-result", "import \"std/array\";\nfunction text[T](x: T): string { return \"x\"; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.map(text); return ys.len(); }\n"},
+		{"array-generic-value-filter-result", "import \"std/array\";\nfunction ident[T](x: T): T { return x; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = xs.filter(ident); return ys.len(); }\n"},
 		// `char` is NOT an integer. Both directions must be rejected without an
 		// explicit cast — that distinctness is the type's whole point (#5629),
 		// since a byte and a code point sharing i32 is what made

@@ -29,6 +29,8 @@
 // docs/RC-PERCEUS-SELF-HOST-PORT.md — simply never reaches rc-zero, and
 // its `drop` never runs. `Drop` is a cleanup hook, not a guarantee; do
 // not depend on it for correctness.
+
+// Drop runs a finalizer before the runtime releases a value's fields.
 pub trait Drop {
   function drop(self: Self): void;
 }

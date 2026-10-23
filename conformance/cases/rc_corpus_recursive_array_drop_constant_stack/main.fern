@@ -1,0 +1,45 @@
+// Cleanup follows the final child of an owned recursive array in a loop.
+// Earlier children, empty arrays, shared arrays, and shared nodes keep their
+// usual reference counts.
+enum Tree { Leaf(i32), Branch(Tree[]) }
+
+@noinline
+function build(n: i32): Tree {
+  let tree: Tree = Leaf(7);
+  let i: i32 = 0;
+  while (i < n) {
+    tree = Branch([Leaf(i), tree]);
+    i = i + 1;
+  }
+  return tree;
+}
+
+@noinline
+function width(tree: Tree): i32 {
+  match (tree) {
+    Leaf(_) => {
+      return 0;
+    },
+    Branch(children) => {
+      return children.len();
+    }
+  }
+}
+
+@noinline
+function exercise(): i32 {
+  let long: Tree = build(30000);
+  let shared: Tree = build(2000);
+  let children: Tree[] = [Leaf(4), shared];
+  let a: Tree = Branch(children);
+  let b: Tree = Branch(children);
+  let empty: Tree = Branch([]);
+  let tree: Tree = Branch([Branch([Leaf(1), Leaf(2)]), Branch([Leaf(3), shared])]);
+  return width(long) - 2 + (width(shared) - 2) + (width(a) - 2)
+    + (width(b) - 2) + width(empty) + (width(tree) - 2);
+}
+
+function main(): i32 {
+  let result: i32 = exercise();
+  return result + __rc_underflow_count();
+}

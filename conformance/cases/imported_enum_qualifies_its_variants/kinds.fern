@@ -1,0 +1,5 @@
+pub enum Kind { Idle, Number(i32) }
+
+pub enum Other { Idle, Number(i32) }
+
+pub enum Box[T] { Wrap(T), Empty }

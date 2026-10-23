@@ -1451,6 +1451,23 @@ function mixed_int_diag(op: string, lt: typeinfo.Type, rt: typeinfo.Type, line: 
   );
 }
 
+// Invalid arithmetic operands name the numeric type the operator requires.
+function numeric_operand_diags(op: string, lt: typeinfo.Type, rt: typeinfo.Type, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  let want_float: boolean = op != "%" && (is_float(lt) || is_float(rt));
+  if (want_float && is_float(lt) && is_float(rt)) {
+    return [dg_at("E009", "operator \"" + op + "\" requires both operands to share a float type; got " + type_label(lt) + " and " + type_label(rt) + " — use `as` for explicit conversion", line, col)];
+  }
+  for operand in [lt, rt] {
+    if (want_float && !is_float(operand)) {
+      out = out.append(dg_at("E009", "operator \"" + op + "\" requires float, got " + type_label(operand), line, col));
+    } else if (!want_float && !is_integer(operand)) {
+      out = out.append(dg_at("E009", "operator \"" + op + "\" requires an integer type, got " + type_label(operand), line, col));
+    }
+  }
+  return out;
+}
+
 // int_result: the type an integer binop yields. An unsuffixed literal is read
 // at the other operand's width, so `n + 1` stays i64 when `n` is; when both
 // sides are settled the operator rules have already required them to share a
@@ -2571,7 +2588,15 @@ function ambiguous_call_diags(fa: ast.ExprFieldAccess, recv_type: string, s: Sco
   if (best.len() < 2) {
     return out;
   }
-  let msg: string = "ambiguous method \"" + fa.field + "\" on " + util.demangle(recv_type) + ": provided by " + sig_provider(best[0]) + " and " + sig_provider(best[1]);
+  best = util.sorted_by(best, method_provider_after);
+  let providers: string = "";
+  for m in best {
+    if (providers.len() > 0) {
+      providers = providers + " and ";
+    }
+    providers = providers + sig_provider(m);
+  }
+  let msg: string = "ambiguous method \"" + fa.field + "\" on " + util.demangle(recv_type) + ": provided by " + providers;
   return out.append(dg_at("E074", msg, fa.line, fa.col));
 }
 
@@ -2594,6 +2619,10 @@ function finalizer_call_diags(fa: ast.ExprFieldAccess, recv_type: string, s: Sco
 
 // sig_provider names a candidate as native's E074 does: the trait and where
 // its method was declared.
+function method_provider_after(a: MethodSig, b: MethodSig): boolean {
+  return a.impl_trait > b.impl_trait;
+}
+
 function sig_provider(m: MethodSig): string {
   return "trait " + util.demangle(m.impl_trait) + " (declared at " + m.file + util.i32_to_string(util.pos_line(m.line)) + ":" + util.i32_to_string(m.col) + ")";
 }
@@ -4901,9 +4930,8 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   if (promotes_view(from, to)) {
     return false;
   }
-  // `[T]` (#9944): an array view and an owned `T[]` convert in neither
-  // direction, except the owned-into-view lend at an argument
-  // (view_arg_borrow).
+  // Array loans need a direct conversion site. Argument checks and local
+  // initializer checks admit the loan before this general assignment rule.
   if (is_arr_view(from) && is_owned_array(to) || is_owned_array(from) && is_arr_view(to)) {
     return false;
   }
@@ -5288,6 +5316,7 @@ function settle_shared_literal_typevars(c: ast.ExprCall, nargs: ast.Expr[], s: S
 // typing special-cases ahead of it (print's Display argument, map_new's
 // element types, cell_new's T) are listed as native registers them all the
 // same; TestSelfHostBuiltinSigsMatch pins the list entry for entry.
+// The rows are in byte order, which builtin_row's binary search needs.
 function builtin_sigs(): string[] {
   return [
     "__c_call0(usize): usize",
@@ -5317,16 +5346,14 @@ function builtin_sigs(): string[] {
     "__method_Dir_stat(Dir, string): Result[FileStat, IoError]",
     "__method_Reader_close(Reader): Result[void, IoError]",
     "__method_Reader_copy_range_to(Reader, Writer, i32): Result[i64, IoError]",
+    "__method_Reader_drop_cache(Reader, i64, i64): Result[void, IoError]",
     "__method_Reader_dup_onto(Reader, i32): Result[void, IoError]",
     "__method_Reader_fdatasync(Reader): Result[void, IoError]",
-    "__method_Reader_drop_cache(Reader, i64, i64): Result[void, IoError]",
     "__method_Reader_flags(Reader): Result[i64, IoError]",
     "__method_Reader_fsync(Reader): Result[void, IoError]",
     "__method_Reader_isatty(Reader): boolean",
     "__method_Reader_read_chunk(Reader, i32): Result[string, IoError]",
     "__method_Reader_read_chunk_bytes(Reader, i32): Result[u8[], IoError]",
-    "__method_Writer_write_bytes(Writer, [u8]): Result[void, IoError]",
-    "__method_Writer_write_some_bytes(Writer, [u8]): Result[i64, IoError]",
     "__method_Reader_seek(Reader, i64, i32): Result[i64, IoError]",
     "__method_Reader_set_extproc(Reader, boolean): Result[void, IoError]",
     "__method_Reader_set_window_size(Reader, i32, i32): Result[void, IoError]",
@@ -5337,9 +5364,9 @@ function builtin_sigs(): string[] {
     "__method_Reader_termios_set(Reader, i32, i64[]): Result[void, IoError]",
     "__method_Reader_window_size(Reader): Result[WinSize, IoError]",
     "__method_Writer_close(Writer): Result[void, IoError]",
+    "__method_Writer_drop_cache(Writer, i64, i64): Result[void, IoError]",
     "__method_Writer_dup_onto(Writer, i32): Result[void, IoError]",
     "__method_Writer_fdatasync(Writer): Result[void, IoError]",
-    "__method_Writer_drop_cache(Writer, i64, i64): Result[void, IoError]",
     "__method_Writer_flags(Writer): Result[i64, IoError]",
     "__method_Writer_fsync(Writer): Result[void, IoError]",
     "__method_Writer_isatty(Writer): boolean",
@@ -5349,7 +5376,9 @@ function builtin_sigs(): string[] {
     "__method_Writer_syncfs(Writer): Result[void, IoError]",
     "__method_Writer_truncate(Writer, i64): Result[void, IoError]",
     "__method_Writer_write(Writer, string): Result[void, IoError]",
+    "__method_Writer_write_bytes(Writer, [u8]): Result[void, IoError]",
     "__method_Writer_write_some(Writer, string): Result[i64, IoError]",
+    "__method_Writer_write_some_bytes(Writer, [u8]): Result[i64, IoError]",
     "__method_boolean_to_string(boolean): string",
     "__method_string_as_bytes(string): [u8]",
     "__method_string_len(string): i32",
@@ -5380,24 +5409,15 @@ function builtin_sigs(): string[] {
     "chroot(string): Result[void, IoError]",
     "clock_resolution(): i64",
     "clock_set(i64, i64): Result[void, IoError]",
+    "clone_file(string, string): Result[void, IoError]",
+    "config_get(string): Option[string]",
     "cpu_count(): i32",
     "create_dir(string, i32): Result[void, IoError]",
     "create_dir_all(string): Result[void, IoError]",
     "create_link(string, string): Result[void, IoError]",
-    "clone_file(string, string): Result[void, IoError]",
     "create_symlink(string, string): Result[void, IoError]",
-    "rename_noreplace(string, string): Result[void, IoError]",
-    "getxattr(string, string): Result[string, IoError]",
-    "getxattr_bytes(string, string): Result[u8[], IoError]",
-    "lgetxattr(string, string): Result[string, IoError]",
-    "lgetxattr_bytes(string, string): Result[u8[], IoError]",
-    "setxattr(string, string, string): Result[void, IoError]",
-    "setxattr_bytes(string, string, u8[]): Result[void, IoError]",
-    "lsetxattr(string, string, string): Result[void, IoError]",
-    "lsetxattr_bytes(string, string, u8[]): Result[void, IoError]",
-    "rename_exchange(string, string): Result[void, IoError]",
+    "disable_core_dumps(): boolean",
     "env(string): Option[string]",
-    "config_get(string): Option[string]",
     "environ(): string[]",
     "eprint(string): void",
     "exit(i32): void",
@@ -5411,12 +5431,19 @@ function builtin_sigs(): string[] {
     "getgid(): u32",
     "getgroups(): i64[]",
     "getuid(): u32",
+    "getxattr(string, string): Result[string, IoError]",
+    "getxattr_bytes(string, string): Result[u8[], IoError]",
     "hostname(): string",
     "isatty(i32): boolean",
+    "lgetxattr(string, string): Result[string, IoError]",
+    "lgetxattr_bytes(string, string): Result[u8[], IoError]",
+    "lsetxattr(string, string, string): Result[void, IoError]",
+    "lsetxattr_bytes(string, string, u8[]): Result[void, IoError]",
     "lstat(string): Result[FileStat, IoError]",
     "map_new(i32): Map",
     "mknod(string, i32, i32, i32): Result[void, IoError]",
     "monotonic_ns(): i64",
+    "mounts(): Result[MountEntry[], IoError]",
     "now_ns(): i64",
     "now_unix_ms(): i64",
     "open_appender(string): Result[Writer, IoError]",
@@ -5426,21 +5453,23 @@ function builtin_sigs(): string[] {
     "open_reader_with(string, i32): Result[Reader, IoError]",
     "open_writer(string): Result[Writer, IoError]",
     "open_writer_with(string, i32): Result[Writer, IoError]",
+    "pipe(): Result[Pipe, IoError]",
     "poll(i32[], i32): i32",
     "print(string): void",
     "priority(): i32",
     "proc_exec(string, string[]): i32",
     "proc_exec_as(string, string[], string[]): i32",
-    "pipe(): Result[Pipe, IoError]",
     "proc_fork(): i32",
     "proc_waitpid(i32): i32",
-    "proc_waitpid_status(i32): i32",
-    "disable_core_dumps(): boolean",
     "proc_waitpid_nohang(i32): i32",
+    "proc_waitpid_status(i32): i32",
     "process_alive(i32): boolean",
     "putchar(i32): void",
     "random_bytes(i32): u8[]",
     "random_i32(): i32",
+    "reactor_ctl(i32, i32, i32, i32): i32",
+    "reactor_new(): i32",
+    "reactor_wait(i32, i32[], i32): i32",
     "read_dir(string): Result[string[], IoError]",
     "read_dir_all(string): Result[string[], IoError]",
     "read_dir_ino(string): Result[DirEntry[], IoError]",
@@ -5452,16 +5481,25 @@ function builtin_sigs(): string[] {
     "remove_dir_all(string): Result[void, IoError]",
     "remove_file(string): Result[void, IoError]",
     "rename(string, string): Result[void, IoError]",
+    "rename_exchange(string, string): Result[void, IoError]",
+    "rename_noreplace(string, string): Result[void, IoError]",
+    "ring_ctl(i64, i32, i32, i32): i32",
+    "ring_new(i32): i64",
+    "ring_recv(i64, i32, u8[]): i32",
+    "ring_send_zc(i64, i32, u8[], i32): i32",
+    "ring_wait(i64, i32[], i32): i32",
     "rlimit_nofile(): i64",
     "set_args(string[]): void",
+    "set_extproc(i32, boolean): Result[void, IoError]",
     "set_file_times(string, i64, i64, i64, i64, i32): Result[void, IoError]",
     "set_priority(i32): Result[void, IoError]",
     "set_process_group(i32, i32): Result[void, IoError]",
-    "set_extproc(i32, boolean): Result[void, IoError]",
     "set_window_size(i32, i32, i32): Result[void, IoError]",
     "setgid(i64): Result[void, IoError]",
     "setgroups(i64[]): Result[void, IoError]",
     "setuid(i64): Result[void, IoError]",
+    "setxattr(string, string, string): Result[void, IoError]",
+    "setxattr_bytes(string, string, u8[]): Result[void, IoError]",
     "signal_catch(i32): i32",
     "signal_catch_interrupting(i32): i32",
     "signal_default(i32): i32",
@@ -5476,43 +5514,34 @@ function builtin_sigs(): string[] {
     "slice_unchecked(string, i32, i32): str",
     "stat(string): Result[FileStat, IoError]",
     "statfs(string): Result[FsStat, IoError]",
-    "mounts(): Result[MountEntry[], IoError]",
-    "sysctl(i32[]): Result[u8[], IoError]",
     "stderr(): Writer",
     "stdin(): Reader",
     "stdout(): Writer",
-    "string_from_bytes_unchecked(u8[]): string",
     "string_from_bytes_range_unchecked(u8[], i32, i32): string",
+    "string_from_bytes_unchecked(u8[]): string",
     "subprocess(string, string[], string): ProcessResult",
     "sync(): void",
+    "sysctl(i32[]): Result[u8[], IoError]",
     "target_arch(): string",
     "target_os(): string",
     "tcp_accept(i32): i32",
     "tcp_close(i32): i32",
     "tcp_connect_with(u8[], i32, boolean): i32",
+    "tcp_ktls(i32, i32, i32, u8[]): i32",
     "tcp_listen(i32): i32",
     "tcp_listen_with(u8[], i32, i32, boolean): i32",
     "tcp_local_port(i32): i32",
     "tcp_pollable(i32): i32",
-    "tcp_send_bytes(i32, u8[]): i32",
-    "tcp_socket_ctl(i32, i32, i32): i32",
-    "tcp_sendfile(i32, i32, i32): i32",
+    "tcp_recv_into(i32, u8[]): i32",
     "tcp_send_buf(i32, usize, i32): i32",
+    "tcp_send_bytes(i32, u8[]): i32",
+    "tcp_sendfile(i32, i32, i32): i32",
+    "tcp_socket_ctl(i32, i32, i32): i32",
     "temp_dir(string): Result[string, IoError]",
-    "reactor_ctl(i32, i32, i32, i32): i32",
-    "reactor_new(): i32",
-    "ring_new(i32): i64",
-    "ring_ctl(i64, i32, i32, i32): i32",
-    "ring_wait(i64, i32[], i32): i32",
-    "ring_recv(i64, i32, u8[]): i32",
-    "ring_send_zc(i64, i32, u8[], i32): i32",
-    "reactor_wait(i32, i32[], i32): i32",
     "termios_get(i32): Result[i64[], IoError]",
     "termios_set(i32, i32, i64[]): Result[void, IoError]",
     "timer_fd(i32): i32",
     "truncate(string, i64): Result[void, IoError]",
-    "tcp_recv_into(i32, u8[]): i32",
-    "tcp_ktls(i32, i32, i32, u8[]): i32",
     "udp_bind(u8[], i32): i32",
     "udp_bind_with(u8[], i32, boolean): i32",
     "udp_connect(i32, u8[], i32): i32",
@@ -5520,9 +5549,9 @@ function builtin_sigs(): string[] {
     "udp_sendto(i32, u8[], i32, string): i32",
     "udp_sendto_bytes(i32, u8[], i32, u8[]): i32",
     "umask(i32): i32",
+    "uname_field(i32): string",
     "unix_connect(string): i32",
     "unix_listen(string, i32): i32",
-    "uname_field(i32): string",
     "wasm_block(i32): i32",
     "wasm_poll(i32[]): i32",
     "wasm_pollable_drop(i32): i32",
@@ -5535,24 +5564,44 @@ function builtin_sigs(): string[] {
   ];
 }
 
+// builtin_row is `name`'s row of builtin_sigs(), or "" when no surface builtin
+// has that name. `(` sorts below every byte of a name, so the first row not
+// below `name(` is the one that starts with it, if any does.
+function builtin_row(name: string): string {
+  let rows: string[] = builtin_sigs();
+  let head: string = name + "(";
+  let lo: i32 = 0;
+  let hi: i32 = rows.len();
+  while (lo < hi) {
+    let mid: i32 = (lo + hi) / 2;
+    if (util.str_less(rows[mid], head)) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  if (lo < rows.len() && util.str_has_prefix(rows[lo], head)) {
+    return rows[lo];
+  }
+  return "";
+}
+
 // builtin_sig is `name`'s signature from builtin_sigs() as a TypeFunc, or
 // unknown when no surface builtin has that name.
 pub function builtin_sig(name: string): typeinfo.Type {
-  let head: string = name + "(";
-  for row in builtin_sigs() {
-    if (row.len() > head.len() && row[0] == head[0] && util.str_has_prefix(row, head)) {
-      let close: i32 = util.index_of_sub(row, "): ");
-      let inner: string = slice_unchecked(row, head.len(), close) + "";
-      let params: typeinfo.Type[] = [];
-      if (inner.len() > 0) {
-        for p in parser.split_top_commas(inner) {
-          params = params.append(type_from_name(p));
-        }
-      }
-      return t_func(params, type_from_name(slice_unchecked(row, close + 3, row.len()) + ""));
+  let row: string = builtin_row(name);
+  if (row.len() == 0) {
+    return t_unknown("not a builtin: " + name);
+  }
+  let close: i32 = util.index_of_sub(row, "): ");
+  let inner: string = slice_unchecked(row, name.len() + 1, close) + "";
+  let params: typeinfo.Type[] = [];
+  if (inner.len() > 0) {
+    for p in parser.split_top_commas(inner) {
+      params = params.append(type_from_name(p));
     }
   }
-  return t_unknown("not a builtin: " + name);
+  return t_func(params, type_from_name(slice_unchecked(row, close + 3, row.len()) + ""));
 }
 
 // builtin_method_sig is a builtin method's callable without its receiver, or
@@ -7871,6 +7920,9 @@ function struct_field_type(sn: typeinfo.TypeStruct, field: string, s: Scope): ty
   }
   if (fai < fsig.field_type_names.len() && fsig.type_params.len() > 0 && sn.args.len() > 0) {
     let fref: parser.TypeRef = parser.parse_type_ref(fsig.field_type_names[fai]);
+    if (sn.args.len() != fsig.type_params.len()) {
+      return type_from_ref_subst(fref, fsig.type_params, rigid_tparams(fsig.type_params), s.type_names());
+    }
     return type_from_ref_subst(fref, fsig.type_params, sn.args, s.type_names());
   }
   return fsig.field_types[fai];
@@ -8428,7 +8480,19 @@ function method_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv
     let mat: typeinfo.Type = check_expr(c.args[mi], s);
     let want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
     out = util.append_diags(out, int_dest_range_diags(c.args[mi], want));
-    if (!is_unknown(want) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
+    // An unresolved function value gets E040 from its destination check.
+    // Its abstract signature must not add a second mismatch here.
+    let unresolved_value: boolean = false;
+    if (generic_fn_value_arg(c.args[mi], s)) {
+      if let ast.ExprIdent(id) = c.args[mi] {
+        if let typeinfo.TypeFunc(wf) = want {
+          let sig: FuncSig = s.lookup_sig(id.name);
+          let (bn, bt) = fn_value_binds(sig, wf, s);
+          unresolved_value = bn.len() != sig.all_type_params.len();
+        }
+      }
+    }
+    if (!unresolved_value && !is_unknown(want) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
       out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + method + "\": expected " + type_label(want) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
     }
     out = util.append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
@@ -8581,7 +8645,7 @@ function nominal_args_clash(from: typeinfo.Type, to: typeinfo.Type, unions: Unio
   let fa: typeinfo.Type[] = nominal_args(from);
   let ta: typeinfo.Type[] = nominal_args(to);
   if (fa.len() != ta.len()) {
-    return false;
+    return fa.len() > 0 && ta.len() > 0;
   }
   let i: i32 = 0;
   while (i < fa.len()) {
@@ -10295,6 +10359,11 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
+        if (is_arr_view(var_declared_type(v, cur)) && is_owned_array(check_expr(v.init, cur))) {
+          if (slc_src_roots(v.init, cur, params, localarr, tainted, sums, vix).local) {
+            tainted = tainted.append(v.name);
+          }
+        }
         match (v.init) {
           ast.ExprBytes(_) => {
             localarr = localarr.append(v.name);
@@ -11806,13 +11875,14 @@ function vb_arms_fold(types: typeinfo.Type[], exprs: ast.Expr[], s: Scope): MxFo
 // mx_e031 emits one E031 if a value if's or match's arms do not all join.
 function mx_e031(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], enums: parser.EnumDecl[], if_form: boolean, assigns: boolean, line: i32, col: i32): util.Diag[] {
   let f: MxFold = mx_fold_arms(types, exprs, unions, enums, if_form, assigns);
-  return mx_fold_diags(f, line, col);
+  return mx_fold_diags(f, line, col, if_form);
 }
 
-function mx_fold_diags(f: MxFold, line: i32, col: i32): util.Diag[] {
+function mx_fold_diags(f: MxFold, line: i32, col: i32, if_form: boolean): util.Diag[] {
   let out: util.Diag[] = [];
   if (!f.ok) {
-    out = out.append(dg_at("E031", "match/if-expression arms have incompatible types: " + type_label(f.acc.t) + " vs " + type_label(f.bad), line, col));
+    let kind: string = if (if_form) { "if-expression branches differ: " } else { "match-expression arms differ: " };
+    out = out.append(dg_at("E031", kind + type_label(f.acc.t) + " vs " + type_label(f.bad), line, col));
   }
   return out;
 }
@@ -11828,7 +11898,7 @@ function mx_if_diags(f: ast.StmtIf, types: typeinfo.Type[], exprs: ast.Expr[], u
     for arm in f.sugar.lits {
       if (mx_branch_yields(arm.body)) {
         if (at == fold.bad_index) {
-          return mx_fold_diags(fold, arm.line, arm.col);
+          return mx_fold_diags(fold, arm.line, arm.col, origin == parser.ORIGIN_IF_EXPR);
         }
         at = at + 1;
       }
@@ -11836,7 +11906,7 @@ function mx_if_diags(f: ast.StmtIf, types: typeinfo.Type[], exprs: ast.Expr[], u
     line = f.sugar.line;
     col = f.sugar.col;
   }
-  return mx_fold_diags(fold, line, col);
+  return mx_fold_diags(fold, line, col, origin == parser.ORIGIN_IF_EXPR);
 }
 
 // mx_branch_yields: does a value branch reach its terminal value? One whose
@@ -12187,7 +12257,7 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
         // that drives E031 — matches the Go checker, which reports E061
         // when a value-position block has no tail expression.
         if (u.kind == "value branch has no trailing expression") {
-          out = out.append(dg("E061", "block-expression has no trailing value"));
+          out = out.append(dg_at("E061", parser.BLOCK_VALUE_REQUIRED_MESSAGE, u.line, u.col));
         }
       },
       _ => {}
@@ -12712,14 +12782,14 @@ function loop_diags(stmts: ast.Stmt[], in_loop: boolean, labels: string[]): util
         if (!in_loop) {
           out = out.append(dg_at("E011", "break outside of a loop", bk.line, bk.col));
         } else if (bk.label.len() > 0 && !label_in_scope(labels, bk.label)) {
-          out = out.append(dg_at("E058", "break label does not match any enclosing loop", bk.line, bk.col));
+          out = out.append(dg_at("E058", "break label \"" + bk.label + "\" does not match any enclosing loop", bk.line, bk.col));
         }
       },
       ast.StmtContinue(ck) => {
         if (!in_loop) {
           out = out.append(dg_at("E011", "continue outside of a loop", ck.line, ck.col));
         } else if (ck.label.len() > 0 && !label_in_scope(labels, ck.label)) {
-          out = out.append(dg_at("E058", "continue label does not match any enclosing loop", ck.line, ck.col));
+          out = out.append(dg_at("E058", "continue label \"" + ck.label + "\" does not match any enclosing loop", ck.line, ck.col));
         }
       },
       ast.StmtWhile(w) => {
@@ -13242,7 +13312,6 @@ function match_diags(stmts: ast.Stmt[], structs: StructTable, unions: UnionTable
         }
       },
       ast.StmtIf(f) => {
-        out = util.append_diags(out, sugar_unreachable_diags(f.sugar));
         out = util.append_diags(out, match_diags(f.then_body, structs, unions));
         out = util.append_diags(out, match_diags(f.else_body, structs, unions));
       },
@@ -15589,10 +15658,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // code native does not.
       if (union_of_variant(id.name, s.unions).len() > 0 || parser.builtin_enum_of(id.name).len() > 0) {
         for arg in c.args {
-          // `Ok(())` is the payload written as the unit itself — void's one
-          // value, and the spelling the message asks for. Native's
-          // requireValue exempts its UnitLit here for the same reason.
-          if (is_void(check_expr(arg, s)) && !parser.is_unit_expr(arg)) {
+          // Unit literals and bindings carry a value. A void call does not.
+          let unit_binding: boolean = false;
+          if let ast.ExprIdent(_) = arg {
+            unit_binding = true;
+          }
+          if (is_void(check_expr(arg, s)) && !parser.is_unit_expr(arg) && !unit_binding) {
             out = out.append(dg_at("E072", "a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value", expr_line(arg), expr_col(arg)));
           }
         }
@@ -16179,7 +16250,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
         if (both_int) {
           out = out.append(mixed_int_diag(b.op, pl, pr, b.line, b.col));
         } else {
-          out = out.append(dg_at("E009", "operator \"+\" requires matching numeric or string operands, got " + type_label(pl) + " and " + type_label(pr), b.line, b.col));
+          out = util.append_diags(out, numeric_operand_diags(b.op, pl, pr, b.line, b.col));
         }
       }
     }
@@ -16195,7 +16266,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
         if (a_both_int) {
           out = out.append(mixed_int_diag(b.op, alt, art, b.line, b.col));
         } else {
-          out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching numeric operands, got " + type_label(alt) + " and " + type_label(art), b.line, b.col));
+          out = util.append_diags(out, numeric_operand_diags(b.op, alt, art, b.line, b.col));
         }
       }
     }
@@ -17085,6 +17156,11 @@ function fn_value_settles(e: ast.Expr, want: typeinfo.TypeFunc, s: Scope): boole
       result = want.ret_type;
     }
     let actual: typeinfo.Type = t_func_own(params, sig.param_own, result);
+    // A method's unbound result variable can take the instantiated result.
+    // A variable of the enclosing function remains a fixed contract.
+    if (is_unknown(want.ret_type) && !util.has_str(s.tparams, callable_typevar_name(want.ret_type))) {
+      return type_assignable(actual, typeinfo.TypeFunc { ...want, ret_type: result }, s.unions.unions);
+    }
     return type_assignable(actual, want, s.unions.unions);
   }
   return false;
@@ -17209,7 +17285,7 @@ function e055_diag(e: ast.Expr, s: Scope): util.Diag[] {
           if (!is_coll) {
             return none;
           }
-          let d: util.Diag[] = [dg_at("E055", "result of `." + fa.field + "(...)` is unused; assign it back (e.g. `x = x." + fa.field + "(...)`) — collection operations return a new value, they do not mutate in place", fa.line, fa.col)];
+          let d: util.Diag[] = [dg_at("E055", "result of `." + fa.field + "(...)` is unused; assign it back (e.g. `x = x." + fa.field + "(...)`) — collection operations return a new value, they do not mutate in place (use `let _ = …` to discard intentionally)", fa.line, fa.col)];
           return d;
         },
         _ => {
@@ -17647,25 +17723,41 @@ function cover_opaque(): CoverPat {
 }
 
 function sugar_exhaustive_diags(sg: ast.MatchSugar, s: Scope): util.Diag[] {
-  let none: util.Diag[] = [];
-  if (sg.origin != "" || sg.tup.len() + sg.strct.len() + sg.arms.len() == 0 || has_catch_all(sg)) {
-    return none;
+  if (sg.origin != "" || sg.tup.len() + sg.strct.len() + sg.arms.len() == 0) {
+    return [];
   }
+  let out: util.Diag[] = [];
   let t: typeinfo.Type = check_expr(sg.scrut, s);
-  if (is_unknown(t)) {
-    return none;
+  let valid: ast.MatchSugar = sg;
+  if let typeinfo.TypeTuple(tuple) = t {
+    let arms: ast.TupArm[] = [];
+    for arm in sg.tup {
+      if (!arm.is_wild && arm.elem_kinds.len() != tuple.elements.len()) {
+        out = out.append(dg_at("E035", "tuple pattern has " + util.i32_to_string(arm.elem_kinds.len()) + " elements, but scrutinee tuple has " + util.i32_to_string(tuple.elements.len()), arm.line, arm.col));
+      } else {
+        arms = arms.append(arm);
+      }
+    }
+    valid = ast.MatchSugar { ...sg, tup: arms };
   }
-  let rows: CoverPat[][] = sugar_rows(sg, t, s);
+  out = util.append_diags(out, sugar_unreachable_diags(valid));
+  if (is_unknown(t)) {
+    return out;
+  }
+  if (has_catch_all(valid)) {
+    return out;
+  }
+  let rows: CoverPat[][] = sugar_rows(valid, t, s);
   if (sg.arms.len() > 0) {
-    return variant_cover_diags(rows, t, sg, s);
+    return util.append_diags(out, variant_cover_diags(rows, t, valid, s));
   }
   if (!cover_useful(rows, [t], s)) {
-    return none;
+    return out;
   }
   if (sg.tup.len() > 0) {
-    return [dg_at("E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm", sg.line, sg.col)];
+    return out.append(dg_at("E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm", sg.line, sg.col));
   }
-  return [dg_at("E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm", sg.line, sg.col)];
+  return out.append(dg_at("E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm", sg.line, sg.col));
 }
 
 // One E030 per variant of the scrutinee's enum some value of escapes every
@@ -18615,7 +18707,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           out = util.append_diags(out, ctor_payload_diags(v.init, declared, cur));
           let vbound: util.Diag[] = dest_bound_diags(v.init, declared, cur);
           out = util.append_diags(out, vbound);
-          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
+          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !semtypes.lends_array(initt, declared) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
             out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + type_label(initt) + str_copy_hint(initt, declared), v.line, v.col));
           }
           // An annotation naming no declared type (the E064 case) is a type
@@ -18729,11 +18821,15 @@ pub function is_build_gate_code(code: string): boolean {
 // that refusal is uncoded, as native's is, so it gates here by where it comes
 // from rather than by code.
 pub function build_gate_diags(mod: parser.Module): util.Diag[] {
+  return build_gate_diags_with_file(mod, "");
+}
+
+pub function build_gate_diags_with_file(mod: parser.Module, entry_file: string): util.Diag[] {
   let cgd: util.Diag[] = const_grammar_diags(mod);
   if (cgd.len() > 0) {
     return cgd;
   }
-  return filter_build_gate(check_module(mod).diags);
+  return filter_build_gate(check_module_with_file(mod, entry_file).diags);
 }
 
 // filter_build_gate keeps the diagnostics the compile path enforces.
@@ -19299,7 +19395,7 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
   }
   // A free function named like a builtin or an intrinsic redeclares it, as
   // native's pre-registered signature makes it there.
-  if (f2.receiver_type.len() == 0 && (!is_unknown(builtin_sig(f2.name)) || util.has_str(registered_intrinsics(), f2.name))) {
+  if (f2.receiver_type.len() == 0 && (builtin_row(f2.name).len() > 0 || util.has_str(registered_intrinsics(), f2.name))) {
     earlier = true;
   }
   return earlier;
@@ -20530,6 +20626,9 @@ function lu_try_at(x: ast.Expr, own found: boolean): boolean {
 function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   if let ast.ExprFieldAccess(fa) = c.callee {
     if (!fx.ofuncs.methods.has(fa.field)) {
+      for a in c.args {
+        acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+      }
       return acc;
     }
     acc = lu_method_arg(fa.obj, e, outer, has_outer, site, fx, acc);
@@ -20540,6 +20639,9 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
   }
   let cname: string = ow_ident_name(c.callee);
   if (cname.len() == 0 || util.has_str(fx.params, cname) || !ow_is_own_func(fx.ofuncs, cname)) {
+    for a in c.args {
+      acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+    }
     return acc;
   }
   let flags: boolean[] = ow_func_flags(fx.ofuncs, cname);
@@ -20968,7 +21070,16 @@ function ow_own_call(c: ast.ExprCall, ctx: OwnCtx): OwnCall {
       return OwnCall { args: args, flags: ow_func_flags(ctx.ofuncs, key), arr: arr, recv: ow_recv_kind(key) };
     }
   }
-  return OwnCall { args: c.args, flags: ow_call_arg_flags(c.callee, ctx), arr: [], recv: RECV_NONE };
+  let flags: boolean[] = ow_call_arg_flags(c.callee, ctx);
+  let arr: boolean[] = [];
+  if (flags.len() > 0) {
+    if let typeinfo.TypeFunc(ft) = check_expr(c.callee, ctx.scope) {
+      for t in ft.param_types {
+        arr = arr.append(is_owned_array(t) || is_arr_view(t) || is_unknown(t));
+      }
+    }
+  }
+  return OwnCall { args: c.args, flags: flags, arr: arr, recv: RECV_NONE };
 }
 
 function ow_recv_kind(key: string): i32 {
@@ -20982,7 +21093,7 @@ function ow_recv_kind(key: string): i32 {
 // array-typed, that the last-use pass found dead under that condition
 // (lu_method_arg's `~` key).
 function ow_arg_dies(oc: OwnCall, i: i32, ctx: OwnCtx): boolean {
-  if (oc.recv != RECV_METHOD || i >= oc.arr.len() || oc.arr[i]) {
+  if (oc.recv == RECV_DYN || i >= oc.arr.len() || oc.arr[i]) {
     return false;
   }
   if let ast.ExprIdent(id) = oc.args[i] {
@@ -21046,14 +21157,17 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
 
 // ow_call_arg_flags returns the callee's per-parameter `own` flags for a
 // plain (ident-callee) call, or an empty list when the callee is not an
-// own-func or not a plain ident (a closure callee borrows its args; a method
-// is ow_own_call's case).
+// own-func or a function value whose type declares consuming slots.
+// A method receiver is ow_own_call's case.
 // Drives the precise affine model: an argument is consumed only at an `own`
 // position.
 function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
   match (callee) {
     ast.ExprIdent(id) => {
       if (util.has_str(ctx.bound, id.name)) {
+        if let typeinfo.TypeFunc(ft) = check_expr(callee, ctx.scope) {
+          return ft.param_own;
+        }
         return [];
       }
       if (ow_is_own_func(ctx.ofuncs, id.name)) {
@@ -21062,6 +21176,9 @@ function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
       return [];
     },
     _ => {
+      if let typeinfo.TypeFunc(ft) = check_expr(callee, ctx.scope) {
+        return ft.param_own;
+      }
       return [];
     }
   }
@@ -22222,12 +22339,9 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
   return kept;
 }
 
-// own_diags runs the affine move-check over every function whose body
-// could exercise it: those with owned params (the E050 walk) and — once
-// any owned-param function exists — every function (the E051 call-site
-// guard). No-op when the module declares no `own` parameter anywhere, so
-// ordinary programs are untouched. The result-borrow fixpoint always spans the
-// module; only the bodies `focus` admits (in_focus) are walked.
+// own_diags checks moves and owned arguments in each function, including
+// calls through a consuming function type. The result-borrow fixpoint spans
+// the module. Only the bodies `focus` admits are walked.
 pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex): util.Diag[] {
   let ofuncs: OwnFuncs = collect_own_funcs(mod);
   let builtins: util.NameIndex = util.name_index(ow_fresh_builtins());
@@ -22253,12 +22367,10 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    if (owned.len() > 0 || ofuncs.rows.len() > 0) {
-      let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs) };
-      let nomoved: MovedEntry[] = [];
-      let r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
-      out = util.append_diags(out, r.diags);
-    }
+    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs) };
+    let nomoved: MovedEntry[] = [];
+    let r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
+    out = util.append_diags(out, r.diags);
   }
   return out;
 }
@@ -22308,6 +22420,15 @@ function e049_ref_capture(enclosing: NameTy[], name: string): boolean {
     }
   }
   return false;
+}
+
+function e049_capture_label(enclosing: NameTy[], name: string): string {
+  for elem in enclosing {
+    if (elem.nm == name && elem.ty != "__e049_ref") {
+      return util.demangle(elem.ty) + " ";
+    }
+  }
+  return "";
 }
 
 // e049_init_ref_ty infers a reference-shaped type marker for an UNANNOTATED
@@ -22488,7 +22609,7 @@ function e049_check_assigns(stmts: ast.Stmt[], enclosing: NameTy[], locals: Name
     match (stmt) {
       ast.StmtAssign(a) => {
         if (!util.has_str(local_names, a.target) && e049_ref_capture(enclosing, a.target)) {
-          out = out.append(dg_at("E049", "cannot assign to captured \"" + a.target + "\": a reference-typed closure capture is read-only (return the new value from the closure instead)", a.target_line, a.target_col));
+          out = out.append(dg_at("E049", "cannot assign to captured " + e049_capture_label(enclosing, a.target) + "\"" + a.target + "\": a reference-typed closure capture is read-only (it could close a reference cycle); return the new value from the closure instead", a.target_line, a.target_col));
         }
       },
       ast.StmtIf(f) => {
@@ -26058,18 +26179,26 @@ function fn_value_inst(e: ast.Expr, dest: typeinfo.Type, s: Scope, gens: parser.
 // generic function as a value ask for, each against the parameter it is passed
 // to.
 function arg_value_insts(c: ast.ExprCall, s: Scope, gens: parser.FuncDecl[], depth: i32, own acc: Inst[]): Inst[] {
-  let ast.ExprIdent(cid) = c.callee else {
-    return acc;
-  };
-  if (s.defines(cid.name)) {
+  let needs_dest: boolean = false;
+  for a in c.args {
+    if (generic_fn_value_arg(a, s)) {
+      needs_dest = true;
+    }
+  }
+  if (!needs_dest) {
     return acc;
   }
-  let sig: FuncSig = s.lookup_sig(cid.name);
+  if let ast.ExprIdent(cid) = c.callee {
+    if (s.defines(cid.name)) {
+      return acc;
+    }
+  }
+  let dests: typeinfo.Type[] = s.call_param_types(c);
   let out: Inst[] = acc;
   let i: i32 = 0;
-  while (i < c.args.len() && i < sig.param_types.len()) {
+  while (i < c.args.len() && i < dests.len()) {
     if (generic_fn_value_arg(c.args[i], s)) {
-      let inst: Inst = fn_value_inst(c.args[i], bound_param_dest(c, i, sig.param_types[i], s), s, gens, depth);
+      let inst: Inst = fn_value_inst(c.args[i], bound_param_dest(c, i, dests[i], s), s, gens, depth);
       if (inst.name.len() > 0) {
         out = out.append(inst);
       }
@@ -26238,6 +26367,10 @@ function body_insts(fd: parser.FuncDecl, env: ModuleEnv, msc: Scope, gens: parse
 // run in, so an instantiation's diagnostics are reported only for a program
 // whose templates passed.
 pub function check_module(raw_mod: parser.Module): ModuleTypes {
+  return check_module_with_file(raw_mod, "");
+}
+
+pub function check_module_with_file(raw_mod: parser.Module, entry_file: string): ModuleTypes {
   // Native's checker resolves named arguments and fills omitted defaults
   // before it types anything, and reports what does not resolve (E076 /
   // E077 / E004) as its first diagnostics. Filling here rather than in each
@@ -26246,7 +26379,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // because a call that did not resolve was left as written.
   let (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
   let mod: parser.Module = prepared_module(filled);
-  let env: ModuleEnv = module_env(mod);
+  let env: ModuleEnv = module_env_with_file(mod, entry_file);
   let mt: ModuleTypes = check_module_pass(mod, env, fda_diags, []);
   if (mt.diags.len() > 0) {
     return mt;
@@ -26262,7 +26395,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     names = names.append(cl.name);
   }
   let cmod: parser.Module = parser.Module { ...mod, funcs: funcs };
-  let rt: ModuleTypes = check_module_pass(cmod, module_env(cmod), [], names);
+  let rt: ModuleTypes = check_module_pass(cmod, module_env_with_file(cmod, entry_file), [], names);
   if (rt.diags.len() == 0) {
     return mt;
   }
@@ -26762,6 +26895,10 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
 pub struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[] }
 
 function module_env(mod: parser.Module): ModuleEnv {
+  return module_env_with_file(mod, "");
+}
+
+function module_env_with_file(mod: parser.Module, entry_file: string): ModuleEnv {
   // The struct sigs resolve against the union NAMES, so a struct field typed
   // as a union resolves rather than going unknown; the full union sigs, with
   // their variants, come after, and func sigs read both. The built-in structs
@@ -26778,11 +26915,23 @@ function module_env(mod: parser.Module): ModuleEnv {
   let union_names: string[] = union_sig_names(unions);
   let tn: TypeNames = with_spellings(type_names(type_head_names(structs, union_names), union_names, rnames), mod);
   let sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
+  let methods: MethodSig[] = collect_method_sigs(mod.funcs, tn);
+  if (entry_file.len() > 0) {
+    let named: MethodSig[] = [];
+    for m in methods {
+      if (m.file.len() == 0 && m.line > 0) {
+        named = named.append(MethodSig { ...m, file: entry_file + ":" });
+      } else {
+        named = named.append(m);
+      }
+    }
+    methods = named;
+  }
   return ModuleEnv {
     sigs: sig_table(sigs),
     structs: struct_table(structs, union_names, rnames, tn.spellings),
     unions: union_table(unions),
-    methods: method_table(collect_method_sigs(mod.funcs, tn)),
+    methods: method_table(methods),
     imports: module_imports(mod),
     impls: assoc_func_impls(mod.impls, mod.funcs),
     trait_reqs: mod.trait_reqs,
@@ -26928,6 +27077,11 @@ pub function variant_shape_sig(s: Scope, name: string, owner: string): StructSig
 function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
   if (body.len() == 0) {
     return t_unknown("empty value block");
+  }
+  if let ast.StmtUnknown(u) = body[body.len() - 1] {
+    if (u.kind == "value branch has no trailing expression") {
+      return t_void();
+    }
   }
   if let ast.StmtReturn(r) = body[body.len() - 1] {
     if (parser.bare_return(r.value) || int_literal_tree(r.value)) {
@@ -28496,6 +28650,14 @@ function any_width_open(ts: typeinfo.Type[]): boolean {
 }
 
 function annotate_callee(c: ast.ExprCall, ct: typeinfo.Type, s: Scope): ast.Expr {
+  if let ast.ExprIdent(id) = c.callee {
+    if let typeinfo.TypeUnion(u) = ct {
+      if (!s.is_bound(id.name) && !s.has_sig(id.name)) {
+        // A constructor retains the enum selected in its lexical module.
+        return ast.ExprIdent { ...id, ty: u.name };
+      }
+    }
+  }
   if let ast.ExprLambda(lm) = c.callee {
     if (parser.is_value_block(c)) {
       return annotate_lambda_expr(lm, s, "", ct);
@@ -29642,7 +29804,23 @@ function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
       return ast.StmtAssign { ...a, value: pretype_expr(a.value, s) };
     },
     ast.StmtIf(f) => {
-      return ast.StmtIf { ...f, cond: pretype_expr(f.cond, s), then_body: pretype_stmts(f.then_body, s), else_body: pretype_stmts(f.else_body, s) };
+      let ready: ast.StmtIf = f;
+      if (f.sugar.origin == "" && f.sugar.tup.len() > 0) {
+        if let typeinfo.TypeTuple(tuple) = check_expr(f.sugar.scrut, s) {
+          let wrong: boolean = false;
+          for arm in f.sugar.tup {
+            if (!arm.is_wild && arm.elem_kinds.len() != tuple.elements.len()) {
+              wrong = true;
+            }
+          }
+          if (wrong) {
+            if let ast.StmtIf(rebuilt) = parser.build_tuple_match_sized(f.sugar.scrut, f.sugar.tup, tuple.elements.len(), f.sugar.line, f.sugar.col) {
+              ready = rebuilt;
+            }
+          }
+        }
+      }
+      return ast.StmtIf { ...ready, cond: pretype_expr(ready.cond, s), then_body: pretype_stmts(ready.then_body, s), else_body: pretype_stmts(ready.else_body, s) };
     },
     ast.StmtWhile(w) => {
       return ast.StmtWhile { ...w, cond: pretype_expr(w.cond, s), body: pretype_stmts(w.body, s) };
@@ -29847,9 +30025,19 @@ function needs_pretype_or_rescope(stmts: ast.Stmt[], coll: string[]): boolean {
 function needs_pretype(stmts: ast.Stmt[]): boolean {
   let found: boolean = false;
   for stmt in stmts {
-    found = astwalk.fold_stmt_pruned(stmt, found, pretype_at, astwalk.descend_all);
+    found = astwalk.fold_stmt_nodes(stmt, found, pretype_needed_stmt, pretype_at, astwalk.descend_all);
   }
   return found;
+}
+
+function pretype_needed_stmt(st: ast.Stmt, own found: boolean): boolean {
+  if (found) {
+    return true;
+  }
+  if let ast.StmtIf(f) = st {
+    return f.sugar.origin == "" && f.sugar.tup.len() > 0;
+  }
+  return false;
 }
 
 // use_untyped reports whether `c` is the source call of a `use NAME <- CALL;`

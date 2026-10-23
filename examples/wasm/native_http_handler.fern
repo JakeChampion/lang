@@ -13,12 +13,9 @@
 //   $ PORT=8080 qemu-aarch64 ./serve &
 //   $ curl http://localhost:8080/foo
 //
-// The per-request arena is wrapped around the handler call
-// inside `serve.run`, so every allocation this handler makes
-// (the response string concat, the parsed request fields, the
-// serialised wire bytes) is reclaimed before the next
-// `tcp_accept` — bump-allocator semantics matching the wasi-
-// http path's implicit `__http_entry` arena.
+// Reference counts track the request and response values.
+// The runtime releases each value after its last reference.
+// Server-owned state can remain alive across requests.
 //
 // The second parameter is the handler's capability bag: the host
 // effects it may reach, as methods (std/platform). An access log

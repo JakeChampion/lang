@@ -231,7 +231,7 @@ which ones.
 | `CRASH-ONLY-SERVE.md` | [reference] | Crash-only serving in std/serve: the trap taxonomy, the supervisor with a prefork worker pool, and its test bar. |
 | `DST-PLATFORM-BRIEF.md` | [reference] | Deterministic simulation testing in std/sim, std/sim_platform and std/sim_fetch: a virtual clock and seeded fault injection. |
 | `PERSISTENT-COLLECTIONS.md` | [reference] | std/ordmap, ordset, pmap, pset and pvec: design, measurements, and what the compiler still owes them. |
-| `STDLIB.md` | [reference] | The standard library: the std/ and core/ module map, conventions and receiver methods. |
+| `STDLIB.md` | [reference] | Library conventions and links to the generated API reference. |
 | `WASI-SOCKET-ERRORS.md` | [reference] | How WASI socket error-code results map to negative Preview 1 errnos. |
 | `FEATURE-AUDIT.md` | [tracker] | Every built-in and stdlib function against every backend and the interpreter, with a log of the bugs found and fixed. |
 | `SOTA-STDLIB-MATRIX-2026.md` | [tracker] | The execution matrix over the blueprint: verdict, prerequisite, phase and acceptance gate per row. |
