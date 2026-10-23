@@ -8447,8 +8447,10 @@ function method_binding(c: ast.ExprCall, msig: MethodSig, recv: typeinfo.Type, s
   }
   let mi: i32 = 0;
   while (mi < c.args.len() && mi < msig.param_type_names.len()) {
-    let at: typeinfo.Type = binding_arg_type(c.args[mi], msig.param_type_names[mi], n2, t2, s);
-    let (n3, t3) = gc_bind_param(parser.parse_type_ref(msig.param_type_names[mi]), at, full, s.type_names(), n2, t2);
+    let ref = parser.parse_type_ref(msig.param_type_names[mi]);
+    let dest = type_from_ref_subst(ref, n2, t2, s.type_names());
+    let actual = fn_value_at(c.args[mi], dest, s);
+    let (n3, t3) = gc_bind_param(ref, actual, full, s.type_names(), n2, t2);
     n2 = n3;
     t2 = t3;
     mi = mi + 1;
@@ -17147,26 +17149,6 @@ function fn_value_instance(sig: FuncSig, bn: string[], bt: typeinfo.Type[], s: S
   return typeinfo.TypeFunc { param_types: params, param_own: callable_own_flags(sig.param_own, params.len()), ret_type: result, params_known: true };
 }
 
-// binding_arg_type is the type a method argument binds the method's type
-// variables from. A generic function value gives its instance at the
-// parameter, with the variables bound so far, so a result such as `U` in
-// `(T) => U` binds to the instance's result.
-function binding_arg_type(arg: ast.Expr, param: string, bn: string[], bt: typeinfo.Type[], s: Scope): typeinfo.Type {
-  let at: typeinfo.Type = check_expr(arg, s);
-  if (!generic_fn_value_arg(arg, s)) {
-    return at;
-  }
-  let ast.ExprIdent(id) = arg else {
-    return at;
-  };
-  let typeinfo.TypeFunc(want) = type_from_ref_subst(parser.parse_type_ref(param), bn, bt, s.type_names()) else {
-    return at;
-  };
-  let sig: FuncSig = s.lookup_sig(id.name);
-  let (vn, vt) = fn_value_binds(sig, want, s);
-  return fn_value_instance(sig, vn, vt, s);
-}
-
 // fn_value_settles reports whether the callable `want` binds every type
 // parameter of the generic function `e` names, to a known type or to a type
 // variable of the enclosing generic.
@@ -17196,6 +17178,20 @@ function fn_value_settles(e: ast.Expr, want: typeinfo.TypeFunc, s: Scope): boole
     return type_assignable(actual, want, s.unions.unions);
   }
   return false;
+}
+
+// A generic callback takes the known parameter types before it binds a method result.
+function fn_value_at(e: ast.Expr, dest: typeinfo.Type, s: Scope): typeinfo.Type {
+  if (generic_fn_value_arg(e, s)) {
+    if let ast.ExprIdent(id) = e {
+      if let typeinfo.TypeFunc(want) = dest {
+        let sig = s.lookup_sig(id.name);
+        let (names, types) = fn_value_binds(sig, want, s);
+        return fn_value_instance(sig, names, types, s);
+      }
+    }
+  }
+  return check_expr(e, s);
 }
 
 // generic_fn_value_arg reports whether `e` names a generic function as a

@@ -34,6 +34,9 @@
 // build still owns the production code path; this file is run
 // from a Go test that compiles + executes it.
 
+import "std/unicode";
+import "std/utf8";
+
 pub struct TokEof { line: i32, col: i32 }
 
 // `raw` is the source spelling of a quoted literal — `'x'` / `b'x'`,
@@ -77,7 +80,7 @@ pub type Token = TokEof | TokNumber | TokIdent | TokKeyword | TokPunct | TokStri
 
 // is_digit / is_alpha / is_alnum — byte-level classifiers,
 // matching the Go lexer's `unicode.IsDigit` / `IsLetter` on the
-// ASCII subset (multibyte UTF-8 source isn't supported here).
+// ASCII subset. A non-ASCII letter gets the identifier-specific diagnostic.
 function is_digit(b: i32): boolean {
   return b >= 48 && b <= 57;
 }
@@ -1067,8 +1070,8 @@ function dec_str(v: i32): string {
 }
 
 // Utf8 is one decoded UTF-8 sequence: `val` is the scalar, `len` its
-// byte length, and len 0 marks a malformed sequence. Only character
-// literals need it — every other scanner here works byte-at-a-time.
+// byte length, and len 0 marks a malformed sequence. Source decoding,
+// character literals, and non-ASCII diagnostics share this strict decoder.
 struct Utf8 { val: i32, len: i32 }
 
 function decode_utf8(src: string, i: i32, n: i32): Utf8 {
@@ -1078,13 +1081,13 @@ function decode_utf8(src: string, i: i32, n: i32): Utf8 {
   }
   let need: i32 = 0;
   let val: i32 = 0;
-  if (b0 >= 240 && b0 < 248) {
+  if (b0 >= 240 && b0 <= 244) {
     need = 3;
     val = b0 & 7;
-  } else if (b0 >= 224) {
+  } else if (b0 >= 224 && b0 < 240) {
     need = 2;
     val = b0 & 15;
-  } else if (b0 >= 192) {
+  } else if (b0 >= 194 && b0 < 224) {
     need = 1;
     val = b0 & 31;
   } else {
@@ -1101,6 +1104,11 @@ function decode_utf8(src: string, i: i32, n: i32): Utf8 {
     }
     val = val << 6 | c & 63;
     k = k + 1;
+  }
+  if (val > 1114111 || val >= 55296 && val <= 57343
+    || need == 1 && val < 128 || need == 2 && val < 2048
+    || need == 3 && val < 65536) {
+    return Utf8 { val: 0, len: 0 };
   }
   return Utf8 { val: val, len: need + 1 };
 }
@@ -1161,7 +1169,38 @@ function bad_char_message(src: string, i: i32, n: i32): string {
   if (b >= 128 && decode_utf8(src, i, n).len == 0) {
     return "invalid UTF-8 byte 0x" + hex_digit(b >> 4, "0123456789ABCDEF") + hex_digit(b & 15, "0123456789ABCDEF");
   }
+  let ch: char = decode_utf8(src, i, n).val as char;
+  if (ch.is_letter() || ch.is_digit()) {
+    return "identifiers must be ASCII; found " + quote_char(src, i, n);
+  }
   return "unexpected character " + quote_char(src, i, n);
+}
+
+// Decode external source bytes before they enter the string-based parser.
+// The unchecked local never escapes unless the complete UTF-8 scan succeeds.
+// Invalid bytes in comments and literals take precedence over token errors.
+pub function decode_source(bytes: u8[]): Result[string, TokError] {
+  let src: string = string_from_bytes_unchecked(bytes);
+  if (utf8.is_valid_utf8(src)) {
+    return Ok(src);
+  }
+  let i: i32 = 0;
+  let line: i32 = 1;
+  let col: i32 = 1;
+  while (i < src.len()) {
+    let rune: Utf8 = decode_utf8(src, i, src.len());
+    if (rune.len == 0) {
+      return Err(TokError { msg: bad_char_message(src, i, src.len()), code: "P001", line: line, col: col });
+    }
+    if (rune.val == 10) {
+      line = line + 1;
+      col = 1;
+    } else {
+      col = col + rune.len;
+    }
+    i = i + rune.len;
+  }
+  return Err(TokError { msg: "invalid UTF-8 source", code: "P001", line: 1, col: 1 });
 }
 
 // EscVal is one decoded escape inside a quoted literal: the advanced
@@ -2207,6 +2246,12 @@ function test_unknown_char(): i32 {
   if (!lex_error_is(string_from_bytes_unchecked([97 as u8, 32 as u8, 255 as u8]), "invalid UTF-8 byte 0xFF", "P001")) {
     return 1908;
   }
+  if (!lex_error_is("é", "identifiers must be ASCII; found 'é'", "P001")) {
+    return 2230;
+  }
+  if (!lex_error_is("١", "identifiers must be ASCII; found '١'", "P001")) {
+    return 2231;
+  }
   // The rest of the lexer's errors carry their codes too: a numeric literal's
   // is P002.
   if (!lex_error_is("42i33", "unknown numeric suffix \"i33\" on \"42\"", "P002")) {
@@ -2767,12 +2812,36 @@ function test_multibyte(): i32 {
   }
   match (t2[2]) {
     TokError(t) => {
-      if (t.msg != "unexpected character 'é'") {
+      if (t.msg != "identifiers must be ASCII; found 'é'") {
         return 2215;
       }
     },
     _ => {
       return 2216;
+    }
+  }
+  return 0;
+}
+
+function test_source_decoding(): i32 {
+  match (decode_source([47 as u8, 47 as u8, 10 as u8, 32 as u8, 255 as u8])) {
+    Ok(_) => {
+      return 2232;
+    },
+    Err(e) => {
+      if (e.line != 2 || e.col != 2 || e.code != "P001" || e.msg != "invalid UTF-8 byte 0xFF") {
+        return 2233;
+      }
+    }
+  }
+  match (decode_source([195 as u8, 169 as u8])) {
+    Ok(text) => {
+      if (text != "é") {
+        return 2234;
+      }
+    },
+    Err(_) => {
+      return 2235;
     }
   }
   return 0;
@@ -2844,5 +2913,5 @@ function main(): i32 {
   if (c != 0) {
     return c;
   }
-  return 0;
+  return test_source_decoding();
 }
