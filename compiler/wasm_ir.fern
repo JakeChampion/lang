@@ -5804,8 +5804,8 @@ function emit_wasm_lane_group(width: i32, base: i32, set: boolean): string {
   if (set) {
     out = "    local.set " + util.i32_to_string(base + 5) + "\n";
   }
-  out = out + "    local.set " + util.i32_to_string(base + 4) + "\n" + wasm_arr_index_trap(base, base + 4);
-  out = out + "    local.get " + arr + "\n    i32.load\n" + at + "    i32.const " + util.i32_to_string(128 / width - 1) + "\n    i32.add\n    i32.le_u\n    if\n      unreachable\n    end\n";
+  out = out + "    local.set " + util.i32_to_string(base + 4) + "\n" + wasm_arr_index_trap(base, base + 4, "arr");
+  out = out + "    local.get " + arr + "\n    i32.load\n" + at + "    i32.const " + util.i32_to_string(128 / width - 1) + "\n    i32.add\n    i32.le_u\n    if\n      call $__fern_abort_arr\n      unreachable\n    end\n";
   out = out + "    local.get " + arr + "\n" + at + "    i32.const 8\n    i32.mul\n    i32.add\n    i32.const 8\n    i32.add\n    local.set " + util.i32_to_string(base + 4) + "\n";
   let hi: string = at + "    i32.const 16\n    i32.add\n";
   if (set && width == 64) {
