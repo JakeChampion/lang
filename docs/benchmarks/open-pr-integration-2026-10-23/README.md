@@ -19,6 +19,11 @@ baseline. Its dynamic count is 33,602,359. The reports include both figures.
 added deflate benchmarks and the replaced sort_inplace benchmark on all three
 targets. Other earlier advisory size rows are outside this baseline update.
 
+`selfhost-cold-calls.txt` records the 20 ARM rows that the cold-call change affects.
+Their values use the combined source report.
+`alloc-report.txt` records 28,679,178 allocations and the same number of frees.
+The allocation baseline uses these combined source counts.
+
 These reports describe the combined source scope.
 
 Apply the values to the branch only after it contains these sources.
