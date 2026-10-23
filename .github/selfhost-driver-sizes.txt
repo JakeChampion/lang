@@ -564,14 +564,23 @@
 # updater splice, which copies an updater's field reads into each caller.
 # Its ratio to fern.fern went from 1.003 to 1.056, so the splice adds about
 # 5% to the self-built compiler.
+#
+# 2026-10-23 (#13040) — nine rows from the driver-sizes lane on #13040.
+# fern.fern 13289616 -> 14260976 (+7.3%), and the eight drivers from +8.4%
+# (asm_load_run) to +15.7% (asm_pathprobe_run). The cause is the stage0 pin,
+# not the source: #13040 pins stage0-20261023-33f4f6f, a self-built compiler,
+# and stage0 builds these drivers. Built by that stage0, the compiler from
+# #13040's sources is 25008 bytes (+0.1%) larger than the compiler from main
+# at 8207edec. fern.fern/stage2 (+1.6%) and checker_modload_run (+2.4%) stay
+# inside the tolerance and keep their rows.
 fern.fern/stage2 14037248
-fern.fern 13289616
-drivers/asm_load_run.fern 10447952
-drivers/asm_modload_run.fern 9096992
-drivers/asm_ir_run.fern 8731008
-drivers/asm_run.fern 7921744
-drivers/wasm_ir_run.fern 7918016
-drivers/wasm_run.fern 7917984
-drivers/wasm_runio_run.fern 7901024
-drivers/asm_pathprobe_run.fern 5070560
+fern.fern 14260976
+drivers/asm_load_run.fern 11324144
+drivers/asm_modload_run.fern 9965328
+drivers/asm_ir_run.fern 9615440
+drivers/asm_run.fern 8812464
+drivers/wasm_ir_run.fern 8797456
+drivers/wasm_run.fern 8801584
+drivers/wasm_runio_run.fern 8783248
+drivers/asm_pathprobe_run.fern 5867376
 drivers/checker_modload_run.fern 2985696

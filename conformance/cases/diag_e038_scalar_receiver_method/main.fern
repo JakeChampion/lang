@@ -1,0 +1,22 @@
+// A method on a string, number or boolean receiver checks its arguments like
+// any other call, and a call whose argument is wrong still has the type its
+// callee declares, so a binding of the wrong type is reported too.
+import "std/string";
+
+function (s: string) twice(n: i32): string {
+    return s + s;
+}
+
+function f(a: i32): Option[i32] {
+    return Some(a);
+}
+
+function main(): i32 {
+    let a = "ab".repeat("x");
+    let b = "ab".twice("x");
+    let c: i32 = "ab".twice(2);
+    let n: i32 = f("x");
+    let g = (x: i32): string => "x";
+    let m: i32 = g("y");
+    return 0;
+}

@@ -86,12 +86,16 @@ func TestSelfHostLSPWorkspaceX86_64(t *testing.T) {
 			"helper/lib.fern":  reachesFS,
 		})
 		mainURI, libURI := fileURI(filepath.Join(dir, "app", "main.fern")), fileURI(filepath.Join(dir, "helper", "lib.fern"))
-		if ds := run(t, lspOpen(mainURI, appMain))[mainURI]; len(ds) != 1 || ds[0].Code != "E070" {
-			t.Fatalf("main with helper on disk = %+v, want its E070", ds)
+		// The E070 sits at helper's `save`, so it is published on helper's file.
+		if ds := run(t, lspOpen(libURI, reachesFS), lspOpen(mainURI, appMain))[libURI]; len(ds) != 1 || ds[0].Code != "E070" || ds[0].Range.Start.Line != 0 {
+			t.Fatalf("helper as on disk = %+v, want its E070 at save", ds)
 		}
 		got := run(t, lspOpen(libURI, reachesNothing), lspOpen(mainURI, appMain))
 		if ds, ok := got[mainURI]; !ok || len(ds) != 0 {
 			t.Errorf("main = %+v (published %v), want helper read from its buffer", ds, ok)
+		}
+		if ds := got[libURI]; len(ds) != 0 {
+			t.Errorf("helper = %+v, want its buffer's reach cleared", ds)
 		}
 	})
 

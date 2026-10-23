@@ -5,7 +5,7 @@
 //   import "std/ndarray";
 //   let a: ndarray.NdArray[i64] = ndarray.from_flat(xs, [64, 64]);
 //   let t: ndarray.NdArray[i64] = a.transpose();   // no element moves
-//   t.get([3, 5]) == a.get([5, 3]);
+//   t.get_unchecked([3, 5]) == a.get_unchecked([5, 3]);
 //   let r: ndarray.NdArray[i64] = t.reshape([4096]); // copies: t is not row-major
 //
 // # The representation
@@ -187,16 +187,16 @@ pub function (a: NdArray[T]) is_packed(): boolean {
   return a.is_row_major() && a.offset == 0 && a.data.len() == a.len();
 }
 
-// The storage index of `idx`, checking the rank and every bound.
+// The storage index of `idx`, or -1 when its rank or a bound is wrong.
 function addr[T](a: NdArray[T], idx: i32[]): i32 {
   if (idx.len() != a.shape.len()) {
-    shape_error();
+    return -1;
   }
   let at: i32 = a.offset;
   let k: i32 = 0;
   while (k < idx.len()) {
     if (idx[k] < 0 || idx[k] >= a.shape[k]) {
-      shape_error();
+      return -1;
     }
     at = at + idx[k] * a.strides[k];
     k = k + 1;
@@ -204,10 +204,24 @@ function addr[T](a: NdArray[T], idx: i32[]): i32 {
   return at;
 }
 
-// `get(idx)` — the element at a full index. A rank-0 array is read with
-// `get([])`.
-pub function (a: NdArray[T]) get(idx: i32[]): T {
-  return a.data[addr(a, idx)];
+// `get(idx)` — `Some(element)` at a full index, `None` when the index has
+// the wrong rank or is out of bounds. A rank-0 array is read with `get([])`.
+pub function (a: NdArray[T]) get(idx: i32[]): Option[T] {
+  let at: i32 = addr(a, idx);
+  if (at < 0) {
+    return None;
+  }
+  return Some(a.data[at]);
+}
+
+// `get_unchecked(idx)` — the element at an index the caller knows is valid;
+// traps when it is not.
+pub function (a: NdArray[T]) get_unchecked(idx: i32[]): T {
+  let at: i32 = addr(a, idx);
+  if (at < 0) {
+    shape_error();
+  }
+  return a.data[at];
 }
 
 function check_axis[T](a: NdArray[T], axis: i32): void {

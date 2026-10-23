@@ -35,12 +35,14 @@
 // resolve) and returns `Result[Grammar, string]`. Matching:
 //
 //   let Ok(g) = peg.peg_grammar(rules, "line") else { … };
-//   let r: peg.PegResult = peg.peg_match(g, input);
-//   if (r.ok) { … r.pos … r.caps.get("key") … }
+//   match (peg.peg_match(g, input)) {
+//     Ok(m) => { … m.pos … m.caps.get("key") … },
+//     Err(e) => { … e.furthest … },
+//   }
 //
 // `peg_match` anchors at position 0 and succeeds as soon as the
 // start pattern matches — it does NOT require consuming the whole
-// input; end a rule with `PEof` for that. On failure, `PegResult.pos`
+// input; end a rule with `PEof` for that. On failure, `PegError.furthest`
 // is the FURTHEST byte position any alternative reached — the
 // natural "syntax error near byte N" report. Captures are collected
 // only from the branches that end up on the successful parse
@@ -61,6 +63,9 @@
 // An empty capture is valid at any byte position.
 
 import "core/map";
+import "core/int";
+import "core/cmp";
+import "std/error";
 import "std/utf8";
 
 // Pattern is the pattern algebra — see the module header for the
@@ -87,11 +92,26 @@ pub enum Pattern {
 // peg_grammar (which validates) rather than the literal.
 pub struct Grammar { rules: Map[string, Pattern], start: string }
 
-// PegResult is what matching returns. ok=true: the start pattern
-// matched anchored at 0 and `pos` is the first byte AFTER the match
-// (input.len() when the grammar ends in PEof). ok=false: `pos` is
-// the furthest position reached before failing, and caps is empty.
-pub struct PegResult { ok: boolean, pos: i32, caps: Map[string, string] }
+// PegMatch is a successful match: the start pattern matched anchored at
+// 0, `pos` is the first byte AFTER the match (input.len() when the grammar
+// ends in PEof), and `caps` holds the captures.
+pub struct PegMatch { pos: i32, caps: Map[string, string] }
+
+// PegError is a failed match: `furthest` is the furthest byte position any
+// alternative reached before failing.
+pub struct PegError { furthest: i32 }
+
+pub function (e: PegError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for PegError {}
+
+impl cmp.Display for PegError {}
+
+pub function (e: PegError) message(): string {
+  return "peg: no match (reached byte " + int.int_to_string(e.furthest) + ")";
+}
 
 // PegState threads the matcher's bookkeeping FUNCTIONALLY (struct
 // fields are immutable — every change builds a new state). The
@@ -104,7 +124,7 @@ struct PegState { tn: string[], ts: i32[], te: i32[], furthest: i32 }
 
 // __peg_fail records `pos` into the furthest-failure watermark and
 // returns the failure sentinel. Every failing arm routes through
-// here so PegResult.pos is meaningful on ok=false.
+// here so PegError.furthest is meaningful.
 function __peg_fail(st: PegState, pos: i32): (i32, PegState) {
   if (pos > st.furthest) {
     return (0 - 1, PegState { ...st, furthest: pos });
@@ -402,12 +422,12 @@ pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Gra
 
 // __peg_result packages a finished run: on success the capture
 // trail becomes the caps map (insertion order = match order, later
-// same-name captures overwrite earlier ones); on failure caps is
-// empty and pos is the furthest watermark.
-function __peg_result(r: i32, st: PegState, input: string): PegResult {
+// same-name captures overwrite earlier ones); on failure the error carries
+// the furthest watermark.
+function __peg_result(r: i32, st: PegState, input: string): Result[PegMatch, PegError] {
   let caps: Map[string, string] = map_new(8);
   if (r < 0) {
-    return PegResult { ok: false, pos: st.furthest, caps: caps };
+    return Err(PegError { furthest: st.furthest });
   }
   // The input is valid UTF-8, so nonempty ranges are valid exactly when
   // both endpoints are character boundaries. Check before creating text
@@ -419,22 +439,22 @@ function __peg_result(r: i32, st: PegState, input: string): PegResult {
       if (r > furthest) {
         furthest = r;
       }
-      return PegResult { ok: false, pos: furthest, caps: caps };
+      return Err(PegError { furthest: furthest });
     }
     i = i + 1;
   }
   i = 0;
   while (i < st.tn.len()) {
     // Each capture is materialised with `+ ""`: a bare slice views `input`,
-    // which the PegResult this map rides out in outlives.
+    // which the PegMatch this map rides out in outlives.
     caps = caps.insert(st.tn[i], slice_unchecked(input, st.ts[i], st.te[i]) + "");
     i = i + 1;
   }
-  return PegResult { ok: true, pos: r, caps: caps };
+  return Ok(PegMatch { pos: r, caps: caps });
 }
 
 // peg_match runs the grammar's start rule anchored at position 0.
-pub function peg_match(g: Grammar, input: string): PegResult {
+pub function peg_match(g: Grammar, input: string): Result[PegMatch, PegError] {
   let tn: string[] = [];
   let ts: i32[] = [];
   let te: i32[] = [];
@@ -445,7 +465,7 @@ pub function peg_match(g: Grammar, input: string): PegResult {
 
 // peg_match_pattern matches a standalone pattern (no rule table —
 // a PRef inside fails the match) anchored at position 0.
-pub function peg_match_pattern(p: Pattern, input: string): PegResult {
+pub function peg_match_pattern(p: Pattern, input: string): Result[PegMatch, PegError] {
   let rules: Map[string, Pattern] = map_new(2);
   rules = rules.insert("__start", p);
   let g: Grammar = Grammar { rules: rules, start: "__start" };
