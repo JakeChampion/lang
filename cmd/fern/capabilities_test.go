@@ -153,6 +153,48 @@ function main(): i32 {
 	}
 }
 
+// A trait default the importer inherits is the trait package's code: its
+// E070 sits at the default in that package's file, and the chain names the
+// method as declared rather than the impl's hoisted name.
+func TestEnforceCapabilitiesTraitDefaultChain(t *testing.T) {
+	root := writeCapsTree(t, capsTraitDefaultTree)
+	err, _ := runEnforce(t, filepath.Join(root, "app", "main.fern"))
+	want := `package "b" reaches 'fs' (read_file) without a capability grant: grab → read_file;`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("error = %v, want substring %q", err, want)
+	}
+	var ce *checker.Error
+	if errs, ok := err.(diag.Errors); !ok || len(errs) != 1 || !errors.As(errs[0], &ce) ||
+		!strings.HasSuffix(ce.Path, filepath.Join("b", "lib.fern")) || ce.Pos.Line != 3 || ce.Pos.Col != 3 {
+		t.Errorf("E070 should sit at b/lib.fern:3:3, got %+v", ce)
+	}
+}
+
+// capsTraitDefaultTree is an app inheriting package b's trait default, which
+// reads a file b is granted no capability for.
+var capsTraitDefaultTree = map[string]string{
+	"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nb = { path = \"../b\", capabilities = [] }\n",
+	"app/main.fern": `import "b";
+struct R { n: i32 }
+impl b.Leaky for R {
+  function size(self: Self): i32 { return self.n; }
+}
+function main(): i32 {
+  let r: R = R { n: 1 };
+  return r.grab();
+}`,
+	"b/fern.toml": "[package]\nname = \"b\"\n",
+	"b/lib.fern": `pub trait Leaky {
+  function size(self: Self): i32;
+  function grab(self: Self): i32 {
+    if let Ok(t) = read_file("/etc/hostname") {
+      return t.len();
+    }
+    return self.size();
+  }
+}`,
+}
+
 // (c) A dependency with NO capabilities key is warn-and-allow: the
 // compile succeeds and each package+capability warns once with an
 // example chain.
