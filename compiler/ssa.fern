@@ -601,7 +601,7 @@ pub const COLD_SLOW: i32 = 1;
 // A call in a block that some iterations of its loop skip (`cold_blocks`).
 pub const COLD_BRANCH: i32 = 2;
 
-// An rc primitive the emitters render inline (`rc_inlined`): no call at all.
+// A primitive the emitter inlines outside size mode. It has no call cost.
 pub const COLD_INLINE: i32 = 3;
 
 // cold_positions classifies each instruction position, numbered as the
@@ -803,14 +803,12 @@ pub function calls(ins: SInst): boolean {
   return inst_is_call(ins.kind_tag) && !rc_inlined(ins);
 }
 
-// rc_inlined names a call both register-path emitters render at the site
-// rather than calling: the two rc primitives whose whole body is a guard
-// chain over the count word. `__fern_rc_dec` is NOT one of them — it maps to
-// the array release, which frees.
+// rc_inlined identifies retain and uniqueness primitives that can inline.
+// Their bodies are guard chains over the count word.
+// The release primitive __fern_rc_dec calls the array release helper.
 //
-// Without `cold_calls` the allocator still counts these positions as calls
-// (inst_is_call), so a value is spilled across one; with it they are
-// COLD_INLINE and count as nothing.
+// The allocator uses COLD_INLINE only outside size mode.
+// A size build retains the call constraints for these primitives.
 pub function rc_inlined(ins: SInst): boolean {
   if (ins.kind_tag != 11 || ins.args.len() != 1) {
     return false;
