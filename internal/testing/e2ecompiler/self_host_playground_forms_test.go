@@ -205,7 +205,7 @@ func TestSelfHostPlaygroundRefusesWhatTheTargetLacks(t *testing.T) {
 		name, target, src, builtin string
 	}{
 		{"native-only", "wasm32-wasi", "function main(): i32 { return timer_fd(10); }\n", "`timer_fd`"},
-		{"native-runtime-floor", "wasm32-wasi", "function main(): i32 { let p: usize = __raw_alloc(64); return 0; }\n", "`__raw_alloc`"},
+		{"private-runtime-floor", "wasm32-wasi", "function main(): i32 { let p: usize = __raw_alloc(64); return 0; }\n", "__raw_alloc"},
 		{"no-stdout-on-http", "wasm32-wasi-http", httpWrites, "`write`"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -239,7 +239,7 @@ func TestSelfHostPlaygroundRefusesWhatTheTargetLacks(t *testing.T) {
 func gateLines(stderr string) []string {
 	var out []string
 	for _, line := range strings.Split(stderr, "\n") {
-		if strings.Contains(line, "error[E066]") || strings.Contains(line, "error[E080]") {
+		if strings.Contains(line, "error[E001]") || strings.Contains(line, "error[E066]") || strings.Contains(line, "error[E080]") {
 			out = append(out, line)
 		}
 	}

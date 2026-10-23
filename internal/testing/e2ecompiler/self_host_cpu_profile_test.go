@@ -194,7 +194,7 @@ func TestSelfHostCPUProfileRefusals(t *testing.T) {
 }
 
 func TestSelfHostCPUProfileCapacity(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			getpid, gettid, tgkill := "39", "186", "234"

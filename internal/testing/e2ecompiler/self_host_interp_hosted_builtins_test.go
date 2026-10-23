@@ -54,22 +54,27 @@ func TestSelfHostInterpHostedBuiltinsMatchOracle(t *testing.T) {
 }
 
 // The raw syscall and C-call floor take machine addresses, which neither
-// interpreter has: the self-host one says so rather than reporting the name
-// undefined.
+// interpreter has. Private syscalls are rejected at source admission.
+// The public C-call primitive reaches the address-space refusal.
 func TestSelfHostInterpRefusesTheRawFloor(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	for _, call := range []string{
-		"__syscall3(39, 0i64, 0i64, 0i64) as i32",
-		"__c_call0(0 as usize) as i32",
+	for _, tc := range []struct {
+		call       string
+		code       int
+		diagnostic string
+	}{
+		{"__syscall3(39, 0i64, 0i64, 0i64) as i32", 1, `error[E001]: cannot find "__syscall3" in this scope`},
+		{"__c_call0(0 as usize) as i32", 254, "takes machine addresses, and the interpreter has no address space"},
 	} {
+		call := tc.call
 		t.Run(strings.Fields(call)[0], func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "raw.fern")
 			if err := os.WriteFile(src, []byte("function main(): i32 { return "+call+"; }\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			_, stderr, code := runInterpCLI(t, runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib), "")
-			if code != 254 || !strings.Contains(stderr, "takes machine addresses, and the interpreter has no address space") {
-				t.Errorf("exit %d, stderr %q; want 254 and the address-space refusal", code, stderr)
+			if code != tc.code || !strings.Contains(stderr, tc.diagnostic) {
+				t.Errorf("exit %d, stderr %q; want %d and %q", code, stderr, tc.code, tc.diagnostic)
 			}
 		})
 	}

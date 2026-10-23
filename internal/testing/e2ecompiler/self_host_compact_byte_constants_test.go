@@ -124,7 +124,7 @@ function main(): i32 {
 }
 
 func TestSelfHostCompactByteConstantsExecution(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	assets := t.TempDir()
 	all := make([]byte, 256)
 	for i := range all {

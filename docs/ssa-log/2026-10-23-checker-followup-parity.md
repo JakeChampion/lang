@@ -52,3 +52,8 @@ The expanded header comparisons and declaration-order checks pass locally.
 The generic-call, native syscall, WebAssembly refusal, and user-world composition regressions pass on the available targets.
 The runtime probes cover native execution, WebAssembly execution, and assembly emission for the native targets.
 The complete PR run supplies the remaining platform and performance checks.
+
+The remaining memory, profiling, register, and platform primitive probes select the runtime entry explicitly.
+Their native execution and available assembly checks pass locally.
+Playground emission now applies the same source admission gate as the CLI before target capability checks.
+The playground examples, emitted forms, and refusal diagnostics pass their focused comparisons.
