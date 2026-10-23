@@ -776,8 +776,8 @@ function parse_destructure_names_nested(p: Par): (string, i32, boolean, Par) {
 // BINDING names and the comma-joined FIELD names — the two differ exactly where
 // a field is renamed on binding — and ok=false when a non-ident token stands
 // where a field name belongs. A trailing `..` marks intentionally-omitted
-// fields (partial bind); it binds nothing, so it comes back as its own flag
-// for the printer to put back rather than joining either list. Shared by the
+// fields (partial bind); it binds nothing, so it comes back as its own flag,
+// which the checker requires when a field is left out (E015). Shared by the
 // statement form (`let P { x } = E;`) and the parameter form (`P { x }: P`),
 // which encode the same binding.
 function parse_struct_pattern_fields(p: Par): (string, string, boolean, boolean, Par) {

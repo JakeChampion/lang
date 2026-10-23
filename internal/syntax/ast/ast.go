@@ -2625,9 +2625,8 @@ type Destructure struct {
 	Names      []string
 	Fields     []string // struct destructure: field projected for Names[i]; nil = tuple mode
 	StructName string   // struct destructure: the named struct type in the pattern; "" = tuple mode
-	// RestWritten records the pattern's trailing `..`. A struct destructure
-	// binds only the fields it lists either way, so here only the printer
-	// reads it.
+	// RestWritten records the pattern's trailing `..`, without which the
+	// pattern must list every field of the struct (E015).
 	RestWritten bool
 	Init        Expr
 	// AtName is the `@` binding naming the WHOLE value beside the pattern —
@@ -2811,9 +2810,8 @@ type MatchArm struct {
 	// `S { x }`, FieldNames[i] == Bindings[i]. nil for non-named patterns.
 	FieldNames []string
 	// RestWritten records the trailing `..` of a named-field pattern
-	// (`Rect { w, .. }`). An enum variant pattern must name every field
-	// unless it ends in `..`; a struct pattern binds only the fields it
-	// lists either way, so there only the printer reads it.
+	// (`Rect { w, .. }`). A struct or record-variant pattern must name
+	// every field unless it ends in `..` (E015).
 	RestWritten bool
 	IsWildcard  bool // `_ => …`
 	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
@@ -2973,7 +2971,7 @@ type MatchExprArm struct {
 	BindingTypes  []Type
 	NamedFields   bool     // named-field pattern `Rect { w, h }` — see MatchArm.NamedFields
 	FieldNames    []string // parallel to Bindings for named-field patterns — see MatchArm.FieldNames
-	RestWritten   bool     // trailing `..`, for the printer — see MatchArm.RestWritten
+	RestWritten   bool     // trailing `..` — see MatchArm.RestWritten
 	IsWildcard    bool
 	Literal       Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
 	// RangeHi / RangeInclusive — range pattern `lo..hi` / `lo..=hi`; see
