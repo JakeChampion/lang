@@ -210,6 +210,12 @@ function test_bytes_past_two_gib(): test.TestOutcome {
   return test.assert_eq(format.format_bytes(n), "5 GiB");
 }
 
+// One minus sign at i64's minimum, which has no positive counterpart.
+function test_bytes_i64_min(): test.TestOutcome {
+  let n: i64 = -9223372036854775807 - 1;
+  return test.assert_eq(format.format_bytes(n), "-8388608 TiB");
+}
+
 function test_bytes_tib(): test.TestOutcome {
   let n: i64 = 3298534883328;
   return test.assert_eq(format.format_bytes(n), "3 TiB");
@@ -316,6 +322,7 @@ function main(): i32 {
   r = r.it("bytes negative", test_bytes_negative);
   r = r.it("bytes past 2 GiB", test_bytes_past_two_gib);
   r = r.it("bytes TiB", test_bytes_tib);
+  r = r.it("bytes i64 minimum", test_bytes_i64_min);
   r = r.it("duration zero", test_duration_zero);
   r = r.it("duration sub-second", test_duration_sub_second);
   r = r.it("duration seconds and ms", test_duration_seconds_and_ms);
