@@ -205,7 +205,7 @@ var fullLower = []fullCase{
 // not a synonym for lowercasing: `ß` folds to `ss` (lowercase leaves it
 // alone), `ſ` LATIN SMALL LETTER LONG S folds to `s`, and `µ` MICRO SIGN
 // folds to the Greek `μ`. Only the 297 code points where the fold differs
-// from `to_lower_char` are stored; everything else falls through to the
+// from the char `to_lower` are stored; everything else falls through to the
 // simple lowercase table, which keeps this table a quarter the size of a
 // complete one.
 //
@@ -1505,7 +1505,7 @@ func generate() (string, genStats) {
 //
 // What std/string's plain-named case methods delegate to, and the
 // complement to its byte-wise to_ascii_* twins. Four families:
-//   - Case mapping: to_upper / to_lower / to_upper_char / to_lower_char
+//   - Case mapping: to_upper / to_lower on strings and char values
 //     / swap_case / capitalize / title_case / eq_ignore_case — over
 //     every code point (Latin, Greek, Cyrillic, Armenian, fullwidth, …),
 //     decoding UTF-8 via std/utf8 and re-encoding. See the caveats below
@@ -1522,8 +1522,8 @@ func generate() (string, genStats) {
 // Scope + caveats:
 //   - String-level to_upper / to_lower do FULL mapping: a code point may
 //     expand to several (`+"`ß`"+` → `+"`SS`"+`, the ligatures, the Greek
-//     iota-subscript forms). The per-code-point to_upper_char /
-//     to_lower_char stay SIMPLE (1:1) — a 1→N expansion has no single
+//     iota-subscript forms). The char methods to_upper and
+//     to_lower stay SIMPLE (1:1) — a 1→N expansion has no single
 //     code point to return.
 //   - One CONDITIONAL rule is applied when lowercasing: Greek Final_Sigma,
 //     so a word-final `+"`Σ`"+` becomes `+"`ς`"+` and a medial one `+"`σ`"+`. The LOCALE
@@ -1853,7 +1853,7 @@ pub function to_lower(s: string): string {
 
 // ` + "`case_fold(cp)`" + ` — the case-folded form of one code point, as an
 // encoded string. Folding is its own operation, NOT lowercasing: ` + "`ß`" + `
-// folds to ` + "`ss`" + ` and ` + "`ſ`" + ` folds to ` + "`s`" + `, neither of which ` + "`to_lower_char`" + `
+// folds to ` + "`ss`" + ` and ` + "`ſ`" + ` folds to ` + "`s`" + `, neither of which the char ` + "`to_lower`" + `
 // does. Only the differing code points are tabulated; the rest fall
 // through to the simple lowercase mapping.
 function _fold_cp(cp: i32): string {
