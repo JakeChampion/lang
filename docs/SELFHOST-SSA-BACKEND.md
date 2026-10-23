@@ -416,8 +416,9 @@ not register pressure. The order to take that in:
    area. Frame loads and stores fall from 1.19M and 769k to 768k and 590k;
    the text barely moves because an operand that was loaded is now moved.
    Native's allocator work on #4112 found the spill rule that decides when a
-   call-crossing value is better in a slot than in a saved register; that
-   rule is still to take.
+   call-crossing value is better in a slot than in a saved register. On
+   arm64, "Cold calls" below takes the part of it for calls that only some
+   loop iterations run.
 2. Call results into their home. The cheap half is done (#9595): a load
    into x0 of the value it already holds emits nothing, which removes the
    move back after every move out. The rest is x0 as an allocatable
@@ -427,6 +428,49 @@ not register pressure. The order to take that in:
    subset that worked on the lifted function saved 1.2-1.9% of instructions
    for 20-22% more compile time
    (`docs/ssa-log/2026-09-17-the-optimiser-costs-more-than-it-saves.md`).
+
+### Cold calls (arm64)
+
+On arm64 the allocator does not count every call as a call
+(`regalloc_linear_fixed` with `cold_calls`). `ssa.cold_positions` sorts the
+call positions into four kinds:
+
+- An array push (`COLD_SLOW`) calls only on its slow path, to grow the array.
+- A call in a cold block (`COLD_BRANCH`) is inside a loop, in a block that
+  does not dominate the loop's latch (`ssa.cold_blocks`). Some iterations
+  do not run it: an error branch, a fallback.
+- An inline rc primitive (`COLD_INLINE`, `ssa.rc_inlined`) is not a call at
+  all.
+- Every other call is a call.
+
+An integer value live across only the first three kinds can sit in a caller
+register. The emitter keeps it there. A push's slow path stores the live
+caller registers to eight frame words and loads them back. A cold-branch
+call does the same around all of its code (`ssa_cold_save`).
+
+The frame words keep sp fixed, so the spill slots inside the call keep their
+offsets. A fixed table
+(`ssafixed.table_inside`) keeps such values off x0 to x3 and x30, which the
+call writes. The table binds only values live across the position, so the
+call's operands and result can still use those registers.
+
+Two rules stop the saves from costing more than they save:
+
+- A value live across a cold-branch call takes a free callee-saved register
+  first. A caller register is for a loop that is short of callee-saved
+  ones.
+- A value takes a caller register only when a save and a load at each
+  cold-branch call it spans, weighted by loop depth, cost less than its own
+  weighted reads and writes (`hard_spans`). Otherwise it is treated as live
+  across a call.
+
+With `cold_calls`, a phi can be read far more than its entry operand
+(`weight` more than 4 times). Such a phi takes a register even when that
+operand is spilled, and loads it on the entry edge.
+
+On the std/deflate decoder (#13074) this keeps the bit reader in registers,
+and decoding is 8 to 18% faster. The bench corpus does not move outside
+run-to-run noise (Apple M3 Pro, the median of 5 runs of each benchmark).
 
 ### Lane values
 

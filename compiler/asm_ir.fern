@@ -6462,17 +6462,17 @@ function ssa_has_integer_saved(reg_of: i32[]): boolean {
 function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, s: asmcore.EmitState): ssa.Alloc {
   let prefs = ssa_arg_prefs(f, s);
   let floats = ssa.float_values(f, [], false);
-  let kept = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true));
+  let kept = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true), false);
   let audited = ssa_can_borrow_r11(f, imm, floats);
   // Small arithmetic graphs can lose throughput after recoloring despite
   // fewer saves. Keep their existing homes when the old pool suffices.
   if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
-    return ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false));
+    return ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false), false);
   }
   if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
     return kept;
   }
-  let borrowed = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true));
+  let borrowed = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true), false);
   // Only the absence of spills proves these forms need no r11 scratch.
   if (ssa.spill_count(borrowed.reg_of) > 0) {
     return kept;

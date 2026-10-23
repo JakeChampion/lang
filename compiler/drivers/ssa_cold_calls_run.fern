@@ -1,0 +1,77 @@
+import "../ssa";
+import "../ssafixed";
+import "../util";
+
+function inst(kind: i32, v: i32, args: i32[], str: string): ssa.SInst {
+  return ssa.SInst { kind_tag: kind, result: v, args: args, imm: 0, str: str };
+}
+
+function jump(to: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 2, cond: 0, target: to, t: 0, f: 0, value: 0 };
+}
+
+function branch(cond: i32, t: i32, f: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 3, cond: cond, target: 0, t: t, f: f, value: 0 };
+}
+
+// A loop whose header (1) tests and leaves to 5, whose test (2) sends some
+// iterations through a block with a call (3), and whose join (4) runs every
+// iteration: it calls, pushes, tests a count inline and branches back.
+function looped(): ssa.SFunc {
+  let b0: ssa.SBlock = ssa.SBlock { id: 0, insts: [inst(1, 0, [], "")], term: jump(1), preds: [] };
+  let b1: ssa.SBlock = ssa.SBlock { id: 1, insts: [inst(8, 1, [0, 6], ""), inst(9, 2, [1, 0], "lt_s")], term: branch(2, 2, 5), preds: [0, 4] };
+  let b2: ssa.SBlock = ssa.SBlock { id: 2, insts: [inst(9, 3, [1, 0], "eq")], term: branch(3, 3, 4), preds: [1] };
+  let b3: ssa.SBlock = ssa.SBlock { id: 3, insts: [inst(11, 4, [1], "rare")], term: jump(4), preds: [2] };
+  let join: ssa.SInst[] = [inst(11, 5, [0], "every"), inst(50, 7, [0, 1], "arr_push_u8"), inst(11, 8, [0], "__fern_rc_is_unique"), inst(9, 6, [1, 1], "add")];
+  let b4: ssa.SBlock = ssa.SBlock { id: 4, insts: join, term: jump(1), preds: [2, 3] };
+  let b5: ssa.SBlock = ssa.SBlock { id: 5, insts: [], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 }, preds: [1] };
+  return ssa.SFunc { name: "looped", nparams: 0, nvals: 9, blocks: [b0, b1, b2, b3, b4, b5], entry: 0, takes_env: false };
+}
+
+// The same loop without the call every iteration makes: the header's phi is
+// then live across cold calls only.
+function cold_only(): ssa.SFunc {
+  let f: ssa.SFunc = looped();
+  let join: ssa.SInst[] = [inst(50, 7, [0, 1], "arr_push_u8"), inst(11, 8, [0], "__fern_rc_is_unique"), inst(9, 6, [1, 1], "add")];
+  let blocks: ssa.SBlock[] = f.blocks.with(4, ssa.SBlock { ...f.blocks[4], insts: join });
+  return ssa.SFunc { ...f, blocks: blocks };
+}
+
+function check(ok: boolean, what: string, failures: i32): i32 {
+  if (ok) {
+    return failures;
+  }
+  print("FAIL " + what);
+  return failures + 1;
+}
+
+function main(): i32 {
+  let f: ssa.SFunc = looped();
+  let failures: i32 = 0;
+  let cold: boolean[] = ssa.cold_blocks(f);
+  failures = check(!cold[0] && !cold[1] && !cold[2] && cold[3] && !cold[4] && !cold[5], "cold_blocks", failures);
+  // Positions: block 0 at 0 (one inst, its terminator at 1), block 1 at 2,
+  // block 2 at 5, block 3 at 7, block 4 at 9.
+  let kinds: i32[] = ssa.cold_positions(f);
+  failures = check(kinds[7] == ssa.COLD_BRANCH, "a call some iterations skip is COLD_BRANCH", failures);
+  failures = check(kinds[9] == ssa.COLD_NONE, "a call every iteration makes is a call", failures);
+  failures = check(kinds[10] == ssa.COLD_SLOW, "a push is COLD_SLOW", failures);
+  failures = check(kinds[11] == ssa.COLD_INLINE, "an inline rc primitive is COLD_INLINE", failures);
+  // A clobber at position 1 binds a value live across it under table_inside,
+  // and a value that dies or is defined there too under table.
+  let inside: ssafixed.Table = ssafixed.table_inside(0, 1, [0, 1, 0, 0]);
+  let plain: ssafixed.Table = ssafixed.table(0, 1, [0, 1, 0, 0]);
+  failures = check(ssafixed.allows(inside, 0, 0, 1) && ssafixed.allows(inside, 0, 1, 3), "table_inside admits endpoints", failures);
+  failures = check(!ssafixed.allows(inside, 0, 0, 2), "table_inside refuses a span", failures);
+  failures = check(!ssafixed.allows(plain, 0, 0, 1), "table refuses an endpoint", failures);
+  // With no callee-saved register, the phi that crosses only cold calls
+  // keeps a caller register when those calls are cold, and is spilled when
+  // every call is a call.
+  let g: ssa.SFunc = cold_only();
+  let kept: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), true);
+  let spilled: ssa.Alloc = ssa.regalloc_linear_fixed(g, 2, 0, 0 - 1, false, [], [], [], 0, 0, ssafixed.none(), false);
+  failures = check(kept.reg_of[1] >= 0, "cold calls leave the hot phi a register", failures);
+  failures = check(spilled.reg_of[1] < 0, "calls spill the hot phi", failures);
+  print("failures=" + util.i32_to_string(failures));
+  return failures;
+}
