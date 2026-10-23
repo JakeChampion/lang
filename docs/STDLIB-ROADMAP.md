@@ -737,8 +737,8 @@ think they're free additions to make.
 - **`format_duration_ms(ms)`**: human-readable durations
   like `"1h 23m 45s"` / `"500ms"`. Components only emitted
   when non-zero; `0` returns `"0ms"`.
-- **Byte digit/hex values**: `(b).digit_value()` / `(b).hex_value()`, each `Option[i32]`.
-  Return -1 on non-digits. Useful for hand-rolled parsers.
+- **Byte digit/hex values**: `(b).digit_value()` / `(b).hex_value()`, each `Option[i32]`,
+  `None` on a byte that is not a digit. Useful for hand-rolled parsers.
 - **`s.count_byte(b)`**: single-byte fast path on count.
 - **`http_url_path_only(path)`**: strip the `?query`
   suffix.
