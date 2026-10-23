@@ -84,10 +84,10 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 	mmcArm64 := buildBinArm64(t, armgcc, dir, "mmc_arm64_stage2", string(stage1Asm))
 
 	// A span, not a sample. `lexer.fern` is a compiler module (cheap, and the
-	// shape gen1 itself is made of) that imports std/unicode and std/utf8; the
-	// three test suites are the survivors of the deleted test's four inputs and
-	// carry stdlib transitive imports, floats and process/string helpers
-	// between them.
+	// shape gen1 itself is made of) that imports std/utf8; the three test
+	// suites are the survivors of the deleted test's four inputs and carry
+	// stdlib transitive imports, floats and process/string helpers between
+	// them.
 	cases := []struct {
 		name    string
 		src     string

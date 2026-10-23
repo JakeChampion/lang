@@ -15,10 +15,11 @@ import (
 // TestComposeFromUserWorld is P3: bring-your-own WIT. A user-authored world
 // (here a minimal stdout and stderr one) is embedded with wasm-tools, decoded
 // from its raw component-type bytes (not an embedded fern/http payload), and
-// used to compose a stdout program. The resulting component imports *only* the
-// interfaces the user's world declares (io/error + io/poll + io/streams +
-// cli/stdout + cli/stderr — five, since a stream's subscribe names a pollable,
-// vs the fern world's fourteen), and runs under wasmtime. This proves the import
+// used to compose a stdout program, which imports stderr for an abort's cause
+// lines. The resulting component imports *only* the interfaces the user's
+// world declares (io/error + io/poll + io/streams + cli/stdout + cli/stderr —
+// five, since a stream's subscribe names a pollable, vs the fern world's
+// fourteen), and runs under wasmtime. This proves the import
 // surface is driven by the supplied WIT, not hardcoded.
 func TestComposeFromUserWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")

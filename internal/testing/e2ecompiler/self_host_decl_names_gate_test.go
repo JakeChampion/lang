@@ -315,7 +315,8 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 
 // TestSelfHostEmittingDriversRunDeclGates pins that every self-host driver
 // calling an emitter entry point also runs the parse gates
-// (asmcore.parse_errors), the declaration gate among them. The gates cannot live in the emitters, which see the module
+// (asmcore.parse_errors, or parse_errors_before_check where the checker runs
+// next), the declaration gate among them. The gates cannot live in the emitters, which see the module
 // after the local-function lift has added untyped capture parameters, so each
 // driver carries its own call and a new driver must too. A driver is a file
 // with a main; emitforms.fern is a library its drivers reach the wasm emitter
@@ -323,7 +324,7 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 func TestSelfHostEmittingDriversRunDeclGates(t *testing.T) {
 	emits := regexp.MustCompile(`\b(asm_ir|asm_arm64_ir|wasm_ir)\.emit_\w*\(|\bemitforms\.wasm_component\(`)
 	hasMain := regexp.MustCompile(`(?m)^(pub )?function main\(`)
-	parseGate := regexp.MustCompile(`\b(refuse_parse_errors|parse_errors)\(`)
+	parseGate := regexp.MustCompile(`\b(refuse_parse_errors|parse_errors|parse_errors_before_check)\(`)
 	files, err := filepath.Glob(filepath.Join("..", "..", "..", "compiler", "*.fern"))
 	inDrivers, _ := filepath.Glob(filepath.Join("..", "..", "..", "compiler", "drivers", "*.fern"))
 	files = append(files, inDrivers...)
