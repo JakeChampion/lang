@@ -1950,21 +1950,38 @@ function read_manifest(dir_slash: string): fern_toml.Manifest {
   let no_excl: string[] = [];
   return fern_toml.Manifest {
     name: "", lib: "lib.fern", index: "", deps: no_deps, members: no_members,
-    excl_pkg: no_excl, excl_ver: no_excl, lint_keys: no_excl, lint_vals: no_excl, err: "",
+    excl_pkg: no_excl, excl_ver: no_excl, lint_keys: no_excl, lint_vals: no_excl, err: "", err_line: 0,
   };
 }
 
-// manifest_error names the manifest read from `dir` and its diagnostic, as
-// native's manifest.Load does, or is "" when it parsed.
-function manifest_error(dir: string, man: fern_toml.Manifest): string {
-  if (man.err.len() == 0) {
-    return "";
-  }
+// manifest_path is the absolute path of `dir`'s fern.toml, as native's
+// manifest.Load names it.
+function manifest_path(dir: string): string {
   let abs: string = pkggrants.canonical_dir(dir);
   if (abs != "/") {
     abs = abs + "/";
   }
-  return abs + "fern.toml: " + man.err;
+  return abs + "fern.toml";
+}
+
+// manifest_error is the E088 diagnostic of the manifest read from `dir`, or ""
+// when it parsed.
+function manifest_error(dir: string, man: fern_toml.Manifest): string {
+  if (man.err.len() == 0) {
+    return "";
+  }
+  return fern_toml.diagnostic(manifest_path(dir), man);
+}
+
+// manifest_refused is `b` refusing the program for `man`, the manifest read
+// from `dir`: E088 at its line, the manifest added to the files that positions
+// index so the diagnostic names it and quotes the line.
+function manifest_refused(b: Bundle, dir: string, man: fern_toml.Manifest): Bundle {
+  let line: i32 = util.line_base(b.files.len()) + man.err_line;
+  return Bundle {
+    ...b, files: b.files.append(manifest_path(dir)), maps: b.maps.append(util.no_line_map()), srcs: b.srcs.append(""),
+    err: man.err, err_code: "E088", err_line: line, err_col: 1,
+  };
 }
 
 // manifest_reqs is a manifest's versioned ([package] index) dependencies as
@@ -3043,9 +3060,8 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let no_files: string[] = [];
   let maps: util.LineMap[] = [s.maps[0]];
   let srcs: string[] = [s.srcs[0]];
-  let bad_manifest: string = manifest_error(gov.dir, gov.man);
-  if (bad_manifest.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: "fern: " + bad_manifest, err_code: "", err_line: 0, err_col: 0 };
+  if (gov.man.err.len() > 0) {
+    return manifest_refused(Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, gov.dir, gov.man);
   }
   let missing: string = emitforms.http_entry_refused(entry_mod, target, entry_display(entry_path));
   if (missing.len() > 0) {
@@ -3105,9 +3121,8 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       // Attribute this file to its own governing package, including
       // local modules imported from a dependency.
       let module_gov: Governed = governing_manifest(mdir);
-      let bad_module_manifest: string = manifest_error(module_gov.dir, module_gov.man);
-      if (bad_module_manifest.len() > 0) {
-        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + bad_module_manifest, err_code: "", err_line: 0, err_col: 0 };
+      if (module_gov.man.err.len() > 0) {
+        return manifest_refused(Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 }, module_gov.dir, module_gov.man);
       }
       module_packages = module_packages.append(module_package_at(mdir, module_gov, gov.dir, root_package, is_stdlib));
       grant_mans = pkggrants.with_manifest(grant_mans, module_gov.dir, module_gov.man);
@@ -5333,7 +5348,7 @@ function lint_config(first: string, sets: string[], opts: string[]): (lint.Confi
   let g: Governed = governing_manifest(dir);
   let mpath: string = g.dir + "fern.toml";
   if (g.man.err.len() > 0) {
-    return (c, mpath + ": " + g.man.err);
+    return (c, fern_toml.diagnostic(mpath, g.man));
   }
   let keys: string[] = [];
   let vals: string[] = [];

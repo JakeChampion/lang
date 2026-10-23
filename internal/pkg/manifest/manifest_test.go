@@ -104,13 +104,37 @@ func TestParseDepCapabilitiesUnknownName(t *testing.T) {
 	}
 }
 
+// A refused manifest is E088 at the line it is on, named by its path once Load
+// has read it; a missing name is reported at the [package] header.
+func TestLoadErrorIsE088AtItsLine(t *testing.T) {
+	for _, c := range []struct{ src, want string }{
+		{"[package]\nname = \"app\"\n[dependencies]\nkv = { path = \"../kv\", capabilities = [\"nett\"] }\n", ":4:1: error[E088]: dependency \"kv\": capabilities: unknown capability \"nett\""},
+		{"# comment\n[package]\nversion = \"1.0.0\"\n", ":2:1: error[E088]: missing [package] name"},
+		{"[dependencies]\n", ":1:1: error[E088]: missing [package] name"},
+	} {
+		dir := t.TempDir()
+		path := filepath.Join(dir, FileName)
+		if err := os.WriteFile(path, []byte(c.src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(dir)
+		me, ok := err.(*Error)
+		if !ok {
+			t.Fatalf("Load(%q) error = %v (%T), want a *manifest.Error", c.src, err, err)
+		}
+		if me.Code() != "E088" || !strings.HasPrefix(err.Error(), path+c.want) {
+			t.Errorf("Load(%q) error = %q, want %q", c.src, err, path+c.want)
+		}
+	}
+}
+
 // A repeated table or key is refused, never resolved to one of the values: a
 // second, ungoverned entry for a dependency must not override its grant.
 func TestParseDuplicates(t *testing.T) {
 	for src, want := range map[string]string{
-		"[package]\nname = \"a\"\n[dependencies]\n[package]\n":                                                     `line 4: duplicate section [package]`,
-		"[package]\nname = \"a\"\nname = \"b\"\n":                                                                  `line 3: duplicate key "name" in [package]`,
-		"[package]\nname = \"a\"\n[dependencies]\nh = { path = \"h\", capabilities = [] }\nh = { path = \"h\" }\n": `line 5: duplicate key "h" in [dependencies]`,
+		"[package]\nname = \"a\"\n[dependencies]\n[package]\n":                                                     `4:1: error[E088]: duplicate section [package]`,
+		"[package]\nname = \"a\"\nname = \"b\"\n":                                                                  `3:1: error[E088]: duplicate key "name" in [package]`,
+		"[package]\nname = \"a\"\n[dependencies]\nh = { path = \"h\", capabilities = [] }\nh = { path = \"h\" }\n": `5:1: error[E088]: duplicate key "h" in [dependencies]`,
 	} {
 		if _, err := Parse(src); err == nil || err.Error() != want {
 			t.Errorf("Parse(%q) error = %v, want %s", src, err, want)

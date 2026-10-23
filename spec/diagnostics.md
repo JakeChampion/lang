@@ -160,6 +160,7 @@ language does not have. It is deleted.
 | `E085` | a lane value is held inside another value | `diag_e085` |
 | `E086` | an import does not resolve to a module | `diag_e086` |
 | `E087` | a module-qualified name the importing module cannot use | `diag_e087` |
+| `E088` | a `fern.toml` the loader refuses | — |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |
