@@ -40,7 +40,7 @@ function test_cksum_vectors(): test.TestOutcome {
     return test.fail("abc");
   }
   let c: hash.Cksum = hash.cksum_new().update("abc");
-  if (c.len() != 3 as u64) {
+  if (c.byte_count() != 3 as u64) {
     return test.fail("len");
   }
   return test.assert_eq(c.finish(), 1219131554);
@@ -69,7 +69,7 @@ function test_cksum_seven_byte_updates(): test.TestOutcome {
   if (c.finish() != 741291487) {
     return test.fail("chunked");
   }
-  if (c.len() != 10003 as u64) {
+  if (c.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
   return test.assert_eq(c.finish(), hash.cksum_of(string_from_bytes_unchecked(msg)));
@@ -97,7 +97,7 @@ function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
     at = at + take;
     k = k + 1;
   }
-  if (c.len() != 10003 as u64) {
+  if (c.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
   let viabytes: hash.Cksum = hash.cksum_new().update_bytes(__pseudo());
@@ -126,13 +126,13 @@ function test_bsd_sum(): test.TestOutcome {
     return test.fail("chunked");
   }
   let array_sum: hash.BsdSum = hash.bsd_sum_new().update_array(msg);
-  if (array_sum.finish() != s.finish() || array_sum.len() != s.len()) {
+  if (array_sum.finish() != s.finish() || array_sum.byte_count() != s.byte_count()) {
     return test.fail("owned-array BSD kernel");
   }
   if (s.finish() != hash.bsd_sum_of(string_from_bytes_unchecked(msg))) {
     return test.fail("one-shot");
   }
-  if (s.len() != 10003 as u64) {
+  if (s.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
   return test.assert_eq(s.blocks(), 10 as u64);
@@ -157,13 +157,13 @@ function test_sysv_sum(): test.TestOutcome {
     return test.fail("chunked");
   }
   let array_sum: hash.SysvSum = hash.sysv_sum_new().update_array(msg);
-  if (array_sum.finish() != s.finish() || array_sum.len() != s.len()) {
+  if (array_sum.finish() != s.finish() || array_sum.byte_count() != s.byte_count()) {
     return test.fail("owned-array System V kernel");
   }
   if (s.finish() != hash.sysv_sum_of(string_from_bytes_unchecked(msg))) {
     return test.fail("one-shot");
   }
-  if (s.len() != 10003 as u64) {
+  if (s.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
   return test.assert_eq(s.blocks(), 20 as u64);
@@ -197,7 +197,7 @@ function test_sysv_sum_string_updates(): test.TestOutcome {
   if (s.finish() != 29049) {
     return test.fail("chunked string");
   }
-  if (s.len() != 10003 as u64) {
+  if (s.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
   let b: hash.SysvSum = hash.sysv_sum_new().update_bytes(msg);

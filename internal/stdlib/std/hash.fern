@@ -128,8 +128,9 @@ pub function (c: Cksum) update_array(chunk: u8[]): Cksum {
   };
 }
 
-// len() — the number of bytes absorbed, the second field of cksum's output.
-pub function (c: Cksum) len(): u64 {
+// byte_count() — the number of bytes absorbed, the second field of cksum's
+// output. A u64, not a collection length: a stream can pass 4 GiB.
+pub function (c: Cksum) byte_count(): u64 {
   return c.len;
 }
 
@@ -233,8 +234,8 @@ pub function (c: Crc32) update_array(chunk: u8[]): Crc32 {
   return __crc32_absorb(c, chunk);
 }
 
-// len() — the number of bytes absorbed, the second field cksum prints.
-pub function (c: Crc32) len(): u64 {
+// byte_count() — the number of bytes absorbed, the second field cksum prints.
+pub function (c: Crc32) byte_count(): u64 {
   return c.len;
 }
 
@@ -293,7 +294,7 @@ pub function (s: BsdSum) finish(): u32 {
   return s.sum;
 }
 
-pub function (s: BsdSum) len(): u64 {
+pub function (s: BsdSum) byte_count(): u64 {
   return s.len;
 }
 
@@ -364,7 +365,7 @@ pub function (s: SysvSum) finish(): u32 {
   return (r & 0xffff) + (r >> 16);
 }
 
-pub function (s: SysvSum) len(): u64 {
+pub function (s: SysvSum) byte_count(): u64 {
   return s.len;
 }
 

@@ -77,19 +77,19 @@ const ndarrayProductReportSrc = `import "std/ndarray";
 }
 function main(): i32 {
   let xs: f64[] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-  if (packed(xs).get([1, 2, 1, 2]) != 36.0) { return 1; }
-  if (left_strided(xs).get([2, 1, 1, 2]) != 36.0) { return 2; }
-  if (right_strided(xs).get([1, 2, 2, 1]) != 36.0) { return 3; }
-  if (reversed(xs).get([0, 1, 0, 2]) != 6.0) { return 4; }
-  if (added(xs).get([0, 1, 0, 2]) != 7.0) { return 5; }
-  if (captured(xs, 2.0).get([0, 1, 0, 2]) != 12.0) { return 6; }
-  if (unresolved(xs, (x: f64, y: f64): f64 => x * y).get([0, 1, 0, 2]) != 6.0) { return 7; }
+  if (packed(xs).get_unchecked([1, 2, 1, 2]) != 36.0) { return 1; }
+  if (left_strided(xs).get_unchecked([2, 1, 1, 2]) != 36.0) { return 2; }
+  if (right_strided(xs).get_unchecked([1, 2, 2, 1]) != 36.0) { return 3; }
+  if (reversed(xs).get_unchecked([0, 1, 0, 2]) != 6.0) { return 4; }
+  if (added(xs).get_unchecked([0, 1, 0, 2]) != 7.0) { return 5; }
+  if (captured(xs, 2.0).get_unchecked([0, 1, 0, 2]) != 12.0) { return 6; }
+  if (unresolved(xs, (x: f64, y: f64): f64 => x * y).get_unchecked([0, 1, 0, 2]) != 6.0) { return 7; }
   let scalar = ndarray.from_flat([2.0], []);
   let one = ndarray.from_flat([3.0], [1]);
   let out = scalar.outer(one, (x: f64, y: f64): f64 => x * y);
-  if (out.shape().len() != 1 || out.shape()[0] != 1 || out.get([0]) != 6.0 || !out.is_packed()) { return 8; }
+  if (out.shape().len() != 1 || out.shape()[0] != 1 || out.get_unchecked([0]) != 6.0 || !out.is_packed()) { return 8; }
   let canonical = noncanonical(xs);
-  if (canonical.get([0, 1, 0, 2]) != 6.0 || canonical.strides()[0] != 36 || canonical.strides()[1] != 6 || canonical.strides()[2] != 6 || canonical.strides()[3] != 1) { return 9; }
+  if (canonical.get_unchecked([0, 1, 0, 2]) != 6.0 || canonical.strides()[0] != 36 || canonical.strides()[1] != 6 || canonical.strides()[2] != 6 || canonical.strides()[3] != 1) { return 9; }
   return 0;
 }`
 
