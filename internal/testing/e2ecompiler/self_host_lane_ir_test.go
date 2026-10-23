@@ -15,8 +15,9 @@ import (
 // self_host_byte_view_rc_test.go does. `main` computes with every op on
 // f64x2 and f32x4 values held in locals, reads lanes back with vextract and
 // exits with the number of the first check that is not the spec's answer, 0
-// when all hold. Check 33 spills lane values across a call, and check 34
-// calls a lane function with no f64 value in it. Each target's emitter, allocator and encoder are what the
+// when all hold. Check 33 spills lane values across a call, check 34
+// calls a lane function with no f64 value in it, and check 35 reads and
+// writes groups of array elements. Each target's emitter, allocator and encoder are what the
 // exit code proves: a wrong register class, slot size or instruction gives a
 // wrong lane, not a diagnostic.
 const laneIRDriver = `import "./ir";
@@ -42,6 +43,14 @@ function c(): ir.Op[] { return [ir.op_load_local(2)]; }
 function check(own ops: ir.Op[], expr: ir.Op[], t: string, n: i32): ir.Op[] {
   for o in expr { ops = ops.append(o); }
   return ops.append(f(t)).append(ir.op_fbin("fne")).append(ir.op_if(0)).append(ir.op_const_i32(n)).append(ir.op_return()).append(ir.op_end());
+}
+// held_check is check with the array in local 9 released on the way out, so
+// the emitted-RC certifier finds no unit left held.
+function held_check(own ops: ir.Op[], expr: ir.Op[], t: string, n: i32): ir.Op[] {
+  for o in expr { ops = ops.append(o); }
+  ops = ops.append(f(t)).append(ir.op_fbin("fne")).append(ir.op_if(0));
+  ops = ops.append(ir.op_load_local(9)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
+  return ops.append(ir.op_const_i32(n)).append(ir.op_return()).append(ir.op_end());
 }
 function bin(k: string, x: ir.Op[], y: ir.Op[], lane: i32): ir.Op[] {
   let out: ir.Op[] = [];
@@ -145,6 +154,19 @@ function main(): i32 {
   m = m.append(ir.op_call_direct("side", 0)).append(ir.op_drop());
   m = check(m, [ir.op_load_local(7)], "4.5", 33);
   m = check(m, [ir.op_load_local(8)], "-10.0", 33);
+  // 35: vget and vset on xs = [1.0, 2.0, 3.0, 4.0, 5.0] in local 9, a group
+  // of f64 elements at each width.
+  m = m.append(f("1.0")).append(f("2.0")).append(f("3.0")).append(f("4.0")).append(f("5.0")).append(ir.op_arr_make(5, 64)).append(ir.op_store_local(9));
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(3), v("vget"), ir.op_lane_at("vextract", 64, 1)], "5.0", 35);
+  m = m.append(ir.op_load_local(9)).append(ir.op_const_i32(1)).append(ir.op_load_local(0)).append(v("vset"));
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(2), ir.op_arr_get(64)], "-2.5", 35);
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(1), v32("vget"), ir.op_lane_at("vextract", 32, 1)], "-2.5", 35);
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(1), v32("vget"), ir.op_lane_at("vextract", 32, 3)], "5.0", 35);
+  m = m.append(ir.op_load_local(9)).append(ir.op_const_i32(1)).append(ir.op_load_local(2)).append(v32("vset"));
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(4), ir.op_arr_get(64)], "-4.0", 35);
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(2), ir.op_arr_get(64)], "1.5", 35);
+  m = held_check(m, [ir.op_load_local(9), ir.op_const_i32(0), ir.op_arr_get(64)], "1.0", 35);
+  m = m.append(ir.op_load_local(9)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
   // 26..31: f32x4 on c = [1.5, 1.5, 1.5, -4.0].
   m = check(m, bin32("vadd", c(), 3), "-8.0", 26);
   m = check(m, bin32("vmul", c(), 0), "2.25", 26);
@@ -183,7 +205,7 @@ function main(): i32 {
   for r in g.cache {
     let out = r;
     if (i < g.im.funcs.len() && g.im.funcs[i].name == "main") {
-      out = irtables.LowerResult { ...r, ops: m, n_params: 0, n_locals: 9, v128_slots: [0, 1, 2, 3, 5, 6], f64_slots: [7, 8] };
+      out = irtables.LowerResult { ...r, ops: m, n_params: 0, n_locals: 10, v128_slots: [0, 1, 2, 3, 5, 6], f64_slots: [7, 8] };
     }
     if (i < g.im.funcs.len() && g.im.funcs[i].name == "kern") {
       out = irtables.LowerResult { ...r, ops: kern, n_params: 1, n_locals: 1 };

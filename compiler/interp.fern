@@ -81,8 +81,9 @@ pub struct VTuple { elements: Value[] }
 // the lambda's body / params / ret_type plus the scope at the
 // point of construction so free identifiers in the body resolve
 // against the enclosing function's bindings rather than the
-// caller's.
-pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[] }
+// caller's. `generic_name` names the generic top-level function the value
+// is, which a call binds the type parameters of; it is "" otherwise.
+pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[], generic_name: string }
 
 // VMap models the runtime hash-map. Parallel arrays for keys
 // and values keep the implementation trivial — lookup is a
@@ -5246,6 +5247,10 @@ function resolve_ident_value(name: string, env: Env): Value {
         let no_names: string[] = [];
         let no_values: Value[] = [];
         let no_types: string[] = [];
+        let generic_name: string = "";
+        if (vfd.type_params.len() > 0) {
+          generic_name = name;
+        }
         return VFunc {
           params: vfd.params,
           ret_type: vfd.ret_type,
@@ -5253,6 +5258,7 @@ function resolve_ident_value(name: string, env: Env): Value {
           captured_names: no_names,
           captured_values: no_values,
           captured_types: no_types,
+          generic_name: generic_name,
         };
       }
       vfi = vfi + 1;
@@ -5452,6 +5458,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
         captured_names: env.names,
         captured_values: env.values,
         captured_types: env.types,
+        generic_name: "",
       };
     },
     ast.ExprMapLit(_) => {
@@ -6181,7 +6188,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
 // the lambda body resolve against the enclosing function's
 // scope. Args bind on top in declaration order.
 function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], outs: OutTable): Value {
-  let fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [] };
+  let fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "" };
   match (cv) {
     VFunc(v) => {
       fv = v;
@@ -6189,6 +6196,9 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
     _ => {
       return v_err("call_closure: not a VFunc");
     }
+  }
+  if (fv.generic_name.len() > 0) {
+    return call_func_targs(fv.generic_name, args, [], "", funcs, aliases, type_decls, outs);
   }
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
@@ -6328,6 +6338,9 @@ function tyarg_of_value(v: Value): string {
     },
     VFloat32(_) => {
       return "f32";
+    },
+    VLanes(l) => {
+      return typeinfo.lanes_spelling(l.width);
     },
     VStruct(sv) => {
       if (sv.targs.len() == 0) {
