@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -3916,13 +3917,17 @@ func isTypeKeyword(s string) bool {
 func (p *parser) parseTypeArgList() ([]ast.Type, error) {
 	var args []ast.Type
 	for {
-		if t := p.peek(); isConstArgTok(t) {
-			v, err := strconv.ParseInt(t.Text, 10, 64)
+		if isConstArgTok(p.peek()) {
+			e, err := p.parsePrimary()
 			if err != nil {
-				return nil, p.errorfCode(t.Pos, "P001", "const argument %s is out of range", t.Text)
+				return nil, err
 			}
-			p.advance()
-			args = append(args, ast.ConstArg{Value: v})
+			lit := e.(*ast.NumberLit)
+			v := lit.Value
+			if lit.ExceedsI64 || lit.ExceedsU64 {
+				v = math.MaxInt64
+			}
+			args = append(args, ast.ConstArg{Value: v, Raw: lit.Raw})
 			if !p.moreElems("]") {
 				break
 			}

@@ -37,6 +37,27 @@ func TestConstArgInTypeArgList(t *testing.T) {
 	}
 }
 
+// A const argument may be spelled in any base and with `_` separators, and it
+// keeps its spelling for the formatter.
+func TestConstArgSpellings(t *testing.T) {
+	for src, want := range map[string]ast.ConstArg{
+		"0x10":  {Value: 16, Raw: "0x10"},
+		"0o17":  {Value: 15, Raw: "0o17"},
+		"0b101": {Value: 5, Raw: "0b101"},
+		"1_000": {Value: 1000, Raw: "1_000"},
+		"007":   {Value: 7},
+	} {
+		prog, err := Parse("function main(): i32 {\n  return count[" + src + ", string](\"a\");\n}")
+		if err != nil {
+			t.Fatalf("%s: %v", src, err)
+		}
+		call := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.Call)
+		if got, ok := call.TypeArgs[0].(ast.ConstArg); !ok || got != want {
+			t.Errorf("%s: TypeArgs[0] = %#v, want %#v", src, call.TypeArgs[0], want)
+		}
+	}
+}
+
 // A const parameter is P001 everywhere but on a function, and its type must be
 // written, as i32.
 func TestConstParamRefusals(t *testing.T) {

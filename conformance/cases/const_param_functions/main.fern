@@ -5,6 +5,7 @@
 // the body reads N as it reads any local. A binder of the same name shadows
 // N: a `let`, a lambda parameter, a loop variable and a match binding each
 // read their own value, and a `let N` initializer still reads the parameter.
+// A const argument can be written in any base and with `_` separators.
 import "std/i32";
 
 function filled[const N: i32](x: f64): f64[] {
@@ -65,5 +66,7 @@ function main(): i32 {
   print(both[5]().to_string());
   print(shadowed[100]([1, 2], Some(7)).to_string());
   print(doubled[5]().to_string());
+  print(count[0x10, string]("a").to_string());
+  print(filled[1_0](1.5).len().to_string());
   return 0;
 }

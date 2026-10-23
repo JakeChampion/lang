@@ -76,6 +76,10 @@ var fmtParityCases = []struct {
 	// An associated constant prints as written in a trait and an impl, and a
 	// read keeps the `::` it was written with (docs/ASSOCIATED-TYPES.md).
 	{"assoc-const-as-written", "trait Lanes {\n  const LANES: i32;\n  const NAME: string = \"lanes\";\n  function width(self: Self): i32;\n}\n\nstruct V2 { a: f64 }\n\nimpl Lanes for V2 {\n  const LANES: i32 = 2;\n  function width(self: Self): i32 {\n    return Self.LANES;\n  }\n}\n\nfunction chunk[T: Lanes](n: i32): i32 {\n  return n / T.LANES + f64.LANES;\n}\n\nfunction main(): i32 {\n  return 0;\n}\n"},
+	// A const parameter prints as declared, and a const argument keeps its
+	// spelling in a type-argument list and in the bracket after a call
+	// (docs/CONST-GENERICS.md).
+	{"const-params-as-written", "function filled[const N: i32](x: f64): f64[] {\n  return [x];\n}\n\nfunction count[const N: i32, T](x: T): i32 {\n  return N;\n}\n\nfunction main(): i32 {\n  return filled[0x4](1.0).len() + count[1_000, string](\"a\") + count[0o17, i32](1);\n}\n"},
 	// A value block whose statements span lines prints one per line (#12393).
 	{"value-block-statements-span-lines", `function g(c: boolean, n: i32): i32 {
   let total: i32 = 0;

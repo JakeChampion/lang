@@ -19,6 +19,9 @@ func TestConstParamRejected(t *testing.T) {
 		"integer for type": {`function f(): i32 { return count[3, 4]("a"); }`, "E090", "type parameter T takes a type, not the integer 4"},
 		"type parameter":   {`function f[T](x: T): i32 { return count[T, T](x); }`, "E090", "const parameter N takes an integer, not the type T"},
 		"assignment":       {`function bump[const N: i32](): i32 { N = 4; return N; }`, "E091", "cannot assign to const parameter N"},
+		"past i32":         {`function f(): i32 { return count[2147483648, string]("a"); }`, "E089", "the const argument for N must fit in i32"},
+		"index past i32":   {`function f(): i32 { return filled[0x80000000](1.0).len(); }`, "E089", "the const argument for N must fit in i32"},
+		"parameter name":   {`function g[const N: i32](N: i32): i32 { return N; }`, "E018", "duplicate parameter \"N\""},
 		"captured":         {`function bump[const N: i32](): i32 { let h = (x: i32): i32 => { N = x; return x; }; return h(1); }`, "E091", "cannot assign to const parameter N"},
 	} {
 		err := checkSource(t, constParamDecls+tc.src)
@@ -40,6 +43,7 @@ func TestConstParamAccepted(t *testing.T) {
 		"passed on":      `function g[const M: i32](): i32 { return filled[M](1.0).len() + count[M, i32](1); }`,
 		"i32 arithmetic": `function g[const M: i32](): i64 { let n: i32 = M * 2 + 1; return n as i64; }`,
 		"lambda":         `function g[const M: i32](): i32 { let h = (x: i32): i32 => x + M; return h(1); }`,
+		"radix literals": `function f(): i32 { return filled[0x3](1.0).len() + count[0b101, string]("a") + count[1_000, string]("a") + count[2147483647, string]("a"); }`,
 		"local copy":     `function g[const M: i32](): i32 { let k: i32 = M; k = 3; return k; }`,
 		"shadowing let":  `function g[const M: i32](): i32 { let M: i32 = M * 2; M = M + 1; return M; }`,
 		"lambda param":   `function g[const M: i32](): i32 { let h = (M: i32): i32 => { M = M + 1; return M; }; return h(1); }`,

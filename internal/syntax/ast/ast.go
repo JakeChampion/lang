@@ -174,8 +174,13 @@ func (l LanesType) Lanes() int { return 128 / l.Width }
 type ArrayType struct{ Elem Type }
 
 // ConstArg is an integer written as a generic argument: the `4` of
-// `filled[4](x)`, bound to a const parameter (`const N: i32`).
-type ConstArg struct{ Value int64 }
+// `filled[4](x)`, bound to a const parameter (`const N: i32`). Raw is the
+// spelling as written when it is not the decimal of Value, for the
+// formatter, as on NumberLit.
+type ConstArg struct {
+	Value int64
+	Raw   string
+}
 
 // StreamType is the WASI Preview-3 async data channel `Stream[T]` — a sequence
 // of `T` delivered incrementally over the wire. It appears in Fern source only

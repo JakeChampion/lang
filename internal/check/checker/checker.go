@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -13415,6 +13416,10 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		root.set(p.Name, p.Type)
 	}
 	for _, cp := range fn.ConstParams {
+		if _, dup := root.names[cp]; dup {
+			c.errfCode(fn.P, "E018", "duplicate parameter %q", cp)
+			continue
+		}
 		root.set(cp, ast.NumberType{Width: 32, Signed: true})
 		if root.consts == nil {
 			root.consts = map[string]bool{}
@@ -18115,7 +18120,7 @@ func (c *checker) indexAsConstArg(e ast.Expr, s *scope) ast.Type {
 	switch x := e.(type) {
 	case *ast.NumberLit:
 		if isConstArgLit(x) {
-			return ast.ConstArg{Value: x.Value}
+			return constArgOf(x)
 		}
 	case *ast.Ident:
 		if c.isConstParam(x.Name, s) {
@@ -18133,7 +18138,16 @@ func (c *checker) indexAsConstArg(e ast.Expr, s *scope) ast.Type {
 // isConstArgLit reports whether n is written as plain decimal digits with no
 // suffix, the one spelling of a const argument.
 func isConstArgLit(n *ast.NumberLit) bool {
-	return n.Width == 0 && n.Raw == "" && !n.IsUnsigned && n.Value >= 0
+	return n.Width == 0 && !n.IsUnsigned && !n.IsFloat
+}
+
+// constArgOf is the const argument an integer literal spells. A value past
+// i64 keeps a value past i32, so constArgDiags refuses it.
+func constArgOf(n *ast.NumberLit) ast.ConstArg {
+	if n.ExceedsI64 || n.ExceedsU64 {
+		return ast.ConstArg{Value: math.MaxInt64}
+	}
+	return ast.ConstArg{Value: n.Value}
 }
 
 // isConstParam reports whether name, read in scope s, is a const parameter of
@@ -18169,7 +18183,10 @@ func (c *checker) constArgDiags(fn *ast.FuncDecl, written []ast.Type, pos ast.Po
 			}
 			continue
 		}
-		if isInt {
+		if ca, ok := ta.(ast.ConstArg); ok {
+			if ca.Value > math.MaxInt32 {
+				c.errfCode(pos, "E089", "the const argument for %s must fit in i32", tp)
+			}
 			continue
 		}
 		if pt, ok := ta.(ast.ParamType); ok && c.isConstParam(pt.Name, s) {

@@ -37,7 +37,8 @@ only, the type of `len()` and of an index. A later slice can admit `usize`,
 
 ### 1.2 Applying a const argument
 
-A const argument is an integer literal or a const parameter in scope:
+A const argument is an integer literal that fits in `i32`, in any base, or a
+const parameter in scope:
 `Ring[8, string]`, `Vec[2, f64]`, `Vec[N, T]`. An expression such as
 `N + 1` or `2 * N` is refused (§1.6). Arithmetic on const arguments needs the
 checker to prove two expressions equal. Rust's first release of const
@@ -51,7 +52,8 @@ an integer in a type position, is refused.
 In a body, `N` is a value of type `i32` and a constant. After
 monomorphisation it is the literal of its instance, so the existing constant
 folding sees it. `N` is not a place: an assignment to it is refused (E091).
-A binder of the same name shadows `N`, as it shadows a parameter.
+A binder of the same name in the body shadows `N`, as it shadows a parameter.
+A value parameter of the same name is a duplicate parameter (E018).
 
 ### 1.4 Inference and explicit arguments
 

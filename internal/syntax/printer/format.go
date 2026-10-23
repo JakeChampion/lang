@@ -2604,7 +2604,12 @@ func formatType(t ast.Type) string {
 			return x.Spelling
 		}
 		return x.String()
-	case ast.LanesType, ast.ConstArg:
+	case ast.LanesType:
+		return x.String()
+	case ast.ConstArg:
+		if x.Raw != "" {
+			return x.Raw
+		}
 		return x.String()
 	case ast.StructType:
 		return x.Name

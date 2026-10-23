@@ -9437,7 +9437,9 @@ function const_arg_diags(sig: FuncSig, c: ast.ExprCall, s: Scope): util.Diag[] {
     let arg: string = c.type_args[i];
     let k: i32 = util.index_of_str(sig.type_params, tp);
     let is_const: boolean = k >= 0 && k < sig.type_bounds.len() && parser.is_const_bound(sig.type_bounds[k]);
-    if (is_const && !parser.is_const_arg(arg) && !s.is_const_param(arg)) {
+    if (is_const && parser.is_const_arg(arg) && !parser.const_arg_fits(arg)) {
+      out = out.append(dg_at("E089", "the const argument for " + tp + " must fit in i32", c.line, c.col));
+    } else if (is_const && !parser.is_const_arg(arg) && !s.is_const_param(arg)) {
       if (arg.len() == 0 || s.defines(arg)) {
         out = out.append(dg_at("E089", "the const argument for " + tp + " must be an integer literal or a const parameter", c.line, c.col));
       } else {
@@ -19844,6 +19846,9 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     let pnames: string[] = [];
     for param in fd.params {
       pnames = pnames.append(param.name);
+    }
+    for cp in const_tparams(fd) {
+      pnames = pnames.append(cp);
     }
     let pk: i32 = 0;
     while (pk < pnames.len()) {

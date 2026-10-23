@@ -1,1 +1,2 @@
 the const argument for N must be an integer literal or a const parameter
+the const argument for N must fit in i32

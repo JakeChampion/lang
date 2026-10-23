@@ -2263,13 +2263,21 @@ function (p: Par) peek_number_text(): string {
   return "";
 }
 
-// peek_const_arg is the digits of an unsuffixed integer literal at the cursor,
+// peek_const_arg is the decimal value of an unsuffixed integer literal at the cursor,
 // which is a const argument in a type-argument list, or "" for any other token.
 function (p: Par) peek_const_arg(): string {
   if let lexer.TokNumber(x) = p.peek() {
-    if (!x.is_float && x.suffix.len() == 0) {
+    if (x.is_float || x.suffix.len() > 0) {
+      return "";
+    }
+    // `-fmt` keeps the spelling as written.
+    if (p.verbatim && x.raw.len() > 0) {
+      return x.raw;
+    }
+    if (p.verbatim) {
       return x.text;
     }
+    return const_arg_text(x.text);
   }
   return "";
 }
@@ -24874,13 +24882,40 @@ pub function is_const_arg(spelling: string): boolean {
   return true;
 }
 
+// const_arg_text is the decimal spelling of an unsuffixed integer token as a
+// const argument. The lexer gives decimal digits, or `0x` and hex digits for
+// any other base. A hex value too long to convert gets a spelling past i32.
+pub function const_arg_text(text: string): string {
+  let hex: boolean = text.len() > 2 && text[0] == b'0' && (text[1] == b'x' || text[1] == b'X');
+  let at: i32 = 0;
+  if (hex) {
+    at = 2;
+  }
+  while (at + 1 < text.len() && text[at] == b'0') {
+    at = at + 1;
+  }
+  if (!hex) {
+    return slice_unchecked(text, at, text.len()) + "";
+  }
+  if (text.len() - at > 15) {
+    return "99999999999";
+  }
+  return util.i64_to_string(util.lit_to_i64(text));
+}
+
+// const_arg_fits reports whether a const argument's decimal spelling is an
+// i32 value.
+pub function const_arg_fits(spelling: string): boolean {
+  return spelling.len() <= 10 && util.lit_to_i64(spelling) <= 2147483647;
+}
+
 // const_bracket_spelling is the generic argument a bracket after a const-first
 // function spells: an unsuffixed integer literal's digits, a name, or "" for
 // any other expression.
 function const_bracket_spelling(e: ast.Expr): string {
   if let ast.ExprNumber(n) = e {
     if (!n.is_float && n.suffix.len() == 0) {
-      return n.text;
+      return const_arg_text(n.text);
     }
   }
   if let ast.ExprIdent(id) = e {
