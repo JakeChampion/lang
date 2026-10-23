@@ -78,12 +78,14 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("component wit: %v\n%s", err, wit)
 	}
-	if !strings.Contains(string(wit), "import wasi:cli/stdout@0.2.0") {
-		t.Errorf("component WIT lacks the stdout import:\n%s", wit)
+	for _, iface := range []string{"wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0"} {
+		if !strings.Contains(string(wit), "import "+iface) {
+			t.Errorf("component WIT lacks %s:\n%s", iface, wit)
+		}
 	}
 	// An interface the core never reaches is dropped, whether or not a type
 	// of it is aliased by another interface the core does not reach either.
-	for _, unused := range []string{"wasi:cli/stderr", "wasi:random/", "wasi:filesystem/", "wasi:sockets/", "wasi:clocks/"} {
+	for _, unused := range []string{"wasi:random/", "wasi:filesystem/", "wasi:sockets/", "wasi:clocks/"} {
 		if strings.Contains(string(wit), unused) {
 			t.Errorf("component imports %s, which a stdout core never reaches:\n%s", unused, wit)
 		}
@@ -122,8 +124,8 @@ function main(): i32 {
 
 // TestSelfHostComposeFromUserWorld is the self-host P3 gate: the self-hosted
 // compiler composes a component from a USER-supplied WIT world (a minimal
-// stdout-only one), not the embedded fern world. The component imports only
-// the user world's three interfaces and runs under wasmtime. Self-host mirror
+// stdout program plus abort causes), not the embedded fern world. The component
+// imports the four interfaces of that world and runs under wasmtime. Self-host mirror
 // of TestComposeFromUserWorld.
 func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -136,14 +138,14 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	// Author + embed a minimal stdout-only world; pull out its payload.
+	// The heap OOM path requires stderr even when the program writes only stdout.
 	witDir := filepath.Join(dir, "wit")
 	_ = os.MkdirAll(witDir, 0o755)
 	if out, err := exec.Command("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(witDir, "deps")).CombinedOutput(); err != nil {
 		t.Fatalf("copy deps: %v\n%s", err, out)
 	}
 	if err := os.WriteFile(filepath.Join(witDir, "byo.wit"),
-		[]byte("package local:byo@0.0.0;\nworld stdout-only {\n    import wasi:cli/stdout@0.2.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:byo@0.0.0;\nworld output {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write byo.wit: %v", err)
 	}
 	emptyWat := filepath.Join(dir, "empty.wat")
@@ -153,7 +155,7 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	if out, err := exec.Command(wasmtools, "parse", emptyWat, "-o", emptyWasm).CombinedOutput(); err != nil {
 		t.Fatalf("parse: %v\n%s", err, out)
 	}
-	if out, err := exec.Command(wasmtools, "component", "embed", witDir, "-w", "stdout-only", emptyWasm, "-o", embedded).CombinedOutput(); err != nil {
+	if out, err := exec.Command(wasmtools, "component", "embed", witDir, "-w", "output", emptyWasm, "-o", embedded).CombinedOutput(); err != nil {
 		t.Fatalf("embed: %v\n%s", err, out)
 	}
 	embeddedBytes, err := os.ReadFile(embedded)
@@ -188,7 +190,10 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	}
 	var comp []byte
 	for _, tok := range strings.Fields(string(out)) {
-		n, _ := strconv.Atoi(tok)
+		n, err := strconv.Atoi(tok)
+		if err != nil {
+			t.Fatalf("bad byte %q: %v", tok, err)
+		}
 		comp = append(comp, byte(n))
 	}
 	mine := filepath.Join(dir, "user-world.wasm")
@@ -200,7 +205,7 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("component wit: %v\n%s", err, wit)
 	}
-	for _, iface := range []string{"wasi:io/error@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"} {
+	for _, iface := range []string{"wasi:io/error@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0"} {
 		if !strings.Contains(string(wit), iface) {
 			t.Errorf("component WIT missing %q", iface)
 		}
