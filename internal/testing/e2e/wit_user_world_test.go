@@ -13,12 +13,13 @@ import (
 )
 
 // TestComposeFromUserWorld is P3: bring-your-own WIT. A user-authored world
-// (here a minimal stdout-only one) is embedded with wasm-tools, decoded from
-// its raw component-type bytes (not an embedded fern/http payload), and used
-// to compose a stdout program. The resulting component imports *only* the
-// interfaces the user's world declares (io/error + io/poll + io/streams +
-// cli/stdout — four, since a stream's subscribe names a pollable, vs the
-// fern world's fourteen), and runs under wasmtime. This proves the import
+// (here a minimal stdout and stderr one) is embedded with wasm-tools, decoded
+// from its raw component-type bytes (not an embedded fern/http payload), and
+// used to compose a stdout program, which imports stderr for an abort's cause
+// lines. The resulting component imports *only* the interfaces the user's
+// world declares (io/error + io/poll + io/streams + cli/stdout + cli/stderr —
+// five, since a stream's subscribe names a pollable, vs the fern world's
+// fourteen), and runs under wasmtime. This proves the import
 // surface is driven by the supplied WIT, not hardcoded.
 func TestComposeFromUserWorld(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -70,8 +71,8 @@ func TestComposeFromUserWorld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
-	if got := len(w.Interfaces()); got != 4 {
-		t.Errorf("user world has %d interfaces, want 4", got)
+	if got := len(w.Interfaces()); got != 5 {
+		t.Errorf("user world has %d interfaces, want 5", got)
 	}
 
 	// Compile a stdout program and compose it against the user world.
@@ -102,12 +103,12 @@ func TestComposeFromUserWorld(t *testing.T) {
 		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
 	}
 
-	// The component imports only the user world's four interfaces.
+	// The component imports only the user world's five interfaces.
 	wit, err := exec.Command(wasmtools, "component", "wit", mine).CombinedOutput()
 	if err != nil {
 		t.Fatalf("wasm-tools component wit: %v\n%s", err, wit)
 	}
-	for _, iface := range []string{"wasi:io/error@0.2.0", "wasi:io/poll@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"} {
+	for _, iface := range []string{"wasi:io/error@0.2.0", "wasi:io/poll@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0"} {
 		if !strings.Contains(string(wit), iface) {
 			t.Errorf("component WIT missing %q", iface)
 		}
