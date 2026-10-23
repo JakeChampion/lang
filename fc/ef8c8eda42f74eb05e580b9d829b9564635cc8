@@ -12,3 +12,8 @@ grpc/special_status_message	1
 grpc/custom_metadata	1
 grpc/unimplemented_method	1
 grpc/unimplemented_service	1
+
+# lane: net-h2spec
+h2spec/passed	146
+h2spec/failed	0
+h2spec/skipped	0
