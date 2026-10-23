@@ -13152,26 +13152,29 @@ func (c *checker) errUnknownMember(pos, namePos ast.Position, structName, noun, 
 	c.errors = append(c.errors, e)
 }
 
-// collectNames flattens every name reachable from s, plus all top-level
-// function names, into a single slice for diag.Suggest to scan.
+// collectNames flattens every name reachable from s, innermost and latest
+// bound first, then the visible top-level functions in name order, for
+// diag.Suggest to scan. The self-host lists them the same way, so a tie
+// picks the same name in both.
 func (c *checker) collectNames(s *scope) []string {
 	seen := map[string]bool{}
 	var out []string
 	for cur := s; cur != nil; cur = cur.parent {
-		for name := range cur.names {
-			if !seen[name] {
+		for i := len(cur.order) - 1; i >= 0; i-- {
+			if name := cur.order[i]; !seen[name] {
 				seen[name] = true
 				out = append(out, name)
 			}
 		}
 	}
+	var funcs []string
 	for name := range c.info.FuncSigs {
 		if !seen[name] && c.funcVisibleHere(name) {
-			seen[name] = true
-			out = append(out, name)
+			funcs = append(funcs, name)
 		}
 	}
-	return out
+	slices.Sort(funcs)
+	return append(out, funcs...)
 }
 
 // isUserFuncOrLocal reports whether `name` is bound by an in-scope
@@ -13201,6 +13204,8 @@ func (c *checker) visibleFuncSig(name string) (*ast.FuncType, bool) {
 type scope struct {
 	parent *scope
 	names  map[string]ast.Type
+	// order is names' keys in the order they were first bound.
+	order []string
 	// vars maps the subset of `names` introduced by a `let` statement to
 	// the declaration itself, so a binding can be identified by NODE
 	// rather than by name. Names are not unique until shadowrename, which
@@ -13215,6 +13220,14 @@ func newScope(parent *scope) *scope {
 	return &scope{parent: parent, names: map[string]ast.Type{}}
 }
 
+// set binds name to t in this scope.
+func (s *scope) set(name string, t ast.Type) {
+	if _, bound := s.names[name]; !bound {
+		s.order = append(s.order, name)
+	}
+	s.names[name] = t
+}
+
 func (s *scope) lookup(name string) (ast.Type, bool) {
 	for cur := s; cur != nil; cur = cur.parent {
 		if t, ok := cur.names[name]; ok {
@@ -13227,7 +13240,7 @@ func (s *scope) lookup(name string) (ast.Type, bool) {
 // bindVar binds a `let` declaration's name, recording the declaration node
 // alongside the type.
 func (s *scope) bindVar(name string, t ast.Type, decl *ast.Var) {
-	s.names[name] = t
+	s.set(name, t)
 	if s.vars == nil {
 		s.vars = map[string]*ast.Var{}
 	}
@@ -13253,7 +13266,7 @@ func (s *scope) lookupVarDecl(name string) *ast.Var {
 // later use of the name stays quiet instead of reporting a second,
 // spurious E001 apiece.
 func (s *scope) poison(name string) {
-	s.names[name] = nil
+	s.set(name, nil)
 }
 
 // poisonAll poisons every name a pattern would have bound had it
@@ -13384,7 +13397,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		if _, dup := root.names[p.Name]; dup {
 			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
 		}
-		root.names[p.Name] = p.Type
+		root.set(p.Name, p.Type)
 	}
 	c.checkBlock(fn.Body, root)
 	c.settleLitLocals(fn.Body)
@@ -15309,7 +15322,7 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 		c.mutualRecSiblings = detectMutualRecSCCs(localFns)
 		for _, fn := range localFns {
 			if c.mutualRecSiblings[fn.Name] {
-				s.names[fn.Name] = paramSig(fn.Params, fn.ReturnType)
+				s.set(fn.Name, paramSig(fn.Params, fn.ReturnType))
 			}
 		}
 	} else {
@@ -15877,7 +15890,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// in the same function don't collide.
 		tempName := c.destructHolderName(n, s)
 		tempVar := &ast.Var{P: n.P, Name: tempName, Type: tup}
-		s.names[tempName] = tup
+		s.set(tempName, tup)
 		c.info.VarTypes[tempVar] = tup
 		c.info.Locals[c.current] = append(c.info.Locals[c.current], tempVar)
 		for i, name := range n.Names {
@@ -15887,7 +15900,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			}
 			elemT := tup.Elems[i]
 			v := &ast.Var{P: n.P, Name: name, Type: elemT}
-			s.names[name] = elemT
+			s.set(name, elemT)
 			c.info.VarTypes[v] = elemT
 			c.info.Locals[c.current] = append(c.info.Locals[c.current], v)
 		}
@@ -15990,7 +16003,7 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 	}
 	tempName := c.destructHolderName(n, s)
 	tempVar := &ast.Var{P: n.P, Name: tempName, Type: st}
-	s.names[tempName] = st
+	s.set(tempName, st)
 	c.info.VarTypes[tempVar] = st
 	c.info.Locals[c.current] = append(c.info.Locals[c.current], tempVar)
 	for i, name := range n.Names {
@@ -16021,7 +16034,7 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 			continue
 		}
 		v := &ast.Var{P: n.P, Name: name, Type: ft}
-		s.names[name] = ft
+		s.set(name, ft)
 		c.info.VarTypes[v] = ft
 		c.info.Locals[c.current] = append(c.info.Locals[c.current], v)
 	}
@@ -16303,7 +16316,7 @@ func (c *checker) bindArmPayloads(pos ast.Position, bindings []string, types []a
 			armScope.poison(name)
 			continue
 		}
-		armScope.names[name] = bt
+		armScope.set(name, bt)
 	}
 }
 
@@ -16496,7 +16509,7 @@ func (c *checker) checkTuplePatElem(pos ast.Position, elems []ast.TuplePatElem, 
 	if en, clash := c.payloadlessVariantNamed(el.Name, elT); clash {
 		c.errPayloadlessVariantBinder(pos, el.Name, en, "a tuple element")
 	}
-	armScope.names[el.Name] = elT
+	armScope.set(el.Name, elT)
 	return false
 }
 
@@ -16598,7 +16611,7 @@ func (c *checker) checkTuplePatStructElem(pos ast.Position, el *ast.TuplePatElem
 			continue
 		}
 		seen[b] = true
-		armScope.names[b] = ft
+		armScope.set(b, ft)
 	}
 	return refutable
 }
@@ -16658,7 +16671,7 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 			continue
 		}
 		seen[name] = true
-		armScope.names[name] = el.VariantBindingTypes[i]
+		armScope.set(name, el.VariantBindingTypes[i])
 	}
 }
 
@@ -16987,7 +17000,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		armScope := newScope(s)
 		// `@` binding: the whole matched value, bound at the scrutinee's type.
 		if arm.AtBinding != "" {
-			armScope.names[arm.AtBinding] = et
+			armScope.set(arm.AtBinding, et)
 		}
 		c.bindArmPayloads(arm.P, arm.Bindings, arm.BindingTypes, arm.Payloads, s, armScope)
 		c.bindEnumLiteralPayloads(n.Tag, ed, variant, arm.Bindings, arm.BindingTypes, armScope, literalLocals)
@@ -17152,7 +17165,7 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 		armScope := newScope(s)
 		// `@` binding: the whole matched value, at the scrutinee's type.
 		if arm.AtBinding != "" {
-			armScope.names[arm.AtBinding] = tagT
+			armScope.set(arm.AtBinding, tagT)
 		}
 		if arm.Guard != nil {
 			gt := c.checkExpr(arm.Guard, armScope)
@@ -17232,7 +17245,7 @@ func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
 		armScope := newScope(s)
 		// `@` binding: the whole matched tuple, bound at the scrutinee type.
 		if arm.AtBinding != "" {
-			armScope.names[arm.AtBinding] = tup
+			armScope.set(arm.AtBinding, tup)
 		}
 		irrefutable := true
 		arm.BindingTypes = make([]ast.Type, len(arm.TupleElems))
@@ -17321,7 +17334,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 		c.checkStructPatternCovers(arm.P, sd, patternFields(arm.Bindings, arm.FieldNames), arm.RestWritten)
 		// `@` binding: the whole matched struct, bound at the scrutinee type.
 		if arm.AtBinding != "" {
-			armScope.names[arm.AtBinding] = st
+			armScope.set(arm.AtBinding, st)
 		}
 		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
 		seen := map[string]bool{}
@@ -17369,7 +17382,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 				continue
 			}
 			seen[b] = true
-			armScope.names[b] = ft
+			armScope.set(b, ft)
 		}
 		structArms = append(structArms, structArmPatOf(sd, arm.Bindings, arm.FieldNames, arm.Payloads, arm.BindingTypes, arm.Guard != nil))
 		irrefutable := !armPayloadsRefutable(arm.Payloads)
@@ -17487,7 +17500,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 		armScope := newScope(s)
 		// `@` binding: the whole matched value, at the scrutinee's type.
 		if arm.AtBinding != "" {
-			armScope.names[arm.AtBinding] = tagT
+			armScope.set(arm.AtBinding, tagT)
 		}
 		if arm.Guard != nil {
 			gt := c.checkExpr(arm.Guard, armScope)
@@ -17572,7 +17585,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 		armScope := newScope(s)
 		// `@` binding: the whole matched tuple, bound at the scrutinee type.
 		if arm.AtBinding != "" {
-			armScope.names[arm.AtBinding] = tup
+			armScope.set(arm.AtBinding, tup)
 		}
 		irrefutable := true
 		arm.BindingTypes = make([]ast.Type, len(arm.TupleElems))
@@ -17680,7 +17693,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 		c.checkStructPatternCovers(arm.P, sd, patternFields(arm.Bindings, arm.FieldNames), arm.RestWritten)
 		// `@` binding: the whole matched struct, bound at the scrutinee type.
 		if arm.AtBinding != "" {
-			armScope.names[arm.AtBinding] = st
+			armScope.set(arm.AtBinding, st)
 		}
 		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
 		seen := map[string]bool{}
@@ -17728,7 +17741,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 				continue
 			}
 			seen[b] = true
-			armScope.names[b] = ft
+			armScope.set(b, ft)
 		}
 		structArms = append(structArms, structArmPatOf(sd, arm.Bindings, arm.FieldNames, arm.Payloads, arm.BindingTypes, arm.Guard != nil))
 		irrefutable := !armPayloadsRefutable(arm.Payloads)
@@ -17875,7 +17888,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			structArmPat{payloads: arm.Payloads, types: arm.BindingTypes, guarded: arm.Guard != nil})
 		armScope := newScope(s)
 		if arm.AtBinding != "" {
-			armScope.names[arm.AtBinding] = et
+			armScope.set(arm.AtBinding, et)
 		}
 		c.bindArmPayloads(arm.P, arm.Bindings, arm.BindingTypes, arm.Payloads, s, armScope)
 		c.bindEnumLiteralPayloads(n.Tag, ed, variant, arm.Bindings, arm.BindingTypes, armScope, literalLocals)
@@ -18287,7 +18300,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	// Bind the function's name in the outer scope so subsequent code
 	// can call it.
 	sig := paramSig(fn.Params, fn.ReturnType)
-	outer.names[fn.Name] = sig
+	outer.set(fn.Name, sig)
 
 	// Body scope: fresh root with the function's own params.
 	root := newScope(nil)
@@ -18295,7 +18308,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		if _, dup := root.names[p.Name]; dup {
 			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
 		}
-		root.names[p.Name] = p.Type
+		root.set(p.Name, p.Type)
 	}
 
 	captured := map[string]ast.Type{}
@@ -20841,7 +20854,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if _, dup := root.names[p.Name]; dup {
 				c.errfCode(n.P, "E018", "duplicate parameter %q", p.Name)
 			}
-			root.names[p.Name] = p.Type
+			root.set(p.Name, p.Type)
 		}
 		captured := map[string]ast.Type{}
 		var captureOrder []string
