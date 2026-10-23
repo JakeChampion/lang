@@ -1067,6 +1067,7 @@ variant_pattern_rename                               0
 variant_pattern_rename_rest                          0
 variant_pattern_rest                                 0
 variant_payload_from_array_field                     0
+wasi_http_error_code_names                           0
 while_sum                                            0
 wide_array_append_grow                               0
 wide_shift_by_variable                               0

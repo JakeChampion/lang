@@ -460,18 +460,241 @@ function response_drop(resp: i32): void;
 // may carry.
 pub struct Outgoing { method: string, authority: string, tls: boolean, target: string, headers: HeaderMap, body: u8[], connect: Duration, inactivity: Duration, body_cap: i32 }
 
+// `ErrorCode` — a case of the WIT `error-code` the host answered. The
+// host hands over the case alone, so a case's payload (the DNS error's
+// rcode, the TLS alert's description, a size limit) is not carried.
+// `Unknown(n)` is a case past the 39 this module knows.
+pub enum ErrorCode {
+  DnsTimeout,
+  DnsError,
+  DestinationNotFound,
+  DestinationUnavailable,
+  DestinationIpProhibited,
+  DestinationIpUnroutable,
+  ConnectionRefused,
+  ConnectionTerminated,
+  ConnectionTimeout,
+  ConnectionReadTimeout,
+  ConnectionWriteTimeout,
+  ConnectionLimitReached,
+  TlsProtocolError,
+  TlsCertificateError,
+  TlsAlertReceived,
+  HttpRequestDenied,
+  HttpRequestLengthRequired,
+  HttpRequestBodySize,
+  HttpRequestMethodInvalid,
+  HttpRequestUriInvalid,
+  HttpRequestUriTooLong,
+  HttpRequestHeaderSectionSize,
+  HttpRequestHeaderSize,
+  HttpRequestTrailerSectionSize,
+  HttpRequestTrailerSize,
+  HttpResponseIncomplete,
+  HttpResponseHeaderSectionSize,
+  HttpResponseHeaderSize,
+  HttpResponseBodySize,
+  HttpResponseTrailerSectionSize,
+  HttpResponseTrailerSize,
+  HttpResponseTransferCoding,
+  HttpResponseContentCoding,
+  HttpResponseTimeout,
+  HttpUpgradeFailed,
+  HttpProtocolError,
+  LoopDetected,
+  ConfigurationError,
+  InternalError,
+  Unknown(i32),
+}
+
+// `error_code(n)` — the case at position `n` of the WIT's declaration
+// order, the form the host returns it in: `DNS-timeout` is 0,
+// `internal-error` 38.
+pub function error_code(n: i32): ErrorCode {
+  let all: ErrorCode[] = [ErrorCode.DnsTimeout, ErrorCode.DnsError, ErrorCode.DestinationNotFound, ErrorCode.DestinationUnavailable, ErrorCode.DestinationIpProhibited, ErrorCode.DestinationIpUnroutable, ErrorCode.ConnectionRefused, ErrorCode.ConnectionTerminated, ErrorCode.ConnectionTimeout, ErrorCode.ConnectionReadTimeout, ErrorCode.ConnectionWriteTimeout, ErrorCode.ConnectionLimitReached, ErrorCode.TlsProtocolError, ErrorCode.TlsCertificateError, ErrorCode.TlsAlertReceived, ErrorCode.HttpRequestDenied, ErrorCode.HttpRequestLengthRequired, ErrorCode.HttpRequestBodySize, ErrorCode.HttpRequestMethodInvalid, ErrorCode.HttpRequestUriInvalid, ErrorCode.HttpRequestUriTooLong, ErrorCode.HttpRequestHeaderSectionSize, ErrorCode.HttpRequestHeaderSize, ErrorCode.HttpRequestTrailerSectionSize, ErrorCode.HttpRequestTrailerSize, ErrorCode.HttpResponseIncomplete, ErrorCode.HttpResponseHeaderSectionSize, ErrorCode.HttpResponseHeaderSize, ErrorCode.HttpResponseBodySize, ErrorCode.HttpResponseTrailerSectionSize, ErrorCode.HttpResponseTrailerSize, ErrorCode.HttpResponseTransferCoding, ErrorCode.HttpResponseContentCoding, ErrorCode.HttpResponseTimeout, ErrorCode.HttpUpgradeFailed, ErrorCode.HttpProtocolError, ErrorCode.LoopDetected, ErrorCode.ConfigurationError, ErrorCode.InternalError];
+  if (n >= 0 && n < all.len()) {
+    return all[n];
+  }
+  return ErrorCode.Unknown(n);
+}
+
+// `name()` — the case as the WIT spells it.
+pub function (c: ErrorCode) name(): string {
+  match (c) {
+    ErrorCode.DnsTimeout => {
+      return "DNS-timeout";
+    },
+    ErrorCode.DnsError => {
+      return "DNS-error";
+    },
+    ErrorCode.DestinationNotFound => {
+      return "destination-not-found";
+    },
+    ErrorCode.DestinationUnavailable => {
+      return "destination-unavailable";
+    },
+    ErrorCode.DestinationIpProhibited => {
+      return "destination-IP-prohibited";
+    },
+    ErrorCode.DestinationIpUnroutable => {
+      return "destination-IP-unroutable";
+    },
+    ErrorCode.ConnectionRefused => {
+      return "connection-refused";
+    },
+    ErrorCode.ConnectionTerminated => {
+      return "connection-terminated";
+    },
+    _ => {
+      return __name_connect(c);
+    }
+  }
+  return "";
+}
+
+function __name_connect(c: ErrorCode): string {
+  match (c) {
+    ErrorCode.ConnectionTimeout => {
+      return "connection-timeout";
+    },
+    ErrorCode.ConnectionReadTimeout => {
+      return "connection-read-timeout";
+    },
+    ErrorCode.ConnectionWriteTimeout => {
+      return "connection-write-timeout";
+    },
+    ErrorCode.ConnectionLimitReached => {
+      return "connection-limit-reached";
+    },
+    ErrorCode.TlsProtocolError => {
+      return "TLS-protocol-error";
+    },
+    ErrorCode.TlsCertificateError => {
+      return "TLS-certificate-error";
+    },
+    ErrorCode.TlsAlertReceived => {
+      return "TLS-alert-received";
+    },
+    ErrorCode.HttpRequestDenied => {
+      return "HTTP-request-denied";
+    },
+    _ => {
+      return __name_request(c);
+    }
+  }
+  return "";
+}
+
+function __name_request(c: ErrorCode): string {
+  match (c) {
+    ErrorCode.HttpRequestLengthRequired => {
+      return "HTTP-request-length-required";
+    },
+    ErrorCode.HttpRequestBodySize => {
+      return "HTTP-request-body-size";
+    },
+    ErrorCode.HttpRequestMethodInvalid => {
+      return "HTTP-request-method-invalid";
+    },
+    ErrorCode.HttpRequestUriInvalid => {
+      return "HTTP-request-URI-invalid";
+    },
+    ErrorCode.HttpRequestUriTooLong => {
+      return "HTTP-request-URI-too-long";
+    },
+    ErrorCode.HttpRequestHeaderSectionSize => {
+      return "HTTP-request-header-section-size";
+    },
+    ErrorCode.HttpRequestHeaderSize => {
+      return "HTTP-request-header-size";
+    },
+    ErrorCode.HttpRequestTrailerSectionSize => {
+      return "HTTP-request-trailer-section-size";
+    },
+    _ => {
+      return __name_response(c);
+    }
+  }
+  return "";
+}
+
+function __name_response(c: ErrorCode): string {
+  match (c) {
+    ErrorCode.HttpRequestTrailerSize => {
+      return "HTTP-request-trailer-size";
+    },
+    ErrorCode.HttpResponseIncomplete => {
+      return "HTTP-response-incomplete";
+    },
+    ErrorCode.HttpResponseHeaderSectionSize => {
+      return "HTTP-response-header-section-size";
+    },
+    ErrorCode.HttpResponseHeaderSize => {
+      return "HTTP-response-header-size";
+    },
+    ErrorCode.HttpResponseBodySize => {
+      return "HTTP-response-body-size";
+    },
+    ErrorCode.HttpResponseTrailerSectionSize => {
+      return "HTTP-response-trailer-section-size";
+    },
+    ErrorCode.HttpResponseTrailerSize => {
+      return "HTTP-response-trailer-size";
+    },
+    ErrorCode.HttpResponseTransferCoding => {
+      return "HTTP-response-transfer-coding";
+    },
+    _ => {
+      return __name_late(c);
+    }
+  }
+  return "";
+}
+
+function __name_late(c: ErrorCode): string {
+  match (c) {
+    ErrorCode.HttpResponseContentCoding => {
+      return "HTTP-response-content-coding";
+    },
+    ErrorCode.HttpResponseTimeout => {
+      return "HTTP-response-timeout";
+    },
+    ErrorCode.HttpUpgradeFailed => {
+      return "HTTP-upgrade-failed";
+    },
+    ErrorCode.HttpProtocolError => {
+      return "HTTP-protocol-error";
+    },
+    ErrorCode.LoopDetected => {
+      return "loop-detected";
+    },
+    ErrorCode.ConfigurationError => {
+      return "configuration-error";
+    },
+    ErrorCode.InternalError => {
+      return "internal-error";
+    },
+    ErrorCode.Unknown(n) => {
+      return "error-code " + int.int_to_string(n);
+    },
+    _ => {
+      return "";
+    }
+  }
+  return "";
+}
+
 // `OutgoingError` — why the host gave no response: `Code(code)`, the
-// case of the WIT `error-code` the host answered, in its declaration
-// order (`DNS-timeout` is 0, `internal-error` 38); `Field(name)`, a field
+// case of the WIT `error-code` the host answered; `Field(name)`, a field
 // the host refuses to carry; `BodyPastCap`, a response body past the
 // cap; `CutShort`, a body whose stream failed before it closed;
 // `Lost`, a future that settled with no response.
-pub enum OutgoingError { Code(i32), Field(string), BodyPastCap, CutShort, Lost }
+pub enum OutgoingError { Code(ErrorCode), Field(string), BodyPastCap, CutShort, Lost }
 
 pub function (e: OutgoingError) message(): string {
   match (e) {
     Code(code) => {
-      return "outgoing HTTP request failed with code " + int.int_to_string(code);
+      return "outgoing HTTP request failed: " + code.name();
     },
     Field(name) => {
       return "outgoing HTTP request has an invalid field: " + name;
@@ -518,7 +741,7 @@ pub function outgoing(o: Outgoing): Result[HttpResponse, OutgoingError] {
     },
     Err(e) => {
       body_finish_out(body, None);
-      return Err(Code((e & 255 as i64) as i32));
+      return Err(Code(error_code((e & 255 as i64) as i32)));
     }
   }
   write_body(body, o.body);
@@ -594,7 +817,7 @@ function await_response(fut: i32): Result[i32, OutgoingError] {
     return Err(Lost);
   }
   if ((got.w4 & 255) != 0) {
-    return Err(Code(got.w6 & 255));
+    return Err(Code(error_code(got.w6 & 255)));
   }
   return Ok(got.w6);
 }
