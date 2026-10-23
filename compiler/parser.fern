@@ -2263,6 +2263,17 @@ function (p: Par) peek_number_text(): string {
   return "";
 }
 
+// peek_const_arg is the digits of an unsuffixed integer literal at the cursor,
+// which is a const argument in a type-argument list, or "" for any other token.
+function (p: Par) peek_const_arg(): string {
+  if let lexer.TokNumber(x) = p.peek() {
+    if (!x.is_float && x.suffix.len() == 0) {
+      return x.text;
+    }
+  }
+  return "";
+}
+
 function (p: Par) peek_is_literal(): boolean {
   let t: lexer.Token = p.peek();
   match (t) {
@@ -2897,8 +2908,9 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
 // to share the loop across multiple base shapes — ident
 // chains, parenthesised exprs, tuple / array literals.
 // scan_written_type_args reconstructs a `[T1, T2, …]` instantiation as written.
-// The cursor sits just past the `[` and is left on the matching `]`. Each
-// argument goes through parse_type_name, so the spelling is the type grammar's
+// The cursor sits just past the `[` and is left on the matching `]`. An integer
+// literal is a const argument. Each other argument goes through
+// parse_type_name, so the spelling is the type grammar's
 // own — which under `-fmt` keeps `str`, `[T]` and fn types as the author wrote
 // them. A count of 0 means the brackets do not hold a type list; the cursor is
 // then wherever the attempt stopped and the caller must restore it.
@@ -2906,11 +2918,17 @@ function scan_written_type_args(p: Par): (string, i32, Par) {
   let out: string = "";
   let n: i32 = 0;
   while (true) {
-    let (tn, tn_fnret, tn_p) = parse_type_name(p);
-    if (tn.len() == 0) {
-      return ("", 0, p);
+    let tn: string = p.peek_const_arg();
+    if (tn.len() > 0) {
+      p = p.advance();
+    } else {
+      let (written, written_fnret, written_p) = parse_type_name(p);
+      if (written.len() == 0) {
+        return ("", 0, p);
+      }
+      tn = written;
+      p = written_p;
     }
-    p = tn_p;
     if (n > 0) {
       out = out + ", ";
     }
@@ -2945,7 +2963,7 @@ function written_type_arg_list(text: string, scanned: i32, count: i32): string[]
 }
 
 // type_shaped_bracket reports whether the bracket the cursor sits just inside
-// opens with a name or `(` yet holds a type list, from shapes an index cannot
+// opens with a name, a const argument or `(` yet holds a type list, from shapes an index cannot
 // take: a top-level comma (`[Box, Loc]`), a nested `[` opening a type keyword or
 // `[]` (`[Pair[i32]]`, `[Box[]]`), a `(` opening a type keyword
 // (`[(i32, string)]`) or a function type's `=>` (`[(Box) => Loc]`), closed by a
@@ -2953,7 +2971,7 @@ function written_type_arg_list(text: string, scanned: i32, count: i32): string[]
 // Mirrors the Go parser's peekTypeArgs; a lone name before `(` stays an index
 // for retag_type_arg_indexes to settle.
 function type_shaped_bracket(p: Par): boolean {
-  let named: boolean = p.peek_ident().len() > 0;
+  let named: boolean = p.peek_ident().len() > 0 || p.peek_const_arg().len() > 0;
   if (!named && p.peek_punct() != "(") {
     return false;
   }
@@ -9558,6 +9576,13 @@ function parse_type_param_list(p: Par): (TpList, Par) {
     if (p.peek_punct() == "]") {
       break;
     }
+    if (p.peek_keyword() == "const") {
+      let (cname, cp) = parse_const_tparam(p);
+      names = names.append(cname);
+      bounds = bounds.append(CONST_BOUND);
+      p = tparam_sep(cp);
+      continue;
+    }
     let tpname: string = p.peek_ident();
     if (tpname.len() == 0) {
       p = p.advance();
@@ -9633,21 +9658,68 @@ function parse_type_param_list(p: Par): (TpList, Par) {
     }
     names = names.append(tpname);
     bounds = bounds.append(this_bounds);
-    if (p.peek_punct() == ",") {
-      p = p.advance();
-    } else if (p.peek_punct() != "]" && !p.at_end()) {
-      // Native expects `,` or `]` after a parameter; anything else ends the
-      // list with its diagnostic rather than reading on as another parameter.
-      p = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \"]\", got " + tok_desc(p.peek()))) };
-      while (!p.at_end() && p.peek_punct() != "]") {
-        p = p.advance();
-      }
-    }
+    p = tparam_sep(p);
   }
   if (p.peek_punct() == "]") {
     p = p.advance();
   }
   return (TpList { tnames: names, tbounds: bounds }, p);
+}
+
+// tparam_sep consumes the `,` after a generic parameter. Native expects `,` or
+// `]` there; anything else ends the list with its diagnostic rather than
+// reading on as another parameter.
+function tparam_sep(p: Par): Par {
+  if (p.peek_punct() == ",") {
+    return p.advance();
+  }
+  if (p.peek_punct() != "]" && !p.at_end()) {
+    p = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \"]\", got " + tok_desc(p.peek()))) };
+    while (!p.at_end() && p.peek_punct() != "]") {
+      p = p.advance();
+    }
+  }
+  return p;
+}
+
+// CONST_BOUND is the bound a const parameter (`const N: i32`) carries in a
+// type-parameter list. `const` is a keyword, so no trait has the name.
+pub const CONST_BOUND: string = "const";
+
+pub function is_const_bound(bound: string): boolean {
+  return bound == CONST_BOUND;
+}
+
+// parse_const_tparam reads `const NAME: i32` and returns NAME. A const
+// parameter's type is i32 (docs/CONST-GENERICS.md).
+function parse_const_tparam(p: Par): (string, Par) {
+  p = p.advance();
+  let name: string = p.peek_ident();
+  if (name.len() == 0) {
+    return ("", Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected a name, got " + tok_desc(p.peek()))) });
+  }
+  p = p.advance();
+  if (p.peek_punct() != ":") {
+    return (name, Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:const parameter " + name + " needs a type: write const " + name + ": i32")) });
+  }
+  p = p.advance();
+  if (p.peek_keyword() != "i32") {
+    return (name, Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:const parameter " + name + " has type i32, got " + tok_desc(p.peek()))) });
+  }
+  return (name, p.advance());
+}
+
+// refuse_const_tparams refuses a const parameter in list `tpl`, which is not
+// a function's. `at` is the parser where the refusal points.
+function refuse_const_tparams(p: Par, at: Par, tpl: TpList): Par {
+  let i: i32 = 0;
+  while (i < tpl.tnames.len()) {
+    if (is_const_bound(tpl.tbounds[i])) {
+      return Par { ...p, type_errs: p.type_errs.append(s_unknown(at, "decl:const parameter " + tpl.tnames[i] + ": only a function takes a const parameter")) };
+    }
+    i = i + 1;
+  }
+  return p;
 }
 
 // A receiver has a typed name and a method name after its closing parenthesis.
@@ -9772,10 +9844,14 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     p = p.refused_type("expected a name, got " + tok_desc(p.peek()));
     return (FuncDecl { stdlib: "", no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, receiver_own: receiver_own, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] }, p);
   }
+  let name_p: Par = p;
   p = p.advance();
   // Generic type parameters written AFTER the name (`name[T: Bound, U]`).
   let (post_tps, post_p) = parse_type_param_list(p);
   p = post_p;
+  if (receiver_name.len() > 0) {
+    p = refuse_const_tparams(refuse_const_tparams(p, name_p, pre_tps), name_p, post_tps);
+  }
   let tpi0: i32 = 0;
   while (tpi0 < post_tps.tnames.len()) {
     all_tps = all_tps.append(post_tps.tnames[tpi0]);
@@ -14903,6 +14979,11 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
   match (e) {
     ast.ExprIdent(id) => {
       let k: i32 = tp_index(id.name, tparams);
+      // const_reads gives a const parameter its literal, where no binder
+      // shadows it.
+      if (k >= 0 && is_const_arg(cts[k])) {
+        return e;
+      }
       if (k >= 0) {
         return ast.ExprIdent { name: cts[k], line: id.line, col: id.col, ty: id.ty };
       }
@@ -15178,9 +15259,13 @@ function ref_bind(pattern: TypeRef, actual: TypeRef, vars: string[], names: stri
 }
 
 // split_plus_bounds splits a `+`-joined bound spelling into its entries, each
-// AS WRITTEN — `Iterator[T] + Clone` gives both, type arguments intact.
+// AS WRITTEN — `Iterator[T] + Clone` gives both, type arguments intact. A
+// const parameter's marker names no trait, so it gives none.
 pub function split_plus_bounds(bound: string): string[] {
   let out: string[] = [];
+  if (is_const_bound(bound)) {
+    return out;
+  }
   let start: i32 = 0;
   let depth: i32 = 0;
   let i: i32 = 0;
@@ -15549,8 +15634,31 @@ pub function instantiate_func(fd: FuncDecl, name: string, tparams: string[], cts
     ret_type: resolve_proj_in_type(subst_ty(fd.ret_type, tparams, cts), impls),
     ret_fn_ret: subst_ty(fd.ret_fn_ret, tparams, cts),
     ret_fn_param_types: subst_ty_list(fd.ret_fn_param_types, tparams, cts),
-    body: subst_stmts(fd.body, tparams, cts),
+    body: const_reads(fd, subst_stmts(fd.body, tparams, cts), tparams, cts),
   };
+}
+
+// const_reads replaces each read of a const parameter of `fd` in `body` with
+// the integer of the instance. A binder of the same name shadows it.
+function const_reads(fd: FuncDecl, body: ast.Stmt[], tparams: string[], cts: string[]): ast.Stmt[] {
+  let vars: string[] = [];
+  let lits: string[] = [];
+  let i: i32 = 0;
+  while (i < tparams.len() && i < cts.len()) {
+    if (is_const_arg(cts[i])) {
+      vars = vars.append(tparams[i]);
+      lits = lits.append(cts[i]);
+    }
+    i = i + 1;
+  }
+  if (vars.len() == 0) {
+    return body;
+  }
+  let values: string[] = [];
+  for pd in fd.params {
+    values = astwalk.append_bound_name(values, pd.name);
+  }
+  return tv_obj_body(body, TvScope { vars: vars, cts: lits, values: values, lits: true });
 }
 
 // ---- generic array-method monomorphisation (slice 1) ----------------
@@ -24601,6 +24709,7 @@ function retag_type_arg_indexes(mod: Module): Module {
       generics = generics.append(fd.name);
     }
   }
+  let const_firsts: string[] = const_first_generics(mod.funcs);
   if (generics.len() == 0) {
     return mod;
   }
@@ -24658,7 +24767,7 @@ function retag_type_arg_indexes(mod: Module): Module {
       ftypes = rta_type_names(fd.receiver_type, ftypes);
     }
     function rw(x: ast.Expr): ast.Expr {
-      return rta_call_of(x, generics, ftypes, shadow);
+      return rta_call_of(x, generics, const_firsts, ftypes, shadow);
     }
     funcs = funcs.append(FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, rw) });
   }
@@ -24667,7 +24776,7 @@ function retag_type_arg_indexes(mod: Module): Module {
   }
   let top_shadow: string[] = astwalk.collect_bound_stmts(mod.top_stmts, consts);
   function top_rw(x: ast.Expr): ast.Expr {
-    return rta_call_of(x, generics, types, top_shadow);
+    return rta_call_of(x, generics, const_firsts, types, top_shadow);
   }
   return Module { ...mod, funcs: funcs, top_stmts: astwalk.map_stmts(mod.top_stmts, top_rw) };
 }
@@ -24686,16 +24795,8 @@ function rta_skip_stmt(st: ast.Stmt, own acc: boolean): boolean {
 
 function rta_index_call_of(e: ast.Expr, own acc: boolean): boolean {
   if let ast.ExprCall(c) = e {
-    if let ast.ExprIndex(ix) = c.callee {
-      match (ix.index) {
-        ast.ExprIdent(_) => {
-          return true;
-        },
-        ast.ExprIndex(_) => {
-          return true;
-        },
-        _ => {}
-      }
+    if let ast.ExprIndex(_) = c.callee {
+      return true;
     }
   }
   return acc;
@@ -24718,22 +24819,74 @@ function rta_type_names(ty: string, acc: string[]): string[] {
   return acc;
 }
 
-function rta_call_of(x: ast.Expr, generics: string[], types: string[], shadow: string[]): ast.Expr {
+function rta_call_of(x: ast.Expr, generics: string[], const_firsts: string[], types: string[], shadow: string[]): ast.Expr {
   if let ast.ExprCall(c) = x {
     if (c.type_args.len() > 0) {
       return x;
     }
     if let ast.ExprIndex(ix) = c.callee {
+      let fname: string = rta_callee_name(ix.array, shadow);
       let targ: string = rta_type_spelling(ix.index, types, shadow);
-      if (targ.len() > 0) {
-        let fname: string = rta_callee_name(ix.array, shadow);
-        if (fname.len() > 0 && util.has_str(generics, fname)) {
-          return ast.ExprCall { ...c, callee: ix.array, type_args: [targ] };
-        }
+      // A function whose first parameter is const takes its bracket as a
+      // generic argument whatever it holds. The checker refuses one that is
+      // not a const argument, and "" stands for an expression.
+      if (targ.len() == 0 && fname.len() > 0 && util.has_str(const_firsts, fname)) {
+        return ast.ExprCall { ...c, callee: ix.array, type_args: [const_bracket_spelling(ix.index)] };
+      }
+      if (targ.len() > 0 && fname.len() > 0 && util.has_str(generics, fname)) {
+        return ast.ExprCall { ...c, callee: ix.array, type_args: [targ] };
       }
     }
   }
   return x;
+}
+
+// const_first_generics names the generic functions whose first written
+// generic parameter is a const parameter, so `f[4](x)` is a call with one
+// const argument where `xs[4](x)` stays an index.
+function const_first_generics(funcs: FuncDecl[]): string[] {
+  let out: string[] = [];
+  for fd in funcs {
+    if (fd.all_type_params.len() > 0 && fd.receiver_type.len() == 0 && is_const_tparam(fd, fd.all_type_params[0])) {
+      out = out.append(fd.name);
+    }
+  }
+  return out;
+}
+
+// is_const_tparam reports whether `name` is a const parameter of `fd`.
+pub function is_const_tparam(fd: FuncDecl, name: string): boolean {
+  let i: i32 = util.index_of_str(fd.type_params, name);
+  return i >= 0 && i < fd.bound_traits.len() && is_const_bound(fd.bound_traits[i]);
+}
+
+// is_const_arg reports whether a type-argument spelling is a const argument:
+// the digits of an integer literal.
+pub function is_const_arg(spelling: string): boolean {
+  if (spelling.len() == 0) {
+    return false;
+  }
+  for ch in spelling {
+    if (ch < b'0' || ch > b'9') {
+      return false;
+    }
+  }
+  return true;
+}
+
+// const_bracket_spelling is the generic argument a bracket after a const-first
+// function spells: an unsuffixed integer literal's digits, a name, or "" for
+// any other expression.
+function const_bracket_spelling(e: ast.Expr): string {
+  if let ast.ExprNumber(n) = e {
+    if (!n.is_float && n.suffix.len() == 0) {
+      return n.text;
+    }
+  }
+  if let ast.ExprIdent(id) = e {
+    return id.name;
+  }
+  return "";
 }
 
 // rta_type_spelling is the type an index operand spells — a type name, or a
@@ -26618,12 +26771,18 @@ function decl_type_params(name: string, mod: Module): string[] {
 }
 
 // fn_type_vars is every type variable `fd` is written in: its declared
-// parameters, the implicit ones a generic receiver binds, and — for a derived
+// parameters but its const ones, which are values, the implicit ones a generic
+// receiver binds, and — for a derived
 // method, whose receiver is spelled bare — its type's own parameters. Once
 // respelled, a receiver's variables are read straight off its spelling.
 function fn_type_vars(fd: FuncDecl, mod: Module, respelled: boolean): string[] {
   let none: string[] = [];
-  let vars: string[] = add_tvars(add_tvars(none, fd.all_type_params), fd.type_params);
+  let vars: string[] = [];
+  for v in add_tvars(add_tvars(none, fd.all_type_params), fd.type_params) {
+    if (!is_const_tparam(fd, v)) {
+      vars = vars.append(v);
+    }
+  }
   if (fd.receiver_type.len() == 0) {
     return vars;
   }
@@ -26687,6 +26846,10 @@ function rename_ty_list(list: string[], vars: string[], cts: string[]): string[]
 function rename_bounds(bounds: string[], vars: string[], cts: string[]): string[] {
   let out: string[] = [];
   for b in bounds {
+    if (is_const_bound(b)) {
+      out = out.append(b);
+      continue;
+    }
     let joined: string = "";
     for entry in split_plus_bounds(b) {
       if (joined.len() > 0) {
@@ -26723,7 +26886,7 @@ function rename_fn_type_vars(fd: FuncDecl, vars: string[], cts: string[], mvals:
   for pd in fd.params {
     values = astwalk.append_bound_name(values, pd.name);
   }
-  let sc: TvScope = TvScope { vars: vars, cts: cts, values: values };
+  let sc: TvScope = TvScope { vars: vars, cts: cts, values: values, lits: false };
   let params: ast.ParamDecl[] = [];
   for pd in fd.params {
     let rp: ast.ParamDecl = rename_param_type_vars(pd, vars, cts);
@@ -26826,8 +26989,9 @@ function rename_tv_expr(e: ast.Expr, vars: string[], cts: string[]): ast.Expr {
 // resolves in either position (module_value_names), so that respelling walks
 // the body with the value names in scope. TvScope is the
 // walk's accumulator: the declaration's variables, their respellings, and the
-// value names bound so far.
-struct TvScope { vars: string[], cts: string[], values: string[] }
+// value names bound so far. With `lits` the variables are const parameters,
+// each read anywhere becomes its integer in cts, and const_reads drives it.
+struct TvScope { vars: string[], cts: string[], values: string[], lits: boolean }
 
 function tv_shadow(sc: TvScope, names: string[]): TvScope {
   let values: string[] = sc.values;
@@ -26862,6 +27026,9 @@ function tv_obj_in(e: ast.Expr, sc: TvScope): ast.Expr {
 function tv_obj_ident(e: ast.Expr, sc: TvScope): ast.Expr {
   if let ast.ExprIdent(id) = e {
     let k: i32 = tp_index(id.name, sc.vars);
+    if (k >= 0 && !str_in(sc.values, id.name) && sc.lits) {
+      return ast.ExprNumber { text: sc.cts[k], suffix: "", raw: "", is_float: false, line: id.line, col: id.col };
+    }
     if (k >= 0 && !str_in(sc.values, id.name)) {
       return ast.ExprIdent { ...id, name: sc.cts[k] };
     }
@@ -26873,6 +27040,12 @@ function tv_obj_ident(e: ast.Expr, sc: TvScope): ast.Expr {
 // the shared spine owns every other container.
 function tv_obj_expr(e: ast.Expr, sc: TvScope): (ast.Expr, TvScope, boolean) {
   match (e) {
+    ast.ExprIdent(_) => {
+      if (sc.lits) {
+        return (tv_obj_ident(e, sc), sc, true);
+      }
+      return (e, sc, false);
+    },
     ast.ExprFieldAccess(fa) => {
       if let ast.ExprIdent(_) = fa.obj {
         return (ast.ExprFieldAccess { ...fa, obj: tv_obj_ident(fa.obj, sc) }, sc, true);
@@ -28591,7 +28764,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
   // monomorphisation, and the whole list with its bounds is what the formatter
   // needs — `impl[T: cmp.Eq]` reprinted as `impl` drops the constraint.
   let (impl_tpl, impl_tp_p) = parse_type_param_list(p);
-  p = impl_tp_p;
+  p = refuse_const_tparams(impl_tp_p, p, impl_tpl);
   let impl_tps: string[] = [];
   // Parallel to impl_tps. finalize_impl_method merges both halves into every
   // method of the block, so a name kept without its bound gives a method that
@@ -28690,8 +28863,12 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
       p = skip_body_item(p.advance());
       continue;
     }
+    let name_at: Par = p.advance();
     let (fr_func, fr_p) = parse_func_decl(p);
     p = fr_p;
+    if (fr_func.receiver_name.len() == 0) {
+      p = refuse_const_tparams(p, name_at, TpList { tnames: fr_func.type_params, tbounds: fr_func.bound_traits });
+    }
     if (fr_func.name.len() == 0) {
       p = skip_body_item(p);
     }
@@ -29567,7 +29744,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
   // the formatter — printing the block without them leaves every `T` in the
   // method signatures unbound.
   let (trait_tps, trait_tp_p) = parse_type_param_list(p);
-  p = trait_tp_p;
+  p = refuse_const_tparams(trait_tp_p, p, trait_tps);
   // Optional supertrait clause `: Trait (+ Trait)*` (each possibly
   // `mod.Trait`). Dispatch is still by receiver type, but the supertrait
   // NAMES are retained for the E021 conformance check (#4347): an

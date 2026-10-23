@@ -13216,6 +13216,19 @@ type scope struct {
 	// match on the spelling. Nil for a scope that binds only parameters
 	// and pattern bindings.
 	vars map[string]*ast.Var
+	// consts names the const parameters a generic function's root scope
+	// binds.
+	consts map[string]bool
+}
+
+// binder is the innermost scope from s outward that binds name, or nil.
+func (s *scope) binder(name string) *scope {
+	for cur := s; cur != nil; cur = cur.parent {
+		if _, ok := cur.names[name]; ok {
+			return cur
+		}
+	}
+	return nil
 }
 
 func newScope(parent *scope) *scope {
@@ -13400,6 +13413,13 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
 		}
 		root.set(p.Name, p.Type)
+	}
+	for _, cp := range fn.ConstParams {
+		root.set(cp, ast.NumberType{Width: 32, Signed: true})
+		if root.consts == nil {
+			root.consts = map[string]bool{}
+		}
+		root.consts[cp] = true
 	}
 	c.checkBlock(fn.Body, root)
 	c.settleLitLocals(fn.Body)
@@ -18070,6 +18090,12 @@ func (c *checker) retagIndexAsTypeArgs(n *ast.Call, s *scope) {
 	if !ok || !c.calleeIsGenericFunc(fn, s) {
 		return
 	}
+	if gen := c.info.GenericFuncs[fn.Name]; len(gen.TypeParams) > 0 && slices.Contains(gen.ConstParams, gen.TypeParams[0]) {
+		n.Callee = fn
+		n.TypeArgs = []ast.Type{c.indexAsConstArg(ix.Idx, s)}
+		n.TypeArgsWritten = true
+		return
+	}
 	params := c.typeParamsInScope()
 	t, ok := c.indexAsType(ix.Idx, params, s)
 	if !ok {
@@ -18079,6 +18105,84 @@ func (c *checker) retagIndexAsTypeArgs(n *ast.Call, s *scope) {
 	n.Callee = fn
 	n.TypeArgs = []ast.Type{t}
 	n.TypeArgsWritten = true
+}
+
+// indexAsConstArg reads the index operand of `f[e](…)`, where f takes a const
+// parameter first, as that parameter's argument: an integer literal, or a
+// const parameter in scope. Any other operand is a value or a type, which
+// constArgDiags refuses, so it comes back as a name or an empty one.
+func (c *checker) indexAsConstArg(e ast.Expr, s *scope) ast.Type {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		if isConstArgLit(x) {
+			return ast.ConstArg{Value: x.Value}
+		}
+	case *ast.Ident:
+		if c.isConstParam(x.Name, s) {
+			return ast.ParamType{Name: x.Name}
+		}
+		if _, bound := c.identValueBinding(x.Name, s); !bound {
+			t := ast.Type(ast.StructType{Name: x.Name})
+			c.resolveType(&t, c.typeParamsInScope(), x.P)
+			return t
+		}
+	}
+	return ast.StructType{}
+}
+
+// isConstArgLit reports whether n is written as plain decimal digits with no
+// suffix, the one spelling of a const argument.
+func isConstArgLit(n *ast.NumberLit) bool {
+	return n.Width == 0 && n.Raw == "" && !n.IsUnsigned && n.Value >= 0
+}
+
+// isConstParam reports whether name, read in scope s, is a const parameter of
+// an enclosing generic function rather than a binder that shadows one.
+func (c *checker) isConstParam(name string, s *scope) bool {
+	if b := s.binder(name); b != nil {
+		return b.consts[name]
+	}
+	for i := len(c.captureChain) - 1; i >= 0; i-- {
+		if ent := c.captureChain[i]; ent.scope != nil {
+			if b := ent.scope.binder(name); b != nil {
+				return b.consts[name]
+			}
+		}
+	}
+	return false
+}
+
+// constArgDiags checks each written argument of a call to generic fn against
+// the kind of its parameter: a const parameter takes an integer literal or a
+// const parameter in scope (E089 for a value, E090 for a type), and a type
+// parameter takes a type (E090 for an integer).
+func (c *checker) constArgDiags(fn *ast.FuncDecl, written []ast.Type, pos ast.Position, s *scope) {
+	for i, ta := range written {
+		if i >= len(fn.TypeParams) {
+			return
+		}
+		tp := fn.TypeParams[i]
+		_, isInt := ta.(ast.ConstArg)
+		if !slices.Contains(fn.ConstParams, tp) {
+			if isInt {
+				c.errfCode(pos, "E090", "type parameter %s takes a type, not the integer %s", tp, ta)
+			}
+			continue
+		}
+		if isInt {
+			continue
+		}
+		if pt, ok := ta.(ast.ParamType); ok && c.isConstParam(pt.Name, s) {
+			continue
+		}
+		if st, ok := ta.(ast.StructType); ok && len(st.Args) == 0 {
+			if _, bound := c.identValueBinding(st.Name, s); st.Name == "" || bound {
+				c.errfCode(pos, "E089", "the const argument for %s must be an integer literal or a const parameter", tp)
+				continue
+			}
+		}
+		c.errfCode(pos, "E090", "const parameter %s takes an integer, not the type %s", tp, ta)
+	}
 }
 
 // indexAsType reads an index operand as the type it spells: a type name, or a
@@ -18772,6 +18876,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.Ident:
 		if t, ok := s.lookup(n.Name); ok {
 			n.Local = true
+			n.ConstParam = s.binder(n.Name).consts[n.Name]
 			c.noteLitIdent(n, t, s.lookupVarDecl(n.Name))
 			return t
 		}
@@ -18800,6 +18905,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 				if t, ok := ent.scope.lookup(n.Name); ok {
 					n.Local = true
+					n.ConstParam = ent.scope.binder(n.Name).consts[n.Name]
 					// Record the capture in this entry's sink AND
 					// in every deeper sink (so each intermediate
 					// closure forwards the slot through).
@@ -19898,6 +20004,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					if tooMany || (tooFew && n.Method == nil) {
 						display, _ := callSiteName(fn)
 						c.errfCode(n.P, "E040", "%s", arityMsg(display, len(fn.TypeParams), count, "type argument"))
+					} else if n.Method == nil {
+						c.constArgDiags(fn, written, n.P, s)
 					}
 					// The receiver's arguments are the LEADING parameters.
 					for i, ta := range recvArgs {
@@ -19917,9 +20025,15 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						offset = len(fn.TypeParams) - len(written)
 					}
 					for i, ta := range written {
-						if offset+i < len(fn.TypeParams) {
-							sub[fn.TypeParams[offset+i]] = ta
+						if offset+i >= len(fn.TypeParams) {
+							continue
 						}
+						// An integer for a type parameter is E090, and the
+						// arguments still infer that parameter.
+						if _, isInt := ta.(ast.ConstArg); isInt && !slices.Contains(fn.ConstParams, fn.TypeParams[offset+i]) {
+							continue
+						}
+						sub[fn.TypeParams[offset+i]] = ta
 					}
 				}
 			}
@@ -20817,6 +20931,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// shaped captures (string / array / struct / enum / slice /
 		// tuple / closure, per ast.IsPointerType) are rejected;
 		// thread the new value out of the closure (return it).
+		if id, ok := n.Target.(*ast.Ident); ok && c.isConstParam(id.Name, s) {
+			c.errfCode(id.Pos(), "E091", "cannot assign to const parameter %s: it is the constant its instance is made for", id.Name)
+		}
 		if id, ok := n.Target.(*ast.Ident); ok {
 			if ct, isCap := c.capturedType(id.Name, s); isCap && ast.IsPointerType(ct) {
 				c.errfCode(id.Pos(), "E049",

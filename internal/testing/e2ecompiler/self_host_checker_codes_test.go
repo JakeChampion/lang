@@ -1611,6 +1611,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e085-lane-capture", "function main(): i32 { let c: f64x2 = __f64x2_splat(1.0); let g = (x: f64): f64 => x + __f64x2_lane(c, 0); return 0; }\n", []string{"E085"}},
 		{"e038-lane-index", "function main(): i32 { let v: f64x2 = __f64x2_splat(1.0); let i: i32 = 1; let x: f64 = __f64x2_lane(v, i); return 0; }\n", []string{"E038"}},
 		{"e041-lane-compare", "function main(): i32 { let v: f64x2 = __f64x2_splat(1.0); if (v == v) { return 1; } return 0; }\n", []string{"E041"}},
+		// E089-E091: a const argument is an integer literal or a const
+		// parameter, of its parameter's kind, and a const parameter is no place.
+		{"e089-const-arg-value", "function f[const N: i32](): i32 { return N; }\nfunction main(): i32 { let k: i32 = 2; return f[k](); }\n", []string{"E089"}},
+		{"e090-const-arg-type", "function f[const N: i32, T](x: T): i32 { return N; }\nfunction main(): i32 { return f[string, string](\"a\"); }\n", []string{"E090"}},
+		{"e090-type-arg-integer", "function f[const N: i32, T](x: T): i32 { return N; }\nfunction main(): i32 { return f[3, 4](\"a\"); }\n", []string{"E090"}},
+		{"e091-const-param-assign", "function f[const N: i32](): i32 { N = 4; return N; }\nfunction main(): i32 { return f[1](); }\n", []string{"E091"}},
+		{"e091-const-param-captured-assign", "function f[const N: i32](): i32 { let h = (x: i32): i32 => { N = x; return x; }; return h(1); }\nfunction main(): i32 { return f[1](); }\n", []string{"E091"}},
+		{"e091-const-param-shadowed-ok", "function f[const N: i32](xs: i32[]): i32 { let h = (N: i32): i32 => { N = N + 1; return N; }; let t: i32 = h(1); for N in xs { N = N + 1; t = t + N; } let N: i32 = N * 2; N = N + 1; return t + N; }\nfunction main(): i32 { return f[1]([2]); }\n", nil},
+		{"e089-const-param-passed-on-ok", "function f[const N: i32](): i32 { return N; }\nfunction g[const M: i32](): i32 { return f[M]() + f[3](); }\nfunction main(): i32 { return g[2](); }\n", nil},
 		{"e009-lane-scalar", "function main(): i32 { let v: f64x2 = __f64x2_splat(1.0); let w = v + 1.0; return 0; }\n", []string{"E009"}},
 		{"e082-enum-payload", "enum Tok { Word(str), Num(i32) }\nfunction f(s: string): i32 { let t: Tok = Word(slice_unchecked(s, 0, 1)); let g = (): i32 => match (t) { Word(w) => w.len(), Num(n) => n }; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
 		{"e082-option", "function f(s: string): i32 { let o: Option[str] = Some(slice_unchecked(s, 0, 1)); let g = (): i32 => match (o) { Some(x) => x.len(), None => 0 }; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},

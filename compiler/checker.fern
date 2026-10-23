@@ -2711,6 +2711,17 @@ function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
   return Scope { ...s, tparams: tparams, tbounds: tbounds };
 }
 
+// is_const_param reports whether `name` is a const parameter of the enclosing
+// function (`const N: i32`).
+function (s: Scope) is_const_param(name: string): boolean {
+  let i: i32 = util.index_of_str(s.tparams, name);
+  if (i < 0 || i >= s.tbounds.len() || !parser.is_const_bound(s.tbounds[i])) {
+    return false;
+  }
+  // A later binding of the name is a local that shadows the parameter.
+  return util.index_of_str(s.names, name) == s.binding_index(name);
+}
+
 // resolve_type resolves a type SPELLING as written in this scope: the enclosing
 // function's type parameters are type VARIABLES, every other name resolves
 // against the declared structs and unions. Every spelling read while checking a
@@ -9414,6 +9425,46 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // ret_type (so StmtReturn arms can compare against it), the receiver (for
 // methods), then the parameters. Shared by check_func_body and the
 // coded-diagnostic walks so they bind names identically.
+// const_arg_diags checks each written generic argument of a call against the
+// kind of its parameter. A const parameter takes an integer literal or a const
+// parameter in scope (E089), and not a type (E090). A type parameter does not
+// take an integer (E090).
+function const_arg_diags(sig: FuncSig, c: ast.ExprCall, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  let i: i32 = 0;
+  while (i < sig.all_type_params.len() && i < c.type_args.len()) {
+    let tp: string = sig.all_type_params[i];
+    let arg: string = c.type_args[i];
+    let k: i32 = util.index_of_str(sig.type_params, tp);
+    let is_const: boolean = k >= 0 && k < sig.type_bounds.len() && parser.is_const_bound(sig.type_bounds[k]);
+    if (is_const && !parser.is_const_arg(arg) && !s.is_const_param(arg)) {
+      if (arg.len() == 0 || s.defines(arg)) {
+        out = out.append(dg_at("E089", "the const argument for " + tp + " must be an integer literal or a const parameter", c.line, c.col));
+      } else {
+        out = out.append(dg_at("E090", "const parameter " + tp + " takes an integer, not the type " + arg, c.line, c.col));
+      }
+    } else if (!is_const && parser.is_const_arg(arg)) {
+      out = out.append(dg_at("E090", "type parameter " + tp + " takes a type, not the integer " + arg, c.line, c.col));
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// const_tparams is the const parameters of `fd` (`const N: i32`), each an
+// i32 value in the body.
+function const_tparams(fd: parser.FuncDecl): string[] {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < fd.type_params.len() && i < fd.bound_traits.len()) {
+    if (parser.is_const_bound(fd.bound_traits[i])) {
+      out = out.append(fd.type_params[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
 function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let s: Scope = Scope { ...new_scope_full(st, structs, unions.seen_from(fd), methods, imports, impls, trait_reqs), fn_module: fd.module };
   if (fd.impl_trait.len() > 0 && parser.is_inherited_default(impls, trait_reqs, fd)) {
@@ -9473,6 +9524,9 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
   }
   for param in fd.params {
     s = s.bind(param.name, param_decl_type(param, tps, rigid_tparams(tps), s.type_names()));
+  }
+  for name in const_tparams(fd) {
+    s = s.bind(name, t_i32());
   }
   return s;
 }
@@ -14443,7 +14497,7 @@ function trait_req_idx(tr: string, reqs: parser.TraitReq[]): i32 {
 // bundle prefix of the module that wrote it, as flatten spells a derive: a bare
 // `Ord` in core/cmp is `cmp.Ord`, whatever the program itself declares.
 function bounds_in_module(b: string, module: string): string {
-  if (module.len() == 0) {
+  if (module.len() == 0 || parser.is_const_bound(b)) {
     return b;
   }
   let out: string = "";
@@ -15691,6 +15745,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         // function are ignored (matching the Go checker).
         if (sig.name.len() > 0 && sig.all_type_params.len() > 0 && c.type_args.len() > 0 && c.type_args.len() != sig.all_type_params.len()) {
           out = out.append(dg_at("E040", util.arity_message(id.name, sig.all_type_params.len(), c.type_args.len(), "type argument"), c.line, c.col));
+        } else if (sig.name.len() > 0 && c.type_args.len() > 0) {
+          out = util.append_diags(out, const_arg_diags(sig, c, s));
         }
         if (sig.name.len() > 0) {
           if (c.args.len() != sig.param_types.len()) {
@@ -18711,6 +18767,8 @@ function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.D
     // allowlist needed. Reported at the `=` token (the
     // assignment position the parser captured).
     out = out.append(undefined_name(a.target, cur, a.target_line, a.target_col));
+  } else if (cur.is_const_param(a.target)) {
+    out = out.append(dg_at("E091", "cannot assign to const parameter " + a.target + ": it is the constant its instance is made for", a.target_line, a.target_col));
   } else {
     let tt: typeinfo.Type = cur.lookup(a.target);
     let vt: typeinfo.Type = check_expr(a.value, cur);

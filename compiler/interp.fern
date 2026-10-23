@@ -5823,6 +5823,12 @@ function bound_type_spelling(spelling: string, env: Env): string {
     VType(tv) => {
       base = tv.name;
     },
+    VInt(iv) => {
+      // A const parameter passed on (`filled[M]`) is the integer it binds.
+      if (ref.args.len() == 0) {
+        return util.i32_to_string(iv.v);
+      }
+    },
     _ => {}
   }
   let args: parser.TypeRef[] = [];
@@ -6476,8 +6482,18 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
   while (t < fd.type_params.len()) {
     let tp: string = fd.type_params[t];
     let concrete: string = "";
-    if (t < type_args.len()) {
-      concrete = type_args[t];
+    // A written list names every parameter in order, the erased ones too.
+    let at: i32 = util.index_of_str(fd.all_type_params, tp);
+    if (at < 0) {
+      at = t;
+    }
+    if (at < type_args.len()) {
+      concrete = type_args[at];
+    }
+    if (parser.is_const_arg(concrete)) {
+      e = e.bind(tp, v_int(util.digits_to_i32(concrete)));
+      t = t + 1;
+      continue;
     }
     if (has_recv && concrete.len() == 0) {
       concrete = tyarg_match(fd.receiver_type, tp, recv);

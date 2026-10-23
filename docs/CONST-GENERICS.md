@@ -1,6 +1,7 @@
 # Const generics
 
-Status: [plan] the design and the staging. Nothing here ships yet.
+Status: CG1a ships. A function takes a const parameter, and each call writes
+its const argument (§4). CG1b, CG2 and CG3 are plans.
 
 A const parameter is a generic parameter whose argument is an integer, not a
 type. `Vec[N, T]` is the first consumer: it is a lane type of `N` lanes of
@@ -49,8 +50,8 @@ an integer in a type position, is refused.
 
 In a body, `N` is a value of type `i32` and a constant. After
 monomorphisation it is the literal of its instance, so the existing constant
-folding sees it. `N` is not a place: an assignment to it is refused as an
-assignment to a constant is.
+folding sees it. `N` is not a place: an assignment to it is refused (E091).
+A binder of the same name shadows `N`, as it shadows a parameter.
 
 ### 1.4 Inference and explicit arguments
 
@@ -71,14 +72,17 @@ and every const argument is the same integer.
 
 ### 1.6 Diagnostics
 
-The design adds these codes, numbered from the next free one when the slice
-that first reports each lands:
+The design adds these codes:
 
-- A const argument that is not an integer literal or a const parameter.
-- An argument of the wrong kind: a type for a const parameter, or an integer
-  for a type parameter.
-- A const parameter used as a place.
-- A `Vec[N, T]` with no lane type on the portable tier (§2.2).
+- E089: a const argument that is not an integer literal or a const parameter.
+- E090: an argument of the wrong kind. That is a type for a const parameter,
+  or an integer for a type parameter.
+- E091: an assignment to a const parameter.
+- A `Vec[N, T]` with no lane type on the portable tier (§2.2). It gets the
+  next free code when CG2 lands.
+
+A const parameter in the list of an impl, a trait or a method is a P001 until
+CG1b.
 
 A const argument that cannot be inferred reports E040, as a type argument
 does.
@@ -163,11 +167,17 @@ places each compiler has to change.
 
 ## 4. Slices
 
-- **CG1.** `const N: i32` in a generic parameter list, and a const argument
-  in a type application and at a call site. This goes into both front ends,
-  the printers and the grammar. Both compilers learn type identity,
-  inference, instance names and `N` as a value. The gate is a generic struct
-  and function over `N` on every engine, and a test for each new diagnostic.
+- **CG1a (done).** `const N: i32` in the list of a function, and a const
+  argument at a call site: `filled[4](x)`, `count[3, string](x)`,
+  `filled[M](x)`. This is in both front ends, both printers and the grammar.
+  `N` is an `i32` in the body, and each instance holds its literal. A call
+  writes its arguments, because no argument type carries a const argument
+  yet. The gate is the conformance case `const_param_functions` on every
+  engine and E089, E090 and E091.
+
+- **CG1b.** A const parameter on a struct, an enum, an impl and a trait, type
+  identity, and inference of a const argument from an argument type. The
+  gate is a generic struct over `N` on every engine.
 
 - **CG2.** `Vec[N, T]` as the second spelling of the lane types, and
   inference of `N` and `T` from a lane type. The gate is a kernel over

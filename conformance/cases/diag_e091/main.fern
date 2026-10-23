@@ -1,0 +1,12 @@
+// E091: a const parameter is the constant its instance is made for, not a
+// place. An assignment to it is refused. A local copy of it can change.
+function bump[const N: i32](): i32 {
+  let k: i32 = N;
+  k = k + 1;
+  N = 4;
+  return k;
+}
+
+function main(): i32 {
+  return bump[1]();
+}
