@@ -67,6 +67,7 @@ function new_escape_state(limit: i32): EscapeBatch {
 function main(): i32 {
   let result: EscapeBatch = new_escape_state(64);
   let raw: u8[] = __alloc_u8(3);
+  let colors: u8[] = __alloc_u8(3);
   let mark: i64 = __heap_alloc_count();
   let index: i32 = 0;
   while (index < 128) {
@@ -74,11 +75,14 @@ function main(): i32 {
     if (result.steps0 != 0 || result.magnitude0 != -1.0 || result.steps1 != 0 || result.magnitude1 != -1.0) { return 1; }
     if (result.steps2 != 4 || result.magnitude2 != 2090916.0) { return 2; }
     if (result.steps3 != 64 || result.magnitude3 != -1.0) { return 3; }
+    let position: f64 = index as f64 / 128.0;
+    colors = write_pixel(colors, 0, channel(position, 0), channel(position, 1), channel(position, 2));
     raw = write_pixel(raw, 0, index as u8, 255 as u8, 0 as u8);
     index = index + 1;
   }
   if (__heap_alloc_count() != mark) { return 4; }
   if (raw[0] != 127 as u8 || raw[1] != 255 as u8 || raw[2] != 0 as u8) { return 5; }
+  if (colors[0] != 0 as u8 || colors[1] != 6 as u8 || colors[2] != 94 as u8) { return 13; }
 
   let saved_result: EscapeBatch = result;
   result = escape_batch(result, 2.0, 0.0, -1.0, 2.0, 2.0);

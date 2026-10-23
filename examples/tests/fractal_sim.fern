@@ -12,7 +12,7 @@ function main(): i32 {
   let d: sim.Sim = sim.new(7);
   let plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.net(d));
   let s: server.Stats = server.stats("sim", 0, 0);
-  let r: router.Router[sim_platform.SimPlatform] = server.routes[sim_platform.SimPlatform](s, "web");
+  let r: router.Router[sim_platform.SimPlatform] = server.routes[sim_platform.SimPlatform](s, "web", []);
   if (!tile_is_png(r.handle(http.request("GET", "/tile/2/1/1"), plat))) {
     return 1;
   }
