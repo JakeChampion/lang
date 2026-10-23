@@ -70,7 +70,7 @@ func TestSelfHostImportedModuleMatchExhaustiveness(t *testing.T) {
 	src := writeTreeProgram(t, gapModuleSrc)
 	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, cli.stdlib)
 	msg, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(msg), "E030") || !strings.Contains(string(msg), "does not cover variant tree__Node of enum tree__Tree") {
+	if err == nil || !strings.Contains(string(msg), "E030") || !strings.Contains(string(msg), "does not cover variant Node of enum Tree —") {
 		t.Fatalf("a gap in an imported module's match: want E030 naming the variant, got err=%v\n%s", err, msg)
 	}
 }

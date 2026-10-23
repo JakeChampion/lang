@@ -3102,8 +3102,8 @@ function shown_variant_in(structs: StructTable, name: string): string {
 function shown_enum(s: Scope, name: string): string {
   let m: string = s.lookup_union(name).module;
   let bare: string = unprefixed_variant(name, m);
-  if (bare == name) {
-    return name;
+  if (bare == name || m == s.fn_module) {
+    return bare;
   }
   return m + "." + bare;
 }
