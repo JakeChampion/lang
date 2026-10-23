@@ -1,6 +1,7 @@
 // A lane type can be a method receiver and a type argument: a trait of the
 // program's own is implemented for f64x2 and f32x4, and a generic function
-// bound by it runs at each.
+// bound by it runs at each. A method call on a concrete lane value has the
+// type of its impl.
 import "std/f64";
 
 trait Doubled {
@@ -38,5 +39,10 @@ function main(): i32 {
   print(__f64x2_lane(quadrupled(a), 1).to_string());
   print(quadrupled(b).first().to_string());
   print((__f32x4_lane(quadrupled(b), 3) as f64).to_string());
+  let d: f64x2 = a.doubled();
+  let first: f64 = d.first();
+  if (first != 3.0 || b.doubled().first() != 0.5) {
+    return 1;
+  }
   return 0;
 }

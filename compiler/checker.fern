@@ -5768,6 +5768,9 @@ pub function receiver_key(t: typeinfo.Type): string {
     typeinfo.TypeUnion(un) => {
       return un.name;
     },
+    typeinfo.TypeLanes(l) => {
+      return typeinfo.lanes_spelling(l.width);
+    },
     _ => {
       return "";
     }
