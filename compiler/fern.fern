@@ -3023,6 +3023,7 @@ function module_package_at(mdir: string, module_gov: Governed, root_gov_dir: str
 // the target has nothing to call in.
 function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target: string): Bundle {
   let entry_path: string = s.paths[0];
+  let entry_ident: string = flatten.module_ident(util.clean_path(entry_path));
   let dir: string = util.dir_of(entry_path);
   // The manifest governing the entry, when there is one: it names the
   // dependency packages, which are both a way to RESOLVE an import the
@@ -3117,7 +3118,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
     return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file", err_code: "", err_line: 0, err_col: 0 };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
-  if let Some(imp) = flatten.import_cycle(entry_r, flatten.module_ident(entry_path), loaded, root) {
+  if let Some(imp) = flatten.import_cycle(entry_r, entry_ident, loaded, root) {
     return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: modloader.import_cycle_message(imp.path), err_code: "E086", err_line: imp.line, err_col: imp.col };
   }
   let prefixes: string[] = flatten.assign_prefixes(loaded);
@@ -3134,7 +3135,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   // settle against until the bundle exists; parse_module resolved the
   // same-module ones already, and the pass is idempotent.
   merged = parser.resolve_variant_fields_module(merged);
-  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 };
+  return Bundle { entry: entry_r, entry_ident: entry_ident, root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 };
 }
 
 // unloaded_error is load_bundle's E086 for import `ipath`, which read as `rm`

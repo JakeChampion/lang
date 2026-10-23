@@ -440,7 +440,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	for i, imp := range prog.Imports {
 		childPaths[i], err = resolveImport(dir, imp.Path, mans, overrides)
 		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+			return unresolvedImport(path, imp.P, imp.Path, err)
 		}
 		if err := checkStdlibImport(path, imp.P, imp.Path); err != nil {
 			return err
@@ -457,7 +457,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 	for i, pu := range prog.PubUses {
 		pubUsePaths[i], err = resolveImport(dir, pu.Path, mans, overrides)
 		if err != nil {
-			return fmt.Errorf("%s: %w", path, err)
+			return unresolvedImport(path, pu.P, pu.Path, err)
 		}
 		if err := checkStdlibImport(path, pu.P, pu.Path); err != nil {
 			return err
@@ -705,8 +705,16 @@ func resolveImport(importingDir, importPath string, mans map[string]*manifest.Ma
 	if moduleExists(p, overrides) {
 		return p, nil
 	}
-	return "", fmt.Errorf("import %q: not found relative to %s, and %q is not a declared dependency in %s (add it under [dependencies], e.g. %s = { path = \"../%s\" })",
-		importPath, importingDir, seg, filepath.Join(man.Dir, manifest.FileName), seg, seg)
+	return "", &undeclaredImport{seg: seg, manifest: filepath.Join(man.Dir, manifest.FileName)}
+}
+
+// undeclaredImport is a bare import, under a manifest, that names neither a
+// module file nor a declared dependency.
+type undeclaredImport struct{ seg, manifest string }
+
+func (e *undeclaredImport) Error() string {
+	return fmt.Sprintf("not found, and %q is not a declared dependency in %s (add it under [dependencies], e.g. %s = { path = \"../%s\" })",
+		e.seg, e.manifest, e.seg, e.seg)
 }
 
 // declaredDepDir resolves the DECLARED dependency `seg` of `man` to its
@@ -1067,6 +1075,16 @@ func importFailure(path string, pos ast.Position, importPath string, err error) 
 		return &importError{path: path, pos: pos, code: "E086", msg: fmt.Sprintf("cannot resolve import %q: not found", importPath)}
 	}
 	return err
+}
+
+// unresolvedImport places resolveImport's failure at the import: E086 when
+// the path names nothing, the manifest error as it stands otherwise.
+func unresolvedImport(path string, pos ast.Position, importPath string, err error) error {
+	var u *undeclaredImport
+	if errors.As(err, &u) {
+		return &importError{path: path, pos: pos, code: "E086", msg: fmt.Sprintf("cannot resolve import %q: %s", importPath, u)}
+	}
+	return fmt.Errorf("%s: %w", path, err)
 }
 
 // stdlibPrefix tags a path as referring to the embedded stdlib

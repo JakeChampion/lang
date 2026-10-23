@@ -235,8 +235,8 @@ pub function resolve_module(ov: Overlay, dir: string, path: string): Resolved {
 // package's lib module, `helper/extra` its `extra.fern`. The forms are path,
 // workspace member, lock, vendor tree and the content-addressed store. Not-ok
 // for a stdlib or relative import, which never names a dependency, and when
-// there is no manifest, the segment is not a declared dep, or its form is not
-// disk-resolvable.
+// there is no manifest or the dependency's form is not disk-resolvable; an
+// error when the manifest declares no such dependency.
 pub function try_manifest(ov: Overlay, from: string, path: string): Resolved {
   if (util.is_stdlib_path(path) || util.is_local(path)) {
     return res_none();
@@ -244,7 +244,11 @@ pub function try_manifest(ov: Overlay, from: string, path: string): Resolved {
   let dir: string = manifest_dir(from);
   match (read_file(dir + "fern.toml")) {
     Ok(src) => {
-      match (dep_dir(fern_toml.parse(src), dir, util.dep_name(path))) {
+      let m: fern_toml.Manifest = fern_toml.parse(src);
+      if (!util.has_str(fern_toml.dep_names(m), util.dep_name(path))) {
+        return Resolved { ...res_none(), err: undeclared_dependency(util.dep_name(path), dir + "fern.toml") };
+      }
+      match (dep_dir(m, dir, util.dep_name(path))) {
         Some(dd) => {
           // A url dependency's directory is in the store, which only
           // `fern -fetch` fills: say so rather than fall through to a
@@ -543,7 +547,16 @@ pub function unresolved_import(path: string, tried: string, reason: string): str
   if (reason.len() == 0) {
     return "cannot resolve import \"" + path + "\": not found";
   }
+  if (tried.len() == 0) {
+    return "cannot resolve import \"" + path + "\": " + reason;
+  }
   return "cannot resolve import \"" + path + "\": " + tried + ": " + reason;
+}
+
+// undeclared_dependency is why a bare import under the manifest `toml` that
+// names no module file fails: `seg` is not one of its dependencies.
+function undeclared_dependency(seg: string, toml: string): string {
+  return "not found, and \"" + seg + "\" is not a declared dependency in " + toml + " (add it under [dependencies], e.g. " + seg + " = { path = \"../" + seg + "\" })";
 }
 
 // import_cycle_message is E086's message for the import that closes a cycle.
