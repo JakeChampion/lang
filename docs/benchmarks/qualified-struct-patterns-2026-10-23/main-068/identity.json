@@ -1,0 +1,17 @@
+{
+  "source_commit": "c94281f01b831ccd11c551df40742eba7426ce49",
+  "tested_main": "0681f37a0ea830a971009efc09aa1a19649ba230",
+  "source_sha256": "abe41f42ea96b38b08d796b5426a0c1bb8fe39e2aadb97dd72e7b890bb56a6a5",
+  "feature_commands": 24,
+  "binaries": {
+    "compiler": {
+      "bytes": 14289856,
+      "sha256": "1ec2622d961f06bed5508ba8ca7a3b0da5fdeeb8e91757bc63666ca17050d720"
+    },
+    "oracle": {
+      "bytes": 32469433,
+      "sha256": "e9ea6e5977d3dace330cb13eb75c1573e03d36372742aca2376d95731b0bff84"
+    }
+  },
+  "equivalent_merged_source_commit": "ea33ce1d1fbaf5401832e9b05b98b2df4188e2a2"
+}
