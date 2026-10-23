@@ -101,7 +101,8 @@ first because they are a type-system project of their own in the compiler and th
 naming in `ssasem.instance_name`, array sizing), and the portable 128-bit tier
 has exactly two float lane types, which a trait over concrete types carries
 without them. When they land, `f64x2` and `f32x4` become spellings of
-`Vec[2, f64]` and `Vec[4, f32]`; the `Lanes` surface does not change.
+`Vec[2, f64]` and `Vec[4, f32]`; the `Lanes` surface does not change. The
+design and its slices are in `docs/CONST-GENERICS.md`.
 
 ### 3.3 The portable width is 128 bits
 
@@ -341,12 +342,12 @@ of them. No PR leaves a type on main that a backend refuses.
 
 | # | Slice | State |
 | --- | --- | --- |
-| 1 | This brief | this PR |
-| 2 | Associated constants, compiler and Go front end | this PR |
-| 3 | `std/simd`: `Lanes`, `Math`, scalar impls, `Dual`, `DoubleDouble`, benchmark | this PR |
+| 1 | This brief | done (#12924) |
+| 2 | Associated constants, compiler and Go front end | done (#12924) |
+| 3 | `std/simd`: `Lanes`, `Math`, scalar impls, `Dual`, `DoubleDouble`, benchmark | done (#12924) |
 | 4a | Lane types: the instruction vocabulary on x86-64, arm64 and wasm | done (#12945) |
 | 4b | Lane types: IR ops, the 128-bit register class and spill slot, emission on every backend | done (#12961) |
-| 4c | Lane types: `f64x2` / `f32x4` in both front ends, the builtins, the lowering and its call ABI, both interpreters | this PR |
+| 4c | Lane types: `f64x2` / `f32x4` in both front ends, the builtins, the lowering and its call ABI, both interpreters | done (#13004) |
 | 5 | `impl Lanes` / `impl Math` for `f64x2` / `f32x4`; array fusion picks the lane instance for a packed `f64[]` map | after 4 |
-| 6 | Const generics; `Vec[N, T]` | follow-on project |
+| 6 | Const generics; `Vec[N, T]` | follow-on project, `docs/CONST-GENERICS.md` |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |
