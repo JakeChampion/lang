@@ -18984,7 +18984,8 @@ function undefined_name(name: string, s: Scope, line: i32, col: i32): util.Diag 
 }
 
 // visible_names is every name `s` resolves: its bindings, innermost first,
-// then the module's functions and constants.
+// then the functions and builtins in name order. The Go checker lists them
+// the same way, so a tie in util.suggest picks the same name in both.
 function (s: Scope) visible_names(): string[] {
   let out: string[] = [];
   let i: i32 = s.names.len() - 1;
@@ -18992,12 +18993,13 @@ function (s: Scope) visible_names(): string[] {
     out = astwalk.append_bound_name(out, s.names[i]);
     i = i - 1;
   }
+  let funcs: string[] = parser.builtin_function_names();
   for sig in s.sigs.sigs {
     if (sig.receiver.len() == 0) {
-      out = out.append(sig.name);
+      funcs = funcs.append(sig.name);
     }
   }
-  return util.append_all(out, parser.builtin_function_names());
+  return util.append_all(out, util.sorted_by(funcs, (a: string, b: string) => a > b));
 }
 
 // scalar_match_exhaustive_diags: E030 for a `match` on a number / string /
