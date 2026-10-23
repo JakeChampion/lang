@@ -12494,7 +12494,7 @@ func (c *checker) boundsAdmitReceiver(mangled string, param, recv ast.Type) bool
 func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) string {
 	msg := fmt.Sprintf("no method %q on %s", method, recv)
 	if repl, ok := retiredCollectionSpellings[typeName+"."+method]; ok {
-		if repl == "contains" {
+		if typeName == "Map" && (method == "has" || method == "without") {
 			return fmt.Sprintf("%s — it was renamed; use %q", msg, repl)
 		}
 		return fmt.Sprintf("%s — the in-place spelling was removed; use %q, which returns the updated %s (assign the result back)",

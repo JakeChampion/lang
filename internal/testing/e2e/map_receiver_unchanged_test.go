@@ -47,7 +47,7 @@ function main(): i32 {
     let a: i32 = size(m.insert(2, 20));
     let b: i32 = m.insert(3, 30).insert(4, 40).len();
     let c: i32 = m.cleared().len();
-    let d: boolean = m.contains(1);
+    let d: boolean = m.remove(1).len() == 0;
     return m.len() + a * 2 + b * 4 + c * 8 + (if (d) { 16 } else { 0 });
 }`, 33},
 	{"fields", `import "core/map";

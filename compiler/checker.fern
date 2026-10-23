@@ -4504,8 +4504,8 @@ function (s: Scope) unknown_method_message(ns: string, method: string, label: st
   if (view) {
     repl = "";
   }
-  if (repl == "contains") {
-    return base + " — it was renamed; use \"contains\"";
+  if (ns == "Map" && (method == "has" || method == "without")) {
+    return base + " — it was renamed; use \"" + repl + "\"";
   }
   if (repl.len() > 0) {
     return base + " — the in-place spelling was removed; use \"" + repl

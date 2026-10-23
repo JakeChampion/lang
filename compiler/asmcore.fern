@@ -10310,7 +10310,7 @@ pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
 // arguments DISAGREE with the ctor's key kind was accepted by check and the
 // emitters MISCOMPILED it — an i32 key dispatched through the string-keyed
 // map runtime (SIGSEGV at runtime). Reject exactly that mismatch: an
-// arg-taking map method (insert / get / get_or / has / without) whose chain
+// arg-taking map method (insert / get / get_or / contains / remove) whose chain
 // ROOT is a bare map_new [__map_new_i32] call and whose KEY argument is a
 // number [string] literal. A KIND-CONSISTENT chain is deliberately admitted
 // (narrower than native): the parser's own `Map { … }` literal desugar IS

@@ -105,21 +105,19 @@ function main(): i32 { let m: Map[i32,i32] = map_new(4); m = m.insert(5,7); retu
 function (p: Pair) swapped(): (Pair, i32) { return (Pair { hi: p.lo, lo: p.hi }, p.hi); }
 function main(): i32 { let p: Pair = Pair { hi: 7, lo: 3 }; let (q, old) = p.swapped(); return q.hi + q.lo + old; }`, 17},
 
-	// Map.without returns (map, existed); destructured and
-	// re-queried, exercising both the runtime helper and the
-	// tuple-destructure inference. m={1:10,2:20}; without(1) → existed,
-	// m2={2:20}; m2.get_or(2,-1)=20.
-	{"map-delete", `import "core/map";
+	// Map.remove returns the map without the key. m={1:10,2:20};
+	// contains(1), then remove(1) → m2={2:20}; m2.get_or(2,-1)=20.
+	{"map-remove", `import "core/map";
 function main(): i32 { let m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); let ex: boolean = m.contains(1); let m2 = m.remove(1); if (!ex) { return 70; } return m2.get_or(2,-1); }`, 20},
-	// without: {1:10}; existed; m2.get_or(1,-1)=10 and the
-	// removed key reads the default (-1+1=0): total 10.
-	{"map-without", `import "core/map";
+	// remove(2) → {1:10}; m2.get_or(1,-1)=10 and the removed key reads
+	// the default (-1+1=0): total 10.
+	{"map-remove-reads-default", `import "core/map";
 function main(): i32 { let m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); let ex: boolean = m.contains(2); let m2 = m.remove(2); if (!ex) { return 70; } return m2.get_or(1,-1) + (m2.get_or(2,-1) + 1); }`, 10},
-	// Deleting an absent key reports existed=false; the map is unchanged.
-	{"map-without-absent", `import "core/map";
+	// Removing an absent key leaves the map unchanged.
+	{"map-remove-absent", `import "core/map";
 function main(): i32 { let m: Map[i32,i32] = map_new(8); m = m.insert(1,10); let ex: boolean = m.contains(9); let m2 = m.remove(9); if (ex) { return 1; } return m2.get_or(1,-1); }`, 10},
-	// String-keyed without: shift over the string-compare search path.
-	{"smap-delete", `import "core/map";
+	// String-keyed remove: shift over the string-compare search path.
+	{"smap-remove", `import "core/map";
 function main(): i32 { let m: Map[string,i32] = map_new(8); m = m.insert("a",10); m = m.insert("b",20); let ex: boolean = m.contains("a"); let m2 = m.remove("a"); if (!ex) { return 70; } return m2.get_or("b",-1) + (m2.get_or("a",-1) + 1); }`, 20},
 }
 

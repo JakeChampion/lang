@@ -996,23 +996,23 @@ function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 40); m
 function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("x", 5).insert("y", 7); return m.get_or("y", 0) + m.len(); }`, 9},
 		{"map-insert-keyword-literal", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`, 4},
-		{"map-insert-has", `import "core/map";
+		{"map-insert-contains", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert("k", 9); let r = 0; if (m.contains("k")) { r = r + 1; } if (m.contains("z")) { r = r + 10; } return r; }`, 1},
 		// m.remove(k) returns the map without k; m.contains(k) says whether it was there (#2926).
-		// Later ops on the destructured map work.
-		{"map-without-len", `import "core/map";
+		// Later ops on the returned map work.
+		{"map-remove-len", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); let e: boolean = m.contains(1); let m2 = m.remove(1); return m2.len(); }`, 1},
-		{"map-without-existed", `import "core/map";
+		{"map-remove-existed", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); let e: boolean = m.contains(1); let m2 = m.remove(1); if (e) { return 1; } return 0; }`, 1},
-		{"map-without-miss", `import "core/map";
+		{"map-remove-miss", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); let e: boolean = m.contains(99); let m2 = m.remove(99); if (e) { return 1; } return m2.len() + 5; }`, 6},
-		{"map-without-survivor", `import "core/map";
+		{"map-remove-survivor", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); let e: boolean = m.contains(1); let m2 = m.remove(1); return m2.get_or(2, 0); }`, 20},
-		{"map-without-removed-gone", `import "core/map";
+		{"map-remove-removed-gone", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); let e: boolean = m.contains(1); let m2 = m.remove(1); if (m2.contains(1)) { return 9; } return 0; }`, 0},
-		{"map-without-strkey", `import "core/map";
+		{"map-remove-strkey", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 1); m = m.insert("b", 2); let e: boolean = m.contains("a"); let m2 = m.remove("a"); return m2.len() + m2.get_or("b", 0); }`, 3},
-		{"map-without-then-insert", `import "core/map";
+		{"map-remove-then-insert", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("a", 1); let e: boolean = m.contains("a"); let m2 = m.remove("a"); m2 = m2.insert("c", 5); return m2.get_or("c", 0); }`, 5},
 		// if-EXPRESSION in value position (#2938): the parser desugars it to a
 		// 0-arg IIFE.

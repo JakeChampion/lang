@@ -24,7 +24,7 @@ function main(): i32 {
     let r: Map[string, i32] = m.remove("b");
     if (!r_had) { return 80; }
     let n: Map[string, i32] = r;
-    if (n.contains("zz")) { return 81; }
+    if (n.remove("zz").len() != n.len()) { return 81; }
     return n.get_or("a", 0) * 100 + n.get_or("b", 7) * 10 + n.get_or("c", 0);
 }
 `
@@ -38,7 +38,7 @@ function main(): i32 {
     let r: Map[i32, i32] = m.remove(20);
     if (!r_had) { return 80; }
     let n: Map[i32, i32] = r;
-    if (n.contains(99)) { return 81; }
+    if (n.remove(99).len() != n.len()) { return 81; }
     return n.get_or(10, 0) * 100 + n.get_or(20, 7) * 10 + n.get_or(30, 0);
 }
 `
@@ -58,7 +58,7 @@ function main(): i32 {
     let r: Map[K, i32] = m.remove(K { a: 2, b: 2 });
     if (!r_had) { return 80; }
     let n: Map[K, i32] = r;
-    if (n.contains(K { a: 9, b: 9 })) { return 81; }
+    if (n.remove(K { a: 9, b: 9 }).len() != n.len()) { return 81; }
     return n.get_or(K { a: 1, b: 1 }, 0) * 100 + n.get_or(K { a: 2, b: 2 }, 7) * 10 + n.get_or(K { a: 3, b: 3 }, 0);
 }
 `

@@ -1302,7 +1302,7 @@ function main(): i32 {
     if (!had7) { return 4; }
     m = m7;
     if (m.contains(7i64)) { return 5; }
-    if (m.contains(7i64)) { return 6; }
+    if (m.remove(7i64).len() != m.len()) { return 6; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -1445,7 +1445,7 @@ function main(): i32 {
     if (m.len() != 2) { return 3; }
     if (m.contains(2)) { return 4; }
     if let Some(_) = m.get(2) { return 5; }
-    if (m.contains(99)) { return 6; }   // missing → false
+    if (m.remove(99).len() != m.len()) { return 6; }   // missing → unchanged
     if (m.len() != 2) { return 7; }
     // Surviving entries still reachable.
     if let Some(v) = m.get(1) {
@@ -2295,7 +2295,7 @@ function main(): i32 {
     if (!hadg) { return 24; }
     m = mg;
     if (m.contains("GET")) { return 25; }
-    if (m.contains("GET")) { return 26; }
+    if (m.remove("GET").len() != m.len()) { return 26; }
     if (m.len() != 5) { return 27; }
 
     return 0;
@@ -2348,7 +2348,7 @@ function main(): i32 {
     m = mf;
     if (m.contains("foo")) { return 14; }
     if (m.len() != 2) { return 15; }
-    if (m.contains("foo")) { return 16; }
+    if (m.remove("foo").len() != 2) { return 16; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -16691,7 +16691,7 @@ function main(): i32 {
     let mb = m.remove("b");
     if (!hadb) { return 1; }
     m = mb;
-    if (m.contains("z"))  { return 2; }
+    if (m.remove("z").len() != m.len())  { return 2; }
     let ok: boolean = m.contains("a");
     let m2 = m.remove("a");
     if (!ok) { return 3; }

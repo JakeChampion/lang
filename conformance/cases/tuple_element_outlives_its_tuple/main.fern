@@ -1,11 +1,11 @@
 import "core/map";
 import "std/string";
 
-// An element read out of a tuple the frame is done with outlives it: the map
-// below is deleted from twice, each delete handing it back inside a fresh
-// tuple, and the array and string come out of a literal whose box dies at the
-// read. Both are then used in ways that consume them, which a borrow of the
-// tuple could not pay for — a map box carries no count to retain (#9555).
+// An element read out of a tuple the frame is done with outlives it: the array
+// and string come out of a literal whose box dies at the read, and are then
+// used in ways that consume them, which a borrow of the tuple could not pay
+// for (#9555). `chained` is the map that used to come back inside a tuple
+// from each delete; `remove` hands it back alone.
 function chained(n: i32): i32 {
     let m: Map[i32, i32] = map_new(8);
     let i: i32 = 0;

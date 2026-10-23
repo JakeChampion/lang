@@ -2548,7 +2548,7 @@ function main(): i32 {
     let mb = m.remove("b");
     if (!hadb) { return 1; }
     m = mb;
-    if (m.contains("z"))  { return 2; }
+    if (m.remove("z").len() != m.len())  { return 2; }
     let ok: boolean = m.contains("a");
     let m2 = m.remove("a");
     if (!ok) { return 3; }

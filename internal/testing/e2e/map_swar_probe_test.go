@@ -62,8 +62,8 @@ function main(): i32 {
     z = z.insert(3, 30);
     z = z.remove(1);
     z = z.insert(7, 70);
-    if (z.contains(150)) { return 35; }    // missing key over a full+tombstone table
-    if (z.contains(4)) { return 36; }      // deleted key, ditto
+    if (z.remove(150).len() != 2) { return 35; }    // missing key over a full+tombstone table
+    if (z.remove(4).len() != 2) { return 36; }      // deleted key, ditto
     if (z.get_or(3, 0 - 1) != 30) { return 37; }
     if (z.get_or(7, 0 - 1) != 70) { return 38; }
     if (z.len() != 2) { return 39; }
