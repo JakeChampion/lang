@@ -29628,6 +29628,33 @@ function pretype_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
   return (x, s, false);
 }
 
+function pretype_if(st: ast.Stmt, f: ast.StmtIf, s: Scope): ast.Stmt {
+  if let Some(m) = parser.struct_record_source(st) {
+    if (struct_record_match(m, s)) {
+      return pretype_stmt(parser.lower_struct_record_match(m, ""), s);
+    }
+  }
+  return ast.StmtIf { ...f, cond: pretype_expr(f.cond, s), then_body: pretype_stmts(f.then_body, s), else_body: pretype_stmts(f.else_body, s) };
+}
+
+function pretype_match(m: ast.StmtMatch, s: Scope): ast.Stmt {
+  if (struct_record_match(m, s)) {
+    return pretype_stmt(parser.lower_struct_record_match(m, ""), s);
+  }
+  let narms: ast.MatchArm[] = [];
+  let whole: typeinfo.Type = check_expr(m.scrutinee, s);
+  for arm0 in m.arms {
+    let arm: ast.MatchArm = ast.MatchArm { ...arm0, pattern: rescope_pattern(arm0.pattern, whole, s) };
+    let asc: Scope = annotate_arm_scope(arm, s, whole);
+    let g: ast.Expr = arm.guard;
+    if (arm.has_guard) {
+      g = pretype_expr(arm.guard, asc);
+    }
+    narms = narms.append(ast.MatchArm { ...arm, body: pretype_stmts(arm.body, asc), guard: g });
+  }
+  return ast.StmtMatch { ...m, scrutinee: pretype_expr(m.scrutinee, s), arms: narms };
+}
+
 function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
@@ -29647,12 +29674,7 @@ function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
       return ast.StmtAssign { ...a, value: pretype_expr(a.value, s) };
     },
     ast.StmtIf(f) => {
-      if let Some(m) = parser.struct_record_source(st) {
-        if (struct_record_match(m, s)) {
-          return pretype_stmt(parser.lower_struct_record_match(m, ""), s);
-        }
-      }
-      return ast.StmtIf { ...f, cond: pretype_expr(f.cond, s), then_body: pretype_stmts(f.then_body, s), else_body: pretype_stmts(f.else_body, s) };
+      return pretype_if(st, f, s);
     },
     ast.StmtWhile(w) => {
       return ast.StmtWhile { ...w, cond: pretype_expr(w.cond, s), body: pretype_stmts(w.body, s) };
@@ -29661,21 +29683,7 @@ function pretype_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
       return ast.StmtFor { ...fr, iter: pretype_expr(fr.iter, s), body: pretype_stmts(fr.body, for_body_scope(fr, s)) };
     },
     ast.StmtMatch(m) => {
-      if (struct_record_match(m, s)) {
-        return pretype_stmt(parser.lower_struct_record_match(m, ""), s);
-      }
-      let narms: ast.MatchArm[] = [];
-      let whole: typeinfo.Type = check_expr(m.scrutinee, s);
-      for arm0 in m.arms {
-        let arm: ast.MatchArm = ast.MatchArm { ...arm0, pattern: rescope_pattern(arm0.pattern, whole, s) };
-        let asc: Scope = annotate_arm_scope(arm, s, whole);
-        let g: ast.Expr = arm.guard;
-        if (arm.has_guard) {
-          g = pretype_expr(arm.guard, asc);
-        }
-        narms = narms.append(ast.MatchArm { ...arm, body: pretype_stmts(arm.body, asc), guard: g });
-      }
-      return ast.StmtMatch { ...m, scrutinee: pretype_expr(m.scrutinee, s), arms: narms };
+      return pretype_match(m, s);
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { ...d, action: pretype_stmt(d.action, s) };
