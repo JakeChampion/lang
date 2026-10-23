@@ -98,7 +98,14 @@ function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   socket = new WebSocket(`${proto}//${location.host}/ws`);
   socket.binaryType = "arraybuffer";
+  const fallback = setTimeout(() => {
+    if (!socketReady && state.transport === "ws") {
+      setServer("WebSocket blocked, using HTTP", false);
+      document.querySelector('[data-transport="http"]').click();
+    }
+  }, 5000);
   socket.onopen = () => {
+    clearTimeout(fallback);
     socketReady = true;
     pump();
   };
