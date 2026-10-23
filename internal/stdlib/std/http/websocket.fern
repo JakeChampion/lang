@@ -317,7 +317,7 @@ function __deflate_param(name: string, kv: string[], bits: i32): i32 {
 
 // `accept_key(key)` — the `Sec-WebSocket-Accept` for a client's key.
 pub function accept_key(key: string): string {
-  return base64.base64_encode(crypto.sha1_bytes(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"));
+  return base64.base64_encode(crypto.sha1_bytes((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").as_bytes()));
 }
 
 // `frame(fin, opcode, payload, mask)` — a frame as a client writes one
