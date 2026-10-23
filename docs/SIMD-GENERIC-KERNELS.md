@@ -297,6 +297,11 @@ file, so the slice starts from facts rather than from §4's table:
 - **The interpreters** take a `VLanes` / `Lanes` value kind with the element
   width and the lane values; `tyarg_of_value` names it `f64x2`.
 
+`__f64x2_bitmask(v)` and `__f32x4_bitmask(v)` return an `i32` with one sign bit per lane.
+Bit zero comes from lane zero. Comparison masks therefore give compact sets of matching lanes.
+The operation preserves the sign of zero and NaN. It allocates no storage and has a FIP contract.
+The native backends extract lane signs. WASI uses `i64x2.bitmask` or `i32x4.bitmask`.
+
 The slice is a register-class project across the two native emitters, the
 wasm emitter, two front ends and two interpreters, with the Atlas §1.2
 estimate (two weeks before the SSA backend existed) as its floor. It is

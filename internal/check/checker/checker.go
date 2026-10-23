@@ -12680,6 +12680,7 @@ var fipNonAllocBuiltins = map[string]bool{
 	"__ptr_width": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
 	"monotonic_ns": true,
 	"__f64x2_of":   true, "__f64x2_splat": true, "__f64x2_lane": true,
+	"__f64x2_lt": true, "__f64x2_ne": true, "__f64x2_bitmask": true, "__f32x4_bitmask": true,
 }
 
 // checkFipFunctions verifies every `fip function` performs no heap allocation —
@@ -23482,7 +23483,7 @@ func isFloat(t ast.Type) bool {
 
 // laneBuiltinVerbs are the lane builtins after their `__f64x2_` / `__f32x4_`
 // prefix (docs/SIMD-GENERIC-KERNELS.md §6).
-var laneBuiltinVerbs = []string{"splat", "of", "lane", "mul_add", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "load", "with"}
+var laneBuiltinVerbs = []string{"splat", "of", "lane", "bitmask", "mul_add", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select", "load", "with"}
 
 // registerLaneBuiltins declares the lane builtins of f64x2 and f32x4. `lane`
 // reads one element, `lt` and `ne` give a mask, `select(a, b, m)` takes a
@@ -23501,6 +23502,7 @@ func (c *checker) registerLaneBuiltins() {
 			"splat":   {Params: []ast.Type{e}, Result: lt},
 			"of":      {Params: of, Result: lt},
 			"lane":    {Params: []ast.Type{lt, i32}, Result: e},
+			"bitmask": {Params: []ast.Type{lt}, Result: i32},
 			"mul_add": {Params: []ast.Type{lt, lt, lt}, Result: lt},
 			"select":  {Params: []ast.Type{lt, lt, lt}, Result: lt},
 			"load":    {Params: []ast.Type{arr, i32}, Result: lt},

@@ -5757,6 +5757,12 @@ function wasm_lane_const(width: i32, text: string): string {
 
 function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
   let k: string = ir.kind_name(o.kind_tag);
+  if (k == "vbitmask") {
+    if (o.width == 32) {
+      return "    i32x4.bitmask\n";
+    }
+    return "    i64x2.bitmask\n";
+  }
   let sh: string = wasm_lane_shape(o.width);
   let vtmp: string = util.i32_to_string(cx.base + 5);
   let vtmp2: string = util.i32_to_string(cx.base + 6);

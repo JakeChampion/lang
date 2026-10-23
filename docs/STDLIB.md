@@ -73,6 +73,16 @@ Use a checked UTF-8 conversion for external bytes before you treat them as text.
 String byte offsets and Unicode character positions are different units.
 The `std/utf8` and `std/unicode` modules describe code-point and text operations.
 
+`std/parse.int64(text)` returns `Result[i64, parse.IntError]` for checked decimal conversion.
+It accepts an optional sign and the full signed 64-bit range.
+Errors distinguish empty input, an invalid digit offset, and overflow.
+
+`std/binary` reads and appends unsigned 32-bit and 64-bit integers in network byte order.
+Reads return `Result` and reject offsets outside the input view.
+
+`std/png.encode_rgb8(width, height, pixels)` encodes consecutive RGB triples as a PNG image.
+It checks dimensions and buffer length before allocation and returns a typed encoding error.
+
 ## Host capabilities
 
 Some modules need capabilities that a target does not provide.

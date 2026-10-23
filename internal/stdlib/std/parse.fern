@@ -1,0 +1,69 @@
+// Checked decimal integer conversion.
+// A sign is optional. Whitespace and non-ASCII digits are invalid.
+
+import "std/error";
+import "std/i32";
+
+pub enum IntError {
+  Empty,
+  // The payload is the invalid byte offset.
+  InvalidDigit(i32),
+  Overflow,
+}
+
+pub function (e: IntError) message(): string {
+  match (e) {
+    Empty => {
+      return "expected decimal digits";
+    },
+    InvalidDigit(offset) => {
+      return "invalid decimal digit at byte " + offset.to_string();
+    },
+    Overflow => {
+      return "decimal integer is outside the signed 64-bit range";
+    }
+  }
+}
+
+impl error.Error for IntError {}
+
+// Parse the complete string, including the full signed 64-bit range.
+pub function int64(text: string): Result[i64, IntError] {
+  if (text.len() == 0) {
+    return Err(Empty);
+  }
+  let at: i32 = 0;
+  let negative: boolean = text[0] == b'-';
+  if (negative || text[0] == b'+') {
+    at = 1;
+  }
+  if (at == text.len()) {
+    return Err(Empty);
+  }
+  // A negative accumulator can represent the magnitude of i64::MIN.
+  let limit: i64 = -9223372036854775807;
+  if (negative) {
+    limit = limit - 1;
+  }
+  let cutoff: i64 = limit / 10;
+  let value: i64 = 0;
+  while (at < text.len()) {
+    let digit: i64 = text[at] as i64 - 48;
+    if (digit < 0 || digit > 9) {
+      return Err(InvalidDigit(at));
+    }
+    if (value < cutoff) {
+      return Err(Overflow);
+    }
+    value = value * 10;
+    if (value < limit + digit) {
+      return Err(Overflow);
+    }
+    value = value - digit;
+    at = at + 1;
+  }
+  if (negative) {
+    return Ok(value);
+  }
+  return Ok(0 - value);
+}

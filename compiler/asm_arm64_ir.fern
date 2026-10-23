@@ -2924,6 +2924,9 @@ function ssa_fr_q(s: asmcore.EmitState, load: boolean, q: string, first: i32, pu
 
 function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let b: string = ssa.lane_base(ins.str);
+  if (b == "vbitmask") {
+    return ssa_vbitmask(ins, reg_of, s);
+  }
   if (b == "vsplat") {
     return ssa_vsplat(ins, reg_of, s);
   }
@@ -2943,6 +2946,27 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
     return ssa_vbin(ins, reg_of, s);
   }
   return ssa_vunary(ins, reg_of, s);
+}
+
+// Gather lane sign bits into an integer without converting the floats.
+function ssa_vbitmask(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "d1");
+  let d: string = ssa_dst(reg_of, ins.result);
+  let n: i32 = 128 / ins.imm;
+  let k: i32 = 0;
+  s = s.write("    mov " + d + ", #0\n");
+  while (k < n) {
+    let r: string = "x16";
+    if (ins.imm == 32) {
+      r = "w16";
+    }
+    s = s.write("    umov " + r + ", " + ssa_vq_lane(a, ins.imm, k) + "\n");
+    s = s.write("    lsr " + r + ", " + r + ", #" + util.i32_to_string(ins.imm - 1) + "\n");
+    s = s.write("    orr " + d + ", " + d + ", x16, lsl #" + util.i32_to_string(k) + "\n");
+    k = k + 1;
+  }
+  return ssa_store(reg_of, ins.result, d, s);
 }
 
 // ssa_vsplat: every lane takes the f64, which an f32 lane rounds first.

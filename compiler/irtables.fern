@@ -1132,6 +1132,9 @@ pub function result_v128(): i32 {
 // lane_builtin_op is the lane op a lane builtin's verb is, "" for `lane`,
 // `of`, `mul_add`, `load` and `with`, which are more than one op.
 pub function lane_builtin_op(verb: string): string {
+  if (verb == "bitmask") {
+    return "vbitmask";
+  }
   let verbs: string[] = ["splat", "sqrt", "abs", "floor", "round", "min", "max", "lt", "ne", "select"];
   let i: i32 = util.index_of_str(verbs, verb);
   if (i < 0) {

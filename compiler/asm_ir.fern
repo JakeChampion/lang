@@ -6683,6 +6683,8 @@ const J_JS: i32 = 8;
 
 const J_JNS: i32 = 9;
 
+const J_JP: i32 = 10;
+
 const J_JL: i32 = 12;
 
 const J_JGE: i32 = 13;
@@ -6721,6 +6723,8 @@ function ssa_jump_text(j: i32): string {
     return "js";
   } else if (j == J_JNS) {
     return "jns";
+  } else if (j == J_JP) {
+    return "jp";
   } else if (j == J_JL) {
     return "jl";
   } else if (j == J_JGE) {
@@ -7926,6 +7930,16 @@ function ssa_lane_sfx(width: i32): string {
 
 function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let b: string = ssa.lane_base(ins.str);
+  if (b == "vbitmask") {
+    s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+    let m: string = "movmskpd";
+    if (ins.imm == 32) {
+      m = "movmskps";
+    }
+    let d: string = ssa_dst(reg_of, ins.result);
+    s = s.write("    " + m + " " + ssa_fsrc(reg_of, ins.args[0], "%xmm1") + ", " + ssa_r32(d) + "\n");
+    return ssa_store(reg_of, ins.result, d, s);
+  }
   if (b == "vsplat") {
     return ssa_vsplat(ins, reg_of, s);
   }
@@ -8063,6 +8077,9 @@ function ssa_vbin_form(b: string): VBinForm {
 
 function ssa_vbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let form: VBinForm = ssa_vbin_form(ssa.lane_base(ins.str));
+  if (form.pred < 0) {
+    return ssa_vbin_avx(ins, reg_of, form, s);
+  }
   s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
   s = ssa_fread(reg_of, ins.args[1], "%xmm2", s);
   let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
@@ -8081,6 +8098,32 @@ function ssa_vbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
     imm = "$" + util.i32_to_string(form.pred) + ", ";
   }
   s = s.write("    " + form.mnem + ssa_lane_sfx(ins.imm) + " " + imm + b + ", " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// AVX has independent source and destination registers and permits an unaligned
+// memory source. A spilled right operand needs no separate reload.
+function ssa_vbin_avx(ins: ssa.SInst, reg_of: i32[], form: VBinForm, s: asmcore.EmitState): asmcore.EmitState {
+  let left: i32 = ins.args[0];
+  let right: i32 = ins.args[1];
+  if (form.right) {
+    left = ins.args[1];
+    right = ins.args[0];
+  }
+  s = ssa_fread(reg_of, left, "%xmm1", s);
+  let a: string = ssa_fsrc(reg_of, left, "%xmm1");
+  let b: string = a;
+  if (right != left) {
+    if (reg_of[right] < 0) {
+      // A lane pair starts one word below its slot's scalar displacement.
+      b = ssa_mem("%rbp", ssa_slot_disp(ssa.spill_slot(reg_of[right]), s.ssa_save) - 8, false);
+    } else {
+      s = ssa_fread(reg_of, right, "%xmm2", s);
+      b = ssa_fsrc(reg_of, right, "%xmm2");
+    }
+  }
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  s = s.write("    v" + form.mnem + ssa_lane_sfx(ins.imm) + " " + b + ", " + a + ", " + d + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
@@ -9564,7 +9607,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
     if (cmp.result != last.args[0] || fr.uses[cmp.result] != 1) {
       return value_test;
     }
-    if (!ssa_unique_test(cmp) && (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str)))) {
+    if (!ssa_unique_test(cmp) && !ssa_fusable_cmp(cmp)) {
       return value_test;
     }
     n = 2;
@@ -9573,13 +9616,29 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
   if (ssa_unique_test(cmp)) {
     return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4 };
   }
-  if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) {
+  if (!ssa_fusable_cmp(cmp)) {
     return ssa_no_fuse();
+  }
+  if (ssa.float_cmp(cmp.str)) {
+    let tag: string = cmp.str;
+    if (tag == "flt" || tag == "fle") {
+      if (tag == "flt") {
+        tag = "fgt";
+      } else {
+        tag = "fge";
+      }
+      return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
+    }
+    return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
   }
   if (fr.imm.is_imm[cmp.args[0]]) {
     return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
   }
   return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+}
+
+function ssa_fusable_cmp(ins: ssa.SInst): boolean {
+  return ins.kind_tag == 9 && (ircore.is_int_cmp_kind(ir.kind_id(ins.str)) || ssa.float_cmp(ins.str));
 }
 
 // ssa_block_inst emits the instruction at position ii of blk: nothing for a
@@ -10247,14 +10306,14 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
       return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JZ, tl);
     }
     if (fu.n > 0) {
-      return ssa_branch(s, ir_cmp_jcc(fu.tag, !fu.inverted), tl);
+      return ssa_cmp_branch(s, fu, !fu.inverted, tl);
     }
     return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JNZ, tl);
   }
   if (fu.n > 0 && fu.tag == 0) {
     s = ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JNZ, fl);
   } else if (fu.n > 0) {
-    s = ssa_branch(s, ir_cmp_jcc(fu.tag, fu.inverted), fl);
+    s = ssa_cmp_branch(s, fu, fu.inverted, fl);
   } else {
     s = ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JZ, fl);
   }
@@ -10267,6 +10326,35 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     return ssa_jump(fr, lp, t.f, next, s);
   }
   return ssa_jump(fr, lp, t.t, next, s);
+}
+
+// Branch directly on compare flags without materializing a boolean.
+// An unordered comparison is false except for != and explicit negation.
+function ssa_cmp_branch(s: asmcore.EmitState, fu: SsaFuse, when_true: boolean, target: asmcore.Lab): asmcore.EmitState {
+  let k: string = ir.kind_name(fu.tag);
+  if (!ssa.float_cmp(k)) {
+    return ssa_branch(s, ir_cmp_jcc(fu.tag, when_true), target);
+  }
+  if (k == "fgt") {
+    if (when_true) {
+      return ssa_branch(s, J_JA, target);
+    }
+    return ssa_branch(s, J_JBE, target);
+  }
+  if (k == "fge") {
+    if (when_true) {
+      return ssa_branch(s, J_JAE, target);
+    }
+    return ssa_branch(s, J_JB, target);
+  }
+  if (k == "feq" == when_true) {
+    let fresh: asmcore.LabelOut = asmcore.fresh_label(s);
+    let skip: asmcore.LabNew = asmcore.lab_new(fresh.state, fresh.name);
+    s = ssa_branch(skip.state, J_JP, skip.lab);
+    s = ssa_branch(s, J_JE, target);
+    return s.lab_def(skip.lab);
+  }
+  return ssa_branch(ssa_branch(s, J_JP, target), J_JNE, target);
 }
 
 // ssa_fused_test sets the flags a block's fused compare leaves for its branch
@@ -10291,6 +10379,11 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
   }
   if (fu.unique) {
     return ssa_unique_flags(reg_of, fu.a, fu.aligned, join, s);
+  }
+  if (ssa.float_cmp(ir.kind_name(fu.tag))) {
+    s = ssa_fread(reg_of, fu.a, "%xmm1", s);
+    s = ssa_fread(reg_of, fu.b, "%xmm2", s);
+    return s.write("    ucomisd " + ssa_fsrc(reg_of, fu.b, "%xmm2") + ", " + ssa_fsrc(reg_of, fu.a, "%xmm1") + "\n");
   }
   let b_in_slot: boolean = !fr.imm.is_imm[fu.b] && reg_of[fu.b] < 0;
   if (reg_of[fu.a] < 0 && s.ssa_x0 != fu.a && !b_in_slot) {

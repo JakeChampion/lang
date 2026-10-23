@@ -1,0 +1,170 @@
+// Perturbation and bivariate linear approximation for a group of nearby pixels.
+// The direct renderer remains the reference for exact floating-point output.
+import "std/f64";
+import "std/array";
+import "std/simd";
+import "./series";
+
+pub struct Step {
+  length: i32,
+  ar: f64,
+  ai: f64,
+  br: f64,
+  bi: f64,
+  radius: f64,
+}
+
+pub struct Reference {
+  real: f64,
+  imaginary: f64,
+  zr: f64[],
+  zi: f64[],
+  levels: Step[][],
+  series: series.Model,
+}
+
+pub struct Start { real: f64, imaginary: f64, steps: i32, work: i32 }
+
+// Skip a shared prefix, then return to direct SIMD iteration.
+// Each jump covers at least eight updates, so lookup cost stays bounded.
+pub function prefix(ref: Reference, real: f64, imaginary: f64, limit: i32): Start {
+  let cr: f64 = real - ref.real;
+  let ci: f64 = imaginary - ref.imaginary;
+  let dr: f64 = cr;
+  let di: f64 = ci;
+  let n: i32 = 1;
+  let work: i32 = 1;
+  if (ref.series.steps > 1) {
+    let value: series.Value = series.evaluate(ref.series, cr, ci);
+    dr = value.real;
+    di = value.imaginary;
+    n = ref.series.steps;
+    work = ref.series.cr.len();
+  }
+  while (n + 8 < limit) {
+    match (lookup(ref, n, limit - n, norm(dr, di))) {
+      Some(step) => {
+        if (step.length < 8) {
+          break;
+        }
+        let next: f64 = step.ar * dr - step.ai * di + step.br * cr - step.bi * ci;
+        di = step.ar * di + step.ai * dr + step.br * ci + step.bi * cr;
+        dr = next;
+        n = n + step.length;
+        work = work + 1;
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  let zr: f64 = ref.zr[n] + dr;
+  let zi: f64 = ref.zi[n] + di;
+  if (!(zr * zr + zi * zi < 65536.0)) {
+    return Start { real: 0.0, imaginary: 0.0, steps: 0, work: 0 };
+  }
+  return Start { real: zr, imaginary: zi, steps: n, work: work };
+}
+
+function norm(real: f64, imaginary: f64): f64 {
+  return (real * real + imaginary * imaginary).sqrt();
+}
+
+// Each step's validity radius includes the tile's maximum parameter delta.
+// epsilon limits the nonlinear term relative to the linear perturbation term.
+pub function reference(real: f64, imaginary: f64, delta_max: f64, limit: i32, epsilon: f64): Reference {
+  let zr: f64[] = [0.0];
+  let zi: f64[] = [0.0];
+  let r: simd.DoubleDouble[f64] = simd.dd_of(0.0);
+  let i: simd.DoubleDouble[f64] = simd.dd_of(0.0);
+  let cr: simd.DoubleDouble[f64] = simd.dd_of(real);
+  let ci: simd.DoubleDouble[f64] = simd.dd_of(imaginary);
+  let count: i32 = 0;
+  while (count < limit && r.hi * r.hi + i.hi * i.hi <= 65536.0) {
+    let rr: simd.DoubleDouble[f64] = r * r;
+    let ii: simd.DoubleDouble[f64] = i * i;
+    i = (r + r) * i + ci;
+    r = rr - ii + cr;
+    zr = zr.append(simd.dd_value(r));
+    zi = zi.append(simd.dd_value(i));
+    count = count + 1;
+  }
+  let levels: Step[][] = [];
+  let level: Step[] = [];
+  let at: i32 = 1;
+  while (at + 1 < zr.len()) {
+    let size: f64 = norm(zr[at], zi[at]);
+    let radius: f64 = epsilon * 2.0 * size;
+    // The skipped interval must not contain an unchecked escape.
+    if (radius > 256.0 - size) {
+      radius = 256.0 - size;
+    }
+    if (radius < 0.0) {
+      radius = 0.0;
+    }
+    level = level.append(Step { length: 1, ar: 2.0 * zr[at], ai: 2.0 * zi[at], br: 1.0, bi: 0.0, radius: radius });
+    at = at + 1;
+  }
+  if (level.len() > 0) {
+    levels = levels.append(level);
+  }
+  while (level.len() > 1) {
+    let next: Step[] = [];
+    let k: i32 = 0;
+    while (k + 1 < level.len()) {
+      next = next.append(merge(level[k], level[k + 1], delta_max));
+      k = k + 2;
+    }
+    if (next.len() > 0) {
+      levels = levels.append(next);
+    }
+    level = next;
+  }
+  let model: series.Model = series.build(zr, zi, delta_max, epsilon);
+  return Reference { real: real, imaginary: imaginary, zr: zr, zi: zi, levels: levels, series: model };
+}
+
+// Compose y after x: A = Ay*Ax and B = Ay*Bx + By.
+function merge(x: Step, y: Step, delta_max: f64): Step {
+  let size: f64 = norm(x.ar, x.ai);
+  let radius: f64 = 0.0;
+  if (size > 0.0 && size < 1e150) {
+    radius = (y.radius - norm(x.br, x.bi) * delta_max) / size;
+    if (radius > x.radius) {
+      radius = x.radius;
+    }
+    if (!(radius > 0.0)) {
+      radius = 0.0;
+    }
+  }
+  return Step {
+    length: x.length + y.length,
+    ar: y.ar * x.ar - y.ai * x.ai,
+    ai: y.ar * x.ai + y.ai * x.ar,
+    br: y.ar * x.br - y.ai * x.bi + y.br,
+    bi: y.ar * x.bi + y.ai * x.br + y.bi,
+    radius: radius,
+  };
+}
+
+// Search from the largest aligned block to the smallest.
+function lookup(ref: Reference, at: i32, remaining: i32, delta: f64): Option[Step] {
+  if (at < 1) {
+    return None;
+  }
+  let level: i32 = ref.levels.len() - 1;
+  while (level >= 0) {
+    let width: i32 = 1 << level;
+    if ((at - 1 & width - 1) == 0) {
+      let index: i32 = at - 1 >> level;
+      if (index < ref.levels[level].len()) {
+        let step: Step = ref.levels[level][index];
+        if (step.length > 1 && step.length <= remaining && delta < step.radius) {
+          return Some(step);
+        }
+      }
+    }
+    level = level - 1;
+  }
+  return None;
+}
