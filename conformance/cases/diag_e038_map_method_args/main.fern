@@ -1,0 +1,11 @@
+// A method core/map declares checks its arity and its arguments against the
+// receiver's key and value types, as a builtin Map method does.
+import "core/map";
+function main(): i32 {
+  let m: Map[i32, string] = map_new(0);
+  let n = m.merge(3);
+  let k = m.update(1, 2, 3);
+  let g = m.merge();
+  let ok = m.merge(m);
+  return 0;
+}

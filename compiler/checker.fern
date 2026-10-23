@@ -6460,6 +6460,21 @@ function declared_method_diags(c: ast.ExprCall, recv_ty: typeinfo.Type, recv: st
   return util.append_diags(out, uninferred_method_diags(c, recv, method, msig, s));
 }
 
+// map_method_arg_diags checks the arity and arguments of a Map method core/map
+// declares (`merge`, `update`, …), as declared_method_diags does a scalar's.
+// The builtin methods have no signature here; map_arg_diags checks theirs.
+function map_method_arg_diags(c: ast.ExprCall, recv_ty: typeinfo.Type, method: string, s: Scope): util.Diag[] {
+  let msig: MethodSig = s.lookup_method(method, "Map");
+  if (msig.name.len() == 0) {
+    return [];
+  }
+  if (c.args.len() != msig.param_types.len()) {
+    return [dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col)];
+  }
+  let out: util.Diag[] = method_arg_diags(c, method, msig, recv_ty, s);
+  return util.append_diags(out, method_type_arg_diags(c, method, msig, recv_ty, s));
+}
+
 // uninferred_recv_diags reports E040 for a variable of the receiver's type
 // that the receiver itself leaves unbound: `let o = GNil;` gives `o` no type
 // argument at all, so nothing binds `T` in `o.count()` unless an argument, the
@@ -15835,6 +15850,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         typeinfo.TypeMap(mt) => {
           out = map_arg_diags(c, mfa.field, mt, s, out);
           out = unbound_map_arg_diags(c, mfa.field, mt, s, out);
+          out = util.append_diags(out, map_method_arg_diags(c, recv, mfa.field, s));
           // E043 (map method existence). methods_in_namespace("Map") is the
           // whole surface — the runtime builtins plus whatever core/map's
           // receiver methods add once it is in the program — so a name that
