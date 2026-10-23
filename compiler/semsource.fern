@@ -20,6 +20,7 @@ import "./ownership";
 import "./util";
 import "./rtbytecopy";
 import "./sembytecopy";
+import "./byteconst";
 import "./seminline";
 import "./sourcepos";
 import "./semdead";
@@ -1266,6 +1267,12 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
     return refused(s, "unresolved array literal type");
   }
   let elem: typeinfo.Type = element_type(ty);
+  if (ssasem.is_u8(elem)) {
+    let (bytes, constant) = constant_byte_elements(a.elements);
+    if (constant) {
+      return packed_bytes(e, bytes, s, ty);
+    }
+  }
   let ids: i32[] = [];
   for e in a.elements {
     let v: Value = expr(e, s, elem);
@@ -1282,6 +1289,49 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
   }
   let owned: typeinfo.Type = typeinfo.TypeArray { elem: elem, view: false };
   return widen(define(s, ssasem.array_new(), ids, 0, "", owned), ty);
+}
+
+function constant_byte_element(e: ast.Expr): i32 {
+  if let ast.ExprUnary(u) = e {
+    if (u.op == "as_u8") {
+      return constant_byte_element(u.operand);
+    }
+    return -1;
+  }
+  if let ast.ExprNumber(n) = e {
+    if (!n.is_float && (n.suffix == "" || n.suffix == "u8")) {
+      let value: i64 = util.lit_to_i64(n.text);
+      if (value >= 0i64 && value <= 255i64) {
+        return value as i32;
+      }
+    }
+  }
+  return -1;
+}
+
+function constant_byte_elements(elements: ast.Expr[]): (u8[], boolean) {
+  let bytes: u8[] = [];
+  for e in elements {
+    let value: i32 = constant_byte_element(e);
+    if (value < 0) {
+      return (bytes, false);
+    }
+    bytes = bytes.append(value as u8);
+  }
+  return (bytes, true);
+}
+
+function packed_bytes(e: ast.Expr, bytes: u8[], s: State, expected: typeinfo.Type): Value {
+  let ty: typeinfo.Type = destination_type(e, s, expected);
+  if (!ssasem.is_u8(element_type(ty))) {
+    return refused(s, "constant byte array destination type");
+  }
+  let words: string = byteconst.words(bytes);
+  if (!byteconst.valid(words, bytes.len())) {
+    return refused(s, "constant byte array payload size");
+  }
+  let owned: typeinfo.Type = typeinfo.TypeArray { elem: element_type(ty), view: false };
+  return widen(define(s, ssasem.bytes_new(), [], bytes.len(), words, owned), ty);
 }
 
 function tuple(e: ast.Expr, t: ast.ExprTuple, s: State, expected: typeinfo.Type): Value {
@@ -4416,6 +4466,9 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
     },
     ast.ExprArray(a) => {
       return array(e, a, s, expected);
+    },
+    ast.ExprBytes(bs) => {
+      return packed_bytes(e, bs.value, s, expected);
     },
     ast.ExprTuple(t) => {
       return tuple(e, t, s, expected);

@@ -1,0 +1,47 @@
+Main binary filename not available.
+Fern bounded reservoir: retained=2686 dropped=0
+Type: alloc_objects
+Showing nodes accounting for 171136, 99.55% of 171904 total
+Dropped 214 nodes (cum <= 859)
+Showing top 40 nodes out of 54
+      flat  flat%   sum%        cum   cum%
+     95744 55.70% 55.70%      95744 55.70%  __fn___fern_str_concat
+     46336 26.95% 82.65%      46336 26.95%  __fn___fern_str_grow_fresh_range
+     29056 16.90% 99.55%      29056 16.90%  __fern_arr_box
+         0     0% 99.55%        960  0.56%  __fern_alloc_bytes
+         0     0% 99.55%       2560  1.49%  __fern_alloc_u8
+         0     0% 99.55%       6528  3.80%  __fern_arr_push
+         0     0% 99.55%       2112  1.23%  __fern_arr_push_owned
+         0     0% 99.55%      16576  9.64%  __fn_asm_ir__emit_entry_runtime
+         0     0% 99.55%       1408  0.82%  __fn_asm_ir__emit_function_via_ir_named
+         0     0% 99.55%       1408  0.82%  __fn_asm_ir__emit_function_via_ir_pre
+         0     0% 99.55%      16512  9.61%  __fn_asm_ir__emit_ir_runtime
+         0     0% 99.55%      16256  9.46%  __fn_asm_ir__emit_ir_runtime_fern_fn
+         0     0% 99.55%     154432 89.84%  __fn_asm_ir__emit_module_or_error_sub
+         0     0% 99.55%       1728  1.01%  __fn_checker__annotate_module
+         0     0% 99.55%       4160  2.42%  __fn_checker__build_gate_diags
+         0     0% 99.55%       5056  2.94%  __fn_checker__builtin_sig
+         0     0% 99.55%       4160  2.42%  __fn_checker__check_module
+         0     0% 99.55%       2432  1.41%  __fn_checker__check_module_pass
+         0     0% 99.55%       3968  2.31%  __fn_checker__module_env
+         0     0% 99.55%       4032  2.35%  __fn_checker__type_from_name
+         0     0% 99.55%       1920  1.12%  __fn_checker__type_from_spelling
+         0     0% 99.55%       4032  2.35%  __fn_checker__type_names
+         0     0% 99.55%      90880 52.87%  __fn_irverifygate__close_memo
+         0     0% 99.55%      45504 26.47%  __fn_irverifygate__open_memo
+         0     0% 99.55%     171904   100%  __fn_main
+         0     0% 99.55%       2624  1.53%  __fn_parser__parse_type_ref
+         0     0% 99.55%     171904   100%  __fn_run_with
+         0     0% 99.55%       8960  5.21%  __fn_semlower__inferred_rows
+         0     0% 99.55%        896  0.52%  __fn_semlower__produced_body
+         0     0% 99.55%      21504 12.51%  __fn_semlower__produced_rows
+         0     0% 99.55%        896  0.52%  __fn_semlower__rows_lowered
+         0     0% 99.55%      14784  8.60%  __fn_semlower__runtime_lowering
+         0     0% 99.55%      14784  8.60%  __fn_semlower__runtime_lowering$wrap
+         0     0% 99.55%      13248  7.71%  __fn_semlower__substitution_of
+         0     0% 99.55%      13632  7.93%  __fn_semlower__target_substitution
+         0     0% 99.55%      14400  8.38%  __fn_semsource__builtin_contracts
+         0     0% 99.55%       5056  2.94%  __fn_semsource__c_call_contracts
+         0     0% 99.55%       1024   0.6%  __fn_semsource__handle_contracts
+         0     0% 99.55%       1472  0.86%  __fn_semsource__inferred_contract
+         0     0% 99.55%      10496  6.11%  __fn_semsource__intrinsic_contracts

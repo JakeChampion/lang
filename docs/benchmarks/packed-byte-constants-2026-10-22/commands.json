@@ -1,0 +1,171 @@
+{
+  "producer_sha256": "3be44999ff7041c0a240210726a73b854f5d3b9d419e1f34d222d3d6442df8d8",
+  "builds": [
+    {
+      "name": "discovery",
+      "environment": {
+        "FERN_PROFILE": "alloc-pprof",
+        "FERN_PROFILE_FILE": "/workspace/scratch/lang-byte-literal-profile/alloc.pprof"
+      },
+      "command": [
+        "/workspace/scratch/lang-main-d669-control/stage3",
+        "-g",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-byte-literal-profile/compiler-alloc",
+        "/workspace/lang-byte-literal-control/compiler/fern.fern",
+        "/workspace/lang-byte-literal-control/internal/stdlib"
+      ],
+      "measurement": [
+        "python3",
+        "/workspace/scratch/lang-profile-byte-literals.py",
+        "/workspace/lang-byte-literal-control",
+        "/workspace/scratch/lang-byte-literal-profile",
+        "/workspace/scratch/lang-byte-literal-profile/compiler-alloc",
+        "/workspace/scratch/lang-byte-literal-profile/alloc.pprof"
+      ]
+    },
+    {
+      "name": "exact-base",
+      "environment": {
+        "FERN_PROFILE": "alloc-pprof",
+        "FERN_PROFILE_FILE": "/workspace/scratch/lang-packed-byte-constants/profile-base12625/alloc.pprof"
+      },
+      "command": [
+        "/workspace/scratch/lang-main-d669-control/stage3",
+        "-g",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+        "/workspace/lang-byte-literal-control-12625/compiler/fern.fern",
+        "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+      ],
+      "measurement": [
+        "python3",
+        "/workspace/scratch/lang-profile-byte-literals.py",
+        "/workspace/lang-byte-literal-control-12625",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/alloc.pprof"
+      ]
+    },
+    {
+      "name": "final",
+      "environment": {
+        "FERN_PROFILE": "alloc-pprof",
+        "FERN_PROFILE_FILE": "/workspace/scratch/lang-packed-byte-constants/profile-final/alloc.pprof"
+      },
+      "command": [
+        "/workspace/scratch/lang-main-d669-control/stage3",
+        "-g",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/compiler-alloc",
+        "/workspace/lang-packed-byte-constants/compiler/fern.fern",
+        "/workspace/lang-packed-byte-constants/internal/stdlib"
+      ],
+      "measurement": [
+        "python3",
+        "/workspace/scratch/lang-profile-byte-literals.py",
+        "/workspace/lang-packed-byte-constants",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/compiler-alloc",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/alloc.pprof"
+      ]
+    }
+  ],
+  "validation": [
+    {
+      "command": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHost(PackedBytesGraph|CompactByteConstantsExecution|EmbedBytesCompileLinear|PackedBytes|StaticBoxes|ConstAggregate.*|RecordOfStaticBoxesIsStatic|IRKindRegistry|SSAKindRegistry|FeatureCensus|RepoComplexityRatchet|CCall.*|CompilePathEnforcesFipBudget|PerUnitEmitEnforcesFipBudget|IRVerifyFip|SSASemantic.*)$",
+        "-count=1",
+        "-timeout",
+        "20m"
+      ],
+      "log": "broad.log"
+    },
+    {
+      "command": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHost(PackedBytesGraph|CompactByteConstantsExecution|RepoComplexityRatchet|EmbedBytesEveryTarget)$",
+        "-count=1",
+        "-timeout",
+        "10m"
+      ],
+      "log": "refactor-targeted.log"
+    },
+    {
+      "command": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHost(PackedBytesGraph|CheckerDifferentialX86_64)$/.*(array|tuple|literal).*",
+        "-count=1",
+        "-timeout",
+        "10m"
+      ],
+      "log": "coercion-differential-final.log"
+    },
+    {
+      "command": [
+        "go",
+        "test",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHostWarmStockDriver$",
+        "-count=1",
+        "-timeout",
+        "20m"
+      ],
+      "log": "driver-build.log"
+    }
+  ],
+  "bootstrap": [
+    "python3",
+    "/workspace/scratch/lang-build-fixedpoint.py",
+    "/workspace/lang-packed-byte-constants",
+    "/workspace/scratch/lang-packed-byte-constants/bootstrap-final",
+    "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux"
+  ],
+  "strict_gate": {
+    "environment": {
+      "FERN_CI_SIZE_GATE_STRICT": "1",
+      "FERN_SIZE_REPORT_COMPLETE": "1"
+    },
+    "command": [
+      "scripts/ci-check-driver-sizes",
+      ".github/selfhost-driver-sizes.txt",
+      "/workspace/scratch/lang-packed-byte-constants/driver-sizes.txt"
+    ]
+  },
+  "driver_environment": {
+    "FERN_SELFHOST_BUILD_CACHE": "/workspace/scratch/lang-driver-cache",
+    "FERN_DRIVER_SIZE_REPORT": "/workspace/scratch/lang-packed-byte-constants/driver-sizes.txt",
+    "FERN_WARM_DRIVER": "fern.fern/stage2,fern.fern,drivers/asm_load_run.fern,drivers/asm_modload_run.fern,drivers/asm_ir_run.fern,drivers/asm_run.fern,drivers/wasm_ir_run.fern,drivers/wasm_run.fern,drivers/wasm_runio_run.fern,drivers/asm_pathprobe_run.fern,drivers/checker_modload_run.fern"
+  },
+  "broad_environment": {
+    "PATH_prefix": [
+      "/workspace/toolchain/gdb-bin",
+      "/workspace/toolchain/sysroot/usr/bin"
+    ],
+    "LD_LIBRARY_PATH": "/workspace/toolchain/sysroot/usr/lib/x86_64-linux-gnu",
+    "VALGRIND_LIB": "/workspace/toolchain/sysroot/usr/libexec/valgrind"
+  },
+  "toolchain": {
+    "go": "1.27.3",
+    "wasmtime": "46.0.1",
+    "bootstrap_pin": "stage0-20261017-882323a",
+    "pin_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee"
+  }
+}

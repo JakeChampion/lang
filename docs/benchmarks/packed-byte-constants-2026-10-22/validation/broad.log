@@ -1,0 +1,9 @@
+--- FAIL: TestSelfHostRepoComplexityRatchet (5.63s)
+    --- FAIL: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+        self_host_lint_ratchet_test.go:103: total complexity over the limit of 10 is 16334, more than 5% above the recorded 15547.
+            A change added real complexity. Split the new function up, or annotate it with
+            `// fern-lint: allow cyclomatic-complexity` and a line saying why.
+            Run: fern -lint compiler
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	188.337s
+FAIL

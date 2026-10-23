@@ -77,49 +77,49 @@ x86_64/closure_call.text	877
 x86_64/closure_call.ir	63018154
 x86_64/enum_match.text	994
 x86_64/enum_match.ir	50850085
-x86_64/http_hello.text	16110
-x86_64/http_hello.ir	23640438
+x86_64/http_hello.text	16104
+x86_64/http_hello.ir	23836438
 x86_64/int_loop.text	178
 x86_64/int_loop.ir	12000070
-x86_64/map_int.text	5757
+x86_64/map_int.text	5744
 x86_64/map_int.ir	37644884
-x86_64/map_probe_chain.text	5764
+x86_64/map_probe_chain.text	5751
 x86_64/map_probe_chain.ir	353681009
-x86_64/map_string.text	6688
-x86_64/map_string.ir	61513241	2
-x86_64/ordmap_insert.text	2828
+x86_64/map_string.text	6675
+x86_64/map_string.ir	61742858	2
+x86_64/ordmap_insert.text	2815
 x86_64/ordmap_insert.ir	105979348
-x86_64/pmap_insert.text	2600
+x86_64/pmap_insert.text	2587
 x86_64/pmap_insert.ir	56484135
-x86_64/pvec_with.text	2772
+x86_64/pvec_with.text	2759
 x86_64/pvec_with.ir	56311395
 x86_64/record_update.ir	37759081
 x86_64/record_update.text	1280
-x86_64/sort_inplace.text	1302
+x86_64/sort_inplace.text	1289
 x86_64/sort_inplace.ir	43049023
-x86_64/sort_ints.text	1777
+x86_64/sort_ints.text	1764
 x86_64/sort_ints.ir	31264495
-x86_64/sort_strings.text	3077
+x86_64/sort_strings.text	3064
 x86_64/sort_strings.ir	105294698
-x86_64/string_build.text	1846
+x86_64/string_build.text	1833
 x86_64/string_build.ir	42429808
 x86_64/string_count_byte.text	1142
 x86_64/string_count_byte.ir	135589342
-x86_64/string_find_byte.text	1522
+x86_64/string_find_byte.text	1509
 x86_64/string_find_byte.ir	43567380
-x86_64/string_rfind_byte.text	1591
+x86_64/string_rfind_byte.text	1578
 x86_64/string_rfind_byte.ir	43576286
-x86_64/string_scan.text	2092
+x86_64/string_scan.text	2079
 x86_64/string_scan.ir	52603745
 x86_64/string_slice.text	803
 x86_64/string_slice.ir	38700086
-x86_64/struct_drop.text	2220
+x86_64/struct_drop.text	2207
 x86_64/struct_drop.ir	191340574
 x86_64/tokenize.text	1037
 x86_64/tokenize.ir	36960087
-x86_64/utf8_ingest_unchecked.text	7123
+x86_64/utf8_ingest_unchecked.text	7110
 x86_64/utf8_ingest_unchecked.ir	2786713
-x86_64/utf8_ingest_validated.text	7371
+x86_64/utf8_ingest_validated.text	7358
 x86_64/utf8_ingest_validated.ir	5869315
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -277,6 +277,11 @@ x86_64/utf8_ingest_validated.ir	5869315
 # caller's frame for their size and range traps (+3 each). No `.ir` row
 # moves: none of the new code runs unless a program aborts.
 #
+# Re-pinned 2026-10-22 (#13021) on every x86_64 row from a local perf-bench
+# run of the merge with main at 12625f42, and on aarch64/perceus_rbtree_ck.text
+# from the perf lane (3306 -> 3266). The x86_64 .text rows moved by about -1%
+# between main's earlier pin and this merge. No .ir row moved by 1% or more.
+#
 # Re-pinned 2026-10-22 (#12969) on every x86_64 row from a local
 # perf-bench run. A record updater is spliced into its callers, and
 # semdead drops a record cycle that nothing reads. The rows that moved by
@@ -291,6 +296,12 @@ x86_64/utf8_ingest_validated.ir	5869315
 # http_hello.ir moved -2.20% and .text +2.42%. The two utf8_ingest .text
 # rows moved -1.2%. The http_hello and record_update .text rows add the 3
 # instructions of the #12957 trap entry.
+#
+# Re-pinned 2026-10-23 (#13026) on aarch64/perceus_rbtree_ck.text (3306 to
+# 3266, -1.21%), the perf lane's figure. The change is from main, not from
+# #13026: a compiler built from main at 7fccb64 emits the same 3266
+# instructions. Most other aarch64 `.text` rows moved about -0.5%, inside
+# the tolerance.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
@@ -364,15 +375,15 @@ aarch64/utf8_ingest_validated.text	7779
 aarch64/utf8_ingest_validated.ir	6278000
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	1799
+x86_64/perceus_cfold.text	1786
 x86_64/perceus_cfold.ir	54667288
-x86_64/perceus_deriv.text	2593
+x86_64/perceus_deriv.text	2580
 x86_64/perceus_deriv.ir	66902002
-x86_64/perceus_nqueens.text	1473
+x86_64/perceus_nqueens.text	1460
 x86_64/perceus_nqueens.ir	93164076
-x86_64/perceus_rbtree.text	2778
+x86_64/perceus_rbtree.text	2765
 x86_64/perceus_rbtree.ir	56730015
-x86_64/perceus_rbtree_ck.text	2994
+x86_64/perceus_rbtree_ck.text	2981
 x86_64/perceus_rbtree_ck.ir	55908895
 aarch64/perceus_cfold.text	2049
 aarch64/perceus_cfold.ir	61163070

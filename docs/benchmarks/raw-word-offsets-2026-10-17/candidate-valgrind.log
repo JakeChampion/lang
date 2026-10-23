@@ -1,0 +1,7 @@
+==260712== Cachegrind, a high-precision tracing profiler
+==260712== Copyright (C) 2002-2024, and GNU GPL'd, by Nicholas Nethercote et al.
+==260712== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==260712== Command: /workspace/scratch/lang-raw-word-immediates/instructions/cand/probe
+==260712== 
+==260712== 
+==260712== I refs:        13,001,213

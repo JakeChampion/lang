@@ -438,6 +438,9 @@ function masked(g: Graph, x: i32): i32 {
 // literal_len is the element count of the array literal `base` is, or -1.
 function literal_len(g: Graph, base: i32): i32 {
   let d: ssa.SInst = def_of(g, base);
+  if (d.kind_tag == ssasem.bytes_new()) {
+    return d.imm;
+  }
   if (d.kind_tag == ssasem.array_new()) {
     return d.args.len();
   }

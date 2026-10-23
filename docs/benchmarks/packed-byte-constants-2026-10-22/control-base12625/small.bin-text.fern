@@ -1,0 +1,8 @@
+@noinline
+function asset(): string {
+  return __fern_asset("small.bin");
+}
+
+function main(): i32 {
+  return asset().len() % 7;
+}

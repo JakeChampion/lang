@@ -2937,6 +2937,10 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
 }
 
 function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], left: string[]): boolean {
+  // A word-scaled displacement encodable on both native ISAs.
+  if ((ins.kind_tag == 52 || ins.kind_tag == 53) && a == 1) {
+    return c >= 0i64 && c <= 4095i64;
+  }
   if ((ins.kind_tag == 54 || ins.kind_tag == 55) && a == 1) {
     return true;
   }

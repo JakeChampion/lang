@@ -42,14 +42,12 @@ both a negative index and `index >= len`.
 
 - **x86-64 / arm64** abort with **exit code 134** (the same trap the
   string-slice helper uses).
-- **wasm** traps (`unreachable`), which `wasmtime` surfaces as exit
-  134.
+- **wasm** prints the cause line and traps (`unreachable`). `wasmtime`
+  reports exit 134.
 - **interp** stops with **exit code 134**, `fern -interp` and
   `fern-oracle -interp` alike.
 
-All four agree on the observable contract: an out-of-bounds index
-aborts before producing a value. The natives and both interpreters also
-print the same cause line, below.
+All runners print the same cause line before an out-of-bounds index aborts.
 
 ## Allocation size (#8457)
 
@@ -60,7 +58,7 @@ and everything downstream reads the count as unsigned, so the natives
 allocated against the zero-extended value and then walked off it.
 `__alloc_u8` and `__fern_strcat` reject a negative count on both native
 backends. Both interpreters reject it with the same cause line and exit
-134, and wasm traps.
+134. Wasm prints that line and traps.
 
 A size that wraps to a small NON-negative value is a different outcome
 and stays one: the allocation succeeds at the wrapped size and the copy
@@ -103,12 +101,18 @@ fern: array index out of range
   index 5, length 3
 ```
 
-The cause lines live in `compiler/aborts.fern`, which both emitters and
+The cause lines live in `compiler/aborts.fern`, which all emitters and
 the self-host interpreter read; the Go interpreter's copies are pinned to
 it by `TestAbortCausesMatchTheCompiler`. A string's byte index reports the
 string cause, as `slice_unchecked` does; an array, a byte view and `.with`
 report the array cause, as does a map cursor's `key()` or `value()` past
 its last entry; an out-of-range `buf_push_range` reports the slice cause.
+
+Wasm command and HTTP components import stderr when their runtime can abort.
+The abort helper writes the cause through the host stream and then traps.
+It uses static message bytes and reserved scratch memory, so a memory-exhaustion report needs no allocation.
+WASI does not permit command exit status 134, so the helper retains the trap.
+Wasmtime prints its own trap trace after the cause line.
 
 Under the header is a frame-pointer walk (the `x29` / `rbp` chain,
 bounded to 64 frames). The addresses are raw; build with `-g` and
