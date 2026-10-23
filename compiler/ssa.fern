@@ -609,11 +609,9 @@ pub const COLD_INLINE: i32 = 3;
 pub function cold_positions(f: SFunc, size: boolean): i32[] {
   let cold: boolean[] = cold_blocks(f);
   let out: i32[] = [];
-  let bi: i32 = 0;
-  while (bi < f.blocks.len()) {
+  for bi in 0..f.blocks.len() {
     let blk: SBlock = f.blocks[bi];
-    let k: i32 = 0;
-    while (k < blk.insts.len()) {
+    for k in 0..blk.insts.len() {
       let ins: SInst = blk.insts[k];
       let kind: i32 = COLD_NONE;
       if (cold_call(ins)) {
@@ -626,10 +624,8 @@ pub function cold_positions(f: SFunc, size: boolean): i32[] {
         kind = COLD_BRANCH;
       }
       out = out.append(kind);
-      k = k + 1;
     }
     out = out.append(COLD_NONE);
-    bi = bi + 1;
   }
   return out;
 }
@@ -643,37 +639,27 @@ pub function cold_blocks(f: SFunc): boolean[] {
   let at: i32[] = block_positions(f);
   let latch: i32[] = __alloc_i32(n);
   let span: i32[] = __alloc_i32(n);
-  let i: i32 = 0;
-  while (i < n) {
+  for i in 0..n {
     latch = latch.with(i, 0 - 1);
     span = span.with(i, n + 1);
-    i = i + 1;
   }
-  let bi: i32 = 0;
-  while (bi < n) {
-    let which: i32 = 0;
-    while (which < 2) {
+  for bi in 0..n {
+    for which in 0..2 {
       let tgt: i32 = distinct_successor_position(at, f.blocks[bi].term, which);
       if (tgt >= 0 && tgt <= bi) {
-        let k: i32 = tgt;
-        while (k <= bi) {
+        for k in tgt..=bi {
           if (bi - tgt < span[k]) {
             span = span.with(k, bi - tgt);
             latch = latch.with(k, bi);
           }
-          k = k + 1;
         }
       }
-      which = which + 1;
     }
-    bi = bi + 1;
   }
   let idom: i32[] = dominators(f, at);
   let out: boolean[] = __alloc_bool(n);
-  i = 0;
-  while (i < n) {
+  for i in 0..n {
     out = out.with(i, latch[i] >= 0 && !dominates(idom, i, latch[i]));
-    i = i + 1;
   }
   return out;
 }
@@ -686,20 +672,16 @@ function dominators(f: SFunc, at: i32[]): i32[] {
   let entry: i32 = position_of(at, f.entry);
   let idom: i32[] = __alloc_i32(n);
   let po: i32[] = __alloc_i32(n);
-  let i: i32 = 0;
-  while (i < n) {
+  for i in 0..n {
     idom = idom.with(i, 0 - 1);
     po = po.with(i, 0 - 1);
-    i = i + 1;
   }
   if (entry < 0) {
     return idom;
   }
   let order: i32[] = postorder(f, at, entry);
-  i = 0;
-  while (i < order.len()) {
+  for i in 0..order.len() {
     po = po.with(order[i], i);
-    i = i + 1;
   }
   idom = idom.with(entry, entry);
   let changed: boolean = true;
@@ -878,16 +860,13 @@ function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
 function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], weight: i32[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.nvals);
   if (cold.len() == 0) {
-    let v: i32 = 0;
-    while (v < f.nvals) {
+    for v in 0..f.nvals {
       out = out.with(v, spans_call(cum, lo[v], hi[v]));
-      v = v + 1;
     }
     return out;
   }
   let cost: i32[] = cold_call_cost(f, cold);
-  let v: i32 = 0;
-  while (v < f.nvals) {
+  for v in 0..f.nvals {
     let h: boolean = spans_call(cum, lo[v], hi[v]);
     if (!h && hi[v] > lo[v] + 1 && lo[v] + 1 < cost.len()) {
       let b: i32 = hi[v];
@@ -897,7 +876,6 @@ function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], wei
       h = 2 * (cost[b] - cost[lo[v] + 1]) >= weight[v];
     }
     out = out.with(v, h);
-    v = v + 1;
   }
   return out;
 }
@@ -909,18 +887,14 @@ function cold_call_cost(f: SFunc, cold: i32[]): i32[] {
   let out: i32[] = [0];
   let total: i32 = 0;
   let pos: i32 = 0;
-  let bi: i32 = 0;
-  while (bi < f.blocks.len()) {
-    let k: i32 = 0;
-    while (k <= f.blocks[bi].insts.len()) {
+  for bi in 0..f.blocks.len() {
+    for k in 0..=f.blocks[bi].insts.len() {
       if (pos < cold.len() && cold[pos] == COLD_BRANCH) {
         total = total + bw[bi];
       }
       pos = pos + 1;
       out = out.append(total);
-      k = k + 1;
     }
-    bi = bi + 1;
   }
   return out;
 }
