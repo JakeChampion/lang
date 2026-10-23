@@ -1,0 +1,5 @@
+import "./second";
+
+pub function one(): i32 {
+    return second.two() - 1;
+}

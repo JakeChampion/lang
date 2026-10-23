@@ -32,7 +32,7 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 			files: map[string]string{
 				"main.fern": "import \"./helper\";\nfunction main(): i32 { return 0; }\n",
 			},
-			want: `checker_modload_run: cannot resolve import "./helper" in DIR/main.fern: DIR/helper.fern: not found`,
+			want: `checker_modload_run: DIR/main.fern:1:1: error[E086]: cannot resolve import "./helper": not found`,
 		},
 		{
 			name: "missing-from-imported-module",
@@ -40,7 +40,7 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 				"main.fern": "import \"./mid\";\nfunction main(): i32 { return mid.f(); }\n",
 				"mid.fern":  "import \"./gone\";\npub function f(): i32 { return 1; }\n",
 			},
-			want: `checker_modload_run: cannot resolve import "./gone" in DIR/mid.fern: DIR/gone.fern: not found`,
+			want: `checker_modload_run: DIR/mid.fern:1:1: error[E086]: cannot resolve import "./gone": not found`,
 		},
 		{
 			// A std/ tree is there, so the stdlib was given and a module
@@ -50,7 +50,7 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 				"main.fern":      "import \"std/nosuch\";\nfunction main(): i32 { return 0; }\n",
 				"std/other.fern": "pub function x(): i32 { return 1; }\n",
 			},
-			want: `checker_modload_run: DIR/main.fern:1:1: error: unknown stdlib module "std/nosuch"`,
+			want: `checker_modload_run: DIR/main.fern:1:1: error[E086]: unknown stdlib module "std/nosuch"`,
 		},
 		{
 			// An empty path is an import of no file, as any other is.
@@ -58,7 +58,7 @@ func TestSelfHostModloadUnresolvedImport(t *testing.T) {
 			files: map[string]string{
 				"main.fern": "import \"\";\nfunction main(): i32 { return 0; }\n",
 			},
-			want: `checker_modload_run: cannot resolve import "" in DIR/main.fern: DIR/.fern: not found`,
+			want: `checker_modload_run: DIR/main.fern:1:1: error[E086]: cannot resolve import "": not found`,
 		},
 		{
 			// A path the parser could not read is its diagnostic alone; the

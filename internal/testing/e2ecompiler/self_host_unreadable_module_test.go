@@ -26,7 +26,7 @@ func TestSelfHostUnreadableModuleIsReported(t *testing.T) {
 	write("bad.fern", "pub function f(): i32 { let s: string = \"\xb2\"; return 0; }\n")
 	badEntry := write("uses_bad.fern", "import \"./bad\";\nfunction main(): i32 { return bad.f(); }\n")
 	missEntry := write("uses_gone.fern", "import \"./gone\";\nfunction main(): i32 { return 0; }\n")
-	// The importer named is the module that wrote the import, not the entry.
+	// The import is reported in the module that wrote it, not the entry.
 	midModule := write("mid.fern", "import \"./gone\";\npub function f(): i32 { return 1; }\n")
 	transEntry := write("uses_mid.fern", "import \"./mid\";\nfunction main(): i32 { return mid.f(); }\n")
 	// Shadowing: mything.fern is present but unreadable and its literate
@@ -42,10 +42,10 @@ func TestSelfHostUnreadableModuleIsReported(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"invalid-utf8-module", []string{"-o", filepath.Join(dir, "a.out"), badEntry}, "fern: cannot resolve import \"./bad\" in " + badEntry + ": " + filepath.Join(dir, "bad.fern") + ": invalid UTF-8"},
-		{"missing-module", []string{"-o", filepath.Join(dir, "b.out"), missEntry}, "fern: cannot resolve import \"./gone\" in " + missEntry + ": " + filepath.Join(dir, "gone.fern") + ": not found"},
-		{"missing-module-check-transitive", []string{"-check", transEntry}, "fern: cannot resolve import \"./gone\" in " + midModule + ": " + filepath.Join(dir, "gone.fern") + ": not found"},
-		{"unreadable-candidate-is-not-shadowed", []string{"-o", filepath.Join(dir, "d.out"), shadowEntry}, "fern: cannot resolve import \"./mything\" in " + shadowEntry + ": " + filepath.Join(dir, "mything.fern") + ": invalid UTF-8"},
+		{"invalid-utf8-module", []string{"-o", filepath.Join(dir, "a.out"), badEntry}, badEntry + ":1:1: error[E086]: cannot resolve import \"./bad\": " + filepath.Join(dir, "bad.fern") + ": invalid UTF-8"},
+		{"missing-module", []string{"-o", filepath.Join(dir, "b.out"), missEntry}, missEntry + ":1:1: error[E086]: cannot resolve import \"./gone\": not found"},
+		{"missing-module-check-transitive", []string{"-check", transEntry}, midModule + ":1:1: error[E086]: cannot resolve import \"./gone\": not found"},
+		{"unreadable-candidate-is-not-shadowed", []string{"-o", filepath.Join(dir, "d.out"), shadowEntry}, shadowEntry + ":1:1: error[E086]: cannot resolve import \"./mything\": " + filepath.Join(dir, "mything.fern") + ": invalid UTF-8"},
 		{"missing-entry", []string{"-o", filepath.Join(dir, "c.out"), noEntry}, "fern: cannot read entry file " + noEntry + ": not found"},
 		{"missing-entry-check", []string{"-check", noEntry}, "fern: cannot read entry file " + noEntry + ": not found"},
 	}
@@ -58,8 +58,8 @@ func TestSelfHostUnreadableModuleIsReported(t *testing.T) {
 			if err == nil {
 				t.Fatalf("exit 0, want a failure")
 			}
-			if got := strings.TrimRight(stderr.String(), "\n"); got != c.want {
-				t.Errorf("stderr:\n%q\nwant:\n%q", got, c.want)
+			if got, _, _ := strings.Cut(stderr.String(), "\n"); got != c.want {
+				t.Errorf("stderr:\n%q\nwant its first line:\n%q", stderr.String(), c.want)
 			}
 		})
 	}
