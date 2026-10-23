@@ -1,9 +1,8 @@
 // std/simd — one numeric kernel, several evaluators (docs/SIMD-GENERIC-KERNELS.md).
 //
-// A kernel written against `Lanes` runs on a scalar `f64` or `f32` today and,
-// once the compiler's lane types land, on `f64x2` / `f32x4`; the same call
-// site computes its own first derivative on `Dual[T]` and about 106 bits on
-// `DoubleDouble[T]`. The operators come from std/num, so `a * b + c` is plain
+// A kernel written against `Lanes` runs on a scalar `f64` or `f32` and on the
+// lane types `f64x2` and `f32x4`; the same call site computes its own first
+// derivative on `Dual[T]` and about 106 bits on `DoubleDouble[T]`. The operators come from std/num, so `a * b + c` is plain
 // source on every one of these; a branch on a lane is written as `lt` and
 // `select`, which is what lets one body serve a vector.
 //
@@ -153,6 +152,180 @@ impl Lanes for f32 {
 }
 
 impl Math for f32 {}
+
+// ---- f64x2 and f32x4 ---------------------------------------------------------
+
+// The lane types keep the scalar mask contract: `lt` and `ne` give 1.0 in a
+// lane where the comparison holds and 0.0 where it does not, and `select`
+// takes the lanes of `a` where the mask is not 0.0. `lane` with an index past
+// the last lane reads the last lane. `ldexp` and every function of Math apply
+// the scalar function to each lane; a vector kernel needs integer lane
+// operations, which the lane types do not have yet.
+impl Lanes for f64x2 {
+  const LANES: i32 = 2;
+  const SPLIT: f64 = 134217729.0;
+  function splat(x: f64): f64x2 {
+    return __f64x2_splat(x);
+  }
+  function lane(self: f64x2, i: i32): f64 {
+    if (i == 0) {
+      return __f64x2_lane(self, 0);
+    }
+    return __f64x2_lane(self, 1);
+  }
+  function mul_add(self: f64x2, b: f64x2, c: f64x2): f64x2 {
+    return __f64x2_mul_add(self, b, c);
+  }
+  function sqrt(self: f64x2): f64x2 {
+    return __f64x2_sqrt(self);
+  }
+  function abs(self: f64x2): f64x2 {
+    return __f64x2_abs(self);
+  }
+  function floor(self: f64x2): f64x2 {
+    return __f64x2_floor(self);
+  }
+  function round(self: f64x2): f64x2 {
+    return __f64x2_round(self);
+  }
+  function min(self: f64x2, o: f64x2): f64x2 {
+    return __f64x2_min(self, o);
+  }
+  function max(self: f64x2, o: f64x2): f64x2 {
+    return __f64x2_max(self, o);
+  }
+  function lt(self: f64x2, o: f64x2): f64x2 {
+    return __f64x2_select(__f64x2_splat(1.0), __f64x2_splat(0.0), __f64x2_lt(self, o));
+  }
+  function ne(self: f64x2, o: f64x2): f64x2 {
+    return __f64x2_select(__f64x2_splat(1.0), __f64x2_splat(0.0), __f64x2_ne(self, o));
+  }
+  function select(m: f64x2, a: f64x2, b: f64x2): f64x2 {
+    return __f64x2_select(a, b, __f64x2_ne(m, __f64x2_splat(0.0)));
+  }
+  function ldexp(self: f64x2, k: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0) * pow2_f64(__f64x2_lane(k, 0)), __f64x2_lane(self, 1) * pow2_f64(__f64x2_lane(k, 1)));
+  }
+}
+
+impl Math for f64x2 {
+  function exp(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).exp(), __f64x2_lane(self, 1).exp());
+  }
+  function log(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).log(), __f64x2_lane(self, 1).log());
+  }
+  function sin(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).sin(), __f64x2_lane(self, 1).sin());
+  }
+  function cos(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).cos(), __f64x2_lane(self, 1).cos());
+  }
+  function tan(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).tan(), __f64x2_lane(self, 1).tan());
+  }
+  function tanh(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).tanh(), __f64x2_lane(self, 1).tanh());
+  }
+  function atan(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).atan(), __f64x2_lane(self, 1).atan());
+  }
+  function expm1(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).expm1(), __f64x2_lane(self, 1).expm1());
+  }
+  function log1p(self: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).log1p(), __f64x2_lane(self, 1).log1p());
+  }
+  function pow(self: f64x2, y: f64x2): f64x2 {
+    return __f64x2_of(__f64x2_lane(self, 0).pow(__f64x2_lane(y, 0)), __f64x2_lane(self, 1).pow(__f64x2_lane(y, 1)));
+  }
+}
+
+impl Lanes for f32x4 {
+  const LANES: i32 = 4;
+  const SPLIT: f64 = 4097.0;
+  function splat(x: f64): f32x4 {
+    return __f32x4_splat(x as f32);
+  }
+  function lane(self: f32x4, i: i32): f64 {
+    if (i == 0) {
+      return __f32x4_lane(self, 0) as f64;
+    }
+    if (i == 1) {
+      return __f32x4_lane(self, 1) as f64;
+    }
+    if (i == 2) {
+      return __f32x4_lane(self, 2) as f64;
+    }
+    return __f32x4_lane(self, 3) as f64;
+  }
+  function mul_add(self: f32x4, b: f32x4, c: f32x4): f32x4 {
+    return __f32x4_mul_add(self, b, c);
+  }
+  function sqrt(self: f32x4): f32x4 {
+    return __f32x4_sqrt(self);
+  }
+  function abs(self: f32x4): f32x4 {
+    return __f32x4_abs(self);
+  }
+  function floor(self: f32x4): f32x4 {
+    return __f32x4_floor(self);
+  }
+  function round(self: f32x4): f32x4 {
+    return __f32x4_round(self);
+  }
+  function min(self: f32x4, o: f32x4): f32x4 {
+    return __f32x4_min(self, o);
+  }
+  function max(self: f32x4, o: f32x4): f32x4 {
+    return __f32x4_max(self, o);
+  }
+  function lt(self: f32x4, o: f32x4): f32x4 {
+    return __f32x4_select(__f32x4_splat(1.0), __f32x4_splat(0.0), __f32x4_lt(self, o));
+  }
+  function ne(self: f32x4, o: f32x4): f32x4 {
+    return __f32x4_select(__f32x4_splat(1.0), __f32x4_splat(0.0), __f32x4_ne(self, o));
+  }
+  function select(m: f32x4, a: f32x4, b: f32x4): f32x4 {
+    return __f32x4_select(a, b, __f32x4_ne(m, __f32x4_splat(0.0)));
+  }
+  function ldexp(self: f32x4, k: f32x4): f32x4 {
+    return __f32x4_of((__f32x4_lane(self, 0) as f64 * pow2_f64(__f32x4_lane(k, 0) as f64)) as f32, (__f32x4_lane(self, 1) as f64 * pow2_f64(__f32x4_lane(k, 1) as f64)) as f32, (__f32x4_lane(self, 2) as f64 * pow2_f64(__f32x4_lane(k, 2) as f64)) as f32, (__f32x4_lane(self, 3) as f64 * pow2_f64(__f32x4_lane(k, 3) as f64)) as f32);
+  }
+}
+
+impl Math for f32x4 {
+  function exp(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).exp(), __f32x4_lane(self, 1).exp(), __f32x4_lane(self, 2).exp(), __f32x4_lane(self, 3).exp());
+  }
+  function log(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).log(), __f32x4_lane(self, 1).log(), __f32x4_lane(self, 2).log(), __f32x4_lane(self, 3).log());
+  }
+  function sin(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).sin(), __f32x4_lane(self, 1).sin(), __f32x4_lane(self, 2).sin(), __f32x4_lane(self, 3).sin());
+  }
+  function cos(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).cos(), __f32x4_lane(self, 1).cos(), __f32x4_lane(self, 2).cos(), __f32x4_lane(self, 3).cos());
+  }
+  function tan(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).tan(), __f32x4_lane(self, 1).tan(), __f32x4_lane(self, 2).tan(), __f32x4_lane(self, 3).tan());
+  }
+  function tanh(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).tanh(), __f32x4_lane(self, 1).tanh(), __f32x4_lane(self, 2).tanh(), __f32x4_lane(self, 3).tanh());
+  }
+  function atan(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).atan(), __f32x4_lane(self, 1).atan(), __f32x4_lane(self, 2).atan(), __f32x4_lane(self, 3).atan());
+  }
+  function expm1(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).expm1(), __f32x4_lane(self, 1).expm1(), __f32x4_lane(self, 2).expm1(), __f32x4_lane(self, 3).expm1());
+  }
+  function log1p(self: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).log1p(), __f32x4_lane(self, 1).log1p(), __f32x4_lane(self, 2).log1p(), __f32x4_lane(self, 3).log1p());
+  }
+  function pow(self: f32x4, y: f32x4): f32x4 {
+    return __f32x4_of(__f32x4_lane(self, 0).pow(__f32x4_lane(y, 0)), __f32x4_lane(self, 1).pow(__f32x4_lane(y, 1)), __f32x4_lane(self, 2).pow(__f32x4_lane(y, 2)), __f32x4_lane(self, 3).pow(__f32x4_lane(y, 3)));
+  }
+}
 
 // ---- generic helpers --------------------------------------------------------
 

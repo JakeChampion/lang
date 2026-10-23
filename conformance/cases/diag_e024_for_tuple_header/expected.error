@@ -1,0 +1,6 @@
+tuple destructure needs a tuple expression, got i32
+tuple destructure needs a tuple expression, got i32
+tuple has 2 elements, but 3 names given
+iterating a Map binds a (key, value) pair, but this pattern binds 3
+tuple destructure needs a tuple expression, got i32
+tuple destructure needs a tuple expression, got u8

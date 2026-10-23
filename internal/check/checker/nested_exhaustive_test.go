@@ -80,7 +80,7 @@ func TestNestedPatternExhaustiveness(t *testing.T) {
 }`,
 		"a field one arm leaves out": `function f(q: Pair2): i32 {
   match (q) {
-    Pair2 { y: true } => { return 1; },
+    Pair2 { y: true, .. } => { return 1; },
     Pair2 { x: true, y: false } => { return 2; },
     Pair2 { y: false, x: false } => { return 3; }
   }

@@ -76,10 +76,10 @@ function main(): i32 { return f(Named { id: 9, label: "abcd" }) * 10 + f(Named {
 		want: 142, // (4+10)*10 + 2
 	},
 	{
-		// Only binding a subset of fields is fine (the rest are ignored).
+		// Binding a subset of fields ends in `..`, which leaves the rest out.
 		name: "partial_bind",
 		src: `struct P { x: i32, y: i32, z: i32 }
-function f(p: P): i32 { match (p) { P { y } => { return y; } } return 0; }
+function f(p: P): i32 { match (p) { P { y, .. } => { return y; } } return 0; }
 function main(): i32 { return f(P { x: 1, y: 42, z: 3 }); }`,
 		want: 42,
 	},
@@ -146,7 +146,7 @@ function main(): i32 { return area(Point { x: 4, y: 4 }) + area(Point { x: 3, y:
 		// Partial rename: bind a single field under a fresh local.
 		name: "rename_partial",
 		src: `struct P { x: i32, y: i32, z: i32 }
-function f(p: P): i32 { match (p) { P { y: m } => { return m; } } return 0; }
+function f(p: P): i32 { match (p) { P { y: m, .. } => { return m; } } return 0; }
 function main(): i32 { return f(P { x: 1, y: 42, z: 3 }); }`,
 		want: 42,
 	},

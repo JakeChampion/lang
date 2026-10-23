@@ -1,0 +1,21 @@
+// A float cast converts its operand's result. It does not bind the type
+// argument of a generic call inside it, which the argument already fixes
+// (#12976).
+import "std/f64";
+
+function twice[T](x: T): T {
+  return x;
+}
+
+function widen(e: f32): f64 {
+  return twice(e) as f64;
+}
+
+function main(): i32 {
+  let third: f32 = 1.0 / 3.0;
+  print(widen(third).to_string());
+  let w: f64 = twice(third) as f64;
+  print(w.to_string());
+  print(((twice(0.1) as f32) as f64).to_string());
+  return 0;
+}

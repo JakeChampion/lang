@@ -1,0 +1,44 @@
+// server.fern — a small web server for a Netlify container deploy: an HTML
+// page, a JSON greeting, and a health check, on the port the Dockerfile
+// exposes.
+import "std/http";
+import "std/http/router";
+import "std/json";
+import "std/platform";
+import "std/serve";
+
+const PORT: i32 = 8080;
+
+@derive(json.Json)
+struct Greeting { message: string, served_at_ms: i64 }
+
+const PAGE: string = "<!doctype html>\n"
+  + "<html lang=\"en\">\n"
+  + "<head><meta charset=\"utf-8\"><title>Fern on Netlify</title></head>\n"
+  + "<body>\n"
+  + "<h1>Hello from Fern</h1>\n"
+  + "<p>This page comes from a static Fern binary in a container on Netlify.</p>\n"
+  + "<p>Try <a href=\"/api/hello?name=Netlify\">/api/hello?name=Netlify</a>.</p>\n"
+  + "</body>\n"
+  + "</html>\n";
+
+pub function routes[P: platform.Platform](): router.Router[P] {
+  return router.new[P]().get("/{$}", page).get("/api/hello", hello).get("/healthz", health);
+}
+
+function page[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(http.html(PAGE));
+}
+
+function hello[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] {
+  let name: string = req.query("name").unwrap_or("world");
+  return Ok(http.json_of(Greeting { message: "Hello, " + name + "!", served_at_ms: plat.now_ms() }));
+}
+
+function health[P: platform.Platform](req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] {
+  return Ok(http.ok("ok"));
+}
+
+function main(): i32 {
+  return serve.run_shutdown(PORT, serve.config(), routes[platform.Host]().handler(), (reason: string): void => eprint("server: stopped, " + reason));
+}

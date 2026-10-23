@@ -1,0 +1,72 @@
+// A lane type takes methods and associated functions from a trait impl, and
+// a generic function takes a lane type as its type argument, written or
+// inferred from a lane argument.
+import "std/f64";
+import "std/num" as num;
+
+trait Scale {
+  function scale(self: Self, k: f64): Self;
+  function unit(): Self;
+  function first(self: Self): f64;
+  function plus(self: Self, o: Self): Self;
+}
+
+impl Scale for f64x2 {
+  function scale(self: f64x2, k: f64): f64x2 {
+    return self * __f64x2_splat(k);
+  }
+  function unit(): f64x2 {
+    return __f64x2_splat(1.0);
+  }
+  function first(self: f64x2): f64 {
+    return __f64x2_lane(self, 0);
+  }
+  // No f64 value in the body: the float class holds only lane values.
+  function plus(self: f64x2, o: f64x2): f64x2 {
+    return self + o;
+  }
+}
+
+impl Scale for f32x4 {
+  function scale(self: f32x4, k: f64): f32x4 {
+    return self * __f32x4_splat(k as f32);
+  }
+  function unit(): f32x4 {
+    return __f32x4_splat(1.0);
+  }
+  function first(self: f32x4): f64 {
+    return __f32x4_lane(self, 0) as f64;
+  }
+  function plus(self: f32x4, o: f32x4): f32x4 {
+    return self + o;
+  }
+}
+
+// A method with no lane operation of its own.
+function twice[T: Scale](x: T): T {
+  return x.scale(2.0);
+}
+
+function shifted[T: Scale + num.Add + num.Neg](x: T): T {
+  return x.add(T.unit()).neg();
+}
+
+function show2(tag: string, v: f64x2): void {
+  print(tag + " " + __f64x2_lane(v, 0).to_string() + " " + __f64x2_lane(v, 1).to_string());
+}
+
+function main(): i32 {
+  let v: f64x2 = __f64x2_of(1.5, -2.0);
+  show2("scale", v.scale(3.0));
+  show2("unit", f64x2.unit());
+  show2("twice", twice[f64x2](v));
+  show2("inferred", twice(v));
+  show2("shifted", shifted(v));
+  print("first " + v.first().to_string());
+  show2("plus", v.plus(v.plus(v)));
+  print("plus f32x4 " + __f32x4_splat(0.5).plus(f32x4.unit()).first().to_string());
+  let w: f32x4 = shifted(twice(__f32x4_of(0.25, 1.0, -1.0, 3.0)));
+  print("f32x4 " + w.first().to_string() + " " + (__f32x4_lane(w, 3) as f64).to_string());
+  print("zero " + __f64x2_lane(f64x2.zero(), 1).to_string() + " one " + (__f32x4_lane(f32x4.one(), 2) as f64).to_string());
+  return 0;
+}
