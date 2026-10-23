@@ -1448,6 +1448,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
         body: rewrite_block(f.body, RewriteCtx { ...ctx, locals: astwalk.append_bound_name(loop_locals, f.var_name) }),
         label: f.label,
         line: f.line,
+        col: f.col,
       };
     },
     ast.StmtMatch(m) => {

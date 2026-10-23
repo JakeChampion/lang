@@ -659,8 +659,9 @@ pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, o
 // StmtFor models `for VAR in EXPR { body }`, binding `var_name` to each
 // element in turn. Annotation replaces a loop over a core/iter Iterator with
 // its `next()` loop (parser.iterator_loop), so what reaches the lowering walks
-// an array, a string or a Map.
-pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string, line: i32 }
+// an array, a string or a Map. `col` places a tuple header's `(` (`for (a, b)
+// in m`), and is 0 for any other header.
+pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string, line: i32, col: i32 }
 
 // StmtBreak / StmtContinue model `break;` and `continue;`. The
 // tag fields are placeholder payload — variants need a shape
