@@ -1,0 +1,5 @@
+import "./first";
+
+pub function two(): i32 {
+    return 2;
+}

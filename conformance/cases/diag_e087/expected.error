@@ -1,0 +1,1 @@
+lib.hidden is not exported (declare it as `pub function hidden …` to make it accessible from other modules)

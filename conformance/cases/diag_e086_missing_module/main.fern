@@ -1,0 +1,6 @@
+// Pins E086 for a relative import with no module file beside it.
+import "./missing";
+
+function main(): i32 {
+    return 0;
+}

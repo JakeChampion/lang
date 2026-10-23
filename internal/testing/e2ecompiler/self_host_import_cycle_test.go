@@ -11,7 +11,7 @@ import (
 )
 
 // An import cycle between a program's own modules is refused with native's
-// diagnostic, naming the module the walk reached again (#11152). A diamond
+// E086, at the import that leads back to a module still being loaded (#11152). A diamond
 // reaches one module twice without a cycle and must still build; it imports
 // std/string as well, whose stdlib imports may cycle among themselves.
 func TestSelfHostImportCycleX86_64(t *testing.T) {
@@ -24,13 +24,17 @@ func TestSelfHostImportCycleX86_64(t *testing.T) {
 			"a.fern":    "import \"./b\";\npub function fa(): i32 { return 1; }\npub function viab(): i32 { return b.fb(); }\n",
 			"b.fern":    "import \"./a\";\npub function fb(): i32 { return a.fa() + 1; }\n",
 			"main.fern": "import \"./a\";\nfunction main(): i32 { return a.viab(); }\n",
-		}, "import cycle detected including %DIR%/a.fern"},
+		}, "%DIR%/b.fern:1:1: error[E086]: import \"./a\" closes an import cycle"},
 		{"three-module cycle", map[string]string{
 			"a.fern":    "import \"./b\";\npub function fa(): i32 { return b.fb(); }\n",
 			"b.fern":    "import \"./c\";\npub function fb(): i32 { return c.fc(); }\n",
 			"c.fern":    "import \"./a\";\npub function fc(): i32 { return 3; }\npub function back(): i32 { return a.fa(); }\n",
 			"main.fern": "import \"./a\";\nfunction main(): i32 { return a.fa(); }\n",
-		}, "import cycle detected including %DIR%/a.fern"},
+		}, "%DIR%/c.fern:1:1: error[E086]: import \"./a\" closes an import cycle"},
+		{"entry in the cycle", map[string]string{
+			"a.fern":    "import \"./main\";\npub function fa(): i32 { return 1; }\n",
+			"main.fern": "import \"./a\";\nfunction main(): i32 { return a.fa(); }\n",
+		}, "%DIR%/a.fern:1:1: error[E086]: import \"./main\" closes an import cycle"},
 		{"diamond", map[string]string{
 			"left.fern":  "import \"./base\";\npub function l(): i32 { return base.b() + 1; }\n",
 			"right.fern": "import \"./base\";\npub function r(): i32 { return base.b() + 2; }\n",

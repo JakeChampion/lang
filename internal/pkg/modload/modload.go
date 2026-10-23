@@ -391,7 +391,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		if strings.HasPrefix(path, stdlibPrefix) {
 			return nil
 		}
-		return fmt.Errorf("import cycle detected including %s", path)
+		return errImportCycle
 	}
 	stack[path] = true
 	defer delete(stack, path)
@@ -446,7 +446,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 			return err
 		}
 		if err := loadRecursive(childPaths[i], loaded, stack, srcs, overrides, lit, mans); err != nil {
-			return err
+			return importFailure(path, imp.P, imp.Path, err)
 		}
 	}
 	// `pub use "path".{…};` re-export targets are loaded like imports so
@@ -463,7 +463,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 			return err
 		}
 		if err := loadRecursive(pubUsePaths[i], loaded, stack, srcs, overrides, lit, mans); err != nil {
-			return err
+			return importFailure(path, pu.P, pu.Path, err)
 		}
 	}
 
@@ -1047,7 +1047,26 @@ func checkStdlibImport(path string, pos ast.Position, importPath string) error {
 	if _, ok := stdlib.Resolve(importPath); ok {
 		return nil
 	}
-	return diag.Errors{&importError{path: path, pos: pos, msg: fmt.Sprintf("unknown stdlib module %q", importPath)}}
+	return diag.Errors{&importError{path: path, pos: pos, code: "E086", msg: fmt.Sprintf("unknown stdlib module %q", importPath)}}
+}
+
+// errImportCycle is loadRecursive's report that a module is already being
+// loaded further up the stack; importFailure positions it at the import that
+// closes the cycle.
+var errImportCycle = errors.New("import cycle")
+
+// importFailure positions the failure to load the module that import
+// `importPath`, written in `path` at `pos`, names: a module that is not there,
+// or one whose import closes a cycle, is E086 at that import. Any other
+// failure, including one a deeper import already positioned, passes through.
+func importFailure(path string, pos ast.Position, importPath string, err error) error {
+	switch {
+	case errors.Is(err, errImportCycle):
+		return &importError{path: path, pos: pos, code: "E086", msg: fmt.Sprintf("import %q closes an import cycle", importPath)}
+	case os.IsNotExist(underlyingErr(err)):
+		return &importError{path: path, pos: pos, code: "E086", msg: fmt.Sprintf("cannot resolve import %q: not found", importPath)}
+	}
+	return err
 }
 
 // stdlibPrefix tags a path as referring to the embedded stdlib
@@ -1803,7 +1822,7 @@ type rewriter struct {
 
 // refuse records an error at pos in the module being rewritten.
 func (r *rewriter) refuse(pos ast.Position, format string, args ...any) {
-	r.errs = append(r.errs, &importError{path: r.modPath, pos: pos, msg: fmt.Sprintf(format, args...)})
+	r.errs = append(r.errs, &importError{path: r.modPath, pos: pos, code: "E087", msg: fmt.Sprintf(format, args...)})
 }
 
 // packageScopedOK reports whether `name` is a `pub(package)` decl of

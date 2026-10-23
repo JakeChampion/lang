@@ -537,14 +537,18 @@ pub function store_dir(hash: string): Option[string] {
   return Some(root + "/" + hr.hex + "/");
 }
 
-// unresolved_import is the diagnostic for an import that resolves to no
-// module file: the import as written, the file that wrote it, and the first
-// candidate looked for with why it failed ("" means it is not there).
-pub function unresolved_import(path: string, importer: string, tried: string, reason: string): string {
+// unresolved_import is E086's message for an import that resolves to no
+// module file: "not found", or the file `tried` and why it failed.
+pub function unresolved_import(path: string, tried: string, reason: string): string {
   if (reason.len() == 0) {
-    reason = "not found";
+    return "cannot resolve import \"" + path + "\": not found";
   }
-  return "cannot resolve import \"" + path + "\" in " + importer + ": " + tried + ": " + reason;
+  return "cannot resolve import \"" + path + "\": " + tried + ": " + reason;
+}
+
+// import_cycle_message is E086's message for the import that closes a cycle.
+pub function import_cycle_message(path: string): string {
+  return "import \"" + path + "\" closes an import cycle";
 }
 
 // unknown_stdlib_module is the message for a `std/` or `core/` import that
@@ -669,18 +673,19 @@ function vendored_stdlib_dir(ov: Overlay, dir: string): string {
   return dir;
 }
 
-// missing_line is load_graph's report of import `imp`, written in `importer`
-// and resolved against `base`, that read as `r` rather than as a module, or ""
-// when stdlib_not_given expects it to be absent. A stdlib module that is not
-// there is reported at the import, as util.pos_str places it among `files`.
-function missing_line(ov: Overlay, imp: parser.Import, base: string, importer: string, r: Resolved, entry_path: string, files: string[]): string {
-  if (r.err.len() > 0 || !util.is_stdlib_path(imp.path)) {
-    return unresolved_import(imp.path, importer, r.err_path, r.err);
+// missing_line is load_graph's E086 for import `imp`, resolved against `base`,
+// that read as `r` rather than as a module, or "" when stdlib_not_given
+// expects it to be absent. It is reported at the import, as util.pos_str
+// places it among `files`.
+function missing_line(ov: Overlay, imp: parser.Import, base: string, r: Resolved, entry_path: string, files: string[]): string {
+  let msg: string = unresolved_import(imp.path, r.err_path, r.err);
+  if (r.err.len() == 0 && util.is_stdlib_path(imp.path)) {
+    if (stdlib_not_given(ov, base, imp.path)) {
+      return "";
+    }
+    msg = unknown_stdlib_module(imp.path);
   }
-  if (stdlib_not_given(ov, base, imp.path)) {
-    return "";
-  }
-  return util.pos_str(entry_path, files, imp.line, imp.col) + ": error: " + unknown_stdlib_module(imp.path);
+  return util.pos_str(entry_path, files, imp.line, imp.col) + ": error[E086]: " + msg;
 }
 
 // load_graph walks the entry module's import graph breadth-first, reading and
@@ -706,18 +711,15 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
   let idents: string[] = [];
   let imps: parser.Import[] = [];
   let dirs: string[] = [];
-  let importers: string[] = [];
   for imp in entry.imports {
     imps = imps.append(imp);
     dirs = dirs.append(edir);
-    importers = importers.append(entry_path);
   }
   let qi: i32 = 0;
   while (qi < imps.len()) {
     let imp: parser.Import = imps[qi];
     let path: string = imp.path;
     let dir: string = dirs[qi];
-    let importer: string = importers[qi];
     qi = qi + 1;
     let key: string = import_key(ov, path, dir, sroot);
     if (util.has_str(keys, key)) {
@@ -728,7 +730,7 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
     let r: Resolved = resolve_module(ov, base, path);
     if (!r.ok) {
       idents = idents.append("");
-      let line: string = missing_line(ov, imp, base, importer, r, entry_path, files);
+      let line: string = missing_line(ov, imp, base, r, entry_path, files);
       if (line.len() > 0) {
         missing = missing.append(line);
       }
@@ -759,7 +761,6 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
     for mi in m.imports {
       imps = imps.append(mi);
       dirs = dirs.append(mdir);
-      importers = importers.append(r.shown);
     }
   }
   let stamped: flatten.LoadedModule[] = [];

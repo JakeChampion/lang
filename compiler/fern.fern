@@ -1409,11 +1409,10 @@ function var_range(r: elf.VarRanges, f: string[], lo: i32, hi: i32): elf.VarRang
 // directory of the module that imported it. A dependency's `import "./util"`
 // names a file beside the DEPENDENCY, and a dependency's own dependencies are
 // declared in the dependency's manifest — so an import cannot be resolved
-// without knowing where it was written (#6756). `importers` names the file
-// that wrote each path and `lines` / `cols` where in it, for the diagnostic
-// when it resolves to nothing. `unrooted` is the first `std/…` or `core/…`
+// without knowing where it was written (#6756). `lines` / `cols` place each
+// import, for the diagnostic when it resolves to nothing. `unrooted` is the first `std/…` or `core/…`
 // import met with no stdlib root to load it from.
-struct ImportQueue { paths: string[], dirs: string[], importers: string[], lines: i32[], cols: i32[], stdlibs: boolean[], unrooted: string }
+struct ImportQueue { paths: string[], dirs: string[], lines: i32[], cols: i32[], stdlibs: boolean[], unrooted: string }
 
 // queued reports whether this import path has already been queued FROM this
 // same directory.
@@ -1430,11 +1429,10 @@ function queued(paths: string[], dirs: string[], ip: string, from_dir: string): 
 
 // queue_imports appends each of mod's loadable import paths, deduped by path
 // AND directory, each tagged with `from_dir` — mod's own directory, which is
-// what its imports resolve against — and with `importer`, mod's file.
-function queue_imports(q: ImportQueue, mod: parser.Module, importer: string, from_dir: string, root: string, deps: string[], parent_stdlib: boolean): ImportQueue {
+// what its imports resolve against.
+function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, root: string, deps: string[], parent_stdlib: boolean): ImportQueue {
   let paths: string[] = q.paths;
   let dirs: string[] = q.dirs;
-  let importers: string[] = q.importers;
   let lines: i32[] = q.lines;
   let cols: i32[] = q.cols;
   let stdlibs: boolean[] = q.stdlibs;
@@ -1453,14 +1451,13 @@ function queue_imports(q: ImportQueue, mod: parser.Module, importer: string, fro
     if (util.should_load(ip, root, deps) && !queued(paths, dirs, ip, from_dir)) {
       paths = paths.append(ip);
       dirs = dirs.append(from_dir + "");
-      importers = importers.append(importer + "");
       lines = lines.append(mod.imports[i].line);
       cols = cols.append(mod.imports[i].col);
       stdlibs = stdlibs.append(util.is_stdlib_path(ip) || parent_stdlib && !util.has_str(deps, util.dep_name(ip)));
     }
     i = i + 1;
   }
-  return ImportQueue { paths: paths, dirs: dirs, importers: importers, lines: lines, cols: cols, stdlibs: stdlibs, unrooted: unrooted };
+  return ImportQueue { paths: paths, dirs: dirs, lines: lines, cols: cols, stdlibs: stdlibs, unrooted: unrooted };
 }
 
 // is_flag is true for an argument that begins with '-'. A bare `-` is not a
@@ -2825,8 +2822,9 @@ function is_vendorable(name: string): boolean {
 // order, which is the order of their line bases (util.pos_str); `maps` and
 // `srcs` are each module's line map and text, the entry's first
 // (util.doc_diag). `err` is the line `-check` prints when the program could
-// not be loaded, and is empty when it was; `err_line` / `err_col` place it at
-// the import that caused it, and are 0 when it has no position.
+// not be loaded, and is empty when it was; `err_code` is its code, and
+// `err_line` / `err_col` place it at the import that caused it. Both are empty
+// when it has none.
 struct Bundle {
   entry: parser.Module,
   entry_ident: string,
@@ -2838,6 +2836,7 @@ struct Bundle {
   maps: util.LineMap[],
   srcs: string[],
   err: string,
+  err_code: string,
   err_line: i32,
   err_col: i32,
 }
@@ -3032,14 +3031,14 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let srcs: string[] = [s.srcs[0]];
   let bad_manifest: string = manifest_error(gov.dir, gov.man);
   if (bad_manifest.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: "fern: " + bad_manifest, err_line: 0, err_col: 0 };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: "fern: " + bad_manifest, err_code: "", err_line: 0, err_col: 0 };
   }
   let missing: string = emitforms.http_entry_refused(entry_mod, target, entry_display(entry_path));
   if (missing.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: missing, err_line: 0, err_col: 0 };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, srcs: srcs, err: missing, err_code: "", err_line: 0, err_col: 0 };
   }
 
-  let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], importers: [], lines: [], cols: [], stdlibs: [], unrooted: "" }, entry_mod, entry_path, dir_slash, root, deps, false);
+  let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], lines: [], cols: [], stdlibs: [], unrooted: "" }, entry_mod, dir_slash, root, deps, false);
   let loaded: flatten.LoadedModule[] = [];
   let files: string[] = [];
   let done_paths: string[] = [];
@@ -3047,7 +3046,6 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   while (j < q.paths.len()) {
     let ipath: string = q.paths[j];
     let from: string = q.dirs[j];
-    let importer: string = q.importers[j];
     let at_line: i32 = q.lines[j];
     let at_col: i32 = q.cols[j];
     let is_stdlib: boolean = q.stdlibs[j];
@@ -3067,8 +3065,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       done_paths = done_paths.append(mpath);
       let rm: modloader.Resolved = read_bundle_module(s, mpath, from, ipath);
       if (!rm.ok) {
-        let (err, err_line, err_col) = unloaded_error(rm, ipath, importer, mpath, at_line, at_col);
-        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: err, err_line: err_line, err_col: err_col };
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: unloaded_error(rm, ipath), err_code: "E086", err_line: at_line, err_col: at_col };
       }
       // A module's own imports resolve beside its file — a module in lib/
       // writing `import "./gnu"` means lib/gnu.fern — wherever it was found.
@@ -3096,26 +3093,25 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       let module_gov: Governed = governing_manifest(mdir);
       let bad_module_manifest: string = manifest_error(module_gov.dir, module_gov.man);
       if (bad_module_manifest.len() > 0) {
-        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + bad_module_manifest, err_line: 0, err_col: 0 };
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + bad_module_manifest, err_code: "", err_line: 0, err_col: 0 };
       }
       module_packages = module_packages.append(module_package_at(mdir, module_gov, gov.dir, root_package, is_stdlib));
       grant_mans = pkggrants.with_manifest(grant_mans, module_gov.dir, module_gov.man);
-      q = queue_imports(q, m, shown, mdir, root, fern_toml.dep_names(module_gov.man), is_stdlib);
+      q = queue_imports(q, m, mdir, root, fern_toml.dep_names(module_gov.man), is_stdlib);
     }
   }
   if (q.unrooted.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file", err_line: 0, err_col: 0 };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file", err_code: "", err_line: 0, err_col: 0 };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
-  let import_err: string = bundle_import_error(entry_r, loaded, root, files);
-  if (import_err.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: import_err, err_line: 0, err_col: 0 };
+  if let Some(imp) = flatten.import_cycle(entry_r, flatten.module_ident(entry_path), loaded, root) {
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: modloader.import_cycle_message(imp.path), err_code: "E086", err_line: imp.line, err_col: imp.col };
   }
   let prefixes: string[] = flatten.assign_prefixes(loaded);
   let checked: pkggrants.Checked = pkggrants.checked(grant_mans, root_package, module_packages, prefixes);
   pkgs = checked.pkgs;
   if (checked.err.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + checked.err, err_line: 0, err_col: 0 };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "fern: " + checked.err, err_code: "", err_line: 0, err_col: 0 };
   }
   let merged: parser.Module = flatten.bundle_with_prefixes(entry_r, loaded, target, prefixes);
   // Fill omitted trailing args from default parameter values up front, so the
@@ -3125,31 +3121,16 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   // settle against until the bundle exists; parse_module resolved the
   // same-module ones already, and the pass is idempotent.
   merged = parser.resolve_variant_fields_module(merged);
-  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "", err_line: 0, err_col: 0 };
+  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, srcs: srcs, err: "", err_code: "", err_line: 0, err_col: 0 };
 }
 
-// unloaded_error is load_bundle's refusal of import `ipath`, written in
-// `importer` at `line`:`col`, that read as `rm` from `mpath`: a stdlib module
-// that is not there is refused at the import, anything else on one line naming
-// the file looked for.
-function unloaded_error(rm: modloader.Resolved, ipath: string, importer: string, mpath: string, line: i32, col: i32): (string, i32, i32) {
+// unloaded_error is load_bundle's E086 for import `ipath`, which read as `rm`
+// rather than as a module; it is reported at the import.
+function unloaded_error(rm: modloader.Resolved, ipath: string): string {
   if (rm.err.len() == 0 && util.is_stdlib_path(ipath)) {
-    return (modloader.unknown_stdlib_module(ipath), line, col);
+    return modloader.unknown_stdlib_module(ipath);
   }
-  let bad: string = mpath;
-  if (rm.err.len() > 0) {
-    bad = rm.err_path;
-  }
-  return ("fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err), 0, 0);
-}
-
-// Check the completed import graph before flattening or checking its code.
-function bundle_import_error(entry: parser.Module, loaded: flatten.LoadedModule[], root: string, files: string[]): string {
-  let cycle: i32 = flatten.import_cycle(entry, loaded, root);
-  if (cycle >= 0) {
-    return "fern: import cycle detected including " + files[cycle];
-  }
-  return "";
+  return modloader.unresolved_import(ipath, rm.err_path, rm.err);
 }
 
 // Loaded is a program read for checking or building, and the findings that
@@ -3172,7 +3153,7 @@ function load_checked(s: Sources, root: string, target: string, embed_dir: strin
   let b: Bundle = load_bundle(s, entry_mod, root, target);
   if (b.err.len() > 0) {
     let f: Finding = refusal(b.err);
-    return Loaded { b: b, refused: [Finding { ...f, diag: util.Diag { ...f.diag, line: b.err_line, col: b.err_col } }] };
+    return Loaded { b: b, refused: [Finding { ...f, diag: util.Diag { ...f.diag, code: b.err_code, line: b.err_line, col: b.err_col } }] };
   }
   let (folded, fold_errs) = fold_embedded_assets(b, embed_dir);
   if (fold_errs.len() > 0) {
@@ -3246,7 +3227,7 @@ function load_source(entry_path: string, src: string, open: modloader.Buffers, r
   let (s, err) = entry_sources(entry_path, src);
   if (err.len() > 0) {
     let none: parser.Module = parser.parse_module(lexer.tokenize(""));
-    return Loaded { b: Bundle { entry: none, entry_ident: "", root: root, loaded: [], merged: none, pkgs: [], files: [], maps: [], srcs: [], err: err, err_line: 0, err_col: 0 }, refused: [refusal(err)] };
+    return Loaded { b: Bundle { entry: none, entry_ident: "", root: root, loaded: [], merged: none, pkgs: [], files: [], maps: [], srcs: [], err: err, err_code: "", err_line: 0, err_col: 0 }, refused: [refusal(err)] };
   }
   return load_checked(Sources { ...s, open: open }, root, target, embed_dir);
 }
