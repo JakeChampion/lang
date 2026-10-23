@@ -83,9 +83,11 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 	t.Logf("stage 1: self-hosted arm64 compiler asm = %d bytes", len(stage1Asm))
 	mmcArm64 := buildBinArm64(t, armgcc, dir, "mmc_arm64_stage2", string(stage1Asm))
 
-	// The lexer now imports std/unicode and std/utf8 for source admission.
-	// Both generations need the same standard library root. The other cases
-	// also cover transitive imports, floats, and process and string helpers.
+	// A span, not a sample. `lexer.fern` is a compiler module (cheap, and the
+	// shape gen1 itself is made of) that imports std/utf8; the three test
+	// suites are the survivors of the deleted test's four inputs and carry
+	// stdlib transitive imports, floats and process/string helpers between
+	// them.
 	cases := []struct {
 		name    string
 		src     string

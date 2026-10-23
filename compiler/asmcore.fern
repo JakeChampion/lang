@@ -10971,10 +10971,10 @@ pub function parse_errors(mod: parser.Module): util.Diag[] {
   return ordered;
 }
 
-// parse_errors_before_check is for callers that run the checker next.
-// The checker reports E061 with the block's void type.
-// Destination errors can thus report that type too.
-// Emit paths without the checker retain the parser's E061.
+// parse_errors_before_check is parse_errors for a caller that runs the checker
+// next. A value-less block parses correctly, and the checker reports its E061
+// with the block's void type, so an error at its destination can name that
+// type too; a path that emits without the checker keeps the parser's E061.
 pub function parse_errors_before_check(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for d in parse_errors(mod) {
