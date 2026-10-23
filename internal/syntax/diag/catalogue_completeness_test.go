@@ -18,9 +18,14 @@ import (
 // comment or message string is never picked up.
 var emittedCodeRE = regexp.MustCompile(`(?:err\w*Code\(|ErrCode:\s*|\bCode:\s*)[^"]*"([EP][0-9]{3})"`)
 
+// fernEmittedCodeRE is the same for the self-host compiler's sources, which
+// pass a code as a call's first argument (`dg_at("E036", …)`) or set it as a
+// field (`code: "E087"`).
+var fernEmittedCodeRE = regexp.MustCompile(`(?:\(|:)\s*"([EP][0-9]{3})"`)
+
 // TestEmittedCodesHaveExplanations is the catalogue-completeness gate
-// (#4413 Rec §4): every diagnostic code the checker / parser / modload
-// actually EMITS must have a `fern -explain`-able explanation under
+// (#4413 Rec §4): every diagnostic code the checker / parser / modload, and
+// the self-host compiler, actually EMIT must have a `fern -explain`-able explanation under
 // internal/syntax/diag/explanations/, so `fern -explain <code>` never bottoms out
 // on "unknown code" for a diagnostic a user can hit. It scrapes the
 // emission sites from source (rather than a hand-maintained list, which
@@ -58,6 +63,23 @@ func TestEmittedCodesHaveExplanations(t *testing.T) {
 				if _, seen := emitted[m[1]]; !seen {
 					emitted[m[1]] = f
 				}
+			}
+		}
+	}
+	// The self-host compiler is what ships, so its codes are held to the same
+	// rule.
+	fern, err := filepath.Glob("../../../compiler/*.fern")
+	if err != nil || len(fern) == 0 {
+		t.Fatalf("glob compiler/*.fern: %v (%d files)", err, len(fern))
+	}
+	for _, f := range fern {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for _, m := range fernEmittedCodeRE.FindAllStringSubmatch(string(b), -1) {
+			if _, seen := emitted[m[1]]; !seen {
+				emitted[m[1]] = f
 			}
 		}
 	}

@@ -1,0 +1,7 @@
+function hidden(): i32 {
+    return 1;
+}
+
+pub function shown(): i32 {
+    return 2;
+}
