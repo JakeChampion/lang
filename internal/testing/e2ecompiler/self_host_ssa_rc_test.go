@@ -179,7 +179,7 @@ func physicalRCSource(setup, modes string) string {
 	source = strings.Replace(source, `let src: string = "function produce`, `let src: string = "@noinline function produce`, 1)
 	return `import "./ssarc"; import "./suspend"; import "./ssasem"; import "./ssaunits"; import "./ssa";
 import "./typeinfo"; import "./semrecords"; import "./parser"; import "./lexer"; import "./irtables";
-import "./ir"; import "./util";
+import "./ir"; import "./util"; import "./ssadeps";
 import "./ircore"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./irverifyrc"; import "./physicalbody";
 import "./semlower";
 ` + source
@@ -1301,7 +1301,8 @@ function main(): i32 {
     // a carried one is held on every path into a block and spent or freed
     // before the function leaves.
     let tok = token_func(false);
-    let tp = ssaunits.with_reuse(tok, ssaunits.plan(tok, [1], ssaunits.no_view()));
+    let tplan = ssaunits.plan(tok, [1], ssaunits.no_view());
+    let tp = ssaunits.with_reuse(tok, tplan, ssaunits.step_index(tplan), ssadeps.dominates(tok.graph));
     if (!tp.ok) { eprint(tp.why); return 250; }
     let tpr: ssaunits.ReusePairs = tp.reuse.pairs[0];
     if (tpr.tokens[2] != 1 || tpr.builds[4] != 1) { eprint("no in-block pairing planned"); return 251; }
@@ -1312,7 +1313,8 @@ function main(): i32 {
     if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, selfs: tpr.selfs.with(5, 3) }, "a construction reads the box it builds in")) { return 256; }
     if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, builds: tpr.builds.with(4, 0 - 1) }, "a token taken in a block is spent by no construction in it")) { return 257; }
     let split = token_func(true);
-    let sp = ssaunits.with_reuse(split, ssaunits.plan(split, [1], ssaunits.no_view()));
+    let splan = ssaunits.plan(split, [1], ssaunits.no_view());
+    let sp = ssaunits.with_reuse(split, splan, ssaunits.step_index(splan), ssadeps.dominates(split.graph));
     if (!sp.ok) { eprint(sp.why); return 258; }
     let sc: ssaunits.Carry = sp.reuse.carry;
     if (sc.to.len() != 1 || sc.from.len() != 1 || sc.held[0] != 1 || sp.reuse.pairs[1].selfs[0] != 1) { eprint("no carry planned"); return 259; }

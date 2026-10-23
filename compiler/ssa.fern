@@ -1153,20 +1153,22 @@ pub function lane_values(f: SFunc): boolean[] {
   return lane_carriers(f, lanes);
 }
 
-// lane_results marks the lane ops' results, empty when there are none.
+// lane_results marks the lane ops' results, empty when there are none. The
+// kind, the call mark and the name's first byte rule out almost every
+// instruction before lane_result is asked.
 function lane_results(f: SFunc): boolean[] {
-  let lanes: boolean[] = __alloc_bool(f.nvals);
-  let any: boolean = false;
+  let lanes: boolean[] = [];
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.result >= 0 && ins.result < f.nvals && lane_result(ins)) {
+      let k: i32 = ins.kind_tag;
+      let maybe: boolean = k == 6 || k == 11 && ins.imm == 6 || (k == 9 || k == 10 || k == 61 || k == 62) && ins.str.len() > 1 && ins.str[0] == b'v';
+      if (maybe && ins.result >= 0 && ins.result < f.nvals && lane_result(ins)) {
+        if (lanes.len() == 0) {
+          lanes = __alloc_bool(f.nvals);
+        }
         lanes = lanes.with(ins.result, true);
-        any = true;
       }
     }
-  }
-  if (!any) {
-    return [];
   }
   return lanes;
 }
