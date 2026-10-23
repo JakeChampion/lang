@@ -213,10 +213,18 @@ separate change to the contract of `Math`.
   so `impl Math for f64 {}` is the whole binding); `Dual` applies the chain
   rule to the inner type's functions; `DoubleDouble` reduces the argument
   and sums a series at its own precision, seeded by the inner type's own
-  result where a Newton step doubles it (log, atan, sqrt). The lane types
-  implement `Math` with the bit-level kernels ported from `std/f64`
-  (slice 5); writing those against `Lanes` before a lane type exists would
-  leave them untested on the only type they are for.
+  result where a Newton step doubles it (log, atan, sqrt).
+- **`f64x2` and `f32x4`** (slice 5a): `impl Lanes`, `impl Math` and the
+  `std/num` operator traits, so a generic kernel takes a lane type as its
+  type argument.
+
+On a lane type, `lt` and `ne` turn the all-ones bit masks of the builtins
+into the masks of the contract (1.0 and 0.0). `select` reads a lane that is not
+0.0 as true. `ldexp` and each function of `Math` apply the scalar function
+to each lane, so each lane gives the scalar's answer. The vector kernels
+ported from `std/f64` need integer lane operations (`to_bits`, the
+lane-wise shifts), which the lane types do not have yet. A lane value
+cannot be a field, so `Dual[f64x2]` and `DoubleDouble[f64x2]` are E085.
 
 **Performance, measured.** A `Dual` or `DoubleDouble` op builds a record per
 operation. `docs/benchmarks/simd-evaluators-2026-10-21/` runs one kernel
