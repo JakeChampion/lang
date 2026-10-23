@@ -5,7 +5,7 @@ zstd: malformed: code
 Bad Request: bad body
 body is not valid UTF-8
 outgoing HTTP request has an invalid field: host
-outgoing HTTP request failed with code 7
+outgoing HTTP request failed: connection-terminated
 outgoing HTTP response body exceeds its limit
 outgoing HTTP response body ended early
 outgoing HTTP response is unavailable

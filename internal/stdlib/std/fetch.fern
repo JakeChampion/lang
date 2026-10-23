@@ -85,6 +85,7 @@ import "std/zstd";
 // std/wasi_http — the host's client a `wasm32-wasi-http` build sends
 // through, the one target with no sockets of its own.
 import "std/wasi_http";
+import "std/tls";
 import "std/tls/client";
 import "std/tls/ktls";
 import "std/tls/verify";
@@ -111,8 +112,9 @@ pub enum Phase { Connecting, Inactivity, Total }
 // that did not resolve; `Connect` for
 // addresses that all failed; `Blocked` for a host that resolves to an
 // address the route may not reach (`plat.http` and `net.is_global`);
-// `Tls` for a TLS connection that could not be made: no roots to trust,
-// a handshake refused, or a certificate not trusted for the host;
+// `Tls` for a TLS connection that failed, with the `tls.TlsError`: no
+// roots to trust, a handshake refused, a certificate not trusted for the
+// host, or the kernel's record layer refusing the connection's keys;
 // `Timeout` for a bound passed; `Protocol` for a response this client
 // cannot read, with what was wrong; `Io` for a send or read the kernel
 // refused; `Redirect` for a redirect the client would not follow: more
@@ -121,7 +123,10 @@ pub enum Phase { Connecting, Inactivity, Total }
 // not; `Decode` for a content coding the client could not undo: more
 // codings than `Decoding.depth`, a body that is not gzip, or one grown
 // past what `Decoding.ratio` allows, the message naming the allowance;
-// `Cancelled` for a request whose task was cancelled while it waited to
+// `Host` for a failure the wasi:http host reported that no other variant
+// fits, with its `error-code` case: the host's TLS failing, its connection
+// limit, a request it denied, a loop, its configuration or an internal
+// error; `Cancelled` for a request whose task was cancelled while it waited to
 // connect or for the next byte (docs/ASYNC.md §8), the wait answering
 // `async.cancelled()`. `FetchError` is `http.ToResponse`, below.
 pub enum FetchError {
@@ -130,14 +135,14 @@ pub enum FetchError {
   Dns(dns.DnsError),
   Connect(net.NetError),
   Blocked(string),
-  Tls(string),
+  Tls(tls.TlsError),
   Timeout(Phase),
   Protocol(string),
   Io(net.NetError),
   Redirect(string),
   BodyLimit,
   Decode(string),
-  Host(string),
+  Host(wasi_http.ErrorCode),
   Cancelled,
 }
 
@@ -172,8 +177,8 @@ pub function (e: FetchError) message(): string {
     Connect(n) => {
       return "connect: " + n.message();
     },
-    Tls(what) => {
-      return "TLS: " + what;
+    Tls(t) => {
+      return "TLS: " + t.message();
     },
     Timeout(p) => {
       return "timed out " + p.message();
@@ -205,8 +210,8 @@ function __later_message(e: FetchError): string {
     Decode(what) => {
       return "decode: " + what;
     },
-    Host(what) => {
-      return "host: " + what;
+    Host(code) => {
+      return "host: " + code.name();
     },
     Cancelled => {
       return "cancelled";
@@ -1197,7 +1202,7 @@ function __driven_feed(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32]
     },
     Err(f) => {
       let sent: i32 = tcp_send_bytes(fd, f.alert);
-      __driven_failed(sh, fd, Tls(f.message()));
+      __driven_failed(sh, fd, Tls(f.error));
       return Some(fd);
     }
   }
@@ -2418,8 +2423,8 @@ function __kernel_session(sock: i32, s: client.Session, req: Request): Result[cl
         return Ok(o.session);
       },
       ktls.Unchanged => {},
-      ktls.Broken(errno) => {
-        return Err(Tls("the kernel's TLS record layer refused the transmit keys (errno " + errno.to_string() + ")"));
+      ktls.Broken(code) => {
+        return Err(Tls(tls.OffloadRefused(code)));
       }
     }
   }
@@ -2443,29 +2448,30 @@ function __kernel_record(sock: i32, s: client.Session, now: i64): __Record {
     ktls.Opened(t, content) => {
       match (s.read(ktls.framed(t, content), now)) {
         Ok(step) => {
-          if (ktls.send_records(sock, step.output) < 0) {
-            return RecordFailed(Tls("the connection closed while the session answered a record"));
+          let sent: i32 = ktls.send_records(sock, step.output);
+          if (sent < 0) {
+            return RecordFailed(Io(net.error_from_errno(sent)));
           }
           let installed: i32 = ktls.install(sock, step.rekeyed);
           if (installed < 0) {
-            return RecordFailed(Tls("the kernel's TLS record layer refused new keys (errno " + (0 - installed).to_string() + ")"));
+            return RecordFailed(Tls(tls.KeysRefused(0 - installed)));
           }
           return RecordTaken(step);
         },
         Err(f) => {
           ktls.send_records(sock, f.alert);
-          return RecordFailed(Tls(f.message()));
+          return RecordFailed(Tls(f.error));
         }
       }
     },
     ktls.StreamEnded => {
       return RecordsEnded;
     },
-    ktls.ReadFailed(errno) => {
-      if (errno == 74) {
+    ktls.ReadFailed(code) => {
+      if (code == 74) {
         ktls.alert(sock, 20);
       }
-      return RecordFailed(Tls("the kernel's TLS record layer failed a read (errno " + errno.to_string() + ")"));
+      return RecordFailed(Tls(tls.KernelReadFailed(code)));
     },
     _ => {
       return RecordAwaited;
@@ -2586,7 +2592,7 @@ function __handshake_read(got: Result[net.Recv, net.NetError]): Result[u8[], Fet
   match (__io(got)?) {
     Chunk(b) => {
       if (b.len() == 0) {
-        return Err(Tls("the server closed the connection during the handshake"));
+        return Err(Tls(tls.ClosedEarly));
       }
       return Ok(b);
     },
@@ -2610,10 +2616,10 @@ function __roots(given: Option[verify.Roots]): Result[verify.Roots, FetchError] 
       return Ok(r);
     },
     None => {
-      return Err(Tls("no root certificates: none at SSL_CERT_FILE or the system's bundle paths"));
+      return Err(Tls(tls.NoRoots));
     }
   }
-  return Err(Tls("no root certificates"));
+  return Err(Tls(tls.NoRoots));
 }
 
 // `__tls_read(tr, fd, s, input)` — `input` read by the session, or the
@@ -2625,22 +2631,22 @@ function __tls_read[T: Transport](tr: T, fd: i32, s: client.Session, input: [u8]
     },
     Err(f) => {
       tr.write(fd, f.alert);
-      return Err(Tls(f.message()));
+      return Err(Tls(f.error));
     }
   }
-  return Err(Tls("unreachable"));
+  return Err(Tls(tls.ClosedEarly));
 }
 
-function __tls[V](r: Result[V, client.TlsError]): Result[V, FetchError] {
+function __tls[V](r: Result[V, tls.TlsError]): Result[V, FetchError] {
   match (r) {
     Ok(v) => {
       return Ok(v);
     },
     Err(e) => {
-      return Err(Tls(e.message()));
+      return Err(Tls(e));
     }
   }
-  return Err(Tls("unreachable"));
+  return Err(Tls(tls.ClosedEarly));
 }
 
 // `__tls_name(host)` — the name a certificate must carry for `host`: an
@@ -2735,138 +2741,129 @@ function __hosted_error(e: wasi_http.OutgoingError): FetchError {
 }
 
 // `__host_code(code)` — a wasi:http `error-code` case as the phase it
-// failed in, read by its position in the WIT's declaration order.
-function __host_code(code: i32): FetchError {
-  if (code < 3) {
-    return __host_dns_code(code);
+// failed in; one no other variant fits stays the host's, as `Host(code)`.
+function __host_code(code: wasi_http.ErrorCode): FetchError {
+  match (code) {
+    wasi_http.DnsTimeout => {
+      return Dns(dns.NoReply);
+    },
+    wasi_http.DnsError => {
+      return Dns(dns.ServerFailure);
+    },
+    wasi_http.DestinationNotFound => {
+      return Dns(dns.NoSuchName);
+    },
+    wasi_http.DestinationUnavailable => {
+      return Connect(net.HostUnreachable);
+    },
+    wasi_http.DestinationIpProhibited => {
+      return Blocked("an address the host refuses to reach");
+    },
+    wasi_http.DestinationIpUnroutable => {
+      return Connect(net.NetworkUnreachable);
+    },
+    _ => {
+      return __host_connect_code(code);
+    }
   }
-  if (code < 12) {
-    return __host_connect_code(code);
-  }
-  if (code < 15) {
-    return __host_tls_code(code);
-  }
-  if (code < 25) {
-    return __host_request_code(code);
-  }
-  if (code < 33) {
-    return __host_response_code(code);
-  }
-  return __host_late_code(code);
+  return Host(code);
 }
 
-// `DNS-timeout`, `DNS-error`, `destination-not-found`.
-function __host_dns_code(code: i32): FetchError {
-  if (code == 0) {
-    return Dns(dns.NoReply);
+// `connection-refused` to `connection-write-timeout`.
+function __host_connect_code(code: wasi_http.ErrorCode): FetchError {
+  match (code) {
+    wasi_http.ConnectionRefused => {
+      return Connect(net.ConnectionRefused);
+    },
+    wasi_http.ConnectionTerminated => {
+      return Io(net.ConnectionReset);
+    },
+    wasi_http.ConnectionTimeout => {
+      return Timeout(Connecting);
+    },
+    wasi_http.ConnectionReadTimeout | wasi_http.ConnectionWriteTimeout => {
+      return Timeout(Inactivity);
+    },
+    _ => {
+      return __host_request_code(code);
+    }
   }
-  if (code == 1) {
-    return Dns(dns.ServerFailure);
-  }
-  return Dns(dns.NoSuchName);
+  return Host(code);
 }
 
-// `destination-unavailable` to `connection-limit-reached`.
-function __host_connect_code(code: i32): FetchError {
-  if (code == 3) {
-    return Connect(net.HostUnreachable);
+// `HTTP-request-length-required` to `HTTP-request-trailer-size`: what the
+// host would not send.
+function __host_request_code(code: wasi_http.ErrorCode): FetchError {
+  match (code) {
+    wasi_http.HttpRequestLengthRequired => {
+      return InvalidRequest("the host requires a length");
+    },
+    wasi_http.HttpRequestBodySize => {
+      return InvalidRequest("the body is larger than the host sends");
+    },
+    wasi_http.HttpRequestMethodInvalid => {
+      return InvalidRequest("the method is not one the host sends");
+    },
+    wasi_http.HttpRequestUriInvalid | wasi_http.HttpRequestUriTooLong => {
+      return InvalidUrl("not one the host sends");
+    },
+    wasi_http.HttpRequestHeaderSectionSize | wasi_http.HttpRequestHeaderSize | wasi_http.HttpRequestTrailerSectionSize | wasi_http.HttpRequestTrailerSize => {
+      return InvalidRequest("the fields are larger than the host sends");
+    },
+    _ => {
+      return __host_response_code(code);
+    }
   }
-  if (code == 4) {
-    return Blocked("an address the host refuses to reach");
-  }
-  if (code == 5) {
-    return Connect(net.NetworkUnreachable);
-  }
-  if (code == 6) {
-    return Connect(net.ConnectionRefused);
-  }
-  if (code == 7) {
-    return Io(net.ConnectionReset);
-  }
-  if (code == 8) {
-    return Timeout(Connecting);
-  }
-  if (code < 11) {
-    return Timeout(Inactivity);
-  }
-  return Host("the connection limit was reached");
+  return Host(code);
 }
 
-// `TLS-protocol-error`, `TLS-certificate-error`, `TLS-alert-received`.
-function __host_tls_code(code: i32): FetchError {
-  if (code == 12) {
-    return Tls("a protocol error");
+// `HTTP-response-incomplete` to `HTTP-response-content-coding`: what the
+// host could not read. The host's protocol error covers a connection closed before
+// any response byte as well (wasmtime reports every failure of its HTTP
+// client that is not a connect or TLS failure as one), so the hosted route
+// cannot tell a reset from a malformed response and never sends a request
+// again.
+function __host_response_code(code: wasi_http.ErrorCode): FetchError {
+  match (code) {
+    wasi_http.HttpResponseIncomplete => {
+      return Protocol("the response ended before it was complete");
+    },
+    wasi_http.HttpResponseHeaderSectionSize | wasi_http.HttpResponseHeaderSize | wasi_http.HttpResponseTrailerSectionSize | wasi_http.HttpResponseTrailerSize => {
+      return Protocol("the response fields are larger than the host reads");
+    },
+    wasi_http.HttpResponseBodySize => {
+      return BodyLimit;
+    },
+    wasi_http.HttpResponseTransferCoding => {
+      return Protocol("a transfer coding the host could not read");
+    },
+    wasi_http.HttpResponseContentCoding => {
+      return Decode("a content coding the host could not undo");
+    },
+    _ => {
+      return __host_late_code(code);
+    }
   }
-  if (code == 13) {
-    return Tls("the certificate was refused");
-  }
-  return Tls("an alert was received");
+  return Host(code);
 }
 
-// `HTTP-request-denied` to `HTTP-request-trailer-size`: what the host
-// would not send.
-function __host_request_code(code: i32): FetchError {
-  if (code == 15) {
-    return Host("the request was denied");
+// `HTTP-response-timeout` to `internal-error`.
+function __host_late_code(code: wasi_http.ErrorCode): FetchError {
+  match (code) {
+    wasi_http.HttpResponseTimeout => {
+      return Timeout(Inactivity);
+    },
+    wasi_http.HttpUpgradeFailed => {
+      return Protocol("the upgrade failed");
+    },
+    wasi_http.HttpProtocolError => {
+      return Protocol("the host read a malformed response");
+    },
+    _ => {
+      return Host(code);
+    }
   }
-  if (code == 16) {
-    return InvalidRequest("the host requires a length");
-  }
-  if (code == 17) {
-    return InvalidRequest("the body is larger than the host sends");
-  }
-  if (code == 18) {
-    return InvalidRequest("the method is not one the host sends");
-  }
-  if (code < 21) {
-    return InvalidUrl("not one the host sends");
-  }
-  return InvalidRequest("the fields are larger than the host sends");
-}
-
-// `HTTP-response-incomplete` to `HTTP-response-content-coding`: what
-// the host could not read.
-function __host_response_code(code: i32): FetchError {
-  if (code == 25) {
-    return Protocol("the response ended before it was complete");
-  }
-  if (code == 28) {
-    return BodyLimit;
-  }
-  if (code == 31) {
-    return Protocol("a transfer coding the host could not read");
-  }
-  if (code == 32) {
-    return Decode("a content coding the host could not undo");
-  }
-  return Protocol("the response fields are larger than the host reads");
-}
-
-// `HTTP-response-timeout` to `internal-error`. The host's protocol error
-// covers a connection closed before any response byte as well (wasmtime
-// reports every failure of its HTTP client that is not a connect or TLS
-// failure as one), so the hosted route cannot tell a reset from a
-// malformed response and never sends a request again.
-function __host_late_code(code: i32): FetchError {
-  if (code == 33) {
-    return Timeout(Inactivity);
-  }
-  if (code == 34) {
-    return Protocol("the upgrade failed");
-  }
-  if (code == 35) {
-    return Protocol("the host read a malformed response");
-  }
-  if (code == 36) {
-    return Host("a loop was detected");
-  }
-  if (code == 37) {
-    return Host("the host is misconfigured");
-  }
-  if (code == 38) {
-    return Host("an internal error");
-  }
-  return Host("error code " + int.int_to_string(code));
+  return Host(code);
 }
 
 // `__Read` — a final response as it came off the connection, and whether
@@ -3172,7 +3169,7 @@ function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, s
         let raw: u8[] = __recv_raw(tr, conn.fd, timeouts, started)?;
         if (raw.len() == 0) {
           if (session.held.len() > 0) {
-            return Err(Tls("the connection closed inside a record"));
+            return Err(Tls(tls.RecordCut));
           }
           return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: [] });
         }

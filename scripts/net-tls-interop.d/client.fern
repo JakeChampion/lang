@@ -19,6 +19,7 @@ import "std/fetch";
 import "std/http";
 import "std/string";
 import "std/time";
+import "std/tls";
 import "std/tls/client";
 import "std/tls/identity";
 import "std/tls/verify";
@@ -129,7 +130,7 @@ function answered(raw: u8[]): string {
 
 // exchange sends the request and reads the response to the server's
 // close.
-function exchange(conn: client.Connection): Result[(client.Connection, u8[]), client.TlsError] {
+function exchange(conn: client.Connection): Result[(client.Connection, u8[]), tls.TlsError] {
   let c: client.Connection = conn.send("GET /hello HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n".bytes())?;
   let out: u8[] = [];
   let going: boolean = true;
@@ -147,7 +148,7 @@ function exchange(conn: client.Connection): Result[(client.Connection, u8[]), cl
 }
 
 // over is one request on a session of its own at `port`.
-function over(cfg: client.Config, port: i32): Result[Outcome, client.TlsError] {
+function over(cfg: client.Config, port: i32): Result[Outcome, tls.TlsError] {
   let conn: client.Connection = client.connect("localhost", port, cfg, time.duration_seconds(10 as i64))?;
   let (c, raw) = exchange(conn)?;
   c.close();
@@ -158,7 +159,7 @@ function over(cfg: client.Config, port: i32): Result[Outcome, client.TlsError] {
   return Ok(Outcome { answer: answered(raw) + alpn, tickets: c.tickets, resumed: c.session.resumed() });
 }
 
-function describe(r: Result[Outcome, client.TlsError], resumption: boolean): string {
+function describe(r: Result[Outcome, tls.TlsError], resumption: boolean): string {
   match (r) {
     Ok(o) => {
       if (!resumption) {
@@ -228,7 +229,7 @@ function main(): i32 {
   }
   let cfg: client.Config = client.config("localhost", roots).with_alpn(["http/1.1"]);
   let port: i32 = port_of("PORT");
-  let first: Result[Outcome, client.TlsError] = over(cfg, port);
+  let first: Result[Outcome, tls.TlsError] = over(cfg, port);
   print("socket: " + describe(first, false));
   match (first) {
     Ok(o) => {

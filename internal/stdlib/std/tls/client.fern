@@ -20,6 +20,7 @@ import "std/dns";
 import "std/i32";
 import "std/net";
 import "std/time";
+import "std/tls";
 import "std/tls/handshake";
 import "std/tls/identity";
 import "std/tls/keyschedule";
@@ -28,8 +29,6 @@ import "std/tls/message";
 import "std/tls/record";
 import "std/tls/verify";
 import "std/tls/x509";
-import "std/error";
-import "core/cmp";
 
 // Config — the name the certificate must carry, the protocols to offer by
 // ALPN in preference order, the roots to trust, a ticket to resume from,
@@ -64,85 +63,10 @@ pub function (c: Config) with_identity(id: identity.Identity): Config {
   return Config { ...c, identity: Some(id) };
 }
 
-// TlsError — why a connection failed: the handshake's own refusal, a chain
-// the roots do not vouch for, a CertificateVerify that does not verify, the
-// name not resolving, the socket's error, the handshake outlasting its
-// bound, the peer closing before the handshake ended, or closing inside a
-// record.
-pub enum TlsError {
-  HandshakeFailed(handshake.HandshakeError),
-  Untrusted(verify.VerifyError),
-  SignatureInvalid,
-  // The identity's key could not sign the CertificateVerify.
-  SigningFailed,
-  Unresolved(dns.DnsError),
-  NetFailed(net.NetError),
-  HandshakeTimeout,
-  ClosedEarly,
-  RecordCut,
-  // The kernel's TLS record layer refused a KeyUpdate's keys, with the
-  // errno: Linux before 6.14 takes one key per direction.
-  KeysRefused(i32),
-}
-
-pub function (e: TlsError) to_string(): string {
-  return e.message();
-}
-
-impl error.Error for TlsError {}
-
-impl cmp.Display for TlsError {}
-
-// One arm per variant.
-// fern-lint: allow cyclomatic-complexity
-pub function (e: TlsError) message(): string {
-  match (e) {
-    HandshakeFailed(h) => {
-      return h.message();
-    },
-    Untrusted(v) => {
-      return "the server's certificate is not trusted: " + v.message();
-    },
-    SignatureInvalid => {
-      return "the server's CertificateVerify does not verify";
-    },
-    SigningFailed => {
-      return "the identity's key could not sign the CertificateVerify";
-    },
-    Unresolved(d) => {
-      return d.message();
-    },
-    NetFailed(n) => {
-      return n.message();
-    },
-    HandshakeTimeout => {
-      return "the handshake did not finish in time";
-    },
-    ClosedEarly => {
-      return "the peer closed the connection during the handshake";
-    },
-    RecordCut => {
-      return "the peer closed the connection inside a record";
-    },
-    KeysRefused(errno) => {
-      return "the kernel's TLS record layer refused new keys (errno " + errno.to_string() + "); Linux before 6.14 takes one key per direction";
-    }
-  }
-  return "";
-}
-
 // Session — one connection's TLS, bytes in and bytes out: the handshake's
 // client, the name and roots it is judged by, and the bytes of a record
 // still arriving.
 pub struct Session { client: handshake.Client, name: string, roots: verify.Roots, identity: Option[identity.Identity], held: u8[] }
-
-// Failure — why `read` failed, and the alert record to send the server
-// before closing, sealed under the keys in force when it failed.
-pub struct Failure { error: TlsError, alert: u8[] }
-
-pub function (f: Failure) message(): string {
-  return f.error.message();
-}
 
 // Step — the session after a call, the bytes to send, the application data
 // read, whether the peer has sent close_notify, the tickets the server
@@ -152,7 +76,7 @@ pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, t
 
 // start begins a handshake at `now`, the wall-clock time in Unix
 // milliseconds; send `output`, then feed what arrives to `read`.
-pub function start(config: Config, now: i64): Result[Step, TlsError] {
+pub function start(config: Config, now: i64): Result[Step, tls.TlsError] {
   let sni: string = config.server_name;
   if (__is_address(sni)) {
     sni = "";
@@ -170,10 +94,10 @@ pub function start(config: Config, now: i64): Result[Step, TlsError] {
       return Ok(Step { session: s, output: step.output, data: [], closed: false, tickets: [], rekeyed: __no_keys() });
     },
     Err(e) => {
-      return Err(HandshakeFailed(e));
+      return Err(tls.HandshakeFailed(e));
     }
   }
-  return Err(ClosedEarly);
+  return Err(tls.ClosedEarly);
 }
 
 // __offer is the ticket to offer at `now`: the config's, when it was
@@ -219,7 +143,7 @@ function __is_address(name: string): boolean {
 // reaches it. Whole records go to the handshake one at a time: the keys
 // change only between records, so a failure's alert is sealed under the
 // keys the records before it left.
-pub function (s: Session) read(input: [u8], now: i64): Result[Step, Failure] {
+pub function (s: Session) read(input: [u8], now: i64): Result[Step, tls.Failure] {
   let buf: u8[] = __copy(s.held);
   buf = __cat(buf, input);
   let session: Session = Session { ...s, held: [] };
@@ -248,33 +172,33 @@ pub function (s: Session) read(input: [u8], now: i64): Result[Step, Failure] {
   return Ok(Step { session: Session { ...session, held: __copy(buf[at:buf.len()]) }, output: output, data: data, closed: closed, tickets: tickets, rekeyed: keys });
 }
 
-function __record(s: Session, record: [u8], now: i64): Result[Step, Failure] {
+function __record(s: Session, record: [u8], now: i64): Result[Step, tls.Failure] {
   match (s.client.read(record)) {
     Ok(step) => {
       return __judged(s, step, now);
     },
     Err(e) => {
-      return Err(Failure { error: HandshakeFailed(e), alert: s.client.alert(e) });
+      return Err(tls.Failure { error: tls.HandshakeFailed(e), alert: s.client.alert(e) });
     }
   }
-  return Err(Failure { error: ClosedEarly, alert: [] });
+  return Err(tls.Failure { error: tls.ClosedEarly, alert: [] });
 }
 
 // write seals application data; the session must be connected.
-pub function (s: Session) write(data: [u8]): Result[Step, TlsError] {
+pub function (s: Session) write(data: [u8]): Result[Step, tls.TlsError] {
   let step: handshake.ClientStep = __step(s.client.write(data))?;
   return Ok(Step { session: Session { ...s, client: step.client }, output: step.output, data: [], closed: false, tickets: [], rekeyed: __no_keys() });
 }
 
 // close is the close_notify to send; nothing more may be written.
-pub function (s: Session) close(): Result[Step, TlsError] {
+pub function (s: Session) close(): Result[Step, tls.TlsError] {
   let step: handshake.ClientStep = __step(s.client.close())?;
   return Ok(Step { session: Session { ...s, client: step.client }, output: step.output, data: [], closed: false, tickets: [], rekeyed: __no_keys() });
 }
 
 // update_keys sends a KeyUpdate and moves to the next write key; `request`
 // asks the server to move to its next one too.
-pub function (s: Session) update_keys(request: boolean): Result[Step, TlsError] {
+pub function (s: Session) update_keys(request: boolean): Result[Step, tls.TlsError] {
   let step: handshake.ClientStep = __step(s.client.update_keys(request))?;
   return Ok(Step { session: Session { ...s, client: step.client }, output: step.output, data: [], closed: false, tickets: [], rekeyed: handshake.rekeyed(step.client.cipher_suite(), step.events) });
 }
@@ -321,72 +245,72 @@ pub function (s: Session) resumed(): boolean {
 // save is a connected session as bytes, for a pool that keeps idle
 // connections where only bytes can go; `restore` makes it again. It holds
 // the traffic secrets.
-pub function (s: Session) save(): Result[u8[], TlsError] {
+pub function (s: Session) save(): Result[u8[], tls.TlsError] {
   let c: u8[] = __handshake_ok(s.client.save())?;
   let n: i32 = c.len();
   let out: u8[] = [(n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
   return Ok(__cat(__cat(out, c), s.held));
 }
 
-pub function restore(saved: [u8]): Result[Session, TlsError] {
+pub function restore(saved: [u8]): Result[Session, tls.TlsError] {
   if (saved.len() < 4) {
-    return Err(HandshakeFailed(handshake.Misuse("restore")));
+    return Err(tls.HandshakeFailed(handshake.Misuse("restore")));
   }
   let n: i32 = saved[0] as i32 << 24 | saved[1] as i32 << 16 | saved[2] as i32 << 8 | saved[3] as i32;
   if (n < 0 || n > saved.len() - 4) {
-    return Err(HandshakeFailed(handshake.Misuse("restore")));
+    return Err(tls.HandshakeFailed(handshake.Misuse("restore")));
   }
   match (handshake.client_restore(saved[4:4 + n])) {
     Ok(c) => {
       return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __copy(saved[4 + n:saved.len()]) });
     },
     Err(e) => {
-      return Err(HandshakeFailed(e));
+      return Err(tls.HandshakeFailed(e));
     }
   }
-  return Err(ClosedEarly);
+  return Err(tls.ClosedEarly);
 }
 
-function __step(r: Result[handshake.ClientStep, handshake.HandshakeError]): Result[handshake.ClientStep, TlsError] {
+function __step(r: Result[handshake.ClientStep, handshake.HandshakeError]): Result[handshake.ClientStep, tls.TlsError] {
   match (r) {
     Ok(step) => {
       return Ok(step);
     },
     Err(e) => {
-      return Err(HandshakeFailed(e));
+      return Err(tls.HandshakeFailed(e));
     }
   }
-  return Err(ClosedEarly);
+  return Err(tls.ClosedEarly);
 }
 
-function __verdict(c: handshake.Client): Result[handshake.ClientStep, Failure] {
+function __verdict(c: handshake.Client): Result[handshake.ClientStep, tls.Failure] {
   match (c.verdict(true)) {
     Ok(step) => {
       return Ok(step);
     },
     Err(e) => {
-      return Err(Failure { error: HandshakeFailed(e), alert: c.alert(e) });
+      return Err(tls.Failure { error: tls.HandshakeFailed(e), alert: c.alert(e) });
     }
   }
-  return Err(Failure { error: ClosedEarly, alert: [] });
+  return Err(tls.Failure { error: tls.ClosedEarly, alert: [] });
 }
 
-function __handshake_ok(r: Result[u8[], handshake.HandshakeError]): Result[u8[], TlsError] {
+function __handshake_ok(r: Result[u8[], handshake.HandshakeError]): Result[u8[], tls.TlsError] {
   match (r) {
     Ok(b) => {
       return Ok(b);
     },
     Err(e) => {
-      return Err(HandshakeFailed(e));
+      return Err(tls.HandshakeFailed(e));
     }
   }
-  return Err(ClosedEarly);
+  return Err(tls.ClosedEarly);
 }
 
 // __judged answers each event in a step that asks something of the client
 // (a verdict on the server's chain, a signature) and gathers what the
 // handshake goes on to produce, and the tickets issued.
-function __judged(s: Session, first: handshake.ClientStep, now: i64): Result[Step, Failure] {
+function __judged(s: Session, first: handshake.ClientStep, now: i64): Result[Step, tls.Failure] {
   let c: handshake.Client = first.client;
   let output: u8[] = first.output;
   let data: u8[] = first.data;
@@ -434,7 +358,7 @@ function __kept(own tickets: Ticket[], s: Session, c: handshake.Client, t: messa
 }
 
 // __answered is what the client does about one event: nothing, for most.
-function __answered(s: Session, c: handshake.Client, e: handshake.Event, now: i64): Result[handshake.ClientStep, Failure] {
+function __answered(s: Session, c: handshake.Client, e: handshake.Event, now: i64): Result[handshake.ClientStep, tls.Failure] {
   match (e) {
     handshake.VerifyServer(v) => {
       match (__trusted(s, v, now)) {
@@ -442,7 +366,7 @@ function __answered(s: Session, c: handshake.Client, e: handshake.Event, now: i6
           return __verdict(c);
         },
         Err(err) => {
-          return Err(Failure { error: err, alert: c.alert(handshake.BadCertificate) });
+          return Err(tls.Failure { error: err, alert: c.alert(handshake.BadCertificate) });
         }
       }
     },
@@ -455,7 +379,7 @@ function __answered(s: Session, c: handshake.Client, e: handshake.Event, now: i6
 }
 
 // __signature signs the client's CertificateVerify with the identity's key.
-function __signature(s: Session, c: handshake.Client, sg: handshake.Signing): Result[handshake.ClientStep, Failure] {
+function __signature(s: Session, c: handshake.Client, sg: handshake.Signing): Result[handshake.ClientStep, tls.Failure] {
   let sig: u8[] = [];
   match (s.identity) {
     Some(id) => {
@@ -464,12 +388,12 @@ function __signature(s: Session, c: handshake.Client, sg: handshake.Signing): Re
           sig = b;
         },
         Err(_) => {
-          return Err(Failure { error: SigningFailed, alert: c.alert(handshake.HandshakeFailure("signing")) });
+          return Err(tls.Failure { error: tls.SigningFailed, alert: c.alert(handshake.HandshakeFailure("signing")) });
         }
       }
     },
     None => {
-      return Err(Failure { error: SigningFailed, alert: c.alert(handshake.HandshakeFailure("signing")) });
+      return Err(tls.Failure { error: tls.SigningFailed, alert: c.alert(handshake.HandshakeFailure("signing")) });
     }
   }
   match (c.signature(sig)) {
@@ -477,27 +401,27 @@ function __signature(s: Session, c: handshake.Client, sg: handshake.Signing): Re
       return Ok(step);
     },
     Err(e) => {
-      return Err(Failure { error: HandshakeFailed(e), alert: c.alert(e) });
+      return Err(tls.Failure { error: tls.HandshakeFailed(e), alert: c.alert(e) });
     }
   }
-  return Err(Failure { error: ClosedEarly, alert: [] });
+  return Err(tls.Failure { error: tls.ClosedEarly, alert: [] });
 }
 
 // __trusted checks the chain against the roots for the session's name at
 // `now`, in Unix milliseconds, and the CertificateVerify under the leaf's key.
-function __trusted(s: Session, v: handshake.Verification, now: i64): Result[void, TlsError] {
+function __trusted(s: Session, v: handshake.Verification, now: i64): Result[void, tls.TlsError] {
   match (verify.verify_server(v.chain, s.roots, s.name, now / 1000)) {
     Ok(leaf) => {
       if (!verify.verify_signed(leaf, v.scheme, v.signed, v.signature)) {
-        return Err(SignatureInvalid);
+        return Err(tls.SignatureInvalid);
       }
       return Ok(());
     },
     Err(e) => {
-      return Err(Untrusted(e));
+      return Err(tls.Untrusted(e));
     }
   }
-  return Err(SignatureInvalid);
+  return Err(tls.SignatureInvalid);
 }
 
 function __cat(own a: u8[], b: [u8]): u8[] {
@@ -536,7 +460,7 @@ pub struct Received { conn: Connection, data: u8[], ended: boolean }
 
 // connect resolves `host`, races its addresses and completes a handshake,
 // all within `timeout`.
-pub function connect(host: string, port: i32, config: Config, timeout: Duration): Result[Connection, TlsError] {
+pub function connect(host: string, port: i32, config: Config, timeout: Duration): Result[Connection, tls.TlsError] {
   let deadline: i64 = monotonic_ns() + timeout.as_nanos();
   let addrs: net.IpAddr[] = [];
   match (dns.resolve(host)) {
@@ -544,7 +468,7 @@ pub function connect(host: string, port: i32, config: Config, timeout: Duration)
       addrs = a;
     },
     Err(e) => {
-      return Err(Unresolved(e));
+      return Err(tls.Unresolved(e));
     }
   }
   match (dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout: timeout })) {
@@ -552,20 +476,20 @@ pub function connect(host: string, port: i32, config: Config, timeout: Duration)
       return __handshake_by(fd, config, deadline);
     },
     Err(e) => {
-      return Err(NetFailed(e));
+      return Err(tls.NetFailed(e));
     }
   }
-  return Err(ClosedEarly);
+  return Err(tls.ClosedEarly);
 }
 
 // over completes a handshake on a socket already connected, within
 // `timeout`: after a STARTTLS, or through a proxy's tunnel. The socket is
 // closed if the handshake fails.
-pub function over(fd: i32, config: Config, timeout: Duration): Result[Connection, TlsError] {
+pub function over(fd: i32, config: Config, timeout: Duration): Result[Connection, tls.TlsError] {
   return __handshake_by(fd, config, monotonic_ns() + timeout.as_nanos());
 }
 
-function __handshake_by(fd: i32, config: Config, deadline: i64): Result[Connection, TlsError] {
+function __handshake_by(fd: i32, config: Config, deadline: i64): Result[Connection, tls.TlsError] {
   match (__handshake_on(fd, config, deadline)) {
     Ok(st) => {
       return Ok(st);
@@ -575,10 +499,10 @@ function __handshake_by(fd: i32, config: Config, deadline: i64): Result[Connecti
       return Err(e);
     }
   }
-  return Err(ClosedEarly);
+  return Err(tls.ClosedEarly);
 }
 
-function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connection, TlsError] {
+function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connection, tls.TlsError] {
   let step: Step = start(config, now_unix_ms())?;
   __send_fd(fd, step.output)?;
   let s: Session = step.session;
@@ -590,11 +514,11 @@ function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connecti
         input = b;
       },
       None => {
-        return Err(HandshakeTimeout);
+        return Err(tls.HandshakeTimeout);
       }
     }
     if (input.len() == 0) {
-      return Err(ClosedEarly);
+      return Err(tls.ClosedEarly);
     }
     let step: Step = __exchange_fd(fd, s, input)?;
     s = step.session;
@@ -611,7 +535,7 @@ function __more_tickets(own a: Ticket[], b: Ticket[]): Ticket[] {
 }
 
 // send writes data to the server.
-pub function (c: Connection) send(data: [u8]): Result[Connection, TlsError] {
+pub function (c: Connection) send(data: [u8]): Result[Connection, tls.TlsError] {
   if (c.session.offloaded()) {
     __send_fd(c.fd, data)?;
     return Ok(c);
@@ -624,7 +548,7 @@ pub function (c: Connection) send(data: [u8]): Result[Connection, TlsError] {
 // offload moves the connection's records into the kernel, as
 // server.Connection.offload does. A ticket the server sends afterwards
 // still reaches `tickets`.
-pub function (c: Connection) offload(): Result[Connection, TlsError] {
+pub function (c: Connection) offload(): Result[Connection, tls.TlsError] {
   if let Some(o) = c.session.offload() {
     match (ktls.attach(c.fd, o.keys)) {
       ktls.Kernel => {
@@ -634,7 +558,7 @@ pub function (c: Connection) offload(): Result[Connection, TlsError] {
       ktls.Broken(e) => {
         tcp_close(c.fd);
         c.open.set(false);
-        return Err(NetFailed(net.error_from_errno(e)));
+        return Err(tls.NetFailed(net.error_from_errno(e)));
       }
     }
   }
@@ -651,20 +575,20 @@ pub function (c: Connection) offloaded(): boolean {
 // the new key after the KeyUpdate it seals under the old one; a kernel
 // that refuses it (before 6.14) leaves the socket unusable, and it is
 // closed.
-pub function (c: Connection) update_keys(request: boolean): Result[Connection, TlsError] {
+pub function (c: Connection) update_keys(request: boolean): Result[Connection, tls.TlsError] {
   let step: Step = c.session.update_keys(request)?;
   __send_out(c.fd, c.session, step.output)?;
   let r: i32 = ktls.install(c.fd, step.rekeyed);
   if (r < 0) {
     tcp_close(c.fd);
     c.open.set(false);
-    return Err(KeysRefused(0 - r));
+    return Err(tls.KeysRefused(0 - r));
   }
   return Ok(Connection { ...c, session: step.session });
 }
 
 // recv waits at most `wait` for application data.
-pub function (c: Connection) recv(wait: Duration): Result[Received, TlsError] {
+pub function (c: Connection) recv(wait: Duration): Result[Received, tls.TlsError] {
   let deadline: i64 = monotonic_ns() + wait.as_nanos();
   if (c.session.offloaded()) {
     return __recv_kernel(c, deadline);
@@ -701,7 +625,7 @@ function __received(c: Connection, s: Session, data: u8[], ended: boolean): Rece
 // __recv_kernel reads records the kernel opened until application data or
 // the end of the stream arrives, or the deadline passes; any other record
 // (a ticket, a KeyUpdate, an alert) goes through the session.
-function __recv_kernel(c: Connection, deadline: i64): Result[Received, TlsError] {
+function __recv_kernel(c: Connection, deadline: i64): Result[Received, tls.TlsError] {
   let conn: Connection = c;
   while (true) {
     let left: i64 = deadline - monotonic_ns();
@@ -723,7 +647,7 @@ function __recv_kernel(c: Connection, deadline: i64): Result[Received, TlsError]
 // server issued, and whether it ends the wait (`done`).
 struct Kerneled { session: Session, data: u8[], ended: boolean, tickets: Ticket[], done: boolean }
 
-function __kernel_next(c: Connection, read: ktls.Read): Result[Kerneled, TlsError] {
+function __kernel_next(c: Connection, read: ktls.Read): Result[Kerneled, tls.TlsError] {
   let s: Session = c.session;
   match (read) {
     ktls.Opened(t, content) => {
@@ -740,25 +664,25 @@ function __kernel_next(c: Connection, read: ktls.Read): Result[Kerneled, TlsErro
       return Ok(Kerneled { session: s, data: [], ended: false, tickets: [], done: true });
     },
     ktls.WaitCancelled => {
-      return Err(NetFailed(net.Interrupted));
+      return Err(tls.NetFailed(net.Interrupted));
     },
     ktls.ReadFailed(e) => {
       return Err(__kernel_failed(c, e));
     }
   }
-  return Err(ClosedEarly);
+  return Err(tls.ClosedEarly);
 }
 
 // __kernel_failed is a read the kernel refused: a record that did not open
 // or overflowed gets its alert, and the socket is closed either way.
-function __kernel_failed(c: Connection, errno: i32): TlsError {
-  let err: TlsError = NetFailed(net.error_from_errno(errno));
+function __kernel_failed(c: Connection, errno: i32): tls.TlsError {
+  let err: tls.TlsError = tls.NetFailed(net.error_from_errno(errno));
   if (errno == 74) {
     ktls.alert(c.fd, 20);
-    err = HandshakeFailed(handshake.Record(record.BadRecordMac));
+    err = tls.HandshakeFailed(handshake.Record(record.BadRecordMac));
   } else if (errno == 90) {
     ktls.alert(c.fd, 22);
-    err = HandshakeFailed(handshake.Record(record.RecordOverflow(0)));
+    err = tls.HandshakeFailed(handshake.Record(record.RecordOverflow(0)));
   }
   tcp_close(c.fd);
   c.open.set(false);
@@ -767,16 +691,16 @@ function __kernel_failed(c: Connection, errno: i32): TlsError {
 
 // __stream_ended is the socket's end of stream: the peer has gone, which
 // inside a record is a cut.
-function __stream_ended(c: Connection, s: Session): Result[Received, TlsError] {
+function __stream_ended(c: Connection, s: Session): Result[Received, tls.TlsError] {
   if (s.held.len() > 0) {
-    return Err(RecordCut);
+    return Err(tls.RecordCut);
   }
   return Ok(__received(c, s, [], true));
 }
 
 // __exchange reads input on an open connection and sends what the session
 // answers; a failure sends its alert and closes the socket.
-function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, TlsError] {
+function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, tls.TlsError] {
   match (__exchange_fd(c.fd, s, input)) {
     Ok(step) => {
       return Ok(step);
@@ -787,19 +711,19 @@ function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, TlsErr
       return Err(e);
     }
   }
-  return Err(ClosedEarly);
+  return Err(tls.ClosedEarly);
 }
 
 // __exchange_fd reads input and sends what the session answers, or the
 // alert a failure calls for. Once offloaded, the keys a KeyUpdate set go to
 // the kernel after what the session answered under the old ones.
-function __exchange_fd(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
+function __exchange_fd(fd: i32, s: Session, input: [u8]): Result[Step, tls.TlsError] {
   match (s.read(input, now_unix_ms())) {
     Ok(step) => {
       __send_out(fd, s, step.output)?;
       let r: i32 = ktls.install(fd, step.rekeyed);
       if (r < 0) {
-        return Err(KeysRefused(0 - r));
+        return Err(tls.KeysRefused(0 - r));
       }
       return Ok(step);
     },
@@ -808,18 +732,18 @@ function __exchange_fd(fd: i32, s: Session, input: [u8]): Result[Step, TlsError]
       return Err(f.error);
     }
   }
-  return Err(ClosedEarly);
+  return Err(tls.ClosedEarly);
 }
 
 // __send_out sends what a session wrote: records it sealed, or once
 // offloaded the records it framed for the kernel.
-function __send_out(fd: i32, s: Session, out: [u8]): Result[void, TlsError] {
+function __send_out(fd: i32, s: Session, out: [u8]): Result[void, tls.TlsError] {
   if (!s.offloaded()) {
     return __send_fd(fd, out);
   }
   let r: i32 = ktls.send_records(fd, out);
   if (r < 0) {
-    return Err(NetFailed(net.error_from_errno(0 - r)));
+    return Err(tls.NetFailed(net.error_from_errno(0 - r)));
   }
   return Ok(());
 }
@@ -836,15 +760,15 @@ pub function (c: Connection) close(): void {
   tcp_close(c.fd);
 }
 
-function __send_fd(fd: i32, data: [u8]): Result[void, TlsError] {
+function __send_fd(fd: i32, data: [u8]): Result[void, tls.TlsError] {
   let at: i32 = 0;
   while (at < data.len()) {
     let n: i32 = tcp_send_bytes(fd, __cat([], data[at:data.len()]));
     if (n < 0) {
-      return Err(NetFailed(net.error_from_errno(0 - n)));
+      return Err(tls.NetFailed(net.error_from_errno(0 - n)));
     }
     if (n == 0) {
-      return Err(NetFailed(net.ConnectionReset));
+      return Err(tls.NetFailed(net.ConnectionReset));
     }
     at = at + n;
   }
@@ -853,7 +777,7 @@ function __send_fd(fd: i32, data: [u8]): Result[void, TlsError] {
 
 // __await is the next bytes off the socket before `deadline`, empty at the
 // end of the stream, or None once the deadline has passed.
-function __await(fd: i32, deadline: i64): Result[Option[u8[]], TlsError] {
+function __await(fd: i32, deadline: i64): Result[Option[u8[]], tls.TlsError] {
   let left: i64 = deadline - monotonic_ns();
   if (left <= 0) {
     return Ok(None);
@@ -863,7 +787,7 @@ function __await(fd: i32, deadline: i64): Result[Option[u8[]], TlsError] {
 
 // __recv_fd is the next bytes off the socket within `wait`, empty at the
 // end of the stream, or None when the wait passed first.
-function __recv_fd(fd: i32, wait: Duration): Result[Option[u8[]], TlsError] {
+function __recv_fd(fd: i32, wait: Duration): Result[Option[u8[]], tls.TlsError] {
   match (net.read_deadline(fd, 65536, wait)) {
     Ok(net.Chunk(b)) => {
       return Ok(Some(b));
@@ -872,10 +796,10 @@ function __recv_fd(fd: i32, wait: Duration): Result[Option[u8[]], TlsError] {
       return Ok(None);
     },
     Ok(net.Abandoned()) => {
-      return Err(NetFailed(net.Interrupted));
+      return Err(tls.NetFailed(net.Interrupted));
     },
     Err(e) => {
-      return Err(NetFailed(e));
+      return Err(tls.NetFailed(e));
     }
   }
   return Ok(None);
