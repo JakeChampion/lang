@@ -361,8 +361,8 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	// registry while counting lambdas and module-function value occurrences.
 	// 91 -> 90: default filling's scoped walk (#11850) carries its state in
 	// an accumulator, so fda_stmts' rw visitor is gone.
-	pinned(t, c, "nested named fns", 89,
-		"Nested named functions are visitors in astwalk, checker, parser, lift, wasm_ir, cover, treeshake and interp. Retiring the two WASI nested-array release gates removes their op predicates.")
+	pinned(t, c, "nested named fns", 87,
+		"Nested named functions are visitors in astwalk, checker, parser, lift, wasm_ir, cover, treeshake and interp. Routing E032 through the shared call-diagnostic walk removes two nested visitors.")
 	pinned(t, c, "try op", 0,
 		"The self-host propagates errors by hand, so `?` has NO fixpoint coverage. A rise here is good news and means this row and the doc's have to move.")
 	pinned(t, c, "Map type spellings", 11,
