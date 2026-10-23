@@ -2555,7 +2555,7 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
       p = pr_p;
       params = params.append(pr_param);
       // A trailing comma before `)` must not start another parameter —
-      // parse_param returns its empty sentinel for `)`, and appending that
+      // parse_param returns its __invalid_param sentinel for `)`, and appending that
       // gives the function one phantom nameless param. Harmless-looking on a
       // register backend, fatal on wasm, where a function's arity is
       // DECLARED: `(n: i32,) => n * 2` hoisted `$__lam_0` with two params and
@@ -9365,7 +9365,7 @@ pub function is_destr_marker(type_name: string): boolean {
 //
 // Empty ParamDestr.names signals a parse problem (a malformed binding list, a
 // tuple with fewer than 2 positions, or a missing `:`); callers degrade the
-// same way they do for parse_param's empty-name result.
+// same way they do for parse_param's __invalid_param sentinel.
 function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
   let tline: i32 = p.peek_line();
   let tcol: i32 = p.peek_col();
@@ -24051,6 +24051,9 @@ function fda_stmts(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: FuncDecl[]
 // cast is an ExprUnary whose op is `as_<type>`, refused before its operand.
 pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
   match (e) {
+    ast.ExprBytes(_) => {
+      return ("is an array literal", true);
+    },
     ast.ExprNumber(n) => {
       return ("", false);
     },

@@ -8,6 +8,7 @@ import "./ssadeps";
 import "./semtypes";
 import "./semrecords";
 import "./typeinfo";
+import "./byteconst";
 
 // The selected Drop provider, after receiver specialization and trait-method
 // interposition. Its symbol need not be the receiver followed by .drop.
@@ -367,6 +368,11 @@ pub function param(): i32 {
 
 pub function array_new(): i32 {
   return 0 - 1;
+}
+
+// The payload contains canonical decimal byte words, with no scalar operands.
+pub function bytes_new(): i32 {
+  return 0 - 55;
 }
 
 // Fresh empty scalar array with capacity for the i32 operand's element count.
@@ -1473,6 +1479,18 @@ function array_construction_error(ins: ssa.SInst, f: Func, result: typeinfo.Type
     return "";
   }
   return "array construction type";
+}
+
+function bytes_construction_error(ins: ssa.SInst, result: typeinfo.Type): string {
+  if (ins.args.len() != 0 || !byteconst.valid(ins.str, ins.imm)) {
+    return "constant byte array payload";
+  }
+  if let typeinfo.TypeArray(a) = result {
+    if (!a.view && is_u8(a.elem)) {
+      return "";
+    }
+  }
+  return "constant byte array type";
 }
 
 function array_reserve_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -3298,12 +3316,15 @@ function scalar_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 // An array, a tuple and a record: the containers whose contract is a shape
 // spelled out beside the value rather than in a declaration table.
 function is_aggregate_op(kind: i32): boolean {
-  return kind == array_new() || kind == array_reserve() || kind == tuple_new() || kind == array_get()
+  return kind == array_new() || kind == bytes_new() || kind == array_reserve() || kind == tuple_new() || kind == array_get()
     || kind == tuple_get() || kind == record_new() || kind == record_get();
 }
 
 function aggregate_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   let kind: i32 = ins.kind_tag;
+  if (kind == bytes_new()) {
+    return bytes_construction_error(ins, result);
+  }
   if (kind == array_reserve()) {
     return array_reserve_error(ins, f, result);
   }

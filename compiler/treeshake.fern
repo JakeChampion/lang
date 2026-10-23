@@ -196,6 +196,9 @@ function ts_nominal(mod: parser.Module, t: string): boolean {
 
 function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
   match (e) {
+    ast.ExprBytes(_) => {
+      return acc;
+    },
     ast.ExprIdent(id) => {
       // A bare identifier names a free function (or a local): it keeps the
       // free functions of that name, not a method that happens to share

@@ -1,0 +1,47 @@
+Main binary filename not available.
+Fern bounded reservoir: retained=1282 dropped=0
+Type: alloc_space
+Showing nodes accounting for 12.61MB, 99.77% of 12.64MB total
+Dropped 222 nodes (cum <= 0.06MB)
+Showing top 40 nodes out of 62
+      flat  flat%   sum%        cum   cum%
+    6.23MB 49.30% 49.30%     6.23MB 49.30%  __fern_arr_box
+       4MB 31.66% 80.96%        4MB 31.66%  __fn___fern_read_dir
+    2.27MB 17.99% 98.95%     2.27MB 17.99%  __fn___fern_str_concat
+    0.10MB  0.82% 99.77%     0.10MB  0.82%  __fn___fern_str_grow_fresh_range
+         0     0% 99.77%     2.22MB 17.55%  __fern_alloc_u8
+         0     0% 99.77%     2.81MB 22.21%  __fern_arr_push
+         0     0% 99.77%     2.57MB 20.32%  __fern_arr_push_owned
+         0     0% 99.77%     1.38MB 10.96%  __fn_asm_ir__emit_entry_runtime
+         0     0% 99.77%     0.12MB  0.97%  __fn_asm_ir__emit_function_via_ir_named
+         0     0% 99.77%     0.12MB  0.97%  __fn_asm_ir__emit_function_via_ir_pre
+         0     0% 99.77%     1.38MB 10.92%  __fn_asm_ir__emit_ir_runtime
+         0     0% 99.77%     1.37MB 10.83%  __fn_asm_ir__emit_ir_runtime_fern_fn
+         0     0% 99.77%     4.29MB 33.93%  __fn_asm_ir__emit_module_or_error_sub
+         0     0% 99.77%     0.08MB  0.64%  __fn_asm_ir__emit_ssa_allocated_x86
+         0     0% 99.77%     0.13MB  1.04%  __fn_asmcore__entry_check_errors
+         0     0% 99.77%     0.70MB  5.52%  __fn_asmcore__new_state
+         0     0% 99.77%     2.13MB 16.84%  __fn_checker__annotate_module
+         0     0% 99.77%     0.41MB  3.21%  __fn_checker__build_gate_diags
+         0     0% 99.77%     0.25MB  2.00%  __fn_checker__builtin_sig
+         0     0% 99.77%     0.41MB  3.21%  __fn_checker__check_module
+         0     0% 99.77%     0.27MB  2.17%  __fn_checker__check_module_pass
+         0     0% 99.77%     2.28MB 18.07%  __fn_checker__module_env
+         0     0% 99.77%     0.21MB  1.65%  __fn_checker__type_from_name
+         0     0% 99.77%     0.17MB  1.35%  __fn_checker__type_from_spelling
+         0     0% 99.77%     0.15MB  1.22%  __fn_checker__type_names
+         0     0% 99.77%     0.19MB  1.50%  __fn_checker__with_spellings
+         0     0% 99.77%     0.51MB  4.01%  __fn_ir__pops_by_kind
+         0     0% 99.77%     2.14MB 16.90%  __fn_irverifygate__open_memo
+         0     0% 99.77%     4.06MB 32.09%  __fn_load_checked
+         0     0% 99.77%    12.64MB   100%  __fn_main
+         0     0% 99.77%     0.10MB  0.75%  __fn_parser__inject_builtin_enums
+         0     0% 99.77%     0.07MB  0.56%  __fn_parser__parse_module
+         0     0% 99.77%     0.07MB  0.56%  __fn_parser__parse_module_flagged
+         0     0% 99.77%     0.24MB  1.86%  __fn_parser__parse_type_ref
+         0     0% 99.77%     0.25MB  2.02%  __fn_physicalbody__abis
+         0     0% 99.77%    12.64MB   100%  __fn_run_with
+         0     0% 99.77%     0.53MB  4.21%  __fn_semlower__inferred_rows
+         0     0% 99.77%     0.08MB  0.63%  __fn_semlower__produced_body
+         0     0% 99.77%     1.22MB  9.67%  __fn_semlower__produced_rows
+         0     0% 99.77%     0.08MB  0.63%  __fn_semlower__rows_lowered

@@ -1,0 +1,30 @@
+[
+  {
+    "label": "small.bin-bytes",
+    "initial_sha256": "9a063ac788fc4b266e18195aa16103d7a77b61e13d241924b38f96608df6b9a6",
+    "exact_base_sha256": "9a063ac788fc4b266e18195aa16103d7a77b61e13d241924b38f96608df6b9a6",
+    "final_sha256": "9a063ac788fc4b266e18195aa16103d7a77b61e13d241924b38f96608df6b9a6",
+    "equal": true
+  },
+  {
+    "label": "small.bin-text",
+    "initial_sha256": "b0b85e40ced1402ff7ab13985f8de36512ec9b77520b29b42ff0a53aad728d99",
+    "exact_base_sha256": "b0b85e40ced1402ff7ab13985f8de36512ec9b77520b29b42ff0a53aad728d99",
+    "final_sha256": "b0b85e40ced1402ff7ab13985f8de36512ec9b77520b29b42ff0a53aad728d99",
+    "equal": true
+  },
+  {
+    "label": "large.bin-bytes",
+    "initial_sha256": "f95965a9b0dc6e9b42b961a1f41a45f0c630a74105a094cef88e871f83b882ab",
+    "exact_base_sha256": "f95965a9b0dc6e9b42b961a1f41a45f0c630a74105a094cef88e871f83b882ab",
+    "final_sha256": "f95965a9b0dc6e9b42b961a1f41a45f0c630a74105a094cef88e871f83b882ab",
+    "equal": true
+  },
+  {
+    "label": "large.bin-text",
+    "initial_sha256": "b265fc187106c2d5a1759edc1dfde27663968db0d4002bcdaaf0d3aeeef16187",
+    "exact_base_sha256": "b265fc187106c2d5a1759edc1dfde27663968db0d4002bcdaaf0d3aeeef16187",
+    "final_sha256": "b265fc187106c2d5a1759edc1dfde27663968db0d4002bcdaaf0d3aeeef16187",
+    "equal": true
+  }
+]

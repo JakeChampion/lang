@@ -778,6 +778,18 @@ function print_expr_prec(e: ast.Expr, parent_prec: i32, depth: i32): string {
 // written (print_list_lines) instead of stranding it for the next statement.
 function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (string, Fmt) {
   match (e) {
+    ast.ExprBytes(bs) => {
+      let out: string = "[";
+      let i: i32 = 0;
+      while (i < bs.value.len()) {
+        if (i > 0) {
+          out = out + ", ";
+        }
+        out = out + util.i32_to_string(bs.value[i] as i32) + "u8";
+        i = i + 1;
+      }
+      return (out + "]", f);
+    },
     ast.ExprNumber(n) => {
       // A quoted literal or the unit `()` prints its spelling, escapes
       // and all — the decoded value in `text` is not what the author
