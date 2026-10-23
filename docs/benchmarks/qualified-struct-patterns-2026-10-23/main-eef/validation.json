@@ -1,0 +1,10 @@
+{
+  "base": "eefc2cc377e210e2583c1d846bd160371a2df43f",
+  "source_commit": "7d06f6230ec011ee84ee8a75554d132c807ffd3d",
+  "source_sha256": "381f52e43e0a7f277759f763c897d385e26dba1aadb1ef07e04f6788df8982c2",
+  "compiler_sha256": "1cea9da0215d1e3876a7c255f58f9abf08115bc51631f8c57564704456ae69ed",
+  "oracle_sha256": "958a440b8b41671459cd565ed910636b8638ecc3db7921f1dc57b9761c2f0ac0",
+  "feature_checks": 24,
+  "feature_exit": 0,
+  "go_targeted_exit": 0
+}

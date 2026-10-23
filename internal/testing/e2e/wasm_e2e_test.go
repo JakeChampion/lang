@@ -1042,7 +1042,7 @@ function main(): i32 {
 
 // Map[i32, i32] linear-search smoke test. Auto-injected `Map`
 // struct + `map_new(cap)` constructor; methods are
-// `m.insert(k, v)`, `m.get(k)`, `m.has(k)`, `m.len()`. This is
+// `m.insert(k, v)`, `m.get(k)`, `m.contains(k)`, `m.len()`. This is
 // the first cut from PR 4 in docs/LANGUAGE-DIRECTION.md;
 // generic K / V and the IndexMap fingerprint-table layout
 // land in follow-ups.
@@ -1052,13 +1052,13 @@ import "core/map";
 function main(): i32 {
     let m: Map[i32, i32] = map_new(8);
     if (m.len() != 0) { return 1; }
-    if (m.has(7)) { return 2; }
+    if (m.contains(7)) { return 2; }
     m = m.insert(7, 42);
     m = m.insert(11, 99);
     if (m.len() != 2) { return 3; }
-    if (!m.has(7)) { return 4; }
-    if (!m.has(11)) { return 5; }
-    if (m.has(13)) { return 6; }
+    if (!m.contains(7)) { return 4; }
+    if (!m.contains(11)) { return 5; }
+    if (m.contains(13)) { return 6; }
     if let Some(v) = m.get(7) {
         if (v != 42) { return 7; }
     } else {
@@ -1087,12 +1087,12 @@ function main(): i32 {
 	}
 }
 
-// Two `m.has()` calls under a short-circuiting `&&` with a `!` on the
+// Two `m.contains()` calls under a short-circuiting `&&` with a `!` on the
 // second operand. Regression for issue #2652: on the self-hosted wasm
-// backend `m.has(1) && !m.has(2)` evaluated to 0 instead of 7 — a
+// backend `m.contains(1) && !m.contains(2)` evaluated to 0 instead of 7 — a
 // stack/value interaction between the `map_has` call sequence and the
-// `&&` short-circuit block. `m.has(1)` is true, `m.has(2)` is false, so
-// `!m.has(2)` is true and the `&&` is true. The native backend always
+// `&&` short-circuit block. `m.contains(1)` is true, `m.contains(2)` is false, so
+// `!m.contains(2)` is true and the `&&` is true. The native backend always
 // agreed with the correct answer; this guards it on the result-printer
 // (wasm) harness so the cross-backend contract stays explicit.
 func TestWASMMapHasShortCircuit(t *testing.T) {
@@ -1101,11 +1101,11 @@ import "core/map";
 function main(): i32 {
     let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
-    if (m.has(1) && !m.has(2)) { return 7; }
+    if (m.contains(1) && !m.contains(2)) { return 7; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 7 {
-		t.Errorf("got %d, want 7 (m.has(1) && !m.has(2) short-circuit, issue #2652)", got)
+		t.Errorf("got %d, want 7 (m.contains(1) && !m.contains(2) short-circuit, issue #2652)", got)
 	}
 }
 
@@ -1294,14 +1294,15 @@ function main(): i32 {
     let m: Map[i64, i32] = map_new(4);
     m = m.insert(7i64, 100);
     m = m.insert(42i64, 200);
-    if (!m.has(7i64)) { return 1; }
-    if (!m.has(42i64)) { return 2; }
-    if (m.has(99i64)) { return 3; }
-    let (m7, had7) = m.without(7i64);
+    if (!m.contains(7i64)) { return 1; }
+    if (!m.contains(42i64)) { return 2; }
+    if (m.contains(99i64)) { return 3; }
+    let had7: boolean = m.contains(7i64);
+    let m7 = m.remove(7i64);
     if (!had7) { return 4; }
     m = m7;
-    if (m.has(7i64)) { return 5; }
-    if (m.without(7i64).1) { return 6; }
+    if (m.contains(7i64)) { return 5; }
+    if (m.remove(7i64).len() != m.len()) { return 6; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -1423,8 +1424,8 @@ function main(): i32 {
 	}
 }
 
-// Map.without(k) removes a key, returning true if it was
-// present. Implementation is swap-with-last (O(1), trades
+// Map.remove(k) removes a key; Map.contains(k) reports whether it
+// was present. Implementation is swap-with-last (O(1), trades
 // insertion order for speed). Verifies the basic
 // present/missing behaviour, that len decrements, and that
 // subsequent lookups return None.
@@ -1437,13 +1438,14 @@ function main(): i32 {
     m = m.insert(2, 20);
     m = m.insert(3, 30);
     if (m.len() != 3) { return 1; }
-    let (m2, had2) = m.without(2);
+    let had2: boolean = m.contains(2);
+    let m2 = m.remove(2);
     if (!had2) { return 2; }   // present → true
     m = m2;
     if (m.len() != 2) { return 3; }
-    if (m.has(2)) { return 4; }
+    if (m.contains(2)) { return 4; }
     if let Some(_) = m.get(2) { return 5; }
-    if (m.without(99).1) { return 6; }   // missing → false
+    if (m.remove(99).len() != m.len()) { return 6; }   // missing → unchanged
     if (m.len() != 2) { return 7; }
     // Surviving entries still reachable.
     if let Some(v) = m.get(1) {
@@ -1489,7 +1491,7 @@ function main(): i32 {
     // Empty literal works too.
     let empty: Map[i32, i32] = Map {};
     if (empty.len() != 0) { return 5; }
-    if (empty.has(0)) { return 6; }
+    if (empty.contains(0)) { return 6; }
     // Trailing comma is fine.
     let m2: Map[i32, i32] = Map { 7: 700, };
     if (m2.len() != 1) { return 7; }
@@ -2280,20 +2282,21 @@ function main(): i32 {
     if let Some(_) = m.get("PUT") { return 18; }
 
     // has() over inline-form keys.
-    if (!m.has("a")) { return 19; }
-    if (!m.has("ok")) { return 20; }
-    if (m.has("xy")) { return 21; }
+    if (!m.contains("a")) { return 19; }
+    if (!m.contains("ok")) { return 20; }
+    if (m.contains("xy")) { return 21; }
 
     // Update + delete an inline key.
     m = m.insert("GET", 30);
     if let Some(v) = m.get("GET") {
         if (v != 30) { return 22; }
     } else { return 23; }
-    let (mg, hadg) = m.without("GET");
+    let hadg: boolean = m.contains("GET");
+    let mg = m.remove("GET");
     if (!hadg) { return 24; }
     m = mg;
-    if (m.has("GET")) { return 25; }
-    if (m.without("GET").1) { return 26; }
+    if (m.contains("GET")) { return 25; }
+    if (m.remove("GET").len() != m.len()) { return 26; }
     if (m.len() != 5) { return 27; }
 
     return 0;
@@ -2315,9 +2318,9 @@ function main(): i32 {
     m = m.insert("world", 2);
     m = m.insert("foo", 3);
     if (m.len() != 3) { return 1; }
-    if (!m.has("hello")) { return 2; }
-    if (!m.has("world")) { return 3; }
-    if (m.has("missing")) { return 4; }
+    if (!m.contains("hello")) { return 2; }
+    if (!m.contains("world")) { return 3; }
+    if (m.contains("missing")) { return 4; }
     if let Some(v) = m.get("hello") {
         if (v != 1) { return 5; }
     } else {
@@ -2340,12 +2343,13 @@ function main(): i32 {
         return 12;
     }
     // Delete.
-    let (mf, hadf) = m.without("foo");
+    let hadf: boolean = m.contains("foo");
+    let mf = m.remove("foo");
     if (!hadf) { return 13; }
     m = mf;
-    if (m.has("foo")) { return 14; }
+    if (m.contains("foo")) { return 14; }
     if (m.len() != 2) { return 15; }
-    if (m.without("foo").1) { return 16; }
+    if (m.remove("foo").len() != 2) { return 16; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -2421,7 +2425,8 @@ function main(): i32 {
     // miss and odd keys must still hit.
     let d: i32 = 0;
     while (d < 100) {
-        let (md, hadd) = m.without(d);
+        let hadd: boolean = m.contains(d);
+        let md = m.remove(d);
         if (!hadd) { return 300 + d; }
         m = md;
         d = d + 2;
@@ -2430,7 +2435,7 @@ function main(): i32 {
     let c: i32 = 0;
     while (c < 100) {
         if (c % 2 == 0) {
-            if (m.has(c)) { return 400 + c; }
+            if (m.contains(c)) { return 400 + c; }
         } else {
             if let Some(v) = m.get(c) {
                 if (v != c * 11 + 2) { return 500 + c; }
@@ -2507,7 +2512,7 @@ function main(): i32 {
         }
         j = j + 1;
     }
-    if (m.has("k_99")) { return 2; }
+    if (m.contains("k_99")) { return 2; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -2887,7 +2892,7 @@ function main(): i32 {
     if (m.len() != 3) { return 1; }
     m = m.cleared();
     if (m.len() != 0) { return 2; }
-    if (m.has("a")) { return 3; }
+    if (m.contains("a")) { return 3; }
     if let Some(_) = m.get("b") { return 4; }
     // Re-insert after clear works (bucket array was reset
     // to all-empty so the linear probe terminates).
@@ -2904,7 +2909,7 @@ function main(): i32 {
     } else {
         return 9;
     }
-    if (m.has("a")) { return 10; }
+    if (m.contains("a")) { return 10; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -16683,14 +16688,16 @@ function main(): i32 {
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
-    let (mb, hadb) = m.without("b");
+    let hadb: boolean = m.contains("b");
+    let mb = m.remove("b");
     if (!hadb) { return 1; }
     m = mb;
-    if (m.without("z").1)  { return 2; }
-    let (m2, ok) = m.without("a");
+    if (m.remove("z").len() != m.len())  { return 2; }
+    let ok: boolean = m.contains("a");
+    let m2 = m.remove("a");
     if (!ok) { return 3; }
-    if (m2.has("a")) { return 4; }
-    if (!m2.has("c")) { return 5; }
+    if (m2.contains("a")) { return 4; }
+    if (!m2.contains("c")) { return 5; }
     if (m2.len() != 1) { return 6; }
     return 0;
 }`
@@ -16710,7 +16717,7 @@ function main(): i32 {
     if (m.len() != 2) { return 1; }
     m = m.cleared();
     if (m.len() != 0) { return 2; }
-    if (m.has("x")) { return 3; }
+    if (m.contains("x")) { return 3; }
     m = m.insert("z", 99);
     if (m.len() != 1) { return 4; }
     if (m.get_or("z", 0) != 99) { return 5; }
@@ -16751,12 +16758,13 @@ function main(): i32 {
     m1 = m1.insert("a", 1);
     m1 = m1.insert("b", 2);
     let m2 = m1;                       // alias → rc=2
-    let (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
+    let ok: boolean = m2.contains("a");
+    let m3 = m2.remove("a");     // rc>1 → copy; m1/m2 intact
     if (!ok)            { return 1; }
     if (m1.len() != 2)  { return 2; }
-    if (!m1.has("a"))   { return 3; }
+    if (!m1.contains("a"))   { return 3; }
     if (m3.len() != 1)  { return 4; }
-    if (m3.has("a"))    { return 5; }
+    if (m3.contains("a"))    { return 5; }
     let m4 = m1;                       // alias → rc=2
     m4 = m4.cleared();                   // rc>1 → copy; m1 intact
     if (m1.len() != 2)  { return 6; }
@@ -16844,7 +16852,7 @@ function main(): i32 {
     let b: Map[i32, string] = Map {};
     if (b.len() != 0) { return 3; }
     b = b.insert(7, "hello");
-    if (!b.has(7)) { return 4; }
+    if (!b.contains(7)) { return 4; }
     if (take(Map {}) != 0) { return 5; }
     let r = mkEmpty();
     if (r.len() != 0) { return 6; }

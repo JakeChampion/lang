@@ -1,0 +1,6 @@
+=== RUN   TestSelfHostFmtNativeParityX86_64
+=== RUN   TestSelfHostFmtNativeParityX86_64/qualified-record-binding-sites
+--- PASS: TestSelfHostFmtNativeParityX86_64 (1.67s)
+    --- PASS: TestSelfHostFmtNativeParityX86_64/qualified-record-binding-sites (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	1.691s

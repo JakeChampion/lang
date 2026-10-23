@@ -46,7 +46,7 @@ function main(): i32 {
             let k: string = i.to_string();
             while (k.len() < want_len) { k = k + "x"; }
             k = slice_unchecked(k, 0, want_len).to_owned();
-            if (!m.has(k)) {
+            if (!m.contains(k)) {
                 m = m.insert(k, i);
                 made = made.append(k);
             }
@@ -55,7 +55,7 @@ function main(): i32 {
         // Every key inserted must be found, with its own value.
         let j: i32 = 0;
         while (j < made.len()) {
-            if (!m.has(made[j])) { return 1; }
+            if (!m.contains(made[j])) { return 1; }
             if (m.get_or(made[j], 0 - 1) < 0) { return 2; }
             j = j + 1;
         }
@@ -77,12 +77,12 @@ function main(): i32 {
         if (big.get_or("key_" + b.to_string(), 0 - 1) != b * 3) { return 5; }
         b = b + 1;
     }
-    if (big.has("absent")) { return 6; }
+    if (big.contains("absent")) { return 6; }
     if (big.get_or("absent", 0 - 7) != (0 - 7)) { return 7; }
 
     let d: i32 = 0;
     while (d < n) {
-        big = big.without("key_" + d.to_string()).0;
+        big = big.remove("key_" + d.to_string());
         d = d + 2;
     }
     if (big.len() != n / 2) { return 8; }
@@ -93,7 +93,7 @@ function main(): i32 {
     }
     let f: i32 = 0;
     while (f < n) {
-        if (big.has("key_" + f.to_string())) { return 10; }
+        if (big.contains("key_" + f.to_string())) { return 10; }
         f = f + 2;
     }
 
@@ -122,21 +122,21 @@ function main(): i32 {
         let h: i32 = 0;
         while (h < sz) {
             if (t.get_or("k" + h.to_string(), 0 - 1) != h * 7) { return 15; }
-            if (!t.has("k" + h.to_string())) { return 16; }
+            if (!t.contains("k" + h.to_string())) { return 16; }
             h = h + 1;
         }
-        if (t.has("k" + sz.to_string())) { return 17; }
+        if (t.contains("k" + sz.to_string())) { return 17; }
         // Delete down across the threshold, re-checking survivors each step.
         let d2: i32 = sz - 1;
         while (d2 >= 0) {
-            t = t.without("k" + d2.to_string()).0;
+            t = t.remove("k" + d2.to_string());
             if (t.len() != d2) { return 18; }
             let s2: i32 = 0;
             while (s2 < d2) {
                 if (t.get_or("k" + s2.to_string(), 0 - 1) != s2 * 7) { return 19; }
                 s2 = s2 + 1;
             }
-            if (t.has("k" + d2.to_string())) { return 20; }
+            if (t.contains("k" + d2.to_string())) { return 20; }
             d2 = d2 - 1;
         }
         sz = sz + 1;

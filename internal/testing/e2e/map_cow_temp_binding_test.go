@@ -54,13 +54,14 @@ function main(): i32 {
     // SEGV'd on every compiled backend and was right under -interp.
     let d: i32 = 0;
     while (d < 20) {
-        let (md, ok) = m.without("k" + d.to_string());
+        let ok: boolean = m.contains("k" + d.to_string());
+        let md = m.remove("k" + d.to_string());
         if (!ok) { return 3; }
         m = md;
         d = d + 1;
     }
     if (m.len() != 20) { return 4; }
-    if (m.has("k7")) { return 5; }
+    if (m.contains("k7")) { return 5; }
     if (m.get_or("k25", 0 - 1) != 25) { return 6; }
     // The survivors of the swap-with-last backfill are all still reachable.
     let s: i32 = 20;
@@ -149,7 +150,8 @@ function main(): i32 {
     }
     let d: i32 = 0;
     while (d < 4) {
-        let (md, ok) = m.without("k" + d.to_string());
+        let ok: boolean = m.contains("k" + d.to_string());
+        let md = m.remove("k" + d.to_string());
         m = md;
         d = d + 1;
     }
@@ -441,7 +443,7 @@ function lookups(n: i32): i64 {
     while (i < n) {
         // Literal key: leaks the boxed cell alone.
         sink = sink + m.get_or("k7", 0);
-        if (m.has("k7")) { sink = sink + 1; }
+        if (m.contains("k7")) { sink = sink + 1; }
         // Built key: leaks the cell AND the string buffer behind it.
         sink = sink + m.get_or("k" + (i % 32).to_string(), 0);
         i = i + 1;

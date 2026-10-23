@@ -21,7 +21,7 @@ function fill(n: i32): Map[i64, i64] {
 
 function main(): i32 {
     let m: Map[i64, i64] = fill(30);
-    m = m.without(3).0;
+    m = m.remove(3);
     let h: Holder = Holder { m: fill(5) };
     let ms: Map[i64, i64][] = [fill(4), fill(6)];
     let u: Map[u64, string] = Map {};

@@ -58,15 +58,15 @@ function main(): i32 {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, shape := range []struct{ name, decl, del string }{
-				{"string_key_hit", strDecl, `    let st = m.without("ke" + "y");
-    m = st.0;
-    if (st.1) { }`},
-				{"string_key_miss", strDecl, `    let st = m.without("zz" + "zz");
-    m = st.0;
-    if (st.1) { }`},
-				{"i32_key_hit", intDecl, `    let st = m.without(1);
-    m = st.0;
-    if (st.1) { }`},
+				{"string_key_hit", strDecl, `    let st_had: boolean = m.contains("ke" + "y"); let st = m.remove("ke" + "y");
+    m = st;
+    if (st_had) { }`},
+				{"string_key_miss", strDecl, `    let st_had: boolean = m.contains("zz" + "zz"); let st = m.remove("zz" + "zz");
+    m = st;
+    if (st_had) { }`},
+				{"i32_key_hit", intDecl, `    let st_had: boolean = m.contains(1); let st = m.remove(1);
+    m = st;
+    if (st_had) { }`},
 			} {
 				t.Run(shape.name, func(t *testing.T) {
 					_, stderr, code := tc.run(t, src(shape.decl, shape.del))

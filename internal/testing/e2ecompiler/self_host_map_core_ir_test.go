@@ -43,7 +43,7 @@ var mapCoreIRCases = []struct {
 	// lowering at `did not lower: match` (#9038). 2 + 40 = 42.
 	{"get-unannotated", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); let g = m.get(\"b\"); match (g) { Some(v) => { return v + 40; }, None => { return 9; } } }\n"},
 	// delete via without (returns (Map, removed)). get_or(\"x\",99)+get_or(\"y\",0) = 99+7 = 106.
-	{"delete", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"x\", 5); m = m.insert(\"y\", 7); let r = m.without(\"x\"); m = r.0; return m.get_or(\"x\", 99) + m.get_or(\"y\", 0); }\n"},
+	{"delete", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"x\", 5); m = m.insert(\"y\", 7); let r = m.remove(\"x\"); m = r; return m.get_or(\"x\", 99) + m.get_or(\"y\", 0); }\n"},
 }
 
 func TestSelfHostMapCoreIRX86_64(t *testing.T) {

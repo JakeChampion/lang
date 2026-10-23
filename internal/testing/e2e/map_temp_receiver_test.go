@@ -26,7 +26,7 @@ function check(): i32 {
     let t: i32 = 0;
     while (i < 20) {
         t = t + mk().len() + look(mk());
-        if (mk().has(2)) { t = t + 1; }
+        if (mk().contains(2)) { t = t + 1; }
         match (mk().get(1)) { Some(v) => { t = t + (v as i32); }, None => {} }
         t = t + (mk().get_or(9, 5) as i32);
         t = t + (mk().keys().len() as i32) + (mk().values().len() as i32);

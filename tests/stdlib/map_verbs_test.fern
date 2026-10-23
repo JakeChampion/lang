@@ -2,7 +2,7 @@ import "core/map";
 import "std/test";
 
 // tests/stdlib/map_verbs_test.fern — higher-level Map verbs added
-// to core/map (#2685): `entries`, `merge` / `extend`, `from`,
+// to core/map (#2685): `entries`, `merge`, `from`,
 // `get_or_insert`, `update`, and `contains_value`. Covered over both
 // i32 and string keys.
 //
@@ -77,12 +77,6 @@ function test_merge_empty(): test.TestOutcome {
     return test.fail("merge with empty wrong");
   }
   return test.assert_eq(e.merge(a).get_or(1, 0), 1);
-}
-
-function test_extend_alias(): test.TestOutcome {
-  let a: Map[i32, i32] = map.from([(1, 1)]);
-  let b: Map[i32, i32] = map.from([(2, 2)]);
-  return test.assert_eq(a.extend(b).len(), 2);
 }
 
 function test_get_or_insert_present(): test.TestOutcome {
@@ -178,7 +172,6 @@ function main(): i32 {
   r = r.it("from string keys", test_from_string_keys);
   r = r.it("merge other wins", test_merge_other_wins);
   r = r.it("merge with empty", test_merge_empty);
-  r = r.it("extend aliases merge", test_extend_alias);
   r = r.it("get_or_insert present", test_get_or_insert_present);
   r = r.it("get_or_insert absent", test_get_or_insert_absent);
   r = r.it("get_or_insert word count", test_get_or_insert_word_count);

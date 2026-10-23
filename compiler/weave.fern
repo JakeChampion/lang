@@ -716,11 +716,11 @@ function safe_link_url(url: string): boolean {
 // ─── Fern highlighting ───────────────────────────────────────────
 
 function is_keyword(w: string): boolean {
-  return has(["function", "fn", "let", "return", "if", "else", "while", "for", "in", "match", "struct", "enum", "type", "pub", "import", "as", "break", "continue", "true", "false"], w);
+  return has(["function", "fn", "let", "const", "return", "if", "else", "while", "for", "in", "match", "struct", "enum", "type", "pub", "import", "as", "own", "fip", "fbip", "async", "defer", "errdefer", "break", "continue", "true", "false"], w);
 }
 
 function is_type_name(w: string): boolean {
-  return has(["i32", "i64", "f32", "f64", "u8", "bool", "boolean", "string", "void"], w);
+  return has(["i32", "i64", "f32", "f64", "f32x4", "f64x2", "u8", "u32", "u64", "usize", "char", "bool", "boolean", "string", "void", "Option", "Result", "Cell"], w);
 }
 
 function is_word(c: u8): boolean {

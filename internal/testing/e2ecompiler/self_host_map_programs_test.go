@@ -453,7 +453,7 @@ function build(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: 2 };
     let j: i32 = 0;
     while (j < 12) { m = m.insert(j + 10, j * 2); j = j + 1; }
-    if (m.has(15)) { return m.len(); }
+    if (m.contains(15)) { return m.len(); }
     return 0;
 }
 function main(): i32 {
@@ -510,7 +510,7 @@ function build(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: 2 };
     let j: i32 = 0;
     while (j < 12) { m = m.insert(j + 10, j * 2); j = j + 1; }
-    if (m.has(15)) { return m.len(); }
+    if (m.contains(15)) { return m.len(); }
     return 0;
 }
 function main(): i32 {
@@ -686,7 +686,7 @@ function build_grow(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: 2 };
     let j: i32 = 0;
     while (j < 12) { m = m.insert(j + 10, j * 2); j = j + 1; }
-    if (m.has(15)) { return m.len(); }
+    if (m.contains(15)) { return m.len(); }
     return 0;
 }
 function build_small(n: i32): i32 {
@@ -764,15 +764,15 @@ function main(): i32 {
     return 0;
 }`, 0},
 	{"struct-key/struct-i32", `import "core/map";
-import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function main(): i32 { let m: Map[P, i32] = map_new(8); m = m.insert(P { x: 1, y: 2 }, 10); m = m.insert(P { x: 3, y: 4 }, 20); if (m.get_or(P { x: 1, y: 2 }, 0 - 1) != 10) { return 101; } if (m.get_or(P { x: 3, y: 4 }, 0 - 1) != 20) { return 102; } if (m.get_or(P { x: 9, y: 9 }, 0 - 1) != 0 - 1) { return 103; } if (!m.has(P { x: 1, y: 2 })) { return 104; } if (m.has(P { x: 2, y: 1 })) { return 105; } m = m.insert(P { x: 1, y: 2 }, 99); if (m.len() != 2) { return 106; } return m.get_or(P { x: 1, y: 2 }, 0 - 1); }`, 99},
+import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function main(): i32 { let m: Map[P, i32] = map_new(8); m = m.insert(P { x: 1, y: 2 }, 10); m = m.insert(P { x: 3, y: 4 }, 20); if (m.get_or(P { x: 1, y: 2 }, 0 - 1) != 10) { return 101; } if (m.get_or(P { x: 3, y: 4 }, 0 - 1) != 20) { return 102; } if (m.get_or(P { x: 9, y: 9 }, 0 - 1) != 0 - 1) { return 103; } if (!m.contains(P { x: 1, y: 2 })) { return 104; } if (m.contains(P { x: 2, y: 1 })) { return 105; } m = m.insert(P { x: 1, y: 2 }, 99); if (m.len() != 2) { return 106; } return m.get_or(P { x: 1, y: 2 }, 0 - 1); }`, 99},
 	{"struct-key/struct-string-field", `import "core/map";
-import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct N { first: string, rank: i32 } function main(): i32 { let m: Map[N, i32] = map_new(8); m = m.insert(N { first: "ada", rank: 1 }, 10); m = m.insert(N { first: "bob", rank: 2 }, 20); if (m.get_or(N { first: "a" + "da", rank: 1 }, 0 - 1) != 10) { return 101; } if (m.has(N { first: "ada", rank: 9 })) { return 102; } let (m2, ok) = m.without(N { first: "ada", rank: 1 }); m = m2; if (!ok) { return 103; } if (m.has(N { first: "ada", rank: 1 })) { return 104; } if (m.len() != 1) { return 105; } return m.get_or(N { first: "bob", rank: 2 }, 0 - 1); }`, 20},
+import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct N { first: string, rank: i32 } function main(): i32 { let m: Map[N, i32] = map_new(8); m = m.insert(N { first: "ada", rank: 1 }, 10); m = m.insert(N { first: "bob", rank: 2 }, 20); if (m.get_or(N { first: "a" + "da", rank: 1 }, 0 - 1) != 10) { return 101; } if (m.contains(N { first: "ada", rank: 9 })) { return 102; } let ok: boolean = m.contains(N { first: "ada", rank: 1 }); let m2 = m.remove(N { first: "ada", rank: 1 }); m = m2; if (!ok) { return 103; } if (m.contains(N { first: "ada", rank: 1 })) { return 104; } if (m.len() != 1) { return 105; } return m.get_or(N { first: "bob", rank: 2 }, 0 - 1); }`, 20},
 	{"struct-key/enum-key-iter", `import "core/map";
 import "core/cmp"; @derive(cmp.Eq, cmp.Hash) enum Tag { A(i32), B, C(string) } function main(): i32 { let m: Map[Tag, i32] = map_new(8); m = m.insert(A(1), 10); m = m.insert(B, 20); m = m.insert(C("x" + "y"), 30); if (m.get_or(C("xy"), 0) != 30) { return 101; } if (m.get_or(A(2), 0 - 1) != 0 - 1) { return 102; } if (m.len() != 3) { return 103; } let t: i32 = 0; for (k, v) in m { t = t + v; } return t; }`, 60},
 	{"struct-key/enum-key", `import "core/map";
 import "core/cmp"; @derive(cmp.Eq, cmp.Hash) enum Tag { A(i32), B, C(string) } function main(): i32 { let m: Map[Tag, i32] = map_new(8); m = m.insert(A(1), 10); m = m.insert(B, 20); m = m.insert(C("x" + "y"), 30); if (m.get_or(C("xy"), 0) != 30) { return 101; } if (m.get_or(A(2), 0 - 1) != 0 - 1) { return 102; } if (m.len() != 3) { return 103; } return m.get_or(B, 0) + m.get_or(A(1), 0); }`, 30},
 	{"struct-key/struct-grow", `import "core/map";
-import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function main(): i32 { let m: Map[P, i32] = map_new(4); let i: i32 = 0; while (i < 20) { m = m.insert(P { x: i, y: i * 2 }, i + 1); i = i + 1; } if (m.len() != 20) { return 101; } let j: i32 = 0; while (j < 20) { if (m.get_or(P { x: j, y: j * 2 }, 0 - 1) != j + 1) { return 1 + j; } j = j + 1; } let (m2, ok) = m.without(P { x: 7, y: 14 }); m = m2; if (!ok) { return 102; } if (m.has(P { x: 7, y: 14 })) { return 103; } if (m.len() != 19) { return 104; } return 42; }`, 42},
+import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function main(): i32 { let m: Map[P, i32] = map_new(4); let i: i32 = 0; while (i < 20) { m = m.insert(P { x: i, y: i * 2 }, i + 1); i = i + 1; } if (m.len() != 20) { return 101; } let j: i32 = 0; while (j < 20) { if (m.get_or(P { x: j, y: j * 2 }, 0 - 1) != j + 1) { return 1 + j; } j = j + 1; } let ok: boolean = m.contains(P { x: 7, y: 14 }); let m2 = m.remove(P { x: 7, y: 14 }); m = m2; if (!ok) { return 102; } if (m.contains(P { x: 7, y: 14 })) { return 103; } if (m.len() != 19) { return 104; } return 42; }`, 42},
 	{"values-w64/sum", `import "core/map";
 function main(): i32 { let m: Map[i32, i64] = Map { 1: 5000000000, 2: 9000000000, 3: 12000000005 }; let vs: i64[] = m.values(); let s: i64 = 0; let i: i32 = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } return (s % 1000) as i32; }`, 5},
 	{"values-w64/len", `import "core/map";
@@ -785,15 +785,15 @@ function main(): i32 { let m: Map[i32, i64] = map_new(8); m = m.insert(1, 500000
 function build_str(n: i32): i32 {
     let m: Map[i32, string] = Map { 1: "a" + "b", 2: "c" + "d" };
     let r: i32 = 0;
-    if (m.has(1)) { r = r + 1; }
-    if (m.has(2)) { r = r + 1; }
+    if (m.contains(1)) { r = r + 1; }
+    if (m.contains(2)) { r = r + 1; }
     return r;
 }
 function build_i32(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: 2, 3: 4 };
     let r: i32 = 0;
-    if (m.has(1)) { r = r + 1; }
-    if (m.has(3)) { r = r + 1; }
+    if (m.contains(1)) { r = r + 1; }
+    if (m.contains(3)) { r = r + 1; }
     return r;
 }
 function main(): i32 {
@@ -847,15 +847,15 @@ function main(): i32 {
 function build_str(n: i32): i32 {
     let m: Map[i32, string] = Map { 1: "a" + "b", 2: "c" + "d" };
     let r: i32 = 0;
-    if (m.has(1)) { r = r + 1; }
-    if (m.has(2)) { r = r + 1; }
+    if (m.contains(1)) { r = r + 1; }
+    if (m.contains(2)) { r = r + 1; }
     return r;
 }
 function build_i32(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: 2, 3: 4 };
     let r: i32 = 0;
-    if (m.has(1)) { r = r + 1; }
-    if (m.has(3)) { r = r + 1; }
+    if (m.contains(1)) { r = r + 1; }
+    if (m.contains(3)) { r = r + 1; }
     return r;
 }
 function main(): i32 {
@@ -941,9 +941,9 @@ import "core/cmp"; @derive(cmp.Eq, cmp.Hash) enum Tag { Lo(i32), Hi(i32) } funct
 	{"fresh-box-arg/struct-value", `import "core/map";
 import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function build(n: i32): i32 { let m: Map[i32, P] = map_new(4); m = m.insert(n, P { x: n, y: n * 2 }); return m.len(); } function main(): i32 { let acc: i32 = 0; let w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } let s1: i32 = (__heap_bump_bytes() as i32); let j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } let s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } if (acc != 1100) { return 88; } return 0; }`, 0},
 	{"read-key-temp/box-has-fresh", `import "core/map";
-import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); if (m.has(P { x: n, y: n * 2 })) { return 0; } return 0; } function main(): i32 { let acc: i32 = 0; let w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } let s1: i32 = (__heap_bump_bytes() as i32); let j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } let s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } return 0; }`, 0},
+import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); if (m.contains(P { x: n, y: n * 2 })) { return 0; } return 0; } function main(): i32 { let acc: i32 = 0; let w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } let s1: i32 = (__heap_bump_bytes() as i32); let j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } let s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } return 0; }`, 0},
 	{"read-key-temp/box-has-borrowed", `import "core/map";
-import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); if (m.has(k)) { return 0; } return 0; } function main(): i32 { let acc: i32 = 0; let w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } let s1: i32 = (__heap_bump_bytes() as i32); let j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } let s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } return 0; }`, 0},
+import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); if (m.contains(k)) { return 0; } return 0; } function main(): i32 { let acc: i32 = 0; let w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } let s1: i32 = (__heap_bump_bytes() as i32); let j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } let s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } return 0; }`, 0},
 	{"read-key-temp/box-get-fresh", `import "core/map";
 import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); let acc: i32 = 0; match (m.get(P { x: n, y: n * 2 })) { Some(v) => { acc = acc + v - 7; }, None => { acc = acc - 1; } } return acc; } function main(): i32 { let acc: i32 = 0; let w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } let s1: i32 = (__heap_bump_bytes() as i32); let j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } let s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } return 0; }`, 0},
 	{"read-key-temp/box-get-borrowed", `import "core/map";
@@ -968,7 +968,7 @@ function main(): i32 {
 function main(): i32 {
 			   let m: Map[string, i32] = map_new(4);
 			   m = m.insert("k", 7);
-			   let u: (boolean, boolean) = (m.has("k"), m.has("nope"));
+			   let u: (boolean, boolean) = (m.contains("k"), m.contains("nope"));
 			   if (u.0 && !u.1) { return 7; }
 			   return 9;
 			 }`, 7},

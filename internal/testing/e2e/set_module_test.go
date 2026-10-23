@@ -14,7 +14,7 @@ import "testing"
 
 // setPurityProg exercises the essential invariant: an operation
 // returns a NEW set and never mutates its receiver. `before*100 +
-// after*10 + clen` == 223 iff `a.add(3)` left `a` (len 2) untouched
+// after*10 + clen` == 223 iff `a.insert(3)` left `a` (len 2) untouched
 // while producing a 3-element result. The naive in-place impl yields
 // 233 (receiver grown to 3) when compiled.
 const setPurityProg = `
@@ -22,14 +22,14 @@ import "std/set" as set;
 function main(): i32 {
     let a: set.Set[i32] = set.set_of([1, 2]);
     let before: i32 = a.len();
-    let c: set.Set[i32] = a.add(3);
+    let c: set.Set[i32] = a.insert(3);
     let after: i32 = a.len();
     return before * 100 + after * 10 + c.len();   // expect 223
 }
 `
 
 // setOpsProg walks the full combinator surface (dedup, remove,
-// union/intersect/difference, subset/equals, string elems) and returns
+// union/intersection/difference, subset/equals, string elems) and returns
 // 42 iff every check holds. Mirrors tests/stdlib/set_test.fern in a
 // single exit-coded program so the compiled backends assert it too.
 const setOpsProg = `
@@ -38,12 +38,12 @@ function main(): i32 {
     let a: set.Set[i32] = set.set_of([1, 2, 2, 3]);
     if (a.len() != 3) { return 1; }
     if (!a.contains(2) || a.contains(9)) { return 2; }
-    a = a.add(4);
+    a = a.insert(4);
     a = a.remove(2);
     if (a.contains(2) || a.len() != 3) { return 3; }
     let b: set.Set[i32] = set.set_of([3, 4, 5]);
     if (a.union(b).len() != 4) { return 4; }
-    if (a.intersect(b).len() != 2) { return 5; }
+    if (a.intersection(b).len() != 2) { return 5; }
     let d: set.Set[i32] = a.difference(b);
     if (d.len() != 1 || !d.contains(1)) { return 6; }
     if (!set.set_of([3, 4]).is_subset(a)) { return 7; }
