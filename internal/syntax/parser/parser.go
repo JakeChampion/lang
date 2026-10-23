@@ -3006,10 +3006,10 @@ func (p *parser) firstParamLooksTyped(idx int) bool {
 		// `(a, b): (T, U)` — the annotation colon follows the matching `)`.
 		// `((a, b), c)` / `((a + b) * c)` never put one there.
 		return p.closerFollowedBy(idx, "(", ")", ":", "=>")
-	case isIdent(idx) && isPunct(idx+1, "{"):
+	case p.recordPatternBraceAt(idx) >= 0:
 		// `P { x, y }: P` — a parenthesised struct LITERAL puts its colons
 		// INSIDE the braces, so only a pattern has one after the `}`.
-		return p.closerFollowedBy(idx+1, "{", "}", ":")
+		return p.closerFollowedBy(p.recordPatternBraceAt(idx), "{", "}", ":")
 	default:
 		return isIdent(idx) && isPunct(idx+1, ":")
 	}
@@ -5052,12 +5052,13 @@ func (p *parser) parseUse(parent *ast.Block) error {
 // unreachable in that position either way.
 func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	kw := p.advance() // let
+	qualifiedRecord := p.qualifiedRecordPatternAhead()
 	// `let name[: T] = expr;`, `let (a, b, …) = expr;` and
 	// `let Point { x, y } = expr;` bind unconditionally and take no
 	// `else`: a name always binds, a tuple is statically arity-checked
 	// and a struct has one shape. The refutable heads below all have
 	// `(`, `.`, `@`, `|` or a literal after the name, never `:` or `=`.
-	if p.atLetBindingHead() {
+	if p.atLetBindingHead() && !qualifiedRecord {
 		return p.parseLetBinding(kw.Pos)
 	}
 	start := p.i
@@ -5078,11 +5079,25 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	// trailer. The Var-init form doesn't need this because it
 	// uses `;`, but `let else` follows the source with `else`.
 	prevNS := p.noStructLit
-	p.noStructLit = true
+	p.noStructLit = !qualifiedRecord || prevNS
 	src, err := p.parseExpr()
 	p.noStructLit = prevNS
 	if err != nil {
 		return nil, err
+	}
+	// A qualified record head names either a struct or an enum variant.
+	// The trailing else selects the refutable form after the initializer.
+	if qualifiedRecord && len(pats) == 1 && !p.match(lexer.Keyword, "else") {
+		d, err := p.irrefutableDestructure(kw.Pos, pats[0], destructureSite, "")
+		if err != nil {
+			return nil, err
+		}
+		d.AtName = pats[0].atBinding
+		d.Init = src
+		if _, err := p.expect(lexer.Punct, ";"); err != nil {
+			return nil, err
+		}
+		return d, nil
 	}
 	if _, err := p.expect(lexer.Keyword, "else"); err != nil {
 		return nil, err
@@ -5288,10 +5303,17 @@ func (p *parser) irrefutableDestructure(pos ast.Position, pat matchPattern, site
 		}
 		return &ast.Destructure{P: pos, Names: discardNames(names, pos, tag), Nested: nested, Init: nil}, nil
 	case pat.NamedFields:
+		if pat.hasNestedSub() {
+			return nil, p.refutableBindErr(pos, "a field sub-pattern", site)
+		}
 		if len(pat.fieldNames) == 0 {
 			return nil, p.errorfCode(pos, "P001", "struct destructure needs at least one field")
 		}
-		return &ast.Destructure{P: pos, Names: discardNames(pat.Bindings, pos, tag), Fields: pat.fieldNames, StructName: pat.VariantName, RestWritten: pat.restWritten}, nil
+		name := pat.VariantName
+		if pat.VariantModule != "" {
+			name = pat.VariantModule + "." + name
+		}
+		return &ast.Destructure{P: pos, Names: discardNames(pat.Bindings, pos, tag), Fields: pat.fieldNames, StructName: name, RestWritten: pat.restWritten}, nil
 	case pat.VariantName != "":
 		return nil, p.refutableBindErr(pos, "an enum variant pattern", site)
 	case pat.Literal != nil:
@@ -5343,19 +5365,40 @@ func (p *parser) refutableBindErr(pos ast.Position, what, site string) error {
 // followed by `:`, `=` or `;`, a plain parameter by `:`, and `for x in xs`
 // by `in`.
 //
-// A refutable `let` head — `IDENT (`, `IDENT .` or a literal, with or
-// without the `@` — is deliberately NOT claimed: it belongs to `let … else`,
-// which has a miss branch to run.
+// A qualified record name also opens a struct pattern. A variant call or
+// literal belongs to `let … else`, which has a miss branch.
 func (p *parser) atPatternHead() bool {
-	i := 0
+	i := p.i
 	if p.peek().Kind == lexer.Ident && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "@" {
-		i = 2
+		i += 2
 	}
-	if p.peekAt(i).Kind == lexer.Punct && p.peekAt(i).Text == "(" {
+	if i < len(p.tokens) && p.tokens[i].Kind == lexer.Punct && p.tokens[i].Text == "(" {
 		return true
 	}
-	return p.peekAt(i).Kind == lexer.Ident &&
-		p.peekAt(i+1).Kind == lexer.Punct && p.peekAt(i+1).Text == "{"
+	return p.recordPatternBraceAt(i) >= 0
+}
+
+// recordPatternBraceAt locates the brace after a bare or qualified record name.
+func (p *parser) recordPatternBraceAt(i int) int {
+	if i >= len(p.tokens) || p.tokens[i].Kind != lexer.Ident {
+		return -1
+	}
+	i++
+	for i+1 < len(p.tokens) && p.tokens[i].Kind == lexer.Punct && p.tokens[i].Text == "." && p.tokens[i+1].Kind == lexer.Ident {
+		i += 2
+	}
+	if i < len(p.tokens) && p.tokens[i].Kind == lexer.Punct && p.tokens[i].Text == "{" {
+		return i
+	}
+	return -1
+}
+
+func (p *parser) qualifiedRecordPatternAhead() bool {
+	i := p.i
+	if p.peek().Kind == lexer.Ident && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "@" {
+		i += 2
+	}
+	return p.recordPatternBraceAt(i) > i+1
 }
 
 // parseDestructure handles the irrefutable binding statements

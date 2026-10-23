@@ -1726,11 +1726,10 @@ function keep_flag(e: ast.Expr, own acc: boolean): boolean {
 // know — so it decides on the name: a locally-declared struct takes the
 // struct-pattern desugar, anything else (a record-form enum variant, or a name
 // from an import) takes the variant path. The tie goes to the variant because a
-// record variant destructured by name is otherwise unparseable — the `{` ends
-// the arm and the rest of the file is reinterpreted (#6676) — while a struct
-// pattern on an imported struct has never been written here. Pre-scanned once
-// per stream rather than accumulated as decls are parsed, so a match written
-// ahead of the struct it destructures still resolves.
+// record variant needs its tag test. The checker resolves imported struct
+// patterns after the bundle supplies their declarations and scrutinee types.
+// The parser scans local names once per stream. A match before its struct
+// declaration thus takes the same path as a match after it.
 // verbatim keeps the WRITTEN spelling of a type where the compile parse
 // canonicalises it — a `[T]` view erased to `T[]`, a function type coarsed to
 // the flat `fn` tag (#6773). Only `-fmt` sets it: those canonicalisations are
@@ -2487,10 +2486,11 @@ function (p: Par) first_param_looks_typed(idx0: i32): boolean {
     // `((a, b), c)` / `((a + b) * c)` never put one there.
     return p.closer_followed_by(idx, "(", ")", ":", "=>");
   }
-  if (p.ident_at(idx).len() > 0 && p.punct_at(idx + 1) == "{") {
+  let brace: i32 = record_pattern_brace_at(p, idx);
+  if (brace >= 0) {
     // `P { x, y }: P` — a parenthesised struct LITERAL puts its colons
     // INSIDE the braces, so only a pattern has one after the `}`.
-    return p.closer_followed_by(idx + 1, "{", "}", ":", "");
+    return p.closer_followed_by(brace, "{", "}", ":", "");
   }
   return p.ident_at(idx).len() > 0 && p.punct_at(idx + 1) == ":";
 }
@@ -4778,6 +4778,10 @@ function struct_field_variant_start(p: Par): boolean {
 }
 
 function build_struct_match(scrut: ast.Expr, arms: ast.StructArm[], mkline: i32, mkcol: i32): ast.Stmt {
+  return build_struct_match_fields(scrut, arms, mkline, mkcol, false);
+}
+
+function build_struct_match_fields(scrut: ast.Expr, arms: ast.StructArm[], mkline: i32, mkcol: i32, record: boolean): ast.Stmt {
   if (arms.len() == 0) {
     return s_unknown_at("empty struct match", mkline, mkcol);
   }
@@ -4824,6 +4828,10 @@ function build_struct_match(scrut: ast.Expr, arms: ast.StructArm[], mkline: i32,
       binds = binds.append(s_var_at(a.at_binding, "", e_ident(tmp), a.line, a.col));
     }
     let bk: i32 = 0;
+    if (record && a.fields.len() > 0) {
+      binds = binds.append(s_var_at(record_binding_list(a.binds, a.line, a.col), "@sm;" + destr_marker("", a.rest_written, "@sd:" + a.type_name + ":" + record_field_list(a.fields)), e_ident(tmp), a.line, a.col));
+      bk = a.binds.len();
+    }
     while (bk < a.binds.len()) {
       // A field carrying a sub-pattern binds nothing itself — the
       // wrap below matches it and its pattern introduces the bindings.
@@ -6538,6 +6546,129 @@ function payload_binder(pv: ast.PatVariant, i: i32): string {
   return "";
 }
 
+function record_field_list(fields: string[]): string {
+  let out: string = "";
+  for field in fields {
+    if (out.len() > 0) {
+      out = out + ",";
+    }
+    out = out + field;
+  }
+  return out;
+}
+
+function record_binding_list(names: string[], line: i32, col: i32): string {
+  let out: string[] = [];
+  let i: i32 = 0;
+  for name in names {
+    out = out.append(discard_name(name, line, col, i));
+    i = i + 1;
+  }
+  return record_field_list(out);
+}
+
+// The checker selects this desugar after it resolves the scrutinee to a struct.
+pub function lower_struct_record_match(m: ast.StmtMatch, value: string): ast.Stmt {
+  let arms: ast.StructArm[] = [];
+  let written: ast.MatchArm[] = m.arms;
+  if (m.sugar.len() > 0) {
+    written = m.sugar;
+  }
+  for arm in written {
+    let fields: string[] = [];
+    let binds: string[] = [];
+    let at: string = "";
+    let name: string = "";
+    let rest: boolean = false;
+    let wild: boolean = true;
+    let kinds: i32[] = [];
+    let lits: ast.Expr[] = [];
+    let pats: ast.Pattern[] = [];
+    if let ast.PatVariant(pv) = arm.pattern {
+      wild = false;
+      fields = pv.field_names;
+      name = pv.type_name;
+      at = pv.at_binding;
+      rest = pv.rest_written;
+      let i: i32 = 0;
+      while (i < fields.len()) {
+        let bind: string = payload_binder(pv, i);
+        binds = binds.append(bind);
+        let kind: i32 = 0;
+        let lit: ast.Expr = e_bool(true);
+        let pat: ast.Pattern = p_wildcard();
+        if let Some(found) = record_slot_literal(pv.lit_cond, bind) {
+          kind = 2;
+          lit = found;
+        } else {
+          if (i < pv.nested.len() && pv_name(pv.nested[i]).len() > 0) {
+            kind = 3;
+            pat = pv.nested[i];
+          }
+        }
+        kinds = kinds.append(kind);
+        lits = lits.append(lit);
+        pats = pats.append(pat);
+        i = i + 1;
+      }
+    }
+    let body: ast.Stmt[] = arm.body;
+    if (value.len() > 0) {
+      body = value_arm_body(body, value);
+    }
+    arms = arms.append(ast.StructArm { is_wild: wild, type_name: name, binds: binds, fields: fields, field_kinds: kinds, field_lits: lits, field_pats: pats, at_binding: at, rest_written: rest, guard: arm.guard, has_guard: arm.has_guard, body: body, line: arm.line, col: arm.col });
+  }
+  return with_sugar_origin(build_struct_match_fields(m.scrutinee, arms, m.line, m.col, true), m.origin);
+}
+
+function record_slot_literal(cond: ast.Expr, slot: string): Option[ast.Expr] {
+  if let ast.ExprBinary(b) = cond {
+    if (b.op == "&&") {
+      if let Some(found) = record_slot_literal(b.left, slot) {
+        return Some(found);
+      }
+      return record_slot_literal(b.right, slot);
+    }
+    if let ast.ExprIdent(id) = b.left {
+      if (b.op == "==" && id.name == slot) {
+        return Some(b.right);
+      }
+    }
+  }
+  return None;
+}
+
+pub function struct_record_source(st: ast.Stmt): Option[ast.StmtMatch] {
+  if let ast.StmtMatch(m) = st {
+    return Some(m);
+  }
+  if let ast.StmtIf(f) = st {
+    let sg: ast.MatchSugar = f.sugar;
+    if (sg.arms.len() > 0) {
+      return Some(ast.StmtMatch { scrutinee: sg.scrut, arms: sg.arms, sugar: [], line: sg.line, col: sg.col, origin: sg.origin });
+    }
+  }
+  return None;
+}
+
+pub function struct_record_value_body(m: ast.StmtMatch, rt: string): ast.Stmt[] {
+  let value: string = "__sm" + dl_itoa(m.line) + "_" + dl_itoa(m.col) + "_r";
+  return [s_var(value, "", zero_expr_for(rt)), lower_struct_record_match(m, value), s_return(e_ident(value))];
+}
+
+pub function struct_record_head(m: ast.StmtMatch): string {
+  let name: string = "";
+  for arm in m.arms {
+    if let ast.PatVariant(pv) = arm.pattern {
+      if (!is_record_pattern(pv) || name.len() > 0 && name != pv.type_name) {
+        return "";
+      }
+      name = pv.type_name;
+    }
+  }
+  return name;
+}
+
 // match_sub_pattern wraps `path` in `match (scrut) { pat => path, _ => {} }`,
 // matching each of pat's own payload sub-patterns the same way inside it, so
 // every slot of a multi-payload sub-pattern keeps its binder at any depth. A
@@ -7326,8 +7457,8 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
       }
       fpre = [s_var_at(fpnames, destr_marker(fp_at, false, ""), fp_init, fp_line, fp_col)];
     } else {
-      let fp_struct: string = p.peek_ident();
-      p = p.advance();
+      let (fp_struct, fp_head) = parse_record_pattern_head(p);
+      p = fp_head;
       let (fpbinds, fpfields, fpfields_rest, fpfields_ok, fpfields_p) = parse_struct_pattern_fields(p);
       p = fpfields_p;
       if (!fpfields_ok || fpbinds.len() == 0) {
@@ -7904,7 +8035,8 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     // REFUTABLE head past the `@` is not claimed by at_pattern_head and
     // stays with the let-else path, where the miss has somewhere to go.
     let at_bind: string = "";
-    if (p.peek_punct_at(1) == "@" && at_pattern_head(p)) {
+    let qualified_record: boolean = qualified_record_pattern_ahead(p);
+    if (p.peek_punct_at(1) == "@" && at_pattern_head(p) && !qualified_record) {
       at_bind = p.peek_ident();
       p = p.advance();
       p = p.advance();
@@ -7979,8 +8111,12 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         lsp_p = lsp_ap;
         lsp_pats = lsp_pats.append(lsp_alt);
       }
-      let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("=").with_no_struct(true));
+      let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("=").with_no_struct(!qualified_record));
       lsp_ip = lsp_ip.with_no_struct(p.no_struct);
+      if (qualified_record && lsp_pats.len() == 1 && lsp_ip.peek_keyword() != "else") {
+        let binding: ast.Stmt = qualified_struct_binding(lsp_pat, lsp_init, vline, vcol);
+        return (binding, lsp_ip.end_of(lsp_init));
+      }
       let (lsp_else, lsp_rest, lsp_restp) = parse_let_else_tail(lsp_ip);
       p = lsp_restp;
       let lsp_arms: ast.MatchArm[] = [];
@@ -9248,18 +9384,70 @@ function parse_type_name_nested(p: Par): (string, string, Par) {
 // destructure, a destructuring parameter, and a `for` header. Nothing else at
 // those sites can look like this — a plain `let name` declaration is followed
 // by `:`, `=` or `;`, a plain parameter by `:` (or `own name :`), and
-// `for x in xs` by `in`. A REFUTABLE head — `Ident (`, `Ident .` or a literal
-// — is deliberately not claimed: it belongs to `let … else`, which has a miss
-// branch to run. Mirrors the native parser's atPatternHead.
+// `for x in xs` by `in`. A qualified record name also opens a struct pattern.
+// A variant call or literal belongs to `let … else`, which has a miss branch.
+// This test mirrors the native parser's atPatternHead.
 function at_pattern_head(p: Par): boolean {
-  let i: i32 = 0;
+  let i: i32 = pattern_head_index(p);
+  return p.punct_at(i) == "(" || record_pattern_brace_at(p, i) >= 0;
+}
+
+function pattern_head_index(p: Par): i32 {
   if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@") {
-    i = 2;
+    return p.pos + 2;
   }
-  if (p.peek_punct_at(i) == "(") {
-    return true;
+  return p.pos;
+}
+
+// Return the brace index after a record name, including its module qualifier.
+function record_pattern_brace_at(p: Par, idx: i32): i32 {
+  if (p.ident_at(idx).len() == 0) {
+    return 0 - 1;
   }
-  return p.peek_ident_at(i).len() > 0 && p.peek_punct_at(i + 1) == "{";
+  idx = idx + 1;
+  while (p.punct_at(idx) == "." && p.ident_at(idx + 1).len() > 0) {
+    idx = idx + 2;
+  }
+  if (p.punct_at(idx) == "{") {
+    return idx;
+  }
+  return 0 - 1;
+}
+
+function qualified_record_pattern_ahead(p: Par): boolean {
+  let i: i32 = pattern_head_index(p);
+  return record_pattern_brace_at(p, i) > i + 1;
+}
+
+function parse_record_pattern_head(p: Par): (string, Par) {
+  let name: string = p.peek_ident();
+  p = p.advance();
+  while (p.peek_punct() == "." && p.peek_ident_at(1).len() > 0) {
+    name = name + "." + p.peek_ident_at(1);
+    p = p.advance().advance();
+  }
+  return (name, p);
+}
+
+function qualified_struct_binding(pat: ast.Pattern, init: ast.Expr, line: i32, col: i32): ast.Stmt {
+  if let ast.PatVariant(pv) = pat {
+    if (is_record_pattern(pv) && !pv.has_lit_cond && pv.nested.len() == 0 && pv.field_names.len() > 0) {
+      let names: string = "";
+      let fields: string = "";
+      let i: i32 = 0;
+      while (i < pv.field_names.len()) {
+        if (i > 0) {
+          names = names + ",";
+          fields = fields + ",";
+        }
+        names = names + discard_name(payload_binder(pv, i), line, col, i);
+        fields = fields + pv.field_names[i];
+        i = i + 1;
+      }
+      return s_var_at(names, destr_marker(pv.at_binding, pv.rest_written, "@sd:" + pv.type_name + ":" + fields), init, line, col);
+    }
+  }
+  return s_unknown_at("a struct destructuring pattern binds field names", line, col);
 }
 
 // DestrMarker is what a destructure StmtVar's marker channel carries beside
@@ -9313,11 +9501,13 @@ pub function strip_pp_marker(marker: string): string {
   return slice_unchecked(marker, 4, marker.len()) + "";
 }
 
-// A leading `@pp;` is transparent here, so every other reader of the channel
-// is unaffected by the tag.
+// Parameter and struct-match tags are transparent to readers of the marker.
 pub function destr_marker_split(marker0: string): DestrMarker {
   let at: string = "";
   let m: string = strip_pp_marker(marker0);
+  if (util.str_has_prefix(m, "@sm;")) {
+    m = slice_unchecked(m, 4, m.len()) + "";
+  }
   if (util.str_has_prefix(m, "@at:")) {
     let i: i32 = 4;
     while (i < m.len()) {
@@ -9347,6 +9537,7 @@ pub function is_struct_destr_marker(type_name: string): boolean {
 pub function is_destr_marker(type_name: string): boolean {
   return type_name.len() > 0 && type_name[0] == b'@'
     && (util.str_has_prefix(type_name, "@pp;")
+    || util.str_has_prefix(type_name, "@sm;")
     || util.str_has_prefix(type_name, "@at:")
     || util.str_has_prefix(type_name, "@rest;")
     || util.str_has_prefix(type_name, "@sd:"));
@@ -9392,11 +9583,11 @@ function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
     }
     names = tnames;
   } else {
-    let struct_name: string = p.peek_ident();
-    if (struct_name.len() == 0 || p.peek_punct_at(1) != "{") {
+    if (record_pattern_brace_at(p, p.pos) < 0) {
       return (bad_param, bad, p);
     }
-    p = p.advance();
+    let (struct_name, head_p) = parse_record_pattern_head(p);
+    p = head_p;
     let (binds, fields, fields_rest, fields_ok, fields_p) = parse_struct_pattern_fields(p);
     p = fields_p;
     // A struct pattern that binds nothing (`P { }`, `P { .. }`) leaves the
