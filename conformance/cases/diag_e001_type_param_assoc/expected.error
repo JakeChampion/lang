@@ -1,0 +1,2 @@
+type parameter T has no associated function "default": T has no bound; bound it by a trait that declares default()
+type parameter T has no associated function "nope": its bound cmp.Eq declares none
