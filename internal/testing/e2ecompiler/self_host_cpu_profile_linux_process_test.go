@@ -39,7 +39,7 @@ func TestSelfHostCPUProfileLinuxShutdown(t *testing.T) {
 	if runtime.GOOS != "linux" || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
 		t.Skip("native Linux profiler target")
 	}
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	target := "x86-64-linux"
 	if runtime.GOARCH == "arm64" {
 		target = "arm64-linux"

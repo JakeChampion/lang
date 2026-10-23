@@ -33,7 +33,7 @@ function main(): i32 {
 		"__syscall6", "fake_sysctl",
 		"__raw_scratch(400)", "fixture_scratch()",
 	).Replace(string(generated))
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	for _, tc := range []struct {
 		name, call    string
 		domain, field int

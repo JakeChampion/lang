@@ -39,6 +39,10 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 
 	for _, prog := range semProductionPrograms {
 		t.Run(prog.name, func(t *testing.T) {
+			compiler := fernBin
+			if prog.runtimeFloor {
+				compiler = buildRuntimeCLI(t).bin
+			}
 			src := filepath.Join(t.TempDir(), "main.fern")
 			if err := os.WriteFile(src, []byte(prog.src), 0o644); err != nil {
 				t.Fatal(err)
@@ -52,7 +56,7 @@ func TestSelfHostSemanticProduction(t *testing.T) {
 					if target == "wasm32-wasi" && prog.wasm != "" {
 						want = prog.wasm
 					}
-					got, report, leak := semCompileRun(t, gcc, runner, fernBin, stdlibRoot, src, target, prog.stdin)
+					got, report, leak := semCompileRun(t, gcc, runner, compiler, stdlibRoot, src, target, prog.stdin)
 					if got != want {
 						t.Fatalf("answered %q, want %q\nreport: %s", got, want, report)
 					}
@@ -196,7 +200,9 @@ var semProductionPrograms = []struct {
 	// wasi profile does not grant (the user and process ids, the permission
 	// bits, subprocess), which E066 refuses at compile time.
 	nativeOnly bool
-	src        string
+	// runtimeFloor selects explicit primitive admission for internal runtime probes.
+	runtimeFloor bool
+	src          string
 }{
 	// `s = s + piece` grows the left operand's buffer in place when the frame
 	// hands it the only unit and its block has room (#9077). Each shape here
@@ -3178,7 +3184,7 @@ function main(): i32 {
 	// address after its last typed use, so sanitizer catches a missing anchor.
 	// A byte view's opaque slot may be tagged: check identity across a call,
 	// without treating that slot as a data pointer or overwriting box headers.
-	{name: "a-reference-cast-to-an-address", atLeast: 2, want: "0|", src: `
+	{name: "a-reference-cast-to-an-address", runtimeFloor: true, atLeast: 2, want: "0|", src: `
 import "std/string";
 @noinline function keep_slot(p: usize): usize { return p; }
 function check_slot(s: string): i32 {
@@ -5603,7 +5609,7 @@ function main(): i32 {
 	// types: an address is a usize, a syscall's words are i64. The produced
 	// bodies release the three strings and both arrays. Syscall 4000 is
 	// unassigned on both Linux ISAs, so it answers -ENOSYS (-38) on each.
-	{name: "raw-floor-intrinsics", atLeast: 3, want: "3|Abc\n", nativeOnly: true, src: `
+	{name: "raw-floor-intrinsics", runtimeFloor: true, atLeast: 3, want: "3|Abc\n", nativeOnly: true, src: `
 function chr_of(b: i32): string { let p: usize = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }
 function cat2(a: string, b: string): string {
     let la: i32 = a.len();
@@ -5863,7 +5869,7 @@ function main(): i32 {
 `},
 	// An address widened to i64 keeps every bit: the store and the load
 	// round-trip it.
-	{name: "usize-widens-to-i64-whole", atLeast: 1, want: "0|", nativeOnly: true, src: `
+	{name: "usize-widens-to-i64-whole", runtimeFloor: true, atLeast: 1, want: "0|", nativeOnly: true, src: `
 function main(): i32 {
     let p: usize = __raw_scratch(8);
     let w: i64 = p as i64;
@@ -5890,7 +5896,7 @@ function main(): i32 {
 	{name: "c-call-trampolines", atLeast: 7, want: "0|", nativeOnly: true, src: semCCallSource},
 	// The floor's three static words, taken with no runtime helper to mark
 	// the need that defines them: each address pulls in its own definition.
-	{name: "raw-floor-symbols-link-without-a-helper", atLeast: 1, want: "7|", nativeOnly: true, src: `
+	{name: "raw-floor-symbols-link-without-a-helper", runtimeFloor: true, atLeast: 1, want: "7|", nativeOnly: true, src: `
 function main(): i32 {
     let sc: usize = __raw_scratch(8);
     __raw_store8(sc, 0, 7);

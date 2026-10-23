@@ -28,6 +28,12 @@ func newStrictCLI(t *testing.T) *strictCLI {
 	return &strictCLI{bin: buildSelfHostBin(t, gcc, dir, "fern.fern", "fern"), stdlib: stdlib, gcc: gcc, runner: runner}
 }
 
+func newStrictRuntimeCLI(t *testing.T) *strictCLI {
+	t.Helper()
+	cli := buildRuntimeCLI(t)
+	return &strictCLI{bin: cli.bin, stdlib: cli.stdlib, gcc: cli.gcc, runner: cli.runner}
+}
+
 // tryEmit compiles src for target and returns the assembly, or the CLI's
 // diagnostics and error when it refuses. env is the compile's FERN_ variables.
 func (c *strictCLI) tryEmit(t *testing.T, target, src string, env ...string) (string, string, error) {

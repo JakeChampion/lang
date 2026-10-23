@@ -298,6 +298,7 @@ generic_pair                                         0
 generic_promotion_ignores_shadowed_names             0
 generic_reads_an_array_literals_joined_element_type  0
 generic_receiver_methods                             0
+generic_results_and_declared_raw_names               0
 generic_return_pin_in_assoc_fn                       0
 generic_struct_literal_in_append                     0
 generic_struct_method_at_tuple_type                  0

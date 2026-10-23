@@ -44,7 +44,7 @@ function main(): i32 {
 `
 
 func TestSelfHostTailArrayAllocation(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	src := filepath.Join(t.TempDir(), "allocation.fern")
 	if err := os.WriteFile(src, []byte(tailArrayAllocationSource), 0o644); err != nil {
 		t.Fatal(err)

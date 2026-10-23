@@ -10,7 +10,7 @@ import (
 )
 
 func TestSelfHostRawWordConstantOffsets(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	var source strings.Builder
 	cases := []struct {
 		name  string
