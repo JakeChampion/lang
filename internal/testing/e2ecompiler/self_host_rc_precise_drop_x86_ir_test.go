@@ -219,9 +219,9 @@ struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { let u: i32 = 
 		// (SIGSEGV). Value 7 (absent key → default; interp-oracle-checked),
 		// detector 0.
 		{"map-without-alias-bind-value", `import "core/map";
-function main(): i32 { let mm: Map[i32, i32] = map_new(8); let (m2, e) = mm.without(1); return m2.get_or(2, 7); }`, 7},
+function main(): i32 { let mm: Map[i32, i32] = map_new(8); let e: boolean = mm.contains(1); let m2 = mm.remove(1); return m2.get_or(2, 7); }`, 7},
 		{"map-without-alias-bind-detector", `import "core/map";
-function main(): i32 { let mm: Map[i32, i32] = map_new(8); let (m2, e) = mm.without(1); let r: i32 = m2.get_or(2, 7); if (r != 7) { return 99; } return __rc_underflow_count(); }`, 0},
+function main(): i32 { let mm: Map[i32, i32] = map_new(8); let e: boolean = mm.contains(1); let m2 = mm.remove(1); let r: i32 = m2.get_or(2, 7); if (r != 7) { return 99; } return __rc_underflow_count(); }`, 0},
 		// NON-firing: the donor's string field is a bare-ident ALIAS, so the
 		// aliased buffer stays valid.
 		{"struct-string-no-reuse-aliased-donor-detector", `struct N { id: i32, name: string } function main(): i32 { let nm: string = "ab" + "c"; let d = N { id: 1, name: nm }; let u: i32 = d.name.len() as i32 + d.id; let c = N { id: 2, name: "wxyz" + "q" }; let s: i32 = c.name.len() as i32 + c.id + u + nm.len() as i32; if (s != 14) { return 99; } return __rc_underflow_count(); }`, 0},

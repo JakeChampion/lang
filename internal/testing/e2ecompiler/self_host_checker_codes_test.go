@@ -232,17 +232,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// call; it used to type unknown with nothing coded.
 		{"map-get-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.get(); return 0; }\n", []string{"E004"}},
 		{"map-insert-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.insert(\"a\"); return 0; }\n", []string{"E004"}},
-		{"map-without-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.without(); return 0; }\n", []string{"E004"}},
+		{"map-remove-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.remove(); return 0; }\n", []string{"E004"}},
 		{"map-keys-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.keys(1); return 0; }\n", []string{"E004"}},
 		{"map-iter-arity-e004", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.iter(1); return 0; }\n", []string{"E004"}},
-		{"map-has-redeclares-builtin", "import \"core/map\";\nfunction (m: Map[string, i32]) has(k: string): boolean { return false; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has(\"a\")) { return 1; } return 0; }\n", []string{"E006"}},
+		{"map-contains-redeclares-builtin", "import \"core/map\";\nfunction (m: Map[string, i32]) contains(k: string): boolean { return false; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.contains(\"a\")) { return 1; } return 0; }\n", []string{"E006"}},
+		{"map-has-user-method-ok", "import \"core/map\";\nfunction (m: Map[string, i32]) has(k: string): boolean { return k.len() > 0; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has(\"a\")) { return 1; } return 0; }\n", nil},
 		{"map-get-or-redeclares-builtin", "import \"core/map\";\nfunction (m: Map[string, i32]) get_or(k: string, d: i32): i32 { return d; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(\"a\", 2); }\n", []string{"E006"}},
 		{"map-get-or-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(5, 1); }\n", []string{"E038"}},
-		{"map-has-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has(5)) { return 1; } return 0; }\n", []string{"E038"}},
+		{"map-has-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.contains(5)) { return 1; } return 0; }\n", []string{"E038"}},
 		{"map-get-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let v: Option[i32] = m.get(5); return 0; }\n", []string{"E038"}},
-		{"map-without-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let r = m.without(5); return 0; }\n", []string{"E038"}},
+		{"map-remove-key-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); let r = m.remove(5); return 0; }\n", []string{"E038"}},
 		{"map-get-or-value-type-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(\"a\", \"b\"); }\n", []string{"E038"}},
-		{"map-get-or-key-and-value-clean", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has(\"a\")) { return m.get_or(\"a\", 1); } return 0; }\n", nil},
+		{"map-get-or-key-and-value-clean", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); if (m.contains(\"a\")) { return m.get_or(\"a\", 1); } return 0; }\n", nil},
 		{"map-get-or-user-method-other-key-type", "import \"core/map\";\nfunction (m: Map[string, i32]) get_or(k: i32, d: i32): i32 { return k + d; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.get_or(5, 1); }\n", []string{"E006", "E038"}},
 		{"map-keys-redeclares-builtin", "import \"core/map\";\nfunction (m: Map[string, i32]) keys(): i32 { return 1; }\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); return m.keys().len(); }\n", []string{"E006"}},
 		{"string-len-redeclares-builtin", "function (s: string) len(): i32 { return 1; }\nfunction main(): i32 { return \"ab\".len(); }\n", []string{"E006"}},
@@ -2912,11 +2913,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"mapnew-get-return-e002-e038", "import \"core/map\";\nfunction f(): Option[i32] { return map_new(8).get(\"x\"); }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E038"}},
 		{"mapnew-get-or-return-e002-e038", "import \"core/map\";\nfunction f(): i32 { return map_new(8).get_or(\"x\", 0); }\nfunction main(): i32 { return 0; }\n", []string{"E002", "E038"}},
 		{"mapnew-iter-annotated-result-e003", "import \"core/map\";\nfunction main(): i32 { let it: MapIter[string, i32] = map_new(8).iter(); return 0; }\n", []string{"E003"}},
-		// Pins without's unbound-key E038; E003 is the tuple-to-Map mismatch,
-		// independent of whether the result preserves unbound columns.
-		{"mapnew-without-annotated-result-e003-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8).without(\"x\"); return m.len(); }\n", []string{"E003", "E038"}},
+		// Pins remove's unbound-key E038; E003 is the unbound map_new result
+		// meeting the annotated Map[string, i32].
+		{"mapnew-remove-annotated-result-e003-e038", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8).remove(\"x\"); return m.len(); }\n", []string{"E003", "E038"}},
 		{"mapnew-annotated-chain-clean", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"x\", 5).insert(\"y\", 7); return m.get_or(\"y\", 0) + m.len(); }\n", nil},
-		{"mapnew-local-unbound-key-e038", "import \"core/map\";\nfunction main(): i32 { let m = map_new(2); if (m.has(\"a\")) { return 1; } return 0; }\n", []string{"E038"}},
+		{"mapnew-local-unbound-key-e038", "import \"core/map\";\nfunction main(): i32 { let m = map_new(2); if (m.contains(\"a\")) { return 1; } return 0; }\n", []string{"E038"}},
 		{"mapnew-local-unbound-insert-e038", "import \"core/map\";\nfunction main(): i32 { let m = map_new(2); return m.insert(1, 2).len(); }\n", []string{"E038"}},
 		{"mapnew-annotated-insert-clean", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(2); m = m.insert(\"a\", 1); return m.get_or(\"a\", 0); }\n", nil},
 		{"maplit-written-insert-clean", "import \"core/map\";\nfunction main(): i32 { let m = Map { \"a\": 1 }; return m.insert(\"b\", 2).get_or(\"b\", 0); }\n", nil},
@@ -3898,10 +3899,12 @@ function main(): i32 { return 0; }`},
 		{"map-set-retired", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m.set(1, 2); return m.get_or(1, 0); }\n"},
 		{"map-delete-retired", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m.delete(1); return 0; }\n"},
 		{"map-clear-retired", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m.clear(); return 0; }\n"},
+		{"map-has-renamed", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); if (m.has(1)) { return 1; } return 0; }\n"},
+		{"map-without-retired", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); let r = m.without(1); return 0; }\n"},
 		{"map-unknown-method", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); return m.nope(); }\n"},
 		// The controls: the value-returning spellings and the other builtins
 		// stay clean, so the rule discriminates rather than refusing Maps.
-		{"map-value-returning-ok", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.without(1); m = m.cleared(); return m.len() + m.get_or(1, 0); }\n"},
+		{"map-value-returning-ok", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.remove(1); m = m.cleared(); if (m.contains(1)) { return 1; } return m.len() + m.get_or(1, 0); }\n"},
 		// A settled i32 beside a settled i64 widens to i64 in either operand
 		// order (native's commonIntegerWidth), so the sum returns as i64 and
 		// is refused as i32.

@@ -98,7 +98,8 @@ function round(n: i32): i32 {
     let fresh: Map[i32, i32] = map_new(1);
     fresh = fresh.insert(5, 5);
     g = g.insert(0, fresh);
-    let (g2, existed) = g.without(2);
+    let existed: boolean = g.contains(2);
+    let g2 = g.remove(2);
     if (!existed) { return -4; }
     let lit: Map[string, Map[i32, i32]] = Map { "a": fresh };
     let la: i32 = 0;
@@ -160,7 +161,8 @@ function round(n: i32): i32 {
         Some(r) => { total = total + r.len() * 1000; },
         None => { return -1; },
     }
-    let (g2, existed) = g.without(Coord { x: 0, y: 0 });
+    let existed: boolean = g.contains(Coord { x: 0, y: 0 });
+    let g2 = g.remove(Coord { x: 0, y: 0 });
     if (!existed) { return -2; }
     return total + g2.len() * 100000;
 }

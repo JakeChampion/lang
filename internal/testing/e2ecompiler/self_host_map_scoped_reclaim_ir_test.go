@@ -19,8 +19,8 @@ function build(n: i32): i32 {
     let r: i32 = 0;
     if (n >= 0) {
         let m: Map[i32, i32] = Map { 1: n, 2: n + 1 };
-        if (m.has(1)) { r = r + 1; }
-        if (m.has(2)) { r = r + 1; }
+        if (m.contains(1)) { r = r + 1; }
+        if (m.contains(2)) { r = r + 1; }
     }
     return r;
 }
@@ -45,8 +45,8 @@ function build(n: i32): i32 {
     let k: i32 = 0;
     while (k < 3) {
         let m: Map[i32, i32] = Map { 1: n + k, 2: n + k + 1 };
-        if (m.has(1)) { r = r + 1; }
-        if (m.has(2)) { r = r + 1; }
+        if (m.contains(1)) { r = r + 1; }
+        if (m.contains(2)) { r = r + 1; }
         k = k + 1;
     }
     return r;
@@ -71,8 +71,8 @@ function build(n: i32): i32 {
     let r: i32 = 0;
     if (n >= 0) {
         let m: Map[string, string] = Map { "k" + "1": "v" + "1", "k" + "2": "v" + "2" };
-        if (m.has("k1")) { r = r + 1; }
-        if (m.has("k2")) { r = r + 1; }
+        if (m.contains("k1")) { r = r + 1; }
+        if (m.contains("k2")) { r = r + 1; }
     }
     return r;
 }
@@ -95,8 +95,8 @@ function main(): i32 {
 function build(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: n, 2: n + 1 };
     let r: i32 = 0;
-    if (m.has(1)) { r = r + 1; }
-    if (m.has(2)) { r = r + 1; }
+    if (m.contains(1)) { r = r + 1; }
+    if (m.contains(2)) { r = r + 1; }
     return r;
 }
 
@@ -118,8 +118,8 @@ function main(): i32 {
 	{"sibling-alias-no-over-release", `import "core/map";
 function round(base: Map[i32, i32], i: i32): i32 {
     let t: i32 = 0;
-    if (i % 2 == 0) { let m: Map[i32, i32] = Map { 1: i, 2: i + 1 }; if (m.has(1)) { t = t + 1; } }
-    if (i % 2 == 1) { let m: Map[i32, i32] = base; if (m.has(1)) { t = t + 2; } }
+    if (i % 2 == 0) { let m: Map[i32, i32] = Map { 1: i, 2: i + 1 }; if (m.contains(1)) { t = t + 1; } }
+    if (i % 2 == 1) { let m: Map[i32, i32] = base; if (m.contains(1)) { t = t + 2; } }
     return t;
 }
 
@@ -129,7 +129,7 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 200) { t = t + round(b, i); i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; }
-    if (!b.has(2)) { return 91; }
+    if (!b.contains(2)) { return 91; }
     if (t != 300) { return 92; }
     return 0;
 }

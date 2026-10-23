@@ -281,7 +281,8 @@ function main(): i32 {
   while (i < 300) { a = a.insert((i as i64) * 4294967311, (i as i64) * 3); i = i + 1; }
   while (i < 600) { a = a.insert(((i - 300) as i64) * 4294967311, 7); i = i + 1; }
   let kept = a;
-  let (a2, gone) = a.without(4294967311 * 5);
+  let gone: boolean = a.contains(4294967311 * 5);
+  let a2 = a.remove(4294967311 * 5);
   a = a2;
   let ks: i64 = 0;
   for k in kept.keys() { ks = ks + k; }
@@ -293,7 +294,7 @@ function main(): i32 {
   match (a.get(12345)) { Some(v) => { miss = v; }, None => { miss = 0 - 2; } }
   let it: i64 = 0;
   for (k, v) in a { it = it + k / 4294967311 + v; }
-  print(f"a {a.len()} {kept.len()} {gone} {ks} {vs} {hit} {miss} {a.has(4294967311 * 5)} {kept.has(4294967311 * 5)} {a.get_or(4294967311 * 8, 0 - 9)} {a.get_or(1, 0 - 9)} {it}");
+  print(f"a {a.len()} {kept.len()} {gone} {ks} {vs} {hit} {miss} {a.contains(4294967311 * 5)} {kept.contains(4294967311 * 5)} {a.get_or(4294967311 * 8, 0 - 9)} {a.get_or(1, 0 - 9)} {it}");
 
   let f: Map[i32, f64] = Map {};
   i = 0;
@@ -329,7 +330,8 @@ function main(): i32 {
   i = 0;
   while (i < 30) { c = c.insert((i % 10) as i64 - 5, P { x: i }); i = i + 1; }
   let c2 = c;
-  let (c3, cg) = c2.without(0 - 5);
+  let cg: boolean = c2.contains(0 - 5);
+  let c3 = c2.remove(0 - 5);
   let px: i32 = 0;
   for v in c.values() { px = px + v.x; }
   print(f"c {c.len()} {c3.len()} {cg} {px}");
@@ -652,7 +654,7 @@ function main(): i32 { return total(5) * 10 + total(1); }
 	{name: "a-method-on-a-concrete-map-receiver", atLeast: 3, want: "210|", wasm: "out-of-range|", src: `
 import "core/map";
 function (m: Map[string, i32]) goi(k: string, fallback: i32): i32 {
-    if (m.has(k)) { return m.get_or(k, 0); }
+    if (m.contains(k)) { return m.get_or(k, 0); }
     return fallback;
 }
 function main(): i32 {
@@ -675,7 +677,8 @@ function run(k: i32): i32 {
     m = m.insert(1, (): i32 => { return tag.len() * 2 + k; });
     let got: i32 = 0;
     match (m.get(1)) { Some(f) => { got = f(); }, None => { got = 0 - 1; } }
-    let (rest, had) = m.without(2);
+    let had: boolean = m.contains(2);
+    let rest = m.remove(2);
     if (!had || rest.len() != 1) { return 0 - 2; }
     return got;
 }
@@ -739,7 +742,7 @@ function tally(words: string[]): Map[string, i32] {
 }
 function seen(words: string[], k: string): i32 {
     let m: Map[string, i32] = tally(words);
-    if (m.has(k)) { return 1; }
+    if (m.contains(k)) { return 1; }
     return 0;
 }
 function main(): i32 { return seen(["a", "b"], "b") + seen(["a", "b"], "z"); }
@@ -1683,7 +1686,8 @@ import "std/string";
 function main(): i32 {
     let m: Map[i32, i32] = Map { 1: 10, 2: 20, 3: 30 };
     m = m.insert(4, 40);
-    let (m2, had) = m.without(2);
+    let had: boolean = m.contains(2);
+    let m2 = m.remove(2);
     let t: i32 = 0;
     for (k, v) in m2 { t = t + k * v; }
     let names: Map[string, i32] = Map { "a": 1, "bb": 2 };
@@ -1889,7 +1893,7 @@ function names(): i32 {
     m = m.insert(Name { first: "ada", rank: 1 }, 10);
     m = m.insert(Name { first: "bob", rank: 2 }, 20);
     if (m.get_or(Name { first: "a" + "da", rank: 1 }, 0 - 1) != 10) { return 1; }
-    if (!m.has(Name { first: "ada", rank: 1 })) { return 2; }
+    if (!m.contains(Name { first: "ada", rank: 1 })) { return 2; }
     m = m.insert(Name { first: "ada", rank: 1 }, 99);
     if (m.len() != 2) { return 3; }
     return m.get_or(Name { first: "ada", rank: 1 }, 0 - 1) - 90;
@@ -1979,8 +1983,8 @@ function main(): i32 {
     let miss: i64 = m.get_or(99, 42);
     let hit: i64 = 0;
     match (m.get(11)) { Some(v) => { hit = v; }, None => { hit = 0 - 1; } }
-    let wo: (Map[i32, i64], boolean) = m.without(5);
-    m = wo.0;
+    let wo: Map[i32, i64] = m.remove(5);
+    m = wo;
     let r: i64 = s / 1000000000 + g / 1000000000 + miss + hit / 1000000000 + total(m) / 1000000000 + (shared.len() as i64) + (m.len() as i64);
     return (r as i32) - 219;
 }
@@ -1994,8 +1998,8 @@ function main(): i32 {
     let m: Map[i32, i64] = map_new(2);
     let i: i32 = 0;
     while (i < 40) { m = m.insert((i * 7919) % 101, (((i * 7919) % 101) as i64) * 3); i = i + 1; }
-    let wo: (Map[i32, i64], boolean) = m.without(14);
-    m = wo.0;
+    let wo: Map[i32, i64] = m.remove(14);
+    m = wo;
     let bad: i32 = 0;
     for (k, v) in m { if (v != (k as i64) * 3) { bad = bad + 1; } }
     let ks: i32[] = m.keys();
@@ -2041,7 +2045,8 @@ function by_string(): i32 {
     let m: Map[string, i32] = map_new(2);
     m = m.insert("a" + "x", 1);
     m = m.insert("b" + "y", 2);
-    let (m2, gone) = m.without("ax");
+    let gone: boolean = m.contains("ax");
+    let m2 = m.remove("ax");
     if (!gone) { return 0 - 1; }
     m2 = m2.insert("a" + "x", 3);
     return m2.len() * 10 + m2.get_or("ax", 0);
@@ -2050,7 +2055,8 @@ function by_value(): i32 {
     let m: Map[i32, string] = map_new(2);
     m = m.insert(1, "one" + "!");
     m = m.insert(2, "two" + "!");
-    let (m2, gone) = m.without(1);
+    let gone: boolean = m.contains(1);
+    let m2 = m.remove(1);
     if (!gone) { return 0 - 1; }
     return m2.get_or(2, "").len();
 }
@@ -2058,9 +2064,10 @@ function by_key(): i32 {
     let m: Map[Coord, Box] = map_new(2);
     let i: i32 = 0;
     while (i < 5) { m = m.insert(Coord { a: i, b: i }, Box { n: i, tag: "t" + "!" }); i = i + 1; }
-    let (m2, gone) = m.without(Coord { a: 2, b: 2 });
+    let gone: boolean = m.contains(Coord { a: 2, b: 2 });
+    let m2 = m.remove(Coord { a: 2, b: 2 });
     if (!gone) { return 0 - 1; }
-    if (m2.has(Coord { a: 2, b: 2 })) { return 0 - 2; }
+    if (m2.contains(Coord { a: 2, b: 2 })) { return 0 - 2; }
     return m2.len() + m2.get_or(Coord { a: 4, b: 4 }, Box { n: 0, tag: "" }).n;
 }
 function main(): i32 { return by_string() + by_value() + by_key(); }
@@ -2071,7 +2078,8 @@ function survivors(n: i32): i32 {
     let m: Map[i32, i32] = map_new(8);
     let i: i32 = 0;
     while (i < n) { m = m.insert(i, i * 10); i = i + 1; }
-    let (m1, gone) = m.without(1);
+    let gone: boolean = m.contains(1);
+    let m1 = m.remove(1);
     if (!gone) { return 0 - 1; }
     return m1.len() * 10 + m1.get_or(4, 0);
 }
@@ -2085,7 +2093,8 @@ function emptied(n: i32): i32 {
 function absent(n: i32): i32 {
     let m: Map[i32, i32] = map_new(4);
     m = m.insert(5, 50);
-    let (m1, missing) = m.without(99);
+    let missing: boolean = m.contains(99);
+    let m1 = m.remove(99);
     if (missing) { return 0 - 1; }
     return m1.get_or(5, 0);
 }
@@ -2103,8 +2112,8 @@ function chained(n: i32): i32 {
     let m: Map[i32, i32] = map_new(8);
     let i: i32 = 0;
     while (i < n) { m = m.insert(i, i * 10); i = i + 1; }
-    m = m.without(1).0;
-    m = m.without(2).0;
+    m = m.remove(1);
+    m = m.remove(2);
     return m.len() * 100 + m.get_or(4, 0);
 }
 function relayed(n: i32): i32 {
@@ -3474,9 +3483,11 @@ function main(): i32 {
     m = m.insert(1, 10);
     let n: Map[i32, i32] = m.insert(2, 20);
     let g: Map[i32, i32] = grown(m, 7);
-    let (rest, had) = n.without(2);
+    let had: boolean = n.contains(2);
+    let rest = n.remove(2);
     let snapshot: Map[i32, i32] = n;
-    let (rest2, had2) = n.without(1);
+    let had2: boolean = n.contains(1);
+    let rest2 = n.remove(1);
     if (g.get_or(7, -1) != 21 || !had || !had2) { return 99; }
     return m.len() + n.len() * 2 + g.len() * 4 + rest.len() * 8 + snapshot.len() * 16 + rest2.len() * 32;
 }`},
@@ -4680,7 +4691,8 @@ function main(): i32 {
     let c: str = t;
     m = m.insert("c", c);
     let held: Map[string, str] = m;
-    let (m2, had) = held.without("b");
+    let had: boolean = held.contains("b");
+    let m2 = held.remove("b");
     m = m.insert("a", slice_unchecked(s, 6, 8));
     let m3: Map[string, str] = grow(m, s);
     let junk: str[] = [slice_unchecked("zzzzzzzz", 0, 3), slice_unchecked("yyyyyyyy", 0, 3)];
@@ -5556,7 +5568,7 @@ function main(): i32 {
     let m = Map { true: 5, false: 9 };
     let n = Map { 1: 10, 2: 20 };
     let s: i32 = m.get_or(true, 0) + m.get_or(false, 0) + n.get_or(2, 0);
-    if (m.has(true)) { s = s + 1; }
+    if (m.contains(true)) { s = s + 1; }
     return s + m.len() + n.len();
 }
 `},

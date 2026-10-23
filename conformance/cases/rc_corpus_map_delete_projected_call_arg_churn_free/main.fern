@@ -17,7 +17,7 @@ function mk(): i32 {
     let sm: Map[string, i32] = map_new(8);
     sm = sm.insert("ke" + "y", 7);
     sm = sm.insert("ot" + "her", 3);
-    acc = acc + sizeof(sm.without("ke" + "y").0);
+    acc = acc + sizeof(sm.remove("ke" + "y"));
     return acc;
 }
 function main(): i32 {

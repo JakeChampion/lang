@@ -63,8 +63,8 @@ function test_lookup_linear(): test.TestOutcome {
   if (num(o.get("k0")) != "0" || num(o.get("k7")) != "7") {
     return test.fail("get");
   }
-  if (o.has("k8") || o.index_of("k3").unwrap_or(-1) != 3 || o.index_of("k8").is_some()) {
-    return test.fail("has / index_of");
+  if (o.contains("k8") || o.index_of("k3").unwrap_or(-1) != 3 || o.index_of("k8").is_some()) {
+    return test.fail("contains / index_of");
   }
   return test.assert_eq(num(o.get("missing")), "<none>");
 }
@@ -81,7 +81,7 @@ function test_lookup_indexed(): test.TestOutcome {
     }
     i = i + 1;
   }
-  if (o.has("k40") || o.has("")) {
+  if (o.contains("k40") || o.contains("")) {
     return test.fail("has a missing key");
   }
   return test.assert_eq(num(o.get("k39")), "39");
@@ -90,10 +90,10 @@ function test_lookup_indexed(): test.TestOutcome {
 function test_insert_replaces_in_place(): test.TestOutcome {
   let small: json.JsonObject = keyed(3).insert("k1", JNumber("100"));
   let large: json.JsonObject = keyed(20).insert("k11", JNumber("100"));
-  if (small.len() != 3 || small.keys[1] != "k1" || num(small.get("k1")) != "100") {
+  if (small.len() != 3 || small.keys()[1] != "k1" || num(small.get("k1")) != "100") {
     return test.fail("small");
   }
-  if (large.len() != 20 || large.keys[11] != "k11" || num(large.get("k11")) != "100") {
+  if (large.len() != 20 || large.keys()[11] != "k11" || num(large.get("k11")) != "100") {
     return test.fail("large");
   }
   return test.assert_eq(json.json_encode(JObject(small)), "{\"k0\":0,\"k1\":100,\"k2\":2}");
@@ -132,7 +132,7 @@ function test_parse_repeated_keys(): test.TestOutcome {
   if (large.len() != 10 || large.index.len() == 0) {
     return test.fail("large: " + large.len().to_string() + " members");
   }
-  return test.assert_eq(num(large.get("b")) + " " + large.keys[1] + " " + large.keys[9], "20 b j");
+  return test.assert_eq(num(large.get("b")) + " " + large.keys()[1] + " " + large.keys()[9], "20 b j");
 }
 
 function test_object_of(): test.TestOutcome {

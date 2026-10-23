@@ -6,7 +6,7 @@ function main(): i32 {
     m = m.insert(11, 99);
     m = m.insert(7, 42);
     if (m.len() != 2) { return 1; }
-    if (!m.has(11)) { return 2; }
+    if (!m.contains(11)) { return 2; }
     match (m.get(7)) {
         Some(v) => { return v; },
         None => { return 3; }

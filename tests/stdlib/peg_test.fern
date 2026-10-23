@@ -117,10 +117,10 @@ function test_capture_backtrack_discarded(): test.TestOutcome {
   let Ok(r) = peg.peg_match_pattern(p, "abc") else {
     return test.fail("expected match");
   };
-  if (r.caps.has("bad")) {
+  if (r.caps.contains("bad")) {
     return test.fail("backtracked capture leaked");
   }
-  return test.assert_true(r.caps.has("good"));
+  return test.assert_true(r.caps.contains("good"));
 }
 
 // Recursive grammar: balanced parentheses via a named rule.

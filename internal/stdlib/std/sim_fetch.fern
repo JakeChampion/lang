@@ -578,7 +578,7 @@ function __text(v: json.JsonValue): string {
 }
 
 function __body_member(o: json.JsonObject): u8[] {
-  if (o.has("body_hex")) {
+  if (o.contains("body_hex")) {
     return hex.hex_decode(__string_member(o, "body_hex"));
   }
   return __string_member(o, "body").bytes();

@@ -41,14 +41,15 @@ function main(): i32 {
     m = m.insert(Name { first: "bob", rank: 2 }, 20);
     if (m.get_or(Name { first: "a" + "da", rank: 1 }, -1) != 10) { return 1; }   // map_get
     if (m.get_or(Name { first: "ada", rank: 9 }, -1) != -1) { return 2; }        // absent
-    if (!m.has(Name { first: "b" + "ob", rank: 2 })) { return 3; }               // map_has
-    if (m.has(Name { first: "zzz", rank: 1 })) { return 4; }
+    if (!m.contains(Name { first: "b" + "ob", rank: 2 })) { return 3; }               // map_has
+    if (m.contains(Name { first: "zzz", rank: 1 })) { return 4; }
     m = m.insert(Name { first: "a" + "da", rank: 1 }, 99);                       // map_set overwrite
     if (m.len() != 2) { return 5; }
     if (m.get_or(Name { first: "ada", rank: 1 }, -1) != 99) { return 6; }
-    let (m2, gone) = m.without(Name { first: "a" + "da", rank: 1 });             // map_delete
+    let gone: boolean = m.contains(Name { first: "a" + "da", rank: 1 });
+    let m2 = m.remove(Name { first: "a" + "da", rank: 1 });             // map_delete
     if (!gone) { return 7; }
-    if (m2.has(Name { first: "ada", rank: 1 })) { return 8; }
+    if (m2.contains(Name { first: "ada", rank: 1 })) { return 8; }
     if (m2.len() != 1) { return 9; }
     return 42;
 }`, 42},

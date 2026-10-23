@@ -59,7 +59,7 @@ function main(): i32 {
     let m: Map[Key, i32] = Map { Key { a: 1, b: "x" }: 10, Key { a: 2, b: "y" }: 20 };
     if (m.get_or(Key { a: 1, b: "x" }, 0) != 10) { return 90; }
     if (m.get_or(Key { a: 3, b: "z" }, 77) != 77) { return 91; }
-    if (m.has(Key { a: 9, b: "q" })) { return 92; }
+    if (m.contains(Key { a: 9, b: "q" })) { return 92; }
     m = m.insert(Key { a: 1, b: "x" }, 11);
     if (m.len() != 2) { return 93; }
     if (m.get_or(Key { a: 1, b: "x" }, 0) != 11) { return 94; }

@@ -124,14 +124,14 @@ the Roc/Clojure precedent:
 | today (mutable-looking) | proposed (value-returning) | precedent |
 |---|---|---|
 | `m.set(k, v)`     | `m.insert(k, v)` / `m.with(k, v)` | Roc `Dict.insert` |
-| `m.delete(k)`     | `m.without(k)`                    | Clojure `dissoc` |
+| `m.delete(k)`     | `m.remove(k)`                     | Clojure `dissoc` |
 | `m.clear()`       | `m.cleared()`                     | — |
 | `arr.push(x)`     | `arr.append(x)` / `arr.pushed(x)` | — |
 | `arr[i] = v`      | `arr.with(i, v)`                  | — |
 
-`delete`'s `(Map, bool)` shape stays (the bool reports presence); the
-rename is `without`. Old names can live one release as deprecation
-aliases that emit a warning, then are removed.
+`remove(k)` returns the map alone; `contains(k)` reports presence. (It was
+first `without(k)`, keeping `delete`'s `(Map, bool)` shape, before #12711
+gave every map and set one vocabulary.)
 
 Note `arr[i] = v` is included: indexed element assignment is the one CoW
 *statement* form that survives today. It becomes `arr = arr.with(i, v)`,
@@ -258,7 +258,7 @@ local.
 
 - `Array.build(fn: (ArrayBuilder[T]) -> void): T[]`
 - `Map.build(fn: (MapBuilder[K, V]) -> void): Map[K, V]`
-- Builder methods: `append`, `with` (array); `insert`, `without` (map);
+- Builder methods: `append`, `with` (array); `insert`, `remove` (map);
   `len`. Builders expose **no read-back of pointer-shaped contents**
   beyond `len` in v1, to keep the linearity story airtight.
 
@@ -335,8 +335,8 @@ snapshots pay off*:
 - `PersistentMap[K, V]` / `PersistentVec[T]` for undo stacks,
   versioned/CoW-heavy state, speculative computation, or genuinely
   shared read-mostly tables.
-- Same method names (`insert`/`without`/`with`/`append`) so swapping the
-  type is the only edit.
+- Same method names (`contains`/`insert`/`remove`/`update`/`merge`/…, #12711)
+  so swapping the type is the only edit.
 
 This is the real long-game unlock: pure surface + race-free immutable
 values also make **structured parallelism** sound (immutable values are

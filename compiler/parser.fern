@@ -13142,7 +13142,7 @@ function me_method_arg_types(fa: ast.ExprFieldAccess, argc: i32, env: MEnv, enum
     if (fa.field == "insert" || fa.field == "set" || fa.field == "get_or") {
       return kv;
     }
-    if (fa.field == "has" || fa.field == "get" || fa.field == "without") {
+    if (fa.field == "contains" || fa.field == "get" || fa.field == "remove") {
       return [kv[0]];
     }
   }
@@ -13166,11 +13166,8 @@ function me_method_arg_types(fa: ast.ExprFieldAccess, argc: i32, env: MEnv, enum
 function me_method_ret_type(rty: string, name: string, funcs: MFns): string {
   let kv: string[] = me_map_args(rty);
   if (kv.len() == 2) {
-    if (name == "insert" || name == "set" || name == "cleared") {
+    if (name == "insert" || name == "set" || name == "cleared" || name == "remove") {
       return rty;
-    }
-    if (name == "without") {
-      return "(" + rty + ", boolean)";
     }
     if (name == "get_or") {
       return kv[1];
@@ -18441,7 +18438,7 @@ function ms_module(mod: Module): Module {
   // Phase 2: generate clones; a worklist covers clones whose own field
   // types / method bodies reference further instantiations. The same
   // worklist carries the bounded-generic instantiations a method clone's
-  // body makes (`__ps_add_all(s, xs)` under `PSet__i32`):
+  // body makes (`__ps_insert_all(s, xs)` under `PSet__i32`):
   // those are cloned here from the templates monomorphize_module passed
   // through, and a clone's own annotations feed back struct instantiations.
   let done: Insts = Insts { inames: [], itypes: [], iargs: [] };
@@ -20014,7 +20011,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
 
 // me_stmts walks a statement list, threading the block-local env.
 // me_bind_var binds what a `let` declares: its name to `vty`, or, for a
-// tuple destructure (`let (m2, had) = m.without(k)`, one StmtVar whose name
+// tuple destructure (`let (a, b) = pair()`, one StmtVar whose name
 // is the comma-joined list), each plain name to its element of the init's
 // tuple type.
 function me_bind_var(env: MEnv, v: ast.StmtVar, vty: string, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): MEnv {

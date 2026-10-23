@@ -52,7 +52,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | Closures / lambdas | Capturing and escaping lambdas and nested named functions | **104**: 89 nested named functions across 8 modules, plus 15 arrow lambdas across 5 modules. Visitors capture queried names, function-signature registries, declared types and instrumentation context. The diagnostics sort captures line maps (#12993). | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **2,026** in 66 modules — `checker.fern`, `parser.fern` and `semsource.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
-| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **12** spellings in 5 modules (`wasm_ir`'s call set, `builtins`' mirror of `JObject`, `printer`'s line-id table for the linear-space diff (#8611), `modloader`'s fact-hash de-duplication set, and `ircore`'s unit-owner tables) | pinned |
+| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **8** spellings in 4 modules (`wasm_ir`'s call-name accumulator, `printer`'s line-id table for the linear-space diff (#8611), `modloader`'s fact-hash de-duplication set, and `ircore`'s unit-owner tables) | pinned |
 | `astwalk` call sites (walkers on the shared spine) | — | **241** across 21 modules (fnsigs.fern held 25 when it was deleted) — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, `lift.fern`'s cap-type and env-box-lift families, `irtables.fern`'s assign-targets family, `treeshake.fern`'s name collector, and `asmcore.fern`'s P001/P002 pre-check (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
@@ -155,10 +155,10 @@ means finishing `str` can never help RC without also un-erasing it.
 Every self-host module imports siblings and `std/io` (which exports exactly two
 functions). Nothing else. The consequences:
 
-- **A compiler that has almost no hash map.** Twelve `Map[K, V]` spellings in
-  175k lines, across five modules — `wasm_ir`'s call set, `builtins`' mirror
-  of `JObject`, `printer`'s line-id table, `modloader`'s fact-hash
-  de-duplication set and `ircore`'s unit-owner tables. Everything else is still a linear
+- **A compiler that has almost no hash map.** Eight `Map[K, V]` spellings in
+  175k lines, across four modules — `wasm_ir`'s call-name accumulator,
+  `printer`'s line-id table, `modloader`'s fact-hash de-duplication set and
+  `ircore`'s unit-owner tables. Everything else is still a linear
   scan over a `string[]` or a hand-rolled bucket table: 290 sites comparing an
   array element to a name, 114 hand-rolled
   `contains`/`index_of`/`find` helpers, and five hand-written hash tables

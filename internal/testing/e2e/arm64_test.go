@@ -11466,8 +11466,7 @@ func TestArm64ArraySetAliasedCopies(t *testing.T) {
 	}
 }
 
-// Phase 2c: m.without(k) returns (Map[K,V], bool).
-// Tests tuple destructuring, bool-field access, and statement-position discard.
+// m.remove(k) returns the map without k; m.contains(k) says whether k was there.
 func TestArm64MapDeleteReturnsMapBool(t *testing.T) {
 	src := `
 import "core/map";
@@ -11476,16 +11475,14 @@ function main(): i32 {
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
-    let (mb, hadb) = m.without("b");
-    if (!hadb) { return 1; }               // "b" present → true
-    m = mb;
-    // Bool field access on call result.
-    if (m.without("z").1)  { return 2; }   // "z" missing → false
-    // Tuple destructuring: m2 is the updated map, ok is the found-flag.
-    let (m2, ok) = m.without("a");
-    if (!ok) { return 3; }
-    if (m2.has("a")) { return 4; }
-    if (!m2.has("c")) { return 5; }
+    if (!m.contains("b")) { return 1; }
+    m = m.remove("b");
+    if (m.contains("z")) { return 2; }
+    let m2: Map[string, i32] = m.remove("z");
+    if (m2.len() != 2) { return 3; }
+    m2 = m2.remove("a");
+    if (m2.contains("a")) { return 4; }
+    if (!m2.contains("c")) { return 5; }
     if (m2.len() != 1) { return 6; }
     return 0;
 }`
@@ -11505,7 +11502,7 @@ function main(): i32 {
     if (m.len() != 2) { return 1; }
     m = m.cleared();
     if (m.len() != 0) { return 2; }
-    if (m.has("x")) { return 3; }
+    if (m.contains("x")) { return 3; }
     // Re-insert after clear must work.
     m = m.insert("z", 99);
     if (m.len() != 1) { return 4; }
@@ -11547,12 +11544,13 @@ function main(): i32 {
     m1 = m1.insert("a", 1);
     m1 = m1.insert("b", 2);
     let m2 = m1;                       // alias → rc=2
-    let (m3, ok) = m2.without("a");     // rc>1 → copy; m1/m2 intact
+    let ok: boolean = m2.contains("a");
+    let m3 = m2.remove("a");            // rc>1 → copy; m1/m2 intact
     if (!ok)            { return 1; }
     if (m1.len() != 2)  { return 2; }
-    if (!m1.has("a"))   { return 3; }
+    if (!m1.contains("a"))   { return 3; }
     if (m3.len() != 1)  { return 4; }
-    if (m3.has("a"))    { return 5; }
+    if (m3.contains("a"))    { return 5; }
     let m4 = m1;                       // alias → rc=2
     m4 = m4.cleared();                   // rc>1 → copy; m1 intact
     if (m1.len() != 2)  { return 6; }
@@ -11655,7 +11653,7 @@ function main(): i32 {
     let b: Map[i32, string] = Map {};
     if (b.len() != 0) { return 3; }
     b = b.insert(7, "hello");
-    if (!b.has(7)) { return 4; }
+    if (!b.contains(7)) { return 4; }
     // Function argument
     if (take(Map {}) != 0) { return 5; }
     // Return statement

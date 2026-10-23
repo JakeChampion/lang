@@ -12,9 +12,10 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 5) { m = m.insert(i, i * 10); i = i + 1; }
 
-    let (m1, gone) = m.without(1);
+    let gone: boolean = m.contains(1);
+    let m1 = m.remove(1);
     if (!gone) { return 91; }
-    if (m1.has(1)) { return 92; }
+    if (m1.contains(1)) { return 92; }
     if (m1.len() != 4) { return 93; }
 
     let ks: i32[] = m1.keys();
@@ -33,7 +34,8 @@ function main(): i32 {
     // A key that is not there leaves both columns alone.
     let e: Map[i32, i32] = map_new(4);
     e = e.insert(5, 50);
-    let (e1, missing) = e.without(99);
+    let missing: boolean = e.contains(99);
+    let e1 = e.remove(99);
     if (missing) { return 96; }
     if (e1.len() != 1) { return 97; }
     if (e1.get_or(5, 0) != 50) { return 98; }
