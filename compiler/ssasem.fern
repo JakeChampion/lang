@@ -547,8 +547,7 @@ pub function map_values(): i32 {
   return 0 - 32;
 }
 
-// `without` removes one entry and answers the map paired with whether the key
-// was there; `cleared` answers a fresh empty map of the same shape, reading
+// `remove` removes one entry and answers the map; `cleared` answers a fresh empty map of the same shape, reading
 // nothing from the receiver.
 pub function map_delete(): i32 {
   return 0 - 33;
@@ -2371,8 +2370,7 @@ function map_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   return map_get_or_error(ins, f, result);
 }
 
-// A delete borrows the key to find the entry and hands the map back inside a
-// tuple with whether it was there. The runtime removes the entry by moving the
+// A delete borrows the key to find the entry and hands the map back. The runtime removes the entry by moving the
 // last one into the hole and shrinking both columns, and releasing the
 // removed entry's key and value through the columns' releases, so every
 // supported map shape is admitted.
@@ -2384,14 +2382,10 @@ function map_delete_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
   if (!is_supported_map(m)) {
     return "map delete type";
   }
-  if (!semtypes.equal(delete_result(m), result)) {
+  if (!semtypes.equal(m, result)) {
     return "map delete result";
   }
   return map_operand_error(m, f.values[ins.args[1]], map_value(m));
-}
-
-pub function delete_result(m: typeinfo.Type): typeinfo.Type {
-  return typeinfo.TypeTuple { elements: [m, typeinfo.TypeBool { tag: 0 }] };
 }
 
 // A clear is a CONSTRUCTION: this runtime's map box is the two columns with no

@@ -9,7 +9,7 @@ import (
 )
 
 // Chained ops on a map-returning BUILTIN method CALL result on the self-host IR
-// path. `m.insert(k, v).len()` / `.get_or(..)` / `.has(..)` — the receiver of the
+// path. `m.insert(k, v).len()` / `.get_or(..)` / `.contains(..)` — the receiver of the
 // outer op is itself a map-returning builtin call (insert/set/delete all return
 // Map[K, V]), often nested (`m.insert(..).insert(..)`). The chained op must
 // dispatch as a map op: a chained `.len()` dispatched as an array length reads

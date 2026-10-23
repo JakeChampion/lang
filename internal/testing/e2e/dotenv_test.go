@@ -17,8 +17,8 @@ function main(): i32 {
     if (m.get_or("TOKEN", "?") != "abc") { return 3; }
     if (m.get_or("MSG", "?") != "a\nb") { return 4; }
     if (m.get_or("RAW", "?") != "x\\ny") { return 5; }
-    if (!m.has("EMPTY") || m.get_or("EMPTY", "?") != "") { return 6; }
-    if (m.has("no_eq")) { return 7; }
+    if (!m.contains("EMPTY") || m.get_or("EMPTY", "?") != "") { return 6; }
+    if (m.contains("no_eq")) { return 7; }
     if (m.len() != 6) { return 8; }   // HOST, PORT, TOKEN, MSG, RAW, EMPTY
     return 42;
 }

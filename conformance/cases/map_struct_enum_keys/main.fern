@@ -26,15 +26,16 @@ function main(): i32 {
     if (m.get_or(Name { first: "a" + "da", rank: 1 }, -1) != 10) { return 1; }
     if (m.get_or(Name { first: "bob", rank: 2 }, -1) != 20) { return 2; }
     if (m.get_or(Name { first: "ada", rank: 9 }, -1) != -1) { return 3; }  // absent
-    if (!m.has(Name { first: "ada", rank: 1 })) { return 4; }
-    if (m.has(Name { first: "zzz", rank: 1 })) { return 5; }
+    if (!m.contains(Name { first: "ada", rank: 1 })) { return 4; }
+    if (m.contains(Name { first: "zzz", rank: 1 })) { return 5; }
     m = m.insert(Name { first: "ada", rank: 1 }, 99);  // overwrite, not grow
     if (m.len() != 2) { return 6; }
     if (m.get_or(Name { first: "ada", rank: 1 }, -1) != 99) { return 7; }
-    let (m2, removed) = m.without(Name { first: "ada", rank: 1 });
+    let removed: boolean = m.contains(Name { first: "ada", rank: 1 });
+    let m2 = m.remove(Name { first: "ada", rank: 1 });
     m = m2;
     if (!removed) { return 8; }
-    if (m.has(Name { first: "ada", rank: 1 })) { return 9; }
+    if (m.contains(Name { first: "ada", rank: 1 })) { return 9; }
 
     // --- enum key with a string payload + unit/scalar variants ---
     let em: Map[Tag, i32] = map_new(8);

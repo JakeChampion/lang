@@ -65,7 +65,7 @@ var asmLoadRunStdlibCases = []struct {
 	{"map-str-keys", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert(\"a\", 1); m = m.insert(\"bb\", 2); m = m.insert(\"a\", 9); return m.len(); }", 2, ""},
 	{"map-get-hit", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(7)) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 42, ""},
 	{"map-get-miss", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); match (m.get(999)) { Some(v) => { return v; }, None => { return 5; } } return 9; }", 5, ""},
-	{"map-has", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 1); let r = 0; if (m.has(1)) { r = r + 1; } if (m.has(2)) { r = r + 10; } return r; }", 1, ""},
+	{"map-has", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(4); m = m.insert(1, 1); let r = 0; if (m.contains(1)) { r = r + 1; } if (m.contains(2)) { r = r + 10; } return r; }", 1, ""},
 	{"map-get-strkey", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert(\"hi\", 11); match (m.get(\"hi\")) { Some(v) => { return v; }, None => { return 0; } } return 9; }", 11, ""},
 	{"map-get-or-hit", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(7, 0); }", 42, ""},
 	{"map-get-or-miss", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); return m.get_or(999, 5); }", 5, ""},

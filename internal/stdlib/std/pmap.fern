@@ -65,7 +65,7 @@ import "std/i32";
 // packed in index order, so a child's slot is the popcount of the bits
 // below its own; `size` is the number of leaves in the subtree. `Empty`
 // is only ever the root of an empty map. The map is the trie: construct
-// one only through `pmap_new` / `from_arrays`.
+// one only through `pmap_new` / `from`.
 pub enum PMap[K, V] { Empty, Leaf(i32, K, V), Coll(i32, PMap[K, V][]), Branch(i32, i32, PMap[K, V][]) }
 
 // `pmap_new()` — the empty map. The key and value types are fixed by
@@ -76,20 +76,12 @@ pub function pmap_new[K, V](): PMap[K, V] {
   return e;
 }
 
-// `from_arrays(keys, values)` — the map holding `keys[i] -> values[i]`
-// for every i. A key repeated in `keys` takes its LAST value. The two
-// arrays must have the same length; extra entries in the longer one are
-// ignored.
-pub function from_arrays[K: cmp.Hash + cmp.Eq, V](keys: K[], values: V[]): PMap[K, V] {
+// `from(pairs)` — the map holding each `(k, v)`. A key repeated in
+// `pairs` takes its LAST value.
+pub function from[K: cmp.Hash + cmp.Eq, V](pairs: (K, V)[]): PMap[K, V] {
   let m: PMap[K, V] = pmap_new();
-  let n: i32 = keys.len();
-  if (values.len() < n) {
-    n = values.len();
-  }
-  let i: i32 = 0;
-  while (i < n) {
-    m = m.insert(keys[i], values[i]);
-    i = i + 1;
+  for p in pairs {
+    m = m.insert(p.0, p.1);
   }
   return m;
 }
@@ -751,22 +743,16 @@ pub function (m: PMap[K, V]) contains[K: cmp.Hash + cmp.Eq, V](k: K): boolean {
   }
 }
 
-// `update(k, f)` — the map with the value at `k` replaced by `f(old)`;
-// the receiver unchanged when `k` is absent.
-pub function (m: PMap[K, V]) update[K: cmp.Hash + cmp.Eq, V](k: K, f: (V) => V): PMap[K, V] {
+// `update(k, init, f)` — the map with `k -> f(old)`, or `k -> f(init)`
+// when `k` is absent.
+pub function (m: PMap[K, V]) update[K: cmp.Hash + cmp.Eq, V](k: K, init: V, f: (V) => V): PMap[K, V] {
   let h: i32 = node_mix(k.hash());
   match (node_find(m, h, k)) {
     Leaf(lh, lk, lv) => {
       return node_insert(m, h, 0, k, f(lv));
     },
-    Empty => {
-      return m;
-    },
-    Coll(xh, xs) => {
-      return m;
-    },
-    Branch(b, s, xs) => {
-      return m;
+    _ => {
+      return node_insert(m, h, 0, k, f(init));
     }
   }
 }
@@ -823,18 +809,16 @@ pub function (m: PMap[K, V]) filter[K: cmp.Hash + cmp.Eq, V](pred: (K, V) => boo
   return out;
 }
 
-// `union(other)` — every entry of both; a key in both keeps THIS map's
+// `merge(other)` — every entry of both; a key in both takes `other`'s
 // value. The smaller map is folded into the larger, O(m log32 n).
-pub function (m: PMap[K, V]) union[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
+pub function (m: PMap[K, V]) merge[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
   if (m.len() >= other.len()) {
     let out: PMap[K, V] = m;
     let ks: K[] = other.keys();
     let vs: V[] = other.values();
     let i: i32 = 0;
     while (i < ks.len()) {
-      if (!out.contains(ks[i])) {
-        out = out.insert(ks[i], vs[i]);
-      }
+      out = out.insert(ks[i], vs[i]);
       i = i + 1;
     }
     return out;
@@ -844,7 +828,22 @@ pub function (m: PMap[K, V]) union[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): 
   let vs: V[] = m.values();
   let i: i32 = 0;
   while (i < ks.len()) {
-    out = out.insert(ks[i], vs[i]);
+    if (!out.contains(ks[i])) {
+      out = out.insert(ks[i], vs[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// `entries()` — every `(key, value)` pair, in hash order.
+pub function (m: PMap[K, V]) entries(): (K, V)[] {
+  let out: (K, V)[] = [];
+  let ks: K[] = m.keys();
+  let vs: V[] = m.values();
+  let i: i32 = 0;
+  while (i < ks.len()) {
+    out = out.append((ks[i], vs[i]));
     i = i + 1;
   }
   return out;

@@ -13,9 +13,10 @@ function main(): i32 {
     let v7: i32 = m.get_or(7, -1);  // 2
 
     // Map.without — value-returning delete; returns (Map, existed).
-    let (m2, existed) = m.without(11);
+    let existed: boolean = m.contains(11);
+    let m2 = m.remove(11);
     if (!existed) { return 91; }
-    if (m2.has(11)) { return 92; }
+    if (m2.contains(11)) { return 92; }
     let total: i32 = v7 + m2.len();  // 2 + 1 = 3
 
     // Array.append + Array.with — value-returning push / element set.

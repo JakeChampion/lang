@@ -72,7 +72,7 @@ function main(): i32 {
   let n: Map[string, i32] = Map {};
   m = m.insert("a", 1);
   m = m.insert("b", 2);
-  if (!m.has("a") || !m.has("b") || n.len() != 0 || m.len() != 2) {
+  if (!m.contains("a") || !m.contains("b") || n.len() != 0 || m.len() != 2) {
     return 40;
   }
   return 0;

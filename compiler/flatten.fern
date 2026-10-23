@@ -1081,12 +1081,10 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
   // T2) rather than a hand-rolled depth-tracking top-level-comma split + per-
   // element space trim; parse_type_ref splits the elements without letting a
   // nested generic's / tuple's inner commas confuse the split, and each element
-  // rendered back is the canonical spelling the recursion expects. A tuple-ARRAY
-  // ("(A, B)[]", array_depth > 0) is not a bare tuple, so it falls through to the
-  // bracket/suffix logic below — matching the former guard, whose ")"-suffix test
-  // failed on the trailing "]".
+  // rendered back is the canonical spelling the recursion expects. A tuple
+  // ARRAY (`(A, B)[]`) takes the same element rewrite, its suffix re-attached.
   let tref: parser.TypeRef = parser.parse_type_ref(tn);
-  if (tref.is_tuple && tref.array_depth == 0) {
+  if (tref.is_tuple) {
     let out: string = "(";
     let ti: i32 = 0;
     while (ti < tref.args.len()) {
@@ -1096,7 +1094,13 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
       out = out + rewrite_type_name(parser.render_type_ref(tref.args[ti]), ctx);
       ti = ti + 1;
     }
-    return out + ")";
+    out = out + ")";
+    let td: i32 = 0;
+    while (td < tref.array_depth) {
+      out = out + "[]";
+      td = td + 1;
+    }
+    return out;
   }
   // A FUNCTION type (`(Flag) => Opt`, `() => i32`): parse_type_ref gives it an
   // EMPTY base with args = the parameters plus the result last, which is the
@@ -2815,9 +2819,8 @@ function main(): i32 {
   if (rewrite_type_name("((Token, i32), string)", ctx) != "((lx__Token, i32), string)") {
     return 203;
   }
-  // A tuple-ARRAY is not a bare tuple: it falls through to the suffix logic, which
-  // leaves a non-own base untouched (the array element is not a rewrite target here).
-  if (rewrite_type_name("(i32, i32)[]", ctx) != "(i32, i32)[]") {
+  // A tuple ARRAY rewrites its elements and keeps every suffix.
+  if (rewrite_type_name("(string, Token)[]", ctx) != "(string, lx__Token)[]" || rewrite_type_name("(i32, lexer.Token)[][]", ctx) != "(i32, lexer__Token)[][]") {
     return 204;
   }
   // FUNCTION types round-trip, parameters and result rewritten. parse_type_ref

@@ -2384,7 +2384,7 @@ function main(): i32 {
 			// with no random call in the program. The framing has to be chosen
 			// accordingly: wrapped as plain stdout, this component carries a core
 			// import no instantiation argument satisfies and will not load.
-			{"map", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); if (!m.has(\"a\")) { return 1; } print(\"map ok\"); return 0; }\n", "map ok\n", true},
+			{"map", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); if (!m.contains(\"a\")) { return 1; } print(\"map ok\"); return 0; }\n", "map ok\n", true},
 			// A value block over an Option of an array: the no-I/O framing
 			// takes the substituted bodies like every other framing.
 			{"typed-only", "function picked(k: i32): i32 { let rows: i32[] = [k, k]; let some: i32[] = (match (Some(rows)) { Some(r) => r, None => [] }); return some.len(); }\nfunction main(): i32 { return picked(4) - 2; }\n", "", false},

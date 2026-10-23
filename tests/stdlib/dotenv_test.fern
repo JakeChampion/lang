@@ -39,7 +39,7 @@ function test_last_wins_and_empty(): test.TestOutcome {
   let m: Map[string, string] = dotenv.parse("A=1\nEMPTY=\nA=2\n");
   return test.assert_true(m.get_or("A", "?") == "2"
     && m.get_or("EMPTY", "?") == ""
-    && m.has("EMPTY"));
+    && m.contains("EMPTY"));
 }
 
 function test_skips_malformed(): test.TestOutcome {

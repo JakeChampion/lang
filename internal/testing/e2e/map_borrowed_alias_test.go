@@ -57,7 +57,8 @@ function check(n: i32): i32 {
     let m = make(n);
     let alias = m;
     let changed = m.insert((n + 2) as %[1]s, n + 2);
-    let (removed, found) = changed.without(n as %[1]s);
+    let found: boolean = changed.contains(n as %[1]s);
+    let removed = changed.remove(n as %[1]s);
     if (!found) { return 11; }
     if (removed.len() != 2) { return 20 + removed.len(); }
     if (alias.len() != 2) { return 30 + alias.len(); }

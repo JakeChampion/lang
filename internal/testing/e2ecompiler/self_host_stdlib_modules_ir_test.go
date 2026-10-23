@@ -233,7 +233,7 @@ function main(): i32 {
     let s: ordset.OrdSet[i32] = ordset.ordset_of([5, 3, 9, 3, 1]);
     let snap: ordset.OrdSet[i32] = s;
     s = s.remove(3);
-    s = s.add(7);
+    s = s.insert(7);
     if (!s.is_valid() || !snap.is_valid()) { return 1; }
     if (s.len() != 4 || snap.len() != 4) { return 2; }
     if (s.contains(3) || !snap.contains(3) || !s.contains(7) || snap.contains(7)) { return 3; }
@@ -246,7 +246,7 @@ function main(): i32 {
     let s: pset.PSet[string] = pset.pset_of(["a", "b", "a", "c"]);
     let snap: pset.PSet[string] = s;
     s = s.remove("a");
-    s = s.add("d");
+    s = s.insert("d");
     if (!s.is_valid() || !snap.is_valid()) { return 1; }
     if (s.len() != 3 || snap.len() != 3) { return 2; }
     if (s.contains("a") || !snap.contains("a") || !s.contains("d") || snap.contains("d")) { return 3; }

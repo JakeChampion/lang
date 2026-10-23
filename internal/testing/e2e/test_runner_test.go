@@ -3481,10 +3481,10 @@ func TestRunnerMetricsExample(t *testing.T) {
 }
 
 // `tests/stdlib/map_verbs_test.fern` exercises the higher-level
-// Map verbs added to core/map (#2685): `entries`, `merge` / `extend`,
+// Map verbs added to core/map (#2685): `entries`, `merge`,
 // `from`, `get_or_insert`, `update`, and `contains_value`, over both i32
 // and string keys (including the word-count use case via both
-// get_or_insert and the one-pass update). Sixteen cases. These verbs use
+// get_or_insert and the one-pass update). Fifteen cases. These verbs use
 // Option + tuples + closures + generic map ops which the self-host
 // compiler can't lower yet, so — like the closure combinators — they are
 // gated through the interpreter rather than the self-host stdtest gate.
@@ -3499,10 +3499,10 @@ func TestRunnerMapVerbsExample(t *testing.T) {
 		"ok 1 - entries sum k+v",
 		"ok 4 - from pairs",
 		"ok 7 - merge other wins",
-		"ok 12 - get_or_insert word count",
-		"ok 13 - update word count",
-		"ok 15 - contains_value",
-		"# pass 16",
+		"ok 11 - get_or_insert word count",
+		"ok 12 - update word count",
+		"ok 14 - contains_value",
+		"# pass 15",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
@@ -4732,9 +4732,9 @@ func TestRunnerQuietModeExample(t *testing.T) {
 }
 
 // `tests/stdlib/set_test.fern` covers std/set — the generic,
-// value-semantic Set[T] (membership, dedup, union/intersect/
+// value-semantic Set[T] (membership, dedup, union/intersection/
 // difference, subset/equals) over both i32 and string elements. The
-// essential case is `add is pure` (test 4): the value-semantics
+// essential case is `insert is pure` (test 4): the value-semantics
 // contract that an operation never mutates its receiver. Passing
 // suite → exit 0; the TAP plan line is `1..12`.
 func TestRunnerSetExamplePasses(t *testing.T) {
@@ -4744,7 +4744,7 @@ func TestRunnerSetExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/set", "ok 4 - add is pure", "1..14", "# pass 14", "# fail 0"} {
+	for _, w := range []string{"# Suite: std/set", "ok 4 - insert is pure", "1..14", "# pass 14", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -4770,11 +4770,17 @@ func TestRunnerPvecExamplePasses(t *testing.T) {
 }
 
 func TestRunnerOrdsetExamplePasses(t *testing.T) {
-	runPersistentSuite(t, "tests/stdlib/ordset_test.fern", "std/ordset", "ok 2 - add is persistent", 6)
+	runPersistentSuite(t, "tests/stdlib/ordset_test.fern", "std/ordset", "ok 2 - insert is persistent", 6)
 }
 
 func TestRunnerPsetExamplePasses(t *testing.T) {
-	runPersistentSuite(t, "tests/stdlib/pset_test.fern", "std/pset", "ok 2 - add is persistent", 5)
+	runPersistentSuite(t, "tests/stdlib/pset_test.fern", "std/pset", "ok 2 - insert is persistent", 5)
+}
+
+// The one vocabulary the maps and sets share (#12711), across all seven
+// collection types.
+func TestRunnerCollectionVocabularyPasses(t *testing.T) {
+	runPersistentSuite(t, "tests/stdlib/collection_vocabulary_test.fern", "collection vocabulary", "ok 4 - JsonObject", 5)
 }
 
 // runPersistentSuite runs one suite through `fern -interp` and checks the

@@ -30,7 +30,7 @@ var auditDataCases = []struct {
 	{"map-i32-insert-getor", `import "core/map";
 function main(): i32 { let m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); m = m.insert(1,99); return m.get_or(1,0) + m.get_or(2,0); }`, 119},
 	{"map-has", `import "core/map";
-function main(): i32 { let m: Map[i32,i32] = map_new(8); m = m.insert(5,1); if (m.has(5) && !m.has(9)) { return 7; } return 0; }`, 7},
+function main(): i32 { let m: Map[i32,i32] = map_new(8); m = m.insert(5,1); if (m.contains(5) && !m.contains(9)) { return 7; } return 0; }`, 7},
 	{"map-string-keys", `import "core/map";
 function main(): i32 { let m: Map[string,i32] = map_new(8); m = m.insert("a",3); m = m.insert("b",4); return m.get_or("a",0) + m.get_or("b",0); }`, 7},
 	{"map-len", `import "core/map";

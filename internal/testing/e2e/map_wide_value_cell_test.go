@@ -57,7 +57,8 @@ function churnDelete(n: i32): i64 {
     let i: i32 = 0;
     while (i < n) {
         m = m.insert(7, i as i64);
-        let (m2, ok) = m.without(7);
+        let ok: boolean = m.contains(7);
+        let m2 = m.remove(7);
         if (!ok) { return 0 - 1; }
         m = m2;
         i = i + 1;
@@ -265,7 +266,8 @@ function main(): i32 {
         i = i + 1;
     }
     let m2 = m;
-    let (m3, gone) = m2.without(3000000021);
+    let gone: boolean = m2.contains(3000000021);
+    let m3 = m2.remove(3000000021);
     if (!gone || m3.len() != 7) { return 1; }
     let junk: i64[] = [];
     i = 0;

@@ -15,7 +15,7 @@ function mk(): i32 {
     sm = sm.insert("ke" + "y", 7);
     sm = sm.insert("ot" + "her", 3);
     sm = sm.insert("th" + "ird", 10);
-    sm = sm.without("th" + "ird").0;
+    sm = sm.remove("th" + "ird");
     acc = acc + sm.get_or("ot" + "her", 0);
     return acc;
 }

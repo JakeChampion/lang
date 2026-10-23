@@ -177,7 +177,7 @@ function main(): i32 {
     if (s.len() != 2) { return 6; }
     let other: set.Set[Point] = set.set_of([Point { x: 3, y: 4 }, Point { x: 5, y: 6 }]);
     if (s.union(other).len() != 3) { return 7; }
-    if (s.intersect(other).len() != 1) { return 8; }
+    if (s.intersection(other).len() != 1) { return 8; }
     if (s.difference(other).len() != 1) { return 9; }
     if (s.is_disjoint(other)) { return 10; }
     if (!r.is_subset(s)) { return 11; }
