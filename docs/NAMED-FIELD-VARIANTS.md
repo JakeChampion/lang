@@ -31,7 +31,7 @@ Field order in the pattern is free, and each field is one of:
   variant pattern such as `Some(t)`), binding whatever that pattern binds.
 
 Every field must be named, unless the pattern ends in `..`, which leaves the
-rest out:
+rest out. A struct pattern keeps the same rule, with the same E015:
 
 ```fern
 match (s) {

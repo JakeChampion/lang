@@ -54,7 +54,7 @@ function f(n: Named): i32 {
 }
 function main(): i32 { return f(Named { id: 9, label: "abcd" }) * 10 + f(Named { id: 1, label: "ab" }); }`},
 	{"partial_bind", `struct P { x: i32, y: i32, z: i32 }
-function f(p: P): i32 { match (p) { P { y } => { return y; } } return 0; }
+function f(p: P): i32 { match (p) { P { y, .. } => { return y; } } return 0; }
 function main(): i32 { return f(P { x: 1, y: 42, z: 3 }); }`},
 	{"expr_form", `struct Point { x: i32, y: i32 }
 function area(p: Point): i32 {
@@ -76,7 +76,7 @@ function area(p: Point): i32 {
 }
 function main(): i32 { return area(Point { x: 4, y: 4 }) + area(Point { x: 3, y: 5 }); }`},
 	{"rename_partial", `struct P { x: i32, y: i32, z: i32 }
-function f(p: P): i32 { match (p) { P { y: m } => { return m; } } return 0; }
+function f(p: P): i32 { match (p) { P { y: m, .. } => { return m; } } return 0; }
 function main(): i32 { return f(P { x: 1, y: 42, z: 3 }); }`},
 	{"rename_mixed", `struct Named { id: i32, label: string }
 function f(n: Named): i32 {
