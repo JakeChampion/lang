@@ -1,7 +1,6 @@
-// server.fern — a Mandelbrot explorer served by Fern. Tiles render on
-// demand as PNG images, over plain HTTP (where
-// the CDN caches them) or over a WebSocket that streams them back with
-// their render times. The page and its script are files under `web/`.
+// Serve Mandelbrot tiles over HTTP and WebSocket.
+// The CDN caches HTTP tiles. WebSocket responses include render times.
+// Browser assets live in web/.
 import "std/http";
 import "std/http/router";
 import "std/http/static";
@@ -9,162 +8,199 @@ import "std/http/websocket";
 import "std/json";
 import "std/platform";
 import "std/serve";
+import "./binary";
 import "./fractal";
 
 const PORT: i32 = 8080;
 
-// `Stats` — what this server has done since it started. A host can run
-// several copies of the server, and each copy has its own.
-pub struct Stats { instance: string, started_ms: i64, binary_bytes: i64, tiles: Cell[i64], iterations: Cell[i64], render_ns: Cell[i64], sockets: Cell[i64] }
+// Each server instance tracks its own counters.
+pub struct Stats {
+  instance: string,
+  started_ms: i64,
+  binary_bytes: i64,
+  tiles: Cell[i64],
+  iterations: Cell[i64],
+  render_ns: Cell[i64],
+  sockets: Cell[i64],
+}
 
 @derive(json.Json)
-struct StatsView { instance: string, binary_bytes: i64, uptime_ms: i64, tiles: i64, iterations: i64, render_ms: i64, sockets: i64, max_zoom: i32 }
+struct StatsView {
+  instance: string,
+  binary_bytes: i64,
+  uptime_ms: i64,
+  tiles: i64,
+  iterations: i64,
+  render_ms: i64,
+  sockets: i64,
+  max_zoom: i32,
+}
 
 pub function stats(instance: string, started_ms: i64, binary_bytes: i64): Stats {
-  return Stats { instance: instance, started_ms: started_ms, binary_bytes: binary_bytes, tiles: cell_new(0 as i64), iterations: cell_new(0 as i64), render_ns: cell_new(0 as i64), sockets: cell_new(0 as i64) };
+  return Stats {
+    instance: instance,
+    started_ms: started_ms,
+    binary_bytes: binary_bytes,
+    tiles: cell_new(0 as i64),
+    iterations: cell_new(0 as i64),
+    render_ns: cell_new(0 as i64),
+    sockets: cell_new(0 as i64),
+  };
 }
 
-function (s: Stats) view(now_ms: i64): StatsView {
-  return StatsView { instance: s.instance, binary_bytes: s.binary_bytes, uptime_ms: now_ms - s.started_ms, tiles: s.tiles.get(), iterations: s.iterations.get(), render_ms: s.render_ns.get() / 1000000, sockets: s.sockets.get(), max_zoom: fractal.MAX_ZOOM };
+function (state: Stats) view(now_ms: i64): StatsView {
+  return StatsView {
+    instance: state.instance,
+    binary_bytes: state.binary_bytes,
+    uptime_ms: now_ms - state.started_ms,
+    tiles: state.tiles.get(),
+    iterations: state.iterations.get(),
+    render_ms: state.render_ns.get() / 1000000,
+    sockets: state.sockets.get(),
+    max_zoom: fractal.MAX_ZOOM,
+  };
 }
 
-// `Rendered` — a tile and how long it took.
-struct Rendered { tile: fractal.Tile, ns: i64 }
+struct Rendered {
+  tile: fractal.Tile,
+  elapsed_ns: i64,
+}
 
-function (s: Stats) render(z: i32, x: i64, y: i64): Rendered {
-  let t0: i64 = now_ns();
+function (state: Stats) render(z: i32, x: i64, y: i64): Rendered {
+  let started_ns: i64 = now_ns();
   let tile: fractal.Tile = fractal.render(z, x, y);
-  let ns: i64 = now_ns() - t0;
-  s.tiles.set(s.tiles.get() + 1);
-  s.iterations.set(s.iterations.get() + tile.iterations);
-  s.render_ns.set(s.render_ns.get() + ns);
-  return Rendered { tile: tile, ns: ns };
+  let elapsed_ns: i64 = now_ns() - started_ns;
+  state.tiles.set(state.tiles.get() + 1);
+  state.iterations.set(state.iterations.get() + tile.iterations);
+  state.render_ns.set(state.render_ns.get() + elapsed_ns);
+  return Rendered { tile: tile, elapsed_ns: elapsed_ns };
 }
 
-pub function routes[P: platform.Platform](s: Stats, web: string): router.Router[P] {
-  return router.new[P]().get("/tile/{z}/{x}/{y}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => tile(s, params)).get("/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.respond(websocket.accept(req, websocket.options(), session(s))))).get("/api/stats", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.json_of(s.view(plat.now_ms())).with_header("Cache-Control", "no-store"))).get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok"))).get("/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(static.serve(req, static.dir(web), plat)));
+pub function routes[P: platform.Platform](state: Stats, web: string): router.Router[P] {
+  let app: router.Router[P] = router.new[P]();
+  app = app.get("/tile/{z}/{x}/{y}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => tile(state, params));
+  app = app.get("/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.respond(websocket.accept(req, websocket.options(), session(state)))));
+  app = app.get("/api/stats", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.json_of(state.view(plat.now_ms())).with_header("Cache-Control", "no-store")));
+  app = app.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
+  return app.get("/{path...}", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(static.serve(req, static.dir(web), plat)));
 }
 
-function tile(s: Stats, params: router.Params): Result[HttpResponse, dyn http.ToResponse] {
+function tile(state: Stats, params: router.Params): Result[HttpResponse, dyn http.ToResponse] {
   let z: i32 = params.int("z")?;
   let x: i64 = parse_i64(params.param("x")?);
   let y: i64 = parse_i64(params.param("y")?);
   if (!fractal.valid(z, x, y)) {
     return Ok(http.bad_request("no such tile"));
   }
-  let r: Rendered = s.render(z, x, y);
-  return Ok(http.bytes(200, r.tile.png).with_content_type("image/png").with_header("Cache-Control", "public, max-age=31536000, immutable").with_header("Netlify-CDN-Cache-Control", "public, durable, max-age=31536000, immutable").with_header("Server-Timing", "render;dur=" + millis(r.ns)).with_header("X-Fern-Instance", s.instance).with_header("X-Fern-Iterations", r.tile.iterations.to_string()));
+  let rendered: Rendered = state.render(z, x, y);
+  let response: HttpResponse = http.bytes(200, rendered.tile.png).with_content_type("image/png");
+  response = response.with_header("Cache-Control", "public, max-age=31536000, immutable");
+  response = response.with_header("Netlify-CDN-Cache-Control", "public, durable, max-age=31536000, immutable");
+  response = response.with_header("Server-Timing", "render;dur=" + millis(rendered.elapsed_ns));
+  response = response.with_header("X-Fern-Instance", state.instance);
+  return Ok(response.with_header("X-Fern-Iterations", rendered.tile.iterations.to_string()));
 }
 
-// `session(s)` — the WebSocket session. The client sends "id z x y" as
-// text. The answer is one binary message: the id, the render time in
-// microseconds, the iteration count, this container's tile count, and
-// then the PNG. The session opens with this container's stats as JSON.
-function session(s: Stats): websocket.Handlers {
+// The client sends "id z x y" as text.
+// Each binary response contains a 20-byte header followed by the PNG.
+// The session opens with this container's stats as JSON.
+function session(state: Stats): websocket.Handlers {
   return websocket.Handlers {
-    open: (c: websocket.Conn): void => {
-      s.sockets.set(s.sockets.get() + 1);
-      let r: websocket.SendResult = c.send_text(s.view(now_unix_ms()).to_json());
+    open: (connection: websocket.Conn): void => {
+      state.sockets.set(state.sockets.get() + 1);
+      let sent: websocket.SendResult = connection.send_text(state.view(now_unix_ms()).to_json());
     },
-    message: (c: websocket.Conn, m: websocket.Message): void => on_message(s, c, m),
-    drain: (c: websocket.Conn): void => {},
-    close: (c: websocket.Conn, code: i32, reason: string): void => { s.sockets.set(s.sockets.get() - 1); },
+    message: (connection: websocket.Conn, message: websocket.Message): void => on_message(state, connection, message),
+    drain: (connection: websocket.Conn): void => {},
+    close: (connection: websocket.Conn, code: i32, reason: string): void => { state.sockets.set(state.sockets.get() - 1); },
   };
 }
 
-function on_message(s: Stats, c: websocket.Conn, m: websocket.Message): void {
-  match (m) {
-    Text(t) => {
-      let r: websocket.SendResult = c.send_binary(answer(s, t));
+function on_message(state: Stats, connection: websocket.Conn, message: websocket.Message): void {
+  match (message) {
+    Text(request) => {
+      let sent: websocket.SendResult = connection.send_binary(answer(state, request));
     },
-    Binary(b) => {
-      c.close(1003, "send tile requests as text");
+    Binary(bytes) => {
+      connection.close(1003, "send tile requests as text");
     }
   }
 }
 
-function answer(s: Stats, request: string): u8[] {
-  let f: string[] = request.split(" ");
-  if (f.len() != 4) {
+function answer(state: Stats, request: string): u8[] {
+  let fields: string[] = request.split(" ");
+  if (fields.len() != 4) {
     return [];
   }
-  let id: i64 = parse_i64(f[0]);
-  let z: i64 = parse_i64(f[1]);
-  let x: i64 = parse_i64(f[2]);
-  let y: i64 = parse_i64(f[3]);
-  let out: u8[] = be32([], id as u32);
+  let id: i64 = parse_i64(fields[0]);
+  let z: i64 = parse_i64(fields[1]);
+  let x: i64 = parse_i64(fields[2]);
+  let y: i64 = parse_i64(fields[3]);
+  let response: u8[] = binary.append_u32_be([], id as u32);
   if (z > fractal.MAX_ZOOM as i64 || !fractal.valid(z as i32, x, y)) {
-    return out;
+    return response;
   }
-  let r: Rendered = s.render(z as i32, x, y);
-  out = be32(out, (r.ns / 1000) as u32);
-  out = be32(be32(out, (r.tile.iterations >> 32) as u32), (r.tile.iterations & 4294967295) as u32);
-  out = be32(out, s.tiles.get() as u32);
-  let png: u8[] = r.tile.png;
-  let i: i32 = 0;
-  while (i < png.len()) {
-    out = out.append(png[i]);
-    i = i + 1;
-  }
-  return out;
+  let rendered: Rendered = state.render(z as i32, x, y);
+  // The 20-byte header contains id:u32, microseconds:u32, iterations:u64, and tiles:u32, all big-endian.
+  response = binary.append_u32_be(response, (rendered.elapsed_ns / 1000) as u32);
+  response = binary.append_u32_be(response, (rendered.tile.iterations >> 32) as u32);
+  response = binary.append_u32_be(response, (rendered.tile.iterations & 4294967295) as u32);
+  response = binary.append_u32_be(response, state.tiles.get() as u32);
+  return binary.append_bytes(response, rendered.tile.png);
 }
 
-// `parse_i64(s)` — the decimal digits of s, or -1 when s is not one.
-function parse_i64(s: string): i64 {
-  let b: [u8] = s.as_bytes();
-  if (b.len() == 0 || b.len() > 18) {
+// Accept up to 18 decimal digits. Return -1 for invalid input.
+function parse_i64(text: string): i64 {
+  let bytes: [u8] = text.as_bytes();
+  if (bytes.len() == 0 || bytes.len() > 18) {
     return -1;
   }
-  let n: i64 = 0;
-  let i: i32 = 0;
-  while (i < b.len()) {
-    let d: i32 = b[i] as i32 - 48;
-    if (d < 0 || d > 9) {
+  let value: i64 = 0;
+  let index: i32 = 0;
+  while (index < bytes.len()) {
+    let digit: i32 = bytes[index] as i32 - 48;
+    if (digit < 0 || digit > 9) {
       return -1;
     }
-    n = n * 10 + d as i64;
-    i = i + 1;
+    value = value * 10 + digit as i64;
+    index = index + 1;
   }
-  return n;
+  return value;
 }
 
-function be32(own out: u8[], v: u32): u8[] {
-  return out.append((v >> 24) as u8).append((v >> 16 & 255) as u8).append((v >> 8 & 255) as u8).append((v & 255) as u8);
+// Format nanoseconds as milliseconds with three decimal places.
+function millis(nanoseconds: i64): string {
+  let microseconds: i64 = nanoseconds / 1000;
+  let fraction: string = (1000 + microseconds % 1000).to_string();
+  return (microseconds / 1000).to_string() + "." + fraction.drop(1);
 }
 
-// `millis(ns)` — ns as milliseconds with three decimals.
-function millis(ns: i64): string {
-  let us: i64 = ns / 1000;
-  let frac: string = (1000 + us % 1000).to_string();
-  return (us / 1000).to_string() + "." + frac.drop(1);
-}
-
-function hex6(v: i32): string {
+function hex6(value: i32): string {
   let digits: string = "0123456789abcdef";
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < 6) {
-    let d: i32 = v >> 20 - 4 * i & 15;
-    out = out + digits.drop(d).take(1);
-    i = i + 1;
+  let result: string = "";
+  let index: i32 = 0;
+  while (index < 6) {
+    let digit: i32 = value >> 20 - 4 * index & 15;
+    result = result + digits.drop(digit).take(1);
+    index = index + 1;
   }
-  return out;
+  return result;
 }
 
-// `own_size()` — the size of this program's binary, or 0 where the
-// system does not say.
+// Return the binary size, or 0 when the host does not expose it.
 function own_size(): i64 {
   match (read_file_bytes("/proc/self/exe")) {
-    Ok(b) => {
-      return b.len() as i64;
+    Ok(bytes) => {
+      return bytes.len() as i64;
     },
-    Err(e) => {
+    Err(error) => {
       return 0;
     }
   }
 }
 
 function main(): i32 {
-  let s: Stats = stats(hex6(random_i32()), now_unix_ms(), own_size());
-  return serve.run_shutdown(PORT, serve.config(), routes[platform.Host](s, "web").handler(), (reason: string): void => eprint("server: stopped, " + reason));
+  let state: Stats = stats(hex6(random_i32()), now_unix_ms(), own_size());
+  let handler: (HttpRequest, platform.Host) => HttpResponse = routes[platform.Host](state, "web").handler();
+  return serve.run_shutdown(PORT, serve.config(), handler, (reason: string): void => eprint("server: stopped, " + reason));
 }

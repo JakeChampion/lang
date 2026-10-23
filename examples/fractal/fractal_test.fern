@@ -1,0 +1,56 @@
+import "std/test";
+import "std/hash";
+import "./binary";
+import "./fractal";
+
+function test_coordinates(): test.TestOutcome {
+  let last: i64 = (1 as i64 << fractal.MAX_ZOOM as i64) - 1;
+  return test.assert_true(
+    fractal.valid(0, 0, 0) && fractal.valid(fractal.MAX_ZOOM, last, last)
+      && !fractal.valid(-1, 0, 0) && !fractal.valid(fractal.MAX_ZOOM + 1, 0, 0)
+      && !fractal.valid(1, -1, 0) && !fractal.valid(1, 0, -1)
+      && !fractal.valid(1, 2, 0) && !fractal.valid(1, 0, 2)
+      && !fractal.valid(fractal.MAX_ZOOM, last + 1, 0),
+  );
+}
+
+function test_iteration_limits(): test.TestOutcome {
+  return test.assert_true(
+    fractal.max_iterations(0) == 256 && fractal.max_iterations(1) == 320
+      && fractal.max_iterations(42) == 2944 && fractal.max_iterations(43) == 3000,
+  );
+}
+
+function test_binary_fields(): test.TestOutcome {
+  let output: u8[] = binary.append_u32_be([], 0x89abcdef as u32);
+  output = binary.append_u32_be(output, 0xffffffff as u32);
+  output = binary.append_bytes(output, "PNG".as_bytes());
+  let expected: u8[] = [137 as u8, 171 as u8, 205 as u8, 239 as u8, 255 as u8, 255 as u8, 255 as u8, 255 as u8, 80 as u8, 78 as u8, 71 as u8];
+  return test.assert_eq_array(output, expected);
+}
+
+// The original renderer at commit 3968020c9 supplies the PNG checksums and iteration totals.
+function check_tile(z: i32, x: i64, y: i64, iterations: i64, bytes: i32, checksum: u32): test.TestOutcome {
+  let tile: fractal.Tile = fractal.render(z, x, y);
+  if (tile.iterations != iterations) {
+    return test.fail("tile iteration total differs");
+  }
+  if (tile.png.len() != bytes || hash.crc32_new().update_array(tile.png).finish() != checksum) {
+    return test.fail("tile PNG differs");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner: test.TestRunner = test.test_new("fractal tiles");
+  runner = runner.it("coordinate bounds", test_coordinates);
+  runner = runner.it("iteration limits", test_iteration_limits);
+  runner = runner.it("big-endian binary fields", test_binary_fields);
+  runner = runner.it("whole set", (): test.TestOutcome => check_tile(0, 0, 0, 529138, 23765, 2195117617 as u32));
+  runner = runner.it("mixed interior and exterior", (): test.TestOutcome => check_tile(2, 1, 1, 1121274, 30744, 3423799718 as u32));
+  runner = runner.it("cardioid interior", (): test.TestOutcome => check_tile(8, 152, 128, 0, 270, 4160868373 as u32));
+  runner = runner.it("boundary detail", (): test.TestOutcome => check_tile(14, 7193, 7652, 8861566, 77465, 581054115 as u32));
+  runner = runner.it("maximum zoom origin", (): test.TestOutcome => check_tile(42, 0, 0, 262144, 725, 757427088 as u32));
+  runner = runner.it("maximum zoom last tile", (): test.TestOutcome => check_tile(42, 4398046511103, 4398046511103, 262144, 725, 757427088 as u32));
+  return runner.finish();
+}
