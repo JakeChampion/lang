@@ -100,7 +100,7 @@ func driverCompilerKeyFor(compilerSHA256, stdlibHash string) string {
 // self-host compiler peaks at 4.0 GB compiling asm_ir_run and 5.7 GB
 // compiling fern.fern, the whole compiler (docs/LOCAL-DEV-LOOP.md).
 func DriverBuildWeightMB(fernName string) int {
-	if fernName == "fern.fern" {
+	if fernName == "fern.fern" || fernName == "drivers/runtime_run.fern" {
 		return 6000
 	}
 	return 4300

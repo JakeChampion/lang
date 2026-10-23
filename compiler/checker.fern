@@ -713,7 +713,7 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
     return t_unknown("not a runtime intrinsic");
   }
   let at: i32 = raw_floor_at(t, name);
-  if (at >= 0 && t.raw[at].params.len() == argc) {
+  if (at >= 0 && raw_floor_allowed(t, name) && t.raw[at].params.len() == argc) {
     return t.raw[at].result;
   }
   if (argc == 1 && is_f64_primitive(name)) {
@@ -976,6 +976,10 @@ function builtin_result_type(recv: typeinfo.Type, name: string, is_method: boole
   if (is_method) {
     return cell_method_type(recv, name, argc);
   }
+  if ((util.str_has_prefix(name, "__raw_") || util.str_has_prefix(name, "__syscall"))
+    && (s.defines(name) || s.lookup_sig(name).name.len() > 0)) {
+    return t_unknown("a declared callable shadows the raw floor");
+  }
   return intrinsic_result(name, argc, s.sigs);
 }
 
@@ -989,7 +993,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
     return ([], false);
   }
   let at: i32 = raw_floor_at(t, name);
-  if (at >= 0) {
+  if (at >= 0 && raw_floor_allowed(t, name)) {
     return (t.raw[at].params, true);
   }
   if (is_f64_primitive(name)) {
@@ -1210,7 +1214,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
 }
 
 // The raw-memory floor the Fern-source runtime helpers are written on (#2649,
-// docs/RUNTIME-INTRINSICS.md). Self-host only: native registers none of them.
+// docs/RUNTIME-INTRINSICS.md). The RC decrement also has a public signature.
 // An address is a `usize`; an offset, a byte or a length is an `i32`. A
 // syscall takes and answers machine words, signed so a negative errno reads
 // as one. `__raw_string` and `__raw_array` hand a block to a fresh string or
@@ -1264,6 +1268,11 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     // The vector UTF-8 check read_file runs on buf[start..n) (ir.op_utf8_blocks).
     RawFloorSig { name: "__raw_utf8_blocks", params: [p, n, n], result: n },
   ];
+}
+
+// The RC decrement is also a public helper used by core/map.
+function raw_floor_allowed(t: SigTable, name: string): boolean {
+  return t.raw_allowed || name == "__fern_rc_dec";
 }
 
 // The index in `t.raw` of the raw-floor signature named `name`, or -1.
@@ -2188,6 +2197,7 @@ pub struct SigTable {
   next: i32[],
   // The raw floor's signatures, which no module declares.
   raw: RawFloorSig[],
+  raw_allowed: boolean,
 }
 
 // sig_buckets is the bucket count of the signature index. Prime, so unrelated
@@ -2217,7 +2227,7 @@ function sig_table(sigs: FuncSig[]): SigTable {
     head = head.with(bk, k);
     k = k - 1;
   }
-  return SigTable { sigs: sigs, head: head, next: next, raw: raw_floor_sigs() };
+  return SigTable { sigs: sigs, head: head, next: next, raw: raw_floor_sigs(), raw_allowed: true };
 }
 
 // StructTable is `structs` with a name index over it, built once per module and
@@ -3176,6 +3186,10 @@ function is_resolvable_value(name: string, s: Scope): boolean {
   // lookup_struct either.
   // A function — user or builtin — may also be referenced as a bare
   // value (e.g. `let w = write;` or passing a function by name).
+  let floor: i32 = raw_floor_at(s.sigs, name);
+  if (floor >= 0 || util.str_has_prefix(name, "__raw_") || util.str_has_prefix(name, "__syscall")) {
+    return floor >= 0 && raw_floor_allowed(s.sigs, name);
+  }
   if (name.len() >= 2 && slice_unchecked(name, 0, 2) == "__") {
     return true;
   }
@@ -3202,6 +3216,10 @@ function is_resolvable_callee(name: string, s: Scope): boolean {
   }
   if (is_builtin_variant(name)) {
     return true;
+  }
+  let floor: i32 = raw_floor_at(s.sigs, name);
+  if (floor >= 0 || util.str_has_prefix(name, "__raw_") || util.str_has_prefix(name, "__syscall")) {
+    return floor >= 0 && raw_floor_allowed(s.sigs, name);
   }
   if (name.len() >= 2 && slice_unchecked(name, 0, 2) == "__") {
     return true;
@@ -6329,7 +6347,7 @@ function bind_from_args(sig: FuncSig, c: ast.ExprCall, s: Scope, literals: boole
   let bt: typeinfo.Type[] = types;
   let i: i32 = 0;
   while (i < sig.param_type_names.len() && i < c.args.len()) {
-    if (int_literal_tree(c.args[i]) == literals) {
+    if (int_literal_tree(c.args[i]) == literals && !binds_nothing(c.args[i], s)) {
       let (bn2, bt2) = gc_bind_param(sig_param_ref(sig, i), check_expr(c.args[i], s), sig.type_params, s.type_names(), bn, bt);
       bn = bn2;
       bt = bt2;
@@ -6482,19 +6500,24 @@ function elemless_array(t: typeinfo.Type): boolean {
 }
 
 // uninferred_call_diags reports E040 for a type variable nothing binds: no
-// explicit type argument, argument or bound, and absent from the result, where
-// a destination could. Only an argument binds_nothing names counts as binding
+// explicit type argument, argument, bound, or result destination. Only an argument binds_nothing names counts as binding
 // nothing; one the checker types in part is left to native, and so is a
 // parameter a bound names, which only the bound's impl can bind.
-function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name: string, s: Scope): util.Diag[] {
+function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name: string, s: Scope, dest: typeinfo.Type): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.type_args.len() > 0) {
     return out;
   }
   let ret: parser.TypeRef = sig_ret_ref(sig);
+  let bound: string[] = bn;
+  if (!is_unknown(dest)) {
+    let no_types: typeinfo.Type[] = [];
+    let (dn, dt) = gc_bind_param(ret, dest, sig.type_params, s.type_names(), [], no_types);
+    bound = util.append_all(bound, dn);
+  }
   for tp in sig.all_type_params {
     let (named, all_empty) = empty_array_positions(sig.param_type_names, c.args, tp, s);
-    if (util.index_of_str(bn, tp) < 0 && !type_ref_names_any(ret, [tp]) && !bound_names_tp(sig.type_bounds, tp) && all_empty) {
+    if (util.index_of_str(bound, tp) < 0 && !bound_names_tp(sig.type_bounds, tp) && all_empty) {
       out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + name + " — supply it explicitly at the call site (e.g. " + name + "[i32](...)) or annotate the binding", c.line, c.col));
     }
   }
@@ -6617,6 +6640,13 @@ function binds_nothing(e: ast.Expr, s: Scope): boolean {
     _ => {
       return false;
     }
+  }
+  return false;
+}
+
+function use_untyped_call(e: ast.Expr): boolean {
+  if let ast.ExprCall(c) = e {
+    return use_untyped(c);
   }
   return false;
 }
@@ -7980,7 +8010,7 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   // A lambda that spells no result returns what its body returns: the
   // first value-carrying `return`, typed in the scope at that statement.
   // A written lambda returning no value is void, as native infers it.
-  if (lm.ret_type.len() == 0) {
+  if (lm.ret_type.len() == 0 && is_unknown(rt)) {
     let (returned, at) = first_returned(lm.body, body_scope);
     if (!parser.bare_return(returned)) {
       let inferred: typeinfo.Type = check_expr(returned, at);
@@ -8387,6 +8417,10 @@ const INFERRED_RESULT: string = "inferred lambda result";
 // is spelled in: the pair a declaration's `ret_fn_ret` carries.
 function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   if (lm.ret_type.len() == 0) {
+    // A use callback inherits the declared result of its enclosing function.
+    if (lm.origin == parser.ORIGIN_USE && !is_unknown(s.ret_type)) {
+      return s.ret_type;
+    }
     return t_unknown(INFERRED_RESULT);
   }
   if (lm.ret_fn_ret.len() > 0 && parser.is_fn_contract_tag(lm.ret_type)) {
@@ -9908,7 +9942,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
           out = util.append_diags(out, ctor_payload_diags(r.value, ret_ty, cur));
           let rbound: util.Diag[] = dest_bound_diags(r.value, ret_ty, cur);
           out = util.append_diags(out, rbound);
-          if (rbound.len() == 0 && !is_unknown(t) && !settles_to(r.value, ret_ty, cur) && !(type_assignable(t, ret_ty, unions) && dyn_conforms(t, ret_ty, cur))) {
+          if (!use_untyped_call(r.value) && rbound.len() == 0 && !is_unknown(t) && !settles_to(r.value, ret_ty, cur) && !(type_assignable(t, ret_ty, unions) && dyn_conforms(t, ret_ty, cur))) {
             out = out.append(dg_at("E002", "return value: expected " + type_label(ret_ty) + ", got " + type_label(t) + str_copy_hint(t, ret_ty), r.line, r.col));
           }
         }
@@ -11285,7 +11319,7 @@ function lambda_body_diags(lm: ast.ExprLambda, lsc: Scope, rt: typeinfo.Type, un
   if (lm.ret_type.len() > 0 && is_void(rt)) {
     return void_ret_diags(lm.body, lsc, unions);
   }
-  if (lm.ret_type.len() > 0) {
+  if (lm.ret_type.len() > 0 || lm.origin == parser.ORIGIN_USE && !is_unknown(rt)) {
     return ret_diags(lm.body, lsc, rt, unions);
   }
   return lambda_exit_diags(lm, lsc);
@@ -11959,26 +11993,37 @@ function mx_e031(types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], 
 }
 
 function mx_fold_diags(f: MxFold, line: i32, col: i32, if_form: boolean): util.Diag[] {
-  let out: util.Diag[] = [];
+  let kind: string = if (if_form) { "if-expression branches differ: " } else { "match-expression arms differ: " };
+  return mx_named_fold_diags(f, line, col, kind);
+}
+
+function mx_named_fold_diags(f: MxFold, line: i32, col: i32, kind: string): util.Diag[] {
   if (!f.ok) {
-    let kind: string = if (if_form) { "if-expression branches differ: " } else { "match-expression arms differ: " };
-    out = out.append(dg_at("E031", kind + type_label(f.acc.t) + " vs " + type_label(f.bad), line, col));
+    return [dg_at("E031", kind + type_label(f.acc.t) + " vs " + type_label(f.bad), line, col)];
   }
-  return out;
+  return [];
 }
 
 // A literal match is an if chain whose conditions are synthetic. Its
 // preserved arm positions identify the failing arm, as a real match does.
-function mx_if_diags(f: ast.StmtIf, types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], enums: parser.EnumDecl[], origin: string): util.Diag[] {
+function mx_if_diags(f: ast.StmtIf, types: typeinfo.Type[], exprs: ast.Expr[], unions: UnionSig[], enums: parser.EnumDecl[], origin: string, origin_line: i32, origin_col: i32): util.Diag[] {
   let fold: MxFold = mx_fold_arms(types, exprs, unions, enums, origin == parser.ORIGIN_IF_EXPR, origin == parser.ORIGIN_MATCH_EXPR);
+  let kind: string = "if-expression branches differ: ";
+  if (origin == parser.ORIGIN_MATCH_EXPR) {
+    kind = "match arms have incompatible types: ";
+  }
   let line: i32 = expr_line(f.cond);
   let col: i32 = expr_col(f.cond);
+  if (origin == parser.ORIGIN_IF_EXPR) {
+    line = origin_line;
+    col = origin_col;
+  }
   if (!fold.ok && f.sugar.lits.len() > 0) {
     let at: i32 = 0;
     for arm in f.sugar.lits {
       if (mx_branch_yields(arm.body)) {
         if (at == fold.bad_index) {
-          return mx_fold_diags(fold, arm.line, arm.col, origin == parser.ORIGIN_IF_EXPR);
+          return mx_named_fold_diags(fold, arm.line, arm.col, kind);
         }
         at = at + 1;
       }
@@ -11986,7 +12031,7 @@ function mx_if_diags(f: ast.StmtIf, types: typeinfo.Type[], exprs: ast.Expr[], u
     line = f.sugar.line;
     col = f.sugar.col;
   }
-  return mx_fold_diags(fold, line, col, origin == parser.ORIGIN_IF_EXPR);
+  return mx_named_fold_diags(fold, line, col, kind);
 }
 
 // mx_branch_yields: does a value branch reach its terminal value? One whose
@@ -12206,7 +12251,7 @@ function mx_expr(e: ast.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDe
                 },
                 ast.StmtIf(f) => {
                   let fts: typeinfo.Type[] = mx_if_branch_types(f, s);
-                  out = util.append_diags(out, mx_if_diags(f, fts, arms, unions, enums, lm.origin));
+                  out = util.append_diags(out, mx_if_diags(f, fts, arms, unions, enums, lm.origin, c.line, c.col));
                   out = util.append_diags(out, vb_pinned_ranges(fts, arms));
                 },
                 _ => {}
@@ -15190,7 +15235,7 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   match (e) {
     ast.ExprCall(c) => {
-      out = call_diags_call(c, s, out);
+      out = call_diags_call(c, s, out, t_unknown("no destination"));
     },
     ast.ExprBinary(b) => {
       out = call_diags_binary(b, s, out);
@@ -15326,7 +15371,7 @@ function callable_arg_diags(c: ast.ExprCall, ft: typeinfo.Type, s: Scope): util.
         let at: typeinfo.Type = check_expr(c.args[i], s);
         out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
         if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !view_arg_borrow(at, pt) && !coercible(at, pt, s)) {
-          out = out.append(dg_at("E038", arg_subject(c, i + 1) + ": expected " + type_label(pt) + ", got " + type_label(at), expr_line(c.args[i]), expr_col(c.args[i])));
+          out = out.append(dg_at("E038", arg_subject(c, i + 1) + ": expected " + type_label(pt) + ", got " + argument_type_label(c.args[i], at, s), expr_line(c.args[i]), expr_col(c.args[i])));
         }
         out = util.append_diags(out, array_elem_check(array_elem_type_of(pt), c.args[i], s));
         i = i + 1;
@@ -15589,7 +15634,8 @@ function map_arg_diag(c: ast.ExprCall, ii: i32, method: string, slot: typeinfo.T
   return out;
 }
 
-function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag[] {
+function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: typeinfo.Type): util.Diag[] {
+  out = util.append_diags(out, e032_call_check(c, s));
   // A method-call callee (`obj.m(...)`) is an ExprFieldAccess
   // whose field names a METHOD, not a field — recurse only into
   // the object so it isn't mis-flagged as an unknown field (E043).
@@ -15844,8 +15890,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               // it, so skip rather than mis-flag E038. (An
               // unknown ARG is already skipped above.)
               let bound_checked: boolean = param_has_bindings(sig, ai, cbn);
-              if (!bound_checked && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
-                out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
+              if (!bound_checked && !(sig.all_type_params.len() > 0 && binds_nothing(c.args[ai], s)) && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
+                out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + argument_type_label(c.args[ai], at, s), expr_line(c.args[ai]), expr_col(c.args[ai])));
               }
               // E034: a composite-array literal argument's
               // elements checked against the parameter's
@@ -15859,7 +15905,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               out = util.append_diags(out, call_bound_diags(sig.type_params, sig.type_bounds, sig.module, util.demangle(sig.name), cbn, cbt, s, c.line, c.col));
               let (fbn, fbt) = call_bindings(sig, c, s);
               out = util.append_diags(out, bound_arg_diags(sig, c, fbn, fbt, s));
-              out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name, s));
+              out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name, s, dest));
             }
           }
         }
@@ -16512,7 +16558,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
     let nt: typeinfo.Type = check_expr(u.operand, s);
     let nok: boolean = !is_unknown(s.unop_overload_ret(u.op, nt));
     if (!operand_open(nt) && !is_integer(nt) && !is_float(nt) && !is_lanes(nt) && !nok) {
-      out = out.append(dg_at("E009", "operator \"-\" requires a numeric type, got " + type_label(nt), u.line, u.col));
+      out = out.append(dg_at("E009", "operator \"-\" requires an integer type, got " + type_label(nt), u.line, u.col));
     }
   }
   // E033 / E069: an invalid `as` cast. `x as T` desugars to the
@@ -17538,6 +17584,9 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   // type arguments from that callable: the monomorphiser clones it for them
   // (parser.mono_fn_value). Only a callable that binds every one of them
   // escapes E040.
+  if let ast.ExprCall(c) = e {
+    return call_diags_call(c, s, [], dest);
+  }
   if let ast.ExprIdent(id) = e {
     if let typeinfo.TypeFunc(df) = dest {
       if (!s.known(id.name) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name))) {
@@ -17676,12 +17725,18 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
       if let typeinfo.TypeStruct(sn) = rt {
         let msig: MethodSig = s.lookup_method(mfa.field, sn.name);
         if (msig.name.len() > 0) {
-          return msig.param_types;
+          return s.bound_method_param_types(c, msig, rt);
         }
         if let typeinfo.TypeFunc(ff) = check_expr(c.callee, s) {
           if (ff.params_known) {
             return ff.param_types;
           }
+        }
+      }
+      if let typeinfo.TypeUnion(un) = rt {
+        let msig: MethodSig = s.lookup_method(mfa.field, un.name);
+        if (msig.name.len() > 0) {
+          return s.bound_method_param_types(c, msig, rt);
         }
       }
       if let typeinfo.TypeMap(mt) = rt {
@@ -17708,7 +17763,11 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
 // method `field` that the call `c` names, with the receiver's element type and
 // the call's type arguments bound. Empty when no such method is imported.
 function (s: Scope) array_method_param_types(c: ast.ExprCall, recv: typeinfo.Type, field: string, view: boolean): typeinfo.Type[] {
-  let asig: MethodSig = s.array_recv_method(field, view);
+  return s.bound_method_param_types(c, s.array_recv_method(field, view), recv);
+}
+
+// Instantiate the method's parameter types from its receiver and written arguments.
+function (s: Scope) bound_method_param_types(c: ast.ExprCall, asig: MethodSig, recv: typeinfo.Type): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   if (asig.name.len() == 0) {
     return out;
@@ -18391,6 +18450,82 @@ function cover_tail(r: CoverPat[]): CoverPat[] {
   return out;
 }
 
+function literal_bound_diags(value: ast.Expr, scrut: typeinfo.Type, scope: Scope, subject: string, line: i32, col: i32): util.Diag[] {
+  let ty: typeinfo.Type = check_expr(value, scope);
+  if (!is_unknown(ty) && !is_unknown(scrut) && !settles_to(value, scrut, scope) && !coercible(ty, scrut, scope)) {
+    return [dg_at("E035", subject + " of type " + type_label(ty) + " does not match scrutinee type " + type_label(scrut), line, col)];
+  }
+  return [];
+}
+
+function literal_comparison_diags(cond: ast.Expr, arm: ast.LitArm, scope: Scope): util.Diag[] {
+  if let ast.ExprBinary(compare) = cond {
+    let scrut: typeinfo.Type = check_expr(compare.left, scope);
+    let subject: string = "literal pattern";
+    if (arm.has_range && compare.op != ">=") {
+      subject = "range pattern bound";
+    }
+    return literal_bound_diags(compare.right, scrut, scope, subject, expr_line(arm.lit), expr_col(arm.lit));
+  }
+  return [];
+}
+
+function literal_arm_diags(cond: ast.Expr, arm: ast.LitArm, scope: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  let pattern: ast.Expr = cond;
+  if (arm.has_guard) {
+    if (arm.is_wild) {
+      return call_diags(cond, scope);
+    }
+    if let ast.ExprBinary(both) = cond {
+      pattern = both.left;
+      out = call_diags(both.right, scope);
+    }
+  }
+  if (arm.has_range) {
+    if let ast.ExprBinary(bounds) = pattern {
+      out = util.append_diags(out, literal_comparison_diags(bounds.left, arm, scope));
+      return util.append_diags(out, literal_comparison_diags(bounds.right, arm, scope));
+    }
+  }
+  return util.append_diags(out, literal_comparison_diags(pattern, arm, scope));
+}
+
+// The written arms supply source sites. Types and bodies come from the rewritten chain.
+function literal_match_diags(chain: ast.StmtIf, scope: Scope): util.Diag[] {
+  if let ast.ExprBool(wrapper) = chain.cond {
+    if (wrapper.value) {
+      let out: util.Diag[] = [];
+      let local: Scope = scope;
+      let i: i32 = 0;
+      for stmt in chain.then_body {
+        if (i + 1 == chain.then_body.len()) {
+          if let ast.StmtIf(tail) = stmt {
+            return util.append_diags(out, literal_chain_diags(tail, chain.sugar.lits, 0, local));
+          }
+        }
+        out = util.append_diags(out, stmts_call_diags([stmt], local));
+        local = bind_stmt(stmt, local);
+        i = i + 1;
+      }
+      return out;
+    }
+  }
+  return literal_chain_diags(chain, chain.sugar.lits, 0, scope);
+}
+
+function literal_chain_diags(chain: ast.StmtIf, arms: ast.LitArm[], at: i32, scope: Scope): util.Diag[] {
+  let out: util.Diag[] = literal_arm_diags(chain.cond, arms[at], scope);
+  out = util.append_diags(out, stmts_call_diags(chain.then_body, scope));
+  let next: i32 = at + 1;
+  if (next < arms.len() && !(arms[next].is_wild && !arms[next].has_guard) && chain.else_body.len() == 1) {
+    if let ast.StmtIf(tail) = chain.else_body[0] {
+      return util.append_diags(out, literal_chain_diags(tail, arms, next, scope));
+    }
+  }
+  return util.append_diags(out, stmts_call_diags(chain.else_body, scope));
+}
+
 function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   let cur: Scope = bind_mutual_siblings(stmts, s);
@@ -18444,9 +18579,13 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
       },
       ast.StmtIf(f) => {
         out = util.append_diags(out, sugar_exhaustive_diags(f.sugar, cur));
-        out = util.append_diags(out, call_diags(f.cond, cur));
-        out = util.append_diags(out, stmts_call_diags(f.then_body, cur));
-        out = util.append_diags(out, stmts_call_diags(f.else_body, cur));
+        if (f.sugar.lits.len() > 0) {
+          out = util.append_diags(out, literal_match_diags(f, cur));
+        } else {
+          out = util.append_diags(out, call_diags(f.cond, cur));
+          out = util.append_diags(out, stmts_call_diags(f.then_body, cur));
+          out = util.append_diags(out, stmts_call_diags(f.else_body, cur));
+        }
       },
       ast.StmtWhile(w) => {
         out = util.append_diags(out, call_diags(w.cond, cur));
@@ -19046,6 +19185,19 @@ pub function build_gate_diags_with_file(mod: parser.Module, entry_file: string):
     return cgd;
   }
   return filter_build_gate(check_module_with_file(mod, entry_file).diags);
+}
+
+// Compiler-generated runtime modules use the private memory floor.
+pub function build_runtime_gate_diags(mod: parser.Module): util.Diag[] {
+  return build_runtime_gate_diags_with_file(mod, "");
+}
+
+pub function build_runtime_gate_diags_with_file(mod: parser.Module, entry_file: string): util.Diag[] {
+  let cgd: util.Diag[] = const_grammar_diags(mod);
+  if (cgd.len() > 0) {
+    return cgd;
+  }
+  return filter_build_gate(check_module_raw_floor(mod, entry_file, true).diags);
 }
 
 // filter_build_gate keeps the diagnostics the compile path enforces.
@@ -24871,16 +25023,20 @@ function lent_place(e: ast.Expr, params: string[]): boolean {
 // with a known signature whose last parameter is a function type taking at
 // least one argument, and a generic callee's written arguments must bind
 // the type parameters the callback's first parameter names.
-function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Diag[] {
+function e032_call_check(c: ast.ExprCall, cur: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   if (c.args.len() == 0) {
     return out;
   }
   let infer: boolean = false;
+  let line: i32 = c.line;
+  let col: i32 = c.col;
   match (c.args[c.args.len() - 1]) {
     ast.ExprLambda(lm) => {
       if (lm.use_infer && lm.params.len() > 0 && lm.params[0].type_name.len() == 0) {
         infer = true;
+        line = lm.line;
+        col = lm.col;
       }
     },
     _ => {}
@@ -24894,43 +25050,36 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
       callee_name = id.name;
     },
     _ => {
-      out = out.append(dg_at("E032", "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation", c.line, c.col));
+      out = out.append(dg_at("E032", "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation", line, col));
       return out;
     }
   }
   // Resolve the callee: a module-level signature, or a local
-  // function-typed binding (a closure-valued var). The self-host type
-  // model coarses a function-type PARAMETER to the tag "fn" (its arity
-  // is not retained), so the last-parameter-is-a-function test reads
-  // the `lastfn` side table built from the parsed decls; the native
-  // "callback takes no arguments" arity arm is not decidable here and
-  // stays native-only. A generic callee whose written arguments leave the
+  // function-typed binding. The side table identifies callback parameters,
+  // and the callable type retains their arity. A generic callee whose arguments leave the
   // callback's parameter unbound is use_binding_type's unknown.
   let sig: FuncSig = cur.lookup_sig(callee_name);
   let have_sig: boolean = sig.name.len() > 0;
   if (have_sig) {
     if (sig.param_types.len() == 0) {
-      out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", c.line, c.col));
+      out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", line, col));
       return out;
     }
-    let lf: boolean = false;
-    for elem in lastfn {
-      if (elem == callee_name) {
-        lf = true;
-      }
-    }
+    let last: i32 = sig.param_types.len() - 1;
+    let lf: boolean = is_func_type(sig.param_types[last]);
     if (!lf) {
-      out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s last parameter isn't a function — add an explicit `: TYPE` annotation", c.line, c.col));
+      out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s last parameter isn't a function — add an explicit `: TYPE` annotation", line, col));
+    } else if (use_callback_empty(sig)) {
+      out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s callback takes no arguments — there's nothing to bind", line, col));
     } else if (sig.all_type_params.len() > 0 && is_unknown(use_binding_type(c, cur))) {
-      out = out.append(dg_at("E032", "use: could not infer binding type for \"" + callee_name + "\" from its arguments — add an explicit `: TYPE` annotation", c.line, c.col));
+      out = out.append(dg_at("E032", "use: could not infer binding type for \"" + callee_name + "\" from its arguments — add an explicit `: TYPE` annotation", line, col));
       // The callback's parameter stays unknown, so it does not fit the
       // callee's parameter either, which native reports as it is declared.
-      let last: i32 = sig.param_types.len() - 1;
       let expected: string = "fn";
       if (last < sig.param_type_names.len()) {
         expected = sig.param_type_names[last];
       }
-      out = out.append(dg_at("E038", arg_subject(c, c.args.len()) + ": expected " + expected + ", got " + use_callback_label(c.args[c.args.len() - 1], cur), c.line, c.col));
+      out = out.append(dg_at("E038", arg_subject(c, c.args.len()) + ": expected " + expected + ", got " + use_callback_label(c.args[c.args.len() - 1], cur), line, col));
     }
     return out;
   }
@@ -24938,24 +25087,42 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
   if (bound_at >= 0) {
     if let typeinfo.TypeFunc(ft) = cur.types[bound_at] {
       if (ft.param_types.len() == 0) {
-        out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", c.line, c.col));
+        out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", line, col));
         return out;
       }
       match (ft.param_types[ft.param_types.len() - 1]) {
         typeinfo.TypeFunc(cb) => {
           if (cb.param_types.len() == 0) {
-            out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s callback takes no arguments — there's nothing to bind", c.line, c.col));
+            out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s callback takes no arguments — there's nothing to bind", line, col));
           }
         },
         _ => {
-          out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s last parameter isn't a function — add an explicit `: TYPE` annotation", c.line, c.col));
+          out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\"'s last parameter isn't a function — add an explicit `: TYPE` annotation", line, col));
         }
       }
       return out;
     }
   }
-  out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", c.line, c.col));
+  out = out.append(dg_at("E032", "use: callee \"" + callee_name + "\" has no signature; add an explicit `: TYPE` annotation", line, col));
   return out;
+}
+
+function use_callback_empty(sig: FuncSig): boolean {
+  if (sig.param_types.len() > 0) {
+    if let typeinfo.TypeFunc(f) = sig.param_types[sig.param_types.len() - 1] {
+      return f.params_known && f.param_types.len() == 0;
+    }
+  }
+  return false;
+}
+
+function argument_type_label(e: ast.Expr, t: typeinfo.Type, s: Scope): string {
+  if let ast.ExprLambda(lm) = e {
+    if (lm.use_infer && lm.params.len() > 0 && lm.params[0].type_name.len() == 0) {
+      return use_callback_label(e, s);
+    }
+  }
+  return type_label(t);
 }
 
 // use_callback_label spells a synthesised `use` callback whose binding has no
@@ -24977,83 +25144,6 @@ function use_callback_label(e: ast.Expr, s: Scope): string {
     ret = type_label(ft.ret_type);
   }
   return "(" + params + ") => " + ret;
-}
-
-// e032_expr collects the E032 diagnostics an expression contributes — a `use`
-// binding whose callee has no signature, or whose source is not an identifier.
-//
-// It PRUNES at ExprLambda and hands the body to e032_stmts, the statement walk,
-// rather than letting astwalk descend: a lambda body's `use` bindings are
-// statements, and e032_stmts is what knows how to read them.
-function e032_expr(e: ast.Expr, lastfn: string[], cur: Scope): util.Diag[] {
-  function at(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
-    match (n) {
-      ast.ExprCall(c) => {
-        return util.append_diags(acc, e032_call_check(c, lastfn, cur));
-      },
-      ast.ExprLambda(lm) => {
-        return util.append_diags(acc, e032_stmts(lm.body, lastfn, cur));
-      },
-      _ => {
-        return acc;
-      }
-    }
-  }
-  function not_into_lambda(n: ast.Expr): boolean {
-    match (n) {
-      ast.ExprLambda(_) => {
-        return false;
-      },
-      _ => {
-        return true;
-      }
-    }
-  }
-  return astwalk.fold_expr_pruned(e, no_diags(), at, not_into_lambda);
-}
-
-function e032_stmts(stmts: ast.Stmt[], lastfn: string[], s: Scope): util.Diag[] {
-  let out: util.Diag[] = [];
-  let cur: Scope = s;
-  for stmt in stmts {
-    match (stmt) {
-      ast.StmtVar(v) => {
-        out = util.append_diags(out, e032_expr(v.init, lastfn, cur));
-      },
-      ast.StmtReturn(r) => {
-        out = util.append_diags(out, e032_expr(r.value, lastfn, cur));
-      },
-      ast.StmtExpr(e) => {
-        out = util.append_diags(out, e032_expr(e.value, lastfn, cur));
-      },
-      ast.StmtAssign(a) => {
-        out = util.append_diags(out, e032_expr(a.value, lastfn, cur));
-      },
-      ast.StmtIf(f) => {
-        out = util.append_diags(out, e032_expr(f.cond, lastfn, cur));
-        out = util.append_diags(out, e032_stmts(f.then_body, lastfn, cur));
-        out = util.append_diags(out, e032_stmts(f.else_body, lastfn, cur));
-      },
-      ast.StmtWhile(w) => {
-        out = util.append_diags(out, e032_stmts(w.body, lastfn, cur));
-      },
-      ast.StmtFor(fr) => {
-        out = util.append_diags(out, e032_stmts(fr.body, lastfn, for_body_scope(fr, cur)));
-      },
-      ast.StmtMatch(m) => {
-        for arm in m.arms {
-          out = util.append_diags(out, e032_stmts(arm.body, lastfn, cur));
-        }
-      },
-      ast.StmtDefer(d) => {
-        let one: ast.Stmt[] = [d.action];
-        out = util.append_diags(out, e032_stmts(one, lastfn, cur));
-      },
-      _ => {}
-    }
-    cur = bind_stmt(stmt, cur);
-  }
-  return out;
 }
 
 // e021_diags reports E021 (#4347): an `impl Trait for Type` block that omits a
@@ -25629,7 +25719,7 @@ function type_mentions_self(type_name: string): boolean {
   return type_ref_mentions_self(parser.parse_type_ref(type_name));
 }
 
-// e021_object_unsafe_method returns the name of a required method that makes
+// e021_object_unsafe_method describes a required method that makes
 // `trait_name` NOT object-safe (so it can't be used as `dyn T`), or "" when the
 // trait is object-safe or unknown. Behind `dyn` the concrete type is erased, so
 // a method mentioning `Self` in a non-receiver parameter or in its result has
@@ -25659,15 +25749,12 @@ function e021_object_unsafe_method(mod: parser.Module, trait_name: string): stri
         }
         while (i < f.params.len()) {
           if (type_mentions_self(f.params[i].type_name)) {
-            return f.name;
+            return "method \"" + f.name + "\" takes Self as a non-receiver parameter";
           }
           i = i + 1;
         }
         if (type_mentions_self(f.ret_type)) {
-          return f.name;
-        }
-        if (f.type_params.len() > 0 || f.all_type_params.len() > 0) {
-          return f.name;
+          return "method \"" + f.name + "\" returns Self";
         }
       }
       return "";
@@ -25799,98 +25886,33 @@ function e021_object_unsafe_assoc(mod: parser.Module, trait_name: string, dyn_sp
   return "";
 }
 
-// e021_dyn_locals_of collects the dyn TARGET of every `let` annotation in a
-// body, in source order. Deliberately NOT e060_collect_dyn_locals, which asks a
-// different question: that one tracks what a NAME's dyn set is and blanks the
-// entry when the name is rebound, because a shadowed name's set is unknowable.
-// Here every annotation is its own use of `dyn T`, so two `let d: dyn Shape`
-// declarations are two sites and E021 is owed at both.
-// e021_dyn_local_at is the statement half of that walk: a `let` whose
-// annotation names a dyn trait contributes that trait. It closes over nothing,
-// so it is a top-level function rather than a nested one — the convention
-// irtables' assign-targets visitors already follow, and what keeps the feature
-// census's closure count measuring closures.
-function e021_dyn_local_at(st: ast.Stmt, own a: string[]): string[] {
-  match (st) {
-    ast.StmtVar(v) => {
-      // The full annotation is kept, not just the trait name: the pin list in
-      // `dyn Holder[Item = i32]` is part of the spelling and the
-      // associated-type rule needs it. Callers take the name with
-      // e021_dyn_target.
-      if (e021_dyn_target(v.type_name).len() > 0) {
-        return a.append(v.type_name);
-      }
-      return a;
-    },
-    _ => {
-      return a;
-    }
-  }
-}
-
-// e021_no_expr is the expression half, for a scan that is purely
-// statement-shaped. Top-level for the same reason.
-function e021_no_expr(e: ast.Expr, own a: string[]): string[] {
-  return a;
-}
-
-function e021_dyn_locals_of(stmts: ast.Stmt[]): string[] {
-  let res: string[] = [];
-  for stmt in stmts {
-    res = astwalk.fold_stmt_nodes(stmt, res, e021_dyn_local_at, e021_no_expr, astwalk.descend_all);
-  }
-  return res;
-}
-
-// e021_object_safety_diags reports E021 for a `dyn T` annotation whose trait T
-// is not object-safe (#4347 slice 4). Scans the three positions the Go checker
-// flags: a function parameter, a function return type, and a LOCAL `let`
-// annotation. A `dyn T` STRUCT FIELD is not flagged there, so it is excluded
-// here to keep parity. A dyn of an object-safe or unknown trait is left alone.
-//
-// The local position was missing, so `let d: dyn Shape = …` inside a body was
-// silent where native draws E021 — the same trait in a parameter or return type
-// was caught all along, which is what made the gap look like the whole check
-// being absent rather than one site of three (#7974).
+// Object safety is reported once per trait at its first unsafe annotation.
 function e021_object_safety_diags(mod: parser.Module, focus: util.NameIndex): util.Diag[] {
   let out: util.Diag[] = [];
+  let seen: string[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
       continue;
     }
-    for param in fn.params {
-      let pt: string = e021_dyn_target(param.type_name);
-      if (pt.len() > 0) {
-        let pm: string = e021_object_unsafe_method(mod, pt);
-        if (pm.len() > 0) {
-          out = out.append(dg("E021", "trait " + pt + " is not object-safe: method \"" + pm + "\""));
+    for site in e021_dyn_sites(fn) {
+      if (e021_dyn_target(site.spelling).len() == 0) {
+        continue;
+      }
+      for bound in parser.split_plus_bounds(e021_dyn_element(site.spelling)) {
+        let spelling: string = util.trim(bound);
+        let target_trait: string = parser.parse_type_ref(spelling).base;
+        if (util.has_str(seen, target_trait)) {
+          continue;
         }
-        let pa: string = e021_object_unsafe_assoc(mod, pt, param.type_name);
-        if (pa.len() > 0) {
-          out = out.append(dg("E021", "trait " + pt + " is not object-safe: " + pa + ", so it cannot be used as `dyn " + pt + "`"));
+        let reason: string = e021_object_unsafe_assoc(mod, target_trait, "dyn " + spelling);
+        if (reason.len() == 0) {
+          reason = e021_object_unsafe_method(mod, target_trait);
         }
-      }
-    }
-    let rt: string = e021_dyn_target(fn.ret_type);
-    if (rt.len() > 0) {
-      let rm: string = e021_object_unsafe_method(mod, rt);
-      if (rm.len() > 0) {
-        out = out.append(dg("E021", "trait " + rt + " is not object-safe: method \"" + rm + "\""));
-      }
-      let ra: string = e021_object_unsafe_assoc(mod, rt, fn.ret_type);
-      if (ra.len() > 0) {
-        out = out.append(dg("E021", "trait " + rt + " is not object-safe: " + ra + ", so it cannot be used as `dyn " + rt + "`"));
-      }
-    }
-    for lspell in e021_dyn_locals_of(fn.body) {
-      let lt: string = e021_dyn_target(lspell);
-      let lm: string = e021_object_unsafe_method(mod, lt);
-      if (lm.len() > 0) {
-        out = out.append(dg("E021", "trait " + lt + " is not object-safe: method \"" + lm + "\""));
-      }
-      let la: string = e021_object_unsafe_assoc(mod, lt, lspell);
-      if (la.len() > 0) {
-        out = out.append(dg("E021", "trait " + lt + " is not object-safe: " + la + ", so it cannot be used as `dyn " + lt + "`"));
+        if (reason.len() > 0) {
+          seen = seen.append(target_trait);
+          let name: string = util.demangle(target_trait);
+          out = out.append(dg_at("E021", "trait " + name + " is not object-safe: " + reason + ", so it cannot be used as `dyn " + name + "`", site.line, site.col));
+        }
       }
     }
   }
@@ -25927,7 +25949,7 @@ struct DynSite { spelling: string, line: i32, col: i32 }
 // e021_dyn_trait_sites is every trait a `dyn` type in fn's parameters, return
 // type or local annotations names, each `+` entry separately, in the order
 // native visits them.
-function e021_dyn_trait_sites(fn: parser.FuncDecl): DynSite[] {
+function e021_dyn_sites(fn: parser.FuncDecl): DynSite[] {
   let sites: DynSite[] = [];
   for param in fn.params {
     sites = sites.append(DynSite { spelling: param.type_name, line: fn.line, col: fn.col });
@@ -25936,8 +25958,12 @@ function e021_dyn_trait_sites(fn: parser.FuncDecl): DynSite[] {
   for stmt in fn.body {
     sites = astwalk.fold_stmt_nodes(stmt, sites, e021_dyn_site_at, e021_no_site, astwalk.descend_all);
   }
+  return sites;
+}
+
+function e021_dyn_trait_sites(fn: parser.FuncDecl): DynSite[] {
   let out: DynSite[] = [];
-  for site in sites {
+  for site in e021_dyn_sites(fn) {
     if (e021_dyn_target(site.spelling).len() > 0) {
       for entry in parser.split_plus_bounds(e021_dyn_element(site.spelling)) {
         out = out.append(DynSite { spelling: parser.parse_type_ref(util.trim(entry)).base, line: site.line, col: site.col });
@@ -26596,6 +26622,20 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
 }
 
 pub function check_module_with_file(raw_mod: parser.Module, entry_file: string): ModuleTypes {
+  return check_module_raw_floor(raw_mod, entry_file, false);
+}
+
+// Generated runtime source has an explicit checker entry for its raw floor.
+// Source admission keeps that private catalog disabled.
+function admission_env(mod: parser.Module, entry_file: string, raw_floor: boolean): ModuleEnv {
+  let env: ModuleEnv = module_env_with_file(mod, entry_file);
+  if (raw_floor) {
+    return env;
+  }
+  return ModuleEnv { ...env, sigs: SigTable { ...env.sigs, raw_allowed: false } };
+}
+
+function check_module_raw_floor(raw_mod: parser.Module, entry_file: string, raw_floor: boolean): ModuleTypes {
   // Native's checker resolves named arguments and fills omitted defaults
   // before it types anything, and reports what does not resolve (E076 /
   // E077 / E004) as its first diagnostics. Filling here rather than in each
@@ -26604,7 +26644,7 @@ pub function check_module_with_file(raw_mod: parser.Module, entry_file: string):
   // because a call that did not resolve was left as written.
   let (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
   let mod: parser.Module = prepared_module(filled);
-  let env: ModuleEnv = module_env_with_file(mod, entry_file);
+  let env: ModuleEnv = admission_env(mod, entry_file, raw_floor);
   let mt: ModuleTypes = check_module_pass(mod, env, fda_diags, []);
   if (mt.diags.len() > 0) {
     return mt;
@@ -26620,7 +26660,7 @@ pub function check_module_with_file(raw_mod: parser.Module, entry_file: string):
     names = names.append(cl.name);
   }
   let cmod: parser.Module = parser.Module { ...mod, funcs: funcs };
-  let rt: ModuleTypes = check_module_pass(cmod, module_env_with_file(cmod, entry_file), [], names);
+  let rt: ModuleTypes = check_module_pass(cmod, admission_env(cmod, entry_file, raw_floor), [], names);
   if (rt.diags.len() == 0) {
     return mt;
   }
@@ -26762,6 +26802,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       well_typed = false;
     }
     let dbody: ast.Stmt[] = mod.funcs[i].body;
+    let function_diags: util.Diag[] = [];
     // E002: return-type mismatch, per function (recursing into nested
     // blocks). Only meaningful when a return type is declared.
     if (mod.funcs[i].ret_type == "void") {
@@ -26769,7 +26810,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       // E052 — falling off the end is the normal exit) and must not
       // return a value (E002 on any `return <expr>;`). Matches the Go
       // checker, which treats void specially on both fronts.
-      body_diags = util.append_diags(body_diags, void_ret_diags(dbody, fsc, unions));
+      function_diags = util.append_diags(function_diags, void_ret_diags(dbody, fsc, unions));
     } else if (mod.funcs[i].ret_type.len() > 0) {
       // A return type naming no declared type (the E064 case) takes no value,
       // so each typed `return` is E002 beside the E064, as an annotated
@@ -26779,7 +26820,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       if (is_unknown(rty) && util.index_of_str(fsc.tparams, rname) < 0 && e064_unknown_bare(rname, fsc.type_names())) {
         rty = typeinfo.TypeStruct { name: rname, args: [] };
       }
-      body_diags = util.append_diags(body_diags, ret_diags(dbody, fsc, rty, unions));
+      function_diags = util.append_diags(function_diags, ret_diags(dbody, fsc, rty, unions));
       // E052: a non-void function whose body can fall off the end
       // without returning, reported at the function declaration.
       //
@@ -26789,7 +26830,17 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       // is NOT exempt — an absent body and an empty one are the same
       // array here, so the import attribute is what separates them.
       if (mod.funcs[i].import_iface.len() == 0 && !block_exits(mod.funcs[i].body)) {
-        body_diags = body_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
+        function_diags = function_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + mod.funcs[i].ret_type + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
+      }
+    }
+    // Missing annotations remain errors. Infer exits for recovery so a `?`
+    // failure edge can still make a fallthrough non-void, as in the oracle.
+    if (mod.funcs[i].ret_type.len() == 0 && mod.funcs[i].receiver_type.len() == 0
+      && mod.funcs[i].all_type_params.len() == 0 && !mod.funcs[i].is_const
+      && mod.funcs[i].import_iface.len() == 0 && !block_exits(dbody)) {
+      let inferred: typeinfo.Type = exit_result(dbody, fsc);
+      if (!is_unknown(inferred) && !is_void(inferred)) {
+        function_diags = function_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + type_label(inferred) + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
       }
     }
     // E063: returning a `[T]` slice that views function-local storage
@@ -26800,41 +26851,41 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     // `T[]`-returning function that hands a local array back — a move,
     // and legal — which is what bigint / sort / cmp / unicode do.
     if (parser.spelling_is_view(mod.funcs[i].ret_type)) {
-      body_diags = util.append_diags(body_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums, slc_ix).diags);
+      function_diags = util.append_diags(function_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums, slc_ix).diags);
     }
     // E067: a value of a @must_consume struct/enum type must be consumed
     // on every path before its binding leaves scope (the native
     // checkMustConsume — docs/MUST-CONSUME.md).
     if (mc_on) {
-      body_diags = util.append_diags(body_diags, must_consume_diags(mod.funcs[i], fsc, mod.structs, mod.enums));
+      function_diags = util.append_diags(function_diags, must_consume_diags(mod.funcs[i], fsc, mod.structs, mod.enums));
     }
     // E002 (lambda bodies): return-type mismatch inside a lambda is
     // checked against the lambda's own declared return type, not the
     // enclosing function's. Runs for every function (even void ones —
     // a lambda can be declared anywhere), scope-threaded so a lambda
     // sees earlier locals.
-    body_diags = util.append_diags(body_diags, lret_stmts(dbody, fsc, unions));
+    function_diags = util.append_diags(function_diags, lret_stmts(dbody, fsc, unions));
     // E031: match/if-expression arms must have compatible types
     // (scope-threaded so an arm sees earlier locals + its payload).
-    body_diags = util.append_diags(body_diags, mx_stmts(dbody, fsc, unions, mod.enums));
+    function_diags = util.append_diags(function_diags, mx_stmts(dbody, fsc, unions, mod.enums));
     // E005: struct literal missing a declared field (any expression in
     // the body, struct table is module-global so no scope needed).
-    body_diags = util.append_diags(body_diags, stmts_slit_diags(dbody, stt));
+    function_diags = util.append_diags(function_diags, stmts_slit_diags(dbody, stt));
     // E004: free-function call arity (scope-threaded so a shadowing
     // local isn't mistaken for the function).
-    body_diags = util.append_diags(body_diags, stmts_call_diags(dbody, fsc));
+    function_diags = util.append_diags(function_diags, stmts_call_diags(dbody, fsc));
     // E003: assignment / annotated-var type mismatch (scope-threaded).
-    body_diags = util.append_diags(body_diags, stmts_assign_diags(dbody, fsc, unions));
+    function_diags = util.append_diags(function_diags, stmts_assign_diags(dbody, fsc, unions));
     // E011 / E058: break / continue outside a loop, and a labeled
     // break/continue whose label names no enclosing loop (structural).
-    body_diags = util.append_diags(body_diags, loop_diags(dbody, false, []));
+    function_diags = util.append_diags(function_diags, loop_diags(dbody, false, []));
     // E013: duplicate `let` in the same block (structural, no scope).
-    body_diags = util.append_diags(body_diags, dupvar_diags(dbody));
+    function_diags = util.append_diags(function_diags, dupvar_diags(dbody));
     // E047: a typed-suffix integer literal outside its suffix's range.
-    body_diags = util.append_diags(body_diags, suffix_range_stmts(dbody));
+    function_diags = util.append_diags(function_diags, suffix_range_stmts(dbody));
     // E026 / E028: structural match-arm errors (wildcard order, dup
     // variant).
-    body_diags = util.append_diags(body_diags, match_diags(dbody, stt, ut));
+    function_diags = util.append_diags(function_diags, match_diags(dbody, stt, ut));
     // P002 in a parameter's DEFAULT value. Nothing evaluates a default
     // until a call site omits the argument, so it sits outside the body
     // walk above — but native rejects the literal at parse time whether
@@ -26844,7 +26895,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     let pdi: i32 = 0;
     while (pdi < mod.funcs[i].params.len()) {
       if (mod.funcs[i].params[pdi].has_default) {
-        body_diags = util.append_diags(body_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(st, stt, ut, methods, imports, call_impls, mod.trait_reqs), unions, mod.enums), "P002"));
+        function_diags = util.append_diags(function_diags, keep_code(mx_expr(mod.funcs[i].params[pdi].default_value, new_scope_full(st, stt, ut, methods, imports, call_impls, mod.trait_reqs), unions, mod.enums), "P002"));
       }
       pdi = pdi + 1;
     }
@@ -26852,17 +26903,18 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     // in a parameter type.
     let pai2: i32 = 0;
     while (pai2 < mod.funcs[i].params.len()) {
-      body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].params[pai2].type_name, mod.structs, mod.enums));
+      function_diags = util.append_diags(function_diags, type_arity_diag(mod.funcs[i].params[pai2].type_name, mod.structs, mod.enums));
       pai2 = pai2 + 1;
     }
-    body_diags = util.append_diags(body_diags, type_arity_diag(mod.funcs[i].ret_type, mod.structs, mod.enums));
+    function_diags = util.append_diags(function_diags, type_arity_diag(mod.funcs[i].ret_type, mod.structs, mod.enums));
     for annot in collect_annots(mod.funcs[i].body) {
-      body_diags = util.append_diags(body_diags, type_arity_diag(annot.type_name, mod.structs, mod.enums));
+      function_diags = util.append_diags(function_diags, type_arity_diag(annot.type_name, mod.structs, mod.enums));
     }
     // E036: unqualified reference to a variant shared by 2+ enums.
     if (ambig.len() > 0) {
-      body_diags = util.append_diags(body_diags, vref_stmts(dbody, fsc, ambig));
+      function_diags = util.append_diags(function_diags, vref_stmts(dbody, fsc, ambig));
     }
+    body_diags = util.append_diags(body_diags, body_source_order(function_diags));
     i = i + 1;
   }
   let s: Scope = new_scope_full(st, stt, ut, methods, imports, call_impls, mod.trait_reqs);
@@ -26911,6 +26963,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   // trait names (via requirement records and impl headers) and resource
   // names. The Go checker's knownTypeName accepts any declared struct /
   // enum / trait / resource, so the base check must not flag these.
+  let signature_diags: util.Diag[] = [];
   let e064_extra: string[] = [];
   // e064_traits spells each trait as a parameter type reaches here: bare for
   // the entry's own, under the declaring module's prefix for an import's.
@@ -26941,22 +26994,22 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       for param in efn.params {
         let pu: string = e064_unknown_name(e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), e064_tn, e064_extra, efn_tps);
         if (pu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(pu) + "\" in this scope" + unknown_type_hint(pu, e064_traits), efn.line, efn.col));
+          signature_diags = signature_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(pu) + "\" in this scope" + unknown_type_hint(pu, e064_traits), efn.line, efn.col));
         }
       }
       let ru: string = e064_unknown_name(e064_decl_spelling(efn.ret_type, efn.ret_fn_ret, efn.ret_fn_param_types), e064_tn, e064_extra, efn_tps);
       if (ru.len() > 0) {
-        body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(ru) + "\" in this scope" + unknown_type_hint(ru, e064_traits), efn.line, efn.col));
+        signature_diags = signature_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(ru) + "\" in this scope" + unknown_type_hint(ru, e064_traits), efn.line, efn.col));
       }
       // Body `let x: T` annotations.
       let efn_annots: Annot[] = collect_annots(efn.body);
-      body_diags = util.append_diags(body_diags, e064_annot_diags(efn_annots, e064_tn, e064_extra, efn_tps, e064_traits));
+      signature_diags = util.append_diags(signature_diags, e064_annot_diags(efn_annots, e064_tn, e064_extra, efn_tps, e064_traits));
     }
     if (in_focus(focus, efn)) {
-      body_diags = util.append_diags(body_diags, e057_fn_diags(efn, tsc));
+      signature_diags = util.append_diags(signature_diags, e057_fn_diags(efn, tsc));
     }
   }
-  body_diags = util.append_diags(body_diags, handle_type_diags(mod, focus, e064_tn));
+  signature_diags = util.append_diags(signature_diags, handle_type_diags(mod, focus, e064_tn));
   // E044: a closure capture of a value with no runtime representation, a
   // `void` call result.
   let e044_void_fns: string[] = [];
@@ -26984,12 +27037,6 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     }
     if (func.ret_type == "str") {
       str_ret_names = str_ret_names.append(func.name);
-    }
-  }
-  let e032_lastfn: string[] = [];
-  for lfd in mod.funcs {
-    if (lfd.params.len() > 0 && lfd.params[lfd.params.len() - 1].type_name == "fn") {
-      e032_lastfn = e032_lastfn.append(lfd.name);
     }
   }
   let e053_variants: string[] = [];
@@ -27064,7 +27111,6 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, e065_sums, e065_ix, xsc).diags);
     }
     body_diags = util.append_diags(body_diags, e065_cursor_diags(xfn));
-    body_diags = util.append_diags(body_diags, e032_stmts(xfn.body, e032_lastfn, xsc));
   }
   // E045 on a struct FIELD's annotation. Unlike E064 / E057 this needs no
   // non-generic scoping: a type-parameter key resolves to unknown, which
@@ -27104,11 +27150,35 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   if (focus_names.len() == 0) {
     decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), util.append_diags(e021_diags(mod), bound_decl_diags(mod)))), derive_diags);
   }
-  let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, env, focus)), e049_diags(mod, env, focus)), e021_object_safety_diags(mod, focus)), util.append_diags(e021_unknown_dyn_trait_diags(mod, focus), e060_e062_diags(mod, focus))));
+  let leading: util.Diag[] = util.append_diags(fda_diags, decl_diags);
+  leading = util.append_diags(leading, signature_diags);
+  leading = util.append_diags(leading, e021_object_safety_diags(mod, focus));
+  leading = util.append_diags(leading, e021_unknown_dyn_trait_diags(mod, focus));
+  let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(leading, body_diags), own_diags(mod, env, focus)), util.append_diags(e049_diags(mod, env, focus), e060_e062_diags(mod, focus))));
   if (dd.len() > 0) {
     well_typed = false;
   }
   return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
+}
+
+// Body diagnostics follow source order. A missing return is checked after the body.
+function body_source_order(diags: util.Diag[]): util.Diag[] {
+  let out: util.Diag[] = [];
+  let exits: util.Diag[] = [];
+  for d in diags {
+    if (d.code == "E052") {
+      exits = exits.append(d);
+    } else {
+      out = out.append(d);
+      let i: i32 = out.len() - 1;
+      while (i > 0 && (out[i].line < out[i - 1].line || out[i].line == out[i - 1].line && out[i].col < out[i - 1].col)) {
+        let previous: util.Diag = out[i - 1];
+        out = out.with(i - 1, out[i]).with(i, previous);
+        i = i - 1;
+      }
+    }
+  }
+  return util.append_diags(out, exits);
 }
 
 // ModuleEnv is the module-level name environment: the four indexed tables a
@@ -30449,7 +30519,7 @@ function use_typed(c: ast.ExprCall, s: Scope): ast.ExprCall {
 
 // use_ret_typed is `lm` returning what the callback slot `cbt` returns. A
 // result the slot leaves unknown, or one with no declaration spelling, leaves
-// the lambda's result to be inferred from its returns as before.
+// the lambda's result to its enclosing function when that result is known.
 function use_ret_typed(lm: ast.ExprLambda, cbt: typeinfo.Type): ast.ExprLambda {
   if (lm.ret_type.len() > 0) {
     return lm;

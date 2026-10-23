@@ -150,7 +150,7 @@ func TestSelfHostHeapMarkIRX86_64(t *testing.T) {
 // TestSelfHostHeapMarkIRArm64 is the arm64 leg: it runs the cases through the
 // self-host CLI on arm64-linux, under qemu.
 func TestSelfHostHeapMarkIRArm64(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	for _, tc := range heapMarkCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := tc.src + "\n"

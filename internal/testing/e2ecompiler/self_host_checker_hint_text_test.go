@@ -95,6 +95,17 @@ type hintTextCase struct {
 var hintTextCases = []hintTextCase{
 	{name: "E043 narrow Option receiver", src: `function main(): i32 { let x: Option[i32] = Some(1); x.failure(); return 0; }`, code: "E043", spelling: `"failure" is declared for Option[IoError]`},
 	{name: "E043 nested Option receiver", src: `function main(): i32 { let x: Option[i32] = Some(1); x.unzip(); return 0; }`, code: "E043", spelling: `"unzip" is declared for Option[(T, U)]`},
+	{name: "E021 unsafe object reason", src: `trait Bad { function copy(self: Self): Self; } function f(x: dyn Bad): i32 { return 0; } function main(): i32 { return 0; }`, code: "E021", spelling: `method "copy" returns Self, so it cannot be used as`},
+	{name: "E032 empty use callback", src: `function take(f: () => i32): i32 { return f(); } function main(): i32 { use x <- take(); return 0; }`, code: "E032", spelling: `callback takes no arguments`},
+
+	{name: "E052 unannotated try fallthrough", src: `function f(x: Option[i32]) { let y = x?; } function main(): i32 { return 0; }`, code: "E052", spelling: `"f" has return type Option[i32]`},
+
+	{name: "E001 raw data is private", src: `function main(): i32 { let x = __raw_data("a"); return 0; }`, code: "E001", spelling: `cannot find "__raw_data"`},
+	{name: "E001 raw store is private", src: `function main(): i32 { __raw_store8(0 as usize, 0, 0); return 0; }`, code: "E001", spelling: `cannot find "__raw_store8"`},
+	{name: "E040 unbound array result", src: `function mk[T](): T[] { return []; } function main(): i32 { let z = mk(); return 0; }`, code: "E040", spelling: `could not infer type parameter T for mk`},
+	{name: "E009 unary string", src: `function main(): i32 { let x = -"s"; return 0; }`, code: "E009", spelling: `operator "-" requires an integer type, got string`},
+	{name: "E035 literal match type", src: `function main(): i32 { match (true) { 1 => { return 1; }, _ => { return 0; } } }`, code: "E035", spelling: `literal pattern of type i32 does not match scrutinee type boolean`},
+
 	{
 		name: "E040 method type argument count names the receiver",
 		src: `struct B { v: i32 }

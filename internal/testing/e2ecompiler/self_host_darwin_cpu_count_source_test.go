@@ -25,7 +25,7 @@ func TestSelfHostDarwinCPUCountSource(t *testing.T) {
 	}
 	body := strings.ReplaceAll(string(generated), "__fern_cpu_count", "probe_cpu")
 	body = strings.ReplaceAll(body, "__syscall6", "fake_sysctl")
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	for _, tc := range []struct {
 		name      string
 		count, rc int

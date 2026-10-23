@@ -15,7 +15,7 @@ import (
 // Exercise the runtime ABI directly: ordinary record shapes do not reach the
 // large tier. Keep the emitted allocator, release and diagnostic bodies intact.
 func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(src, []byte("function main(): i32 { let p: usize = __raw_arr_box(1); __fern_rc_dec(p); return 0; }"), 0o644); err != nil {
 		t.Fatal(err)

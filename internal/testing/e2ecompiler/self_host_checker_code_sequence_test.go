@@ -156,8 +156,8 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// collector cannot change it. Recorded here because this gate is where
 		// it became visible, and pinned so it cannot drift while someone
 		// decides whether the self-host should match the oracle's order.
-		{"two-bad-use-bindings", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    use m <- add(2);\n    return n + m;\n}\n", "E038,E038,E032,E032", false},
-		{"use-inside-lambda", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    let f = (): i32 => { use n <- add(1); return n; };\n    return f();\n}\n", "E038,E032", false},
+		{"two-bad-use-bindings", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    use m <- add(2);\n    return n + m;\n}\n", "E032,E032,E038,E038", false},
+		{"use-inside-lambda", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    let f = (): i32 => { use n <- add(1); return n; };\n    return f();\n}\n", "E032,E038", false},
 		// E060 / E062 from e060_e062_stmts. Captured against the UNCONVERTED hand
 		// walk first, which is how the three divergences below were found rather
 		// than inferred: it listed nine expression kinds and dropped the rest on a
