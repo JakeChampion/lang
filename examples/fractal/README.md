@@ -61,7 +61,7 @@ Four independent `f64x2` streams advance eight pixels.
 Completed lanes receive new pixels while the other lanes continue.
 Four updates share one escape test. A scalar replay recovers the first escape time and magnitude.
 Exact cycle detection and analytic interior tests stop bounded pixels early.
-Shallow tiles use the smaller four-pixel batch renderer.
+Shallow tiles and tiles with short center orbits use the smaller four-pixel batch renderer.
 
 At zoom 20 and above, nearby pixels can share an orbit prefix.
 The renderer computes one reference orbit with double-double arithmetic.

@@ -2,7 +2,7 @@
   "baseline_revision": "8c5e704903500165dbddccf5e092ea5fbda373c8",
   "compiler_sha256": {
     "baseline": "dabc8bfc3cc2488449768150cf049c90fada615b385f7d3766d01e6ddfc3f942",
-    "candidate": "7f9a9ad5e2e97cf00301c47003320a6b43eede02f27a46ea300c4f06a2c0ec1c"
+    "candidate": "a5a03d0fb0d1b8566f28c425e28436266aa2dba8881270bd80cc540bad89c2d5"
   },
   "candidate_function": "render_exact",
   "stdlib_sha256": {
@@ -13,7 +13,7 @@
     "internal/stdlib/std/base32.fern": "3f4e5857a81304431e354152c916a07e14f60c4ec7b2797e7200d353a0dd0bf8",
     "internal/stdlib/std/base64.fern": "33e2c4a34db5bfc1514b0d99fd54597a7916aab58af7228fe986948bc07ac5e2",
     "internal/stdlib/std/bench.fern": "408c52802cb7c8ced06e4f9e0f2b959e259db8fc61a4bb7a661dbff226667a96",
-    "internal/stdlib/std/binary.fern": "5ffd52f114dff95f8b266466f9c63dfbb2fa0e868c26d0078239ad78159df20a",
+    "internal/stdlib/std/binary.fern": "959f8e8d7dedaa0d52e36e904f5744e2c2043c9d20461aa17b6978963805cc09",
     "internal/stdlib/std/brotli.fern": "89f4159d984ea6f7d7c424455fafde502ff7d2b54a2a4dfc3e10f75820ed1ba1",
     "internal/stdlib/std/cli.fern": "0d8f1b0665e7c2c72d956a6a9cbcdbf549db9e41446ad4d94e3868dbd219b775",
     "internal/stdlib/std/constmap.fern": "9509d439974eee4e31f06a05990bb28b465accb9a6511d438aad63f5518eddd3",
@@ -52,12 +52,12 @@
     "internal/stdlib/std/option.fern": "f4242d47c8019079635441ff3ddfad922072e187be6c7132cc6122ede73e3be0",
     "internal/stdlib/std/ordmap.fern": "a4e687385890670300720d48be3ece4c6e02e8d0a86fe146c52b29e75a0d51ba",
     "internal/stdlib/std/ordset.fern": "ae1d781853f91cb417281c7889499a1f32dbd98684f2d55d97850614baffddf8",
-    "internal/stdlib/std/parse.fern": "64c31b770594b69a401d16536cd02c5c1ea802fa7205810888eaf8a857bd4082",
+    "internal/stdlib/std/parse.fern": "a2e7c938a3b71cd4f8116468fc78dbce14ee8f5bd35e96286e55e9450986d927",
     "internal/stdlib/std/path.fern": "3f4cff23fa47492abe4a2bbae935ad9a7d207a87be9cf943fe661895e8538193",
     "internal/stdlib/std/peg.fern": "b1e92855bc5ddaeeab4e548ec36636aa18dddc4c41f473d208b192544b17d72a",
     "internal/stdlib/std/platform.fern": "33fa4e8426ce94d18a78f4a4b801b3793b613ddabf0c8a6bf9838eba12f686e4",
     "internal/stdlib/std/pmap.fern": "f36d0f62f9ece62e75e5ec5509c648c7374177b05c3d274e8a6a3de11379fc06",
-    "internal/stdlib/std/png.fern": "884fc482803cfe37c2f8eef10e41e0a44259cce960a296b21908fcb557da5e1f",
+    "internal/stdlib/std/png.fern": "bf4e8ec128d798a68315772430fe698ae52747f07d6b66d303763ae48c14dc3b",
     "internal/stdlib/std/protobuf.fern": "5aeb8a234a0f98696ee466b7d08b121debffd62e75ceb617b6c449858764cdbe",
     "internal/stdlib/std/pset.fern": "1c267256849f5806aed44c65dd9ef98cb62ec0c2f1c8d7206dbf4742d334d945",
     "internal/stdlib/std/publicsuffix.fern": "76f68f97c34298c4f31ab89759fb2fa3de45d9d0e5a7a941ac00540493174ebf",
@@ -97,7 +97,7 @@
       "binary.fern": "1f3f96cc0dec0fb3971fffab58963ede53451b9f9f5103578bf571265ba29b80"
     },
     "candidate": {
-      "fractal.fern": "b21e6489a1d27625c40fe0775a0fa92ef514a168b113de2e3d54be4349ec4204",
+      "fractal.fern": "6e917284edac147f32a64bbad2c144bf29e692d2a5bae6b9e11e8a97c1025633",
       "linear.fern": "dd7ac8bd7ebe12f863e03943b5a8bd656dc6e61dbc70b00e53688052cc4d6f5e",
       "kernel.fern": "f7b87dd80f1c5607febc71718c656684f5a5336e6de72e23cd55c0f3606e0880",
       "series.fern": "74958c92e1d8508888b054470d54b05525d05857042cce1a99e1b0f7f5e7ce5a"
@@ -222,55 +222,55 @@
     "baseline": [
       {
         "whole": {
-          "ms": 12.109799,
+          "ms": 14.405421,
           "iterations": 522386,
           "bytes": 23765,
           "crc32": 2195117617
         },
         "seahorse14": {
-          "ms": 29.959634,
+          "ms": 33.551256,
           "iterations": 7425317,
           "bytes": 54637,
           "crc32": 3748504818
         },
         "dive20": {
-          "ms": 137.469597,
+          "ms": 149.000321,
           "iterations": 67955350,
           "bytes": 65167,
           "crc32": 2474883356
         },
         "dive30": {
-          "ms": 150.391342,
+          "ms": 160.622643,
           "iterations": 70870379,
           "bytes": 64514,
           "crc32": 2597047574
         },
         "dive38": {
-          "ms": 278.339812,
+          "ms": 290.747259,
           "iterations": 138872102,
           "bytes": 90609,
           "crc32": 1468974131
         },
         "dive42": {
-          "ms": 280.227414,
+          "ms": 285.712491,
           "iterations": 140111224,
           "bytes": 71729,
           "crc32": 1306945335
         },
         "minibrot20": {
-          "ms": 16.438306,
+          "ms": 15.660864,
           "iterations": 7340032,
           "bytes": 270,
           "crc32": 4160868373
         },
         "spiral15": {
-          "ms": 41.461607,
+          "ms": 39.817174,
           "iterations": 12910503,
           "bytes": 61019,
           "crc32": 1008565390
         },
         "exterior42": {
-          "ms": 8.514843,
+          "ms": 7.997207,
           "iterations": 262144,
           "bytes": 725,
           "crc32": 757427088
@@ -278,55 +278,55 @@
       },
       {
         "whole": {
-          "ms": 11.442637,
+          "ms": 12.7956,
           "iterations": 522386,
           "bytes": 23765,
           "crc32": 2195117617
         },
         "seahorse14": {
-          "ms": 32.96379,
+          "ms": 32.410084,
           "iterations": 7425317,
           "bytes": 54637,
           "crc32": 3748504818
         },
         "dive20": {
-          "ms": 141.525277,
+          "ms": 145.423775,
           "iterations": 67955350,
           "bytes": 65167,
           "crc32": 2474883356
         },
         "dive30": {
-          "ms": 154.346535,
+          "ms": 153.273261,
           "iterations": 70870379,
           "bytes": 64514,
           "crc32": 2597047574
         },
         "dive38": {
-          "ms": 277.453488,
+          "ms": 295.714306,
           "iterations": 138872102,
           "bytes": 90609,
           "crc32": 1468974131
         },
         "dive42": {
-          "ms": 282.431871,
+          "ms": 281.402975,
           "iterations": 140111224,
           "bytes": 71729,
           "crc32": 1306945335
         },
         "minibrot20": {
-          "ms": 16.079002,
+          "ms": 13.402934,
           "iterations": 7340032,
           "bytes": 270,
           "crc32": 4160868373
         },
         "spiral15": {
-          "ms": 44.00194,
+          "ms": 40.0603,
           "iterations": 12910503,
           "bytes": 61019,
           "crc32": 1008565390
         },
         "exterior42": {
-          "ms": 8.312264,
+          "ms": 8.458752,
           "iterations": 262144,
           "bytes": 725,
           "crc32": 757427088
@@ -334,55 +334,55 @@
       },
       {
         "whole": {
-          "ms": 13.879424,
+          "ms": 12.53954,
           "iterations": 522386,
           "bytes": 23765,
           "crc32": 2195117617
         },
         "seahorse14": {
-          "ms": 36.658262,
+          "ms": 27.993436,
           "iterations": 7425317,
           "bytes": 54637,
           "crc32": 3748504818
         },
         "dive20": {
-          "ms": 159.739902,
+          "ms": 134.010395,
           "iterations": 67955350,
           "bytes": 65167,
           "crc32": 2474883356
         },
         "dive30": {
-          "ms": 165.147621,
+          "ms": 143.839771,
           "iterations": 70870379,
           "bytes": 64514,
           "crc32": 2597047574
         },
         "dive38": {
-          "ms": 297.479433,
+          "ms": 264.124406,
           "iterations": 138872102,
           "bytes": 90609,
           "crc32": 1468974131
         },
         "dive42": {
-          "ms": 288.534795,
+          "ms": 271.256422,
           "iterations": 140111224,
           "bytes": 71729,
           "crc32": 1306945335
         },
         "minibrot20": {
-          "ms": 16.791658,
+          "ms": 15.77866,
           "iterations": 7340032,
           "bytes": 270,
           "crc32": 4160868373
         },
         "spiral15": {
-          "ms": 42.321552,
+          "ms": 41.047055,
           "iterations": 12910503,
           "bytes": 61019,
           "crc32": 1008565390
         },
         "exterior42": {
-          "ms": 8.471513,
+          "ms": 7.577076,
           "iterations": 262144,
           "bytes": 725,
           "crc32": 757427088
@@ -390,55 +390,55 @@
       },
       {
         "whole": {
-          "ms": 10.996312,
+          "ms": 13.270856,
           "iterations": 522386,
           "bytes": 23765,
           "crc32": 2195117617
         },
         "seahorse14": {
-          "ms": 26.989392,
+          "ms": 31.913427,
           "iterations": 7425317,
           "bytes": 54637,
           "crc32": 3748504818
         },
         "dive20": {
-          "ms": 132.931942,
+          "ms": 161.214383,
           "iterations": 67955350,
           "bytes": 65167,
           "crc32": 2474883356
         },
         "dive30": {
-          "ms": 147.191912,
+          "ms": 153.348684,
           "iterations": 70870379,
           "bytes": 64514,
           "crc32": 2597047574
         },
         "dive38": {
-          "ms": 254.739218,
+          "ms": 292.652693,
           "iterations": 138872102,
           "bytes": 90609,
           "crc32": 1468974131
         },
         "dive42": {
-          "ms": 273.160632,
+          "ms": 313.399111,
           "iterations": 140111224,
           "bytes": 71729,
           "crc32": 1306945335
         },
         "minibrot20": {
-          "ms": 15.016162,
+          "ms": 16.669391,
           "iterations": 7340032,
           "bytes": 270,
           "crc32": 4160868373
         },
         "spiral15": {
-          "ms": 37.807475,
+          "ms": 45.918769,
           "iterations": 12910503,
           "bytes": 61019,
           "crc32": 1008565390
         },
         "exterior42": {
-          "ms": 7.409647,
+          "ms": 11.643016,
           "iterations": 262144,
           "bytes": 725,
           "crc32": 757427088
@@ -446,55 +446,55 @@
       },
       {
         "whole": {
-          "ms": 11.116884,
+          "ms": 14.834669,
           "iterations": 522386,
           "bytes": 23765,
           "crc32": 2195117617
         },
         "seahorse14": {
-          "ms": 27.257647,
+          "ms": 38.011065,
           "iterations": 7425317,
           "bytes": 54637,
           "crc32": 3748504818
         },
         "dive20": {
-          "ms": 129.773826,
+          "ms": 159.441285,
           "iterations": 67955350,
           "bytes": 65167,
           "crc32": 2474883356
         },
         "dive30": {
-          "ms": 145.919597,
+          "ms": 161.299091,
           "iterations": 70870379,
           "bytes": 64514,
           "crc32": 2597047574
         },
         "dive38": {
-          "ms": 265.704064,
+          "ms": 295.495546,
           "iterations": 138872102,
           "bytes": 90609,
           "crc32": 1468974131
         },
         "dive42": {
-          "ms": 274.65678,
+          "ms": 286.080264,
           "iterations": 140111224,
           "bytes": 71729,
           "crc32": 1306945335
         },
         "minibrot20": {
-          "ms": 17.447549,
+          "ms": 16.181177,
           "iterations": 7340032,
           "bytes": 270,
           "crc32": 4160868373
         },
         "spiral15": {
-          "ms": 44.985382,
+          "ms": 40.726913,
           "iterations": 12910503,
           "bytes": 61019,
           "crc32": 1008565390
         },
         "exterior42": {
-          "ms": 8.212723,
+          "ms": 9.069211,
           "iterations": 262144,
           "bytes": 725,
           "crc32": 757427088
@@ -504,55 +504,55 @@
     "candidate": [
       {
         "whole": {
-          "ms": 12.030151,
+          "ms": 12.274536,
           "iterations": 522386,
           "bytes": 23765,
           "crc32": 2195117617
         },
         "seahorse14": {
-          "ms": 25.930578,
+          "ms": 25.485752,
           "iterations": 7425317,
           "bytes": 54637,
           "crc32": 3748504818
         },
         "dive20": {
-          "ms": 68.842001,
+          "ms": 68.824126,
           "iterations": 67955350,
           "bytes": 65167,
           "crc32": 2474883356
         },
         "dive30": {
-          "ms": 77.688513,
+          "ms": 76.476264,
           "iterations": 70870379,
           "bytes": 64514,
           "crc32": 2597047574
         },
         "dive38": {
-          "ms": 135.717175,
+          "ms": 131.131973,
           "iterations": 138872102,
           "bytes": 90609,
           "crc32": 1468974131
         },
         "dive42": {
-          "ms": 157.00222,
+          "ms": 129.133535,
           "iterations": 140111224,
           "bytes": 71729,
           "crc32": 1306945335
         },
         "minibrot20": {
-          "ms": 9.948626,
+          "ms": 10.04513,
           "iterations": 7340032,
           "bytes": 270,
           "crc32": 4160868373
         },
         "spiral15": {
-          "ms": 34.405563,
+          "ms": 28.669334,
           "iterations": 12910503,
           "bytes": 61019,
           "crc32": 1008565390
         },
         "exterior42": {
-          "ms": 10.041492,
+          "ms": 8.140734,
           "iterations": 262144,
           "bytes": 725,
           "crc32": 757427088
@@ -560,55 +560,55 @@
       },
       {
         "whole": {
-          "ms": 12.302203,
+          "ms": 12.781569,
           "iterations": 522386,
           "bytes": 23765,
           "crc32": 2195117617
         },
         "seahorse14": {
-          "ms": 28.611067,
+          "ms": 25.768808,
           "iterations": 7425317,
           "bytes": 54637,
           "crc32": 3748504818
         },
         "dive20": {
-          "ms": 68.937402,
+          "ms": 71.182296,
           "iterations": 67955350,
           "bytes": 65167,
           "crc32": 2474883356
         },
         "dive30": {
-          "ms": 80.07597,
+          "ms": 80.276073,
           "iterations": 70870379,
           "bytes": 64514,
           "crc32": 2597047574
         },
         "dive38": {
-          "ms": 134.319286,
+          "ms": 136.365,
           "iterations": 138872102,
           "bytes": 90609,
           "crc32": 1468974131
         },
         "dive42": {
-          "ms": 134.731176,
+          "ms": 134.713844,
           "iterations": 140111224,
           "bytes": 71729,
           "crc32": 1306945335
         },
         "minibrot20": {
-          "ms": 9.675904,
+          "ms": 9.913883,
           "iterations": 7340032,
           "bytes": 270,
           "crc32": 4160868373
         },
         "spiral15": {
-          "ms": 28.596847,
+          "ms": 30.055741,
           "iterations": 12910503,
           "bytes": 61019,
           "crc32": 1008565390
         },
         "exterior42": {
-          "ms": 9.305048,
+          "ms": 8.683871,
           "iterations": 262144,
           "bytes": 725,
           "crc32": 757427088
@@ -616,55 +616,55 @@
       },
       {
         "whole": {
-          "ms": 13.709051,
+          "ms": 12.689791,
           "iterations": 522386,
           "bytes": 23765,
           "crc32": 2195117617
         },
         "seahorse14": {
-          "ms": 26.004082,
+          "ms": 27.952305,
           "iterations": 7425317,
           "bytes": 54637,
           "crc32": 3748504818
         },
         "dive20": {
-          "ms": 71.232321,
+          "ms": 67.618341,
           "iterations": 67955350,
           "bytes": 65167,
           "crc32": 2474883356
         },
         "dive30": {
-          "ms": 79.776914,
+          "ms": 77.593034,
           "iterations": 70870379,
           "bytes": 64514,
           "crc32": 2597047574
         },
         "dive38": {
-          "ms": 130.291989,
+          "ms": 131.430652,
           "iterations": 138872102,
           "bytes": 90609,
           "crc32": 1468974131
         },
         "dive42": {
-          "ms": 127.114154,
+          "ms": 131.304763,
           "iterations": 140111224,
           "bytes": 71729,
           "crc32": 1306945335
         },
         "minibrot20": {
-          "ms": 9.366216,
+          "ms": 9.939461,
           "iterations": 7340032,
           "bytes": 270,
           "crc32": 4160868373
         },
         "spiral15": {
-          "ms": 29.102228,
+          "ms": 29.019771,
           "iterations": 12910503,
           "bytes": 61019,
           "crc32": 1008565390
         },
         "exterior42": {
-          "ms": 8.563252,
+          "ms": 8.054654,
           "iterations": 262144,
           "bytes": 725,
           "crc32": 757427088
@@ -672,55 +672,55 @@
       },
       {
         "whole": {
-          "ms": 11.653246,
+          "ms": 11.876852,
           "iterations": 522386,
           "bytes": 23765,
           "crc32": 2195117617
         },
         "seahorse14": {
-          "ms": 24.079781,
+          "ms": 23.892584,
           "iterations": 7425317,
           "bytes": 54637,
           "crc32": 3748504818
         },
         "dive20": {
-          "ms": 67.033369,
+          "ms": 75.824222,
           "iterations": 67955350,
           "bytes": 65167,
           "crc32": 2474883356
         },
         "dive30": {
-          "ms": 76.268178,
+          "ms": 82.062162,
           "iterations": 70870379,
           "bytes": 64514,
           "crc32": 2597047574
         },
         "dive38": {
-          "ms": 128.492527,
+          "ms": 138.295416,
           "iterations": 138872102,
           "bytes": 90609,
           "crc32": 1468974131
         },
         "dive42": {
-          "ms": 130.478762,
+          "ms": 141.943447,
           "iterations": 140111224,
           "bytes": 71729,
           "crc32": 1306945335
         },
         "minibrot20": {
-          "ms": 9.371464,
+          "ms": 10.345262,
           "iterations": 7340032,
           "bytes": 270,
           "crc32": 4160868373
         },
         "spiral15": {
-          "ms": 29.089529,
+          "ms": 34.831559,
           "iterations": 12910503,
           "bytes": 61019,
           "crc32": 1008565390
         },
         "exterior42": {
-          "ms": 12.709203,
+          "ms": 10.086773,
           "iterations": 262144,
           "bytes": 725,
           "crc32": 757427088
@@ -728,55 +728,55 @@
       },
       {
         "whole": {
-          "ms": 11.65723,
+          "ms": 11.946833,
           "iterations": 522386,
           "bytes": 23765,
           "crc32": 2195117617
         },
         "seahorse14": {
-          "ms": 25.815368,
+          "ms": 25.86302,
           "iterations": 7425317,
           "bytes": 54637,
           "crc32": 3748504818
         },
         "dive20": {
-          "ms": 70.901442,
+          "ms": 75.154074,
           "iterations": 67955350,
           "bytes": 65167,
           "crc32": 2474883356
         },
         "dive30": {
-          "ms": 80.256523,
+          "ms": 78.735915,
           "iterations": 70870379,
           "bytes": 64514,
           "crc32": 2597047574
         },
         "dive38": {
-          "ms": 134.024307,
+          "ms": 135.817145,
           "iterations": 138872102,
           "bytes": 90609,
           "crc32": 1468974131
         },
         "dive42": {
-          "ms": 134.700031,
+          "ms": 134.645422,
           "iterations": 140111224,
           "bytes": 71729,
           "crc32": 1306945335
         },
         "minibrot20": {
-          "ms": 10.074427,
+          "ms": 9.724658,
           "iterations": 7340032,
           "bytes": 270,
           "crc32": 4160868373
         },
         "spiral15": {
-          "ms": 30.133721,
+          "ms": 29.180603,
           "iterations": 12910503,
           "bytes": 61019,
           "crc32": 1008565390
         },
         "exterior42": {
-          "ms": 10.465025,
+          "ms": 8.351832,
           "iterations": 262144,
           "bytes": 725,
           "crc32": 757427088
@@ -786,49 +786,49 @@
   },
   "summary": {
     "whole": {
-      "baseline_ms": 11.442637,
-      "candidate_ms": 12.030151,
-      "speedup": 0.9511632065133679
+      "baseline_ms": 13.270856,
+      "candidate_ms": 12.274536,
+      "speedup": 1.0811696670244806
     },
     "seahorse14": {
-      "baseline_ms": 29.959634,
-      "candidate_ms": 25.930578,
-      "speedup": 1.1553785650285158
+      "baseline_ms": 32.410084,
+      "candidate_ms": 25.768808,
+      "speedup": 1.257725386443952
     },
     "dive20": {
-      "baseline_ms": 137.469597,
-      "candidate_ms": 68.937402,
-      "speedup": 1.9941221022515467
+      "baseline_ms": 149.000321,
+      "candidate_ms": 71.182296,
+      "speedup": 2.0932216207243446
     },
     "dive30": {
-      "baseline_ms": 150.391342,
-      "candidate_ms": 79.776914,
-      "speedup": 1.885148653406172
+      "baseline_ms": 153.348684,
+      "candidate_ms": 78.735915,
+      "speedup": 1.9476332243043086
     },
     "dive38": {
-      "baseline_ms": 277.453488,
-      "candidate_ms": 134.024307,
-      "speedup": 2.070172897816215
+      "baseline_ms": 292.652693,
+      "candidate_ms": 135.817145,
+      "speedup": 2.1547551525987383
     },
     "dive42": {
-      "baseline_ms": 280.227414,
-      "candidate_ms": 134.700031,
-      "speedup": 2.0803812138692086
+      "baseline_ms": 285.712491,
+      "candidate_ms": 134.645422,
+      "speedup": 2.121962163704311
     },
     "minibrot20": {
-      "baseline_ms": 16.438306,
-      "candidate_ms": 9.675904,
-      "speedup": 1.6988909770084535
+      "baseline_ms": 15.77866,
+      "candidate_ms": 9.939461,
+      "speedup": 1.58747642352035
     },
     "spiral15": {
-      "baseline_ms": 42.321552,
-      "candidate_ms": 29.102228,
-      "speedup": 1.4542375243572416
+      "baseline_ms": 40.726913,
+      "candidate_ms": 29.180603,
+      "speedup": 1.3956844209148112
     },
     "exterior42": {
-      "baseline_ms": 8.312264,
-      "candidate_ms": 10.041492,
-      "speedup": 0.8277917265681236
+      "baseline_ms": 8.458752,
+      "candidate_ms": 8.351832,
+      "speedup": 1.0128019816490563
     }
   }
 }
