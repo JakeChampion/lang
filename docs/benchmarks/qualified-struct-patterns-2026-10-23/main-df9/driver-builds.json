@@ -1,0 +1,165 @@
+{
+  "environment": "All FERN_* variables removed, as CompileWithSelfHost requires",
+  "builds": [
+    {
+      "source": "fern.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-qualified-struct-patterns/main-df9-integration/validation/drivers/fern",
+        "/workspace/lang-qualified-struct-patterns-publish/compiler/fern.fern",
+        "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 13480288,
+      "sha256": "065374afd94ee2b50a7c88eecc55dd347fed33cae6b32a56fd95350635a8d002",
+      "seconds": 20.511848795998958
+    },
+    {
+      "source": "drivers/asm_load_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-qualified-struct-patterns/main-df9-integration/validation/drivers/asm_load_run",
+        "/workspace/lang-qualified-struct-patterns-publish/compiler/drivers/asm_load_run.fern",
+        "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 10603392,
+      "sha256": "01ea5a6e4c2f1dee170a67e3c3c8a132185e4eb6870ec8daf579b1dde327a892",
+      "seconds": 15.404647048999323
+    },
+    {
+      "source": "drivers/asm_modload_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-qualified-struct-patterns/main-df9-integration/validation/drivers/asm_modload_run",
+        "/workspace/lang-qualified-struct-patterns-publish/compiler/drivers/asm_modload_run.fern",
+        "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 9236976,
+      "sha256": "11f678b4c6035fa1a912770a3b912a0cfff3d57be127f836c81650fa163a50cb",
+      "seconds": 14.113608919004037
+    },
+    {
+      "source": "drivers/asm_ir_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-qualified-struct-patterns/main-df9-integration/validation/drivers/asm_ir_run",
+        "/workspace/lang-qualified-struct-patterns-publish/compiler/drivers/asm_ir_run.fern",
+        "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8858672,
+      "sha256": "94b09b134b5ac1e14425a1f4de585f91a425f73d196dc039c3d3dabc6c219ae6",
+      "seconds": 14.399779344996205
+    },
+    {
+      "source": "drivers/asm_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-qualified-struct-patterns/main-df9-integration/validation/drivers/asm_run",
+        "/workspace/lang-qualified-struct-patterns-publish/compiler/drivers/asm_run.fern",
+        "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8061024,
+      "sha256": "032f31b54261104c6c92a224a2af2eff7afed17ddf57530df9edef39201782aa",
+      "seconds": 12.701091241004178
+    },
+    {
+      "source": "drivers/wasm_ir_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-qualified-struct-patterns/main-df9-integration/validation/drivers/wasm_ir_run",
+        "/workspace/lang-qualified-struct-patterns-publish/compiler/drivers/wasm_ir_run.fern",
+        "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8038896,
+      "sha256": "de8edc36bee9e25306129ce17230f04524c4023793dab5e7ccd0691af0d7906d",
+      "seconds": 12.789054457993188
+    },
+    {
+      "source": "drivers/wasm_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-qualified-struct-patterns/main-df9-integration/validation/drivers/wasm_run",
+        "/workspace/lang-qualified-struct-patterns-publish/compiler/drivers/wasm_run.fern",
+        "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8042960,
+      "sha256": "bd9a6ffdbd79ff4d6ef544cbffc300ce852d1afae91061b3d16f9d20b43d6bf3",
+      "seconds": 14.090246391999244
+    },
+    {
+      "source": "drivers/wasm_runio_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-qualified-struct-patterns/main-df9-integration/validation/drivers/wasm_runio_run",
+        "/workspace/lang-qualified-struct-patterns-publish/compiler/drivers/wasm_runio_run.fern",
+        "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 8026000,
+      "sha256": "f4dd42a41f23d37ac4605d81dd0e70b695605a7554eaa788d38bce9b2c5dc0da",
+      "seconds": 15.060425277995819
+    },
+    {
+      "source": "drivers/asm_pathprobe_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-qualified-struct-patterns/main-df9-integration/validation/drivers/asm_pathprobe_run",
+        "/workspace/lang-qualified-struct-patterns-publish/compiler/drivers/asm_pathprobe_run.fern",
+        "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 5149392,
+      "sha256": "adb9182b865dd8bf7986d9ad6bba11ee3d422dc76a1c88bab04143638e6bc922",
+      "seconds": 9.85577191599441
+    },
+    {
+      "source": "drivers/checker_modload_run.fern",
+      "arguments": [
+        "/workspace/lang-large-donor-current/build/bootstrap/stage0/stage0-20261017-882323a/fern-selfhost-x86-64-linux",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/lang-qualified-struct-patterns/main-df9-integration/validation/drivers/checker_modload_run",
+        "/workspace/lang-qualified-struct-patterns-publish/compiler/drivers/checker_modload_run.fern",
+        "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+      ],
+      "producer_sha256": "80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee",
+      "bytes": 3058064,
+      "sha256": "756942ffc589b74551539960e450911f7237a7475fd8e1ea1afc5db6473ea519",
+      "seconds": 5.3545278099991265
+    }
+  ]
+}

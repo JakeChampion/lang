@@ -3,6 +3,7 @@
 FROM scratch
 COPY server /server
 COPY web /web
+COPY *.fern /
 WORKDIR /
 EXPOSE 8080
 CMD ["/server"]

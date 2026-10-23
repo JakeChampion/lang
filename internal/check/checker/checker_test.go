@@ -10561,3 +10561,22 @@ func TestAmbiguousUnionMemberVarInitReportsOnce(t *testing.T) {
 		t.Fatalf("want E036 naming both unions, got: %v", errs[0])
 	}
 }
+
+// A user method named for a retired Map spelling is the user's own, while one
+// named for a builtin Map method redeclares it.
+func TestMapUserMethodBesideBuiltins(t *testing.T) {
+	const has = `import "core/map";
+function (m: Map[string, i32]) has(k: string): boolean { return k.len() > 0; }
+function main(): i32 { let m: Map[string, i32] = map_new(4); if (m.has("a")) { return 1; } return 0; }`
+	if err := checkSource(t, has); err != nil {
+		t.Errorf("a user `has` on Map is refused: %v", err)
+	}
+	const contains = `import "core/map";
+function (m: Map[string, i32]) contains(k: string): boolean { return false; }
+function main(): i32 { let m: Map[string, i32] = map_new(4); if (m.contains("a")) { return 1; } return 0; }`
+	err := checkSource(t, contains)
+	es, _ := err.(diag.Errors)
+	if len(es) != 1 || es[0].(*Error).ErrCode != "E006" {
+		t.Errorf("a user `contains` on Map should redeclare the builtin (E006), got %v", err)
+	}
+}

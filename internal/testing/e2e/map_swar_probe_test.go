@@ -37,14 +37,16 @@ function main(): i32 {
     let s: Map[i32, i32] = map_new(1);
     s = s.insert(10, 1);
     s = s.insert(20, 2);
-    let d0: (Map[i32, i32], boolean) = s.without(10);
-    if (!d0.1) { return 30; }
-    s = d0.0;
-    let d1: (Map[i32, i32], boolean) = s.without(99);   // missing: over a tombstone to empty
-    if (d1.1) { return 31; }
-    s = d1.0;
+    let d0_had: boolean = s.contains(10);
+    let d0: Map[i32, i32] = s.remove(10);
+    if (!d0_had) { return 30; }
+    s = d0;
+    let d1_had: boolean = s.contains(99);
+    let d1: Map[i32, i32] = s.remove(99);   // missing: over a tombstone to empty
+    if (d1_had) { return 31; }
+    s = d1;
     s = s.insert(30, 3);                                 // tombstone reuse at cap 4
-    if (s.has(10)) { return 32; }
+    if (s.contains(10)) { return 32; }
     if (s.get_or(20, 0 - 1) != 2) { return 33; }
     if (s.get_or(30, 0 - 1) != 3) { return 34; }
 
@@ -56,12 +58,12 @@ function main(): i32 {
     let z: Map[i32, i32] = map_new(1);
     z = z.insert(4, 40);
     z = z.insert(1, 10);
-    z = z.without(4).0;
+    z = z.remove(4);
     z = z.insert(3, 30);
-    z = z.without(1).0;
+    z = z.remove(1);
     z = z.insert(7, 70);
-    if (z.without(150).1) { return 35; }    // missing key over a full+tombstone table
-    if (z.without(4).1) { return 36; }      // deleted key, ditto
+    if (z.remove(150).len() != 2) { return 35; }    // missing key over a full+tombstone table
+    if (z.remove(4).len() != 2) { return 36; }      // deleted key, ditto
     if (z.get_or(3, 0 - 1) != 30) { return 37; }
     if (z.get_or(7, 0 - 1) != 70) { return 38; }
     if (z.len() != 2) { return 39; }
@@ -77,15 +79,15 @@ function main(): i32 {
         fi = fi + 1;
     }
     fi = 1;
-    while (fi < 12) { f = f.without(fi * 100).0; fi = fi + 2; }   // back to 6 live
+    while (fi < 12) { f = f.remove(fi * 100); fi = fi + 2; }   // back to 6 live
     if (f.len() != 6) { return 42 + 1; }
     fi = 0;
     while (fi < 12) {
         let wantHit: boolean = fi % 2 == 0;
-        if (f.has(fi * 100) != wantHit) { return 44; }
+        if (f.contains(fi * 100) != wantHit) { return 44; }
         fi = fi + 1;
     }
-    if (f.has(1234567)) { return 45; }
+    if (f.contains(1234567)) { return 45; }
 
     // Churn at probing size: scalar (Wang-mixed i32) keys.
     let m: Map[i32, i32] = map_new(4);
@@ -94,11 +96,11 @@ function main(): i32 {
     while (i < n) { m = m.insert(i, i * 7 + 1); i = i + 1; }
     if (m.len() != n) { return 1; }
     i = 0;
-    while (i < n) { m = m.without(i).0; i = i + 3; }
+    while (i < n) { m = m.remove(i); i = i + 3; }
     i = 0;
     while (i < n) {
         if (i % 3 == 0) {
-            if (m.has(i)) { return 2; }
+            if (m.contains(i)) { return 2; }
             if (m.get_or(i, 0 - 1) != 0 - 1) { return 3; }
         } else {
             if (m.get_or(i, 0 - 1) != i * 7 + 1) { return 4; }
@@ -119,7 +121,7 @@ function main(): i32 {
             if (i % 6 == 0) { expect = i * 11 + 5; } else { absent = true; }
         }
         if (absent) {
-            if (m.has(i)) { return 5; }
+            if (m.contains(i)) { return 5; }
         } else {
             if (m.get_or(i, 0 - 1) != expect) { return 6; }
         }
@@ -144,17 +146,17 @@ function main(): i32 {
     while (si < sn) { sm = sm.insert("k" + si.to_string(), si * 3); si = si + 1; }
     if (sm.len() != sn) { return 9; }
     si = 1;
-    while (si < sn) { sm = sm.without("k" + si.to_string()).0; si = si + 2; }
+    while (si < sn) { sm = sm.remove("k" + si.to_string()); si = si + 2; }
     si = 0;
     while (si < sn) {
         if (si % 2 == 0) {
             if (sm.get_or("k" + si.to_string(), 0 - 1) != si * 3) { return 10; }
         } else {
-            if (sm.has("k" + si.to_string())) { return 11; }
+            if (sm.contains("k" + si.to_string())) { return 11; }
         }
         si = si + 1;
     }
-    if (sm.has("absent")) { return 12; }
+    if (sm.contains("absent")) { return 12; }
     // Re-insert the deleted keys over their tombstones, then grow with the
     // remaining tombstones live: the ctrl byte flipped back to H2 must come
     // off the SEEDED hash at reinsert, lookup, and rehash time alike.
@@ -170,7 +172,7 @@ function main(): i32 {
             if (si % 4 == 1) { sWant = si * 5; } else { sAbsent = true; }
         }
         if (sAbsent) {
-            if (sm.has("k" + si.to_string())) { return 16; }
+            if (sm.contains("k" + si.to_string())) { return 16; }
         } else {
             if (sm.get_or("k" + si.to_string(), 0 - 1) != sWant) { return 17; }
         }
@@ -188,12 +190,12 @@ function main(): i32 {
     }
     if (wm.len() != wn) { return 13; }
     wi = 0;
-    while (wi < wn) { wm = wm.without((wi as i64) * (4294967311 as i64)).0; wi = wi + 4; }
+    while (wi < wn) { wm = wm.remove((wi as i64) * (4294967311 as i64)); wi = wi + 4; }
     wi = 0;
     while (wi < wn) {
         let wk2: i64 = (wi as i64) * (4294967311 as i64);
         if (wi % 4 == 0) {
-            if (wm.has(wk2)) { return 14; }
+            if (wm.contains(wk2)) { return 14; }
         } else {
             if (wm.get_or(wk2, 0 - 1) != wi) { return 15; }
         }

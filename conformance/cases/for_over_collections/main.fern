@@ -28,14 +28,14 @@ function main(): i32 {
     print(f"pvec {x}");
   }
   let os: ordset.OrdSet[i32] = ordset.ordset_new();
-  os = os.add(30);
-  os = os.add(10);
-  os = os.add(20);
+  os = os.insert(30);
+  os = os.insert(10);
+  os = os.insert(20);
   for x in os {
     print(f"ordset {x}");
   }
   let ps: pset.PSet[string] = pset.pset_new();
-  ps = ps.add("only");
+  ps = ps.insert("only");
   for x in ps {
     print(f"pset {x}");
   }

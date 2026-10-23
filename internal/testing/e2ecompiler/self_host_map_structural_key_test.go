@@ -48,8 +48,9 @@ function main(): i32 {
     c = c.insert([], 3);
     let parts: string[] = ["a", "b" + "c"];
     let sc: i32 = c.get_or(parts, 0) * 100 + c.get_or(["ab", "c"], 0) * 10 + c.get_or([], 0);
-    let hc: boolean = c.has(["ab"]);
-    let (c2, had) = c.without(["ab", "c"]);
+    let hc: boolean = c.contains(["ab"]);
+    let had: boolean = c.contains(["ab", "c"]);
+    let c2 = c.remove(["ab", "c"]);
 
     let d: Map[i32[][], i32] = map_new(4);
     d = d.insert([[1, 2], [3]], 7);

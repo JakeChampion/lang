@@ -875,10 +875,10 @@ func New() *Interp {
 	i.Builtins["__method_Cell_get"] = &Builtin{Fn: builtinCellGet}
 	i.Builtins["__method_Cell_set"] = &Builtin{Fn: builtinCellSet}
 	i.Builtins["__method_Map_len"] = &Builtin{Fn: builtinMapLen}
-	i.Builtins["__method_Map_has"] = &Builtin{Fn: builtinMapHas}
+	i.Builtins["__method_Map_contains"] = &Builtin{Fn: builtinMapHas}
 	i.Builtins["__method_Map_get"] = &Builtin{Fn: builtinMapGet}
 	i.Builtins["__method_Map_set"] = &Builtin{Fn: builtinMapSet}
-	i.Builtins["__method_Map_delete"] = &Builtin{Fn: builtinMapDelete}
+	i.Builtins["__method_Map_remove"] = &Builtin{Fn: builtinMapDelete}
 	i.Builtins["__method_Map_clear"] = &Builtin{Fn: builtinMapClear}
 	i.Builtins["__method_Map_get_or"] = &Builtin{Fn: builtinMapGetOr}
 	i.Builtins["__method_Map_keys"] = &Builtin{Fn: builtinMapKeys}
@@ -3017,12 +3017,12 @@ func builtinMapLen(_ *Interp, args []Value) (Value, error) {
 }
 
 func builtinMapHas(ip *Interp, args []Value) (Value, error) {
-	m, err := mapReceiver("__method_Map_has", args)
+	m, err := mapReceiver("__method_Map_contains", args)
 	if err != nil {
 		return nil, err
 	}
 	if len(args) != 2 {
-		return nil, fmt.Errorf("__method_Map_has: expected 2 args (m, k), got %d", len(args))
+		return nil, fmt.Errorf("__method_Map_contains: expected 2 args (m, k), got %d", len(args))
 	}
 	idx, err := ip.findKey(m, args[1])
 	if err != nil {
@@ -3105,19 +3105,19 @@ func (i *Interp) movingHolds(m *Map) int {
 }
 
 func builtinMapDelete(ip *Interp, args []Value) (Value, error) {
-	m, err := mapReceiver("__method_Map_delete", args)
+	m, err := mapReceiver("__method_Map_remove", args)
 	if err != nil {
 		return nil, err
 	}
 	if len(args) != 2 {
-		return nil, fmt.Errorf("__method_Map_delete: expected 2 args (m, k), got %d", len(args))
+		return nil, fmt.Errorf("__method_Map_remove: expected 2 args (m, k), got %d", len(args))
 	}
 	idx, err := ip.findKey(m, args[1])
 	if err != nil {
 		return nil, err
 	}
 	if idx < 0 {
-		return arrayOf(m, Bool(false)), nil // unchanged; in-place receiver is fine
+		return m, nil // unchanged; in-place receiver is fine
 	}
 	// A copy keeps the entry order, so idx names the same entry in it.
 	t := ip.cowTarget(m)
@@ -3131,7 +3131,7 @@ func builtinMapDelete(ip *Interp, args []Value) (Value, error) {
 	t.vals[idx] = t.vals[last]
 	t.keys = t.keys[:last]
 	t.vals = t.vals[:last]
-	return arrayOf(t, Bool(true)), nil
+	return t, nil
 }
 
 func builtinMapClear(ip *Interp, args []Value) (Value, error) {
@@ -9613,7 +9613,7 @@ func isUpdateCall(c *ast.Call) bool {
 		return false
 	}
 	switch id.Name {
-	case "__method_Array_set", "__method_Map_set", "__method_Map_delete", "__method_Map_clear":
+	case "__method_Array_set", "__method_Map_set", "__method_Map_remove", "__method_Map_clear":
 		return true
 	}
 	return false

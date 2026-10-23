@@ -34,7 +34,7 @@ function main(): i32 {
         let m: Map[string, string] = map_new(4);
         m = m.insert(stem + "-key-long", stem + "-value-long");
         match (m.get(stem + "-key-long")) { Some(v) => { acc = acc + v.len(); }, None => {} }
-        if (m.has(stem + "-key-long")) { acc = acc + 1; }
+        if (m.contains(stem + "-key-long")) { acc = acc + 1; }
         acc = acc + m.get_or(stem + "-key-long", stem + "-fallback!").len();
         i = i + 1;
     }
@@ -196,8 +196,8 @@ func mapAliasedKeyReadSrc(verb string) string {
 		read = `    if (m.get_or(k, "") == "a-value-long-one") { ok = ok + 1; }`
 	case "get":
 		read = `    match (m.get(k)) { Some(v) => { if (v == "a-value-long-one") { ok = ok + 1; } }, None => {} }`
-	case "has":
-		read = `    if (m.has(k)) { ok = ok + 1; }`
+	case "contains":
+		read = `    if (m.contains(k)) { ok = ok + 1; }`
 	}
 	return `import "core/map";
 function mk(): i32 {
@@ -268,7 +268,7 @@ func TestX86_64MapStringColumnReclaim(t *testing.T) {
 	x86 := func(src string) (string, string, int) { return runLeakCheckX86_64(t, src) }
 	assertMapStringCensus(t, "aliased overwrite", x86, mapAliasedOverwriteSrc)
 	assertMapStringCensus(t, "aliased two-entry", x86, mapAliasedTwoEntrySrc)
-	for _, verb := range []string{"get_or", "get", "has"} {
+	for _, verb := range []string{"get_or", "get", "contains"} {
 		assertMapStringCensus(t, "aliased key read via "+verb, x86, mapAliasedKeyReadSrc(verb))
 	}
 }
@@ -305,7 +305,7 @@ func TestArm64MapStringColumnReclaim(t *testing.T) {
 	arm := func(src string) (string, string, int) { return runLeakCheckArm64(t, src) }
 	assertMapStringCensus(t, "aliased overwrite", arm, mapAliasedOverwriteSrc)
 	assertMapStringCensus(t, "aliased two-entry", arm, mapAliasedTwoEntrySrc)
-	for _, verb := range []string{"get_or", "get", "has"} {
+	for _, verb := range []string{"get_or", "get", "contains"} {
 		assertMapStringCensus(t, "aliased key read via "+verb, arm, mapAliasedKeyReadSrc(verb))
 	}
 }
@@ -334,7 +334,7 @@ func TestWASMMapStringColumnReclaim(t *testing.T) {
 	wasm := func(src string) (string, string, int) { return runLeakCheckWasm(t, src, false) }
 	assertMapStringCensus(t, "aliased overwrite", wasm, mapAliasedOverwriteSrc)
 	assertMapStringCensus(t, "aliased two-entry", wasm, mapAliasedTwoEntrySrc)
-	for _, verb := range []string{"get_or", "get", "has"} {
+	for _, verb := range []string{"get_or", "get", "contains"} {
 		assertMapStringCensus(t, "aliased key read via "+verb, wasm, mapAliasedKeyReadSrc(verb))
 	}
 }

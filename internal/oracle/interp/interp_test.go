@@ -311,9 +311,10 @@ func TestInterpMapBasic(t *testing.T) {
 		{"has and delete", `function main(): i32 {
 			let m: Map[i32, i32] = map_new(4);
 			m = m.insert(1, 100);
-			if (m.has(1) && !m.has(2)) {
-				let (rest, had) = m.without(1);
-				if (had && !rest.has(1) && m.has(1)) { return 0; }
+			if (m.contains(1) && !m.contains(2)) {
+				let had: boolean = m.contains(1);
+				let rest = m.remove(1);
+				if (had && !rest.contains(1) && m.contains(1)) { return 0; }
 				return -1;
 			}
 			return -2;

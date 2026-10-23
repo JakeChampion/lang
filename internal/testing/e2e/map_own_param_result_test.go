@@ -6,7 +6,7 @@ package e2e
 //   - A call with a cast argument, `m = ins(m, i as i64, v)`, read the cast as
 //     a borrowed input, so the binding lost its typed drop and the map leaked
 //     at exit; bound through `let m2 = …; m = m2;` each COW copy leaked too.
-//   - `return m.without(k).0` retained a projection that the read out of the
+//   - `return m.remove(k)` retained a projection that the read out of the
 //     temporary tuple had already retained, so the returned map leaked.
 //   - A mutator chain, `m.insert(a, 1).insert(b, 2)`, hands back the
 //     receiver's own handle like a single mutator does, but neither a rebind
@@ -26,8 +26,8 @@ import "std/i64";
 import "std/i32";
 
 @noinline function ins(own m: Map[i64, i64], k: i64, v: i64): Map[i64, i64] { return m.insert(k, v); }
-@noinline function del(own m: Map[i64, i64]): Map[i64, i64] { return m.without(1).0; }
-@noinline function del_pair(own m: Map[i64, i64]): (Map[i64, i64], i32) { return (m.without(1).0, 4); }
+@noinline function del(own m: Map[i64, i64]): Map[i64, i64] { return m.remove(1); }
+@noinline function del_pair(own m: Map[i64, i64]): (Map[i64, i64], i32) { return (m.remove(1), 4); }
 @noinline function chain(own m: Map[i64, i64]): Map[i64, i64] { return m.insert(1, 2).insert(3, 4); }
 @noinline function chain_borrowed(m: Map[i64, i64]): i32 { m = m.insert(1, 2).cleared().insert(5, 6); return m.len() as i32; }
 

@@ -22,14 +22,14 @@ function main(): i32 {
     let i: i32 = 0;
     while (i < 12) { small = small.insert(i as u8, i * 2); i = i + 1; }
     if (small.len() != 12) { return 1; }
-    if (!small.has(11 as u8)) { return 2; }
-    if (small.has(12 as u8)) { return 3; }
+    if (!small.contains(11 as u8)) { return 2; }
+    if (small.contains(12 as u8)) { return 3; }
 
     let wide: Map[u32, string] = map_new(2);
     let j: i32 = 0;
     while (j < 9) { wide = wide.insert((j * 7) as u32, "v"); j = j + 1; }
     if (wide.len() != 9) { return 4; }
-    if (wide.has(1 as u32)) { return 5; }
+    if (wide.contains(1 as u32)) { return 5; }
 
     // The u8 key column, read one entry at a time through pair iteration.
     let sum: i32 = 0;

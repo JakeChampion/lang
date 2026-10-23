@@ -68,7 +68,7 @@ function word_has(w: string, c: string): boolean {
 function distinct_letters(w: string): set.Set[string] {
   let s: set.Set[string] = set.set_new();
   for i in 0..w.len() {
-    s = s.add(letter_at(w, i));
+    s = s.insert(letter_at(w, i));
   }
   return s;
 }
@@ -100,7 +100,7 @@ function guess(g: Game, c: string): Game {
     w = w + 1;
   }
   return Game {
-    word: g.word, guessed: g.guessed.add(c), wrong: w,
+    word: g.word, guessed: g.guessed.insert(c), wrong: w,
     max_wrong: g.max_wrong,
   };
 }

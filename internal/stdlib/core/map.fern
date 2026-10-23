@@ -1977,13 +1977,6 @@ pub function (m: Map[K, V]) merge(other: Map[K, V]): Map[K, V] {
   return out;
 }
 
-// `m.extend(other)` — synonym for `merge`, named for the in-place
-// "add all of other" intuition even though (like every map op) it
-// returns a fresh value rather than mutating.
-pub function (m: Map[K, V]) extend(other: Map[K, V]): Map[K, V] {
-  return m.merge(other);
-}
-
 // `from(pairs)` — build a `Map[K, V]` from a `(K, V)[]`. Later pairs
 // overwrite earlier ones on a duplicate key. (A free function rather
 // than `Map::from` until associated-function namespacing lands, #2700;
@@ -2029,8 +2022,49 @@ pub function (m: Map[K, V]) update(k: K, init: V, fn: (V) => V): Map[K, V] {
   return m.insert(k, fn(cur));
 }
 
+// `m.is_empty()` — true when there are no entries.
+pub function (m: Map[K, V]) is_empty(): boolean {
+  return m.len() == 0;
+}
+
+// `m.fold(init, f)` — `f(f(f(init, k0, v0), k1, v1), …)` in iteration order.
+pub function (m: Map[K, V]) fold[K, V, A](init: A, f: (A, K, V) => A): A {
+  let acc: A = init;
+  for (k, v) in m {
+    acc = f(acc, k, v);
+  }
+  return acc;
+}
+
+// `m.for_each(f)` — call `f(k, v)` on every entry in iteration order.
+pub function (m: Map[K, V]) for_each(f: (K, V) => void): void {
+  for (k, v) in m {
+    f(k, v);
+  }
+}
+
+// `m.map_values(f)` — the map with every value replaced by `f(value)`.
+pub function (m: Map[K, V]) map_values[K, V, W](f: (V) => W): Map[K, W] {
+  let out: Map[K, W] = map_new(m.len());
+  for (k, v) in m {
+    out = out.insert(k, f(v));
+  }
+  return out;
+}
+
+// `m.filter(pred)` — the map of the entries `pred(k, v)` accepts.
+pub function (m: Map[K, V]) filter(pred: (K, V) => boolean): Map[K, V] {
+  let out: Map[K, V] = map_new(m.len());
+  for (k, v) in m {
+    if (pred(k, v)) {
+      out = out.insert(k, v);
+    }
+  }
+  return out;
+}
+
 // `m.contains_value(target)` — true iff some key maps to `target`. The value
-// counterpart of `has` (which tests keys). Linear scan over the value column;
+// counterpart of `contains` (which tests keys). Linear scan over the value column;
 // `target` is compared with `==`, so V must be an equatable type (i32 /
 // string — the value types the map supports). Empty map → false.
 pub function (m: Map[K, V]) contains_value(target: V): boolean {
