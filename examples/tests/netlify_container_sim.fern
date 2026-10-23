@@ -1,6 +1,6 @@
-// netlify_container_sim.fern — the container example's routes: the page, a
-// greeting that names the query's caller, the health check, a 404 for an
-// unknown path and a 405 for a wrong method.
+// netlify_container_sim.fern — the fractal explorer's routes: a tile is a
+// PNG with its render time, a tile past the edge or the zoom limit is 400,
+// the stats count the tile, and the health check answers.
 import "std/sim";
 import "std/sim_fetch";
 import "std/sim_platform";
@@ -11,22 +11,35 @@ import "../netlify-container/server";
 function main(): i32 {
   let d: sim.Sim = sim.new(7);
   let plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.net(d));
-  let r: router.Router[sim_platform.SimPlatform] = server.routes[sim_platform.SimPlatform]();
-  if (r.handle(http.request("GET", "/"), plat).status != 200) {
+  let s: server.Stats = server.stats("sim", 0, 0);
+  let r: router.Router[sim_platform.SimPlatform] = server.routes[sim_platform.SimPlatform](s, "web");
+  if (!tile_is_png(r.handle(http.request("GET", "/tile/2/1/1"), plat))) {
     return 1;
   }
-  let hello: HttpResponse = r.handle(http.request("GET", "/api/hello?name=Netlify"), plat);
-  if (hello.status != 200 || !hello.body_string().contains("\"message\":\"Hello, Netlify!\"")) {
+  if (r.handle(http.request("GET", "/tile/2/4/0"), plat).status != 400 || r.handle(http.request("GET", "/tile/43/0/0"), plat).status != 400) {
     return 2;
   }
-  if (r.handle(http.request("GET", "/healthz"), plat).body_string() != "ok") {
+  if (!r.handle(http.request("GET", "/api/stats"), plat).body_string().contains("\"tiles\":1,")) {
     return 3;
   }
-  if (r.handle(http.request("GET", "/missing"), plat).status != 404) {
+  if (r.handle(http.request("GET", "/healthz"), plat).body_string() != "ok") {
     return 4;
   }
-  if (r.handle(http.request("POST", "/healthz"), plat).status != 405) {
+  if (r.handle(http.request("POST", "/tile/2/1/1"), plat).status != 405) {
     return 5;
   }
   return 0;
+}
+
+// `tile_is_png(resp)` — a 200 whose body starts with the PNG signature and
+// whose Server-Timing names the render.
+function tile_is_png(resp: HttpResponse): boolean {
+  let png: u8[] = resp.body_bytes();
+  if (resp.status != 200 || png.len() < 8) {
+    return false;
+  }
+  if (png[1] != 80 as u8 || png[2] != 78 as u8 || png[3] != 71 as u8) {
+    return false;
+  }
+  return resp.headers.get("Server-Timing").unwrap_or("").starts_with("render;dur=");
 }

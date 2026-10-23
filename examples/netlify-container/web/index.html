@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fern Fractal Explorer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="map"></div>
+
+<section class="panel" id="intro">
+  <h1><span class="leaf">&#x2766;</span> Fern Fractal Explorer</h1>
+  <p>Every tile of this Mandelbrot set is computed on request by a static
+  <span id="binary-size">Fern</span> binary in a Netlify container: escape-time
+  iteration, smooth colour and PNG encoding (deflate, CRC-32, Adler-32) are all
+  Fern code.</p>
+  <div class="row">
+    <span class="label">Transport</span>
+    <div class="toggle" role="radiogroup">
+      <button data-transport="ws" class="on" title="One WebSocket. Fern streams each tile back as it finishes.">WebSocket</button>
+      <button data-transport="http" title="Plain HTTP GETs that the Netlify CDN caches.">HTTP + CDN</button>
+    </div>
+  </div>
+  <div class="row">
+    <span class="label">Tile labels</span>
+    <div class="toggle">
+      <button data-labels="on" class="on">On</button>
+      <button data-labels="off">Off</button>
+    </div>
+  </div>
+  <div class="places">
+    <button data-place="home">Whole set</button>
+    <button data-place="seahorse">Seahorse Valley</button>
+    <button data-place="elephant">Elephant Valley</button>
+    <button data-place="spiral">Double spiral</button>
+    <button data-place="minibrot">Mini Mandelbrot</button>
+    <button data-place="dive" class="accent">Deep dive &#x2193;</button>
+  </div>
+</section>
+
+<section class="panel" id="stats">
+  <div class="grid">
+    <div><b id="s-tiles">0</b><span>tiles this visit</span></div>
+    <div><b id="s-avg">-</b><span>avg render ms</span></div>
+    <div><b id="s-rate">-</b><span>M iterations/s</span></div>
+    <div><b id="s-cache">-</b><span>edge cache hits</span></div>
+  </div>
+  <canvas id="spark" width="560" height="80"></canvas>
+  <div class="server">
+    <span class="dot" id="s-dot"></span>
+    <span id="s-server">connecting...</span>
+  </div>
+</section>
+
+<section class="panel" id="feed">
+  <h2>Live from Fern</h2>
+  <ol id="feed-list"></ol>
+</section>
+
+<footer class="panel" id="where">
+  <span id="w-zoom">zoom 0</span>
+  <span id="w-coord"></span>
+</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="/app.js"></script>
+</body>
+</html>
