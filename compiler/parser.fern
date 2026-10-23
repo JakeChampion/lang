@@ -4781,6 +4781,40 @@ function build_struct_match(scrut: ast.Expr, arms: ast.StructArm[], mkline: i32,
   return build_struct_match_fields(scrut, arms, mkline, mkcol, false);
 }
 
+function struct_match_literal_cond(cond: ast.Expr, a: ast.StructArm, tmp: string): ast.Expr {
+  let lk: i32 = 0;
+  while (lk < a.field_kinds.len()) {
+    if (a.field_kinds[lk] == 2) {
+      cond = e_binary("&&", cond, e_binary("==", e_field_access_at(e_ident(tmp), a.fields[lk], a.line, a.col), a.field_lits[lk]));
+    }
+    lk = lk + 1;
+  }
+  return cond;
+}
+
+function struct_match_bindings(a: ast.StructArm, tmp: string, record: boolean): ast.Stmt[] {
+  let binds: ast.Stmt[] = [];
+  // `@` binding: bind the whole matched struct (the cached scrutinee
+  // `tmp`) to the at-name, in scope for the guard + body.
+  if (a.at_binding.len() > 0) {
+    binds = binds.append(s_var_at(a.at_binding, "", e_ident(tmp), a.line, a.col));
+  }
+  let bk: i32 = 0;
+  if (record && a.fields.len() > 0) {
+    binds = binds.append(s_var_at(record_binding_list(a.binds, a.line, a.col), "@sm;" + destr_marker("", a.rest_written, "@sd:" + a.type_name + ":" + record_field_list(a.fields)), e_ident(tmp), a.line, a.col));
+    bk = a.binds.len();
+  }
+  while (bk < a.binds.len()) {
+    // A field carrying a sub-pattern binds nothing itself — the
+    // wrap below matches it and its pattern introduces the bindings.
+    if (a.binds[bk].len() > 0) {
+      binds = binds.append(s_var_at(a.binds[bk], "", e_field_access_at(e_ident(tmp), a.fields[bk], a.line, a.col), a.line, a.col));
+    }
+    bk = bk + 1;
+  }
+  return binds;
+}
+
 function build_struct_match_fields(scrut: ast.Expr, arms: ast.StructArm[], mkline: i32, mkcol: i32, record: boolean): ast.Stmt {
   if (arms.len() == 0) {
     return s_unknown_at("empty struct match", mkline, mkcol);
@@ -4814,32 +4848,8 @@ function build_struct_match_fields(scrut: ast.Expr, arms: ast.StructArm[], mklin
     // the same treatment a literal tuple element gets, and the reason it
     // is not a nested match: the IR lowers a literal match only through
     // the parse-time literal desugar, not from a raw match node.
-    let lk: i32 = 0;
-    while (lk < a.field_kinds.len()) {
-      if (a.field_kinds[lk] == 2) {
-        cond = e_binary("&&", cond, e_binary("==", e_field_access_at(e_ident(tmp), a.fields[lk], a.line, a.col), a.field_lits[lk]));
-      }
-      lk = lk + 1;
-    }
-    let binds: ast.Stmt[] = [];
-    // `@` binding: bind the whole matched struct (the cached scrutinee
-    // `tmp`) to the at-name, in scope for the guard + body.
-    if (a.at_binding.len() > 0) {
-      binds = binds.append(s_var_at(a.at_binding, "", e_ident(tmp), a.line, a.col));
-    }
-    let bk: i32 = 0;
-    if (record && a.fields.len() > 0) {
-      binds = binds.append(s_var_at(record_binding_list(a.binds, a.line, a.col), "@sm;" + destr_marker("", a.rest_written, "@sd:" + a.type_name + ":" + record_field_list(a.fields)), e_ident(tmp), a.line, a.col));
-      bk = a.binds.len();
-    }
-    while (bk < a.binds.len()) {
-      // A field carrying a sub-pattern binds nothing itself — the
-      // wrap below matches it and its pattern introduces the bindings.
-      if (a.binds[bk].len() > 0) {
-        binds = binds.append(s_var_at(a.binds[bk], "", e_field_access_at(e_ident(tmp), a.fields[bk], a.line, a.col), a.line, a.col));
-      }
-      bk = bk + 1;
-    }
+    cond = struct_match_literal_cond(cond, a, tmp);
+    let binds: ast.Stmt[] = struct_match_bindings(a, tmp, record);
     if (a.has_guard) {
       let guarded: ast.Stmt[] = [];
       guarded = guarded.append(s_assign(done, e_bool(true)));
