@@ -17,41 +17,7 @@
 // public, steer the loops, and `open` branches on whether the tag matched.
 // The valgrind gate (`__ct_secret`, docs/TEST-GATES.md) checks this.
 
-import "core/int";
-import "std/error";
-import "core/cmp";
-
-// AeadError — why a seal or an open was refused: a key or a nonce of the
-// wrong length (the length it had), or a sealed message that does not
-// verify.
-pub enum AeadError {
-  KeyLength(i32),
-  NonceLength(i32),
-  Forged,
-}
-
-pub function (e: AeadError) to_string(): string {
-  return e.message();
-}
-
-impl error.Error for AeadError {}
-
-impl cmp.Display for AeadError {}
-
-pub function (e: AeadError) message(): string {
-  match (e) {
-    KeyLength(n) => {
-      return "chacha20poly1305: the key is " + int.int_to_string(n) + " bytes, want 32";
-    },
-    NonceLength(n) => {
-      return "chacha20poly1305: the nonce is " + int.int_to_string(n) + " bytes, want 12";
-    },
-    Forged => {
-      return "chacha20poly1305: the message does not verify";
-    }
-  }
-  return "";
-}
+import "std/crypto/aead";
 
 // The key and the nonce as the cipher reads them: eight and three
 // little-endian words.
@@ -71,12 +37,12 @@ function __xor_word(own out: u8[], src: [u8], at: i32, w: u32): u8[] {
   return out.with(at, src[at] ^ (w & 255) as u8).with(at + 1, src[at + 1] ^ (w >> 8 & 255) as u8).with(at + 2, src[at + 2] ^ (w >> 16 & 255) as u8).with(at + 3, src[at + 3] ^ (w >> 24 & 255) as u8);
 }
 
-function __key(key: [u8], nonce: [u8]): Result[Key, AeadError] {
+function __key(key: [u8], nonce: [u8]): Result[Key, aead.AeadError] {
   if (key.len() != 32) {
-    return Err(KeyLength(key.len()));
+    return Err(aead.KeyLength(key.len()));
   }
   if (nonce.len() != 12) {
-    return Err(NonceLength(nonce.len()));
+    return Err(aead.NonceLength(nonce.len()));
   }
   return Ok(Key { k0: __le32(key, 0), k1: __le32(key, 4), k2: __le32(key, 8), k3: __le32(key, 12), k4: __le32(key, 16), k5: __le32(key, 20), k6: __le32(key, 24), k7: __le32(key, 28), n0: __le32(nonce, 0), n1: __le32(nonce, 4), n2: __le32(nonce, 8) });
 }
@@ -268,7 +234,7 @@ function __xor_stream(k: Key, counter: u32, src: [u8], from: i32, len: i32, room
 // chacha20_xor(key, nonce, counter, data) — data exclusive-ored with the
 // ChaCha20 keystream that starts at block `counter` (RFC 8439 §2.4):
 // encryption and decryption alike.
-pub function chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result[u8[], AeadError] {
+pub function chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result[u8[], aead.AeadError] {
   let k: Key = __key(key, nonce)?;
   return Ok(__xor_stream(k, counter, data, 0, data.len(), 0));
 }
@@ -437,9 +403,9 @@ function __poly_finish(p: Poly, s0: u32, s1: u32, s2: u32, s3: u32): u8[] {
 
 // poly1305(key, msg) — the 16-byte Poly1305 tag of msg under a 32-byte
 // one-time key (RFC 8439 §2.5). A key authenticates one message only.
-pub function poly1305(key: [u8], msg: [u8]): Result[u8[], AeadError] {
+pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError] {
   if (key.len() != 32) {
-    return Err(KeyLength(key.len()));
+    return Err(aead.KeyLength(key.len()));
   }
   let p: Poly = __poly_new(__le32(key, 0), __le32(key, 4), __le32(key, 8), __le32(key, 12));
   p = __poly_blocks(p, msg, 0, msg.len(), true);
@@ -472,7 +438,7 @@ function __aead_tag(k: Key, aad: [u8], ct: [u8], from: i32, len: i32): u8[] {
 
 // seal(key, nonce, plaintext, aad) — the plaintext encrypted, with the
 // 16-byte tag over it and the additional data `aad` after it.
-pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], AeadError] {
+pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   let k: Key = __key(key, nonce)?;
   let n: i32 = plaintext.len();
   let sealed: u8[] = __xor_stream(k, 1, plaintext, 0, n, 16);
@@ -488,10 +454,10 @@ pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8
 // open(key, nonce, sealed, aad) — the plaintext of a message `seal` made
 // with the same key, nonce and aad, or `Forged`. The tag is checked, in
 // constant time, before anything is decrypted.
-pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], AeadError] {
+pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   let k: Key = __key(key, nonce)?;
   if (sealed.len() < 16) {
-    return Err(Forged);
+    return Err(aead.Forged);
   }
   let n: i32 = sealed.len() - 16;
   let want: u8[] = __aead_tag(k, aad, sealed, 0, n);
@@ -506,7 +472,7 @@ pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[],
   verdict = verdict.with(0, diff);
   __ct_public(verdict);
   if (verdict[0] != 0) {
-    return Err(Forged);
+    return Err(aead.Forged);
   }
   return Ok(__xor_stream(k, 1, sealed, 0, n, 0));
 }

@@ -3,6 +3,7 @@ import "core/int";
 import "std/hex";
 import "std/crypto/ed25519";
 import "std/crypto/rsa";
+import "std/crypto/sha2";
 import "std/tls/handshake";
 import "std/tls/keyschedule";
 import "std/tls/keyshare";
@@ -199,7 +200,7 @@ function signing(events: handshake.Event[]): handshake.Signing {
 function trace_verifies(signed: u8[], signature: u8[]): boolean {
   match (rsa.public_key(hex.hex_decode("b4bb498f8279303d980836399b36c6988c0c68de55e1bdb826d3901a2461eafd2de49a91d015abbc9a95137ace6c1af19eaa6af98c7ced43120998e187a80ee0ccb0524b1b018c3e0b63264d449a6d38e22a5fda430846748030530ef0461c8ca9d9efbfae8ea6d1d03e2bd193eff0ab9a8002c47428a6d35a8d88d79f7f1e3f"), hex.hex_decode("010001"))) {
     Ok(k) => {
-      return rsa.verify_pss(k, rsa.Sha256, signed, signature);
+      return rsa.verify_pss(k, sha2.Sha256, signed, signature);
     },
     Err(e) => {
       return false;

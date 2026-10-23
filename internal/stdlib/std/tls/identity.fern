@@ -12,6 +12,7 @@
 
 import "core/int";
 import "std/crypto/ecdsa";
+import "std/crypto/sha2";
 import "std/crypto/ed25519";
 import "std/tls/der";
 import "std/tls/pem";
@@ -410,9 +411,9 @@ pub function (key: PrivateKey) sign(scheme: i32, content: [u8]): Result[u8[], Ke
   }
   match (key) {
     EcdsaKey(k) => {
-      let h: ecdsa.Hash = ecdsa.Sha256;
+      let h: sha2.Hash = sha2.Sha256;
       if (scheme == 0x0503) {
-        h = ecdsa.Sha384;
+        h = sha2.Sha384;
       }
       match (ecdsa.sign(k, h, content)) {
         Ok(sig) => {
