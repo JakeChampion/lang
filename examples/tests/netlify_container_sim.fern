@@ -1,0 +1,32 @@
+// netlify_container_sim.fern — the container example's routes: the page, a
+// greeting that names the query's caller, the health check, a 404 for an
+// unknown path and a 405 for a wrong method.
+import "std/sim";
+import "std/sim_fetch";
+import "std/sim_platform";
+import "std/http";
+import "std/http/router";
+import "../netlify-container/server";
+
+function main(): i32 {
+  let d: sim.Sim = sim.new(7);
+  let plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.net(d));
+  let r: router.Router[sim_platform.SimPlatform] = server.routes[sim_platform.SimPlatform]();
+  if (r.handle(http.request("GET", "/"), plat).status != 200) {
+    return 1;
+  }
+  let hello: HttpResponse = r.handle(http.request("GET", "/api/hello?name=Netlify"), plat);
+  if (hello.status != 200 || !hello.body_string().contains("\"message\":\"Hello, Netlify!\"")) {
+    return 2;
+  }
+  if (r.handle(http.request("GET", "/healthz"), plat).body_string() != "ok") {
+    return 3;
+  }
+  if (r.handle(http.request("GET", "/missing"), plat).status != 404) {
+    return 4;
+  }
+  if (r.handle(http.request("POST", "/healthz"), plat).status != 405) {
+    return 5;
+  }
+  return 0;
+}
