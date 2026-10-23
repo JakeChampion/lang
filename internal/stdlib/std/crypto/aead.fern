@@ -1,0 +1,39 @@
+// std/crypto/aead — the error an AEAD reports, shared by
+// `std/crypto/aes_gcm` and `std/crypto/chacha20poly1305` so a caller handles
+// either cipher's refusal the same way.
+
+import "core/int";
+import "std/error";
+import "core/cmp";
+
+// AeadError — why a seal or an open was refused: a key or a nonce of a
+// length the cipher does not take (the length it had), or a sealed message
+// that does not verify.
+pub enum AeadError {
+  KeyLength(i32),
+  NonceLength(i32),
+  Forged,
+}
+
+pub function (e: AeadError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for AeadError {}
+
+impl cmp.Display for AeadError {}
+
+pub function (e: AeadError) message(): string {
+  match (e) {
+    KeyLength(n) => {
+      return "aead: the key is " + int.int_to_string(n) + " bytes, the wrong length for this cipher";
+    },
+    NonceLength(n) => {
+      return "aead: the nonce is " + int.int_to_string(n) + " bytes, want 12";
+    },
+    Forged => {
+      return "aead: the message does not verify";
+    }
+  }
+  return "";
+}

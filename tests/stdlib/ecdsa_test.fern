@@ -2,6 +2,7 @@ import "std/test";
 import "std/hex";
 import "std/string";
 import "std/crypto/ecdsa";
+import "std/crypto/sha2";
 
 // tests/stdlib/ecdsa_test.fern — std/crypto/ecdsa against ECDSA signatures
 // Python's cryptography package made on P-256 over SHA-256 and SHA-384, and
@@ -48,11 +49,11 @@ function message384(): u8[] {
   return "fern p384 verification".bytes();
 }
 
-function verified(point: string, h: ecdsa.Hash, msg: u8[], sig: string): boolean {
+function verified(point: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
   return verified_on(ecdsa.P256, point, h, msg, sig);
 }
 
-function verified_on(curve: ecdsa.Curve, point: string, h: ecdsa.Hash, msg: u8[], sig: string): boolean {
+function verified_on(curve: ecdsa.Curve, point: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
   match (ecdsa.public_key(curve, hex.hex_decode(point))) {
     Ok(k) => {
       return ecdsa.verify(k, h, msg, hex.hex_decode(sig));
@@ -81,50 +82,50 @@ function key_error_on(curve: ecdsa.Curve, point: string): string {
 }
 
 function test_sha256(): test.TestOutcome {
-  return test.assert_true(verified(point_a(), ecdsa.Sha256, message(), sig256()));
+  return test.assert_true(verified(point_a(), sha2.Sha256, message(), sig256()));
 }
 
 function test_sha384(): test.TestOutcome {
-  return test.assert_true(verified(point_a(), ecdsa.Sha384, message(), sig384()));
+  return test.assert_true(verified(point_a(), sha2.Sha384, message(), sig384()));
 }
 
 function test_refusals(): test.TestOutcome {
-  if (verified(point_a(), ecdsa.Sha256, "fern p256 verification!".bytes(), sig256())) {
+  if (verified(point_a(), sha2.Sha256, "fern p256 verification!".bytes(), sig256())) {
     return test.fail("a signature over another message verified");
   }
-  if (verified(point_b(), ecdsa.Sha256, message(), sig256())) {
+  if (verified(point_b(), sha2.Sha256, message(), sig256())) {
     return test.fail("a signature verified under another key");
   }
-  if (verified(point_a(), ecdsa.Sha384, message(), sig256())) {
+  if (verified(point_a(), sha2.Sha384, message(), sig256())) {
     return test.fail("a signature verified under the other digest");
   }
   let flipped: u8[] = hex.hex_decode(sig256());
   flipped = flipped.with(20, flipped[20] ^ 1 as u8);
-  if (verified(point_a(), ecdsa.Sha256, message(), hex.hex_encode(flipped))) {
+  if (verified(point_a(), sha2.Sha256, message(), hex.hex_encode(flipped))) {
     return test.fail("a flipped bit verified");
   }
-  if (verified(point_a(), ecdsa.Sha256, message(), sig256() + "00")) {
+  if (verified(point_a(), sha2.Sha256, message(), sig256() + "00")) {
     return test.fail("a signature with a trailing byte verified");
   }
   return test.pass();
 }
 
 function test_p384(): test.TestOutcome {
-  if (!verified_on(ecdsa.P384, POINT_C, ecdsa.Sha384, message384(), SIG384_384)) {
+  if (!verified_on(ecdsa.P384, POINT_C, sha2.Sha384, message384(), SIG384_384)) {
     return test.fail("SHA-384");
   }
-  if (!verified_on(ecdsa.P384, POINT_C, ecdsa.Sha256, message384(), SIG384_256)) {
+  if (!verified_on(ecdsa.P384, POINT_C, sha2.Sha256, message384(), SIG384_256)) {
     return test.fail("SHA-256");
   }
-  if (!verified_on(ecdsa.P384, POINT_C, ecdsa.Sha512, message384(), SIG384_512)) {
+  if (!verified_on(ecdsa.P384, POINT_C, sha2.Sha512, message384(), SIG384_512)) {
     return test.fail("SHA-512, cut to the order");
   }
-  if (verified_on(ecdsa.P384, POINT_D, ecdsa.Sha384, message384(), SIG384_384) || verified_on(ecdsa.P384, POINT_C, ecdsa.Sha384, message(), SIG384_384) || verified_on(ecdsa.P384, POINT_C, ecdsa.Sha512, message384(), SIG384_384)) {
+  if (verified_on(ecdsa.P384, POINT_D, sha2.Sha384, message384(), SIG384_384) || verified_on(ecdsa.P384, POINT_C, sha2.Sha384, message(), SIG384_384) || verified_on(ecdsa.P384, POINT_C, sha2.Sha512, message384(), SIG384_384)) {
     return test.fail("a refusal verified");
   }
   let flipped: u8[] = hex.hex_decode(SIG384_384);
   flipped = flipped.with(30, flipped[30] ^ 1 as u8);
-  return test.assert_true(!verified_on(ecdsa.P384, POINT_C, ecdsa.Sha384, message384(), hex.hex_encode(flipped)));
+  return test.assert_true(!verified_on(ecdsa.P384, POINT_C, sha2.Sha384, message384(), hex.hex_encode(flipped)));
 }
 
 const P256_POINT: string = "0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299";
@@ -148,7 +149,7 @@ const P256_D: string = "c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b
 
 // signed is the hex signature `d` makes on `curve` over msg, after checking
 // its public point and that it verifies.
-function signed(curve: ecdsa.Curve, d: string, point: string, h: ecdsa.Hash, msg: string): string {
+function signed(curve: ecdsa.Curve, d: string, point: string, h: sha2.Hash, msg: string): string {
   match (ecdsa.private_key(curve, hex.hex_decode(d))) {
     Ok(k) => {
       if (hex.hex_encode(k.public_point()) != point) {
@@ -176,22 +177,22 @@ function signed(curve: ecdsa.Curve, d: string, point: string, h: ecdsa.Hash, msg
 // RFC 6979's deterministic signatures, from A.2.5 and A.2.6 and a
 // reference implementation that reproduces them.
 function test_signing(): test.TestOutcome {
-  if (signed(ecdsa.P256, P256_D, P256_POINT, ecdsa.Sha256, "sample") != P256_SHA256_SAMPLE || signed(ecdsa.P256, P256_D, P256_POINT, ecdsa.Sha256, "test") != P256_SHA256_TEST) {
-    return test.fail("P-256 SHA-256: " + signed(ecdsa.P256, P256_D, P256_POINT, ecdsa.Sha256, "sample"));
+  if (signed(ecdsa.P256, P256_D, P256_POINT, sha2.Sha256, "sample") != P256_SHA256_SAMPLE || signed(ecdsa.P256, P256_D, P256_POINT, sha2.Sha256, "test") != P256_SHA256_TEST) {
+    return test.fail("P-256 SHA-256: " + signed(ecdsa.P256, P256_D, P256_POINT, sha2.Sha256, "sample"));
   }
-  if (signed(ecdsa.P256, P256_D, P256_POINT, ecdsa.Sha384, "sample") != P256_SHA384_SAMPLE) {
+  if (signed(ecdsa.P256, P256_D, P256_POINT, sha2.Sha384, "sample") != P256_SHA384_SAMPLE) {
     return test.fail("P-256 SHA-384");
   }
-  if (signed(ecdsa.P384, P384_D, P384_POINT, ecdsa.Sha384, "sample") != P384_SHA384_SAMPLE) {
-    return test.fail("P-384 SHA-384: " + signed(ecdsa.P384, P384_D, P384_POINT, ecdsa.Sha384, "sample"));
+  if (signed(ecdsa.P384, P384_D, P384_POINT, sha2.Sha384, "sample") != P384_SHA384_SAMPLE) {
+    return test.fail("P-384 SHA-384: " + signed(ecdsa.P384, P384_D, P384_POINT, sha2.Sha384, "sample"));
   }
-  return test.assert_eq(signed(ecdsa.P384, P384_D, P384_POINT, ecdsa.Sha256, "test"), P384_SHA256_TEST);
+  return test.assert_eq(signed(ecdsa.P384, P384_D, P384_POINT, sha2.Sha256, "test"), P384_SHA256_TEST);
 }
 
 function key_refusal(curve: ecdsa.Curve, d: string): string {
   match (ecdsa.private_key(curve, hex.hex_decode(d))) {
     Ok(k) => {
-      match (ecdsa.sign(k, ecdsa.Sha512, "x".bytes())) {
+      match (ecdsa.sign(k, sha2.Sha512, "x".bytes())) {
         Ok(_) => {
           return "signed";
         },
