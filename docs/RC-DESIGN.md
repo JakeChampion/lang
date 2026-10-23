@@ -39,8 +39,11 @@ block uses that a dominating block read (a record, tuple or payload field,
 or an array element at the same index), so the plan takes them instead of
 borrowing them. It re-reads only a read that borrowed, of a parent nothing
 spends while the child, or the value the block reads through it, lives, so
-a re-read never holds a parent longer than the plan already does.
-`semcse.fern` then merges a block's repeated reads of one slot of one value,
+a re-read never holds a parent longer than the plan already does. Before
+that, it merges a repeated read into a read of the same slot in a block that
+dominates it, in two cases. A read off the first is spent, so the plan must take the first. Or
+the repeat is live out of its block, and the block that uses it re-reads it.
+A `length` does not spend its operand. `semcse.fern` then merges a block's repeated reads of one slot of one value,
 which the re-reads at a block's head most often make, so the slot has one
 holder for the plan to hold or take where its box is consumed. Last,
 `semdead.fern` drops constructions nothing reads. `ssasem`'s guard check
@@ -161,7 +164,13 @@ reads (`units_of`):
   read and released at its own death, and its chain to the source is cut, so
   the source moves instead of being retained. A read only borrowed to its
   death stays a borrow. A read that is a take already has its unit and is
-  not held as well. Pinned by `TestSelfHostCrossBlockReuse`'s
+  not held as well. An update consumes its donor, so a read of the donor
+  used past the update is held, and only that read: the donor is not a
+  source that dies unconsumed there. A hold cuts a chain, so the payload
+  takes are then asked again over the cut chains (`takes_past_holds`). There
+  the plan can take a second read of a record field. Each read off the first
+  read of that field that is still in hand is held for it (`twin_holds`).
+  Pinned by `TestSelfHostKeptReadPastUpdate`, `TestSelfHostCrossBlockReuse`'s
   `read-outliving-the-attempt-takes-its-unit`, the `field-read-outlives-the-record`
   rows of `TestSelfHostSemanticAllocationCounts`, and the `update-keeps-fields`
   rows of `TestSelfHostSemanticReuseDifferential`, which pin that a field an
