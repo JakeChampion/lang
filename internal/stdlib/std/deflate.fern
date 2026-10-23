@@ -281,88 +281,210 @@ function __decode(own s: __State, data: u8[], h: __Huff): __State {
 // ---------------------------------------------------------------------------
 // Compressed blocks
 
-function __length_base(): i32[] {
-  return [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+const LENGTH_BASE: i32[] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
+
+const LENGTH_EXTRA: i32[] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+
+const DIST_BASE: i32[] = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
+
+const DIST_EXTRA: i32[] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+
+// The bits the literal/length and distance lookup tables index by. A code
+// longer than its table's bits is decoded by `__walk`.
+const LIT_BITS: i32 = 10;
+
+const DIST_BITS: i32 = 8;
+
+// `__table(h, bits)` — a lookup table for `h` indexed by the next `bits`
+// input bits: each entry is the symbol shifted left 4 with its code length
+// below, and 0 where the code is longer than `bits`. Deflate sends a code's
+// bits most significant first into a stream read least significant first,
+// so a code's entries sit at its bit-reversed value and every extension of
+// it.
+function __table(h: __Huff, bits: i32): i32[] {
+  let table: i32[] = __zeros(1 << bits);
+  let code: i32 = 0;
+  let index: i32 = 0;
+  let len: i32 = 1;
+  while (len <= bits) {
+    let k: i32 = 0;
+    while (k < h.count[len]) {
+      let entry: i32 = h.symbol[index] << 4 | len;
+      let at: i32 = __reversed(code, len);
+      while (at < table.len()) {
+        table = table.with(at, entry);
+        at = at + (1 << len);
+      }
+      code = code + 1;
+      index = index + 1;
+      k = k + 1;
+    }
+    code = code << 1;
+    len = len + 1;
+  }
+  return table;
 }
 
-function __length_extra(): i32[] {
-  return [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
-}
-
-function __dist_base(): i32[] {
-  return [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577];
-}
-
-function __dist_extra(): i32[] {
-  return [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+// `__walk(h, bits, avail)` — the code at the bottom of `bits` (`avail` of
+// them valid) decoded a bit at a time through the code lengths (RFC 1951
+// §3.2.2), as a table entry: the symbol shifted left 4 with the code length
+// below. 0 when `avail` bits hold no whole code, -1 for a bit pattern no
+// code has.
+function __walk(h: __Huff, bits: i64, avail: i32): i32 {
+  let code: i32 = 0;
+  let first: i32 = 0;
+  let index: i32 = 0;
+  let len: i32 = 1;
+  while (len <= 15) {
+    if (len > avail) {
+      return 0;
+    }
+    code = code | (bits >> (len - 1) as i64 & 1 as i64) as i32;
+    let count: i32 = h.count[len];
+    if (code - count < first) {
+      return h.symbol[index + (code - first)] << 4 | len;
+    }
+    index = index + count;
+    first = first + count << 1;
+    code = code << 1;
+    len = len + 1;
+  }
+  return 0 - 1;
 }
 
 // `__codes(s, data, lencode, distcode)` — the symbols of one block decoded to
-// the end-of-block code (RFC 1951 §3.2.5): a literal is appended, a
-// length and distance pair copies from the output already produced. The
-// output is held as a local the state no longer references while the
-// block runs, so every append lands on a uniquely owned array.
+// the end-of-block code (RFC 1951 §3.2.5): a literal is appended, a length
+// and distance pair copies from the output already produced. The bit
+// reader runs in locals here, a 64-bit buffer filled a byte at a time, and
+// whole bytes it did not use go back to the input at the end of the block.
+// One loop, so the bit reader stays in locals rather than crossing a call
+// per symbol.
+// fern-lint: allow cyclomatic-complexity
 function __codes(own s: __State, data: u8[], lencode: __Huff, distcode: __Huff): __State {
+  let lit: i32[] = __table(lencode, LIT_BITS);
+  let dtab: i32[] = __table(distcode, DIST_BITS);
+  let lmask: i64 = (1 << LIT_BITS) as i64 - 1;
+  let dmask: i64 = (1 << DIST_BITS) as i64 - 1;
   let out: u8[] = s.out;
+  let max_out: i32 = s.max_out;
+  let pos: i32 = s.pos;
+  let bitbuf: i64 = s.bitbuf as i64;
+  let bitcnt: i32 = s.bitcnt;
+  let n: i32 = data.len();
   s = __State { ...s, out: [], lengths: [] };
-  while (!s.failed) {
-    s = __decode(s, data, lencode);
-    if (s.failed) {
-      return __State { ...s, out: out };
+  let error: Option[InflateError] = None;
+  let done: boolean = false;
+  while (!done) {
+    while (bitcnt <= 48 && pos < n) {
+      bitbuf = bitbuf | data[pos] as i64 << bitcnt as i64;
+      pos = pos + 1;
+      bitcnt = bitcnt + 8;
     }
-    let sym: i32 = s.last;
-    if (sym < 256) {
-      if (out.len() >= s.max_out) {
-        s = __fail(s, OutputLimit);
-      } else {
-        out = out.append(sym as u8);
-      }
-    } else if (sym == 256) {
-      return __State { ...s, out: out };
+    let e: i32 = lit[(bitbuf & lmask) as i32];
+    if (e == 0) {
+      e = __walk(lencode, bitbuf, bitcnt);
+    }
+    let used: i32 = e & 15;
+    if (e < 0 || used > bitcnt || e == 0) {
+      error = Some(__walk_error(e));
+      done = true;
     } else {
-      s = __pair(s, data, sym - 257, distcode, out.len());
-      out = __copy(out, s.last, s.distance);
+      bitbuf = bitbuf >> used as i64;
+      bitcnt = bitcnt - used;
+      let sym: i32 = e >> 4;
+      if (sym < 256) {
+        if (out.len() >= max_out) {
+          error = Some(OutputLimit);
+          done = true;
+        } else {
+          out = out.append(sym as u8);
+        }
+      } else if (sym == 256) {
+        done = true;
+      } else if (sym - 257 >= 29) {
+        error = Some(Malformed("a length code past 285"));
+        done = true;
+      } else {
+        let lx: i32 = LENGTH_EXTRA[sym - 257];
+        let len: i32 = LENGTH_BASE[sym - 257] + (bitbuf & (1 << lx) as i64 - 1) as i32;
+        let need: i32 = lx;
+        if (need > bitcnt) {
+          error = Some(Truncated);
+          done = true;
+        } else {
+          bitbuf = bitbuf >> lx as i64;
+          bitcnt = bitcnt - lx;
+          while (bitcnt <= 48 && pos < n) {
+            bitbuf = bitbuf | data[pos] as i64 << bitcnt as i64;
+            pos = pos + 1;
+            bitcnt = bitcnt + 8;
+          }
+          let d: i32 = dtab[(bitbuf & dmask) as i32];
+          if (d == 0) {
+            d = __walk(distcode, bitbuf, bitcnt);
+          }
+          let dused: i32 = d & 15;
+          if (d < 0 || dused > bitcnt || d == 0) {
+            error = Some(__walk_error(d));
+            done = true;
+          } else {
+            bitbuf = bitbuf >> dused as i64;
+            bitcnt = bitcnt - dused;
+            let dsym: i32 = d >> 4;
+            if (dsym >= 30) {
+              error = Some(Malformed("a distance code past 29"));
+              done = true;
+            } else {
+              let dx: i32 = DIST_EXTRA[dsym];
+              if (dx > bitcnt) {
+                error = Some(Truncated);
+                done = true;
+              } else {
+                let dist: i32 = DIST_BASE[dsym] + (bitbuf & (1 << dx) as i64 - 1) as i32;
+                bitbuf = bitbuf >> dx as i64;
+                bitcnt = bitcnt - dx;
+                if (dist > out.len()) {
+                  error = Some(Malformed("a distance before the start of the output"));
+                  done = true;
+                } else if (out.len() + len > max_out) {
+                  error = Some(OutputLimit);
+                  done = true;
+                } else {
+                  out = __copy(out, len, dist);
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
-  return __State { ...s, out: out };
+  let back: i32 = bitcnt >> 3;
+  bitcnt = bitcnt & 7;
+  s = __State { ...s, out: out, pos: pos - back, bitbuf: (bitbuf & (1 << bitcnt) as i64 - 1) as i32, bitcnt: bitcnt };
+  match (error) {
+    Some(err) => {
+      return __fail(s, err);
+    },
+    None => {
+      return s;
+    }
+  }
+  return s;
 }
 
-// `__pair(s, data, sym, distcode, produced)` — the length (into `last`) and
-// distance (into `distance`) a literal/length symbol `sym` (257
-// subtracted) and the distance code after it describe, both 0 when the
-// pair is refused: a code past the tables, a distance before the start
-// of the output, or a copy past `max_out`.
-function __pair(own s: __State, data: u8[], sym: i32, distcode: __Huff, produced: i32): __State {
-  if (sym >= 29) {
-    return __fail(s, Malformed("a length code past 285"));
+// `__walk_error(e)` — the failure a table entry or `__walk` answer that
+// gives no code stands for: -1 is a bit pattern no code has, and anything
+// else ran out of input.
+function __walk_error(e: i32): InflateError {
+  if (e < 0) {
+    return Malformed("a bit pattern that is no code");
   }
-  s = __bits(s, data, __length_extra()[sym]);
-  let len: i32 = __length_base()[sym] + s.last;
-  s = __decode(s, data, distcode);
-  if (s.failed) {
-    return s;
-  }
-  let dsym: i32 = s.last;
-  if (dsym >= 30) {
-    return __fail(s, Malformed("a distance code past 29"));
-  }
-  s = __bits(s, data, __dist_extra()[dsym]);
-  if (s.failed) {
-    return s;
-  }
-  let dist: i32 = __dist_base()[dsym] + s.last;
-  if (dist > produced) {
-    return __fail(s, Malformed("a distance before the start of the output"));
-  }
-  if (produced + len > s.max_out) {
-    return __fail(s, OutputLimit);
-  }
-  return __State { ...s, last: len, distance: dist };
+  return Truncated;
 }
 
 // `__copy(out, len, dist)` — `out` with `len` bytes repeated from `dist`
-// back in it, which may overlap what is being written (a run); `len` is
-// 0 for a refused pair.
+// back in it, which may overlap what is being written (a run).
 function __copy(own out: u8[], len: i32, dist: i32): u8[] {
   let i: i32 = 0;
   while (i < len) {
