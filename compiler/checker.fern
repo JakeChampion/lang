@@ -18947,7 +18947,11 @@ function (s: Scope) visible_names(): string[] {
       funcs = funcs.append(sig.name);
     }
   }
-  return util.append_all(out, util.sorted_by(funcs, (a: string, b: string) => a > b));
+  return util.append_all(out, util.sorted_by(funcs, name_after));
+}
+
+function name_after(a: string, b: string): boolean {
+  return a > b;
 }
 
 // scalar_match_exhaustive_diags: E030 for a `match` on a number / string /
