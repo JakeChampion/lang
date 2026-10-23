@@ -1,0 +1,6 @@
+selfhost/x86-64-linux/deflate_decode.emit	9659
+selfhost/arm64-linux/deflate_decode.emit	10412
+selfhost/wasm32-wasi/deflate_decode.emit	15002
+selfhost/x86-64-linux/deflate_encode.emit	6015
+selfhost/arm64-linux/deflate_encode.emit	6652
+selfhost/wasm32-wasi/deflate_encode.emit	9621

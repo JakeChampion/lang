@@ -79,3 +79,7 @@ measurements; the strict comparator passes for both reports.
 
 These counts cover the CI benchmark inputs, separately from the Silesia wall
 time comparison above.
+
+`ci-selfhost-size.txt` retains the same run's exact emitted-size counts for
+the two deflate programs on all three targets; their baseline rows are banked
+from those measurements too.

@@ -1,3 +1,4 @@
+# 2026-10-23: deflate rows measured at 49c290377 in Perf run 40010926319, after main integration.
 # Emitted-size baseline for the SELF-HOSTED compiler over bench,
 # checked against every run by scripts/ci-check-perf.
 #
@@ -151,8 +152,8 @@ selfhost/arm64-linux/array_with.emit	1270
 selfhost/arm64-linux/ascii_scan.emit	1461
 selfhost/arm64-linux/call_overhead.emit	148
 selfhost/arm64-linux/closure_call.emit	1011
-selfhost/arm64-linux/deflate_decode.emit	10385
-selfhost/arm64-linux/deflate_encode.emit	6625
+selfhost/arm64-linux/deflate_decode.emit	10412
+selfhost/arm64-linux/deflate_encode.emit	6652
 selfhost/arm64-linux/enum_match.emit	1174
 selfhost/arm64-linux/http_hello.emit	17130
 selfhost/arm64-linux/int_loop.emit	90
@@ -183,8 +184,8 @@ selfhost/wasm32-wasi/array_with.emit	513
 selfhost/wasm32-wasi/ascii_scan.emit	1224
 selfhost/wasm32-wasi/call_overhead.emit	158
 selfhost/wasm32-wasi/closure_call.emit	503
-selfhost/wasm32-wasi/deflate_decode.emit	14920
-selfhost/wasm32-wasi/deflate_encode.emit	9539
+selfhost/wasm32-wasi/deflate_decode.emit	15002
+selfhost/wasm32-wasi/deflate_encode.emit	9621
 selfhost/wasm32-wasi/enum_match.emit	616
 selfhost/wasm32-wasi/http_hello.emit	18505
 selfhost/wasm32-wasi/int_loop.emit	110
@@ -215,8 +216,8 @@ selfhost/x86-64-linux/array_with.emit	1079
 selfhost/x86-64-linux/ascii_scan.emit	1187
 selfhost/x86-64-linux/call_overhead.emit	88
 selfhost/x86-64-linux/closure_call.emit	818
-selfhost/x86-64-linux/deflate_decode.emit	9634
-selfhost/x86-64-linux/deflate_encode.emit	5994
+selfhost/x86-64-linux/deflate_decode.emit	9659
+selfhost/x86-64-linux/deflate_encode.emit	6015
 selfhost/x86-64-linux/enum_match.emit	980
 selfhost/x86-64-linux/http_hello.emit	16662
 selfhost/x86-64-linux/int_loop.emit	33
