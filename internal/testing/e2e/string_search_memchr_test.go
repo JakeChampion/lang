@@ -47,10 +47,10 @@ func strSearchCases() []strSearchCase {
 		base := strings.Repeat("a", n)
 		hay := base + "z"
 		add(fmt.Sprintf("index_of_last_n%d", n),
-			fmt.Sprintf("(%s).index_of(\"z\")", q(hay)),
+			fmt.Sprintf("found_at((%s).index_of(\"z\"))", q(hay)),
 			fmt.Sprint(strings.Index(hay, "z")))
 		add(fmt.Sprintf("index_of_absent_n%d", n),
-			fmt.Sprintf("(%s).index_of(\"q\")", q(base)),
+			fmt.Sprintf("found_at((%s).index_of(\"q\"))", q(base)),
 			fmt.Sprint(strings.Index(base, "q")))
 		add(fmt.Sprintf("contains_n%d", n),
 			fmt.Sprintf("if ((%s).contains(\"z\")) { 1 } else { 0 }", q(hay)),
@@ -79,8 +79,8 @@ func strSearchCases() []strSearchCase {
 
 	// Non-UTF-8 and NUL: __memchr is a BYTE search and the callers must stay
 	// byte-exact. A NUL is an ordinary byte, not a terminator.
-	add("index_of_nul", fmt.Sprintf("(%s).index_of(%s)", q("a\x00b"), q("\x00")), "1")
-	add("index_of_high", fmt.Sprintf("(%s).index_of(%s)", q("a\xffb"), q("\xff")), "1")
+	add("index_of_nul", fmt.Sprintf("found_at((%s).index_of(%s))", q("a\x00b"), q("\x00")), "1")
+	add("index_of_high", fmt.Sprintf("found_at((%s).index_of(%s))", q("a\xffb"), q("\xff")), "1")
 	add("split_nul", fmt.Sprintf("(%s).split(%s).len()", q("a\x00b\x00c"), q("\x00")), "3")
 
 	// A two-byte needle must NOT take the memchr arm — it routes to Two-Way.
@@ -91,15 +91,15 @@ func strSearchCases() []strSearchCase {
 	// caught that the first time round. Each case below puts needle[0]
 	// strictly before the real match, or has no match at all.
 	add("two_byte_first_byte_earlier",
-		fmt.Sprintf("(%s).index_of(%s)", q("abxbc"), q("bc")),
+		fmt.Sprintf("found_at((%s).index_of(%s))", q("abxbc"), q("bc")),
 		fmt.Sprint(strings.Index("abxbc", "bc"))) // 3, not 1
 	add("two_byte_first_byte_only",
-		fmt.Sprintf("(%s).index_of(%s)", q("abx"), q("bz")),
+		fmt.Sprintf("found_at((%s).index_of(%s))", q("abx"), q("bz")),
 		fmt.Sprint(strings.Index("abx", "bz"))) // -1, not 1
 	add("two_byte_repeated_lead",
-		fmt.Sprintf("(%s).index_of(%s)", q("aaab"), q("ab")),
+		fmt.Sprintf("found_at((%s).index_of(%s))", q("aaab"), q("ab")),
 		fmt.Sprint(strings.Index("aaab", "ab"))) // 2, not 0
-	add("empty_needle", fmt.Sprintf("(%s).index_of(\"\")", q("abc")), "0")
+	add("empty_needle", fmt.Sprintf("found_at((%s).index_of(\"\"))", q("abc")), "0")
 
 	return out
 }
@@ -119,6 +119,14 @@ func runStrSearchCorpus(t *testing.T, run func(t *testing.T, src string) string)
 
 	out := run(t, `import "std/string";
 import "core/int";
+
+// found_at is a search result as Go's strings.Index reports it, -1 when absent.
+function found_at(o: Option[i32]): i32 {
+    match (o) {
+        Some(i) => { return i; },
+        None => { return 0 - 1; }
+    }
+}
 
 function main(): i32 {
 `+body.String()+`    return 0;

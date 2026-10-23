@@ -13,7 +13,7 @@ import (
 
 // Lazy core/iter chains fused into one loop (#6795). Each chain starts from
 // `iter.of(xs)` or `iter.range(lo, hi)`, runs `map`, `filter`, `take` and
-// `flat_map` adapters, and ends in `fold` or `count`; a `skip` chain runs
+// `flat_map` adapters, and ends in `fold` or `len`; a `skip` chain runs
 // unfused beside them. It is compared with a hand-written
 // loop inside the program, with fusion on and off, and the leak checker
 // confirms nothing the unfused chains build is left behind.
@@ -83,7 +83,7 @@ function loop_bare(xs: i64[]): i64 {
 }
 
 function via_count(xs: i64[]): i32 {
-	return iter.of(xs).filter((x: i64): boolean => x > (2 as i64)).count();
+	return iter.of(xs).filter((x: i64): boolean => x > (2 as i64)).len();
 }
 function loop_count(xs: i64[]): i32 {
 	let n: i32 = 0;
@@ -103,7 +103,7 @@ function loop_range(lo: i32, hi: i32): i32 {
 }
 
 function via_range_count(lo: i32, hi: i32, k: i32): i32 {
-	return iter.range(lo, hi).filter((i: i32): boolean => i % 3 != 0).take(k).count();
+	return iter.range(lo, hi).filter((i: i32): boolean => i % 3 != 0).take(k).len();
 }
 function loop_range_count(lo: i32, hi: i32, k: i32): i32 {
 	let n: i32 = 0;
@@ -206,7 +206,7 @@ import "std/i64";
 	return iter.of(xs).take(3).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
 @noinline function counted(xs: i64[]): i32 {
-	return iter.of(xs).filter((x: i64): boolean => x % (2 as i64) == (0 as i64)).count();
+	return iter.of(xs).filter((x: i64): boolean => x % (2 as i64) == (0 as i64)).len();
 }
 @noinline function ranged(n: i32): i32 {
 	return iter.range(0, n).map((i: i32): i32 => i + 1).fold(0, (a: i32, b: i32): i32 => a + b);
@@ -261,7 +261,7 @@ function filtered(xs: i64[]): i64 {
 	return iter.of(xs).filter((x: i64): boolean => x > (1 as i64)).map((x: i64): i64 => x * x).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
 function counted(n: i32): i32 {
-	return iter.range(0, n).take(4).count();
+	return iter.range(0, n).take(4).len();
 }
 function numbered(xs: i64[]): i64 {
 	return iter.of(xs).enumerate().fold(0 as i64, (a: i64, p: (i32, i64)): i64 => a + p.1);
@@ -296,7 +296,7 @@ func TestSelfHostIterFusionReport(t *testing.T) {
 	report := stderr.String()
 	for _, tc := range []struct{ name, plan, reason string }{
 		{"filtered", "of -> filter -> map -> fold; one traversal", "fused"},
-		{"counted", "range -> take -> count; one traversal", "fused"},
+		{"counted", "range -> take -> len; one traversal", "fused"},
 		{"numbered", "enumerate; not fused", "operator-outside-algebra"},
 		{"fanned", "of -> flat_map -> fold; one traversal", "fused"},
 		{"skipped", "skip; not fused", "operator-outside-algebra"},

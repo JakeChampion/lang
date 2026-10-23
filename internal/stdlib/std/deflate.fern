@@ -1405,6 +1405,17 @@ function __hash3(input: u8[], pos: i32): i32 {
   return h * 2057 & 32767;
 }
 
+// __common(input, from, pos) — how many bytes from `pos` repeat those from
+// `from`, at most 258 and not past the end of the input.
+function __common(input: u8[], from: i32, pos: i32): i32 {
+  let n: i32 = input.len();
+  let len: i32 = 0;
+  while (len < 258 && pos + len < n && input[from + len] == input[pos + len]) {
+    len = len + 1;
+  }
+  return len;
+}
+
 // __longest(input, pos, cand, prev, window) — the longest match at
 // `pos` among the chain starting at `cand`: `(length, distance)`, length
 // 0 for none.
@@ -1415,8 +1426,9 @@ function __longest(input: u8[], pos: i32, cand: i32, prev: i32[], window: i32): 
   let depth: i32 = 0;
   while (cand >= 0 && pos - cand < window && depth < 32) {
     let len: i32 = 0;
-    while (len < 258 && pos + len < n && input[cand + len] == input[pos + len]) {
-      len = len + 1;
+    // A candidate that differs at the best length so far cannot beat it.
+    if (pos + best_len >= n || input[cand + best_len] == input[pos + best_len]) {
+      len = __common(input, cand, pos);
     }
     if (len > best_len) {
       best_len = len;

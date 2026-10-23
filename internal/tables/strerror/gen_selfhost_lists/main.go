@@ -2,8 +2,8 @@
 // compiler/asmcore.fern carries for the strerror table, so the
 // self-host copy is regenerated from internal/tables/strerror rather than
 // typed. Paste the output over the strerror_* bodies and
-// wasi_error_code_errnos, and the constants over internal/stdlib/std/errno.fern's;
-// selfhost_parity_test.go checks the result.
+// wasi_error_code_errnos, and the rest over internal/stdlib/std/errno.fern's
+// constants and from_host tables; selfhost_parity_test.go checks the result.
 package main
 
 import (
@@ -36,4 +36,7 @@ func main() {
 	fmt.Printf("pub function strerror_carried(): i32[] {\n    return [%s];\n}\n", strings.Join(carried, ", "))
 	fmt.Printf("pub function wasi_error_code_errnos(): i32[] {\n    return [%s];\n}\n", strings.Join(codes, ", "))
 	fmt.Printf("\n// internal/stdlib/std/errno.fern\n%s\n", strings.Join(consts, "\n\n"))
+	fmt.Printf("\nfunction __darwin_errnos(): i32[] {\n  return [%s];\n}\n", strings.Join(darwin, ", "))
+	fmt.Printf("\nfunction __wasi_errnos(): i32[] {\n  return [%s];\n}\n", strings.Join(wasi, ", "))
+	fmt.Printf("\nfunction __carried_errnos(): i32[] {\n  return [%s];\n}\n", strings.Join(carried, ", "))
 }

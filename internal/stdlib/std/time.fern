@@ -970,7 +970,9 @@ function __asctime_date(s: string): Option[Instant] {
 // `__rfc850_date(s, now)` — `Sunday, 06-Nov-94 08:49:37 GMT`: a weekday
 // name, then 24 bytes from its comma.
 function __rfc850_date(s: string, now: Instant): Option[Instant] {
-  let c: i32 = s.index_of(",");
+  let Some(c) = s.index_of(",") else {
+    return None;
+  };
   if (c < 6 || s.len() != c + 24 || !__rfc850_punctuation(s, c)) {
     return None;
   }
@@ -1107,9 +1109,11 @@ pub function (z: Zoned) format_rfc3339(): string {
     let s: string = tmp.format_rfc3339();
     // tmp's format is "1970-01-01T00:00:00.<frac>Z" —
     // splice the fractional segment (between '.' and 'Z').
-    let dot: i32 = s.index_of(".");
-    let z_idx: i32 = s.index_of("Z");
-    tail = slice_unchecked(s, dot, z_idx);
+    if let Some(dot) = s.index_of(".") {
+      if let Some(z_idx) = s.index_of("Z") {
+        tail = slice_unchecked(s, dot, z_idx);
+      }
+    }
   }
   if (z.zone.offset_seconds == 0) {
     return head + tail + "Z";

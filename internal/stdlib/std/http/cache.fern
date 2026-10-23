@@ -487,14 +487,15 @@ function __join(parts: string[]): string {
 pub function parse_cache_control(h: HeaderMap): CacheControl {
   let c: CacheControl = cache_control();
   for member in h.get_list("cache-control") {
-    let eq: i32 = member.index_of("=");
     let name: string = member.to_lower();
     let value: string = "";
-    if (eq >= 0) {
+    let has_value: boolean = false;
+    if let Some(eq) = member.index_of("=") {
       name = member.slice_snap(0, eq).trim().to_lower();
       value = headers.unquote(member.slice_snap(eq + 1, member.len()).trim());
+      has_value = true;
     }
-    c = __directive(c, name, value, eq >= 0);
+    c = __directive(c, name, value, has_value);
   }
   return c;
 }

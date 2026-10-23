@@ -25,14 +25,17 @@ function main(): i32 {
     ]));
     rules = rules.insert("all", PSeq([PRef("b"), PCap("tail", PPlus(peg.peg_digit())), PEof]));
     let Ok(g) = peg.peg_grammar(rules, "all") else { return 90; };
-    let r: peg.PegResult = peg.peg_match(g, "(()(()))42");
-    if (!r.ok) { return 91; }
+    let Ok(r) = peg.peg_match(g, "(()(()))42") else { return 91; };
     if (r.caps.get_or("tail", "") != "42") { return 92; }
-    if (peg.peg_match(g, "((x").ok) { return 93; }
+    if (ok(peg.peg_match(g, "((x"))) { return 93; }
     let kw: peg.Pattern = PSeq([PLit("if"), PNot(peg.peg_alnum())]);
-    if (peg.peg_match_pattern(kw, "iffy").ok) { return 94; }
-    if (!peg.peg_match_pattern(kw, "if (x)").ok) { return 95; }
+    if (ok(peg.peg_match_pattern(kw, "iffy"))) { return 94; }
+    if (!ok(peg.peg_match_pattern(kw, "if (x)"))) { return 95; }
     return 55;
+}
+function ok(r: Result[peg.PegMatch, peg.PegError]): boolean {
+    if let Ok(_) = r { return true; }
+    return false;
 }`
 	const want = 55
 	t.Run("interp", func(t *testing.T) {
@@ -77,24 +80,28 @@ function main(): i32 {
     let r1: Map[string, peg.Pattern] = map_new(2);
     r1 = r1.insert("l", PSeq([PRef("l"), PLit("a")]));
     let Ok(g1) = peg.peg_grammar(r1, "l") else { return 90; };
-    if (peg.peg_match(g1, "aaa").ok) { return 91; }
+    if (ok(peg.peg_match(g1, "aaa"))) { return 91; }
     let r2: Map[string, peg.Pattern] = map_new(2);
     r2 = r2.insert("a", PSeq([PRef("b"), PLit("x")]));
     r2 = r2.insert("b", PRef("a"));
     let Ok(g2) = peg.peg_grammar(r2, "a") else { return 92; };
-    if (peg.peg_match(g2, "xxx").ok) { return 93; }
+    if (ok(peg.peg_match(g2, "xxx"))) { return 93; }
     let r3: Map[string, peg.Pattern] = map_new(2);
     r3 = r3.insert("r", PChoice([PSeq([PLit("a"), PRef("r")]), PLit("")]));
     let deep: string = "";
     let i: i32 = 0;
     while (i < 200) { deep = deep + "a"; i = i + 1; }
     let Ok(g3) = peg.peg_grammar(r3, "r") else { return 94; };
-    if (!peg.peg_match(g3, deep).ok) { return 95; }
+    if (!ok(peg.peg_match(g3, deep))) { return 95; }
     let r4: Map[string, peg.Pattern] = map_new(2);
     r4 = r4.insert("b", PChoice([PSeq([PLit("("), PRef("b"), PLit(")")]), PLit("")]));
     let Ok(g4) = peg.peg_grammar(r4, "b") else { return 96; };
-    if (!peg.peg_match(g4, "((()))").ok) { return 97; }
+    if (!ok(peg.peg_match(g4, "((()))"))) { return 97; }
     return 55;
+}
+function ok(r: Result[peg.PegMatch, peg.PegError]): boolean {
+    if let Ok(_) = r { return true; }
+    return false;
 }`
 	const want = 55
 	t.Run("interp", func(t *testing.T) {

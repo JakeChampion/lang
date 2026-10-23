@@ -35,8 +35,8 @@ function main(): i32 {
     .filter((x: i64): boolean => x % (2 as i64) == (0 as i64))
     .map((x: i64): i64 => x * (10 as i64))
     .fold(0 as i64, (a: i64, b: i64): i64 => a + b).to_string());
-  print(iter.of(xs).take(4).count().to_string());
-  print(iter.of(xs).take(0 - 2).count().to_string());
+  print(iter.of(xs).take(4).len().to_string());
+  print(iter.of(xs).take(0 - 2).len().to_string());
   let pairs: (i32, i64)[] = iter.of(xs).enumerate().take(2).collect();
   print(pairs[1].0.to_string() + ":" + pairs[1].1.to_string());
   let z: (i64, i32)[] = iter.of(xs).zip(iter.range(10, 13)).collect();

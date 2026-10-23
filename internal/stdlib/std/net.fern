@@ -12,11 +12,10 @@
 //   - `SocketAddr` — an `IpAddr` plus a port. `socket_addr_parse` reads
 //     `a.b.c.d:port` and the bracketed `[v6]:port` form.
 //   - `NetError` — the closed enum every socket primitive of this module
-//     reports. `error_from_errno(n)` maps the errno a builtin returns
-//     (negated or not) onto it, using the Linux, Darwin or WASI numbering
-//     `target_os()` names; `errno()` is the inverse on the same target.
-//     `internal/stdlib/net_errno_test.go` pins the three tables to
-//     `internal/tables/strerror`'s row for row, so a number cannot drift.
+//     reports. `error_from_host(n)` maps the errno a builtin returns
+//     (negated or not, in the target's own numbering) onto it, and
+//     `errno()` answers in Linux numbering on every target, as
+//     `IoError` does, so it compares equal to the `std/errno` constants.
 //
 // The socket controls (`listen_with`, `listen_at`, the options,
 // `shutdown`), the stream verbs on a connection (`read` into the caller's
@@ -37,6 +36,7 @@
 // `import "std/net";` (docs/PRELUDE-TO-MODULES.md, Phase 5).
 
 import "std/i32";
+import "std/errno";
 import "std/error";
 import "std/time";
 import "std/async";
@@ -58,10 +58,11 @@ pub struct SocketAddr {
 
 // NetError — what a networking primitive reports when the OS refuses.
 //
-// Closed: every variant but `Other` names one errno on each target, and
-// `Other(errno)` carries any other number verbatim, so a caller can still
-// print it. `WouldBlock` is both `EAGAIN` and `EWOULDBLOCK` (one number
-// on every target this module runs on). `Interrupted` and `Other` share
+// Closed: every variant but `Other` names one errno, and `Other(errno)`
+// carries any other, in Linux numbering (0 for one the target numbers past
+// the strerror table, as `errno.from_host` reads it). `WouldBlock` is both
+// `EAGAIN` and `EWOULDBLOCK` (one number on every target this module runs
+// on). `Interrupted` and `Other` share
 // their names with `IoError`, so they are written `NetError.Interrupted`
 // and `NetError.Other(n)`.
 pub enum NetError {
@@ -594,17 +595,17 @@ pub struct Prefix {
 // of two different blocks. An IPv4-mapped block of 96 bits or more is the
 // IPv4 block it maps (`::ffff:10.0.0.0/104` is `10.0.0.0/8`).
 pub function prefix_parse(s: string): Option[Prefix] {
-  let slash: i32 = s.index_of("/");
+  let slash: Option[i32] = s.index_of("/");
   let text: string = s;
-  if (slash >= 0) {
-    text = s.slice_snap(0, slash);
+  if let Some(at) = slash {
+    text = s.slice_snap(0, at);
   }
   match (ip_parse(text)) {
     Some(ip) => {
       let width: i32 = ip.bytes().len() * 8;
       let bits: i32 = width;
-      if (slash >= 0) {
-        bits = __prefix_bits(s.slice_snap(slash + 1, s.len()), width);
+      if let Some(at) = slash {
+        bits = __prefix_bits(s.slice_snap(at + 1, s.len()), width);
       }
       if (bits < 0 || !__host_bits_clear(ip.bytes(), bits)) {
         return None;
@@ -1054,39 +1055,12 @@ pub function socket_addr_parse(s: string): Option[SocketAddr] {
 // NetError
 
 // The errno each variant stands for, in declaration order (`Other` has
-// none), and its number on each target. `net_errno_test.go` pins every
-// row to `internal/tables/strerror`; edit the four lists together.
-function __net_errno_names(): string[] {
-  return ["EADDRINUSE", "EADDRNOTAVAIL", "ECONNREFUSED", "ECONNRESET", "ECONNABORTED", "ETIMEDOUT", "EAGAIN", "EINPROGRESS", "ENETUNREACH", "EHOSTUNREACH", "EINTR"];
-}
-
-function __net_errnos_linux(): i32[] {
-  return [98, 99, 111, 104, 103, 110, 11, 115, 101, 113, 4];
-}
-
-function __net_errnos_darwin(): i32[] {
-  return [48, 49, 61, 54, 53, 60, 35, 36, 51, 65, 4];
-}
-
-function __net_errnos_wasi(): i32[] {
-  return [3, 4, 14, 15, 13, 73, 6, 26, 40, 23, 27];
-}
-
-// The table for the compile target. Android numbers as Linux; both
-// wasm targets use WASI preview 1 numbering, which is what the wasm
-// socket helpers translate wasi:sockets error codes to.
+// none).
 function __net_errnos(): i32[] {
-  let os: string = target_os();
-  if (os == "darwin") {
-    return __net_errnos_darwin();
-  }
-  if (os == "wasi" || os == "wasi-http") {
-    return __net_errnos_wasi();
-  }
-  return __net_errnos_linux();
+  return [errno.EADDRINUSE, errno.EADDRNOTAVAIL, errno.ECONNREFUSED, errno.ECONNRESET, errno.ECONNABORTED, errno.ETIMEDOUT, errno.EAGAIN, errno.EINPROGRESS, errno.ENETUNREACH, errno.EHOSTUNREACH, errno.EINTR];
 }
 
-function __net_error_at(i: i32, errno: i32): NetError {
+function __net_error_at(i: i32, n: i32): NetError {
   if (i == 0) {
     return AddrInUse;
   }
@@ -1105,10 +1079,10 @@ function __net_error_at(i: i32, errno: i32): NetError {
   if (i == 5) {
     return TimedOut;
   }
-  return __net_error_at_high(i, errno);
+  return __net_error_at_high(i, n);
 }
 
-function __net_error_at_high(i: i32, errno: i32): NetError {
+function __net_error_at_high(i: i32, n: i32): NetError {
   if (i == 6) {
     return WouldBlock;
   }
@@ -1124,21 +1098,13 @@ function __net_error_at_high(i: i32, errno: i32): NetError {
   if (i == 10) {
     return NetError.Interrupted;
   }
-  return NetError.Other(errno);
+  return NetError.Other(n);
 }
 
-// `error_from_errno(n)` — the variant for errno `n` on the compile
-// target. Takes the negated form the builtins return (`-98`) as well as
-// the plain number; anything the table does not name is `Other(n)` with
-// the sign dropped. i32::MIN, whose magnitude no i32 holds, saturates to
-// i32::MAX rather than negating back to itself.
-pub function error_from_errno(errno: i32): NetError {
-  let e: i32 = errno;
-  if (e == 0 - 2147483647 - 1) {
-    e = 2147483647;
-  } else if (e < 0) {
-    e = 0 - e;
-  }
+// `error_from_host(n)` — the variant for errno `n` as the compile target
+// numbers it, the form a socket builtin returns: negated (`-98`) or not.
+pub function error_from_host(n: i32): NetError {
+  let e: i32 = errno.from_host(n);
   let table: i32[] = __net_errnos();
   let i: i32 = 0;
   while (i < table.len()) {
@@ -1191,7 +1157,7 @@ function __net_error_index(e: NetError): i32 {
   }
 }
 
-// `errno()` — the positive errno this error is on the compile target;
+// `errno()` — the errno this error stands for, in Linux numbering;
 // `Other(n)` answers `n`.
 pub function (e: NetError) errno(): i32 {
   match (e) {
@@ -1273,6 +1239,13 @@ pub function (e: NetError) eq(other: NetError): boolean {
   return i >= 0 || e.errno() == other.errno();
 }
 
+// `ipv6_unavailable()` — whether this is how a `::` listener fails on a host
+// without IPv6: EAFNOSUPPORT from socket(2), or `AddrNotAvailable` from a
+// bind where the family exists but is switched off.
+pub function (e: NetError) ipv6_unavailable(): boolean {
+  return e.eq(AddrNotAvailable) || e.errno() == errno.EAFNOSUPPORT;
+}
+
 // ---------------------------------------------------------------------------
 // Socket controls
 //
@@ -1283,8 +1256,8 @@ pub function (e: NetError) eq(other: NetError): boolean {
 // dialled socket to any control here.
 //
 // wasi:sockets 0.2 has no Nagle switch and no blocking mode to turn off, so
-// on wasm `set_nodelay` and `set_nonblocking` answer `Other(58)`
-// (`ENOTSUP`) rather than claiming a setting the host does not have, and
+// on wasm `set_nodelay` and `set_nonblocking` answer `Other(errno.ENOTSUP)`
+// rather than claiming a setting the host does not have, and
 // `reuse_port` is ignored: a port is one socket's there.
 
 // ListenOptions — what `listen_with` asks of the listener: the accept
@@ -1480,14 +1453,14 @@ function __socket_ctl(sock: i32, op: i32, on: boolean): Result[void, NetError] {
 
 function __socket_result(r: i32): Result[void, NetError] {
   if (r < 0) {
-    return Err(error_from_errno(r));
+    return Err(error_from_host(r));
   }
   return Ok(());
 }
 
 function __socket_count(r: i32): Result[i32, NetError] {
   if (r < 0) {
-    return Err(error_from_errno(r));
+    return Err(error_from_host(r));
   }
   return Ok(r);
 }
@@ -1552,7 +1525,7 @@ pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError
   let from: u8[] = __zero_bytes(19);
   let n: i32 = udp_recvfrom(sock, buf, from);
   if (n < 0) {
-    return Err(error_from_errno(n));
+    return Err(error_from_host(n));
   }
   return Ok((n, __sender(from)));
 }
@@ -1658,7 +1631,7 @@ pub function peer_addr(sock: i32): Result[SocketAddr, NetError] {
 function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError] {
   let fam: i32 = tcp_socket_ctl(sock, op, 8);
   if (fam < 0) {
-    return Err(error_from_errno(fam));
+    return Err(error_from_host(fam));
   }
   let groups: i32 = 2;
   if (fam == 6) {
@@ -1669,7 +1642,7 @@ function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError] {
   while (i < groups) {
     let g: i32 = tcp_socket_ctl(sock, op, i);
     if (g < 0) {
-      return Err(error_from_errno(g));
+      return Err(error_from_host(g));
     }
     b = b.append((g >> 8) as u8);
     b = b.append((g & 255) as u8);
@@ -1677,7 +1650,7 @@ function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError] {
   }
   let port: i32 = tcp_socket_ctl(sock, op, 9);
   if (port < 0) {
-    return Err(error_from_errno(port));
+    return Err(error_from_host(port));
   }
   if (fam == 6) {
     return Ok(socket_addr(V6(b), port));

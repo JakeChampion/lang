@@ -330,8 +330,10 @@ function serve_conn(first: server.Connection): string {
       Ok(got) => {
         c = got.conn;
         held = held + string_from_bytes_unchecked(got.data);
-        let nl: i32 = held.index_of("\n");
-        while (nl >= 0) {
+        while (true) {
+          let Some(nl) = held.index_of("\n") else {
+            break;
+          };
           let line: string = held.take(nl);
           held = held.drop(nl + 1);
           let word: string = line;
@@ -348,7 +350,6 @@ function serve_conn(first: server.Connection): string {
             }
           }
           report = report + " " + word;
-          nl = held.index_of("\n");
         }
         if (got.ended) {
           c.close();

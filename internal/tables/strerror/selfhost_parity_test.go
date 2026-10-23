@@ -28,12 +28,13 @@ func readSelfHost(t *testing.T) string {
 	return string(b)
 }
 
-// fernListBody is the `[...]` body of `pub function NAME(): T[] { return [...]; }`.
+// fernListBody is the `[...]` body of `function NAME(): T[] { return [...]; }`,
+// public or not.
 func fernListBody(t *testing.T, src, name string) string {
 	t.Helper()
-	m := regexp.MustCompile(`(?s)pub function ` + name + `\(\): (?:string|i32)\[\] \{\s*return \[(.*?)\];`).FindStringSubmatch(src)
+	m := regexp.MustCompile(`(?s)(?:pub )?function ` + name + `\(\): (?:string|i32)\[\] \{\s*return \[(.*?)\];`).FindStringSubmatch(src)
 	if m == nil {
-		t.Fatalf("no %s() list found in %s — the extraction pattern has gone stale, which would make this test vacuous", name, selfHostSrc)
+		t.Fatalf("no %s() list found — the extraction pattern has gone stale, which would make this test vacuous", name)
 	}
 	return m[1]
 }
@@ -147,6 +148,35 @@ func TestStdErrnoMatches(t *testing.T) {
 	}
 	for name := range got {
 		t.Errorf("std/errno declares %s, which Table does not carry", name)
+	}
+}
+
+// TestStdErrnoFromHostMatches pins the tables std/errno's from_host translates
+// through to Table, row for row: a row out of place would hand a Darwin or WASI
+// errno some other errno's Linux number.
+func TestStdErrnoFromHostMatches(t *testing.T) {
+	b, err := os.ReadFile("../../stdlib/std/errno.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	lists := map[string][]int{
+		Darwin: fernInts(t, src, "__darwin_errnos"),
+		Wasi:   fernInts(t, src, "__wasi_errnos"),
+	}
+	carried := fernInts(t, src, "__carried_errnos")
+	if len(carried) != len(Table) || len(lists[Darwin]) != len(Table) || len(lists[Wasi]) != len(Table) {
+		t.Fatalf("std/errno's from_host tables have %d, %d and %d rows, Table has %d — regenerate with `go run ./internal/tables/strerror/gen_selfhost_lists`", len(lists[Darwin]), len(lists[Wasi]), len(carried), len(Table))
+	}
+	for i, e := range Table {
+		for os, nums := range lists {
+			if nums[i] != e.Number(os) {
+				t.Errorf("row %d (%s) on %s: std/errno says %d, Table says %d", i, e.Name, os, nums[i], e.Number(os))
+			}
+		}
+		if carried[i] != e.Carried() {
+			t.Errorf("row %d (%s): std/errno carries %d, Table carries %d", i, e.Name, carried[i], e.Carried())
+		}
 	}
 }
 
