@@ -1,0 +1,16 @@
+// A `__` inside a name the program declares is part of the name: only a
+// module's own mangling prefix is left out of a diagnostic.
+enum Pair__Kind { left__side(i32), right__side }
+
+function f(k: Pair__Kind): i32 {
+    let a: Pair__Kind = left__side;
+    let b: Pair__Kind = Pair__Kind.middle__side;
+    match (k) {
+        left__sida(n) => { return n; },
+    }
+    return 0;
+}
+
+function main(): i32 {
+    return 0;
+}

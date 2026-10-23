@@ -1,0 +1,19 @@
+// A variant that carries a payload is a constructor, not a value: read
+// without a call it is E036, bare or qualified, declared here or imported,
+// and for the built-in Some / Ok / Err alike. A payload-less variant stands
+// as a value.
+import "./shapes";
+
+enum Token { Num(i32), Pair(i32, i32), End }
+
+function main(): i32 {
+    let a: Token = Num;
+    let b: Token = Token.Pair;
+    let c: shapes.Shape = shapes.Shape.Circle;
+    let d: shapes.Shape = shapes.Shape.Rect;
+    let e: Option[i32] = Some;
+    let f: Result[i32, string] = Result.Err;
+    let g: Token = Token.End;
+    let h: shapes.Shape = shapes.Shape.Dot;
+    return 0;
+}

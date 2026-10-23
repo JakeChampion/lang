@@ -1,0 +1,2 @@
+pub enum Shape { Circle(f64), Rect { w: f64, h: f64 }, Dot }
+pub enum Mark { Tick, Cross }

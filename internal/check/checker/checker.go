@@ -1197,6 +1197,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c := &checker{
 		funcSources: map[string]string{},
+		entryModule: prog.EntryModule,
 		info: &Info{
 			VarTypes:            map[*ast.Var]ast.Type{},
 			Locals:              map[*ast.FuncDecl][]*ast.Var{},
@@ -8849,6 +8850,9 @@ func isScalarBuiltinMethod(mangled string) bool {
 }
 
 type checker struct {
+	// entryModule is the entry module's path; its declarations keep their
+	// names unmangled.
+	entryModule string
 	// callee is the callee expression the call arm is checking, so a function
 	// named there is told from one named as a value.
 	callee ast.Expr
@@ -10007,7 +10011,7 @@ func (c *checker) monomorphCloneEnumName(dest ast.Type) string {
 // monomorphized clone's `E__i32` is not a module mangle, so it stands.
 func (c *checker) enumHintName(name string) string {
 	ed, ok := c.info.Enums[name]
-	if !ok || ed.Monomorphized || ed.SourceModule == "" {
+	if !ok || ed.Monomorphized || ed.SourceModule == "" || ed.SourceModule == c.entryModule {
 		return name
 	}
 	if ed.SourceModule == c.currentModule() {
@@ -10017,6 +10021,19 @@ func (c *checker) enumHintName(name string) string {
 		return name
 	}
 	return demangle(name)
+}
+
+// variantHintName is how a diagnostic names variant `name` of `ed`: bare. A
+// union's variants are its member structs, whose names modload mangles in a
+// module's declarations, so the declaring module's prefix comes off.
+func (c *checker) variantHintName(ed *ast.EnumDecl, name string) string {
+	if ed == nil || ed.SourceModule == "" || ed.SourceModule == c.entryModule {
+		return name
+	}
+	if i := strings.Index(ed.Name, "__"); i > 0 && strings.HasPrefix(name, ed.Name[:i+2]) {
+		return name[i+2:]
+	}
+	return name
 }
 
 // variantEnumList returns a human-readable list of the enum names that
@@ -13069,8 +13086,8 @@ func scalarModuleFor(t ast.Type) string {
 // The catch-all reading is only offered when the name resembles no
 // variant: a near-miss is far more likely to be a typo than an attempt
 // at a wildcard.
-func unknownVariantHint(name string, ed *ast.EnumDecl) string {
-	if s := variantSpellingHint(name, ed); s != "" {
+func (c *checker) unknownVariantHint(name string, ed *ast.EnumDecl) string {
+	if s := c.variantSpellingHint(name, ed); s != "" {
 		return s
 	}
 	return " — a bare name in arm position is a VARIANT, not a binding;" +
@@ -13081,13 +13098,15 @@ func unknownVariantHint(name string, ed *ast.EnumDecl) string {
 // close enough. It is the whole hint where the spelling already says the
 // pattern is a variant — a tuple element's `A(x)`, which cannot be read as a
 // binder, so unknownVariantHint's arm-position advice would misdirect.
-func variantSpellingHint(name string, ed *ast.EnumDecl) string {
+func (c *checker) variantSpellingHint(name string, ed *ast.EnumDecl) string {
+	name = c.variantHintName(ed, name)
 	best, bestD := "", 0
 	max := len(name)/3 + 1
 	for i := range ed.Variants {
-		d := editDistanceStr(name, ed.Variants[i].Name)
+		v := c.variantHintName(ed, ed.Variants[i].Name)
+		d := editDistanceStr(name, v)
 		if d <= max && (best == "" || d < bestD) {
-			best, bestD = ed.Variants[i].Name, d
+			best, bestD = v, d
 		}
 	}
 	if best != "" {
@@ -16349,9 +16368,9 @@ func scrutineeSub(ed *ast.EnumDecl, et ast.EnumType) map[string]ast.Type {
 // to declare in a per-arm scope and to drive the position-based IR lowering.
 // A named-field pattern reaches it already rewritten into this form by
 // settleNamedVariantPattern. Errors report at pos.
-func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVariant, bindings []string, sub map[string]ast.Type) ([]string, []ast.Type) {
+func (c *checker) resolveVariantBindings(pos ast.Position, ed *ast.EnumDecl, variant *ast.EnumVariant, bindings []string, sub map[string]ast.Type) ([]string, []ast.Type) {
 	if len(bindings) != len(variant.Payloads) {
-		c.errfCode(pos, "E015", "%s", payloadCountMsg(variant.Name, len(variant.Payloads), len(bindings)))
+		c.errfCode(pos, "E015", "%s", payloadCountMsg(c.variantHintName(ed, variant.Name), len(variant.Payloads), len(bindings)))
 	}
 	outTypes := make([]ast.Type, len(bindings))
 	for k := range bindings {
@@ -16374,7 +16393,7 @@ func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVari
 // field may be named once, and all of them must be unless the pattern ends in
 // `..`. A settled pattern settles to itself, so a re-check after
 // monomorphisation is a no-op. See docs/NAMED-FIELD-VARIANTS.md.
-func (c *checker) settleNamedVariantPattern(pos ast.Position, variant *ast.EnumVariant, fields, bindings []string, payloads []*ast.TuplePatElem, rest bool) ([]string, []*ast.TuplePatElem) {
+func (c *checker) settleNamedVariantPattern(pos ast.Position, ed *ast.EnumDecl, variant *ast.EnumVariant, fields, bindings []string, payloads []*ast.TuplePatElem, rest bool) ([]string, []*ast.TuplePatElem) {
 	if len(variant.FieldNames) == 0 {
 		c.errfCode(pos, "E015", "variant %s has positional payloads; match it as %s(...), not %s { ... }",
 			variant.Name, variant.Name, variant.Name)
@@ -16386,11 +16405,11 @@ func (c *checker) settleNamedVariantPattern(pos ast.Position, variant *ast.EnumV
 	for k, f := range fields {
 		idx := slices.Index(variant.FieldNames, f)
 		if idx < 0 {
-			c.errfCode(pos, "E015", "variant %s has no field %q", variant.Name, f)
+			c.errfCode(pos, "E015", "variant %s has no field %q", c.variantHintName(ed, variant.Name), f)
 			continue
 		}
 		if bound[idx] {
-			c.errfCode(pos, "E015", "field %q bound more than once in pattern for %s", f, variant.Name)
+			c.errfCode(pos, "E015", "field %q bound more than once in pattern for %s", f, c.variantHintName(ed, variant.Name))
 			continue
 		}
 		bound[idx] = true
@@ -16636,7 +16655,7 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 		c.errfCode(pos, "E043", "unknown enum type %q", et.Name)
 		return
 	}
-	c.checkVariantQualifier(pos, el.VariantModule, ed)
+	badQualifier := c.checkVariantQualifier(pos, el.VariantModule, ed)
 	var variant *ast.EnumVariant
 	for j := range ed.Variants {
 		if ed.Variants[j].Name == el.VariantName {
@@ -16645,15 +16664,17 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 		}
 	}
 	if variant == nil {
-		c.errfCode(pos, "E014", "variant %q is not part of enum %s%s",
-			el.VariantName, ed.Name, variantSpellingHint(el.VariantName, ed))
+		if !badQualifier {
+			c.errfCode(pos, "E014", "variant %q is not part of enum %s%s",
+				c.variantHintName(ed, el.VariantName), c.enumHintName(ed.Name), c.variantSpellingHint(el.VariantName, ed))
+		}
 		return
 	}
 	if el.VariantFieldNames != nil {
-		el.VariantBindings, el.VariantPayloads = c.settleNamedVariantPattern(pos, variant, el.VariantFieldNames, el.VariantBindings, el.VariantPayloads, el.RestWritten)
+		el.VariantBindings, el.VariantPayloads = c.settleNamedVariantPattern(pos, ed, variant, el.VariantFieldNames, el.VariantBindings, el.VariantPayloads, el.RestWritten)
 		el.VariantFieldNames = slices.Clone(variant.FieldNames)
 	}
-	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, variant, el.VariantBindings, scrutineeSub(ed, et))
+	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, ed, variant, el.VariantBindings, scrutineeSub(ed, et))
 	for i, name := range el.VariantBindings {
 		// A slot carrying a sub-pattern binds nothing itself — its pattern
 		// does, under the same element rules, so it routes back through
@@ -16959,7 +16980,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			c.checkBlock(arm.Body, s)
 			continue
 		}
-		c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
+		badQualifier := c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
 		// Find the variant on this enum.
 		varIdx := -1
 		var variant *ast.EnumVariant
@@ -16971,8 +16992,10 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			}
 		}
 		if varIdx < 0 {
-			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
-				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
+			if !badQualifier {
+				c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+					c.variantHintName(ed, arm.VariantName), c.enumHintName(ed.Name), c.unknownVariantHint(arm.VariantName, ed))
+			}
 			c.checkBlock(arm.Body, s)
 			continue
 		}
@@ -16982,7 +17005,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		arm.EnumName = ed.Name
 		arm.VariantIndex = varIdx
 		if covered[arm.VariantName] {
-			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
+			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", c.variantHintName(ed, arm.VariantName))
 		}
 		// Bind names in a fresh scope so they don't leak into
 		// sibling arms. Payload types get the type-parameter
@@ -16991,10 +17014,10 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		// pattern (`Rect { w, h }`) is validated + reordered into
 		// declaration order here.
 		if arm.NamedFields {
-			arm.Bindings, arm.Payloads = c.settleNamedVariantPattern(arm.P, variant, arm.FieldNames, arm.Bindings, arm.Payloads, arm.RestWritten)
+			arm.Bindings, arm.Payloads = c.settleNamedVariantPattern(arm.P, ed, variant, arm.FieldNames, arm.Bindings, arm.Payloads, arm.RestWritten)
 			arm.FieldNames = slices.Clone(variant.FieldNames)
 		}
-		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, sub)
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, ed, variant, arm.Bindings, sub)
 		// A refutable arm may still complete its variant's coverage together
 		// with its siblings — see payloadsExhaustive, applied per variant once
 		// every arm is in. Snapshotted AFTER resolveVariantBindings, which is
@@ -17036,7 +17059,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		for _, v := range ed.Variants {
 			if !covered[v.Name] {
 				c.errfCode(n.P, "E030", "match does not cover variant %s of enum %s — add an arm for it, or a `_` arm",
-					v.Name, ed.Name)
+					c.variantHintName(ed, v.Name), c.enumHintName(ed.Name))
 			}
 		}
 	}
@@ -17855,7 +17878,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			c.errfCode(arm.P, "E035", "tuple pattern requires a tuple scrutinee, got enum %s", ed.Name)
 			continue
 		}
-		c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
+		badQualifier := c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
 		varIdx := -1
 		var variant *ast.EnumVariant
 		for j := range ed.Variants {
@@ -17866,8 +17889,10 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			}
 		}
 		if varIdx < 0 {
-			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
-				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
+			if !badQualifier {
+				c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+					c.variantHintName(ed, arm.VariantName), c.enumHintName(ed.Name), c.unknownVariantHint(arm.VariantName, ed))
+			}
 			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
 			continue
 		}
@@ -17877,13 +17902,13 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		arm.EnumName = ed.Name
 		arm.VariantIndex = varIdx
 		if covered[arm.VariantName] {
-			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
+			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", c.variantHintName(ed, arm.VariantName))
 		}
 		if arm.NamedFields {
-			arm.Bindings, arm.Payloads = c.settleNamedVariantPattern(arm.P, variant, arm.FieldNames, arm.Bindings, arm.Payloads, arm.RestWritten)
+			arm.Bindings, arm.Payloads = c.settleNamedVariantPattern(arm.P, ed, variant, arm.FieldNames, arm.Bindings, arm.Payloads, arm.RestWritten)
 			arm.FieldNames = slices.Clone(variant.FieldNames)
 		}
-		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, sub)
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, ed, variant, arm.Bindings, sub)
 		// A refutable arm may still complete its variant's coverage together
 		// with its siblings — see payloadsExhaustive, applied per variant once
 		// every arm is in. Snapshotted AFTER resolveVariantBindings, which is
@@ -17922,7 +17947,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		for _, v := range ed.Variants {
 			if !covered[v.Name] {
 				c.errfCode(n.P, "E030", "match does not cover variant %s of enum %s — add an arm for it, or a `_` arm",
-					v.Name, ed.Name)
+					c.variantHintName(ed, v.Name), c.enumHintName(ed.Name))
 			}
 		}
 	}
@@ -24173,19 +24198,25 @@ func isBareNumericLiteral(e ast.Expr) bool {
 // `Color.Red` type-checked as a statement and was rejected as an expression —
 // one construct with two answers depending only on its position (#6576). One
 // function now, so they cannot drift again.
-func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) {
+//
+// It reports whether the qualifier is wrong; a variant missing from the
+// scrutinee enum is then not reported again as E014.
+func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) bool {
 	if qualifier == "" {
-		return
+		return false
 	}
 	if _, qualIsEnum := c.info.Enums[qualifier]; qualIsEnum {
 		if qualifier != ed.Name {
 			c.errfCode(p, "E029", "variant pattern qualifier %q does not match scrutinee enum %s",
 				c.enumHintName(qualifier), c.enumHintName(ed.Name))
+			return true
 		}
-		return
+		return false
 	}
 	if ed.SourceModule != "" && qualifier != ed.SourceModule {
 		c.errfCode(p, "E029", "variant pattern qualifier names module %q, but enum %s lives in module %q",
 			qualifier, c.enumHintName(ed.Name), ed.SourceModule)
+		return true
 	}
+	return false
 }

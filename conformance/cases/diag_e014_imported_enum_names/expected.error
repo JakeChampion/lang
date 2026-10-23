@@ -1,0 +1,5 @@
+variant "Circel" is not part of enum shapes.Shape (did you mean "Circle"?)
+variant Circle has positional payloads; match it as Circle(...), not Circle { ... }
+variant "Rect" already covered earlier in this match
+variant pattern qualifier "shapes.Mark" does not match scrutinee enum shapes.Shape
+match does not cover variant Dot of enum shapes.Shape — add an arm for it, or a `_` arm

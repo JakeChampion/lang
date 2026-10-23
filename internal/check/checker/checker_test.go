@@ -9561,6 +9561,11 @@ func TestVariantQualifierSameInStatementAndExpression(t *testing.T) {
 		if strings.Contains(err.Error(), "names module") {
 			t.Errorf("%s: reported the module-qualifier form, want the enum-mismatch one: %v", name, err)
 		}
+		// `Ok` is not a Color variant either, but the qualifier already says
+		// what is wrong, as the self-host checker reports it.
+		if strings.Contains(err.Error(), "is not part of enum") {
+			t.Errorf("%s: reported E014 beside the E029: %v", name, err)
+		}
 	}
 
 	// The enum-qualifier spelling is legal in BOTH positions. The expression
