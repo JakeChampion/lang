@@ -11,7 +11,7 @@ import (
 )
 
 func TestSelfHostMachOProfileSymbols(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	image := compileCPUProfile(t, cli, `@noinline function probe(x:i32): i32 { return x*7+3; }
 function main(): i32 { return probe(args().len()); }`, "arm64-darwin", "", "-g")
 	file, err := os.ReadFile(image)

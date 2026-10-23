@@ -182,6 +182,31 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		src  string
 		want []string // codes the self-host checker should print
 	}{
+		{"raw-data-is-private", `function main(): i32 { let x = __raw_data("a"); return 0; }`, []string{"E001"}},
+		{"raw-store-is-private", `function main(): i32 { __raw_store8(0 as usize, 0, 0); return 0; }`, []string{"E001"}},
+		{"raw-syscall-is-private", `function main(): i32 { __syscall0(0); return 0; }`, []string{"E001"}},
+		{"generic-array-result-unbound", `function mk[T](): T[] { return []; } function main(): i32 { let z = mk(); return 0; }`, []string{"E040"}},
+		{"generic-array-result-destination", `function mk[T](): T[] { return []; } function main(): i32 { let z: i32[] = mk(); return z.len(); }`, nil},
+		{"generic-array-result-return", `function mk[T](): T[] { return []; } function f(): i32[] { return mk(); } function main(): i32 { return f().len(); }`, nil},
+		{"generic-array-result-receiver", `function mk[T](): T[] { return []; } function main(): i32 { return mk().len(); }`, []string{"E040"}},
+		{"generic-array-result-unused", `function mk[T](): T[] { return []; } function main(): i32 { mk(); return 0; }`, []string{"E040"}},
+		{"raw-name-shadow", `function __raw_data(s: string): i32 { return 1; } function main(): i32 { return __raw_data("a"); }`, nil},
+
+		{"literal-match-wrong-type", `function main(): i32 { match (true) { 1 => { return 1; }, _ => { return 0; } } }`, []string{"E035"}},
+		{"literal-value-match-wrong-type", `function main(): i32 { let n = match (true) { 1 => 1, _ => 0 }; return n; }`, []string{"E035"}},
+		{"ordinary-equality-mismatch", `function main(): i32 { let n = true == 1; return 0; }`, []string{"E041"}},
+
+		{"unannotated-try-fallthrough", `function f(x: Option[i32]) { let y = x?; } function main(): i32 { return 0; }`, []string{"E081", "E052"}},
+		{"unannotated-void-fallthrough", `function f() { print("hi"); } function main(): i32 { return 0; }`, []string{"E081"}},
+		{"unannotated-try-return", `function f(x: Option[i32]) { let y = x?; return Some(y); } function main(): i32 { return 0; }`, []string{"E081"}},
+
+		{"dyn-unsafe-self-result", `trait Bad { function copy(self: Self): Self; } function f(x: dyn Bad): i32 { return 0; } function main(): i32 { return 0; }`, []string{"E021"}},
+		{"use-zero-argument-callback", `function take(f: () => i32): i32 { return f(); } function main(): i32 { use x <- take(); return 0; }`, []string{"E032", "E038"}},
+		{"use-noncallback-source", `function take(n: i32): i32 { return n; } function main(): i32 { use x <- take(1); return 0; }`, []string{"E032", "E004"}},
+
+		{"public-rc-helper-remains-admitted", `function main(): i32 { __fern_rc_dec(0 as usize); return 0; }`, nil},
+		{"raw-data-value-is-private", `function main(): i32 { let f = __raw_data; return 0; }`, []string{"E001"}},
+
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
 		{"char-lt", "function f(a: char, b: char): boolean { return a < b; }", nil},
 		{"char-le", "function f(a: char, b: char): boolean { return a <= b; }", nil},

@@ -9,7 +9,7 @@ import (
 )
 
 func TestSelfHostByteCopyNativeRuntime(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	module, err := os.ReadFile(langSrcAbs(t, "compiler/rtbytecopy.fern"))
 	if err != nil {
 		t.Fatal(err)

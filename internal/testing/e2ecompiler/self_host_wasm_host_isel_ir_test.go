@@ -78,7 +78,7 @@ func TestSelfHostWasmHostIselIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	cli := newStrictCLI(t)
+	cli := newStrictRuntimeCLI(t)
 	for _, c := range []struct{ name, src, stderr string }{
 		{"write-some", wasmWriteSomeSrc, "ok\n"},
 		{"handle-flags", wasmHandleFlagsSrc, ""},

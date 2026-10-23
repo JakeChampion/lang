@@ -10,7 +10,7 @@ import (
 // A pool larger than the register argument set must preserve runtime argument
 // cycles, stack arguments and callee-saved floating-point values.
 func TestSelfHostArm64ExtraCallerRegisters(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	cli := buildRuntimeCLI(t)
 	for name, source := range map[string]string{
 		"runtime-argument-cycle":  armRuntimeArgumentCycle,
 		"float-argument-boundary": armFloatArgumentBoundary,

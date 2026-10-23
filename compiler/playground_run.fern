@@ -332,6 +332,9 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   if (report_diags(asmcore.parse_errors(merged), files)) {
     return 1;
   }
+  if (report_diags(checker.build_gate_diags(merged), files)) {
+    return 1;
+  }
   let errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(merged));
   errs = util.append_diags(errs, asmcore.check_map_new_chain(merged));
   errs = util.append_diags(errs, asmcore.check_undefined_calls(merged));
