@@ -29835,11 +29835,13 @@ function rescope_at_stmt(st: ast.Stmt, own a: RescopeScan): RescopeScan {
 }
 
 function rescope_at_expr(e: ast.Expr, own a: RescopeScan): RescopeScan {
-  return RescopeScan { ...a, found: pretype_at(e, a.found) };
+  if (!a.found && pretype_at(e, false)) {
+    return RescopeScan { ...a, found: true };
+  }
+  return a;
 }
 
-// needs_pretype_or_rescope is needs_pretype, or a match arm whose variant name
-// is in `coll`.
+// One scan finds value blocks, unresolved record patterns, and colliding variant names.
 function needs_pretype_or_rescope(stmts: ast.Stmt[], coll: string[]): boolean {
   let a: RescopeScan = RescopeScan { coll: coll, found: false };
   for stmt in stmts {
@@ -29881,17 +29883,6 @@ function struct_record_value_body(lm: ast.ExprLambda, s: Scope): ast.Stmt[] {
     }
   }
   return lm.body;
-}
-
-// needs_pretype reports whether a body holds anything pretype_module rewrites.
-// It is the cheap syntactic test that keeps the scoped rewrite (and the module
-// tables it needs) off the modules that have none.
-function needs_pretype(stmts: ast.Stmt[]): boolean {
-  let found: boolean = false;
-  for stmt in stmts {
-    found = astwalk.fold_stmt_pruned(stmt, found, pretype_at, astwalk.descend_all);
-  }
-  return found;
 }
 
 // use_untyped reports whether `c` is the source call of a `use NAME <- CALL;`
