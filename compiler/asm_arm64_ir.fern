@@ -1792,7 +1792,7 @@ function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmco
 // as it is, through a register entry: the function can leave through a
 // branch to it, which returns to this function's caller.
 function ssa_tail_call(blk: ssa.SBlock, ins: ssa.SInst, s: asmcore.EmitState, tails: boolean): boolean {
-  return tails && blk.insts.len() > 0 && ssa.returns_call(blk, blk.insts.len() - 1) && blk.insts[blk.insts.len() - 1].result == ins.result && ssa_reg_call(ins, s);
+  return tails && blk.insts.len() > 0 && ssa.returns_call(blk, blk.insts.len() - 1) && blk.insts[blk.insts.len() - 1].result == ins.result && (ssa_reg_call(ins, s) || asmcore.tail_allocator(ins) != "");
 }
 
 // ssa_calls_besides_tails reports a call in `f` that is not a tail call.
@@ -1813,20 +1813,35 @@ function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: bool
 // ssa_emit_tail_call moves a tail call's arguments into the register entry's
 // registers and leaves through a branch to it.
 function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: sourcepos.SourcePos, s: asmcore.EmitState): asmcore.EmitState {
-  let mask: string = s.float_mask(asmcore.sanitize_label(ins.str));
+  let target: string = asmcore.tail_allocator(ins);
+  let allocator: boolean = target != "";
+  let mask: string = "";
+  if (!allocator) {
+    let name: string = asmcore.sanitize_label(ins.str);
+    target = "__fn_" + name + ".r";
+    mask = s.float_mask(name);
+  } else {
+    s = s.need("heap");
+  }
   let srcs: i32[] = [];
   let dsts: i32[] = [];
-  let a: i32 = 0;
-  while (a < ins.args.len()) {
-    srcs = srcs.append(reg_of[ins.args[a]]);
-    dsts = dsts.append(ssa_arg_loc(mask, a));
-    a = a + 1;
+  if (allocator) {
+    // tail_allocator accepts one integer argument. Its runtime home is x0.
+    srcs = [reg_of[ins.args[0]]];
+    dsts = [0];
+  } else {
+    let a: i32 = 0;
+    while (a < ins.args.len()) {
+      srcs = srcs.append(reg_of[ins.args[a]]);
+      dsts = dsts.append(ssa_arg_loc(mask, a));
+      a = a + 1;
+    }
   }
   s = ssa_parallel_moves(srcs, dsts, ssa_x0_forget(s));
   if (pos.line > 0) {
     s = ssa_line_loc(ssa.SInst { kind_tag: 35, result: -1, args: [], imm: pos.line, str: pos.col }, s);
   }
-  return ssa_exit(fr, s, "__fn_" + asmcore.sanitize_label(ins.str) + ".r");
+  return ssa_exit(fr, s, target);
 }
 
 // ssa_pair writes `stp|ldp a, b, [sp, #off]!` (mode 3) or `[sp], #off`
@@ -4375,13 +4390,17 @@ function ssa_view_off(fr: SsaFrame, v: i32): i32 {
 }
 
 // ssa_raw_inst selects the raw memory floor (52..55): unchecked 8-byte and
-// byte loads and stores at base + idx, a byte's constant idx read as the
-// unsigned immediate offset.
+// byte loads and stores at base + idx. A constant word index scales into its
+// byte displacement. A constant byte index is already a byte displacement.
 function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   let a: string = ssa_src(reg_of, ins.args[0], "x4");
   s = ssa_load(reg_of, ins.args[0], a, s);
-  let at: string = "[" + a + ", #" + util.i64_to_string(imm.value[ins.args[1]]) + "]";
+  let offset: i64 = imm.value[ins.args[1]];
+  if (k == 52 || k == 53) {
+    offset = offset * 8i64;
+  }
+  let at: string = "[" + a + ", #" + util.i64_to_string(offset) + "]";
   if (!imm.is_imm[ins.args[1]]) {
     let b: string = ssa_src(reg_of, ins.args[1], "x5");
     s = ssa_load(reg_of, ins.args[1], b, s);

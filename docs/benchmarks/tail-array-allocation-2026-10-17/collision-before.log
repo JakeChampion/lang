@@ -1,0 +1,7 @@
+--- FAIL: TestSelfHostTailArrayAllocation (1.27s)
+    --- FAIL: TestSelfHostTailArrayAllocation/arm64-linux (0.02s)
+        --- FAIL: TestSelfHostTailArrayAllocation/arm64-linux/plain (0.02s)
+            self_host_tail_array_allocation_test.go:105: exit=91
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	1.283s
+FAIL

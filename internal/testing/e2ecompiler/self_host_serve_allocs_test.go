@@ -164,8 +164,10 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 // (docs/rc-log/2026-10-22-a-an-element-take-survives-the-update-that-keeps-its-array.md);
 // 200.92 here with record updaters spliced into their callers and a read
 // that a dominating read of the same slot already made reused
-// (docs/rc-log/2026-10-22-b-an-updater-is-spliced-and-a-repeated-read-is-reused.md).
-const ServeAllocsH3Ceiling = 202
+// (docs/rc-log/2026-10-22-b-an-updater-is-spliced-and-a-repeated-read-is-reused.md);
+// 197.92 here with a field read kept, not read again, past the update of
+// its record (docs/rc-log/2026-10-22-e-a-read-is-kept-past-its-records-update.md).
+const ServeAllocsH3Ceiling = 199
 
 // ServeAllocsH3MuxCeiling bounds allocations per hello request with
 // ServeAllocsH3MuxConcurrency requests in flight on one connection, the
@@ -177,9 +179,10 @@ const ServeAllocsH3Ceiling = 202
 // (docs/benchmarks/net-h3-encode-2026-10-21.md), and 130.32 here with a
 // scalar concat growing a sole receiver's block in place
 // (docs/benchmarks/net-h3-concat-2026-10-21.md), and 112.91 here with
-// record updaters spliced and repeated reads reused; bounded like the H2
-// and serial H3 means, a ceiling that a gain lowers.
-const ServeAllocsH3MuxCeiling = 114
+// record updaters spliced and repeated reads reused, and 109.91 with a field
+// read kept past the update of its record; bounded like the H2 and serial H3
+// means, a ceiling that a gain lowers.
+const ServeAllocsH3MuxCeiling = 111
 
 // ServeAllocsH3MuxConcurrency is how many requests the multiplexed client
 // keeps in flight: enough to measure the multiplexed path, below the

@@ -1,0 +1,143 @@
+// Canonical decimal words for a packed constant byte array.
+import "./util";
+
+pub function words(bs: u8[]): string {
+  let size: i64 = 0;
+  for b in bs {
+    let n: i32 = b as i32;
+    size = size + 1i64;
+    if (n >= 10) {
+      size = size + 1i64;
+    }
+    if (n >= 100) {
+      size = size + 1i64;
+    }
+  }
+  if (bs.len() > 0) {
+    size = size + (bs.len() - 1) as i64;
+  }
+  if (size > 2147483647i64) {
+    return "";
+  }
+  let out: u8[] = __alloc_u8(size as i32);
+  let at: i32 = 0;
+  let i: i32 = 0;
+  while (i < bs.len()) {
+    if (i > 0) {
+      out = out.with(at, 44 as u8);
+      at = at + 1;
+    }
+    let n: i32 = bs[i] as i32;
+    if (n >= 100) {
+      out = out.with(at, (48 + n / 100) as u8);
+      at = at + 1;
+    }
+    if (n >= 10) {
+      out = out.with(at, (48 + n / 10 % 10) as u8);
+      at = at + 1;
+    }
+    out = out.with(at, (48 + n % 10) as u8);
+    at = at + 1;
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+pub function valid(text: string, count: i32): boolean {
+  if (count < 0) {
+    return false;
+  }
+  if (count == 0) {
+    return text.len() == 0;
+  }
+  let words: i32 = 0;
+  let digits: i32 = 0;
+  let value: i32 = 0;
+  for b in text.as_bytes() {
+    if (b == 44 as u8) {
+      if (digits == 0 || value > 255) {
+        return false;
+      }
+      words = words + 1;
+      digits = 0;
+      value = 0;
+    } else {
+      if (invalid_digit(b, digits, value)) {
+        return false;
+      }
+      value = value * 10 + (b as i32 - 48);
+      digits = digits + 1;
+    }
+  }
+  return digits > 0 && value <= 255 && words + 1 == count;
+}
+
+function invalid_digit(b: u8, digits: i32, value: i32): boolean {
+  return b < 48 as u8 || b > 57 as u8 || digits == 3 || digits > 0 && value == 0;
+}
+
+pub function count_words(text: string): i32 {
+  if (text.len() == 0) {
+    return 0;
+  }
+  let count: i32 = 0;
+  for b in text.as_bytes() {
+    if (b == 44 as u8) {
+      count = count + 1;
+    }
+  }
+  if (text[text.len() - 1] != 44 as u8) {
+    count = count + 1;
+  }
+  return count;
+}
+
+pub function spaced_words(text: string): string {
+  let commas: i32 = 0;
+  for b in text.as_bytes() {
+    if (b == 44 as u8) {
+      commas = commas + 1;
+    }
+  }
+  let out: u8[] = __alloc_u8(text.len() + commas);
+  let at: i32 = 0;
+  for b in text.as_bytes() {
+    out = out.with(at, b);
+    at = at + 1;
+    if (b == 44 as u8) {
+      out = out.with(at, 32 as u8);
+      at = at + 1;
+    }
+  }
+  return string_from_bytes_unchecked(out);
+}
+
+pub function values(text: string): u8[] {
+  let out: u8[] = __alloc_u8(count_words(text));
+  let start: i32 = 0;
+  let end: i32 = 0;
+  let at: i32 = 0;
+  while (end < text.len()) {
+    if (text[end] == 44 as u8) {
+      out = out.with(at, byte_value(slice_unchecked(text, start, end)));
+      at = at + 1;
+      start = end + 1;
+    }
+    end = end + 1;
+  }
+  if (start < text.len()) {
+    out = out.with(at, byte_value(slice_unchecked(text, start, text.len())));
+  }
+  return out;
+}
+
+function byte_value(word: str): u8 {
+  let value: i32 = 0;
+  for b in word.as_bytes() {
+    if (b < 48 as u8 || b > 57 as u8) {
+      return util.lit_to_i32(word + "") as u8;
+    }
+    value = value * 10 + b as i32 - 48;
+  }
+  return value as u8;
+}
