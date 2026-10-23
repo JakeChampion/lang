@@ -2,9 +2,9 @@
 # Compiles the server, builds the container image, and saves the image where
 # Netlify finds functions.
 #
-# Netlify's build image has no Docker and no Podman, so this installs a static,
-# rootless Podman, the same setup as netlify/php-on-netlify. Set
-# CONTAINER_TOOL=docker (or podman) to use a tool that is already installed.
+# With no container tool set, this installs a static, rootless Podman set up
+# for an unprivileged build sandbox. Set CONTAINER_TOOL=docker (or podman) to
+# use a tool that is already installed.
 # Set FERN to use an installed compiler in place of the nightly release.
 set -euo pipefail
 cd "$(dirname "$0")"
