@@ -19,6 +19,7 @@
 # programs under examples/tests/ exercise such an example in simulation and run.
 api norun
 api_sim 0
+netlify_container_sim 0
 array 100
 factorial 208
 fizzbuzz 0
