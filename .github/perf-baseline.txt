@@ -1,3 +1,4 @@
+# 2026-10-23: deflate rows measured at 49c290377 in Perf run 40010926319, after main integration.
 # Retired- and static-instruction baselines for the bench corpus,
 # checked against every run by scripts/ci-check-perf.
 #
@@ -75,6 +76,10 @@ x86_64/call_overhead.text	233
 x86_64/call_overhead.ir	8250807
 x86_64/closure_call.text	877
 x86_64/closure_call.ir	63018154
+x86_64/deflate_decode.ir	237885657
+x86_64/deflate_decode.text	9659
+x86_64/deflate_encode.ir	95861038
+x86_64/deflate_encode.text	6015
 x86_64/enum_match.text	994
 x86_64/enum_match.ir	50850085
 x86_64/http_hello.text	16094
@@ -342,6 +347,10 @@ aarch64/call_overhead.text	304
 aarch64/call_overhead.ir	11250819
 aarch64/closure_call.text	1086
 aarch64/closure_call.ir	72624168
+aarch64/deflate_decode.ir	226739308
+aarch64/deflate_decode.text	10412
+aarch64/deflate_encode.ir	102600617
+aarch64/deflate_encode.text	6652
 aarch64/enum_match.text	1206
 aarch64/enum_match.ir	41175097
 aarch64/http_hello.text	16675
