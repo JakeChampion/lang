@@ -152,23 +152,24 @@ function __cli_step_err(opts: Map[string, string], i: i32, msg: string): CliStep
 function __cli_long(s: CliSpec, opts: Map[string, string], argv: string[], i: i32): CliStep {
   let a: string = argv[i];
   let body: str = slice_unchecked(a, 2, a.len());
-  let eq: i32 = body.index_of("=");
   let name: str = body;
   // The value joins `opts`, which outlives this token, so it is copied.
   let inline_val: string = "";
-  if (eq >= 0) {
+  let inline: boolean = false;
+  if let Some(eq) = body.index_of("=") {
     name = slice_unchecked(body, 0, eq);
     inline_val = slice_unchecked(body, eq + 1, body.len()) + "";
+    inline = true;
   }
   match (__cli_find_long(s, name)) {
     Some(f) => {
       if (!f.takes_value) {
-        if (eq >= 0) {
+        if (inline) {
           return __cli_step_err(opts, i, "flag --" + name + " takes no value");
         }
         return CliStep { opts: opts.insert(f.long, "true"), next: i + 1, error: "" };
       }
-      if (eq >= 0) {
+      if (inline) {
         return CliStep { opts: opts.insert(f.long, inline_val), next: i + 1, error: "" };
       }
       if (i + 1 < argv.len()) {

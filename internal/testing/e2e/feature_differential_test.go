@@ -116,7 +116,7 @@ function main(): i32 {
     match (s[0:5]) { Some(v) => { print(v); }, None => { print("none"); } }
     match (s[1:99]) { Some(v) => { print(v); }, None => { print("none"); } }
     print(s + "!");
-    print(s.index_of("World").to_string());
+    match (s.index_of("World")) { Some(i) => { print(i.to_string()); }, None => { print("none"); } }
     print(pb(s.starts_with("Hello")));
     print(pb(s.contains("lo, W")));
     print(s.repeat(2));

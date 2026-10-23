@@ -320,7 +320,7 @@ it is a standing constraint on how stdlib generics can be written at all.
 | 66 | Base64 decode | `std/base64` | Scalar ladder | SIMD | KERNEL; table lookup still the cheaper first move | 1 |
 
 Backward search deserves a note because it is the most instructive row that
-already landed: `last_index_of` / `rfind` / `rsplit_once` / `rpartition` run a
+already landed: `last_index_of` / `rsplit_once` / `rpartition` run a
 naive scan **under a linear comparison budget**, escalating to reverse Two-Way
 only when the budget is spent. Reverse Two-Way needs an O(n) copy of the
 haystack, so it is a pessimisation on the common case (short separator near the

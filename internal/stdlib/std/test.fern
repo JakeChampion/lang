@@ -1707,12 +1707,11 @@ pub function assert_contains_in_order(haystack: string, needles: string[]): Test
   let i: i32 = 0;
   while (i < needles.len()) {
     let rest: str = slice_unchecked(haystack, cursor, haystack.len());
-    let idx: i32 = rest.index_of(needles[i]);
-    if (idx < 0) {
+    let Some(idx) = rest.index_of(needles[i]) else {
       return Fail("assert_contains_in_order: \"" + needles[i]
         + "\" not found after byte " + cursor.to_string()
         + " in:\n  " + haystack);
-    }
+    };
     cursor = cursor + idx + needles[i].len();
     i = i + 1;
   }

@@ -1700,14 +1700,15 @@ function main(): i32 {
 func TestWASMStringMethodsExtra(t *testing.T) {
 	src := `
 import "std/string";
+import "std/option";
 function main(): i32 {
     let s: string = "hello world";
-    if (s.index_of("hello") != 0) { return 1; }
-    if (s.index_of("world") != 6) { return 2; }
-    if (s.index_of(" ") != 5) { return 3; }
-    if (s.index_of("xyz") != -1) { return 4; }
-    if (s.index_of("") != 0) { return 5; }
-    if (s.index_of("hello world!") != -1) { return 6; }
+    if (s.index_of("hello").unwrap_or(-1) != 0) { return 1; }
+    if (s.index_of("world").unwrap_or(-1) != 6) { return 2; }
+    if (s.index_of(" ").unwrap_or(-1) != 5) { return 3; }
+    if (s.index_of("xyz").is_some()) { return 4; }
+    if (s.index_of("").unwrap_or(-1) != 0) { return 5; }
+    if (s.index_of("hello world!").is_some()) { return 6; }
 
     let padded: string = "  hello   ";
     let trimmed: str = padded.trim();

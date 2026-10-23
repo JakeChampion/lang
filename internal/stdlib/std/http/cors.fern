@@ -208,17 +208,16 @@ function __asked_headers(req: HttpRequest): string[] {
 // __wildcard_origin: `pattern` is `scheme://*.domain` and `origin` is that
 // scheme with one or more labels before `.domain`.
 function __wildcard_origin(pattern: string, origin: string): boolean {
-  let star: i32 = pattern.index_of("://*.");
-  if (star < 0) {
+  let Some(star) = pattern.index_of("://*.") else {
     return false;
-  }
+  };
   let scheme: string = pattern.slice_snap(0, star + 3);
   let domain: string = pattern.slice_snap(star + 4, pattern.len());
   if (!origin.starts_with(scheme) || !origin.ends_with(domain)) {
     return false;
   }
   let host: string = origin.slice_snap(scheme.len(), origin.len() - domain.len());
-  return host.len() > 0 && host.index_of("/") < 0 && host.index_of(":") < 0;
+  return host.len() > 0 && !host.contains("/") && !host.contains(":");
 }
 
 function __has_str(xs: string[], x: string): boolean {

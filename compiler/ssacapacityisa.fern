@@ -42,8 +42,13 @@ function invalid_address(): Address {
 }
 
 function address(s: string): Address {
-  let at = s.index_of("(");
-  if (at < 0 || !s.ends_with(")")) {
+  let at = 0;
+  if let Some(open) = s.index_of("(") {
+    at = open;
+  } else {
+    return invalid_address();
+  }
+  if (!s.ends_with(")")) {
     return invalid_address();
   }
   let displacement = slice_unchecked(s, 0, at) + "";
@@ -672,8 +677,13 @@ function immediate_store(name: string, a: string, b: string): Op {
 
 function index_only_lea(name: string, a: string, b: string): Op {
   let dst = registers.reg(b, false, 64);
-  let at = a.index_of("(");
-  if (name != "leaq" || dst < 0 || at < 0 || !a.ends_with(")")) {
+  let at = 0;
+  if let Some(open) = a.index_of("(") {
+    at = open;
+  } else {
+    return empty(0);
+  }
+  if (name != "leaq" || dst < 0 || !a.ends_with(")")) {
     return empty(0);
   }
   let displacement = slice_unchecked(a, 0, at) + "";

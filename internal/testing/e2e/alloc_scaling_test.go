@@ -165,7 +165,10 @@ function churn(n: i32): i32 {
     let i: i32 = 0;
     while (i < n) { hay = hay.append("abcab"); i = i + 1; }
     let s: string = hay.join("");
-    return s.index_of("abcabx") + s.index_of("bcab") + 2;
+    let r: i32 = 1;
+    match (s.index_of("abcabx")) { Some(i) => { r = r + i + 1; }, None => {} }
+    match (s.index_of("bcab")) { Some(i) => { r = r + i; }, None => {} }
+    return r;
 }`,
 		n:        400,
 		maxRatio: 220,

@@ -131,7 +131,7 @@ function test_rank(): test.TestOutcome {
   if (m.value_at(10).unwrap_or(-1) != 10) {
     return test.fail("value_at");
   }
-  if (m.index_of(40) != 20 || m.index_of(41) != -1) {
+  if (m.index_of(40).unwrap_or(-1) != 20 || m.index_of(41).is_some()) {
     return test.fail("index_of");
   }
   return test.assert_true(m.min_key().unwrap_or(-1) == 0 && m.max_key().unwrap_or(-1) == 198);

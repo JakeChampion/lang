@@ -63,8 +63,8 @@ function test_lookup_linear(): test.TestOutcome {
   if (num(o.get("k0")) != "0" || num(o.get("k7")) != "7") {
     return test.fail("get");
   }
-  if (o.contains("k8") || o.position("k3") != 3) {
-    return test.fail("has / position");
+  if (o.contains("k8") || o.index_of("k3").unwrap_or(-1) != 3 || o.index_of("k8").is_some()) {
+    return test.fail("contains / index_of");
   }
   return test.assert_eq(num(o.get("missing")), "<none>");
 }
@@ -76,8 +76,8 @@ function test_lookup_indexed(): test.TestOutcome {
   }
   let i: i32 = 0;
   while (i < 40) {
-    if (o.position("k" + i.to_string()) != i) {
-      return test.fail("position of k" + i.to_string());
+    if (o.index_of("k" + i.to_string()).unwrap_or(-1) != i) {
+      return test.fail("index_of k" + i.to_string());
     }
     i = i + 1;
   }
