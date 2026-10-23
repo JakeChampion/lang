@@ -132,7 +132,7 @@ func TestSelfHostExternHeapResultCustomProvider(t *testing.T) {
 	}
 	run("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps"))
 	write("userwit/deps/test/src.wit", "package local:test@0.1.0;\n"+iface+"\n")
-	write("userwit/world.wit", "package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import local:test/src@0.1.0;\n}\n")
+	write("userwit/world.wit", "package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/src@0.1.0;\n}\n")
 	run(wasmtools, "parse", write("empty.wat", "(module)"), "-o", filepath.Join(dir, "empty.wasm"))
 	run(wasmtools, "component", "embed", userWit, "-w", "u", filepath.Join(dir, "empty.wasm"), "-o", filepath.Join(dir, "embedded.wasm"))
 	embeddedBytes, err := os.ReadFile(filepath.Join(dir, "embedded.wasm"))
