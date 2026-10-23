@@ -1,0 +1,5 @@
+{
+  "head": "a061f713aa32d912da8ed135649585f6e52b9984",
+  "source_sha256": "01d5cd6109954e2e4f94aadd7a0f49875c48ab12e0bfbabc8c6dd359af7f54cd",
+  "patch": "focused-input.patch.gz"
+}

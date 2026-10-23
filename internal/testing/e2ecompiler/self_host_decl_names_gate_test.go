@@ -323,7 +323,7 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 func TestSelfHostEmittingDriversRunDeclGates(t *testing.T) {
 	emits := regexp.MustCompile(`\b(asm_ir|asm_arm64_ir|wasm_ir)\.emit_\w*\(|\bemitforms\.wasm_component\(`)
 	hasMain := regexp.MustCompile(`(?m)^(pub )?function main\(`)
-	parseGate := regexp.MustCompile(`\b(refuse_parse_errors|parse_errors)\(`)
+	parseGate := regexp.MustCompile(`\b(refuse_parse_errors|parse_errors|parse_errors_before_check)\(`)
 	files, err := filepath.Glob(filepath.Join("..", "..", "..", "compiler", "*.fern"))
 	inDrivers, _ := filepath.Glob(filepath.Join("..", "..", "..", "compiler", "drivers", "*.fern"))
 	files = append(files, inDrivers...)

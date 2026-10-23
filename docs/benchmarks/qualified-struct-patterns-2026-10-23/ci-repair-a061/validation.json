@@ -1,0 +1,14 @@
+{
+  "source_sha256": "96e4a7af64dd239ea7c63448d072850647b134e652a4be0da47327f4c44763ed",
+  "focused_semantic_tests_passed": 60,
+  "focused_static_test_initial_failure": "Helper name missing from source gate; corrected and verified by the final corpus run",
+  "focused_skips": 0,
+  "full_corpus_fixtures": 1047,
+  "resolved_calls": 823319,
+  "modelled_bodies": 350096,
+  "full_corpus_exit": 0,
+  "formatter_files": 1176,
+  "formatter_exit": 0,
+  "vet_exit": 0,
+  "driver_gate_exit": 0
+}

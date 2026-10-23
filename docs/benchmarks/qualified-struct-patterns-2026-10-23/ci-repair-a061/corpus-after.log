@@ -1,0 +1,12 @@
+=== RUN   TestSelfHostIRVerifyProvidedCorpusClean
+=== RUN   TestSelfHostIRVerifyProvidedCorpusClean/cases
+=== RUN   TestSelfHostIRVerifyProvidedCorpusClean/cases/qualified_struct_patterns
+=== PAUSE TestSelfHostIRVerifyProvidedCorpusClean/cases/qualified_struct_patterns
+=== CONT  TestSelfHostIRVerifyProvidedCorpusClean/cases/qualified_struct_patterns
+=== NAME  TestSelfHostIRVerifyProvidedCorpusClean
+    self_host_irverify_test.go:259: swept 1/1047 fixtures, resolved 26 direct calls, stack-modelled 9/9 bodies
+--- PASS: TestSelfHostIRVerifyProvidedCorpusClean (20.06s)
+    --- PASS: TestSelfHostIRVerifyProvidedCorpusClean/cases (0.10s)
+        --- PASS: TestSelfHostIRVerifyProvidedCorpusClean/cases/qualified_struct_patterns (0.02s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	20.077s

@@ -2196,7 +2196,8 @@ pub function qualified_name(q: Qualifiers, alias: string, name: string): string 
 // a multi-module program — the compiler itself — lowers to a single
 // namespace and self-compiles.
 pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: string): parser.Module {
-  return bundle_with_prefixes(entry0, imports0, target, assign_prefixes(imports0));
+  // Imported record variants need their declarations before field positions resolve.
+  return parser.resolve_variant_fields_module(bundle_with_prefixes(entry0, imports0, target, assign_prefixes(imports0)));
 }
 
 // The loader uses this same prefix table to attach package provenance.

@@ -1,0 +1,7 @@
+WARNING docs/benchmarks/qualified-struct-patterns-2026-10-23/ci-repair-a061/README.md:par4 [rule 3.5] "bundling": an "-ing" form is permitted only in a technical name.
+WARNING docs/benchmarks/qualified-struct-patterns-2026-10-23/ci-repair-a061/README.md:par5 [rule 3.5] "following": an "-ing" form is permitted only in a technical name.
+WARNING docs/benchmarks/qualified-struct-patterns-2026-10-23/ci-repair-a061/README.md:par10 [rule 3.5] "Formatting": an "-ing" form is permitted only in a technical name.
+
+Result: 0 errors, 3 warnings.
+The text obeys the STE structural rules that this tool can check.
+This tool cannot make sure that each word has its approved meaning.
