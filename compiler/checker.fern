@@ -4452,6 +4452,10 @@ function (s: Scope) unknown_method_message(ns: string, method: string, label: st
     return base + " — the in-place spelling was removed; use \"" + repl
       + "\", which returns the updated " + ns + " (assign the result back)";
   }
+  let declared_receiver: string = stdlib_methods.receiver_of(ns, method);
+  if (declared_receiver.len() > 0) {
+    return base + " — \"" + method + "\" is declared for " + declared_receiver;
+  }
   let import_advice: string = s.stdlib_import_advice(ns, method);
   if (import_advice.len() > 0) {
     return base + import_advice;
@@ -4506,7 +4510,7 @@ function (s: Scope) stdlib_import_advice(ns: string, method: string): string {
 // the `ns` surface, with the import it needs, or "".
 function (s: Scope) stdlib_near_advice(ns: string, method: string): string {
   let near: string = util.suggest(method, stdlib_methods.methods_on(ns));
-  if (near.len() == 0) {
+  if (near.len() == 0 || stdlib_methods.receiver_of(ns, near).len() > 0) {
     return "";
   }
   let mod: string = stdlib_methods.module_of(ns, near);

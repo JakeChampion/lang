@@ -74,6 +74,19 @@ func TestScalarMethodImportHint(t *testing.T) {
 			want: []string{`no method "substring" on string, and no stdlib module declares one`},
 			deny: []string{"import"},
 		},
+
+		{
+			name: "a narrow Option method names its receiver",
+			src:  `function main(): i32 { let x: Option[i32] = Some(1); x.failure(); return 0; }`,
+			want: []string{`"failure" is declared for Option[IoError]`},
+			deny: []string{"add `import"},
+		},
+		{
+			name: "a nested receiver is not a general Option method",
+			src:  `function main(): i32 { let x: Option[i32] = Some(1); x.unzip(); return 0; }`,
+			want: []string{`"unzip" is declared for Option[(T, U)]`},
+			deny: []string{"add `import"},
+		},
 		{
 			name: "a near miss names the method and its import",
 			src:  `function main(): i32 { let s: string = "abc"; return s.trimm().len(); }`,

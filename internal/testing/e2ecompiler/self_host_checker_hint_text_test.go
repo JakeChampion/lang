@@ -93,6 +93,8 @@ type hintTextCase struct {
 }
 
 var hintTextCases = []hintTextCase{
+	{name: "E043 narrow Option receiver", src: `function main(): i32 { let x: Option[i32] = Some(1); x.failure(); return 0; }`, code: "E043", spelling: `"failure" is declared for Option[IoError]`},
+	{name: "E043 nested Option receiver", src: `function main(): i32 { let x: Option[i32] = Some(1); x.unzip(); return 0; }`, code: "E043", spelling: `"unzip" is declared for Option[(T, U)]`},
 	{
 		name: "E040 method type argument count names the receiver",
 		src: `struct B { v: i32 }

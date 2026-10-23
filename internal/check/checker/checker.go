@@ -12501,6 +12501,9 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 			msg, repl, typeName)
 	}
 	declared := stdlibMethodIndex[typeName]
+	if receiver := stdlibMethodReceivers[typeName][method]; receiver != "" {
+		return fmt.Sprintf("%s — %q is declared for %s", msg, method, receiver)
+	}
 	if mod := declared[method]; mod != "" && !c.moduleAlreadyImports(mod) {
 		// The f-string desugar is the one way to reach this without writing
 		// a method call.
@@ -12514,7 +12517,7 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 	if s := diag.Suggest(method, names); s != "" {
 		return fmt.Sprintf("%s — did you mean %q?", msg, s)
 	}
-	if s := diag.Suggest(method, slices.Sorted(maps.Keys(declared))); s != "" && !c.moduleAlreadyImports(declared[s]) {
+	if s := diag.Suggest(method, slices.Sorted(maps.Keys(declared))); s != "" && stdlibMethodReceivers[typeName][s] == "" && !c.moduleAlreadyImports(declared[s]) {
 		return fmt.Sprintf("%s — did you mean %q, which needs `import %q`?", msg, s, declared[s])
 	}
 	if len(declared) > 0 {
