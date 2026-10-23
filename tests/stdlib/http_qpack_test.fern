@@ -131,7 +131,9 @@ function b_step(d: qpack.Decoder, step: string): Result[(qpack.Decoder, string),
     let (next, out) = owed(fed_d);
     return Ok((next, "inserted " + next.insert_count().to_string() + " size " + next.table_size().to_string() + " owes " + out));
   }
-  let space: i32 = step.drop(2).index_of(" ");
+  let Some(space) = step.drop(2).index_of(" ") else {
+    return Err("a step with no space: " + step);
+  };
   let id: string = step.drop(2).take(space);
   let (next, text) = section(d, id.parse_int().unwrap_or(0) as i64, step.drop(3 + space))?;
   return Ok((next, id + ": " + text));
@@ -355,7 +357,10 @@ function test_lsqpack_trace(): test.TestOutcome {
         Ok(r) => {
           d = r.0;
           let text: string = r.1;
-          got = got + text.take(text.index_of("| ")) + "\n";
+          let Some(bar) = text.index_of("| ") else {
+            return test.fail("a section with no `| `: " + text);
+          };
+          got = got + text.take(bar) + "\n";
         },
         Err(e) => {
           return test.fail(e);

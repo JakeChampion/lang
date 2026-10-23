@@ -83,8 +83,8 @@ pub function (s: OrdSet[T]) at(i: i32): Option[T] {
   return s.root.key_at(i);
 }
 
-// `index_of(x)` — the rank of `x` in ascending order, or -1 when absent.
-pub function (s: OrdSet[T]) index_of[T: cmp.Ord](x: T): i32 {
+// `index_of(x)` — the rank of `x` in ascending order, or None when absent.
+pub function (s: OrdSet[T]) index_of[T: cmp.Ord](x: T): Option[i32] {
   return s.root.index_of(x);
 }
 
