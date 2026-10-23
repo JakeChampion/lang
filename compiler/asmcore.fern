@@ -10966,13 +10966,23 @@ pub function parse_errors(mod: parser.Module): util.Diag[] {
   errs = util.append_diags(errs, check_top_level_stmts(mod));
   let ordered: util.Diag[] = [];
   for d in errs {
-    // A value-less block parses correctly. The checker reports E061 with
-    // its void type, so destination errors can use that type too.
-    if (d.code != "E061") {
-      ordered = insert_by_position(ordered, d);
-    }
+    ordered = insert_by_position(ordered, d);
   }
   return ordered;
+}
+
+// parse_errors_before_check is parse_errors for a caller that runs the checker
+// next. A value-less block parses correctly, and the checker reports its E061
+// with the block's void type, so an error at its destination can name that
+// type too; a path that emits without the checker keeps the parser's E061.
+pub function parse_errors_before_check(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  for d in parse_errors(mod) {
+    if (d.code != "E061") {
+      out = out.append(d);
+    }
+  }
+  return out;
 }
 
 // insert_by_position inserts `d` into the position-ordered `ds`, after every
