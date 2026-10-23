@@ -1242,12 +1242,12 @@ pub function sort_by_key[T, K: Ord](arr: T[], key: (T) => K): T[] {
 // so equal elements may change places; `sort` keeps them in order but
 // allocates the result.
 pub function sort_in_place[T: Ord](own arr: T[]): T[] {
-  return __cmp_heap_sort(arr, __cmp_ascending);
+  return __cmp_heap_sort_ord(arr);
 }
 
 // sort_desc_in_place is `sort_in_place` in descending order.
 pub function sort_desc_in_place[T: Ord](own arr: T[]): T[] {
-  return __cmp_heap_sort(arr, __cmp_descending);
+  return __cmp_reverse_in_place(__cmp_heap_sort_ord(arr));
 }
 
 // sort_by_in_place is `sort_by` in `arr`'s own buffer: a heapsort under
@@ -1264,12 +1264,56 @@ pub function sort_by_key_in_place[T, K: Ord](own arr: T[], key: (T) => K): T[] {
   return __cmp_heap_sort(arr, (a: T, b: T): i32 => key(a).cmp(key(b)));
 }
 
-function __cmp_ascending[T: Ord](a: T, b: T): i32 {
-  return a.cmp(b);
+// __cmp_heap_sort_ord is __cmp_heap_sort under `T`'s own order. It calls `cmp`
+// directly because a comparator passed as a function value costs an indirect
+// call per comparison.
+function __cmp_heap_sort_ord[T: Ord](own a: T[]): T[] {
+  let n: i32 = a.len();
+  let start: i32 = n / 2 - 1;
+  while (start >= 0) {
+    a = __cmp_sift_down_ord(a, start, n);
+    start = start - 1;
+  }
+  let end: i32 = n - 1;
+  while (end > 0) {
+    let t: T = a[0];
+    a = a.with(0, a[end]);
+    a = a.with(end, t);
+    a = __cmp_sift_down_ord(a, 0, end);
+    end = end - 1;
+  }
+  return a;
 }
 
-function __cmp_descending[T: Ord](a: T, b: T): i32 {
-  return b.cmp(a);
+function __cmp_sift_down_ord[T: Ord](own a: T[], root: i32, n: i32): T[] {
+  let r: i32 = root;
+  while (2 * r + 1 < n) {
+    let child: i32 = 2 * r + 1;
+    if (child + 1 < n && a[child].cmp(a[child + 1]) < 0) {
+      child = child + 1;
+    }
+    if (a[r].cmp(a[child]) >= 0) {
+      return a;
+    }
+    let t: T = a[r];
+    a = a.with(r, a[child]);
+    a = a.with(child, t);
+    r = child;
+  }
+  return a;
+}
+
+function __cmp_reverse_in_place[T](own a: T[]): T[] {
+  let i: i32 = 0;
+  let j: i32 = a.len() - 1;
+  while (i < j) {
+    let t: T = a[i];
+    a = a.with(i, a[j]);
+    a = a.with(j, t);
+    i = i + 1;
+    j = j - 1;
+  }
+  return a;
 }
 
 // __cmp_heap_sort heapsorts `a` under `order`: build a max-heap, then swap the

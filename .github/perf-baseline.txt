@@ -95,8 +95,8 @@ x86_64/pvec_with.text	2819
 x86_64/pvec_with.ir	56312630
 x86_64/record_update.ir	37759081
 x86_64/record_update.text	1280
-x86_64/sort_inplace.text	1289
-x86_64/sort_inplace.ir	43049023
+x86_64/sort_inplace.text	1343
+x86_64/sort_inplace.ir	41788393
 x86_64/sort_ints.text	1764
 x86_64/sort_ints.ir	31264495
 x86_64/sort_strings.text	3064
@@ -302,6 +302,13 @@ x86_64/utf8_ingest_validated.ir	5887911
 # #13026: a compiler built from main at 7fccb64 emits the same 3266
 # instructions. Most other aarch64 `.text` rows moved about -0.5%, inside
 # the tolerance.
+#
+# Re-pinned 2026-10-23 (#13050) on sort_inplace (x86_64 .ir -2.9%, .text
+# +4.2%): std/sort's i32 insertion sort is gone and the benchmark runs
+# `cmp.sort_in_place`, a heapsort that compares through `cmp` directly. It
+# runs fewer instructions on these 48-element arrays and is O(n log n) on
+# any input, while its code is longer. The x86_64 figures are a local
+# perf-bench run.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
