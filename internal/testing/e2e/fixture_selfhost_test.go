@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jakechampion/lang/internal/envflag"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // These legs run the conformance corpus through the self-host compiler, the
@@ -27,8 +28,9 @@ import (
 //   - TestFernFixturesSelfHostCheck runs the compile-error cases through
 //     `fern -check`.
 //
-// The driver is fern.fern, the real CLI, so a case loads its modules as a
-// user's program does. Building it is a heavy self-host build, paid once per
+// Compile and check legs use fern.fern. The interpreter uses fern_main.fern
+// built by the current compiler, as the release does, so its runtime includes
+// current cleanup helpers. These builds are shared and paid once per
 // leg, so the legs are gated on FERN_SELFHOST_FIXTURES=1 and run as their own
 // CI lanes.
 //
@@ -220,11 +222,12 @@ func TestFernFixturesSelfHostInterp(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:   "interp",
+		shipped:   true,
 		gcc:       gcc,
 		runner:    runner,
 		knownFile: "selfhost-interp-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
-			cmd := exec.Command(fernBin, "-interp", f.mainPath, stdlibRoot)
+			cmd := exec.Command(fernBin, "-interp", f.mainPath)
 			checkSelfHostNativeRun(t, f, runSelfHostBin(cmd, f.stdin), failf)
 		},
 	})
@@ -264,6 +267,7 @@ type failFunc func(format string, args ...any)
 // build, the skip rules, the known-divergence bookkeeping — is shared, so a leg
 // cannot quietly grow its own idea of what counts as covered.
 type selfHostLeg struct {
+	shipped   bool     // use the release CLI built by the current compiler
 	backend   string   // the `backends` sidecar token this leg gates on; also its label
 	gcc       string   // links the self-host DRIVER (always x86-64 asm), whatever the leg's target
 	runner    []string // non-empty when the host cannot exec x86-64 binaries directly
@@ -294,9 +298,14 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, leg.gcc, dir, "fern.fern", "fern")
+	var fernBin string
+	if leg.shipped {
+		fernBin = e2eharness.ShippedFern(t)
+	} else {
+		dir := writeSelfHostAsmProject(t)
+		copySelfHostDriver(t, dir, "fern.fern")
+		fernBin = buildSelfHostBin(t, leg.gcc, dir, "fern.fern", "fern")
+	}
 
 	root := conformanceCases
 	entries, err := os.ReadDir(root)

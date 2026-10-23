@@ -13,10 +13,10 @@ import (
 // Unlike the structural verbs (reverse/take/drop/concat), these take a callback
 // or comparator, so — like the existing map/filter/fold combinators — they use
 // the indirect-call path and are gated through the interpreter (oracle) + the
-// native wasm backend rather than the self-host stdtest gate (the self-host
-// can't lower a closure passed to a generic function yet). Callbacks are kept
-// scalar-shaped per the #2753 indirect-call constraint. main returns 0 iff
-// every check holds.
+// Wasm backend. This case uses scalar callbacks. The conformance case
+// string_callbacks_in_collection_combinators covers string callbacks in both
+// interpreters and on the three compiled targets. main returns 0 when every
+// check holds.
 const arrayCallbackVerbsProgram = `
 import "std/array";
 

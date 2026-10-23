@@ -1,0 +1,100 @@
+import "./kinds" as m;
+import "./facade" as f;
+import "std/net";
+
+struct Value { Number: i32 }
+
+struct Holder { Kind: Value }
+
+function shadow(m: Holder): i32 {
+  return m.Kind.Number;
+}
+
+function read(k: m.Kind): i32 {
+  match (k) {
+    m.Kind.Idle => {
+      return 0;
+    },
+    m.Kind.Number(n) => {
+      return n;
+    }
+  }
+  return 100;
+}
+
+function main(): i32 {
+  if (shadow(Holder { Kind: Value { Number: 17 } }) != 17) {
+    return 8;
+  }
+  let idle: m.Kind = m.Kind.Idle;
+  let number: m.Kind = m.Kind.Number(7);
+  if (read(idle) != 0 || read(number) != 7) {
+    return 1;
+  }
+  let other: m.Other = m.Other.Number(9);
+  match (other) {
+    m.Other.Idle => {
+      return 2;
+    },
+    m.Other.Number(n) => {
+      if (n != 9) {
+        return 3;
+      }
+    }
+  }
+  if let m.Kind.Number(n) = number {
+    if (n != 7) {
+      return 4;
+    }
+  } else {
+    return 5;
+  }
+  let boxed: m.Box[i32] = m.Box.Wrap(11);
+  match (boxed) {
+    m.Box.Wrap(n) => {
+      if (n != 11) {
+        return 6;
+      }
+    },
+    m.Box.Empty => {
+      return 7;
+    }
+  }
+  let reexported: f.Kind = f.Kind.Number(13);
+  match (reexported) {
+    f.Kind.Number(n) => {
+      if (n != 13) {
+        return 9;
+      }
+    },
+    f.Kind.Idle => {
+      return 10;
+    }
+  }
+  let generic: f.Box[i32] = f.Box.Wrap(19);
+  match (generic) {
+    f.Box.Wrap(n) => {
+      if (n != 19) {
+        return 11;
+      }
+    },
+    f.Box.Empty => {
+      return 12;
+    }
+  }
+  match (Some(number)) {
+    Some(m.Kind.Number(n)) => {
+      if (n != 7) {
+        return 13;
+      }
+    },
+    _ => {
+      return 14;
+    }
+  }
+  let interrupted: net.NetError = net.NetError.Interrupted;
+  if let net.NetError.Interrupted = interrupted {} else {
+    return 15;
+  }
+  return 0;
+}

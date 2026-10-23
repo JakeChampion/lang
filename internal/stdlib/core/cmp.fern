@@ -1,13 +1,13 @@
 // core/cmp — the comparison + display trait foundation.
 //
-// Three small traits underpin the generic assertion helpers in
-// `std/test` (and any user code that wants to abstract over
-// "printable" / "comparable" values):
+// Six traits supply display, comparison, hashing, defaults, and debug text:
 //
-//   - `Display` — `(v).to_string()` for an error / log message.
-//   - `Eq`      — value equality (`a.eq(b)`).
-//   - `Ord`     — total ordering via `a.cmp(b)` returning -1 / 0 / 1
-//                 (the std/sort convention).
+//   - Display supplies to_string for messages.
+//   - Eq compares values for equality.
+//   - Ord returns -1, 0, or 1 from cmp.
+//   - Hash supplies a value hash.
+//   - Default constructs a default value.
+//   - Debug supplies diagnostic text through to_debug.
 //
 // The primitive impls live here, in the trait's own module, which
 // satisfies the orphan rule (an impl is legal in the trait's module or

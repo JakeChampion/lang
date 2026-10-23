@@ -25,6 +25,13 @@ func TestUnitValueChecks(t *testing.T) {
 			 function main(): i32 { return 0; }`},
 		{"bound to a variable",
 			`function main(): i32 { let u = (); return 0; }`},
+		{"unit binding as a payload",
+			`function main(): i32 { let u = (); let o: Option[void] = Some(u); return 0; }`},
+		{"matched unit as a payload",
+			`function f(o: Option[void]): Result[void, i32] {
+                 match (o) { Some(u) => { return Ok(u); }, None => { return Err(1); } }
+               }
+               function main(): i32 { return 0; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, err := parser.Parse(tc.src)

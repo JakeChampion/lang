@@ -9619,12 +9619,12 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
   // P005, matching native, so both front ends name the same code for it.
   // The statement-level scan prefixes the kind, so match either spelling.
   if (kind == "nest:too-deep" || kind == "stmt: nest:too-deep") {
-    return util.Diag { related: [], length: 0, code: "P005", message: where + ": input nests too deeply", line: line, col: col, fix: None };
+    return util.Diag { related: [], length: 0, code: "P005", message: where + ": input nests deeper than " + util.i32_to_string(parser.MAX_NEST_DEPTH) + " levels", line: line, col: col, fix: None };
   }
   // A value-position block ending in a `;`-terminated statement: E061, the
   // code native and the self-host checker report for it.
   if (kind == "value branch has no trailing expression" || kind == "stmt: value branch has no trailing expression") {
-    return util.Diag { related: [], length: 0, code: "E061", message: where + ": block-expression has no trailing value", line: line, col: col, fix: None };
+    return util.Diag { related: [], length: 0, code: "E061", message: parser.BLOCK_VALUE_REQUIRED_MESSAGE, line: line, col: col, fix: None };
   }
   // A declaration the parser discarded (a local function's) carries the
   // declaration gate's own text, so it reads as check_decl_names' would.
@@ -10966,7 +10966,11 @@ pub function parse_errors(mod: parser.Module): util.Diag[] {
   errs = util.append_diags(errs, check_top_level_stmts(mod));
   let ordered: util.Diag[] = [];
   for d in errs {
-    ordered = insert_by_position(ordered, d);
+    // A value-less block parses correctly. The checker reports E061 with
+    // its void type, so destination errors can use that type too.
+    if (d.code != "E061") {
+      ordered = insert_by_position(ordered, d);
+    }
   }
   return ordered;
 }

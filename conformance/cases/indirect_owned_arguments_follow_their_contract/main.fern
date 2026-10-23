@@ -1,0 +1,47 @@
+function consume(own s: string): i32 {
+  return s.len();
+}
+
+function borrow(s: string): i32 {
+  return s.len();
+}
+
+@noinline
+function fresh(s: string): string {
+  return s + "!";
+}
+
+struct Sink { run: (own string) => i32 }
+
+struct Observer { run: (string) => i32 }
+
+function apply(f: (own string) => i32): i32 {
+  let value: string = fresh("param");
+  return f(value);
+}
+
+function twice(f: (string) => i32, own value: string): i32 {
+  return f(value) + f(value);
+}
+
+function field_twice(reader: Observer, own value: string): i32 {
+  return reader.run(value) + reader.run(value);
+}
+
+function main(): i32 {
+  let local: (own string) => i32 = consume;
+  let value: string = fresh("local");
+  let total: i32 = apply(consume) + local(value);
+  let sink: Sink = Sink { run: consume };
+  let field_value: string = fresh("field");
+  total = total + sink.run(field_value);
+  let closure: (own string) => i32 = (own s: string): i32 => s.len();
+  total = total + closure(fresh("ab"));
+  total = total + twice(borrow, fresh("a"));
+  total = total + field_twice(Observer { run: borrow }, fresh("c"));
+  if (total != 29) {
+    return 1;
+  }
+  print("owned callback contracts pass");
+  return 0;
+}

@@ -1100,6 +1100,8 @@ func targetSupervises(target string) bool {
 // wasm32-wasi-http, which the self-host's driver reports in the same words.
 const WasiHTTPStatefulHandler = "a wasi:http handler takes `(req, plat)` and no state: the proxy world starts a fresh instance for every request, so nothing carries from one to the next; build a stateful handler for a native target"
 
+const HandlerNeedsServe = "a top-level `handle` requires `std/serve`: add `import \"std/serve\";`"
+
 // wasiHTTPHandlerShape is E075's text for a `handle` of n parameters on
 // wasm32-wasi-http, in the self-host driver's words.
 func wasiHTTPHandlerShape(n int) string {
@@ -5643,7 +5645,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		// a second, positionless error about a call nobody wrote. The
 		// proxy world serves through its incoming-handler export, so a
 		// wasi-http handler gets no serve loop.
-		if c.checkHandlerStatePairing(prog) && !wasiHTTP {
+		if !wasiHTTP && !handlerImportsServe(prog) {
+			c.errfCode(h.P, "E001", "%s", HandlerNeedsServe)
+		} else if c.checkHandlerStatePairing(prog) && !wasiHTTP {
 			prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog, supervised))
 		}
 	}
@@ -6203,9 +6207,8 @@ func (c *checker) setElemHintFor(e ast.Expr, dst ast.Type) {
 	case ast.ArrayType:
 		c.elemHint = at.Elem
 	case ast.SliceType:
-		// A literal at a `[T]` parameter is lent as a view of itself
-		// (#6798), so its elements settle against T exactly as they would
-		// at a `T[]` parameter.
+		// A literal at a [T] parameter or local initializer takes its
+		// element type from T before the checker creates the view.
 		c.elemHint = at.Elem
 	}
 }
@@ -11867,12 +11870,9 @@ func isArrayViewLend(want, got ast.Type) bool {
 	return isView && isArray && arr.Elem != nil && ast.Equal(sl.Elem, arr.Elem)
 }
 
-// lendArrayAsView rewrites an accepted owned-array argument into the
-// full-range slice `xs[:]` — the spelling the caller previously had to write
-// by hand. `[T]` is a `{data_ptr, len}` pair while `T[]` is the array itself,
-// so the view has to be materialised somewhere; doing it here means every
-// backend, the interpreter, and the rc passes see the same shape they already
-// handle for an explicit slice.
+// lendArrayAsView converts an owned array to the full-range view xs[:].
+// Arguments and local initializers use this conversion. The explicit slice
+// shape gives the interpreter, backends, and RC passes the correct view ABI.
 func (c *checker) lendArrayAsView(arg *ast.Expr, want, got ast.Type, own bool) {
 	if own || arg == nil || *arg == nil || !isArrayViewLend(want, got) {
 		return
@@ -12310,6 +12310,10 @@ func (c *checker) requireValue(e ast.Expr, t ast.Type) {
 		return
 	}
 	if _, isUnit := e.(*ast.UnitLit); isUnit {
+		return
+	}
+	// A binding can hold the unit value, including a generic payload at void.
+	if _, isBinding := e.(*ast.Ident); isBinding {
 		return
 	}
 	c.errfCode(e.Pos(), "E072",
@@ -14715,9 +14719,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 	}
 	// Run when the current function has owned params (the affine move-check) OR
-	// when the program declares ANY owned-param function (the call-site guard
-	// must check every caller, even borrowed-only ones).
-	if (len(owned) == 0 && len(c.ownFuncs) == 0) || fn.Body == nil {
+	// when a declaration or callable type has consuming positions. The
+	// call-site guard checks callers that have only borrowed parameters too.
+	if (len(owned) == 0 && len(c.ownFuncs) == 0 && len(c.callOwnFlags) == 0) || fn.Body == nil {
 		return
 	}
 
@@ -15033,34 +15037,22 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				// The callee position is a borrow (function ref / closure call).
 				if id, ok := x.Callee.(*ast.Ident); ok {
 					borrow[id] = true
-					// An owned value is CONSUMED only when passed to an `own`
-					// parameter; an argument to a BORROWED parameter (or any param
-					// of a callee with no `own` flags) is a read — a borrow — not a
-					// move. (`contains_str(out, x)` borrows `out`, so a following
-					// `out = out.append(..)` is not a use-after-move.) Without this
-					// the affine walk over-approximates every whole-value argument
-					// as a consume, which both rejects natural `own`-threaded
-					// builder code and blocks tracking owned locals. The method
-					// receiver (Args[0] when Method is set) keeps its own
-					// consume/borrow classification below.
-					// A callee reached through a function VALUE declares its
-					// consuming slots in its type, not in the own-func registry
-					// — so a use after `f(xs)` at such a slot is a use after
-					// move, exactly as it is for a declared own-func.
-					flags, isOwn := c.callOwnFlags[x]
-					if !isOwn {
-						flags = c.ownFuncs[id.Name]
+				}
+				// Only consuming slots move arguments. Function values,
+				// including fields and call results, use their declared type.
+				flags, isOwn := c.callOwnFlags[x]
+				if id, named := x.Callee.(*ast.Ident); named && !isOwn {
+					flags = c.ownFuncs[id.Name]
+				}
+				for ai, arg := range x.Args {
+					if x.Method != nil && ai == 0 {
+						continue // Receiver ownership is checked below.
 					}
-					for ai, arg := range x.Args {
-						if x.Method != nil && ai == 0 {
-							continue
-						}
-						if ai < len(flags) && flags[ai] {
-							continue // `own` position: a genuine consume
-						}
-						if aid, ok := arg.(*ast.Ident); ok {
-							borrow[aid] = true
-						}
+					if ai < len(flags) && flags[ai] {
+						continue
+					}
+					if aid, ok := arg.(*ast.Ident); ok {
+						borrow[aid] = true
 					}
 				}
 				// A method call (`xs.len()`) is rewritten by the checker to a
@@ -15836,6 +15828,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				return
 			}
 		} else if got != nil {
+			if isArrayViewLend(n.Type, got) {
+				c.lendArrayAsView(&n.Init, n.Type, got, false)
+				got = n.Type
+			}
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
 			if got != nil && !c.assignable(n.Type, got) {
 				c.errfCode(n.P, "E003", "variable %q: expected %s, got %s%s", n.Name, n.Type, got, assignHint(n.Type, got))
@@ -23960,6 +23956,26 @@ func synthesiseWasiHandle() *ast.FuncDecl {
 	}
 }
 
+// handlerImportsServe also accepts flat fixtures that provide the serve API.
+func handlerImportsServe(prog *ast.Program) bool {
+	// Flat checker fixtures can provide the serve helpers directly.
+	if fn := findDecl(prog, "serve__config"); fn != nil && fn.SourceModule == prog.EntryModule {
+		return true
+	}
+	for path := range prog.DirectImports[prog.EntryModule] {
+		path = strings.TrimSuffix(path, ".fern")
+		if path == "stdlib://std/serve" || strings.HasSuffix(path, "/std/serve") {
+			return true
+		}
+	}
+	for _, imp := range prog.Imports {
+		if strings.TrimSuffix(imp.Path, ".fern") == "std/serve" {
+			return true
+		}
+	}
+	return false
+}
+
 // synthesiseHandleMain builds the main of a handler-shaped program: the
 // handler served under the supervisor (docs/CRASH-ONLY-SERVE.md) on
 // `PORT`, with `init`'s config and state where it answers them —
@@ -23987,8 +24003,7 @@ func synthesiseWasiHandle() *ast.FuncDecl {
 // export wrapper that invokes the user's `handle` directly and drops
 // this main before the tree-shake.
 //
-// The calls name std/serve's entries as modload mangles them; a program
-// that does not import std/serve is told they are undefined.
+// The caller checks for std/serve before it creates these calls.
 func synthesiseHandleMain(prog *ast.Program, supervised bool) *ast.FuncDecl {
 	pos := ast.Position{}
 	serveRef := func(name string, args ...ast.Expr) *ast.Call {
