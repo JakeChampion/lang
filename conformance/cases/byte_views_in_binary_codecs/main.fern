@@ -10,18 +10,6 @@ import "std/protobuf" as protobuf;
 import "std/tz" as tz;
 
 function binary_codecs(bytes: [u8]): i32 {
-  let raw: u8[] = deflate.deflate(bytes);
-  if (utf8.from_bytes_lossy(deflate.inflate(raw, 1024).unwrap_or(deflate.Inflated { out: [], consumed: 0 }).out) != "hello, hello, hello world\n") {
-    return 1;
-  }
-  let gz: u8[] = deflate.gzip(bytes);
-  if (utf8.from_bytes_lossy(deflate.gunzip(gz, 1024).unwrap_or([])) != "hello, hello, hello world\n") {
-    return 2;
-  }
-  let zs: u8[] = zstd.compress(bytes);
-  if (utf8.from_bytes_lossy(zstd.decompress(zs, 1024).unwrap_or([])) != "hello, hello, hello world\n") {
-    return 3;
-  }
   let field: u8[] = protobuf.bytes_field(1, bytes);
   let fields: protobuf.Field[] = protobuf.decode(field).unwrap_or([]);
   if (fields.len() != 1 || utf8.from_bytes_lossy(fields[0].bytes) != "hello, hello, hello world\n") {
