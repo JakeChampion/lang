@@ -768,6 +768,7 @@ rc_corpus_projection_accessor_receiver_borrows       0
 rc_corpus_push_elem_param_counted_pointer_field      0
 rc_corpus_push_elem_param_scalar_only_owned_by_default 0
 rc_corpus_push_loop_structs                          0
+rc_corpus_recursive_array_drop_constant_stack        0
 rc_corpus_recursive_enum_drop_constant_stack         0
 rc_corpus_returned_bare_param_kept_by_caller         0
 rc_corpus_scope_dead_move                            0
