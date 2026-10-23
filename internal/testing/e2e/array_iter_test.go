@@ -24,12 +24,12 @@ var arrayIterCases = []struct {
 	// sum over an array: iter.of(xs) yields 10,20,12 → 42.
 	{"sum-array", `import "core/iter";
 function main(): i32 { let xs: i32[] = [10, 20, 12]; return iter.sum(iter.of(xs)); }`, 42},
-	// count over an array → 5.
-	{"count-array", `import "core/iter";
-function main(): i32 { let xs: i32[] = [1, 1, 1, 1, 1]; return iter.of(xs).count(); }`, 5},
-	// filter (closure) then count: evens of 1..6 → 3.
-	{"filter-count", `import "core/iter";
-function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5, 6]; let e: i32[] = iter.of(xs).filter((n: i32): boolean => { return n % 2 == 0; }).collect(); return iter.of(e).count(); }`, 3},
+	// len over an array → 5.
+	{"len-array", `import "core/iter";
+function main(): i32 { let xs: i32[] = [1, 1, 1, 1, 1]; return iter.of(xs).len(); }`, 5},
+	// filter (closure) then len: evens of 1..6 → 3.
+	{"filter-len", `import "core/iter";
+function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5, 6]; let e: i32[] = iter.of(xs).filter((n: i32): boolean => { return n % 2 == 0; }).collect(); return iter.of(e).len(); }`, 3},
 	// map (closure) then sum: squares of 1..4 → 1+4+9+16 = 30.
 	{"map-sum", `import "core/iter";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; let sq: i32[] = iter.of(xs).map((n: i32): i32 => { return n * n; }).collect(); return iter.sum(iter.of(sq)); }`, 30},

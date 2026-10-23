@@ -7802,11 +7802,12 @@ function main(): i32 {
 func TestArm64StdlibBundle9(t *testing.T) {
 	src := `
 import "std/string";
+import "std/option";
 function main(): i32 {
     // Case-insensitive search
-    if ("Hello World".index_of_ci("WORLD") != 6) { return 1; }
-    if ("Hello World".index_of_ci("world") != 6) { return 2; }
-    if ("Hello World".index_of_ci("xyz") != (0 - 1)) { return 3; }
+    if ("Hello World".index_of_ci("WORLD").unwrap_or(-1) != 6) { return 1; }
+    if ("Hello World".index_of_ci("world").unwrap_or(-1) != 6) { return 2; }
+    if ("Hello World".index_of_ci("xyz").is_some()) { return 3; }
     if (!"Hello".contains_ci("ELL")) { return 4; }
     if ("Hello".contains_ci("xyz")) { return 5; }
 
@@ -8050,10 +8051,10 @@ function main(): i32 {
     if ((0).lcm(5) != 0) { return 23; }
 
     // last_index_of — rightmost match
-    if ("hello hello".last_index_of("hello") != 6) { return 24; }
-    if ("aaa".last_index_of("a") != 2) { return 25; }
-    if ("hello".last_index_of("z") != (0 - 1)) { return 26; }
-    if ("hello".last_index_of("") != 5) { return 27; }
+    if ("hello hello".last_index_of("hello").unwrap_or(-1) != 6) { return 24; }
+    if ("aaa".last_index_of("a").unwrap_or(-1) != 2) { return 25; }
+    if ("hello".last_index_of("z").is_some()) { return 26; }
+    if ("hello".last_index_of("").unwrap_or(-1) != 5) { return 27; }
 
     // capitalize — first byte uppercased, rest preserved
     if ("hello".capitalize() != "Hello") { return 28; }

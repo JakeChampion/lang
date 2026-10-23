@@ -88,8 +88,7 @@ pub function parse(req: HttpRequest): Result[Form, FormError] {
 // __is_form: the media type is the form's, whatever parameters follow.
 function __is_form(ct: string): boolean {
   let kind: string = ct;
-  let semi: i32 = ct.index_of(";");
-  if (semi >= 0) {
+  if let Some(semi) = ct.index_of(";") {
     kind = ct.slice_snap(0, semi);
   }
   return kind.trim().to_lower() == "application/x-www-form-urlencoded";

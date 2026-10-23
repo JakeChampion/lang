@@ -595,17 +595,17 @@ pub struct Prefix {
 // of two different blocks. An IPv4-mapped block of 96 bits or more is the
 // IPv4 block it maps (`::ffff:10.0.0.0/104` is `10.0.0.0/8`).
 pub function prefix_parse(s: string): Option[Prefix] {
-  let slash: i32 = s.index_of("/");
+  let slash: Option[i32] = s.index_of("/");
   let text: string = s;
-  if (slash >= 0) {
-    text = s.slice_snap(0, slash);
+  if let Some(at) = slash {
+    text = s.slice_snap(0, at);
   }
   match (ip_parse(text)) {
     Some(ip) => {
       let width: i32 = ip.bytes().len() * 8;
       let bits: i32 = width;
-      if (slash >= 0) {
-        bits = __prefix_bits(s.slice_snap(slash + 1, s.len()), width);
+      if let Some(at) = slash {
+        bits = __prefix_bits(s.slice_snap(at + 1, s.len()), width);
       }
       if (bits < 0 || !__host_bits_clear(ip.bytes(), bits)) {
         return None;

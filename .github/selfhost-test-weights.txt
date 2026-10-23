@@ -741,7 +741,7 @@ TestSelfHostIterFusion 2
 TestSelfHostIterFusionAllocatesNothing 3
 TestSelfHostIterFusionReport 3
 TestSelfHostIterMapFilterIRX86_64 2
-TestSelfHostIterPositionCountByIRX86_64 2
+TestSelfHostIterPositionCountWhereIRX86_64 2
 TestSelfHostIterSingleParamIRX86_64 5
 TestSelfHostIterTakeSkipIRX86_64 2
 TestSelfHostIteratorTraitIRX86_64 2

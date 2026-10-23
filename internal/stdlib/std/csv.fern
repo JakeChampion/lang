@@ -22,8 +22,8 @@ import "std/string";
 // through unchanged.
 // `csv_join(arr)` — join with "," after escaping each field.
 pub function csv_escape(s: string): string {
-  if (s.index_of(",") < 0 && s.index_of("\"") < 0
-    && s.index_of("\n") < 0 && s.index_of("\r") < 0) {
+  if (!s.contains(",") && !s.contains("\"")
+    && !s.contains("\n") && !s.contains("\r")) {
     return s;
   }
   return "\"" + s.replace("\"", "\"\"") + "\"";

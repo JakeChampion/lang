@@ -828,10 +828,9 @@ function entry_names(e: HostsEntry, name: string): boolean {
 
 // The line up to its first `marker`, if any.
 function strip_comment(line: string, marker: string): string {
-  let h: i32 = line.index_of(marker);
-  if (h < 0) {
+  let Some(h) = line.index_of(marker) else {
     return line;
-  }
+  };
   return slice_unchecked(line, 0, h) + "";
 }
 
@@ -906,7 +905,7 @@ pub function parse_resolv_conf(contents: string, host: string): ResolvConf {
 // family, not one with an IPv6 zone, and only while there are fewer than
 // three.
 function with_nameserver(ns: net.SocketAddr[], text: string): net.SocketAddr[] {
-  if (ns.len() >= 3 || text.index_of("%") >= 0) {
+  if (ns.len() >= 3 || text.contains("%")) {
     return ns;
   }
   match (net.ip_parse(text)) {
@@ -986,8 +985,10 @@ function option_value(o: string, at: i32, lo: i32, hi: i32, current: i32): i32 {
 // its first dot, or nothing.
 function host_domain(host: string): string[] {
   let out: string[] = [];
-  let dot: i32 = host.index_of(".");
-  if (dot < 0 || dot + 1 >= host.len()) {
+  let Some(dot) = host.index_of(".") else {
+    return out;
+  };
+  if (dot + 1 >= host.len()) {
     return out;
   }
   return out.append(slice_unchecked(host, dot + 1, host.len()) + "");
