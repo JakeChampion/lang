@@ -30,13 +30,14 @@ function check(): i32 {
         Some(v) => { if (v != -57) { return 2; } },
         None => { return 3; }
     }
-    if (!m.has(-1)) { return 4; }
+    if (!m.contains(-1)) { return 4; }
     m = m.insert(-20, 5);
     if (m.len() != 40) { return 5; }
-    let r: (Map[i32, i32], boolean) = m.without(-18);
-    if (!r.1) { return 6; }
-    m = r.0;
-    if (m.has(-18) || m.len() != 39) { return 7; }
+    let r_had: boolean = m.contains(-18);
+    let r: Map[i32, i32] = m.remove(-18);
+    if (!r_had) { return 6; }
+    m = r;
+    if (m.contains(-18) || m.len() != 39) { return 7; }
     let lit: Map[i32, i32] = Map { -3: 30, -4: 40 };
     let j: i32 = 0;
     let s: i32 = 0;

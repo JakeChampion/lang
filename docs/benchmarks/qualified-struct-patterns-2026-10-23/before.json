@@ -1,0 +1,177 @@
+[
+  {
+    "case": "let",
+    "compiler": "oracle",
+    "command": [
+      "/workspace/scratch/lang-qualified-struct-patterns/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/let.fern"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/fixtures/let.fern:2:108: error[P001]: expected \"else\", got \";\"\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; let shapes.Open { n, .. } = o; return n; }\n                                                                                                               ^\n"
+  },
+  {
+    "case": "let",
+    "compiler": "self-host",
+    "command": [
+      "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/let.fern",
+      "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/fixtures/let.fern:2:108: error[P001]: in fn 'main': expected \"else\", got \";\"\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; let shapes.Open { n, .. } = o; return n; }\n                                                                                                               ^\n"
+  },
+  {
+    "case": "parameter",
+    "compiler": "oracle",
+    "command": [
+      "/workspace/scratch/lang-qualified-struct-patterns/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/parameter.fern"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/fixtures/parameter.fern:2:14: error[E024]: struct destructure pattern names Open, but the expression is shapes__Open\n    function get(shapes.Open { n, .. }: shapes.Open): i32 { return n; }\n                 ^\n"
+  },
+  {
+    "case": "parameter",
+    "compiler": "self-host",
+    "command": [
+      "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/parameter.fern",
+      "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/fixtures/parameter.fern:2:20: error[P001]: in fn 'get': expected \":\", got \".\"\n    function get(shapes.Open { n, .. }: shapes.Open): i32 { return n; }\n                       ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/parameter.fern:2:29: error[P001]: in fn 'get': expected \";\", got \",\"\n    function get(shapes.Open { n, .. }: shapes.Open): i32 { return n; }\n                                ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/parameter.fern:2:35: error[P001]: in fn 'get': expected \";\", got \":\"\n    function get(shapes.Open { n, .. }: shapes.Open): i32 { return n; }\n                                      ^\n"
+  },
+  {
+    "case": "for",
+    "compiler": "oracle",
+    "command": [
+      "/workspace/scratch/lang-qualified-struct-patterns/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/for.fern"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/fixtures/for.fern:2:98: error[P001]: expected \"(\", got \"shapes\"\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; let total = 0; for shapes.Open { n, .. } in [o, o] { total = total + n; } return total; }\n                                                                                                     ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/for.fern:2:120: error[P001]: expected \"function\", got \"in\"\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; let total = 0; for shapes.Open { n, .. } in [o, o] { total = total + n; } return total; }\n                                                                                                                           ^\n"
+  },
+  {
+    "case": "for",
+    "compiler": "self-host",
+    "command": [
+      "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/for.fern",
+      "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/fixtures/for.fern:2:104: error[P001]: in fn 'main': expected \"in\" after the `for` pattern\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; let total = 0; for shapes.Open { n, .. } in [o, o] { total = total + n; } return total; }\n                                                                                                           ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/for.fern:2:113: error[P001]: in fn 'main': expected \";\", got \",\"\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; let total = 0; for shapes.Open { n, .. } in [o, o] { total = total + n; } return total; }\n                                                                                                                    ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/for.fern:2:120: error[P001]: in fn 'main': expected \";\", got \"in\"\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; let total = 0; for shapes.Open { n, .. } in [o, o] { total = total + n; } return total; }\n                                                                                                                           ^\n"
+  },
+  {
+    "case": "match",
+    "compiler": "oracle",
+    "command": [
+      "/workspace/scratch/lang-qualified-struct-patterns/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/match.fern"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "match",
+    "compiler": "self-host",
+    "command": [
+      "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/match.fern",
+      "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/fixtures/match.fern:2:91: error[E035]: match on struct `shapes__Open` only accepts struct patterns `shapes__Open { \u2026 }` or `_`\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; match (o) { shapes.Open { addr, n } => { return n + addr.len(); } } }\n                                                                                              ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/match.fern:2:91: error[E015]: variant shapes__Open has positional payloads; match it as shapes__Open(...), not shapes__Open { ... }\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; match (o) { shapes.Open { addr, n } => { return n + addr.len(); } } }\n                                                                                              ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/match.fern:2:135: error[E043]: struct shapes.Open has no field or method \"len\"\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; match (o) { shapes.Open { addr, n } => { return n + addr.len(); } } }\n                                                                                                                                          ^\n"
+  },
+  {
+    "case": "match-expression",
+    "compiler": "oracle",
+    "command": [
+      "/workspace/scratch/lang-qualified-struct-patterns/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/match-expression.fern"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "match-expression",
+    "compiler": "self-host",
+    "command": [
+      "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/match-expression.fern",
+      "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/fixtures/match-expression.fern:2:79: error[E003]: variable \"result\": expected i32, got shapes__Open\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; let result: i32 = match (o) { shapes.Open { n, .. } => n }; return result; }\n                                                                                  ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/match-expression.fern:2:109: error[E035]: match on struct `shapes__Open` only accepts struct patterns `shapes__Open { \u2026 }` or `_`\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; let result: i32 = match (o) { shapes.Open { n, .. } => n }; return result; }\n                                                                                                                ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/match-expression.fern:2:109: error[E015]: variant shapes__Open has positional payloads; match it as shapes__Open(...), not shapes__Open { ... }\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; let result: i32 = match (o) { shapes.Open { n, .. } => n }; return result; }\n                                                                                                                ^\n"
+  },
+  {
+    "case": "if-let",
+    "compiler": "oracle",
+    "command": [
+      "/workspace/scratch/lang-qualified-struct-patterns/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/if-let.fern"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "if-let",
+    "compiler": "self-host",
+    "command": [
+      "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/if-let.fern",
+      "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/fixtures/if-let.fern:2:86: error[E015]: variant shapes__Open has positional payloads; match it as shapes__Open(...), not shapes__Open { ... }\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; if let shapes.Open { n, .. } = o { return n; } return 0; }\n                                                                                         ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/if-let.fern:2:110: error[E022]: if-let source must be an enum value, got shapes__Open\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; if let shapes.Open { n, .. } = o { return n; } return 0; }\n                                                                                                                 ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/if-let.fern:2:114: error[E002]: return value: expected i32, got shapes__Open\n    function main(): i32 { let o: shapes.Open = shapes.Open { addr: \"ok\", n: 7 }; if let shapes.Open { n, .. } = o { return n; } return 0; }\n                                                                                                                     ^\n"
+  },
+  {
+    "case": "opaque-match",
+    "compiler": "oracle",
+    "command": [
+      "/workspace/scratch/lang-qualified-struct-patterns/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/opaque-match.fern"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/fixtures/opaque-match.fern:2:50: error[E021]: cannot destructure opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { match (shapes.secret()) { shapes.Secret { n } => { return n; } } }\n                                                     ^\n"
+  },
+  {
+    "case": "opaque-match",
+    "compiler": "self-host",
+    "command": [
+      "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/fixtures/opaque-match.fern",
+      "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/fixtures/opaque-match.fern:2:50: error[E035]: match on struct `shapes__Secret` only accepts struct patterns `shapes__Secret { \u2026 }` or `_`\n    function main(): i32 { match (shapes.secret()) { shapes.Secret { n } => { return n; } } }\n                                                     ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/opaque-match.fern:2:50: error[E015]: variant shapes__Secret has positional payloads; match it as shapes__Secret(...), not shapes__Secret { ... }\n    function main(): i32 { match (shapes.secret()) { shapes.Secret { n } => { return n; } } }\n                                                     ^\n/workspace/scratch/lang-qualified-struct-patterns/fixtures/opaque-match.fern:2:75: error[E002]: return value: expected i32, got shapes__Secret\n    function main(): i32 { match (shapes.secret()) { shapes.Secret { n } => { return n; } } }\n                                                                              ^\n"
+  }
+]

@@ -1,0 +1,17 @@
+pub struct Open { addr: string, n: i32 }
+
+pub struct Holder { item: Option[i32] }
+
+pub struct Flag { bit: boolean }
+
+pub opaque struct Secret { n: i32 }
+
+pub function secret(): Secret {
+  return Secret { n: 9 };
+}
+
+pub enum Choice { Named { n: i32 }, Empty }
+
+pub function choice(): Choice {
+  return Named(11);
+}

@@ -1,0 +1,5 @@
+WARNING docs/benchmarks/qualified-struct-patterns-2026-10-23/main-df9/README.md:par5 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+
+Result: 0 errors, 1 warnings.
+The text obeys the STE structural rules that this tool can check.
+This tool cannot make sure that each word has its approved meaning.

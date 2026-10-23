@@ -47,7 +47,7 @@ function main(): i32 {
   print("len " + m.len().to_string());
   print("get a " + m.get_or('a', -1).to_string());
   print("get astral " + m.get_or('\u{1F600}', -1).to_string());
-  print("has c " + yes(m.has('c')));
+  print("has c " + yes(m.contains('c')));
   print("keys " + codes(cmp.sort(m.keys())));
   match (m.get('b')) {
     Some(v) => { print("get b " + v.to_string()); },

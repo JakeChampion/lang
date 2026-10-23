@@ -1,0 +1,110 @@
+import "./shapes";
+
+function param(w @ shapes.Open { addr: text, n }: shapes.Open): i32 {
+  return w.n + n + text.len();
+}
+
+function grow(n: i32): string {
+  let text: string = "";
+  for i in 0..n {
+    text = text + "0123456789";
+  }
+  return text;
+}
+
+function nested(item: Option[i32]): i32 {
+  let holder: shapes.Holder = shapes.Holder { item: item };
+  match (holder) {
+    shapes.Holder { item: Some(n) } => {
+      return n;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function nested_value(item: Option[i32]): i32 {
+  let holder: shapes.Holder = shapes.Holder { item: item };
+  let value: i32 = match (holder) { shapes.Holder { item: Some(n) } => n, _ => 0 };
+  return value + 1;
+}
+
+function flag(bit: boolean): i32 {
+  let holder: shapes.Flag = shapes.Flag { bit: bit };
+  return match (holder) { shapes.Flag { bit: true } => 1, shapes.Flag { bit: false } => 0 };
+}
+
+function main(): i32 {
+  if (nested(Some(7)) != 7 || nested(None) != 0) {
+    return 15;
+  }
+  if (nested_value(Some(7)) != 8 || nested_value(None) != 1) {
+    return 16;
+  }
+  if (flag(true) != 1 || flag(false) != 0) {
+    return 17;
+  }
+  let o: shapes.Open = shapes.Open { addr: "ok", n: 7 };
+  let w @ shapes.Open { n: first, .. } = o;
+  if (first != 7 || w.n != 7) {
+    return 1;
+  }
+  let shapes.Open { n: constructed, .. } = shapes.Open { addr: "new", n: 8 };
+  if (constructed != 8 || param(o) != 16) {
+    return 2;
+  }
+  let f = (shapes.Open { n, .. }: shapes.Open): i32 => n;
+  if (f(o) != 7) {
+    return 3;
+  }
+  let sum: i32 = 0;
+  for whole @ shapes.Open { n, .. } in [o, o] {
+    sum = sum + whole.n + n;
+  }
+  if (sum != 28) {
+    return 4;
+  }
+  for (let shapes.Open { n: start, .. } = o; start < 8; start = start + 1) {
+    sum = sum + start;
+  }
+  if (sum != 35) {
+    return 5;
+  }
+  match (o) {
+    shapes.Open { n, .. } when n < 0 => {
+      return 6;
+    },
+    whole @ shapes.Open { n, addr } => {
+      if (n + whole.n + addr.len() != 16) {
+        return 7;
+      }
+    }
+  }
+  let value: string = match (o) { shapes.Open { n, .. } when n < 0 => "bad", shapes.Open { addr, .. } => addr };
+  if (value != "ok") {
+    return 8;
+  }
+  let shapes.Open { addr: dynamic, .. } = shapes.Open { addr: grow(2), n: 0 };
+  if (dynamic.len() != 20) {
+    return 14;
+  }
+  if let whole @ shapes.Open { n, .. } = o {
+    if (n + whole.n != 14) {
+      return 9;
+    }
+  } else {
+    return 10;
+  }
+  match (shapes.secret()) {
+    shapes.Secret { .. } => {}
+  }
+  let e: shapes.Choice = shapes.choice();
+  let shapes.Named { n } = e else {
+    return 12;
+  };
+  if (n != 11) {
+    return 13;
+  }
+  return 0;
+}

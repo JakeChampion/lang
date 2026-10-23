@@ -20,7 +20,7 @@ function main(): i32 {
     if (m.get_or(big, 0) != 10) { return 2; }
     if (m.get_or(7 as i64, 0) != 20) { return 3; }
     if (m.get_or(0 - big, 0) != 30) { return 4; }
-    if (m.has(4294967296 as i64)) { return 5; }
+    if (m.contains(4294967296 as i64)) { return 5; }
     let ks: i64[] = m.keys();
     if (ks.len() != 3) { return 6; }
     if (ks[0] != big) { return 7; }
@@ -37,8 +37,8 @@ function main(): i32 {
     u = u.insert(18446744073709551615 as u64, 3);
     if (u.get_or(18446744073709551615 as u64, 0) != 3) { return 12; }
     match (m.get(big)) { Some(v) => { if (v != 10) { return 13; } }, None => { return 14; } }
-    let m2: Map[i64, i32] = m.without(big).0;
-    if (m2.has(big)) { return 15; }
+    let m2: Map[i64, i32] = m.remove(big);
+    if (m2.contains(big)) { return 15; }
     if (m2.len() != 2) { return 16; }
     return 42;
 }

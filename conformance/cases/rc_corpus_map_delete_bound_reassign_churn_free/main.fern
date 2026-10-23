@@ -12,9 +12,10 @@ function mk(): i32 {
     sm = sm.insert("ke" + "y", 7);
     sm = sm.insert("ot" + "her", 3);
     sm = sm.insert("th" + "ird", 10);
-    let st = sm.without("ke" + "y");
-    sm = st.0;
-    if (st.1) { acc = acc + 2; }
+    let st_had: boolean = sm.contains("ke" + "y");
+    let st = sm.remove("ke" + "y");
+    sm = st;
+    if (st_had) { acc = acc + 2; }
     acc = acc + sm.get_or("ot" + "her", 0);
     return acc;
 }

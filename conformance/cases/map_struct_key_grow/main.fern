@@ -44,12 +44,13 @@ function main(): i32 {
     }
 
     // delete shrinks; the deleted key misses, the rest survive
-    let (m2, ok) = m.without(Coord { a: 3, b: 6 });
+    let ok: boolean = m.contains(Coord { a: 3, b: 6 });
+    let m2 = m.remove(Coord { a: 3, b: 6 });
     m = m2;
     if (!ok) { return 8; }
     if (m.len() != 19) { return 9; }
-    if (m.has(Coord { a: 3, b: 6 })) { return 10; }
-    if (!m.has(Coord { a: 4, b: 8 })) { return 11; }
+    if (m.contains(Coord { a: 3, b: 6 })) { return 10; }
+    if (!m.contains(Coord { a: 4, b: 8 })) { return 11; }
 
     return 0;
 }

@@ -7877,7 +7877,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   if (is_map(rt) && fa.field == "insert") {
     return rt;
   }
-  if (is_map(rt) && fa.field == "has") {
+  if (is_map(rt) && fa.field == "contains") {
     return ty_bool();
   }
   if (is_map(rt) && fa.field == "len") {
@@ -10310,7 +10310,7 @@ pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
 // arguments DISAGREE with the ctor's key kind was accepted by check and the
 // emitters MISCOMPILED it — an i32 key dispatched through the string-keyed
 // map runtime (SIGSEGV at runtime). Reject exactly that mismatch: an
-// arg-taking map method (insert / get / get_or / has / without) whose chain
+// arg-taking map method (insert / get / get_or / contains / remove) whose chain
 // ROOT is a bare map_new [__map_new_i32] call and whose KEY argument is a
 // number [string] literal. A KIND-CONSISTENT chain is deliberately admitted
 // (narrower than native): the parser's own `Map { … }` literal desugar IS
@@ -10333,7 +10333,7 @@ function map_chain_root_ctor(e: ast.Expr): string {
         },
         ast.ExprFieldAccess(fa) => {
           if (fa.field == "insert" || fa.field == "get" || fa.field == "get_or"
-            || fa.field == "has" || fa.field == "without") {
+            || fa.field == "contains" || fa.field == "remove") {
             return map_chain_root_ctor(fa.obj);
           }
           return "";
@@ -10356,7 +10356,7 @@ function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): ut
       match (c.callee) {
         ast.ExprFieldAccess(fa) => {
           if ((fa.field == "insert" || fa.field == "get" || fa.field == "get_or"
-            || fa.field == "has" || fa.field == "without") && c.args.len() > 0) {
+            || fa.field == "contains" || fa.field == "remove") && c.args.len() > 0) {
             let mroot: string = map_chain_root_ctor(fa.obj);
             if (mroot.len() > 0) {
               let mism: boolean = false;

@@ -119,7 +119,7 @@ function counter(counters: Map[string, i64], req: HttpRequest): Decision {
     return decision(404);
   }
   let key: string = id.to_string();
-  let present: boolean = counters.has(key);
+  let present: boolean = counters.contains(key);
   if (req.method == "GET") {
     if (!present) {
       return decision(404);

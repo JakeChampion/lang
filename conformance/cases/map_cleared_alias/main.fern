@@ -15,7 +15,7 @@ function main(): i32 {
     let alias = m;              // alias must survive the clear intact
     m = m.cleared();
     if (m.len() != 0) { return 2; }
-    if (m.has("x")) { return 3; }
+    if (m.contains("x")) { return 3; }
     if (alias.len() != 2) { return 4; }
     if (alias.get_or("x", 0) != 10) { return 5; }
 

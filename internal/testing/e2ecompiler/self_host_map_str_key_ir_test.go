@@ -22,8 +22,8 @@ function main(): i32 {
     m = m.insert(owned, 10);
     let shared: Map[str, i32] = m;
     let other: Map[str, i32] = shared.insert("four", 4);
-    let r: (Map[str, i32], boolean) = m.without("two");
-    let out: string = m.len().to_string() + other.len().to_string() + r.0.len().to_string() + ":";
+    let r: Map[str, i32] = m.remove("two");
+    let out: string = m.len().to_string() + other.len().to_string() + r.len().to_string() + ":";
     let ks: str[] = m.keys();
     let i: i32 = 0;
     while (i < ks.len()) { out = out + ks[i] + "=" + m.get_or(ks[i], 0).to_string() + ","; i = i + 1; }

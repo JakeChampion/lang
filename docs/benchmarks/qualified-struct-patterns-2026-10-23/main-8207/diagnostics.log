@@ -1,0 +1,184 @@
+=== RUN   TestImportFreeModulesDoNotDrift
+--- PASS: TestImportFreeModulesDoNotDrift (0.07s)
+=== RUN   TestSelfHostCheckReportsLexErrors
+=== RUN   TestSelfHostCheckReportsLexErrors/hash-top-level
+=== PAUSE TestSelfHostCheckReportsLexErrors/hash-top-level
+=== RUN   TestSelfHostCheckReportsLexErrors/hash-in-body
+=== PAUSE TestSelfHostCheckReportsLexErrors/hash-in-body
+=== RUN   TestSelfHostCheckReportsLexErrors/dollar-top-level
+=== PAUSE TestSelfHostCheckReportsLexErrors/dollar-top-level
+=== RUN   TestSelfHostCheckReportsLexErrors/dollar-in-body
+=== PAUSE TestSelfHostCheckReportsLexErrors/dollar-in-body
+=== RUN   TestSelfHostCheckReportsLexErrors/backtick-top-level
+=== PAUSE TestSelfHostCheckReportsLexErrors/backtick-top-level
+=== RUN   TestSelfHostCheckReportsLexErrors/backtick-in-body
+=== PAUSE TestSelfHostCheckReportsLexErrors/backtick-in-body
+=== RUN   TestSelfHostCheckReportsLexErrors/tilde-top-level
+=== PAUSE TestSelfHostCheckReportsLexErrors/tilde-top-level
+=== RUN   TestSelfHostCheckReportsLexErrors/tilde-in-body
+=== PAUSE TestSelfHostCheckReportsLexErrors/tilde-in-body
+=== RUN   TestSelfHostCheckReportsLexErrors/backslash-top-level
+=== PAUSE TestSelfHostCheckReportsLexErrors/backslash-top-level
+=== RUN   TestSelfHostCheckReportsLexErrors/backslash-in-body
+=== PAUSE TestSelfHostCheckReportsLexErrors/backslash-in-body
+=== RUN   TestSelfHostCheckReportsLexErrors/section-sign-top-level
+=== PAUSE TestSelfHostCheckReportsLexErrors/section-sign-top-level
+=== RUN   TestSelfHostCheckReportsLexErrors/section-sign-in-body
+=== PAUSE TestSelfHostCheckReportsLexErrors/section-sign-in-body
+=== RUN   TestSelfHostCheckReportsLexErrors/shebang
+=== PAUSE TestSelfHostCheckReportsLexErrors/shebang
+=== RUN   TestSelfHostCheckReportsLexErrors/unterminated-string
+=== PAUSE TestSelfHostCheckReportsLexErrors/unterminated-string
+=== RUN   TestSelfHostCheckReportsLexErrors/unterminated-string-at-eof
+=== PAUSE TestSelfHostCheckReportsLexErrors/unterminated-string-at-eof
+=== RUN   TestSelfHostCheckReportsLexErrors/bad-escape
+=== PAUSE TestSelfHostCheckReportsLexErrors/bad-escape
+=== RUN   TestSelfHostCheckReportsLexErrors/bad-escape-top-level
+=== PAUSE TestSelfHostCheckReportsLexErrors/bad-escape-top-level
+=== RUN   TestSelfHostCheckReportsLexErrors/bad-numeric-suffix
+=== PAUSE TestSelfHostCheckReportsLexErrors/bad-numeric-suffix
+=== RUN   TestSelfHostCheckReportsLexErrors/integer-suffix-on-float
+=== PAUSE TestSelfHostCheckReportsLexErrors/integer-suffix-on-float
+=== RUN   TestSelfHostCheckReportsLexErrors/interpolant
+=== PAUSE TestSelfHostCheckReportsLexErrors/interpolant
+=== RUN   TestSelfHostCheckReportsLexErrors/latin-letter
+=== PAUSE TestSelfHostCheckReportsLexErrors/latin-letter
+=== RUN   TestSelfHostCheckReportsLexErrors/greek-letter
+=== PAUSE TestSelfHostCheckReportsLexErrors/greek-letter
+=== RUN   TestSelfHostCheckReportsLexErrors/cjk-letter
+=== PAUSE TestSelfHostCheckReportsLexErrors/cjk-letter
+=== RUN   TestSelfHostCheckReportsLexErrors/emoji
+=== PAUSE TestSelfHostCheckReportsLexErrors/emoji
+=== RUN   TestSelfHostCheckReportsLexErrors/non-ascii-digit
+=== PAUSE TestSelfHostCheckReportsLexErrors/non-ascii-digit
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-leading-byte
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-leading-byte
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-byte-in-string
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-byte-in-string
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-byte-in-comment
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-byte-in-comment
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-byte-after-multibyte
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-byte-after-multibyte
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-before-token-error
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-before-token-error
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-overlong
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-overlong
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-surrogate
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-surrogate
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-out-of-range
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-out-of-range
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-truncated
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-truncated
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-continuation
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-continuation
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-five-byte-lead
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-five-byte-lead
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-ff-with-continuations
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-ff-with-continuations
+=== RUN   TestSelfHostCheckReportsLexErrors/invalid-four-byte-lead
+=== PAUSE TestSelfHostCheckReportsLexErrors/invalid-four-byte-lead
+=== CONT  TestSelfHostCheckReportsLexErrors/hash-top-level
+=== CONT  TestSelfHostCheckReportsLexErrors/interpolant
+=== CONT  TestSelfHostCheckReportsLexErrors/section-sign-top-level
+=== CONT  TestSelfHostCheckReportsLexErrors/backtick-in-body
+=== CONT  TestSelfHostCheckReportsLexErrors/backtick-top-level
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-before-token-error
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-four-byte-lead
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-ff-with-continuations
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-five-byte-lead
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-continuation
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-out-of-range
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-truncated
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-surrogate
+=== CONT  TestSelfHostCheckReportsLexErrors/bad-escape
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-overlong
+=== CONT  TestSelfHostCheckReportsLexErrors/integer-suffix-on-float
+=== CONT  TestSelfHostCheckReportsLexErrors/bad-numeric-suffix
+=== CONT  TestSelfHostCheckReportsLexErrors/bad-escape-top-level
+=== CONT  TestSelfHostCheckReportsLexErrors/dollar-top-level
+=== CONT  TestSelfHostCheckReportsLexErrors/dollar-in-body
+=== CONT  TestSelfHostCheckReportsLexErrors/backslash-top-level
+=== CONT  TestSelfHostCheckReportsLexErrors/backslash-in-body
+=== CONT  TestSelfHostCheckReportsLexErrors/hash-in-body
+=== CONT  TestSelfHostCheckReportsLexErrors/non-ascii-digit
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-byte-after-multibyte
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-byte-in-comment
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-byte-in-string
+=== CONT  TestSelfHostCheckReportsLexErrors/invalid-leading-byte
+=== CONT  TestSelfHostCheckReportsLexErrors/tilde-in-body
+=== CONT  TestSelfHostCheckReportsLexErrors/cjk-letter
+=== CONT  TestSelfHostCheckReportsLexErrors/emoji
+=== CONT  TestSelfHostCheckReportsLexErrors/tilde-top-level
+=== CONT  TestSelfHostCheckReportsLexErrors/unterminated-string
+=== CONT  TestSelfHostCheckReportsLexErrors/unterminated-string-at-eof
+=== CONT  TestSelfHostCheckReportsLexErrors/shebang
+=== CONT  TestSelfHostCheckReportsLexErrors/greek-letter
+=== CONT  TestSelfHostCheckReportsLexErrors/latin-letter
+=== CONT  TestSelfHostCheckReportsLexErrors/section-sign-in-body
+--- PASS: TestSelfHostCheckReportsLexErrors (3.70s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/hash-top-level (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/backtick-in-body (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/section-sign-top-level (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/backtick-top-level (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-ff-with-continuations (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-four-byte-lead (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-before-token-error (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-five-byte-lead (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-continuation (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-truncated (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-out-of-range (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-surrogate (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/bad-escape (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/integer-suffix-on-float (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/bad-escape-top-level (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/bad-numeric-suffix (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-overlong (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/dollar-top-level (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/backslash-top-level (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/dollar-in-body (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/backslash-in-body (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/non-ascii-digit (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/hash-in-body (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-byte-after-multibyte (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-byte-in-comment (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-leading-byte (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/invalid-byte-in-string (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/tilde-in-body (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/cjk-letter (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/emoji (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/tilde-top-level (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/unterminated-string (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/unterminated-string-at-eof (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/shebang (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/greek-letter (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/latin-letter (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/section-sign-in-body (0.01s)
+    --- PASS: TestSelfHostCheckReportsLexErrors/interpolant (0.10s)
+=== RUN   TestSelfHostSourceDecodingModes
+=== RUN   TestSelfHostSourceDecodingModes/-check-file
+=== RUN   TestSelfHostSourceDecodingModes/-check-stdin
+=== RUN   TestSelfHostSourceDecodingModes/-interp-file
+=== RUN   TestSelfHostSourceDecodingModes/-interp-stdin
+=== RUN   TestSelfHostSourceDecodingModes/-fmt-file
+=== RUN   TestSelfHostSourceDecodingModes/-fmt-stdin
+=== RUN   TestSelfHostSourceDecodingModes/x86-64-linux
+=== RUN   TestSelfHostSourceDecodingModes/arm64-linux
+=== RUN   TestSelfHostSourceDecodingModes/wasm32-wasi
+--- PASS: TestSelfHostSourceDecodingModes (0.01s)
+    --- PASS: TestSelfHostSourceDecodingModes/-check-file (0.00s)
+    --- PASS: TestSelfHostSourceDecodingModes/-check-stdin (0.00s)
+    --- PASS: TestSelfHostSourceDecodingModes/-interp-file (0.00s)
+    --- PASS: TestSelfHostSourceDecodingModes/-interp-stdin (0.00s)
+    --- PASS: TestSelfHostSourceDecodingModes/-fmt-file (0.00s)
+    --- PASS: TestSelfHostSourceDecodingModes/-fmt-stdin (0.00s)
+    --- PASS: TestSelfHostSourceDecodingModes/x86-64-linux (0.00s)
+    --- PASS: TestSelfHostSourceDecodingModes/arm64-linux (0.00s)
+    --- PASS: TestSelfHostSourceDecodingModes/wasm32-wasi (0.00s)
+=== RUN   TestSelfHostREPL
+--- PASS: TestSelfHostREPL (0.26s)
+=== RUN   TestSelfHostREPLStdlibRootWithDotDot
+--- PASS: TestSelfHostREPLStdlibRootWithDotDot (0.11s)
+=== RUN   TestSelfHostEffects
+--- PASS: TestSelfHostEffects (0.01s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	4.272s
