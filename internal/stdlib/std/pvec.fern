@@ -472,12 +472,21 @@ function __pv_shrink_root[T](len: i32, root: VNode[T], shift: i32, tail: T[]): P
   }
 }
 
-// `pop()` — the vector without its last element; the receiver
-// unchanged when empty. Amortised O(1).
-pub function (v: PVec[T]) pop(): PVec[T] {
-  if (v.len == 0) {
-    return v;
+// `pop()` — `Some((rest, last))`, the vector without its last element and
+// that element; `None` when empty. Amortised O(1).
+pub function (v: PVec[T]) pop(): Option[(PVec[T], T)] {
+  match (v.last()) {
+    Some(x) => {
+      return Some((__pv_without_last(v), x));
+    },
+    None => {
+      return None;
+    }
   }
+}
+
+// __pv_without_last is `pop` on a non-empty vector, without the element.
+function __pv_without_last[T](v: PVec[T]): PVec[T] {
   if (v.len == 1) {
     return pvec_new();
   }

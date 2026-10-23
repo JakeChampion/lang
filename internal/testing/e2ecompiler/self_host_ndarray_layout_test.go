@@ -69,7 +69,7 @@ function check(a: ndarray.NdArray[f64], xs: f64[], transposed: boolean): boolean
     let row: i32 = i / 3;
     let col: i32 = i % 3;
     if (transposed) { row = i % 3; col = i / 3; }
-    if (a.get([row, col]) != xs[i] * 2.0) { return false; }
+    if (a.get_unchecked([row, col]) != xs[i] * 2.0) { return false; }
     i = i + 1;
   }
   return true;
@@ -89,7 +89,7 @@ function main(): i32 {
   if (!check(apply(indirect_scale, a.transpose()), xs, true)) { return 10; }
   // A visible packed call cannot erase the indirect caller's unknown input.
   if (!check(indirect_scale(a), xs, false)) { return 11; }
-  if (a.get([1, 2]) != 6.0 || xs[5] != 6.0) { return 12; }
+  if (a.get_unchecked([1, 2]) != 6.0 || xs[5] != 6.0) { return 12; }
   // Its only visible caller is packed. An external caller is unrestricted.
   if (!check(exported_scale(a), xs, false)) { return 13; }
   if (!check(mixed_recursive_scale(xs), xs, true)) { return 14; }

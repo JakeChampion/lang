@@ -20,7 +20,7 @@ func TestSelfHostNdarrayInnerPerModule(t *testing.T) {
 @noinline pub function score(xs: f64[]): f64 {
   let a = ndarray.from_flat(xs, [2, 2]);
   let out = a.inner(a, 0.25, (x: f64, y: f64): f64 => x * y, (x: f64, y: f64): f64 => x + y);
-  return out.get([0, 0]) + out.get([1, 1]);
+  return out.get_unchecked([0, 0]) + out.get_unchecked([1, 1]);
 }`)
 	mustWrite(t, proj, "main.fern", `import "./leaf";
 function main(): i32 { if (leaf.score([1.0, 2.0, 3.0, 4.0]) != 29.5) { return 1; } return 0; }`)

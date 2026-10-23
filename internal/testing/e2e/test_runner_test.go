@@ -191,8 +191,8 @@ func TestRunnerRegexExamplePasses(t *testing.T) {
 
 // `tests/stdlib/iter_test.fern` covers the core/iter stdlib (the
 // generic Iterator[T] protocol + Range / ArrayIter, the free reducers and
-// the Iterator methods — sum / count / of / product / nth / last / min /
-// max / contains / count_value / fold / any / all / map / filter) through
+// the Iterator methods — sum / len / of / product / nth / last / min /
+// max / contains / count / fold / any / all / map / filter) through
 // the pure-Fern runner. Passing suite → exit 0.
 func TestRunnerIterExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -241,7 +241,7 @@ func TestRunnerFormatExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/format", "# pass 46", "# fail 0", "1..46"} {
+	for _, w := range []string{"# Suite: std/format", "# pass 49", "# fail 0", "1..49"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1025,7 +1025,7 @@ func TestRunnerUtf8ExamplePasses(t *testing.T) {
 
 // `tests/stdlib/uuid_test.fern` covers std/uuid's generators by
 // shape — v4/v7 length, hyphen positions, version + variant nibbles,
-// is_uuid, and distinctness. The output is random but the assertions are
+// is_valid, and distinctness. The output is random but the assertions are
 // structural, so the TAP output is deterministic. Passing → exit 0.
 func TestRunnerUuidExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -1802,9 +1802,9 @@ func TestRunnerArrayBatchExamplePasses(t *testing.T) {
 }
 
 // `tests/stdlib/iter_combinators_test.fern` covers the core/iter
-// combinators NOT in iter_test (sum/count/of/product/nth/last/min/max/
-// contains/count_value/fold/any/all/map/filter): collect / take / skip /
-// flat_map / find / position / position_by / count_by. Passing → exit 0.
+// combinators NOT in iter_test (sum/len/of/product/nth/last/min/max/
+// contains/count/fold/any/all/map/filter): collect / take / skip /
+// flat_map / find / index_of / position / count_where. Passing → exit 0.
 func TestRunnerIterCombinatorsExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/iter_combinators_test.fern")
@@ -1812,7 +1812,7 @@ func TestRunnerIterCombinatorsExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: core/iter combinators", "# pass 11", "# fail 0", "1..11"} {
+	for _, w := range []string{"# Suite: core/iter combinators", "# pass 12", "# fail 0", "1..12"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -4809,7 +4809,7 @@ func TestRunnerNdarrayExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/ndarray", "1..17", "# pass 17", "# fail 0"} {
+	for _, w := range []string{"# Suite: std/ndarray", "1..18", "# pass 18", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

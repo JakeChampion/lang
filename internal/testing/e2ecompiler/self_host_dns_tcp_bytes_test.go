@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // Exercise the production send loop with deterministic short writes and
@@ -31,7 +33,7 @@ func dnsTCPBytesFaultSource(t *testing.T) string {
 	return `import "std/net";
 import "std/array";
 enum DnsError { NoReply, Socket(net.NetError) }
-` + body + `
+` + e2eharness.HostErrnoFern() + body + `
 function probe(mode: i32): void {
     let data: u8[] = [0u8, 255u8, 128u8, 65u8, 0u8, 254u8, 253u8, 10u8];
     if (mode == 6) { data = []; }
@@ -50,8 +52,8 @@ function probe(mode: i32): void {
         assert(calls <= 4);
         assert(remaining.len() == data.len() - progress);
         for i in 0..remaining.len() { assert(remaining[i] == data[progress + i]); }
-        if (mode == 1 && calls == 1) { return 0 - interrupted.errno(); }
-        if (mode == 2 || mode == 3 && calls == 2) { return 0 - reset.errno(); }
+        if (mode == 1 && calls == 1) { return 0 - host_errno(interrupted.errno()); }
+        if (mode == 2 || mode == 3 && calls == 2) { return 0 - host_errno(reset.errno()); }
         if (mode == 4 && calls == 2) { return 0; }
         let n: i32 = remaining.len();
         if (n > 3) { n = 3; }

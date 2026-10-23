@@ -191,13 +191,12 @@ function parse(text: string): ParseR {
       continue;
     }
 
-    let eq: i32 = raw.index_of("=");
-    if (eq < 0) {
+    let Some(eq) = raw.index_of("=") else {
       return ParseR {
         ok: false, cfg: cfg,
         err: Fault { line: lineno, code: 1, msg: "expected `key = value`, found no `=`" },
       };
-    }
+    };
     let key: string = raw.take(eq).trim().to_owned();
     if (key.len() == 0) {
       return ParseR {

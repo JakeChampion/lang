@@ -494,8 +494,7 @@ pub function body_json[T: json.FromJson](req: HttpRequest): Result[T, BodyError]
 // `application/json` or ends in `+json`, in any case.
 function __media_type_is_json(ct: string): boolean {
   let mt: string = ct;
-  let semi: i32 = ct.index_of(";");
-  if (semi >= 0) {
+  if let Some(semi) = ct.index_of(";") {
     mt = slice_unchecked(ct, 0, semi) + "";
   }
   mt = mt.trim();
@@ -515,8 +514,7 @@ function __media_type_is_json(ct: string): boolean {
 pub function http_path_segments(path: string): string[] {
   let n: i32 = path.len();
   // Strip query string.
-  let q: i32 = path.index_of("?");
-  if (q >= 0) {
+  if let Some(q) = path.index_of("?") {
     n = q;
   }
   let out: string[] = [];
@@ -543,10 +541,9 @@ pub function http_path_segments(path: string): string[] {
 // http_path_segments when callers want the bare path
 // without splitting.
 pub function http_url_path_only(path: string): string {
-  let q: i32 = path.index_of("?");
-  if (q < 0) {
+  let Some(q) = path.index_of("?") else {
     return path;
-  }
+  };
   return slice_unchecked(path, 0, q) + "";
 }
 
@@ -2900,10 +2897,9 @@ pub function (r: HttpRequest) query_all(name: string): string[] {
 
 // `__query_of(path)` — the request-target's query, without its `?`.
 function __query_of(path: string): string {
-  let q: i32 = path.index_of("?");
-  if (q < 0) {
+  let Some(q) = path.index_of("?") else {
     return "";
-  }
+  };
   return slice_unchecked(path, q + 1, path.len()) + "";
 }
 

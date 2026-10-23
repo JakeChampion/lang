@@ -447,7 +447,7 @@ it trades a real increase in branching for a handful of iterations, so it was
 left alone rather than half-done.
 
 **Backward search is linear too, by escalation rather than replacement.**
-`last_index_of` / `rfind` / `rsplit_once` / `rpartition` shared a naive
+`last_index_of` / `rsplit_once` / `rpartition` shared a naive
 right-to-left probe loop, `O(n·m)` worst case. They now share
 `__str_rfind_from`, which dispatches like its forward sibling — the gap for an
 empty needle, a backward `memchr`-shaped scan for one byte — and for anything

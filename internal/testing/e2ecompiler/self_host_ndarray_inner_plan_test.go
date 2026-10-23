@@ -53,15 +53,15 @@ const ndarrayInnerPlanSrc = `import "std/ndarray";
 @noinline function uncertain(f: () => ndarray.NdArray[f64]): ndarray.NdArray[f64] { return f(); }
 function main(): i32 {
   let xs: f64[] = [1.0, 2.0, 3.0, 4.0];
-  if (packed(xs).get([0, 0]) != 7.25) { return 1; }
-  if (reverse_mul(xs).get([0, 0]) != 7.25 || reverse_add(xs).get([0, 0]) != 7.25) { return 2; }
-  if (extra_add(xs).get([0, 0]) != 9.25) { return 3; }
-  if (capture_mul(xs, 2.0).get([0, 0]) != 14.25 || capture_add(xs, 2.0).get([0, 0]) != 17.0) { return 4; }
-  if (left_strided(xs).get([0, 0]) != 10.25 || right_strided(xs).get([0, 0]) != 5.25) { return 5; }
-  if (unknown(uncertain((): ndarray.NdArray[f64] => ndarray.from_flat(xs, [2, 2]))).get([0, 0]) != 7.25) { return 6; }
-  if (unknown(ndarray.from_flat(xs, [2, 2]).transpose()).get([0, 0]) != 7.25) { return 7; }
+  if (packed(xs).get_unchecked([0, 0]) != 7.25) { return 1; }
+  if (reverse_mul(xs).get_unchecked([0, 0]) != 7.25 || reverse_add(xs).get_unchecked([0, 0]) != 7.25) { return 2; }
+  if (extra_add(xs).get_unchecked([0, 0]) != 9.25) { return 3; }
+  if (capture_mul(xs, 2.0).get_unchecked([0, 0]) != 14.25 || capture_add(xs, 2.0).get_unchecked([0, 0]) != 17.0) { return 4; }
+  if (left_strided(xs).get_unchecked([0, 0]) != 10.25 || right_strided(xs).get_unchecked([0, 0]) != 5.25) { return 5; }
+  if (unknown(uncertain((): ndarray.NdArray[f64] => ndarray.from_flat(xs, [2, 2]))).get_unchecked([0, 0]) != 7.25) { return 6; }
+  if (unknown(ndarray.from_flat(xs, [2, 2]).transpose()).get_unchecked([0, 0]) != 7.25) { return 7; }
   let canonical = noncanonical(xs);
-  if (canonical.get([0, 0]) != 30.25 || canonical.strides()[0] != 1 || canonical.strides()[1] != 1) { return 8; }
+  if (canonical.get_unchecked([0, 0]) != 30.25 || canonical.strides()[0] != 1 || canonical.strides()[1] != 1) { return 8; }
   return 0;
 }`
 
