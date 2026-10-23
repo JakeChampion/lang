@@ -1,7 +1,7 @@
 # Fractal acceleration, 2026-10-23
 
-The default renderer reduces the measured zoom-42 boundary tile from 277 ms to 39 ms, about 7 times faster.
-The direct `f64` renderer reduces the same tile from 280 ms to 135 ms and preserves every PNG byte.
+The default renderer reduces the measured zoom-42 boundary tile from 264 ms to 40 ms, about 6.6 times faster.
+The direct `f64` renderer reduces the same tile from 286 ms to 135 ms and preserves every PNG byte.
 The default renderer uses a shared approximation. It need not reproduce the old image byte for byte.
 
 ## Complete tile measurements
@@ -14,15 +14,15 @@ The candidate uses the updated compiler and default renderer.
 
 | Tile | Baseline ms | Default ms | Speedup |
 | --- | ---: | ---: | ---: |
-| whole set | 12.13 | 11.98 | 1.01x |
-| seahorse, zoom 14 | 31.77 | 24.72 | 1.29x |
-| boundary, zoom 20 | 145.13 | 68.07 | 2.13x |
-| boundary, zoom 30 | 153.25 | 33.38 | 4.59x |
-| boundary, zoom 38 | 284.09 | 81.76 | 3.47x |
-| boundary, zoom 42 | 276.59 | 39.41 | 7.02x |
-| period-three interior, zoom 20 | 14.39 | 3.55 | 4.05x |
-| spiral, zoom 15 | 40.82 | 29.26 | 1.40x |
-| exterior, zoom 42 | 8.03 | 9.00 | 0.89x |
+| whole set | 12.23 | 12.03 | 1.02x |
+| seahorse, zoom 14 | 30.77 | 25.29 | 1.22x |
+| boundary, zoom 20 | 138.71 | 68.85 | 2.01x |
+| boundary, zoom 30 | 151.58 | 34.57 | 4.38x |
+| boundary, zoom 38 | 277.65 | 86.54 | 3.21x |
+| boundary, zoom 42 | 263.94 | 40.16 | 6.57x |
+| period-three interior, zoom 20 | 15.33 | 3.86 | 3.97x |
+| spiral, zoom 15 | 36.71 | 29.50 | 1.24x |
+| exterior, zoom 42 | 7.59 | 8.47 | 0.90x |
 
 These samples do not establish constant render time at every zoom or location.
 Cheap exterior tiles have a small regression from output allocation and scheduling overhead.
@@ -36,6 +36,9 @@ A spilled right operand can remain in memory, which removes copies and reloads.
 Floating-point comparisons branch directly on flags while preserving unordered NaN behavior.
 A portable SSA pass replaces multiplication by two with addition to self.
 Both lane widths have sign-bit extraction builtins on x86-64, ARM64, WASI, and both interpreters.
+
+A short center orbit selects the smaller batch renderer for cheap tiles.
+This choice changes the scheduler, not the pixel calculation.
 
 The direct renderer has four independent `f64x2` streams and refills completed lanes.
 It advances four updates per escape test and replays a finished group to recover the first escape result.

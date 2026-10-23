@@ -90,6 +90,25 @@ pub function render_exact(z: i32, x: i64, y: i64): Result[Tile, RenderError] {
   return render_kernel(z, x, y, false);
 }
 
+// A short center orbit selects the smaller scheduler for cheap exterior tiles.
+// This is only a cost estimate. The selected renderer still computes every pixel.
+fip function short_orbit(real: f64, imaginary: f64): boolean {
+  let zr: f64 = 0.0;
+  let zi: f64 = 0.0;
+  let steps: i32 = 0;
+  while (steps < 16) {
+    let rr: f64 = zr * zr;
+    let ii: f64 = zi * zi;
+    if (rr + ii > 65536.0) {
+      return true;
+    }
+    zi = 2.0 * zr * zi + imaginary;
+    zr = rr - ii + real;
+    steps = steps + 1;
+  }
+  return false;
+}
+
 function render_kernel(z: i32, x: i64, y: i64, approximate: boolean): Result[Tile, RenderError] {
   if (!valid(z, x, y)) {
     return Err(InvalidTile);
@@ -99,11 +118,14 @@ function render_kernel(z: i32, x: i64, y: i64, approximate: boolean): Result[Til
   }
   let step: f64 = 4.0 / ((1 as i64 << (z + 8) as i64) as f64);
   let view: kernel.View = kernel.View { size: SIZE, x: x * (SIZE as i64), y: y * (SIZE as i64), step: step, limit: max_iterations(z) };
+  let real: f64 = -2.5 + ((view.x + 128) as f64 + 0.5) * step;
+  let imaginary: f64 = 2.0 - ((view.y + 128) as f64 + 0.5) * step;
+  if (short_orbit(real, imaginary)) {
+    return render_reference(z, x, y);
+  }
   let reference: Option[linear.Reference] = None;
   let reference_work: i64 = 0;
   if (approximate && z >= 20) {
-    let real: f64 = -2.5 + ((view.x + 128) as f64 + 0.5) * step;
-    let imaginary: f64 = 2.0 - ((view.y + 128) as f64 + 0.5) * step;
     let ref: linear.Reference = linear.reference(real, imaginary, 182.0 * step, view.limit, 1e-8);
     reference_work = ref.zr.len() as i64 - 1;
     let corner: linear.Start = linear.prefix(ref, -2.5 + (view.x as f64 + 0.5) * step, 2.0 - (view.y as f64 + 0.5) * step, view.limit);
