@@ -193,30 +193,29 @@ pub function (b: u8) hex_digit(): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `(b: u8) digit_value()` — '0'..'9' → 0..9, -1 otherwise.
+// `(b: u8) digit_value()` — '0'..'9' → Some(0..9), None otherwise.
 // Useful for hand-rolled numeric parsers without the
 // __radix_digit detour.
-pub function (b: u8) digit_value(): i32 {
+pub function (b: u8) digit_value(): Option[i32] {
   if (b >= 48 && b <= 57) {
-    return b as i32 - 48;
+    return Some(b as i32 - 48);
   }
-  return 0 - 1;
+  return None;
 }
 
 // `(b: u8) hex_value()` — '0'..'9' / 'a'..'f' / 'A'..'F'
-// → 0..15, -1 otherwise. Same semantics as the internal
-// __hex_value but on the public byte-receiver surface.
-pub function (b: u8) hex_value(): i32 {
+// → Some(0..15), None otherwise.
+pub function (b: u8) hex_value(): Option[i32] {
   if (b >= 48 && b <= 57) {  // 0-9
-    return b as i32 - 48;
+    return Some(b as i32 - 48);
   }
   if (b >= 97 && b <= 102) {  // a-f
-    return b as i32 - 87;
+    return Some(b as i32 - 87);
   }
   if (b >= 65 && b <= 70) {  // A-F
-    return b as i32 - 55;
+    return Some(b as i32 - 55);
   }
-  return 0 - 1;
+  return None;
 }
 
 // `(b: u8) to_ascii_string()` returns one ASCII byte as text, including NUL.
