@@ -86,7 +86,7 @@ func runSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern, userFer
 		t.Fatalf("write dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
-		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import "+fqn+";\n}\n"), 0o644); err != nil {
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import "+fqn+";\n}\n"), 0o644); err != nil {
 		t.Fatalf("write user world: %v", err)
 	}
 	run(wasmtools, "parse", mustWrite(t, dir, "ue.wat", "(module)"), "-o", filepath.Join(dir, "ue.wasm"))
