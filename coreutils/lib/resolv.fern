@@ -115,10 +115,9 @@ pub function nsswitch_hosts(contents: string): Source[] {
 
 // The line up to its `#`, if any.
 function strip_comment(line: string): string {
-  let h: i32 = line.index_of("#");
-  if (h < 0) {
+  let Some(h) = line.index_of("#") else {
     return line;
-  }
+  };
   return slice_unchecked(line, 0, h) + "";
 }
 
@@ -158,10 +157,9 @@ function parse_sources(rest: string): Source[] {
 // negates the status, so the action lands on every OTHER status. An
 // action other than `return` is `continue` (`merge` continues too).
 function apply_action(s: Source, pair: string): Source {
-  let eq: i32 = pair.index_of("=");
-  if (eq < 0) {
+  let Some(eq) = pair.index_of("=") else {
     return s;
-  }
+  };
   let status: string = (slice_unchecked(pair, 0, eq) + "").to_ascii_lower();
   let ret: boolean = (slice_unchecked(pair, eq + 1, pair.len()) + "").eq_ignore_ascii_case("return");
   let negate: boolean = status.starts_with("!");

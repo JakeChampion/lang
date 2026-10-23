@@ -88,9 +88,8 @@ pub function (s: string) repeat(n: i32): string {
 // byte-level prefix / suffix / substring scans. UTF-8
 // agnostic: they walk raw bytes, which means a partial-
 // codepoint search will match its byte sequence wherever
-// it appears (same as Go's `strings.Contains`). Empty
-// needle / prefix / suffix return true / 0 to match the
-// `strstr` / Go conventions.
+// it appears (same as Go's `strings.Contains`). An empty
+// needle / prefix / suffix matches: true, or `Some(0)`.
 pub function (s: string) starts_with(prefix: string): boolean {
   let pLen: i32 = prefix.len();
   if (pLen > s.len()) {
@@ -356,12 +355,26 @@ pub function (s: string) contains(needle: string): boolean {
   return __str_find_from(s, s.len(), needle, nLen, 0) >= 0;
 }
 
-pub function (s: string) index_of(needle: string): i32 {
+// `s.index_of(needle)` — the byte index of the first occurrence, or None.
+pub function (s: string) index_of(needle: string): Option[i32] {
+  return __str_some(__str_index(s, needle));
+}
+
+// __str_index is `index_of` with -1 for absent, for the scans in this module.
+function __str_index(s: string, needle: string): i32 {
   let nLen: i32 = needle.len();
   if (nLen == 0) {
     return 0;
   }
   return __str_find_from(s, s.len(), needle, nLen, 0);
+}
+
+// __str_some is a scan's -1-for-absent index as an Option.
+function __str_some(i: i32): Option[i32] {
+  if (i < 0) {
+    return None;
+  }
+  return Some(i);
 }
 
 // __str_rfind_budget bounds the naive backward scan below before it escalates
@@ -454,40 +467,12 @@ function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 
   return sLen - r - nLen;
 }
 
-// `s.last_index_of(needle)` — rightmost occurrence; -1 if
-// absent. Empty needle returns len(s) to match Python rfind /
-// Go LastIndex conventions (the "match at every gap" trick).
+// `s.last_index_of(needle)` — the byte index of the rightmost
+// occurrence, or None. An empty needle is found at len(s), as
+// Python rfind / Go LastIndex have it (it matches at every gap).
 // Linear: see __str_rfind_from for the three tiers.
-pub function (s: string) last_index_of(needle: string): i32 {
-  return __str_rfind_from(s, s.len(), needle, needle.len());
-}
-
-// `s.find(needle)` / `s.rfind(needle)` — the Option-returning
-// companions to `index_of` / `last_index_of`. They report
-// "not found" as `None` instead of the `-1` sentinel, which is
-// the convention the rest of the stdlib settled on (split_once,
-// strip_prefix, the array `index_of` family). Prefer these
-// in new code so a forgotten `< 0` check can't silently read a
-// bogus index; `index_of` / `last_index_of` stay as the
-// low-level i32 form (and the self-host compiler's own builtin).
-//
-// Empty-needle semantics match the underlying primitive: `find`
-// returns `Some(0)` and `rfind` returns `Some(len(s))`, never
-// `None`, since an empty needle is always "found".
-pub function (s: string) find(needle: string): Option[i32] {
-  let idx: i32 = s.index_of(needle);
-  if (idx < 0) {
-    return None;
-  }
-  return Some(idx);
-}
-
-pub function (s: string) rfind(needle: string): Option[i32] {
-  let idx: i32 = s.last_index_of(needle);
-  if (idx < 0) {
-    return None;
-  }
-  return Some(idx);
+pub function (s: string) last_index_of(needle: string): Option[i32] {
+  return __str_some(__str_rfind_from(s, s.len(), needle, needle.len()));
 }
 
 // `s.to_ascii_capitalize()` — uppercase the first BYTE, leave
@@ -2811,10 +2796,14 @@ pub function (s: string) trim_end_matches(sub: string): string {
 // Folds A-Z to a-z on both sides per byte. Multibyte UTF-8
 // matches only as exact bytes (no Unicode case folding).
 pub function (s: string) contains_ci(needle: string): boolean {
-  return s.index_of_ci(needle) >= 0;
+  return __str_index_ci(s, needle) >= 0;
 }
 
-pub function (s: string) index_of_ci(needle: string): i32 {
+pub function (s: string) index_of_ci(needle: string): Option[i32] {
+  return __str_some(__str_index_ci(s, needle));
+}
+
+function __str_index_ci(s: string, needle: string): i32 {
   let nLen: i32 = needle.len();
   if (nLen == 0) {
     return 0;
@@ -2842,18 +2831,6 @@ pub function (s: string) index_of_ci(needle: string): i32 {
     i = i + 1;
   }
   return 0 - 1;
-}
-
-// `s.find_ci(needle)` — Option-returning companion to
-// `index_of_ci`: `Some(byte-index)` of the first case-
-// insensitive match, `None` when absent. Empty needle returns
-// `Some(0)`. Same Option convention as `find` / `rfind`.
-pub function (s: string) find_ci(needle: string): Option[i32] {
-  let idx: i32 = s.index_of_ci(needle);
-  if (idx < 0) {
-    return None;
-  }
-  return Some(idx);
 }
 
 // `s.pad_start_str(width, fill)` / `pad_end_str(width, fill)` repeat the
@@ -2973,7 +2950,7 @@ pub function (s: string) first_line(): Option[string] {
   if (s.len() == 0) {
     return None;
   }
-  let idx: i32 = s.index_of("\n");
+  let idx: i32 = __str_index(s, "\n");
   if (idx < 0) {
     return Some(s);
   }
@@ -3409,7 +3386,7 @@ pub function (s: string) remove_all(needle: string): string {
 // of sep. Returns s unchanged if sep not present, "" if
 // s starts with sep. Doesn't include sep in the result.
 pub function (s: string) before(sep: string): string {
-  let idx: i32 = s.index_of(sep);
+  let idx: i32 = __str_index(s, sep);
   if (idx < 0) {
     return s;
   }
@@ -3423,7 +3400,7 @@ pub function (s: string) after(sep: string): string {
   if (sep.len() == 0) {
     return s;
   }
-  let idx: i32 = s.index_of(sep);
+  let idx: i32 = __str_index(s, sep);
   if (idx < 0) {
     return "";
   }
@@ -3439,7 +3416,7 @@ pub function (s: string) between(start: string, end: string): Option[string] {
   if (start.len() == 0 || end.len() == 0) {
     return None;
   }
-  let i: i32 = s.index_of(start);
+  let i: i32 = __str_index(s, start);
   if (i < 0) {
     return None;
   }

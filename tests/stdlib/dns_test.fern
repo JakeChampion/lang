@@ -727,10 +727,9 @@ function test_lookup_records_with_walks_the_plan(): test.TestOutcome {
 
 // The scripted names are suffixes here: `nx.ok2` answers as `ok2` does.
 function suffix_of(q: string): string {
-  let dot: i32 = q.index_of(".");
-  if (dot < 0) {
+  let Some(dot) = q.index_of(".") else {
     return q;
-  }
+  };
   return slice_unchecked(q, dot + 1, q.len()) + "";
 }
 

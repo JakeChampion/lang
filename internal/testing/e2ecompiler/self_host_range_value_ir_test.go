@@ -26,9 +26,9 @@ function main(): i32 { return iter.sum(0..10); }`},
 	// Inclusive: sum(0..=10) = 0+…+10 = 55.
 	{"sum-inclusive", `import "core/iter";
 function main(): i32 { return iter.sum(0..=10); }`},
-	// count over a non-zero-based range: count(2..7) = 5.
-	{"count", `import "core/iter";
-function main(): i32 { return (2..7).count(); }`},
+	// len over a non-zero-based range: len(2..7) = 5.
+	{"len", `import "core/iter";
+function main(): i32 { return (2..7).len(); }`},
 	// Precedence: `..` binds looser than `+`, so 0..n+1 is 0..(n+1) → sum 0..4 = 6.
 	{"precedence", `import "core/iter";
 function main(): i32 { let n: i32 = 3; return iter.sum(0..n+1); }`},
