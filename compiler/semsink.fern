@@ -33,24 +33,28 @@ struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos:
 struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
 
 pub function sink(f: ssasem.Func): Sunk {
-  let ru: Sunk = reuse(f);
-  let sk: Sunk = sink_rereads(ru.f);
-  return Sunk { f: sk.f, reread: ru.reread + sk.reread };
+  let ru: Reused = reuse(f);
+  let sk: Sunk = sink_rereads(ru.s.f, ru.reads);
+  return Sunk { f: sk.f, reread: ru.s.reread + sk.reread };
 }
+
+// What reuse leaves, and the reads it built of that graph, if it built them
+// and changed nothing.
+struct Reused { s: Sunk, reads: Option[Reads] }
 
 // A counted projection read off the same parent and slot as one a dominating
 // block read is that read when the first is one the plan must take out of
 // the box (child_used_above): a second read of the slot would find it
 // emptied. `reread` counts the reads replaced.
-function reuse(f: ssasem.Func): Sunk {
+function reuse(f: ssasem.Func): Reused {
   let g: ssa.SFunc = f.graph;
   let at: i32[] = projection_blocks(g, f.values);
   if (at.len() == 0 || !repeated_across(g, f.values, at)) {
-    return Sunk { f: f, reread: 0 };
+    return Reused { s: Sunk { f: f, reread: 0 }, reads: None };
   }
   let rd: Reads = reads_of(g, f.values, at);
   if (!rd.flow.ok) {
-    return Sunk { f: f, reread: 0 };
+    return Reused { s: Sunk { f: f, reread: 0 }, reads: Some(rd) };
   }
   let reads: ssa.SInst[] = counted_reads(g, f.values);
   let slots: Slots = read_slots(reads);
@@ -65,9 +69,9 @@ function reuse(f: ssasem.Func): Sunk {
     }
   }
   if (n == 0) {
-    return Sunk { f: f, reread: 0 };
+    return Reused { s: Sunk { f: f, reread: 0 }, reads: Some(rd) };
   }
-  return Sunk { f: semcse.replaced(f, same), reread: n };
+  return Reused { s: Sunk { f: semcse.replaced(f, same), reread: n }, reads: None };
 }
 
 // The counted projections of `g`, in block order.
@@ -139,13 +143,13 @@ function earlier_read(rd: Reads, reads: ssa.SInst[], slots: Slots, r: ssa.SInst,
   return 0 - 1;
 }
 
-function sink_rereads(f: ssasem.Func): Sunk {
+function sink_rereads(f: ssasem.Func, known: Option[Reads]): Sunk {
   let g: ssa.SFunc = f.graph;
   let at: i32[] = crossing_projections(g, f.values);
   if (at.len() == 0) {
     return Sunk { f: f, reread: 0 };
   }
-  let rd: Reads = reads_of(g, f.values, at);
+  let rd: Reads = reads_at(g, f.values, at, known);
   if (!rd.flow.ok) {
     return Sunk { f: f, reread: 0 };
   }
@@ -198,6 +202,20 @@ function projection(kind: i32): boolean {
 
 // `at` is crossing_projections'.
 struct Tree { par: i32[], parent: boolean[], kids: i32[][], first: i32[] }
+
+// reads_at is reads_of, from `known` when that holds the reads of the same
+// graph: only `at` depends on the caller.
+function reads_at(g: ssa.SFunc, values: typeinfo.Type[], at: i32[], known: Option[Reads]): Reads {
+  match (known) {
+    Some(k) => {
+      return Reads { ...k, at: at };
+    },
+    None => {
+      return reads_of(g, values, at);
+    }
+  }
+  return reads_of(g, values, at);
+}
 
 function reads_of(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): Reads {
   let deps: i32[][] = [];
