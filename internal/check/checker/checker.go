@@ -12312,6 +12312,10 @@ func (c *checker) requireValue(e ast.Expr, t ast.Type) {
 	if _, isUnit := e.(*ast.UnitLit); isUnit {
 		return
 	}
+	// A binding can hold the unit value, including a generic payload at void.
+	if _, isBinding := e.(*ast.Ident); isBinding {
+		return
+	}
 	c.errfCode(e.Pos(), "E072",
 		"a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value")
 }

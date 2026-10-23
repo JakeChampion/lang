@@ -1775,9 +1775,14 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
     return refused(s, "unsupported variant literal");
   }
   let shape: Payloads = literal_payloads(s, whole, name, layout);
-  // A `void` payload's literal writes `Ok(())`: the one argument carries nothing.
+  // A unit payload has no stored field. Evaluate its value before omission.
   let args: ast.Expr[] = written;
-  if (shape.unit && written.len() == 1 && parser.is_unit_expr(written[0])) {
+  if (shape.unit && written.len() == 1 && is_void(checked(written[0], s))) {
+    let unit: Value = expr(written[0], s, t_void());
+    s = unit.s;
+    if (!s.ok) {
+      return unit;
+    }
     args = [];
   }
   if (!shape.found || !semtypes.concrete(whole, false) || args.len() != shape.types.len()) {
@@ -4789,7 +4794,7 @@ function declare_from_call(v: ast.StmtVar, s: State, after: checker.Scope): Stat
   if (!s.ok) {
     return s;
   }
-  if (!semtypes.concrete(s.values[init.id], false)) {
+  if (!semtypes.concrete(s.values[init.id], true)) {
     return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(s.values[init.id]));
   }
   return State { ...bind_var(s, v.name, init.id), scope: after };
@@ -5058,16 +5063,23 @@ function at_bound(pv: ast.PatVariant, scrut: i32, s: State): State {
   return bind(s, pv.at_binding, scrut);
 }
 
-// Each named payload position is a projection of the scrutinee, bound for
-// the arm's body; `_`, an absent payload list and a `void` payload's binding
-// bind nothing.
+// Each named payload position is a projection of the scrutinee. A unit
+// payload has no stored field, so its binding holds the unit constant.
+// A discard or absent payload list binds nothing.
 function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: State, layout: i32): State {
   s = at_bound(pv, scrut, s);
   if (layout == semrecords.layout_member()) {
     return narrowed(pv, scrut, s);
   }
-  if (pv.binding == "" || fields.len() == 0) {
+  if (pv.binding == "" || pv.binding == "_" && fields.len() == 0) {
     return s;
+  }
+  if (fields.len() == 0) {
+    let unit: Value = define(s, 1, [], 0, "", t_void());
+    if (util.index_of_str(unit.s.names, pv.binding) >= 0) {
+      return replace(unit.s, pv.binding, unit.id);
+    }
+    return bind(unit.s, pv.binding, unit.id);
   }
   let names: string[] = [pv.binding];
   for n in pv.extra_bindings {

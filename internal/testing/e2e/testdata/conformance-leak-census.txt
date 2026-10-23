@@ -888,6 +888,7 @@ regex_ops                                            0
 regex_replace_edge                                   0
 regex_replace_groups                                 0
 regex_wordbound                                      0
+result_combinators_accept_unit_payloads               0
 result_err_path                                      0
 result_match                                         0
 result_of_a_call_through_a_function_field_is_released 0

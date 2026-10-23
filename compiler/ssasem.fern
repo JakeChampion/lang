@@ -2561,9 +2561,9 @@ function variable_name(t: typeinfo.Type): string {
 }
 
 // A variable binds a concrete type: the instance is produced at exactly that
-// type, so a void, an unknown or another template's variable binds nothing.
+// type. Unit is concrete too. Unknowns and template variables bind nothing.
 function bind_variable(b: Binding, name: string, got: typeinfo.Type): Binding {
-  if (!semtypes.concrete(got, false)) {
+  if (!semtypes.concrete(got, true)) {
     return unbindable("type variable binds no concrete type");
   }
   let at: i32 = bound_at(b, name);
