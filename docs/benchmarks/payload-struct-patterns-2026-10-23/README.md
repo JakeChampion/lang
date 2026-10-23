@@ -24,3 +24,7 @@ The ten stock-driver builds complete in 96.850 seconds.
 
 The broader checker, pattern, value-block, semantic-execution, and consuming-call suite passes in 273.188 seconds.
 The recorded source fingerprint matches the measured tree.
+
+After main 8207ede, the payload, qualified-pattern, complexity, lexical-error, and source-decoding suite passes in 32.713 seconds.
+Both checkers, both interpreters, and all three runtime targets pass the payload and qualified-pattern tests.
+The bootstrap archive retains the source fingerprint before that Unicode-diagnostic update.
