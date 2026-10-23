@@ -1,6 +1,7 @@
 package modload
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,6 +112,10 @@ function main(): i32 { return 0; }`,
 	}
 	if !strings.Contains(err.Error(), "fern.toml") || !strings.Contains(err.Error(), "textkit") {
 		t.Errorf("error should name the dep and the manifest: %v", err)
+	}
+	var ie *importError
+	if !errors.As(err, &ie) || ie.Code() != "E086" || ie.Position().Line != 1 {
+		t.Errorf("want E086 at the import on line 1, got %v", err)
 	}
 }
 

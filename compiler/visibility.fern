@@ -240,7 +240,7 @@ function package_diag(cx: VisCtx, qual: string, name: string, line: i32, col: i3
   return util.Diag {
     length: 0,
     related: [],
-    code: "",
+    code: "E087",
     message: m + "." + name + " is `pub(package)` — only modules in the same package as " + m + " may use it",
     line: line,
     col: col,
@@ -293,7 +293,7 @@ function ref_diag(cx: VisCtx, r: astwalk.QualRef, out: util.Diag[]): util.Diag[]
   return out.append(util.Diag {
     length: 0,
     related: [],
-    code: "",
+    code: "E087",
     message: cx.loaded[mi].name + "." + r.name + " is not exported (declare it as `pub " + kw + " " + r.name + " …` to make it accessible from other modules)",
     line: r.line,
     col: r.col,
@@ -457,7 +457,7 @@ function check_type_name(tn: string, cx: VisCtx, line: i32, col: i32, acc: util.
   return acc.append(util.Diag {
     length: 0,
     related: [],
-    code: "",
+    code: "E087",
     message: m + "." + base + " is not exported (declare it as `pub " + kind + " " + base + " …` to make it accessible from other modules)",
     line: line,
     col: col,

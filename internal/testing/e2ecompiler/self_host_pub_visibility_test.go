@@ -99,7 +99,7 @@ pub(package) struct PkgBox { v: i32 }
 	// column 41 here, a module name's width to the right (#6993).
 	check(t, "private_ref",
 		"import \"./lib\";\nfunction main(): i32 { return lib.hidden(); }\n",
-		1, "2:34: error: lib.hidden is not exported (declare it as `pub function hidden …` to make it accessible from other modules)")
+		1, "2:34: error[E087]: lib.hidden is not exported (declare it as `pub function hidden …` to make it accessible from other modules)")
 
 	// The same reference in VALUE position — a function value rather than a
 	// call. It has no enclosing call to borrow a position from, so it always
@@ -107,7 +107,7 @@ pub(package) struct PkgBox { v: i32 }
 	// two to one rule rather than to two that happen to agree today.
 	check(t, "private_ref_value_position",
 		"import \"./lib\";\nfunction main(): i32 { let f: () => i32 = lib.hidden; return f(); }\n",
-		1, "2:46: error: lib.hidden is not exported")
+		1, "2:46: error[E087]: lib.hidden is not exported")
 
 	// ACCEPT: the exported member. If a rebuild site dropped `is_pub`, this is
 	// the case that goes red.
