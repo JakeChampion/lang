@@ -1,10 +1,8 @@
 // examples/vcl/store.fern — a cache that survives between requests.
 //
-// The proxy's accept loop reclaims a per-request arena, and `Cell` — the
-// language's mutable box, the only thing that outlives a request — holds a
-// scalar or a string and nothing else (E057: a composite could form a
-// cycle). So the cache lives between requests as a STRING, encoded here
-// and decoded at the top of each request.
+// The server holds the cache in a Cell across requests.
+// Cell permits a scalar or a string. E057 refuses composite values that can
+// form a reference cycle. The cache uses a string that each request decodes.
 //
 // The encoding is length-prefixed rather than delimited, because a cached
 // body is arbitrary bytes: any separator you pick can appear inside one.

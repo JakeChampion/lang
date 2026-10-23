@@ -109,14 +109,16 @@ diagnostic, without source context, notes, fixes or colour.
 | `arm64-linux` (default) | static ELF | ARMv8.2-A with the crypto extensions |
 | `arm64-android` | static position-independent ELF | as `arm64-linux` |
 | `arm64-darwin` | static Mach-O, signed | Apple Silicon, latest macOS |
-| `x86-64-linux` | static ELF | x86-64-v3 (Haswell, 2013) |
+| `x86-64-linux` | static ELF | x86-64-v3 with AES-NI (Haswell, 2013) |
 | `wasm32-wasi` | WASI Preview 2 component | `wasmtime run` |
 | `wasm32-wasi-http` | `wasi:http/incoming-handler` component | `wasmtime serve` |
+| `arm64-freestanding`, `x86-64-freestanding` | check only | no host capabilities; no emitter yet |
 
 The CPU baselines are deliberate: a binary is static with no runtime
 dispatch, so a selected instruction is a hard requirement. The
-`-backend ssa` register-allocating emitter is available on both native Linux
-ISAs. Per-backend support and known gaps: `docs/BACKEND-PARITY.md`.
+register-allocating SSA emitter is the default and only emitter on every native
+target. `-backend flat` is refused there. Per-backend support and known gaps:
+`docs/BACKEND-PARITY.md`.
 
 ## More than a compiler
 

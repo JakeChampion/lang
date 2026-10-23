@@ -539,7 +539,7 @@ coreutils/
                     and a real struct timeval where it is 0, which is
                     400 on arm64
   std/tz            the local zone as tzset(3) finds it, now a stdlib
-                    module (docs/STDLIB.md) — the TZif file
+                    module (internal/stdlib/std/tz.fern) — the TZif file
                     $TZ names (absolute, or under $TZDIR), the POSIX
                     rule in its footer past the transition table, and
                     the rule string itself when no file answers — with

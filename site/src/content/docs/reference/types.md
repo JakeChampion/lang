@@ -256,10 +256,10 @@ failing on an unknown method.
 | `without(k)`          | `(Map[K, V], boolean)` — the map, and whether the key was there |
 | `cleared()`           | an empty map         |
 
-The last three return the updated map rather than mutating in place *as
-an expression*, but they may reuse the original's storage when it is
-uniquely referenced. Rebind the result — `stock = stock.insert(…)` — and
-treat the old binding as spent instead of expecting two independent maps.
+The last three return an updated map. Rebind the result with
+`stock = stock.insert(…)` to replace the current value.
+Another binding keeps its previous value. The runtime can reuse the storage
+when no other owner holds it.
 
 ## Implicit conversions
 
