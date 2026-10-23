@@ -414,3 +414,5 @@ vandnot=473
 vselect=474
 vload=475
 vstore=476
+vget=477
+vset=478

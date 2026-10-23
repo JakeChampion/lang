@@ -5785,7 +5785,39 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
   if (k == "vround") {
     return emit_wasm_lane_round(o.width, sh, vtmp, vtmp2);
   }
+  if (util.has_str(["vget", "vset"], k)) {
+    return emit_wasm_lane_group(o.width, cx.base, k == "vset");
+  }
   return "    " + wasm_lane_verb(k, sh) + "\n";
+}
+
+// emit_wasm_lane_group is vget or vset: the group of elements from the index,
+// after a check of its first and last index, with the address of its first
+// element in the index local. An f32 group is two f64 pairs: a read demotes
+// each and moves the second into the high 64 bits, and a write promotes the
+// low half and then the high half.
+function emit_wasm_lane_group(width: i32, base: i32, set: boolean): string {
+  let arr: string = util.i32_to_string(base);
+  let at: string = "    local.get " + util.i32_to_string(base + 4) + "\n";
+  let v: string = "    local.get " + util.i32_to_string(base + 5) + "\n";
+  let out: string = "";
+  if (set) {
+    out = "    local.set " + util.i32_to_string(base + 5) + "\n";
+  }
+  out = out + "    local.set " + util.i32_to_string(base + 4) + "\n" + wasm_arr_index_trap(base, base + 4);
+  out = out + "    local.get " + arr + "\n    i32.load\n" + at + "    i32.const " + util.i32_to_string(128 / width - 1) + "\n    i32.add\n    i32.le_u\n    if\n      unreachable\n    end\n";
+  out = out + "    local.get " + arr + "\n" + at + "    i32.const 8\n    i32.mul\n    i32.add\n    i32.const 8\n    i32.add\n    local.set " + util.i32_to_string(base + 4) + "\n";
+  let hi: string = at + "    i32.const 16\n    i32.add\n";
+  if (set && width == 64) {
+    return out + at + v + "    v128.store\n";
+  }
+  if (set) {
+    return out + at + v + "    f64x2.promote_low_f32x4\n    v128.store\n" + hi + v + "    f64x2.extract_lane 1\n    f64x2.splat\n    f64x2.promote_low_f32x4\n    v128.store\n";
+  }
+  if (width == 64) {
+    return out + at + "    v128.load\n";
+  }
+  return out + at + "    v128.load\n    f32x4.demote_f64x2_zero\n" + hi + "    v128.load\n    f32x4.demote_f64x2_zero\n    f64x2.extract_lane 0\n    f64x2.replace_lane 1\n";
 }
 
 // wasm_lane_verb is the wasm instruction of a lane op with the same operand
