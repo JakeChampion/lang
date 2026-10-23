@@ -530,18 +530,18 @@ function __family_of(key: string): string {
 pub struct Exporter { listener: i32, scrapes: i32[], heads: string[] }
 
 // `listen(drv, port)` — an exporter on `port`, on every interface of both
-// families where the host has IPv6, watched on `drv`; or the -errno the
-// bind failed with.
-pub function listen[D: async.Driver](drv: D, port: i32): Result[Exporter, i32] {
+// families where the host has IPv6, watched on `drv`; or the error the bind
+// or the watch failed with.
+pub function listen[D: async.Driver](drv: D, port: i32): Result[Exporter, net.NetError] {
   let fd: i32 = __listen_any(port);
   if (fd < 0) {
-    return Err(fd);
+    return Err(net.error_from_host(fd));
   }
   tcp_socket_ctl(fd, 3, 1);
   let watched: i32 = drv.watch(fd, 1);
   if (watched < 0) {
     tcp_close(fd);
-    return Err(watched);
+    return Err(net.error_from_host(watched));
   }
   return Ok(Exporter { listener: fd, scrapes: [], heads: [] });
 }
@@ -549,7 +549,7 @@ pub function listen[D: async.Driver](drv: D, port: i32): Result[Exporter, i32] {
 function __listen_any(port: i32): i32 {
   let v6: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8];
   let both: i32 = tcp_listen_with(v6, port, 16, false);
-  if (both >= 0 || both != -97 && both != -94 && both != -92) {
+  if (both >= 0 || !net.error_from_host(both).ipv6_unavailable()) {
     return both;
   }
   let v4: u8[] = [0 as u8, 0 as u8, 0 as u8, 0 as u8];

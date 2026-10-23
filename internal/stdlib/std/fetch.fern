@@ -77,6 +77,7 @@ import "std/http/cookie";
 import "std/url";
 import "std/dns";
 import "std/net";
+import "std/errno";
 import "std/error";
 import "std/base64";
 import "std/brotli";
@@ -1043,7 +1044,7 @@ pub function (sh: Shared) flush(): (i32[], i32[]) {
       let n: i32 = tcp_send_bytes(d.fd, d.wire);
       if (n < 0 && 0 - n != 11) {
         sh.rows.set(rows);
-        __driven_failed(sh, d.fd, Io(net.error_from_errno(0 - n)));
+        __driven_failed(sh, d.fd, Io(net.error_from_host(0 - n)));
         return sh.flush();
       }
       if (n > 0) {
@@ -2007,7 +2008,7 @@ function __origin_checked[T: Transport](tr: T, t: __Target, policy: Policy): Res
 function __reset(e: FetchError): boolean {
   match (e) {
     Io(n) => {
-      return n.eq(net.ConnectionReset) || n.eq(net.ConnectionAborted) || n.eq(net.Other(32));
+      return n.eq(net.ConnectionReset) || n.eq(net.ConnectionAborted) || n.eq(net.Other(errno.EPIPE));
     },
     _ => {
       return false;
@@ -2417,8 +2418,8 @@ function __kernel_session(sock: i32, s: client.Session, req: Request): Result[cl
         return Ok(o.session);
       },
       ktls.Unchanged => {},
-      ktls.Broken(errno) => {
-        return Err(Tls("the kernel's TLS record layer refused the transmit keys (errno " + errno.to_string() + ")"));
+      ktls.Broken(code) => {
+        return Err(Tls("the kernel's TLS record layer refused the transmit keys (errno " + code.to_string() + ")"));
       }
     }
   }
@@ -2460,11 +2461,11 @@ function __kernel_record(sock: i32, s: client.Session, now: i64): __Record {
     ktls.StreamEnded => {
       return RecordsEnded;
     },
-    ktls.ReadFailed(errno) => {
-      if (errno == 74) {
+    ktls.ReadFailed(code) => {
+      if (code == 74) {
         ktls.alert(sock, 20);
       }
-      return RecordFailed(Tls("the kernel's TLS record layer failed a read (errno " + errno.to_string() + ")"));
+      return RecordFailed(Tls("the kernel's TLS record layer failed a read (errno " + code.to_string() + ")"));
     },
     _ => {
       return RecordAwaited;
@@ -2910,7 +2911,7 @@ function __write_all[T: Transport](tr: T, conn: i32, payload: u8[]): Result[void
     }
     let n: i32 = tr.write(conn, rest);
     if (n < 0) {
-      return Err(Io(net.error_from_errno(0 - n)));
+      return Err(Io(net.error_from_host(0 - n)));
     }
     if (n == 0) {
       return Err(Io(net.ConnectionReset));

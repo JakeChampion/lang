@@ -1342,7 +1342,7 @@ function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[i32, DnsError] {
   while (remaining.len() > 0) {
     let sent: i32 = tcp_send_bytes(sock, remaining);
     if (sent < 0) {
-      let failure: net.NetError = net.error_from_errno(sent);
+      let failure: net.NetError = net.error_from_host(sent);
       if (!failure.eq(net.Interrupted)) {
         tcp_close(sock);
         return Err(Socket(failure));
