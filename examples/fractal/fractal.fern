@@ -267,7 +267,7 @@ function encode(raw: u8[]): u8[] {
 
 function chunk(own png: u8[], kind: string, data: u8[]): u8[] {
   // The CRC covers the chunk type and data, without the length prefix.
-  let checksum: u32 = hash.crc32_new().update(kind).update_array(data).finish();
+  let checksum: u32 = hash.crc32_new().update(kind.as_bytes()).update(data).finish();
   png = binary.append_u32_be(png, data.len() as u32);
   png = binary.append_bytes(png, kind.as_bytes());
   png = binary.append_bytes(png, data);

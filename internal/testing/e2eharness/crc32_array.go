@@ -99,3 +99,12 @@ function main(): i32 {
         let array: hash.Cksum = hash.cksum_new().update(left).update(right);
         let view: hash.Cksum = hash.cksum_new().update(bytes);
         if (array.finish() != view.finish() || array.byte_count() != (n as u64)) { return 3; }
+    }
+    let bytes: u8[] = pattern(256);
+    let held: u8[] = bytes;
+    let original: i32 = crc(123, held);
+    // Compiled probe
+    bytes = bytes.with(255, 0 as u8);
+    if (crc(123, held) != original || crc(123, bytes) == original) { return 4; }
+    return 0;
+}`
