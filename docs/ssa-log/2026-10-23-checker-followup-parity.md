@@ -29,3 +29,9 @@ The runnable fixture checks a generic result destination and direct and indirect
 Its leak census entry expects no live allocation.
 
 This resolves #12776.
+
+All 21 header comparisons pass, including nested use callbacks and repeated invalid use bindings.
+The full code table, message table, bundle differential, and diagnostic sequence tests also pass.
+The error corpus has no known exceptions.
+The full leak census, formatter corpus, runtime-unit checks, and five execution modes pass.
+The source checks, feature census, Go vet, and source format checks pass.
