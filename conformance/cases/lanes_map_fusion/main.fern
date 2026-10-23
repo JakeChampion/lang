@@ -2,8 +2,9 @@
 // type can instantiate, gives the same answer as the scalar map: the
 // compiler may run k on f64x2 / f32x4 groups and on the scalar for the
 // rest, and each lane computes what the scalar does. A kernel that reads its
-// lane structure (`lane`, directly or through a helper) or whose bound the
-// lane type lacks is mapped one element at a time.
+// lane structure (`lane`, directly or through a helper), whose bound the
+// lane type lacks, or that has an effect (`print`, directly or through a
+// method of its own) is mapped one element at a time.
 import "std/f64";
 import "std/simd" as simd;
 import "std/num" as num;
@@ -46,6 +47,33 @@ function tagged[T: Tag + num.Add](x: T): T {
   return x.add(x);
 }
 
+trait Trace {
+  function trace(self: Self): Self;
+}
+
+impl Trace for f64 {
+  function trace(self: f64): f64 {
+    print("trace");
+    return self;
+  }
+}
+
+impl Trace for f64x2 {
+  function trace(self: f64x2): f64x2 {
+    print("trace");
+    return self;
+  }
+}
+
+function noisy[T: num.Add](x: T): T {
+  print("noisy");
+  return x.add(x);
+}
+
+function traced[T: Trace + num.Add](x: T): T {
+  return x.trace().add(x);
+}
+
 function line(tag: string, xs: f64[]): void {
   let out: string = tag;
   for x in xs {
@@ -70,6 +98,9 @@ function main(): i32 {
   line("first", xs.map(first));
   line("via_head", xs.map(via_head));
   line("tagged", xs.map(tagged));
+  let three: f64[] = [1.0, 2.0, 3.0];
+  line("noisy", three.map(noisy));
+  line("traced", three.map(traced));
   let none: f64[] = [];
   line("empty", none.map(poly));
   let one: f64[] = [4.0];

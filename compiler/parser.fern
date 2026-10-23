@@ -16712,7 +16712,7 @@ function lane_map_key(amn: string, elem: string, c: ast.ExprCall, env: MEnv, fun
   if (kn.len() == 0 || kn != kid.name) {
     return "";
   }
-  if (!lane_kernel(funcs.decls[bg_find(funcs, kn)], lane_type_of(elem), funcs)) {
+  if (!lane_kernel(funcs.decls[bg_find(funcs, kn)], elem, funcs)) {
     return "";
   }
   return kn + ";" + elem;
@@ -16726,9 +16726,9 @@ function lane_type_of(elem: string): string {
 }
 
 // lane_kernel reports whether `fd` is `[T: …](x: T): T`, every bound of `T`
-// a trait `lanes` implements, and no function it reaches reads the lane
-// structure.
-function lane_kernel(fd: FuncDecl, lanes: string, funcs: MFns): boolean {
+// a trait the lane type of `elem` implements, and every function it reaches
+// fusable.
+function lane_kernel(fd: FuncDecl, elem: string, funcs: MFns): boolean {
   if (fd.type_params.len() != 1 || fd.params.len() != 1 || fd.receiver_name.len() > 0) {
     return false;
   }
@@ -16736,6 +16736,7 @@ function lane_kernel(fd: FuncDecl, lanes: string, funcs: MFns): boolean {
   if (fd.params[0].type_name != tp || fd.ret_type != tp) {
     return false;
   }
+  let lanes: string = lane_type_of(elem);
   if (fd.bound_traits.len() > 0 && fd.bound_traits[0].len() > 0) {
     for entry in split_plus_bounds(fd.bound_traits[0]) {
       if (!util.has_str(funcs.lane_bounds, lanes + " " + entry)) {
@@ -16743,13 +16744,16 @@ function lane_kernel(fd: FuncDecl, lanes: string, funcs: MFns): boolean {
       }
     }
   }
-  return lane_blind(fd.name, funcs, []);
+  return lane_fusable(fd.name, [elem, lanes], funcs, []);
 }
 
-// lane_blind reports whether the generic function `name`, and every generic
-// function its body calls, leaves `lane` and `LANES` unread: a lane value
-// and a scalar differ there.
-function lane_blind(name: string, funcs: MFns, seen: string[]): boolean {
+// lane_fusable reports whether the generic function `name`, and every generic
+// function its body calls, can run once for each group of lanes in place of
+// once for each element. Such a function reads no `lane` and no `LANES`,
+// where a lane value and a scalar differ. It has no effect, so the count of
+// calls is not visible: it calls only generic functions and standard-library
+// methods of the `types` it runs at.
+function lane_fusable(name: string, types: string[], funcs: MFns, seen: string[]): boolean {
   let gi: i32 = bg_find(funcs, name);
   if (gi < 0 || util.has_str(seen, name)) {
     return true;
@@ -16760,16 +16764,37 @@ function lane_blind(name: string, funcs: MFns, seen: string[]): boolean {
   }
   let next: string[] = seen.append(name);
   for r in reached {
-    if (r.len() == 0 || !lane_blind(r, funcs, next)) {
+    if (r.len() == 0) {
+      return false;
+    }
+    if (util.str_has_prefix(r, "!")) {
+      if (bg_find(funcs, slice_unchecked(r, 1, r.len()) + "") < 0) {
+        return false;
+      }
+    } else if (util.str_has_prefix(r, "@")) {
+      if (!std_methods(slice_unchecked(r, 1, r.len()) + "", types, funcs)) {
+        return false;
+      }
+    } else if (!lane_fusable(r, types, funcs, next)) {
       return false;
     }
   }
   return true;
 }
 
-// lane_reach adds to `acc` the name `e` reads, "" for a read of `lane` or
-// `LANES`.
+// lane_reach adds to `acc` what `e` asks of lane_fusable: "" for a read of
+// `lane` or `LANES` or a call through a computed value, `!f` for a call of
+// the function `f`, `@m` for a call of the method `m`, and each name it reads.
 function lane_reach(e: ast.Expr, own acc: string[]): string[] {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(f) = c.callee {
+      return acc.append("!" + f.name);
+    }
+    if let ast.ExprFieldAccess(m) = c.callee {
+      return acc.append("@" + m.field);
+    }
+    return acc.append("");
+  }
   if let ast.ExprFieldAccess(fa) = e {
     if (fa.field == "lane" || fa.field == "LANES") {
       return acc.append("");
@@ -16782,6 +16807,17 @@ function lane_reach(e: ast.Expr, own acc: string[]): string[] {
     return acc.append(id.name);
   }
   return acc;
+}
+
+// std_methods reports whether every method `name` of the `types` comes from
+// the standard library.
+function std_methods(name: string, types: string[], funcs: MFns): boolean {
+  for d in funcs.decls {
+    if (d.name == name && util.has_str(types, d.receiver_type) && d.stdlib.len() == 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // lane_map_decls is the function each `__lanes_map` instantiation in `done`

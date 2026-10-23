@@ -4,6 +4,14 @@ clamp 0.5 -2 1 1 -0.25
 first 1.5 -1 2 4 0.75
 via_head 0.5 -2 1 3 -0.25
 tagged 1 -4 2 6 -0.5
+noisy
+noisy
+noisy
+noisy 2 4 6
+trace
+trace
+trace
+traced 2 4 6
 empty
 one 12
 poly32 -0.25 6 0 6 0.3125 48.75 2

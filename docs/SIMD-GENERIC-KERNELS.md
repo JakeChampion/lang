@@ -355,8 +355,16 @@ when `k` is a lane kernel. The monomorphiser finds the call where it folds an
 array method (`lane_map_key` in `compiler/parser.fern`). A lane kernel is a
 generic function `[T: …](x: T): T`. Each bound of `T` is a trait the lane
 type implements, as the entry module spells it (`MFns.lane_bounds`). The
-kernel and each generic function it calls read no `lane` and no `LANES`
-(`lane_blind`), because a lane value and a scalar differ only there.
+kernel and each generic function it calls must be fusable (`lane_fusable`):
+
+- They read no `lane` and no `LANES`, because a lane value and a scalar
+  differ only there.
+- They have no effect, because a fused map calls the kernel once for each
+  group and not once for each element. So they call only generic functions
+  and methods of the element and lane types that the standard library
+  declares. Thus a call of `print` or of a function that is not generic
+  keeps the map element by element. A method that the program declares on
+  one of those types also does.
 
 The call becomes `__lanes_map__<k>__<element>(xs)`, which the worklist builds
 (`lane_map_decl`). It runs `k` at `f64x2` / `f32x4` over each whole group
