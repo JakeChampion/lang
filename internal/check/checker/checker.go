@@ -14702,9 +14702,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 	}
 	// Run when the current function has owned params (the affine move-check) OR
-	// when the program declares ANY owned-param function (the call-site guard
-	// must check every caller, even borrowed-only ones).
-	if (len(owned) == 0 && len(c.ownFuncs) == 0) || fn.Body == nil {
+	// when a declaration or callable type has consuming positions. The
+	// call-site guard checks callers that have only borrowed parameters too.
+	if (len(owned) == 0 && len(c.ownFuncs) == 0 && len(c.callOwnFlags) == 0) || fn.Body == nil {
 		return
 	}
 
@@ -15020,34 +15020,22 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				// The callee position is a borrow (function ref / closure call).
 				if id, ok := x.Callee.(*ast.Ident); ok {
 					borrow[id] = true
-					// An owned value is CONSUMED only when passed to an `own`
-					// parameter; an argument to a BORROWED parameter (or any param
-					// of a callee with no `own` flags) is a read — a borrow — not a
-					// move. (`contains_str(out, x)` borrows `out`, so a following
-					// `out = out.append(..)` is not a use-after-move.) Without this
-					// the affine walk over-approximates every whole-value argument
-					// as a consume, which both rejects natural `own`-threaded
-					// builder code and blocks tracking owned locals. The method
-					// receiver (Args[0] when Method is set) keeps its own
-					// consume/borrow classification below.
-					// A callee reached through a function VALUE declares its
-					// consuming slots in its type, not in the own-func registry
-					// — so a use after `f(xs)` at such a slot is a use after
-					// move, exactly as it is for a declared own-func.
-					flags, isOwn := c.callOwnFlags[x]
-					if !isOwn {
-						flags = c.ownFuncs[id.Name]
+				}
+				// Only consuming slots move arguments. Function values,
+				// including fields and call results, use their declared type.
+				flags, isOwn := c.callOwnFlags[x]
+				if id, named := x.Callee.(*ast.Ident); named && !isOwn {
+					flags = c.ownFuncs[id.Name]
+				}
+				for ai, arg := range x.Args {
+					if x.Method != nil && ai == 0 {
+						continue // Receiver ownership is checked below.
 					}
-					for ai, arg := range x.Args {
-						if x.Method != nil && ai == 0 {
-							continue
-						}
-						if ai < len(flags) && flags[ai] {
-							continue // `own` position: a genuine consume
-						}
-						if aid, ok := arg.(*ast.Ident); ok {
-							borrow[aid] = true
-						}
+					if ai < len(flags) && flags[ai] {
+						continue
+					}
+					if aid, ok := arg.(*ast.Ident); ok {
+						borrow[aid] = true
 					}
 				}
 				// A method call (`xs.len()`) is rewritten by the checker to a

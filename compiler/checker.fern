@@ -20524,6 +20524,9 @@ function lu_try_at(x: ast.Expr, own found: boolean): boolean {
 function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   if let ast.ExprFieldAccess(fa) = c.callee {
     if (!fx.ofuncs.methods.has(fa.field)) {
+      for a in c.args {
+        acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+      }
       return acc;
     }
     acc = lu_method_arg(fa.obj, e, outer, has_outer, site, fx, acc);
@@ -20534,6 +20537,9 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
   }
   let cname: string = ow_ident_name(c.callee);
   if (cname.len() == 0 || util.has_str(fx.params, cname) || !ow_is_own_func(fx.ofuncs, cname)) {
+    for a in c.args {
+      acc = lu_method_arg(a, e, outer, has_outer, site, fx, acc);
+    }
     return acc;
   }
   let flags: boolean[] = ow_func_flags(fx.ofuncs, cname);
@@ -20962,7 +20968,16 @@ function ow_own_call(c: ast.ExprCall, ctx: OwnCtx): OwnCall {
       return OwnCall { args: args, flags: ow_func_flags(ctx.ofuncs, key), arr: arr, recv: ow_recv_kind(key) };
     }
   }
-  return OwnCall { args: c.args, flags: ow_call_arg_flags(c.callee, ctx), arr: [], recv: RECV_NONE };
+  let flags: boolean[] = ow_call_arg_flags(c.callee, ctx);
+  let arr: boolean[] = [];
+  if (flags.len() > 0) {
+    if let typeinfo.TypeFunc(ft) = check_expr(c.callee, ctx.scope) {
+      for t in ft.param_types {
+        arr = arr.append(is_owned_array(t) || is_arr_view(t) || is_unknown(t));
+      }
+    }
+  }
+  return OwnCall { args: c.args, flags: flags, arr: arr, recv: RECV_NONE };
 }
 
 function ow_recv_kind(key: string): i32 {
@@ -20976,7 +20991,7 @@ function ow_recv_kind(key: string): i32 {
 // array-typed, that the last-use pass found dead under that condition
 // (lu_method_arg's `~` key).
 function ow_arg_dies(oc: OwnCall, i: i32, ctx: OwnCtx): boolean {
-  if (oc.recv != RECV_METHOD || i >= oc.arr.len() || oc.arr[i]) {
+  if (oc.recv == RECV_DYN || i >= oc.arr.len() || oc.arr[i]) {
     return false;
   }
   if let ast.ExprIdent(id) = oc.args[i] {
@@ -21040,14 +21055,17 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
 
 // ow_call_arg_flags returns the callee's per-parameter `own` flags for a
 // plain (ident-callee) call, or an empty list when the callee is not an
-// own-func or not a plain ident (a closure callee borrows its args; a method
-// is ow_own_call's case).
+// own-func or a function value whose type declares consuming slots.
+// A method receiver is ow_own_call's case.
 // Drives the precise affine model: an argument is consumed only at an `own`
 // position.
 function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
   match (callee) {
     ast.ExprIdent(id) => {
       if (util.has_str(ctx.bound, id.name)) {
+        if let typeinfo.TypeFunc(ft) = check_expr(callee, ctx.scope) {
+          return ft.param_own;
+        }
         return [];
       }
       if (ow_is_own_func(ctx.ofuncs, id.name)) {
@@ -21056,6 +21074,9 @@ function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
       return [];
     },
     _ => {
+      if let typeinfo.TypeFunc(ft) = check_expr(callee, ctx.scope) {
+        return ft.param_own;
+      }
       return [];
     }
   }
@@ -22213,12 +22234,9 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.N
   return kept;
 }
 
-// own_diags runs the affine move-check over every function whose body
-// could exercise it: those with owned params (the E050 walk) and — once
-// any owned-param function exists — every function (the E051 call-site
-// guard). No-op when the module declares no `own` parameter anywhere, so
-// ordinary programs are untouched. The result-borrow fixpoint always spans the
-// module; only the bodies `focus` admits (in_focus) are walked.
+// own_diags checks moves and owned arguments in each function, including
+// calls through a consuming function type. The result-borrow fixpoint spans
+// the module. Only the bodies `focus` admits are walked.
 pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex): util.Diag[] {
   let ofuncs: OwnFuncs = collect_own_funcs(mod);
   let builtins: util.NameIndex = util.name_index(ow_fresh_builtins());
@@ -22244,12 +22262,10 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    if (owned.len() > 0 || ofuncs.rows.len() > 0) {
-      let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs) };
-      let nomoved: MovedEntry[] = [];
-      let r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
-      out = util.append_diags(out, r.diags);
-    }
+    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs) };
+    let nomoved: MovedEntry[] = [];
+    let r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
+    out = util.append_diags(out, r.diags);
   }
   return out;
 }
