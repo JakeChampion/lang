@@ -1,0 +1,66 @@
+// A loop keeps more values live than there are callee-saved registers,
+// across array appends that grow the array and across a call that only some
+// iterations make. On arm64 such values can sit in caller registers that the
+// emitter saves around those calls (docs/SELFHOST-SSA-BACKEND.md, "Cold
+// calls"). Every value must come through both unchanged.
+import "std/i32";
+
+// scramble uses enough temporaries to write the caller registers. It
+// recurses so that it stays a call.
+function scramble(x: i32, depth: i32): i32 {
+  if (depth > 0) {
+    return scramble(x + depth, depth - 1) ^ x;
+  }
+  let a: i32 = x * 3 + 1;
+  let b: i32 = a ^ x >> 2;
+  let c: i32 = b * 7 + a;
+  let d: i32 = c ^ b << 1;
+  let e: i32 = d + c * 5;
+  let f: i32 = e ^ d >> 3;
+  let g: i32 = f + e - a;
+  return (g ^ f) & 65535;
+}
+
+function main(): i32 {
+  let out: i32[] = [];
+  let a: i32 = 1;
+  let b: i32 = 2;
+  let c: i32 = 3;
+  let d: i32 = 4;
+  let e: i32 = 5;
+  let f: i32 = 6;
+  let g: i32 = 7;
+  let h: i32 = 8;
+  let j: i32 = 9;
+  let k: i32 = 10;
+  let l: i32 = 11;
+  let m: i32 = 12;
+  let i: i32 = 0;
+  while (i < 4000) {
+    out = out.append(a + m);
+    if (i % 97 == 0) {
+      a = a + scramble(i, 3);
+    }
+    a = a * 31 + i & 1048575;
+    b = b ^ a;
+    c = c + b & 1048575;
+    d = d ^ c;
+    e = e + d & 1048575;
+    f = f ^ e;
+    g = g + f & 1048575;
+    h = h ^ g;
+    j = j + h & 1048575;
+    k = k ^ j;
+    l = l + k & 1048575;
+    m = m ^ l;
+    i = i + 1;
+  }
+  let sum: i32 = 0;
+  for x in out {
+    sum = sum + x & 1048575;
+  }
+  print(out.len().to_string());
+  print(sum.to_string());
+  print((a ^ b ^ c ^ d ^ e ^ f ^ g ^ h ^ j ^ k ^ l ^ m).to_string());
+  return 0;
+}

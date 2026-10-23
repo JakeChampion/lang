@@ -586,6 +586,214 @@ function inst_is_call(k: i32): boolean {
   return k >= 19 && k <= 27;
 }
 
+// cold_call reports an op that calls only on its slow path: an array push,
+// whose fast path stores in place and whose call grows the array.
+pub function cold_call(ins: SInst): boolean {
+  return ins.kind_tag == 50 && ins.result >= 0 && util.str_has_prefix(ins.str, "arr_push");
+}
+
+// The kinds `cold_positions` gives a position.
+pub const COLD_NONE: i32 = 0;
+
+// An op that calls only on its slow path (`cold_call`).
+pub const COLD_SLOW: i32 = 1;
+
+// A call in a block that some iterations of its loop skip (`cold_blocks`).
+pub const COLD_BRANCH: i32 = 2;
+
+// An rc primitive the emitters render inline (`rc_inlined`): no call at all.
+pub const COLD_INLINE: i32 = 3;
+
+// cold_positions classifies each instruction position, numbered as the
+// allocator numbers them (each block's instructions, then its terminator).
+pub function cold_positions(f: SFunc, size: boolean): i32[] {
+  let cold: boolean[] = cold_blocks(f);
+  let out: i32[] = [];
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let blk: SBlock = f.blocks[bi];
+    let k: i32 = 0;
+    while (k < blk.insts.len()) {
+      let ins: SInst = blk.insts[k];
+      let kind: i32 = COLD_NONE;
+      if (cold_call(ins)) {
+        kind = COLD_SLOW;
+      } else if (rc_inlined(ins)) {
+        if (!size) {
+          kind = COLD_INLINE;
+        }
+      } else if (cold[bi] && inst_is_call(ins.kind_tag) && !returns_call(blk, k)) {
+        kind = COLD_BRANCH;
+      }
+      out = out.append(kind);
+      k = k + 1;
+    }
+    out = out.append(COLD_NONE);
+    bi = bi + 1;
+  }
+  return out;
+}
+
+// cold_blocks says, for each block in layout order, whether it is inside a
+// loop and does not dominate that loop's latch, so some iterations pass it
+// by: the error branch, the slow case. A loop is a branch back to a block at
+// or before its own, the innermost the one that spans the fewest blocks.
+pub function cold_blocks(f: SFunc): boolean[] {
+  let n: i32 = f.blocks.len();
+  let at: i32[] = block_positions(f);
+  let latch: i32[] = __alloc_i32(n);
+  let span: i32[] = __alloc_i32(n);
+  let i: i32 = 0;
+  while (i < n) {
+    latch = latch.with(i, 0 - 1);
+    span = span.with(i, n + 1);
+    i = i + 1;
+  }
+  let bi: i32 = 0;
+  while (bi < n) {
+    let which: i32 = 0;
+    while (which < 2) {
+      let tgt: i32 = distinct_successor_position(at, f.blocks[bi].term, which);
+      if (tgt >= 0 && tgt <= bi) {
+        let k: i32 = tgt;
+        while (k <= bi) {
+          if (bi - tgt < span[k]) {
+            span = span.with(k, bi - tgt);
+            latch = latch.with(k, bi);
+          }
+          k = k + 1;
+        }
+      }
+      which = which + 1;
+    }
+    bi = bi + 1;
+  }
+  let idom: i32[] = dominators(f, at);
+  let out: boolean[] = __alloc_bool(n);
+  i = 0;
+  while (i < n) {
+    out = out.with(i, latch[i] >= 0 && !dominates(idom, i, latch[i]));
+    i = i + 1;
+  }
+  return out;
+}
+
+// dominators gives each block's immediate dominator by layout position, the
+// entry its own and an unreachable block -1 (Cooper, Harvey and Kennedy's
+// iteration over reverse postorder).
+function dominators(f: SFunc, at: i32[]): i32[] {
+  let n: i32 = f.blocks.len();
+  let entry: i32 = position_of(at, f.entry);
+  let idom: i32[] = __alloc_i32(n);
+  let po: i32[] = __alloc_i32(n);
+  let i: i32 = 0;
+  while (i < n) {
+    idom = idom.with(i, 0 - 1);
+    po = po.with(i, 0 - 1);
+    i = i + 1;
+  }
+  if (entry < 0) {
+    return idom;
+  }
+  let order: i32[] = postorder(f, at, entry);
+  i = 0;
+  while (i < order.len()) {
+    po = po.with(order[i], i);
+    i = i + 1;
+  }
+  idom = idom.with(entry, entry);
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    let r: i32 = order.len() - 1;
+    while (r >= 0) {
+      let b: i32 = order[r];
+      r = r - 1;
+      if (b == entry) {
+        continue;
+      }
+      let pick: i32 = meet_preds(f, at, idom, po, b);
+      if (pick != idom[b]) {
+        idom = idom.with(b, pick);
+        changed = true;
+      }
+    }
+  }
+  return idom;
+}
+
+// meet_preds is where the dominators of b's processed predecessors meet.
+function meet_preds(f: SFunc, at: i32[], idom: i32[], po: i32[], b: i32): i32 {
+  let pick: i32 = 0 - 1;
+  for pid in f.blocks[b].preds {
+    let p: i32 = position_of(at, pid);
+    if (p >= 0 && idom[p] >= 0) {
+      if (pick < 0) {
+        pick = p;
+      } else {
+        pick = intersect(idom, po, p, pick);
+      }
+    }
+  }
+  return pick;
+}
+
+function intersect(idom: i32[], po: i32[], a: i32, b: i32): i32 {
+  while (a != b) {
+    while (po[a] < po[b]) {
+      a = idom[a];
+    }
+    while (po[b] < po[a]) {
+      b = idom[b];
+    }
+  }
+  return a;
+}
+
+// postorder lists the blocks reachable from `entry` by layout position, each
+// after every block it reaches first.
+function postorder(f: SFunc, at: i32[], entry: i32): i32[] {
+  let seen: boolean[] = __alloc_bool(f.blocks.len());
+  let out: i32[] = [];
+  let stack: i32[] = [entry];
+  let next: i32[] = [0];
+  seen = seen.with(entry, true);
+  while (stack.len() > 0) {
+    let top: i32 = stack.len() - 1;
+    let b: i32 = stack[top];
+    let which: i32 = next[top];
+    if (which < 2) {
+      next = next.with(top, which + 1);
+      let s: i32 = distinct_successor_position(at, f.blocks[b].term, which);
+      if (s >= 0 && !seen[s]) {
+        seen = seen.with(s, true);
+        stack = stack.append(s);
+        next = next.append(0);
+      }
+    } else {
+      out = out.append(b);
+      stack = drop_last_i(stack);
+      next = drop_last_i(next);
+    }
+  }
+  return out;
+}
+
+// dominates says block `a` dominates block `b`, both by layout position.
+function dominates(idom: i32[], a: i32, b: i32): boolean {
+  if (idom[b] < 0) {
+    return false;
+  }
+  let x: i32 = b;
+  while (x != a) {
+    if (idom[x] == x) {
+      return false;
+    }
+    x = idom[x];
+  }
+  return true;
+}
+
 // returns_call reports a call at `k` that ends `blk`, which returns its
 // result: nothing but that result is live past it, so no value needs a
 // register the call preserves. Whatever else holds a register over it lives
@@ -618,10 +826,9 @@ pub function calls(ins: SInst): boolean {
 // chain over the count word. `__fern_rc_dec` is NOT one of them — it maps to
 // the array release, which frees.
 //
-// The allocator still counts these positions as calls (inst_is_call), so a
-// value is still spilled across one. Not counting them was measured and did
-// not pay: it frees six caller-saved registers to more values at once, and
-// over bench that came out between 0.5% worse and unchanged.
+// Without `cold_calls` the allocator still counts these positions as calls
+// (inst_is_call), so a value is spilled across one; with it they are
+// COLD_INLINE and count as nothing.
 pub function rc_inlined(ins: SInst): boolean {
   if (ins.kind_tag != 11 || ins.args.len() != 1) {
     return false;
@@ -661,6 +868,70 @@ function spans_call(cum: i32[], lo: i32, hi: i32): boolean {
     b = cum.len() - 1;
   }
   return cum[b] - cum[a] > 0;
+}
+
+// hard_spans says, for each value, whether it must stay out of the caller
+// registers: it is live across a call, or across cold-branch calls whose saves
+// and loads would cost more than spilling it. Both sides count a position
+// by its block's loop weight: a save and a load at each cold-branch call
+// against the value's own weighted reads and writes.
+function hard_spans(f: SFunc, cum: i32[], cold: i32[], lo: i32[], hi: i32[], weight: i32[]): boolean[] {
+  let out: boolean[] = __alloc_bool(f.nvals);
+  if (cold.len() == 0) {
+    let v: i32 = 0;
+    while (v < f.nvals) {
+      out = out.with(v, spans_call(cum, lo[v], hi[v]));
+      v = v + 1;
+    }
+    return out;
+  }
+  let cost: i32[] = cold_call_cost(f, cold);
+  let v: i32 = 0;
+  while (v < f.nvals) {
+    let h: boolean = spans_call(cum, lo[v], hi[v]);
+    if (!h && hi[v] > lo[v] + 1 && lo[v] + 1 < cost.len()) {
+      let b: i32 = hi[v];
+      if (b >= cost.len()) {
+        b = cost.len() - 1;
+      }
+      h = 2 * (cost[b] - cost[lo[v] + 1]) >= weight[v];
+    }
+    out = out.with(v, h);
+    v = v + 1;
+  }
+  return out;
+}
+
+// cold_call_cost sums, for every position p, the loop weights of the
+// cold-branch calls below p.
+function cold_call_cost(f: SFunc, cold: i32[]): i32[] {
+  let bw: i32[] = block_loop_weights(f);
+  let out: i32[] = [0];
+  let total: i32 = 0;
+  let pos: i32 = 0;
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let k: i32 = 0;
+    while (k <= f.blocks[bi].insts.len()) {
+      if (pos < cold.len() && cold[pos] == COLD_BRANCH) {
+        total = total + bw[bi];
+      }
+      pos = pos + 1;
+      out = out.append(total);
+      k = k + 1;
+    }
+    bi = bi + 1;
+  }
+  return out;
+}
+
+// spans_hard reads `hard` for an integer value and the call positions for a
+// float one, which counts every call.
+function spans_hard(hard: boolean[], integer: boolean, cum: i32[], lo: i32, hi: i32, v: i32): boolean {
+  if (integer) {
+    return hard[v];
+  }
+  return spans_call(cum, lo, hi);
 }
 
 // order_by_lo returns value ids 0..n-1 sorted ascending by lo, ids ascending
@@ -886,8 +1157,8 @@ function pick_fixed_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: bo
   return 0 - 1;
 }
 
-function preferred_register_allowed(reg: i32, abi: i32, abi_ok: boolean, calls: i32[], lo: i32, hi: i32, fixed: ssafixed.Table): boolean {
-  return reg >= 0 && !spans_call(calls, lo, hi) && (reg != abi || abi_ok) && ssafixed.allows(fixed, reg, lo, hi);
+function preferred_register_allowed(reg: i32, abi: i32, abi_ok: boolean, spans: boolean, lo: i32, hi: i32, fixed: ssafixed.Table): boolean {
+  return reg >= 0 && !spans && (reg != abi || abi_ok) && ssafixed.allows(fixed, reg, lo, hi);
 }
 
 // candidate is the `k`-th value whose register `v` tries to take: its alt
@@ -1069,7 +1340,7 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 // hi[v], numbered over the instructions and then the terminator of each block
 // in layout order, -1 for a value with no interval. A `-g` build describes a
 // variable's location from it (#11410).
-pub struct Alloc { reg_of: i32[], def_pos: i32[], hi: i32[] }
+pub struct Alloc { reg_of: i32[], def_pos: i32[], lo: i32[], hi: i32[], cold: i32[] }
 
 // ---- lane values (docs/SIMD-GENERIC-KERNELS.md §6) ---------------------------
 //
@@ -1421,10 +1692,18 @@ function count_false(fl: boolean[]): i32 {
 // for nothing. A value a block returns that names no register asks for
 // `abi_reg`, where the return reads it (`return_prefs`).
 pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32): Alloc {
-  return regalloc_linear_fixed(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, ssafixed.none());
+  return regalloc_linear_fixed(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, ssafixed.none(), []);
 }
 
-pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table): Alloc {
+// With a non-empty `cold` classification, a position it names is not a call to the
+// integer class: a value live across it may sit in a caller-saved register,
+// which `fixed` keeps off the registers the call itself writes and the
+// emitter saves around it. A value live across a call in a cold block still
+// takes a free callee-saved register first, so only a loop short of them
+// pays for the saves. Float values still count every call. `Alloc.cold` is
+// the classification, by position.
+pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[]): Alloc {
+  let cold_calls: boolean = cold.len() > 0;
   let wish: i32[] = return_prefs(f, pref, abi_reg);
   let big: i32 = 2000000000;
   let lo: i32[] = __alloc_i32(f.nvals);
@@ -1436,6 +1715,8 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     i = i + 1;
   }
   let calls: i32[] = [];
+  let all_calls: i32[] = [];
+  let soft_calls: i32[] = [];
   let abi_cl: i32[] = [];
 
   // Number instructions and record each value's def/use positions.
@@ -1500,7 +1781,16 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       }
       if (inst_is_call(ins.kind_tag)) {
         if (!returns_call(blk, k)) {
-          calls = calls.append(pos);
+          all_calls = all_calls.append(pos);
+          let kind: i32 = COLD_NONE;
+          if (cold_calls) {
+            kind = cold[pos];
+          }
+          if (kind == COLD_NONE) {
+            calls = calls.append(pos);
+          } else if (kind == COLD_BRANCH) {
+            soft_calls = soft_calls.append(pos);
+          }
         }
         if (ins.result >= 0 && ins.result < call_def.len()) {
           call_def = call_def.with(ins.result, 1);
@@ -1591,8 +1881,14 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
   hi = extend_loop_invariant_intervals(f, def_pos, hi);
   let cum: i32[] = calls_before(calls, total_pos);
   let cum_abi: i32[] = calls_before(abi_cl, total_pos);
+  let cum_all: i32[] = cum;
+  let cum_soft: i32[] = calls_before(soft_calls, total_pos);
+  if (cold_calls) {
+    cum_all = calls_before(all_calls, total_pos);
+  }
   let mates: Mates = phi_mates(f, at, def_pos, hi, no_home);
   let weight: i32[] = spill_weights(f, at);
+  let hard: boolean[] = hard_spans(f, cum, cold, lo, hi, weight);
   let sole: i32[] = sole_readers(f);
 
   // Built the first time an interference question is asked.
@@ -1637,6 +1933,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
   let oi: i32 = 0;
   while (oi < order.len()) {
     if (oi == split) {
+      cum = cum_all;
       cbase = nregs + nsaved;
       sat = cbase + nf;
       cabi = 0 - 1;
@@ -1700,8 +1997,10 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
     }
     // A phi whose fall-through operand is spilled stays spilled too, to
     // share its slot (hinted_slot): loaded into a register, it would take
-    // one an operand of a later phi in the block is still hinted at.
-    if (mh >= 0 && mates.through[v] && reg_of[mh] == 0 - 1 && hi[mh] < lo[v]) {
+    // one an operand of a later phi in the block is still hinted at. With
+    // `cold_calls`, a phi read far more than its operand (a loop's carried
+    // value, entered once) is placed instead, and loads it on the edge.
+    if (mh >= 0 && mates.through[v] && reg_of[mh] == 0 - 1 && hi[mh] < lo[v] && !(cold_calls && weight[v] > 4 * weight[mh])) {
       oi = oi + 1;
       continue;
     }
@@ -1719,6 +2018,10 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       }
     }
     let abi_ok: boolean = !spans_call(cum_abi, lo[v], hi[v]);
+    // A value live across a cold-branch call takes a free callee-saved
+    // register rather than a caller one it would save around the call.
+    let soft: boolean = cold_calls && oi < split && spans_call(cum_soft, lo[v], hi[v]) && free_s.len() > 0;
+    let keep_caller: boolean = spans_hard(hard, oi < split, cum, lo[v], hi[v], v) || soft;
     // A value takes the register of its phi mate, or of an operand of
     // its definition, when it can: the register is free, or its holder
     // dies at this very definition and the emitter reads before it
@@ -1737,7 +2040,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
         if (v < wish.len()) {
           pr = wish[v];
         }
-        if (!preferred_register_allowed(pr, abi_reg, abi_ok, cum, lo[v], hi[v], fixed)) {
+        if (!preferred_register_allowed(pr, abi_reg, abi_ok, keep_caller, lo[v], hi[v], fixed)) {
           continue;
         }
         if (index_of_reg(free, pr) >= 0) {
@@ -1765,7 +2068,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       if (call_def[v] == 1 && h != mates.hint[v] && hr != abi_reg) {
         continue;
       }
-      if (hr < cbase || spans_call(cum, lo[v], hi[v]) && hr < sat || hr == cabi && !abi_ok || !ssafixed.allows(fixed, hr, lo[v], hi[v])) {
+      if (hr < cbase || keep_caller && hr < sat || hr == cabi && !abi_ok || !ssafixed.allows(fixed, hr, lo[v], hi[v])) {
         continue;
       }
       let fi: i32 = index_of_reg(free, hr);
@@ -1818,13 +2121,13 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
       continue;
     }
     let pick: i32 = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
-    let from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && pick >= 0;
+    let from_caller: boolean = !spans_hard(hard, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
     if (!from_caller && free_s.len() == 0) {
       // Nothing free: take the register from the active interval whose
       // spill costs least, if that is less than this one's, and spill it
       // instead. `need_saved` keeps the two pools apart, since a value
       // live across a call may only sit in a callee-saved register.
-      let need_saved: boolean = spans_call(cum, lo[v], hi[v]);
+      let need_saved: boolean = spans_hard(hard, oi < split, cum, lo[v], hi[v], v);
       let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], sat, need_saved, forbidden_abi(cabi, abi_ok), fixed, hi[v]);
       let cmp: i32 = 0;
       if (fa >= 0) {
@@ -1877,7 +2180,7 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
   if (sites.start.len() == 0 && spilled_mates(reg_of, def_pos, mates.hint)) {
     sites = read_sites(f, at, blk_start);
   }
-  return Alloc { reg_of: assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, sites, def_blk, def_pos, reg_of, mates), sites), def_pos: def_pos, hi: hi };
+  return Alloc { reg_of: assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, sites, def_blk, def_pos, reg_of, mates), sites), def_pos: def_pos, lo: lo, hi: hi, cold: cold };
 }
 
 // lanes_off_saved spills each lane value given a callee-saved float register

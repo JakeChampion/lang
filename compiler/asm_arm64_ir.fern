@@ -34,6 +34,7 @@ import "./irverifygate";
 import "./lexer";
 import "./ircore";
 import "./ssa";
+import "./ssafixed";
 import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
@@ -2246,6 +2247,114 @@ function ssa_bl_sym(s: asmcore.EmitState, name: string): asmcore.EmitState {
   return s.write("    bl " + name + "\n");
 }
 
+// The caller registers a cold call writes whatever the emitter saves around
+// it: x0 to x3 (its arguments, its result and a push's scratch) and x30 (the
+// link register its `bl` writes). No value live across a cold call may sit
+// in them. The other caller registers hold their values across it: the
+// emitter saves the live ones to frame slots and loads them back
+// (`ssa_cold_save`).
+const COLD_CLOBBERS: i32 = 1 | 1 << 8 | 1 << 9 | 1 << 10 | 1 << 12;
+
+// The frame words a function with a cold call keeps for those saves, one per
+// caller register COLD_CLOBBERS leaves.
+const COLD_SLOTS: i32 = 8;
+
+// ssa_cold_fixed marks COLD_CLOBBERS at every position `ssa.cold_positions`
+// names.
+function ssa_cold_fixed(cold: i32[]): ssafixed.Table {
+  let masks: i32[] = [];
+  for kind in cold {
+    let mask: i32 = 0;
+    if (kind == ssa.COLD_SLOW || kind == ssa.COLD_BRANCH) {
+      mask = COLD_CLOBBERS;
+    }
+    masks = masks.append(mask);
+  }
+  return ssafixed.table_inside(0, ssa_nregs(), masks);
+}
+
+// ColdSaves is, for each position, the caller registers holding a value live
+// across the cold call there, as a mask over the caller register numbers
+// (`by_pos`), and the same for each slow-path op by its result (`by_val`):
+// the registers its slow path saves around the call.
+struct ColdSaves { by_pos: i32[], by_val: i32[], any: boolean }
+
+function ssa_cold_saves(f: ssa.SFunc, alloc: ssa.Alloc): ColdSaves {
+  let by_pos: i32[] = __alloc_i32(alloc.cold.len());
+  let by_val: i32[] = __alloc_i32(f.nvals);
+  let any: boolean = false;
+  let pos: i32 = 0;
+  for b in f.blocks {
+    for ins in b.insts {
+      if (pos < alloc.cold.len() && (alloc.cold[pos] == ssa.COLD_SLOW || alloc.cold[pos] == ssa.COLD_BRANCH)) {
+        let mask: i32 = ssa_live_caller_regs(alloc, pos, ins.result);
+        any = any || mask != 0;
+        if (alloc.cold[pos] == ssa.COLD_SLOW) {
+          by_val = by_val.with(ins.result, mask);
+        } else {
+          by_pos = by_pos.with(pos, mask);
+        }
+      }
+      pos = pos + 1;
+    }
+    pos = pos + 1;
+  }
+  return ColdSaves { by_pos: by_pos, by_val: by_val, any: any };
+}
+
+// ssa_live_caller_regs: the caller registers, COLD_CLOBBERS aside, that hold
+// a value other than `result` live across position `at`.
+function ssa_live_caller_regs(alloc: ssa.Alloc, at: i32, result: i32): i32 {
+  let mask: i32 = 0;
+  let v: i32 = 0;
+  while (v < alloc.reg_of.len()) {
+    let r: i32 = alloc.reg_of[v];
+    if (v != result && r >= 0 && r < ssa_nregs() && alloc.lo[v] < at && alloc.hi[v] > at) {
+      mask = mask | 1 << r;
+    }
+    v = v + 1;
+  }
+  return mask - (mask & COLD_CLOBBERS);
+}
+
+function ssa_cold_mask(fr: SsaFrame, ins: ssa.SInst): i32 {
+  if (ins.result < 0 || ins.result >= fr.cold.by_val.len()) {
+    return 0;
+  }
+  return fr.cold.by_val[ins.result];
+}
+
+// ssa_cold_save stores (or, with `load`, reloads) the caller registers in
+// `mask` to the frame words from slot `base` on.
+function ssa_cold_save(s: asmcore.EmitState, mask: i32, base: i32, load: boolean): asmcore.EmitState {
+  let k: i32 = 0;
+  let j: i32 = 0;
+  while (k < ssa_nregs()) {
+    if ((mask & 1 << k) != 0) {
+      if (load) {
+        s = ssa_fr_ldr(s, ssa_caller_reg(k), ssa_slot_off(base + j), 0);
+      } else {
+        s = ssa_fr_str(s, ssa_caller_reg(k), ssa_slot_off(base + j), 0);
+      }
+      j = j + 1;
+    }
+    k = k + 1;
+  }
+  return s;
+}
+
+// ssa_bl_saving calls `name` with the caller registers in `saves.mask` kept
+// in the frame across the call.
+function ssa_bl_saving(s: asmcore.EmitState, name: string, saves: SlowSaves): asmcore.EmitState {
+  s = ssa_cold_save(s, saves.mask, saves.base, false);
+  s = ssa_bl_sym(s, name);
+  return ssa_cold_save(s, saves.mask, saves.base, true);
+}
+
+// SlowSaves is what a slow-path op's call keeps: the registers and the first
+// frame word of the save area.
+struct SlowSaves { mask: i32, base: i32 }
+
 // ssa_b, ssa_bcond, ssa_cbz and ssa_tbz branch to one of the emitter's own
 // labels: by id when records are on (asmcore.Lab), by name in the text.
 function ssa_b(s: asmcore.EmitState, l: asmcore.Lab): asmcore.EmitState {
@@ -3933,7 +4042,7 @@ function ssa_sym_addr(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 
 // ssa_rt_call is the stack machine's call of a runtime routine on the register
 // ABI: the arguments in x0, x1, the result in x0.
-function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_x0_forget(s);
   s = s.need("heap");
   let sym: string = "__fern_alloc";
@@ -3976,11 +4085,11 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.write("    str x0, [x1]\n");
   }
   if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
-    s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, s);
+    s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
   } else if (util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !s.rc_free_debug) {
-    s = arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, s);
+    s = arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
   } else {
-    s = ssa_bl_sym(s, sym);
+    s = ssa_bl_saving(s, sym, saves);
   }
   if (ins.str == "raw_alloc") {
     s = s.write("    add x0, x0, #24\n");
@@ -4019,7 +4128,7 @@ function lc_rt_uncount(s: asmcore.EmitState, bytes: string, count: string): asmc
 // arr_push_inline is arr_push_fast at the call site, calling `sym` only when
 // the receiver has no free slot or is shared. `unique` drops the count test:
 // the receiver was just tested unique.
-function arr_push_inline(sym: string, l: string, unique: boolean, s: asmcore.EmitState): asmcore.EmitState {
+function arr_push_inline(sym: string, l: string, unique: boolean, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
   let sn: asmcore.LabNew = asmcore.lab_new(s, l + "s");
   let on: asmcore.LabNew = asmcore.lab_new(sn.state, l + "o");
   let en: asmcore.LabNew = asmcore.lab_new(on.state, l + "e");
@@ -4035,13 +4144,13 @@ function arr_push_inline(sym: string, l: string, unique: boolean, s: asmcore.Emi
   s = ssa_ldst0(s, false, "x2", "x0");
   s = ssa_b(s, en.lab);
   s = s.lab_def(sn.lab);
-  s = ssa_bl_sym(s, sym);
+  s = ssa_bl_saving(s, sym, saves);
   return s.lab_def(en.lab);
 }
 
 // arr_push_inline_u8 is arr_push_inline for a packed byte array: its
 // capacity is in 8-byte words, so the room test is against cap * 8.
-function arr_push_inline_u8(sym: string, l: string, unique: boolean, s: asmcore.EmitState): asmcore.EmitState {
+function arr_push_inline_u8(sym: string, l: string, unique: boolean, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
   let sn: asmcore.LabNew = asmcore.lab_new(s, l + "s");
   let on: asmcore.LabNew = asmcore.lab_new(sn.state, l + "o");
   let en: asmcore.LabNew = asmcore.lab_new(on.state, l + "e");
@@ -4059,7 +4168,7 @@ function arr_push_inline_u8(sym: string, l: string, unique: boolean, s: asmcore.
   s = ssa_ldst0(s, false, "x2", "x0");
   s = ssa_b(s, en.lab);
   s = s.lab_def(sn.lab);
-  s = ssa_bl_sym(s, sym);
+  s = ssa_bl_saving(s, sym, saves);
   return s.lab_def(en.lab);
 }
 
@@ -4160,7 +4269,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 // SsaFrame is the frame below the values: three words per frame-resident
 // view box after the values. ssa_view_off is the offset of a view's lowest
 // word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string, lanes: boolean[] }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32 }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -4612,7 +4721,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     return ssa_host_call(ins, reg_of, fr.imm, s);
   }
   if (k == 50) {
-    return ssa_rt_call(ins, reg_of, lp, s);
+    return ssa_rt_call(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base }, s);
   }
   if (k == 58) {
     return ssa_sym_addr(ins, reg_of, s);
@@ -5244,7 +5353,8 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let formed: ssa.Formed = prepared.formed;
   let f: ssa.SFunc = formed.f;
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
-  let alloc: ssa.Alloc = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved());
+  let call_kinds: i32[] = ssa.cold_positions(f, s.size);
+  let alloc: ssa.Alloc = ssa.regalloc_linear_fixed(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(call_kinds), call_kinds);
   let reg_of: i32[] = alloc.reg_of;
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
@@ -5274,9 +5384,13 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let lbase: i32 = s.nlab;
   s = s.lab_take(bp.len());
   let lanes: boolean[] = ssa.lane_values(f);
-  let fr: SsaFrame = SsaFrame { nspill: ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes };
+  let cold: ColdSaves = ssa_cold_saves(f, alloc);
+  let fr: SsaFrame = SsaFrame { nspill: ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa_view_count(views) };
   let fusions: ssaprepare.Fusion[] = [];
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
+  if (cold.any) {
+    frame = frame + COLD_SLOTS * 8;
+  }
   if (frame % 16 != 0) {
     frame = frame + 8;
   }
@@ -5310,7 +5424,10 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
         tailed = true;
       } else {
         s = ssa_prepared_loc(prepared.source.values, ins.result, s);
+        let around: i32 = cold.by_pos[pos + ii];
+        s = ssa_cold_save(s, around, fr.cold_base, false);
         s = ssa_block_inst(blk, ii, reg_of, lp, fr, r, s);
+        s = ssa_cold_save(s, around, fr.cold_base, true);
       }
       ii = ii + 1;
     }
