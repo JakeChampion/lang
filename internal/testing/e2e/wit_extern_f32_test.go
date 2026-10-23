@@ -125,7 +125,7 @@ func runExternWithProvider(t *testing.T, iface, provCoreWat, src string) []byte 
 	}
 	run("cp", "-r", "../../../cmd/fern/wit/deps", filepath.Join(userWit, "deps"))
 	write(filepath.Join(userWit, "deps", "test", "src.wit"), pkg)
-	write(filepath.Join(userWit, "world.wit"), "package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import local:test/src@0.1.0;\n}\n")
+	write(filepath.Join(userWit, "world.wit"), "package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/src@0.1.0;\n}\n")
 	write(filepath.Join(dir, "empty.wat"), "(module)")
 	run(wasmtools, "parse", filepath.Join(dir, "empty.wat"), "-o", filepath.Join(dir, "empty.wasm"))
 	run(wasmtools, "component", "embed", userWit, "-w", "u", filepath.Join(dir, "empty.wasm"), "-o", filepath.Join(dir, "embedded.wasm"))

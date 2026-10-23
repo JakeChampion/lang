@@ -20,11 +20,11 @@ func TestSelfHostTryResidualNamesImportedTypes(t *testing.T) {
 		{
 			name: "dyn std trait, imported error type",
 			src: `import "std/error";
-import "std/brotli";
-function f(b: u8[]): Result[i32, dyn error.Error] { let v: u8[] = brotli.decompress(b, 16)?; return Ok(v.len()); }
+import "custom";
+function f(): Result[i32, dyn error.Error] { let v: i32 = custom.fail()?; return Ok(v); }
 function main(): i32 { return 0; }
 `,
-			want: "error[E042]: `?` cannot box brotli.BrotliError into dyn error.Error: brotli.BrotliError does not implement error.Error",
+			want: "error[E042]: `?` cannot box custom.NotError into dyn error.Error: custom.NotError does not implement error.Error",
 		},
 		{
 			name: "concrete imported error type",
@@ -39,6 +39,14 @@ function main(): i32 { return 0; }
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")
+			// Stdlib errors implement error.Error. Use an imported type with
+			// no impl to keep the missing-impl diagnostic under test.
+			support := `pub struct NotError { code: i32 }
+pub function fail(): Result[i32, NotError] { return Err(NotError { code: 1 }); }
+`
+			if err := os.WriteFile(filepath.Join(filepath.Dir(src), "custom.fern"), []byte(support), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.WriteFile(src, []byte(tc.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
