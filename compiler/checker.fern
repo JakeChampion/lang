@@ -11,6 +11,7 @@ import "./astwalk";
 import "./typeinfo";
 import "./decltypes";
 import "./semtypes";
+import "./stdlib_methods";
 
 // =================== TYPE SYSTEM ====================
 // Semantic type definitions live in typeinfo, shared with typed consumers.
@@ -4309,60 +4310,6 @@ function retired_collection_spelling(ns: string, method: string): string {
   return "";
 }
 
-// scalar_module_for: the stdlib module carrying a scalar type's method surface,
-// "" for a type whose methods are not in one. u8 uses std/i32, not std/u32 —
-// every `pub function (b: u8) …` in the stdlib is declared there, so naming
-// std/u32 made the hint unfollowable.
-function scalar_module_for(t: typeinfo.Type): string {
-  match (t) {
-    typeinfo.TypeI32(it) => {
-      let lb: string = int_label(it);
-      if (lb == "u64" || lb == "usize") {
-        return "std/u64";
-      }
-      if (lb == "u8") {
-        return "std/i32";
-      }
-      if (lb == "u32" || lb == "u16") {
-        return "std/u32";
-      }
-      if (lb == "i64") {
-        return "std/i64";
-      }
-      if (lb == "char") {
-        return "";
-      }
-      return "std/i32";
-    },
-    typeinfo.TypeFloat(_) => {
-      return "std/f64";
-    },
-    typeinfo.TypeString(_) => {
-      return "std/string";
-    },
-    _ => {
-      return "";
-    }
-  }
-  return "";
-}
-
-// scalar_method_module: scalar_module_for narrowed to the names that module
-// actually defines for every scalar. to_string is the f-string desugar target
-// and the case that motivates this; keeping the set tight is what stops the
-// hint naming a module that would not help.
-function scalar_method_module(t: typeinfo.Type, method: string): string {
-  let mod: string = scalar_module_for(t);
-  if (mod.len() == 0) {
-    return "";
-  }
-  if (method == "to_string" || method == "to_string_radix" || method == "to_string_padded"
-    || method == "to_string_with_sep" || method == "to_string_prec") {
-    return mod;
-  }
-  return "";
-}
-
 // module_imported: `path` is in the program's import list. For a single module
 // that is its own imports; for a bundle it is the closure flatten.bundle keeps.
 function (s: Scope) module_imported(path: string): boolean {
@@ -4505,26 +4452,68 @@ function (s: Scope) unknown_method_message(ns: string, method: string, label: st
     return base + " — the in-place spelling was removed; use \"" + repl
       + "\", which returns the updated " + ns + " (assign the result back)";
   }
+  let import_advice: string = s.stdlib_import_advice(ns, method);
+  if (import_advice.len() > 0) {
+    return base + import_advice;
+  }
   let names: string[] = s.method_fix_candidates(ns, recv);
   let did: string = util.suggest(method, names);
   if (did.len() > 0) {
     return base + " — did you mean \"" + did + "\"?";
   }
-  let mod: string = scalar_module_for(recv);
-  if (mod.len() > 0 && !s.imports_directly(mod)) {
-    return base + " — if it comes from " + mod + ", add `import \"" + mod + "\"`";
+  let near_advice: string = s.stdlib_near_advice(ns, method);
+  if (near_advice.len() > 0) {
+    return base + near_advice;
   }
-  if (names.len() > 0) {
-    let listed: string = "";
-    for n in names {
-      if (listed.len() > 0) {
-        listed = listed + ", ";
-      }
-      listed = listed + n;
+  if (stdlib_methods.methods_on(ns).len() > 0) {
+    base = base + ", and no stdlib module declares one";
+  }
+  return base + method_list(names);
+}
+
+// method_list: " (it has: a, b)" for the receiver's methods, "" for none.
+function method_list(names: string[]): string {
+  if (names.len() == 0) {
+    return "";
+  }
+  let listed: string = "";
+  for n in names {
+    if (listed.len() > 0) {
+      listed = listed + ", ";
     }
-    return base + " (it has: " + listed + ")";
+    listed = listed + n;
   }
-  return base;
+  return " (it has: " + listed + ")";
+}
+
+// stdlib_import_advice: the import to add when a stdlib module the program does
+// not import declares `method` on the `ns` surface, or "".
+function (s: Scope) stdlib_import_advice(ns: string, method: string): string {
+  let mod: string = stdlib_methods.module_of(ns, method);
+  if (mod.len() == 0 || s.imports_directly(mod)) {
+    return "";
+  }
+  // The f-string desugar is the one way to reach this without writing a
+  // method call.
+  let note: string = "";
+  if (method == "to_string") {
+    note = " (an f-string like `f\"{x}\"` desugars to `x.to_string()`)";
+  }
+  return " — add `import \"" + mod + "\"`" + note;
+}
+
+// stdlib_near_advice: a near miss among the methods stdlib modules declare on
+// the `ns` surface, with the import it needs, or "".
+function (s: Scope) stdlib_near_advice(ns: string, method: string): string {
+  let near: string = util.suggest(method, stdlib_methods.methods_on(ns));
+  if (near.len() == 0) {
+    return "";
+  }
+  let mod: string = stdlib_methods.module_of(ns, near);
+  if (s.imports_directly(mod)) {
+    return "";
+  }
+  return " — did you mean \"" + near + "\", which needs `import \"" + mod + "\"`?";
 }
 
 // A suggestion and an editor fix use the same receiver-specific candidates.
@@ -4557,48 +4546,19 @@ function (s: Scope) method_fix_candidates(ns: string, recv: typeinfo.Type): stri
 }
 
 // unknown_method_advice: the E043 text for a method call on a non-struct
-// receiver — native's two paths at this site, with the bare message as the
-// fallback both fall through to.
+// receiver. A receiver with a method namespace of its own, or whose methods
+// live in stdlib modules, gets the method advice; anything else the bare
+// message.
 function (s: Scope) unknown_method_advice(ns: string, method: string, recv: typeinfo.Type): string {
   let label: string = type_label(recv);
-  // A scalar whose defining stdlib module was not imported. The bare message
-  // actively misleads here: it talks about struct field access on code the
-  // reader may not have written at all, because an f-string desugars `f"{n}"`
-  // to `n.to_string()`.
-  let smod: string = scalar_method_module(recv, method);
-  if (smod.len() > 0) {
-    let note: string = "";
-    if (method == "to_string") {
-      note = " (an f-string like `f\"{x}\"` desugars to `x.to_string()`)";
-    }
-    return "no method \"" + method + "\" on " + label + " — add `import \"" + smod + "\"`" + note;
+  let surface: string = ns;
+  if let typeinfo.TypeUnion(u) = recv {
+    surface = u.name;
   }
-  // A receiver with a method namespace of its own reaching here means the
-  // method does not exist. Say so, and say what does.
-  if (s.methods_in_namespace(ns).len() > 0) {
-    return s.unknown_method_message(ns, method, label, recv);
-  }
-  // Option's and Result's methods live in std/option and std/result, which a
-  // program sees only when it imports them.
-  let umod: string = builtin_union_module(recv);
-  if (umod.len() > 0 && !s.imports_directly(umod)) {
-    return "no method \"" + method + "\" on " + label + " — if it comes from " + umod + ", add `import \"" + umod + "\"`";
+  if (s.methods_in_namespace(surface).len() > 0 || stdlib_methods.methods_on(surface).len() > 0) {
+    return s.unknown_method_message(surface, method, label, recv);
   }
   return "field access on non-struct value of type " + label;
-}
-
-// builtin_union_module is the stdlib module that declares the methods of the
-// built-in union `t`, or "".
-function builtin_union_module(t: typeinfo.Type): string {
-  if let typeinfo.TypeUnion(u) = t {
-    if (u.name == "Option") {
-      return "std/option";
-    }
-    if (u.name == "Result") {
-      return "std/result";
-    }
-  }
-  return "";
 }
 
 // method_namespace_of: the name a receiver's methods register under — "Array"

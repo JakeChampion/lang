@@ -323,10 +323,18 @@ function main(): i32 { let m = Map { K { a: 1 }: 1 }; return 0; }`,
 		// reader's own import list: with std/string present the message
 		// lists the surface instead, so a checker that cannot see its
 		// imports cannot say either thing correctly.
-		name:     "E043 unknown string method names the import",
+		name:     "E043 a string method from std/string names the import",
+		src:      `function main(): i32 { let s: string = "ab"; return s.trim().len(); }`,
+		code:     "E043",
+		spelling: "— add `import \"std/string\"`",
+	},
+	{
+		// A method no stdlib module declares gets no import advice: adding
+		// one would change nothing (#13064).
+		name:     "E043 a method no module declares names no import",
 		src:      `function main(): i32 { let s: string = "ab"; return s.frobnicate(); }`,
 		code:     "E043",
-		spelling: "if it comes from std/string, add `import \"std/string\"`",
+		spelling: `no method "frobnicate" on string, and no stdlib module declares one`,
 	},
 	{
 		// A field READ rather than a method call. Native says the same
@@ -335,7 +343,7 @@ function main(): i32 { let m = Map { K { a: 1 }: 1 }; return 0; }`,
 		name:     "E043 field read on a non-struct gets the method advice",
 		src:      `function main(): i32 { let s = "a"; return s.foo; }`,
 		code:     "E043",
-		spelling: "if it comes from std/string, add `import \"std/string\"`",
+		spelling: `no method "foo" on string, and no stdlib module declares one`,
 	},
 	{
 		// The type NAME a message renders is advice to write as much as a
