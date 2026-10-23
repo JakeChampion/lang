@@ -48,8 +48,8 @@ func init() {
 // of the TTY column instead, and masking that on both sides changes nothing.
 var pinkyIdleField = regexp.MustCompile(`(?m)^(.*) .{6} ([A-Z][a-z]{2} [ 0-9][0-9] [0-9]{2}:[0-9]{2})`)
 
-func pinkyIdle(out []byte) []byte {
-	return pinkyIdleField.ReplaceAll(out, []byte("$1 ~idle~ $2"))
+func pinkyIdle(out string) string {
+	return pinkyIdleField.ReplaceAllString(out, "$1 ~idle~ $2")
 }
 
 func pinkyCases(t *testing.T) []invocation {
@@ -160,7 +160,7 @@ func pinkyCases(t *testing.T) []invocation {
 		invocation{name: "stdout closed on a fault", args: []string{"-l"}, stdout: stdoutClosed},
 	)
 	for i := range cases {
-		cases[i].clock = pinkyIdle
+		cases[i].mask = pinkyIdle
 	}
 	return cases
 }
@@ -189,7 +189,7 @@ func TestPinkyIdleMask(t *testing.T) {
 		{"Login    Name                 TTY      Idle   When         Where\n", "Login    Name                 TTY      Idle   When         Where\n"},
 		{"Login name: root                        In real life:  root\n", "Login name: root                        In real life:  root\n"},
 	} {
-		if got := string(pinkyIdle([]byte(tc.in))); got != tc.want {
+		if got := pinkyIdle(tc.in); got != tc.want {
 			t.Errorf("pinkyIdle(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}

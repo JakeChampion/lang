@@ -284,11 +284,6 @@ type invocation struct {
 	// expected order from that tree's actual inodes — so the rule is
 	// gated somewhere deterministic and these cases gate the content.
 	unordered bool
-	// clock, when set, rewrites the fields of an output that depend on the
-	// moment it was produced, in both sides before they are compared. Two
-	// runs cannot happen at the same instant, so a field computed from the
-	// wall clock can differ between correct implementations.
-	clock func([]byte) []byte
 	// crossDev seeds a second working directory on a DIFFERENT
 	// filesystem from the seedTree one, reachable from it under the
 	// name `xdev`. It is the only way a case can reach EXDEV, which is
@@ -2038,9 +2033,6 @@ func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 // has its lines sorted first, which is the whole of what that field does;
 // every other case is compared byte for byte.
 func sameOutput(inv invocation, want, got []byte) bool {
-	if inv.clock != nil {
-		want, got = inv.clock(want), inv.clock(got)
-	}
 	if !inv.unordered {
 		return bytes.Equal(want, got)
 	}
