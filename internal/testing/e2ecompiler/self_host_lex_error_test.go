@@ -36,6 +36,24 @@ var lexErrorCases = []struct{ name, src string }{
 	{"bad-numeric-suffix", "function main(): i32 {\n  let x: i32 = 42i33;\n  return x;\n}\n"},
 	{"integer-suffix-on-float", "function main(): i32 {\n  let x: f64 = 1.5i32;\n  return 0;\n}\n"},
 	{"interpolant", "import \"std/i32\";\nfunction main(): i32 {\n  let x: i32 = 1;\n  print(f\"{x $ 1}\");\n  return 0;\n}\n"},
+	{"latin-letter", "function main(): i32 { let café = 1; return 0; }\n"},
+	{"greek-letter", "λ\n"},
+	{"cjk-letter", "function main(): i32 {\n  return 字;\n}\n"},
+	{"emoji", "function main(): i32 { return 😀; }\n"},
+	{"non-ascii-digit", "١\n"},
+	{"invalid-leading-byte", "\xff\n"},
+	{"invalid-byte-in-string", "function main(): i32 { let s: string = \"abc\xff\"; return 0; }\n"},
+	{"invalid-byte-in-comment", "// é\n// abc\xff\nfunction main(): i32 { return 0; }\n"},
+	{"invalid-byte-after-multibyte", "// é\xff\nfunction main(): i32 { return 0; }\n"},
+	{"invalid-before-token-error", "$\n// \xff\n"},
+	{"invalid-overlong", "// \xc0\xaf\n"},
+	{"invalid-surrogate", "// \xed\xa0\x80\n"},
+	{"invalid-out-of-range", "// \xf4\x90\x80\x80\n"},
+	{"invalid-truncated", "// \xe2\x82"},
+	{"invalid-continuation", "// \x80\n"},
+	{"invalid-five-byte-lead", "// \xf8\x80\x80\n"},
+	{"invalid-ff-with-continuations", "// \xff\x80\x80\n"},
+	{"invalid-four-byte-lead", "// \xf5\x80\x80\x80\n"},
 }
 
 // diagHeader is one diagnostic's header with the file path removed:
@@ -82,4 +100,43 @@ func onlyDiag(t *testing.T, who string, cmd *exec.Cmd) string {
 		t.Fatalf("%s reported %d diagnostics, want the lex error alone:\n%s", who, len(ms), out)
 	}
 	return ms[0][1]
+}
+
+func TestSelfHostSourceDecodingModes(t *testing.T) {
+	cli := e2eharness.SelfHostCLI(t)
+	root := e2eharness.SelfHostStdlibRoot(t)
+	native := buildLangBinForInterp(t)
+	source := "// é\nfunction main(): i32 { let s: string = \"x\xff\"; return 0; }\n"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.fern")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := onlyDiag(t, "oracle", exec.Command(native, "-check", path))
+	for _, mode := range []string{"-check", "-interp", "-fmt"} {
+		t.Run(mode+"-file", func(t *testing.T) {
+			args := []string{mode, path}
+			if mode != "-fmt" {
+				args = append(args, root)
+			}
+			if got := onlyDiag(t, "self-host", exec.Command(cli, args...)); got != want {
+				t.Fatalf("got %q, want %q", got, want)
+			}
+		})
+		t.Run(mode+"-stdin", func(t *testing.T) {
+			cmd := exec.Command(cli, mode, "-")
+			cmd.Stdin = strings.NewReader(source)
+			if got := onlyDiag(t, "self-host", cmd); got != want {
+				t.Fatalf("got %q, want %q", got, want)
+			}
+		})
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			cmd := exec.Command(cli, "-target", target, "-o", filepath.Join(t.TempDir(), "program"), path, root)
+			if got := onlyDiag(t, "self-host", cmd); got != want {
+				t.Fatalf("got %q, want %q", got, want)
+			}
+		})
+	}
 }
