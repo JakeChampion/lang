@@ -28,11 +28,22 @@ func markers(t arm64tbl.VecTable) (begin, end string) {
 		"// END GENERATED ARM64 " + name + " TABLE"
 }
 
+// lintLimit is the complexity limit of compiler/lint.fern. A generated
+// table scores one more than its rows, so a long one carries an `allow`.
+const lintLimit = 10
+
+func allowLongTable(b *strings.Builder, rows int) {
+	if rows+1 > lintLimit {
+		b.WriteString("// fern-lint: allow cyclomatic-complexity\n// A generated table: one arm for each row.\n")
+	}
+}
+
 // lookup renders a mnemonic-to-value function as a string match: one arm
 // per row and the wildcard returning -1, the shape a hand-written table
 // reads as. A string match lowers to the same str_eq chain an if-chain
 // would, so the form costs nothing at run time.
 func lookup(b *strings.Builder, fn, ret string, rows []string) {
+	allowLongTable(b, len(rows))
 	fmt.Fprintf(b, "function %s(mnem: string): %s {\n    match (mnem) {\n", fn, ret)
 	for _, r := range rows {
 		fmt.Fprintf(b, "        %s,\n", r)

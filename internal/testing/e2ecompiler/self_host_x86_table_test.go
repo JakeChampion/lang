@@ -1,6 +1,7 @@
 package e2ecompiler
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -37,7 +38,10 @@ func TestSelfHostX86TableRowsMatchGas(t *testing.T) {
 	// Both operand shapes: the rows are the `xmm <- xmm/mem` forms, and a row
 	// that only worked register-to-register would be half a form.
 	for _, o := range x86tbl.SSEOps {
-		cases = append(cases, o.Mnemonic+" %xmm1, %xmm0", o.Mnemonic+" (%rax), %xmm1")
+		cases = append(cases, o.Mnemonic+" %xmm1, %xmm0")
+		if !slices.Contains(x86tbl.SSERegOnly, o.Mnemonic) {
+			cases = append(cases, o.Mnemonic+" (%rax), %xmm1")
+		}
 	}
 	for _, cond := range x86tbl.CondSpellings() {
 		cases = append(cases, "set"+cond+" %cl", "cmov"+cond+" %rcx, %rax")
@@ -55,4 +59,19 @@ func TestSelfHostX86TableRowsMatchGas(t *testing.T) {
 		t.Fatalf("the tables produced only %d cases", len(cases))
 	}
 	compareFormCases(t, cases)
+}
+
+// TestSelfHostX86SSERegOnlyRefusesMemory pins the rows of x86tbl.SSERegOnly.
+// Their opcode with a memory source is movlps or movhps, so the self-host
+// assembler must refuse the memory form, as GNU as does.
+func TestSelfHostX86SSERegOnlyRefusesMemory(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildX86AsmBenchDriver(t, gcc)
+	for _, m := range x86tbl.SSERegOnly {
+		c := m + " (%rax), %xmm1"
+		out := runX86BenchDriver(t, bin, runner, ".text\n_start:\n    "+c+"\n", "-bytes")
+		if len(asmRefusals(out)) == 0 {
+			t.Errorf("%q: the self-host assembler accepts it\n%s", c, out)
+		}
+	}
 }
