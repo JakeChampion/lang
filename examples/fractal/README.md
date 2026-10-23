@@ -20,7 +20,9 @@ Use `-target arm64-linux` or `-target arm64-darwin` for those hosts.
 `binary.fern` contains the shared byte helpers.
 `source.fern` serves the source browser at `/_src/`.
 `web/` contains the browser assets.
+
 `build.sh` creates the container archive for Netlify.
+It builds the checkout compiler first, so new FIP contracts do not depend on the nightly release schedule.
 
 ## Source browser
 
@@ -38,7 +40,7 @@ The container includes the same source files beside the binary.
 The renderer allocates one pixel buffer with space for 256 PNG rows.
 Each row contains one filter byte and 256 RGB pixels.
 The `fip` pixel writer updates that buffer through an `own` parameter.
-The `fip` escape function reuses an `EscapeState` record with a fixed iteration limit.
+The `fip` escape function reuses an `EscapeBatch` record with a fixed iteration limit.
 Coordinate validation, iteration limits, and palette interpolation also use `fip`.
 
 These kernels need no fresh allocations when their inputs are unique.
@@ -49,6 +51,19 @@ The complete renderer remains an ordinary function.
 The color math methods lack FIP contracts, and PNG compression and response assembly allocate output buffers.
 FBIP adds no benefit here because these kernels use only FIP helpers.
 See the [application guide](../../docs/FIP-APPLICATION-GUIDE.md) for the contract details.
+
+## Render performance
+
+Two independent `f64x2` vectors advance four adjacent pixels in parallel.
+Each pixel keeps its first escape time and magnitude for the color calculation.
+The kernel checks exact orbit equality every 16 steps against snapshots at intervals that double.
+A repeated orbit cannot escape later, so the kernel can stop that pixel early.
+The equality test preserves boundary detail.
+
+The renderer retains double precision, the zoom-dependent iteration limit, and the palette.
+Deep boundary tiles can still need more work than exterior or interior tiles.
+The iteration counter includes the steps up to escape, an exact cycle, or the iteration limit for each pixel.
+See the [measurements and reproduction script](../../docs/benchmarks/fractal-2026-10-23/README.md).
 
 ## Checks
 

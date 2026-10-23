@@ -12699,7 +12699,7 @@ func (c *checker) checkUnusedCollectionResult(e ast.Expr) {
 var fipNonAllocMethods = map[string]bool{"len": true}
 
 // fipNonAllocBuiltins is its sibling for builtin functions: each lowers to
-// instructions or a runtime scan that allocates nothing and returns a scalar
+// instructions or a runtime scan that allocates nothing and returns a scalar or lane value
 // (the byte-scan kernels, the bit counts, a constant, the heap counters, the
 // clock). verifyFipAllocs (E068) stays the backstop for what they emit.
 var fipNonAllocBuiltins = map[string]bool{
@@ -12710,6 +12710,7 @@ var fipNonAllocBuiltins = map[string]bool{
 	"__clz64": true, "__ctz64": true, "__popcount64": true, "__mulhi_u64": true,
 	"__ptr_width": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
 	"monotonic_ns": true,
+	"__f64x2_of":   true, "__f64x2_splat": true, "__f64x2_lane": true,
 }
 
 // checkFipFunctions verifies every `fip function` performs no heap allocation —

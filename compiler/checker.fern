@@ -24491,7 +24491,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
 // e053_diags walks one annotated function. `fips` / `fbips` are the module's
 // two claim sets; the callee rule picks which of them this function may reach.
 // fip_builtin_callees is native's fipNonAllocBuiltins: the builtins that lower
-// to instructions or a runtime scan allocating nothing and returning a scalar,
+// to instructions or a runtime scan allocating nothing and returning a scalar or lane value,
 // less any name the module declares as a free function. irfipverify's E068 stays the
 // backstop for what they emit.
 function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
@@ -24500,6 +24500,7 @@ function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
     "__memchr", "__mismatch_bytes", "__mismatch_bytes_str", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_set_bytes",
     "__bsd_sum", "__str_hash", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
     "__ctz64", "__popcount64", "__mulhi_u64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
+    "__f64x2_of", "__f64x2_splat", "__f64x2_lane",
   ] {
     let declared: boolean = false;
     for fd in funcs {

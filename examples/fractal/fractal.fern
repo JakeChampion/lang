@@ -38,7 +38,11 @@ pub fip function max_iterations(z: i32): i32 {
 pub function render(z: i32, x: i64, y: i64): Tile {
   let step: f64 = 4.0 / ((1 as i64 << (z + 8) as i64) as f64);
   let raw: u8[] = __alloc_u8(SIZE * ROW_BYTES);
-  let result: EscapeState = EscapeState { limit: max_iterations(z), magnitude_squared: -1.0, steps: 0 };
+  let result: EscapeBatch = EscapeBatch {
+    limit: max_iterations(z),
+    magnitude0: -1.0, magnitude1: -1.0, magnitude2: -1.0, magnitude3: -1.0,
+    steps0: 0, steps1: 0, steps2: 0, steps3: 0,
+  };
   let iterations: i64 = 0;
   let row: i32 = 0;
   while (row < SIZE) {
@@ -48,64 +52,171 @@ pub function render(z: i32, x: i64, y: i64): Tile {
     let imaginary: f64 = 2.0 - ((y * (SIZE as i64) + row as i64) as f64 + 0.5) * step;
     let column: i32 = 0;
     while (column < SIZE) {
-      let real: f64 = -2.5 + ((x * (SIZE as i64) + column as i64) as f64 + 0.5) * step;
-      result = escape(result, real, imaginary);
-      iterations = iterations + result.steps as i64;
-      let red: u8 = 0 as u8;
-      let green: u8 = 0 as u8;
-      let blue: u8 = 0 as u8;
-      if (result.magnitude_squared >= 0.0) {
-        let smooth_count: f64 = result.steps as f64 + 1.0 - (0.5 * result.magnitude_squared.log()).log2();
-        let position: f64 = smooth_count.sqrt() * 0.09;
-        position = position - position.floor();
-        red = channel(position, 0);
-        green = channel(position, 1);
-        blue = channel(position, 2);
-      }
+      let real0: f64 = -2.5 + ((x * (SIZE as i64) + column as i64) as f64 + 0.5) * step;
+      let real1: f64 = -2.5 + ((x * (SIZE as i64) + (column + 1) as i64) as f64 + 0.5) * step;
+      let real2: f64 = -2.5 + ((x * (SIZE as i64) + (column + 2) as i64) as f64 + 0.5) * step;
+      let real3: f64 = -2.5 + ((x * (SIZE as i64) + (column + 3) as i64) as f64 + 0.5) * step;
+      result = escape_batch(result, real0, real1, real2, real3, imaginary);
+      iterations = iterations + result.steps0 as i64 + result.steps1 as i64 + result.steps2 as i64 + result.steps3 as i64;
       let offset: i32 = row_start + 1 + column * 3;
-      raw = write_pixel(raw, offset, red, green, blue);
-      column = column + 1;
+      raw = color_pixel(raw, offset, result.magnitude0, result.steps0);
+      raw = color_pixel(raw, offset + 3, result.magnitude1, result.steps1);
+      raw = color_pixel(raw, offset + 6, result.magnitude2, result.steps2);
+      raw = color_pixel(raw, offset + 9, result.magnitude3, result.steps3);
+      column = column + 4;
     }
     row = row + 1;
   }
   return Tile { png: encode(raw), iterations: iterations };
 }
 
-struct EscapeState {
+struct EscapeBatch {
   limit: i32,
-  magnitude_squared: f64,
-  steps: i32,
+  magnitude0: f64,
+  magnitude1: f64,
+  magnitude2: f64,
+  magnitude3: f64,
+  steps0: i32,
+  steps1: i32,
+  steps2: i32,
+  steps3: i32,
 }
 
-// A negative magnitude_squared identifies a point that stays inside the radius-256 disc.
-// The result record reuses its donor for each pixel.
-fip function escape(own result: EscapeState, real: f64, imaginary: f64): EscapeState {
+fip function known_interior(real: f64, imaginary: f64): boolean {
   let imaginary_squared: f64 = imaginary * imaginary;
   let cardioid_x: f64 = real - 0.25;
   let bulb_x: f64 = real + 1.0;
   let q: f64 = cardioid_x * cardioid_x + imaginary_squared;
-  let in_cardioid: boolean = q * (q + real - 0.25) <= 0.25 * imaginary_squared;
-  let in_bulb: boolean = bulb_x * bulb_x + imaginary_squared <= 0.0625;
-  let z_real: f64 = 0.0;
-  let z_imaginary: f64 = 0.0;
+  return q * (q + real - 0.25) <= 0.25 * imaginary_squared || bulb_x * bulb_x + imaginary_squared <= 0.0625;
+}
+
+// Two independent f64x2 orbits process four adjacent pixels.
+// Each pixel keeps its first escape result. Negative magnitudes identify bounded pixels.
+// Each lane needs an independent escape and cycle check.
+// fern-lint: allow cyclomatic-complexity
+fip function escape_batch(own result: EscapeBatch, real0: f64, real1: f64, real2: f64, real3: f64, imaginary: f64): EscapeBatch {
+  let done0: boolean = known_interior(real0, imaginary);
+  let done1: boolean = known_interior(real1, imaginary);
+  let done2: boolean = known_interior(real2, imaginary);
+  let done3: boolean = known_interior(real3, imaginary);
+  let steps0: i32 = result.limit;
+  let steps1: i32 = result.limit;
+  let steps2: i32 = result.limit;
+  let steps3: i32 = result.limit;
+  if (done0) {
+    steps0 = 0;
+  }
+  if (done1) {
+    steps1 = 0;
+  }
+  if (done2) {
+    steps2 = 0;
+  }
+  if (done3) {
+    steps3 = 0;
+  }
+  let magnitude0: f64 = -1.0;
+  let magnitude1: f64 = -1.0;
+  let magnitude2: f64 = -1.0;
+  let magnitude3: f64 = -1.0;
+  let imaginary_vector: f64x2 = __f64x2_splat(imaginary);
+  let two: f64x2 = __f64x2_splat(2.0);
+  let real01: f64x2 = __f64x2_of(real0, real1);
+  let real23: f64x2 = __f64x2_of(real2, real3);
+  let z_real01: f64x2 = __f64x2_splat(0.0);
+  let z_imaginary01: f64x2 = z_real01;
+  let z_real23: f64x2 = z_real01;
+  let z_imaginary23: f64x2 = z_real01;
+  let saved_real01: f64x2 = z_real01;
+  let saved_imaginary01: f64x2 = z_imaginary01;
+  let saved_real23: f64x2 = z_real23;
+  let saved_imaginary23: f64x2 = z_imaginary23;
+  let checkpoint: i32 = 16;
   let steps: i32 = 0;
-  let escaped_magnitude_squared: f64 = -1.0;
-  if (!in_cardioid && !in_bulb) {
-    while (steps < result.limit) {
-      let real_squared: f64 = z_real * z_real;
-      let imaginary_squared: f64 = z_imaginary * z_imaginary;
-      let magnitude_squared: f64 = real_squared + imaginary_squared;
-      if (magnitude_squared > 65536.0) {
-        escaped_magnitude_squared = magnitude_squared;
-        break;
+  while (steps < result.limit && (!done0 || !done1 || !done2 || !done3)) {
+    let real_squared01: f64x2 = z_real01 * z_real01;
+    let imaginary_squared01: f64x2 = z_imaginary01 * z_imaginary01;
+    let magnitude01: f64x2 = real_squared01 + imaginary_squared01;
+    let real_squared23: f64x2 = z_real23 * z_real23;
+    let imaginary_squared23: f64x2 = z_imaginary23 * z_imaginary23;
+    let magnitude23: f64x2 = real_squared23 + imaginary_squared23;
+    if (!done0 && __f64x2_lane(magnitude01, 0) > 65536.0) {
+      magnitude0 = __f64x2_lane(magnitude01, 0);
+      steps0 = steps;
+      done0 = true;
+    }
+    if (!done1 && __f64x2_lane(magnitude01, 1) > 65536.0) {
+      magnitude1 = __f64x2_lane(magnitude01, 1);
+      steps1 = steps;
+      done1 = true;
+    }
+    if (!done2 && __f64x2_lane(magnitude23, 0) > 65536.0) {
+      magnitude2 = __f64x2_lane(magnitude23, 0);
+      steps2 = steps;
+      done2 = true;
+    }
+    if (!done3 && __f64x2_lane(magnitude23, 1) > 65536.0) {
+      magnitude3 = __f64x2_lane(magnitude23, 1);
+      steps3 = steps;
+      done3 = true;
+    }
+    if (done0 && done1 && done2 && done3) {
+      break;
+    }
+    // Keep separate operations in scalar order to preserve the pixel colors.
+    z_imaginary01 = two * z_real01 * z_imaginary01 + imaginary_vector;
+    z_real01 = real_squared01 - imaginary_squared01 + real01;
+    z_imaginary23 = two * z_real23 * z_imaginary23 + imaginary_vector;
+    z_real23 = real_squared23 - imaginary_squared23 + real23;
+    steps = steps + 1;
+    // An exact repeated orbit cannot escape later.
+    if ((steps & 15) == 0) {
+      if (!done0 && __f64x2_lane(z_real01, 0) == __f64x2_lane(saved_real01, 0) && __f64x2_lane(z_imaginary01, 0) == __f64x2_lane(saved_imaginary01, 0)) {
+        steps0 = steps;
+        done0 = true;
       }
-      z_imaginary = 2.0 * z_real * z_imaginary + imaginary;
-      z_real = real_squared - imaginary_squared + real;
-      steps = steps + 1;
+      if (!done1 && __f64x2_lane(z_real01, 1) == __f64x2_lane(saved_real01, 1) && __f64x2_lane(z_imaginary01, 1) == __f64x2_lane(saved_imaginary01, 1)) {
+        steps1 = steps;
+        done1 = true;
+      }
+      if (!done2 && __f64x2_lane(z_real23, 0) == __f64x2_lane(saved_real23, 0) && __f64x2_lane(z_imaginary23, 0) == __f64x2_lane(saved_imaginary23, 0)) {
+        steps2 = steps;
+        done2 = true;
+      }
+      if (!done3 && __f64x2_lane(z_real23, 1) == __f64x2_lane(saved_real23, 1) && __f64x2_lane(z_imaginary23, 1) == __f64x2_lane(saved_imaginary23, 1)) {
+        steps3 = steps;
+        done3 = true;
+      }
+      if (steps == checkpoint) {
+        saved_real01 = z_real01;
+        saved_imaginary01 = z_imaginary01;
+        saved_real23 = z_real23;
+        saved_imaginary23 = z_imaginary23;
+        checkpoint = checkpoint * 2;
+      }
     }
   }
-  result = EscapeState { ...result, magnitude_squared: escaped_magnitude_squared, steps: steps };
+  result = EscapeBatch {
+    ...result,
+    magnitude0: magnitude0, magnitude1: magnitude1, magnitude2: magnitude2, magnitude3: magnitude3,
+    steps0: steps0, steps1: steps1, steps2: steps2, steps3: steps3,
+  };
   return result;
+}
+
+function color_pixel(own raw: u8[], offset: i32, magnitude_squared: f64, steps: i32): u8[] {
+  let red: u8 = 0 as u8;
+  let green: u8 = 0 as u8;
+  let blue: u8 = 0 as u8;
+  if (magnitude_squared >= 0.0) {
+    let smooth_count: f64 = steps as f64 + 1.0 - (0.5 * magnitude_squared.log()).log2();
+    let position: f64 = smooth_count.sqrt() * 0.09;
+    position = position - position.floor();
+    red = channel(position, 0);
+    green = channel(position, 1);
+    blue = channel(position, 2);
+  }
+  return write_pixel(raw, offset, red, green, blue);
 }
 
 fip function write_pixel(own raw: u8[], offset: i32, red: u8, green: u8, blue: u8): u8[] {
