@@ -24,8 +24,10 @@
 //
 // `Num` is the supertrait of the four binary operators — the common bound for
 // generic numeric code (`T: num.Num` ⇒ add/sub/mul/div all available). `Neg` is
-// separate and implemented for the signed/float types only (i32/i64/f32/f64);
-// the unsigned u32/u64 get Add/Sub/Mul/Div/Num but no Neg.
+// separate and implemented for the signed and float types only (i32, i64, f32,
+// f64 and the lane types f64x2 and f32x4); the unsigned u32/u64 get
+// Add/Sub/Mul/Div/Num but no Neg. A lane type's identities are the lane-wise
+// 0.0 and 1.0.
 
 pub trait Add {
   function add(self: Self, o: Self): Self;
@@ -245,6 +247,96 @@ impl One for f32 {
 }
 
 impl Num for f32 {}
+
+// ---- f64x2 ----
+impl Add for f64x2 {
+  function add(self: f64x2, o: f64x2): f64x2 {
+    return self + o;
+  }
+}
+
+impl Sub for f64x2 {
+  function sub(self: f64x2, o: f64x2): f64x2 {
+    return self - o;
+  }
+}
+
+impl Mul for f64x2 {
+  function mul(self: f64x2, o: f64x2): f64x2 {
+    return self * o;
+  }
+}
+
+impl Div for f64x2 {
+  function div(self: f64x2, o: f64x2): f64x2 {
+    return self / o;
+  }
+}
+
+impl Neg for f64x2 {
+  function neg(self: f64x2): f64x2 {
+    return -self;
+  }
+}
+
+impl Zero for f64x2 {
+  function zero(): f64x2 {
+    return __f64x2_splat(0.0);
+  }
+}
+
+impl One for f64x2 {
+  function one(): f64x2 {
+    return __f64x2_splat(1.0);
+  }
+}
+
+impl Num for f64x2 {}
+
+// ---- f32x4 ----
+impl Add for f32x4 {
+  function add(self: f32x4, o: f32x4): f32x4 {
+    return self + o;
+  }
+}
+
+impl Sub for f32x4 {
+  function sub(self: f32x4, o: f32x4): f32x4 {
+    return self - o;
+  }
+}
+
+impl Mul for f32x4 {
+  function mul(self: f32x4, o: f32x4): f32x4 {
+    return self * o;
+  }
+}
+
+impl Div for f32x4 {
+  function div(self: f32x4, o: f32x4): f32x4 {
+    return self / o;
+  }
+}
+
+impl Neg for f32x4 {
+  function neg(self: f32x4): f32x4 {
+    return -self;
+  }
+}
+
+impl Zero for f32x4 {
+  function zero(): f32x4 {
+    return __f32x4_splat(0.0);
+  }
+}
+
+impl One for f32x4 {
+  function one(): f32x4 {
+    return __f32x4_splat(1.0);
+  }
+}
+
+impl Num for f32x4 {}
 
 // ---- u32 ---- (unsigned: no Neg)
 impl Add for u32 {

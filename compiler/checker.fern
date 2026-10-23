@@ -5741,6 +5741,9 @@ pub function receiver_key(t: typeinfo.Type): string {
     typeinfo.TypeUnion(un) => {
       return un.name;
     },
+    typeinfo.TypeLanes(l) => {
+      return typeinfo.lanes_spelling(l.width);
+    },
     _ => {
       return "";
     }
@@ -7949,7 +7952,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         if (is_unknown(declared)) {
           return CheckResult { scope: s.bind(v.name, declared), ty: declared };
         }
-        if (!settles_to(v.init, declared, init_scope) && !semtypes.lends_array(t, declared) && !coercible(t, declared, s)) {
+        if (!init_fits(v.init, t, declared, init_scope)) {
           let err: typeinfo.Type = t_unknown("var `" + v.name + "`: init type doesn't match annotation `" + v.type_name + "`");
           return CheckResult { scope: s.bind(v.name, declared), ty: err };
         }
@@ -17140,6 +17143,19 @@ function fn_value_binds(sig: FuncSig, dest: typeinfo.TypeFunc, s: Scope): (strin
   return (rn, rt);
 }
 
+// fn_value_instance is the signature of the generic function `sig` with its
+// type variables bound as `bn` / `bt` bind them.
+function fn_value_instance(sig: FuncSig, bn: string[], bt: typeinfo.Type[], s: Scope): typeinfo.TypeFunc {
+  let params: typeinfo.Type[] = [];
+  let i: i32 = 0;
+  while (i < sig.param_type_names.len()) {
+    params = params.append(type_from_ref_subst(sig_param_ref(sig, i), bn, bt, s.type_names()));
+    i = i + 1;
+  }
+  let result: typeinfo.Type = type_from_ref_subst(sig_ret_ref(sig), bn, bt, s.type_names());
+  return typeinfo.TypeFunc { param_types: params, param_own: callable_own_flags(sig.param_own, params.len()), ret_type: result, params_known: true };
+}
+
 // fn_value_settles reports whether the callable `want` binds every type
 // parameter of the generic function `e` names, to a known type or to a type
 // variable of the enclosing generic.
@@ -17153,19 +17169,14 @@ function fn_value_settles(e: ast.Expr, want: typeinfo.TypeFunc, s: Scope): boole
         return false;
       }
     }
-    let params: typeinfo.Type[] = [];
-    let i: i32 = 0;
-    while (i < sig.param_type_names.len()) {
-      params = params.append(type_from_ref_subst(sig_param_ref(sig, i), bn, bt, s.type_names()));
-      i = i + 1;
-    }
-    let result: typeinfo.Type = type_from_ref_subst(sig_ret_ref(sig), bn, bt, s.type_names());
+    let inst: typeinfo.TypeFunc = fn_value_instance(sig, bn, bt, s);
+    let result: typeinfo.Type = inst.ret_type;
     // A result the callable leaves open, as a method's own type parameter
     // is, takes what the function gives.
     if (is_unknown(want.ret_type)) {
       result = want.ret_type;
     }
-    let actual: typeinfo.Type = t_func_own(params, sig.param_own, result);
+    let actual: typeinfo.Type = t_func_own(inst.param_types, sig.param_own, result);
     // A method's unbound result variable can take the instantiated result.
     // A variable of the enclosing function remains a fixed contract.
     if (is_unknown(want.ret_type) && !util.has_str(s.tparams, callable_typevar_name(want.ret_type))) {
@@ -17183,14 +17194,7 @@ function fn_value_at(e: ast.Expr, dest: typeinfo.Type, s: Scope): typeinfo.Type 
       if let typeinfo.TypeFunc(want) = dest {
         let sig = s.lookup_sig(id.name);
         let (names, types) = fn_value_binds(sig, want, s);
-        let params: typeinfo.Type[] = [];
-        let i = 0;
-        while (i < sig.param_type_names.len()) {
-          params = params.append(type_from_ref_subst(sig_param_ref(sig, i), names, types, s.type_names()));
-          i = i + 1;
-        }
-        let result = type_from_ref_subst(sig_ret_ref(sig), names, types, s.type_names());
-        return t_func_own(params, sig.param_own, result);
+        return fn_value_instance(sig, names, types, s);
       }
     }
   }
@@ -18771,6 +18775,12 @@ function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): 
   return astwalk.fold_stmt_own_pruned(st, no_diags(), at_lambda, not_into_lambda);
 }
 
+// init_fits reports whether a `let` initializer of type `t` fits its
+// annotation. An owned array lends into a view annotation of its element.
+function init_fits(init: ast.Expr, t: typeinfo.Type, declared: typeinfo.Type, s: Scope): boolean {
+  return settles_to(init, declared, s) || semtypes.lends_array(t, declared) || coercible(t, declared, s);
+}
+
 function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[] {
   let out: util.Diag[] = [];
   let cur: Scope = s;
@@ -18790,7 +18800,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           out = util.append_diags(out, ctor_payload_diags(v.init, declared, cur));
           let vbound: util.Diag[] = dest_bound_diags(v.init, declared, cur);
           out = util.append_diags(out, vbound);
-          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !semtypes.lends_array(initt, declared) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
+          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !init_fits(v.init, initt, declared, cur)) {
             out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + type_label(initt) + str_copy_hint(initt, declared), v.line, v.col));
           }
           // An annotation naming no declared type (the E064 case) is a type

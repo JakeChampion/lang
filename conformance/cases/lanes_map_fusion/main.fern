@@ -1,0 +1,119 @@
+// `xs.map(k)` over an f64[] or an f32[], with k a generic kernel the lane
+// type can instantiate, gives the same answer as the scalar map: the
+// compiler may run k on f64x2 / f32x4 groups and on the scalar for the
+// rest, and each lane computes what the scalar does. A kernel that reads its
+// lane structure (`lane`, directly or through a helper), whose bound the
+// lane type lacks, or that has an effect (`print`, directly or through a
+// method of its own) is mapped one element at a time.
+import "std/f64";
+import "std/simd" as simd;
+import "std/num" as num;
+
+trait Tag {
+  function tag(self: Self): f64;
+}
+
+impl Tag for f64 {
+  function tag(self: f64): f64 {
+    return self * 10.0;
+  }
+}
+
+function poly[T: num.Num + num.Neg](x: T): T {
+  return x.mul(x).sub(x);
+}
+
+function sig[T: simd.Math](x: T): T {
+  return T.splat(1.0) / (T.splat(1.0) + (-x).exp());
+}
+
+function clamp[T: simd.Lanes](x: T): T {
+  return T.select(x.lt(T.splat(1.0)), x, T.splat(1.0));
+}
+
+function first[T: simd.Lanes](x: T): T {
+  return T.splat(x.lane(0) + 1.0);
+}
+
+function head[T: simd.Lanes](x: T): f64 {
+  return x.lane(0);
+}
+
+function via_head[T: simd.Lanes](x: T): T {
+  return T.splat(head(x));
+}
+
+function tagged[T: Tag + num.Add](x: T): T {
+  return x.add(x);
+}
+
+trait Trace {
+  function trace(self: Self): Self;
+}
+
+impl Trace for f64 {
+  function trace(self: f64): f64 {
+    print("trace");
+    return self;
+  }
+}
+
+impl Trace for f64x2 {
+  function trace(self: f64x2): f64x2 {
+    print("trace");
+    return self;
+  }
+}
+
+function noisy[T: num.Add](x: T): T {
+  print("noisy");
+  return x.add(x);
+}
+
+function traced[T: Trace + num.Add](x: T): T {
+  return x.trace().add(x);
+}
+
+function line(tag: string, xs: f64[]): void {
+  let out: string = tag;
+  for x in xs {
+    out = out + " " + x.to_string();
+  }
+  print(out);
+}
+
+function line32(tag: string, xs: f32[]): void {
+  let out: string = tag;
+  for x in xs {
+    out = out + " " + (x as f64).to_string();
+  }
+  print(out);
+}
+
+function main(): i32 {
+  let xs: f64[] = [0.5, -2.0, 1.0, 3.0, -0.25];
+  line("poly", xs.map(poly));
+  line("sig", xs.map(sig));
+  line("clamp", xs.map(clamp));
+  line("first", xs.map(first));
+  line("via_head", xs.map(via_head));
+  line("tagged", xs.map(tagged));
+  let three: f64[] = [1.0, 2.0, 3.0];
+  line("noisy", three.map(noisy));
+  line("traced", three.map(traced));
+  let none: f64[] = [];
+  line("empty", none.map(poly));
+  let one: f64[] = [4.0];
+  line("one", one.map(poly));
+  let fs: f32[] = [0.5, -2.0, 1.0, 3.0, -0.25, 7.5, 2.0];
+  line32("poly32", fs.map(poly));
+  line32("clamp32", fs.map(clamp));
+  let four: f32[] = [1.5, 2.5, 3.5, 4.5];
+  line32("four", four.map(poly));
+  // The input is still read after the maps above, so each map copies it.
+  line("input", xs);
+  // Here the input dies at the map, which may write it in place.
+  let ys: f64[] = [2.0, 3.0, 4.0];
+  line("owned", ys.map(poly));
+  return 0;
+}

@@ -55,7 +55,7 @@ func runAdd(name, spec, grant, dir string) error {
 	updated := insertDependency(string(orig), line)
 	// Re-parse before committing: never leave a broken manifest on disk.
 	if _, perr := manifest.Parse(updated); perr != nil {
-		return fmt.Errorf("fern-oracle: -add: the edit would produce an invalid manifest (%w) — no change written", perr)
+		return fmt.Errorf("fern-oracle: -add: the edit would produce an invalid manifest (%s) — no change written", perr.(*manifest.Error).Msg)
 	}
 	if err := os.WriteFile(manPath, []byte(updated), 0o644); err != nil {
 		return err

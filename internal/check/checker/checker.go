@@ -7364,6 +7364,8 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 				ReturnType:     m.Result,
 				Body:           ast.CloneBlock(m.Body),
 				SourceModule:   impl.SourceModule,
+				SourceFile:     td.SourceModule,
+				DeclName:       m.Name,
 				DefiningModule: td.SourceModule,
 				ImplTrait:      impl.Trait,
 				TraitDefault:   impl.Trait,

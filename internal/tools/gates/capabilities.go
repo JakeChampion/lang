@@ -17,8 +17,8 @@ import (
 // walk the -capabilities report uses (caps.Analyze) and hold every
 // dependency package to its manifest grant. A package whose declaring
 // dependency entry carries a `capabilities` key erroring outside the
-// grant is E070 (returned as diag.Errors, position-less — the chain
-// crosses module boundaries, so the message carries the attribution);
+// grant is E070, reported at the package function its call chain starts
+// from, with each function in the chain spelled as its source declares it;
 // a package with no key gets a warn-and-allow warning, once per
 // package+capability; the root package is never enforced or warned.
 // Manifest-less modules fold into it unless an explicit grant boundary
@@ -44,8 +44,13 @@ func Capabilities(entry string, prog *ast.Program) ([]Warning, error) {
 	}
 	rows, grants := CapabilityRows(entry, prog)
 	errsV, warnsV := caps.Enforce(rows, grants)
+	fns := make(map[string]*ast.FuncDecl, len(prog.Funcs))
+	for _, fn := range prog.Funcs {
+		fns[fn.Name] = fn
+	}
 	var warns []Warning
 	for _, v := range warnsV {
+		v.Chain, _ = sourceChain(v.Chain, fns)
 		warns = append(warns, Warning{Msg: v.Message()})
 	}
 	if len(errsV) == 0 {
@@ -53,9 +58,29 @@ func Capabilities(entry string, prog *ast.Program) ([]Warning, error) {
 	}
 	var errs diag.Errors
 	for _, v := range errsV {
-		errs = append(errs, &checker.Error{Msg: v.Message(), ErrCode: "E070"})
+		var from *ast.FuncDecl
+		v.Chain, from = sourceChain(v.Chain, fns)
+		e := &checker.Error{Msg: v.Message(), ErrCode: "E070"}
+		if from != nil {
+			e.Pos, e.Path = from.P, from.SourceFile
+		}
+		errs = append(errs, e)
 	}
 	return warns, errs
+}
+
+// sourceChain spells a violation's call chain with each function's name as
+// its source declares it, and returns the package function the chain starts
+// from, where the violation is reported.
+func sourceChain(chain []string, fns map[string]*ast.FuncDecl) ([]string, *ast.FuncDecl) {
+	out := make([]string, len(chain))
+	for i, name := range chain {
+		out[i] = name
+		if fn := fns[name]; fn != nil && fn.DeclName != "" {
+			out[i] = fn.DeclName
+		}
+	}
+	return out, fns[chain[0]]
 }
 
 // CapabilityRows uses resolved package directories as authority identities.

@@ -3421,8 +3421,12 @@ type FuncDecl struct {
 	// they stay universally visible. Anything that needs to say WHERE a
 	// function came from — the coverage report's per-file totals (#5548) —
 	// needs a stamp with no second meaning attached to it. Empty on a
-	// program built straight from the parser and on synthesised decls.
+	// program built straight from the parser; a materialised trait default
+	// carries the trait's file, where its body was written.
 	SourceFile string
+	// DeclName is the name as the source declares it, before modload adds
+	// the module's mangle prefix. Empty where SourceFile is.
+	DeclName string
 	// DefiningModule is the module whose source WROTE this function's
 	// body, when that differs from SourceModule. Only a trait default
 	// materialised into an impl sets it: the body was written beside the

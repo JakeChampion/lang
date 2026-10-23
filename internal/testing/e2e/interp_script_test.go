@@ -271,23 +271,22 @@ func TestInterpScriptCrypto(t *testing.T) {
 // std/uuid (#2682): uuid_v4 / uuid_v7 generation, built on the
 // cross-backend random_bytes byte source (#2747). Asserts the
 // canonical 36-char 8-4-4-4-12 shape, the version + variant
-// nibbles, that it validates via string.is_uuid(), and that two
+// nibbles, that it validates via uuid.is_valid(), and that two
 // draws differ.
 func TestInterpScriptUuid(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
 	cmd.Stdin = strings.NewReader(`
 import "std/uuid";
-import "std/string";
 function main(): i32 {
     let a: string = uuid.uuid_v4();
     if (a.len() != 36) { return 1; }
-    if (!a.is_uuid()) { return 2; }
+    if (!uuid.is_valid(a)) { return 2; }
     if (a[14] != 52) { return 3; }          // version '4'
     if (a[8] != 45 || a[13] != 45 || a[18] != 45 || a[23] != 45) { return 4; }
     let b: string = uuid.uuid_v7();
     if (b.len() != 36) { return 5; }
-    if (!b.is_uuid()) { return 6; }
+    if (!uuid.is_valid(b)) { return 6; }
     if (b[14] != 55) { return 7; }          // version '7'
     if (uuid.uuid_v4() == uuid.uuid_v4()) { return 8; }
     return 0;

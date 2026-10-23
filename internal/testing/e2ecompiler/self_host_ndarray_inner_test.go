@@ -96,7 +96,7 @@ function main(): i32 {
   if (huge.inner(empty_right, 0.25, (x: f64, y: f64): f64 => x * y, (x: f64, y: f64): f64 => x + y).len() != 0) { return 11; }
   let ints = ndarray.from_flat([1i64, 2i64], [2]);
   let names = ints.inner(ints, "start", (x: i64, y: i64): string => (x * y).to_string(), (x: string, y: string): string => x + ":" + y);
-  if (names.rank() != 0 || names.get([]) != "start:1:4" || ints.get([1]) != 2i64) { return 12; }
+  if (names.rank() != 0 || names.get_unchecked([]) != "start:1:4" || ints.get_unchecked([1]) != 2i64) { return 12; }
   return 0;
 }`
 

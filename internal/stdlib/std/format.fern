@@ -12,11 +12,8 @@
 // No prelude: callers now `import "std/format";` explicitly
 // (docs/PRELUDE-TO-MODULES.md, Phase 5).
 
-// std/format's bodies dispatch (i32) `.abs()` (for negative
-// sign handling) and `.to_string()` on i32 (format_bytes) and i64
-// (format_duration_ms). Declare both so those methods register under
-// no-prelude.
-import "std/i32";
+// std/format's bodies dispatch `.to_string()` on i64 (format_bytes,
+// format_duration_ms). Declare it so the method registers under no-prelude.
 import "std/i64";
 // `.slice_snap` for precision truncation, `utf8_decode_at` for the
 // (possibly multibyte) fill character in a format spec.
@@ -466,35 +463,21 @@ function __repeat_char(s: string, count: i32): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `format_bytes(n)` — render an i32 byte count as "N B" /
-// "N KiB" / "N MiB" / "N GiB" using binary (1024-based)
-// prefixes. Integer truncation only — for "1.5 KiB" the
-// caller can divide by 1024 themselves and apply
-// to_string_padded. Negative input is rendered with a
-// leading "-" before the unit ("-512 B"). i32 caps the
-// representable range at ~2 GiB which covers the common
-// CLI / log use case; callers needing larger sizes can
-// drop down to manual i64 div + to_string.
-pub function format_bytes(n: i32): string {
-  let neg: boolean = n < 0;
-  let mag: i32 = n;
-  if (neg) {
-    mag = n.abs();
+// `format_bytes(n)` — render a byte count as "N B" / "N KiB" / "N MiB" /
+// "N GiB" / "N TiB" using binary (1024-based) prefixes, truncating: for
+// "1.5 KiB" the caller divides by 1024 and pads. Negative input is rendered
+// with a leading "-" ("-512 B"). The count is i64, as `FileStat.size` is.
+// The quotient keeps n's sign rather than negating n, which i64's minimum
+// cannot survive.
+pub function format_bytes(n: i64): string {
+  let units: string[] = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let u: i32 = 0;
+  let scale: i64 = 1;
+  while (u + 1 < units.len() && (n / scale >= 1024 || n / scale <= -1024)) {
+    scale = scale * 1024;
+    u = u + 1;
   }
-  let sign: string = "";
-  if (neg) {
-    sign = "-";
-  }
-  if (mag < 1024) {
-    return sign + mag.to_string() + " B";
-  }
-  if (mag < 1024 * 1024) {
-    return sign + (mag / 1024).to_string() + " KiB";
-  }
-  if (mag < 1024 * 1024 * 1024) {
-    return sign + (mag / (1024 * 1024)).to_string() + " MiB";
-  }
-  return sign + (mag / (1024 * 1024 * 1024)).to_string() + " GiB";
+  return (n / scale).to_string() + " " + units[u];
 }
 
 // `format_duration_ms(ms)` — human-readable duration like
