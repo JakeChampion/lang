@@ -1140,7 +1140,7 @@ pub function lane_result(ins: SInst): boolean {
     return false;
   }
   let b: string = lane_base(ins.str);
-  return b != "vextract" && b != "vstore" && b != "vset";
+  return b != "vextract" && b != "vbitmask" && b != "vstore" && b != "vset";
 }
 
 // lane_values marks the lane values: the lane ops' results, and the phis and
@@ -4381,7 +4381,7 @@ pub function register_form(f: SFunc): Formed {
   // drop_low_wraps deletes each wrap it replaces, and the wrap's operand
   // takes over its reads, so nothing it leaves is dead. prune_dead is
   // idempotent, so a pass that changed nothing needs no prune after it.
-  let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(shared.f)));
+  let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(double_lanes(shared.f))));
   let g: SFunc = unwrapped.f;
   let bytes: Formed = fold_byte_access(g);
   if (bytes.repl.len() > 0) {
@@ -4397,6 +4397,58 @@ pub function register_form(f: SFunc): Formed {
     g = prune_dead(g);
   }
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), shared.repl), unwrapped.repl), bytes.repl) };
+}
+
+// Multiplication by two and addition to self have the same IEEE result.
+// The addition removes the splat and its register from vector loops.
+pub function double_lanes(f: SFunc): SFunc {
+  let has_two: boolean = false;
+  let has_multiply: boolean = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      has_two = has_two || ins.kind_tag == 4 && ins.str == "4611686018427387904";
+      has_multiply = has_multiply || ins.kind_tag == 9 && (ins.str == "vmul" || ins.str == "fmul");
+    }
+  }
+  if (!has_two || !has_multiply) {
+    return f;
+  }
+  let two: boolean[] = __alloc_bool(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 4 && ins.str == "4611686018427387904") {
+        two = two.with(ins.result, true);
+      }
+    }
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 10 && ins.str == "vsplat" && two[ins.args[0]]) {
+        two = two.with(ins.result, true);
+      }
+    }
+  }
+  let blocks: SBlock[] = [];
+  for blk in f.blocks {
+    let insts: SInst[] = [];
+    for ins in blk.insts {
+      if (ins.kind_tag == 9 && (ins.str == "vmul" || ins.str == "fmul") && (two[ins.args[0]] || two[ins.args[1]])) {
+        let a: i32 = ins.args[0];
+        if (two[a]) {
+          a = ins.args[1];
+        }
+        let op: string = "vadd";
+        if (ins.str == "fmul") {
+          op = "fadd";
+        }
+        insts = insts.append(SInst { ...ins, str: op, args: [a, a] });
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    blocks = blocks.append(SBlock { ...blk, insts: insts });
+  }
+  return SFunc { ...f, blocks: blocks };
 }
 
 // Source positions describe code; they are not allocator or optimizer inputs.

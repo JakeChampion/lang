@@ -1,16 +1,18 @@
 // Mandelbrot tiles as PNG images.
 // At zoom z, a 2^z by 2^z grid covers the square from -2.5 - 2i to 1.5 + 2i.
 // Each tile has 256 pixels per side. The x axis points right and the y axis points down.
-import "std/deflate";
-import "std/hash";
-import "./binary";
+import "std/png";
+import "./linear";
+import "./kernel";
 
 pub const SIZE: i32 = 256;
 
-const ROW_BYTES: i32 = 1 + SIZE * 3;
+const ROW_BYTES: i32 = SIZE * 3;
 
 // Higher zoom levels exceed f64 pixel precision.
 pub const MAX_ZOOM: i32 = 42;
+
+pub enum RenderError { InvalidTile, Image(png.EncodeError) }
 
 pub struct Tile {
   png: u8[],
@@ -34,8 +36,11 @@ pub fip function max_iterations(z: i32): i32 {
   return limit;
 }
 
-// The caller must validate tile coordinates with valid().
-pub function render(z: i32, x: i64, y: i64): Tile {
+// Validate coordinates before any shifts or pixel allocation.
+pub function render_reference(z: i32, x: i64, y: i64): Result[Tile, RenderError] {
+  if (!valid(z, x, y)) {
+    return Err(InvalidTile);
+  }
   let step: f64 = 4.0 / ((1 as i64 << (z + 8) as i64) as f64);
   let raw: u8[] = __alloc_u8(SIZE * ROW_BYTES);
   let result: EscapeBatch = EscapeBatch {
@@ -47,8 +52,6 @@ pub function render(z: i32, x: i64, y: i64): Tile {
   let row: i32 = 0;
   while (row < SIZE) {
     let row_start: i32 = row * ROW_BYTES;
-    // PNG filter 0 leaves the RGB bytes unchanged.
-    raw = raw.with(row_start, 0 as u8);
     let imaginary: f64 = 2.0 - ((y * (SIZE as i64) + row as i64) as f64 + 0.5) * step;
     let column: i32 = 0;
     while (column < SIZE) {
@@ -58,7 +61,7 @@ pub function render(z: i32, x: i64, y: i64): Tile {
       let real3: f64 = -2.5 + ((x * (SIZE as i64) + (column + 3) as i64) as f64 + 0.5) * step;
       result = escape_batch(result, real0, real1, real2, real3, imaginary);
       iterations = iterations + result.steps0 as i64 + result.steps1 as i64 + result.steps2 as i64 + result.steps3 as i64;
-      let offset: i32 = row_start + 1 + column * 3;
+      let offset: i32 = row_start + column * 3;
       raw = color_pixel(raw, offset, result.magnitude0, result.steps0);
       raw = color_pixel(raw, offset + 3, result.magnitude1, result.steps1);
       raw = color_pixel(raw, offset + 6, result.magnitude2, result.steps2);
@@ -67,7 +70,75 @@ pub function render(z: i32, x: i64, y: i64): Tile {
     }
     row = row + 1;
   }
-  return Tile { png: encode(raw), iterations: iterations };
+  match (png.encode_rgb8(SIZE, SIZE, raw)) {
+    Ok(bytes) => {
+      return Ok(Tile { png: bytes, iterations: iterations });
+    },
+    Err(error) => {
+      return Err(Image(error));
+    }
+  }
+}
+
+// The default renderer uses a shared orbit prefix when it saves enough work.
+pub function render(z: i32, x: i64, y: i64): Result[Tile, RenderError] {
+  return render_kernel(z, x, y, true);
+}
+
+// Keep a direct path for differential tests and numerical comparisons.
+pub function render_exact(z: i32, x: i64, y: i64): Result[Tile, RenderError] {
+  return render_kernel(z, x, y, false);
+}
+
+function render_kernel(z: i32, x: i64, y: i64, approximate: boolean): Result[Tile, RenderError] {
+  if (!valid(z, x, y)) {
+    return Err(InvalidTile);
+  }
+  if (z < 12) {
+    return render_reference(z, x, y);
+  }
+  let step: f64 = 4.0 / ((1 as i64 << (z + 8) as i64) as f64);
+  let view: kernel.View = kernel.View { size: SIZE, x: x * (SIZE as i64), y: y * (SIZE as i64), step: step, limit: max_iterations(z) };
+  let reference: Option[linear.Reference] = None;
+  let reference_work: i64 = 0;
+  if (approximate && z >= 20) {
+    let real: f64 = -2.5 + ((view.x + 128) as f64 + 0.5) * step;
+    let imaginary: f64 = 2.0 - ((view.y + 128) as f64 + 0.5) * step;
+    let ref: linear.Reference = linear.reference(real, imaginary, 182.0 * step, view.limit, 1e-8);
+    reference_work = ref.zr.len() as i64 - 1;
+    let corner: linear.Start = linear.prefix(ref, -2.5 + (view.x as f64 + 0.5) * step, 2.0 - (view.y as f64 + 0.5) * step, view.limit);
+    if (ref.series.steps >= view.limit) {
+      let black: u8[] = __alloc_u8(SIZE * ROW_BYTES);
+      match (png.encode_rgb8(SIZE, SIZE, black)) {
+        Ok(bytes) => {
+          return Ok(Tile { png: bytes, iterations: reference_work });
+        },
+        Err(error) => {
+          return Err(Image(error));
+        }
+      }
+    }
+    if (corner.steps >= 64) {
+      reference = Some(ref);
+    }
+  }
+  let pixels: kernel.Pixels = kernel.render(view, reference);
+  let raw: u8[] = __alloc_u8(SIZE * ROW_BYTES);
+  let at: i32 = 0;
+  while (at < SIZE * SIZE) {
+    if (pixels.counts[at] > 0) {
+      raw = color_pixel(raw, at * 3, f64_from_bits(pixels.magnitudes[at]), pixels.counts[at]);
+    }
+    at = at + 1;
+  }
+  match (png.encode_rgb8(SIZE, SIZE, raw)) {
+    Ok(bytes) => {
+      return Ok(Tile { png: bytes, iterations: pixels.iterations + reference_work });
+    },
+    Err(error) => {
+      return Err(Image(error));
+    }
+  }
 }
 
 struct EscapeBatch {
@@ -90,37 +161,39 @@ fip function known_interior(real: f64, imaginary: f64): boolean {
   return q * (q + real - 0.25) <= 0.25 * imaginary_squared || bulb_x * bulb_x + imaginary_squared <= 0.0625;
 }
 
-// Two independent f64x2 orbits process four adjacent pixels.
-// Each pixel keeps its first escape result. Negative magnitudes identify bounded pixels.
-// Each lane needs an independent escape and cycle check.
+// Each lane retains its first escape result. Negative magnitudes identify bounded pixels.
+// Four updates share one vector-mask test. An escaping lane replays those updates.
+// The separate lane paths preserve exact escape times and magnitudes.
 // fern-lint: allow cyclomatic-complexity
 fip function escape_batch(own result: EscapeBatch, real0: f64, real1: f64, real2: f64, real3: f64, imaginary: f64): EscapeBatch {
-  let done0: boolean = known_interior(real0, imaginary);
-  let done1: boolean = known_interior(real1, imaginary);
-  let done2: boolean = known_interior(real2, imaginary);
-  let done3: boolean = known_interior(real3, imaginary);
+  let done: i32 = 0;
   let steps0: i32 = result.limit;
-  let steps1: i32 = result.limit;
-  let steps2: i32 = result.limit;
-  let steps3: i32 = result.limit;
-  if (done0) {
+  let magnitude0: f64 = -1.0;
+  if (known_interior(real0, imaginary)) {
+    done = done | 1;
     steps0 = 0;
   }
-  if (done1) {
+  let steps1: i32 = result.limit;
+  let magnitude1: f64 = -1.0;
+  if (known_interior(real1, imaginary)) {
+    done = done | 2;
     steps1 = 0;
   }
-  if (done2) {
+  let steps2: i32 = result.limit;
+  let magnitude2: f64 = -1.0;
+  if (known_interior(real2, imaginary)) {
+    done = done | 4;
     steps2 = 0;
   }
-  if (done3) {
+  let steps3: i32 = result.limit;
+  let magnitude3: f64 = -1.0;
+  if (known_interior(real3, imaginary)) {
+    done = done | 8;
     steps3 = 0;
   }
-  let magnitude0: f64 = -1.0;
-  let magnitude1: f64 = -1.0;
-  let magnitude2: f64 = -1.0;
-  let magnitude3: f64 = -1.0;
   let imaginary_vector: f64x2 = __f64x2_splat(imaginary);
   let two: f64x2 = __f64x2_splat(2.0);
+  let radius: f64x2 = __f64x2_splat(65536.0);
   let real01: f64x2 = __f64x2_of(real0, real1);
   let real23: f64x2 = __f64x2_of(real2, real3);
   let z_real01: f64x2 = __f64x2_splat(0.0);
@@ -128,64 +201,170 @@ fip function escape_batch(own result: EscapeBatch, real0: f64, real1: f64, real2
   let z_real23: f64x2 = z_real01;
   let z_imaginary23: f64x2 = z_real01;
   let saved_real01: f64x2 = z_real01;
-  let saved_imaginary01: f64x2 = z_imaginary01;
-  let saved_real23: f64x2 = z_real23;
-  let saved_imaginary23: f64x2 = z_imaginary23;
+  let saved_imaginary01: f64x2 = z_real01;
+  let saved_real23: f64x2 = z_real01;
+  let saved_imaginary23: f64x2 = z_real01;
   let checkpoint: i32 = 16;
   let steps: i32 = 0;
-  while (steps < result.limit && (!done0 || !done1 || !done2 || !done3)) {
-    let real_squared01: f64x2 = z_real01 * z_real01;
-    let imaginary_squared01: f64x2 = z_imaginary01 * z_imaginary01;
-    let magnitude01: f64x2 = real_squared01 + imaginary_squared01;
-    let real_squared23: f64x2 = z_real23 * z_real23;
-    let imaginary_squared23: f64x2 = z_imaginary23 * z_imaginary23;
-    let magnitude23: f64x2 = real_squared23 + imaginary_squared23;
-    if (!done0 && __f64x2_lane(magnitude01, 0) > 65536.0) {
-      magnitude0 = __f64x2_lane(magnitude01, 0);
-      steps0 = steps;
-      done0 = true;
+  while (steps < result.limit && done != 15) {
+    let first_real01: f64x2 = z_real01;
+    let first_imaginary01: f64x2 = z_imaginary01;
+    let first_real23: f64x2 = z_real23;
+    let first_imaginary23: f64x2 = z_imaginary23;
+    let end: i32 = steps + 4;
+    if (end > result.limit) {
+      end = result.limit;
     }
-    if (!done1 && __f64x2_lane(magnitude01, 1) > 65536.0) {
-      magnitude1 = __f64x2_lane(magnitude01, 1);
-      steps1 = steps;
-      done1 = true;
+    let first: i32 = steps;
+    if (steps + 4 <= result.limit) {
+      {
+        let rr01: f64x2 = z_real01 * z_real01;
+        let ii01: f64x2 = z_imaginary01 * z_imaginary01;
+        z_imaginary01 = two * z_real01 * z_imaginary01 + imaginary_vector;
+        z_real01 = rr01 - ii01 + real01;
+        let rr23: f64x2 = z_real23 * z_real23;
+        let ii23: f64x2 = z_imaginary23 * z_imaginary23;
+        z_imaginary23 = two * z_real23 * z_imaginary23 + imaginary_vector;
+        z_real23 = rr23 - ii23 + real23;
+      }
+      {
+        let rr01: f64x2 = z_real01 * z_real01;
+        let ii01: f64x2 = z_imaginary01 * z_imaginary01;
+        z_imaginary01 = two * z_real01 * z_imaginary01 + imaginary_vector;
+        z_real01 = rr01 - ii01 + real01;
+        let rr23: f64x2 = z_real23 * z_real23;
+        let ii23: f64x2 = z_imaginary23 * z_imaginary23;
+        z_imaginary23 = two * z_real23 * z_imaginary23 + imaginary_vector;
+        z_real23 = rr23 - ii23 + real23;
+      }
+      {
+        let rr01: f64x2 = z_real01 * z_real01;
+        let ii01: f64x2 = z_imaginary01 * z_imaginary01;
+        z_imaginary01 = two * z_real01 * z_imaginary01 + imaginary_vector;
+        z_real01 = rr01 - ii01 + real01;
+        let rr23: f64x2 = z_real23 * z_real23;
+        let ii23: f64x2 = z_imaginary23 * z_imaginary23;
+        z_imaginary23 = two * z_real23 * z_imaginary23 + imaginary_vector;
+        z_real23 = rr23 - ii23 + real23;
+      }
+      {
+        let rr01: f64x2 = z_real01 * z_real01;
+        let ii01: f64x2 = z_imaginary01 * z_imaginary01;
+        z_imaginary01 = two * z_real01 * z_imaginary01 + imaginary_vector;
+        z_real01 = rr01 - ii01 + real01;
+        let rr23: f64x2 = z_real23 * z_real23;
+        let ii23: f64x2 = z_imaginary23 * z_imaginary23;
+        z_imaginary23 = two * z_real23 * z_imaginary23 + imaginary_vector;
+        z_real23 = rr23 - ii23 + real23;
+      }
+      steps = steps + 4;
+    } else {
+      while (steps < end) {
+        let rr01: f64x2 = z_real01 * z_real01;
+        let ii01: f64x2 = z_imaginary01 * z_imaginary01;
+        z_imaginary01 = two * z_real01 * z_imaginary01 + imaginary_vector;
+        z_real01 = rr01 - ii01 + real01;
+        let rr23: f64x2 = z_real23 * z_real23;
+        let ii23: f64x2 = z_imaginary23 * z_imaginary23;
+        z_imaginary23 = two * z_real23 * z_imaginary23 + imaginary_vector;
+        z_real23 = rr23 - ii23 + real23;
+        steps = steps + 1;
+      }
     }
-    if (!done2 && __f64x2_lane(magnitude23, 0) > 65536.0) {
-      magnitude2 = __f64x2_lane(magnitude23, 0);
-      steps2 = steps;
-      done2 = true;
+    let mag01: f64x2 = z_real01 * z_real01 + z_imaginary01 * z_imaginary01;
+    let mag23: f64x2 = z_real23 * z_real23 + z_imaginary23 * z_imaginary23;
+    let escaped: i32 = (__f64x2_bitmask(__f64x2_lt(radius, mag01)) | __f64x2_bitmask(__f64x2_lt(radius, mag23)) << 2) & (15 ^ done);
+    if (escaped != 0) {
+      if ((escaped & 1) != 0) {
+        let zr: f64 = __f64x2_lane(first_real01, 0);
+        let zi: f64 = __f64x2_lane(first_imaginary01, 0);
+        let count: i32 = first;
+        while (count < end) {
+          let rr: f64 = zr * zr;
+          let ii: f64 = zi * zi;
+          if (rr + ii > 65536.0) {
+            magnitude0 = rr + ii;
+            steps0 = count;
+            done = done | 1;
+            break;
+          }
+          zi = 2.0 * zr * zi + imaginary;
+          zr = rr - ii + real0;
+          count = count + 1;
+        }
+      }
+      if ((escaped & 2) != 0) {
+        let zr: f64 = __f64x2_lane(first_real01, 1);
+        let zi: f64 = __f64x2_lane(first_imaginary01, 1);
+        let count: i32 = first;
+        while (count < end) {
+          let rr: f64 = zr * zr;
+          let ii: f64 = zi * zi;
+          if (rr + ii > 65536.0) {
+            magnitude1 = rr + ii;
+            steps1 = count;
+            done = done | 2;
+            break;
+          }
+          zi = 2.0 * zr * zi + imaginary;
+          zr = rr - ii + real1;
+          count = count + 1;
+        }
+      }
+      if ((escaped & 4) != 0) {
+        let zr: f64 = __f64x2_lane(first_real23, 0);
+        let zi: f64 = __f64x2_lane(first_imaginary23, 0);
+        let count: i32 = first;
+        while (count < end) {
+          let rr: f64 = zr * zr;
+          let ii: f64 = zi * zi;
+          if (rr + ii > 65536.0) {
+            magnitude2 = rr + ii;
+            steps2 = count;
+            done = done | 4;
+            break;
+          }
+          zi = 2.0 * zr * zi + imaginary;
+          zr = rr - ii + real2;
+          count = count + 1;
+        }
+      }
+      if ((escaped & 8) != 0) {
+        let zr: f64 = __f64x2_lane(first_real23, 1);
+        let zi: f64 = __f64x2_lane(first_imaginary23, 1);
+        let count: i32 = first;
+        while (count < end) {
+          let rr: f64 = zr * zr;
+          let ii: f64 = zi * zi;
+          if (rr + ii > 65536.0) {
+            magnitude3 = rr + ii;
+            steps3 = count;
+            done = done | 8;
+            break;
+          }
+          zi = 2.0 * zr * zi + imaginary;
+          zr = rr - ii + real3;
+          count = count + 1;
+        }
+      }
     }
-    if (!done3 && __f64x2_lane(magnitude23, 1) > 65536.0) {
-      magnitude3 = __f64x2_lane(magnitude23, 1);
-      steps3 = steps;
-      done3 = true;
-    }
-    if (done0 && done1 && done2 && done3) {
-      break;
-    }
-    // Keep separate operations in scalar order to preserve the pixel colors.
-    z_imaginary01 = two * z_real01 * z_imaginary01 + imaginary_vector;
-    z_real01 = real_squared01 - imaginary_squared01 + real01;
-    z_imaginary23 = two * z_real23 * z_imaginary23 + imaginary_vector;
-    z_real23 = real_squared23 - imaginary_squared23 + real23;
-    steps = steps + 1;
-    // An exact repeated orbit cannot escape later.
+    // Equality uses the complete orbit, with no tolerance.
     if ((steps & 15) == 0) {
-      if (!done0 && __f64x2_lane(z_real01, 0) == __f64x2_lane(saved_real01, 0) && __f64x2_lane(z_imaginary01, 0) == __f64x2_lane(saved_imaginary01, 0)) {
+      if ((done & 1) == 0 && __f64x2_lane(z_real01, 0) == __f64x2_lane(saved_real01, 0) && __f64x2_lane(z_imaginary01, 0) == __f64x2_lane(saved_imaginary01, 0)) {
         steps0 = steps;
-        done0 = true;
+        done = done | 1;
       }
-      if (!done1 && __f64x2_lane(z_real01, 1) == __f64x2_lane(saved_real01, 1) && __f64x2_lane(z_imaginary01, 1) == __f64x2_lane(saved_imaginary01, 1)) {
+      if ((done & 2) == 0 && __f64x2_lane(z_real01, 1) == __f64x2_lane(saved_real01, 1) && __f64x2_lane(z_imaginary01, 1) == __f64x2_lane(saved_imaginary01, 1)) {
         steps1 = steps;
-        done1 = true;
+        done = done | 2;
       }
-      if (!done2 && __f64x2_lane(z_real23, 0) == __f64x2_lane(saved_real23, 0) && __f64x2_lane(z_imaginary23, 0) == __f64x2_lane(saved_imaginary23, 0)) {
+      if ((done & 4) == 0 && __f64x2_lane(z_real23, 0) == __f64x2_lane(saved_real23, 0) && __f64x2_lane(z_imaginary23, 0) == __f64x2_lane(saved_imaginary23, 0)) {
         steps2 = steps;
-        done2 = true;
+        done = done | 4;
       }
-      if (!done3 && __f64x2_lane(z_real23, 1) == __f64x2_lane(saved_real23, 1) && __f64x2_lane(z_imaginary23, 1) == __f64x2_lane(saved_imaginary23, 1)) {
+      if ((done & 8) == 0 && __f64x2_lane(z_real23, 1) == __f64x2_lane(saved_real23, 1) && __f64x2_lane(z_imaginary23, 1) == __f64x2_lane(saved_imaginary23, 1)) {
         steps3 = steps;
-        done3 = true;
+        done = done | 8;
       }
       if (steps == checkpoint) {
         saved_real01 = z_real01;
@@ -196,12 +375,11 @@ fip function escape_batch(own result: EscapeBatch, real0: f64, real1: f64, real2
       }
     }
   }
-  result = EscapeBatch {
+  return EscapeBatch {
     ...result,
     magnitude0: magnitude0, magnitude1: magnitude1, magnitude2: magnitude2, magnitude3: magnitude3,
     steps0: steps0, steps1: steps1, steps2: steps2, steps3: steps3,
   };
-  return result;
 }
 
 function color_pixel(own raw: u8[], offset: i32, magnitude_squared: f64, steps: i32): u8[] {
@@ -246,30 +424,4 @@ fip function channel(position: f64, component: i32): u8 {
   let start: f64 = RGB[3 * stop + component];
   let end: f64 = RGB[3 * stop + 3 + component];
   return (start + (end - start) * fraction) as u8;
-}
-
-// Encode SIZE rows. Each row contains a filter byte and SIZE RGB pixels.
-function encode(raw: u8[]): u8[] {
-  let png: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
-  let header: u8[] = binary.append_u32_be([], SIZE as u32);
-  header = binary.append_u32_be(header, SIZE as u32);
-  // 8-bit RGB, deflate compression, standard filters, no interlace.
-  header = header.append(8 as u8).append(2 as u8).append(0 as u8).append(0 as u8).append(0 as u8);
-  png = chunk(png, "IHDR", header);
-
-  // The zlib stream wraps deflate bytes with a header and an Adler-32 checksum.
-  let compressed: u8[] = [120 as u8, 1 as u8];
-  compressed = binary.append_bytes(compressed, deflate.deflate(raw));
-  compressed = binary.append_u32_be(compressed, deflate.adler32(raw));
-  png = chunk(png, "IDAT", compressed);
-  return chunk(png, "IEND", []);
-}
-
-function chunk(own png: u8[], kind: string, data: u8[]): u8[] {
-  // The CRC covers the chunk type and data, without the length prefix.
-  let checksum: u32 = hash.crc32_new().update(kind).update_array(data).finish();
-  png = binary.append_u32_be(png, data.len() as u32);
-  png = binary.append_bytes(png, kind.as_bytes());
-  png = binary.append_bytes(png, data);
-  return binary.append_u32_be(png, checksum);
 }

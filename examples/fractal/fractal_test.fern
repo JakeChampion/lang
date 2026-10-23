@@ -1,6 +1,6 @@
 import "std/test";
 import "std/hash";
-import "./binary";
+import "std/binary";
 import "./fractal";
 
 function test_coordinates(): test.TestOutcome {
@@ -31,7 +31,17 @@ function test_binary_fields(): test.TestOutcome {
 
 // The original renderer at commit 3968020c9 supplies the PNG checksums.
 function check_tile(z: i32, x: i64, y: i64, iterations: i64, bytes: i32, checksum: u32): test.TestOutcome {
-  let tile: fractal.Tile = fractal.render(z, x, y);
+  match (fractal.render_reference(z, x, y)) {
+    Ok(tile) => {
+      return check_rendered(tile, iterations, bytes, checksum);
+    },
+    Err(_) => {
+      return test.fail("tile renderer failed");
+    }
+  }
+}
+
+function check_rendered(tile: fractal.Tile, iterations: i64, bytes: i32, checksum: u32): test.TestOutcome {
   if (tile.iterations != iterations) {
     return test.fail("tile iteration total differs");
   }

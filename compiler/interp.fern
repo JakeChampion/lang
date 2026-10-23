@@ -3112,6 +3112,17 @@ function call_lane_op(verb: string, width: i32, args: Value[]): Value {
   if (ls.len() == 0 || ls.len() != args.len()) {
     return v_err("lane builtin: expected lane operands");
   }
+  if (verb == "bitmask" && ls.len() == 1) {
+    let mask: i32 = 0;
+    let k: i32 = 0;
+    while (k < ls[0].bits.len()) {
+      if ((ls[0].bits[k] & lane_sign(width)) != 0) {
+        mask = mask | 1 << k;
+      }
+      k = k + 1;
+    }
+    return v_int(mask);
+  }
   if (verb == "abs") {
     return lanes_map_bits(ls[0], 0, lane_sign(width));
   }

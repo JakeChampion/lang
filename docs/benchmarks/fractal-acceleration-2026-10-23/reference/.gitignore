@@ -1,0 +1,8 @@
+orange/
+adapted/
+fern/
+*-kernel
+*.bin
+same-kernel.cpp
+cases.json
+__pycache__/

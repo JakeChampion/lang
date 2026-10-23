@@ -8271,10 +8271,10 @@ function intrinsic_contracts(): ssasem.Contract[] {
 // element reads and `with`s of their lanes.
 function lane_contracts(): ssasem.Contract[] {
   let names: string[] = [
-    "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_mul_add", "__f64x2_sqrt",
+    "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt",
     "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max",
     "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with",
-    "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_mul_add", "__f32x4_sqrt",
+    "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with",
   ];

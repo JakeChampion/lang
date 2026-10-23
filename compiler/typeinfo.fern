@@ -392,7 +392,7 @@ function lane_operands(v: string, lt: Type): Type[] {
   if (v == "mul_add" || v == "select") {
     return [lt, lt, lt];
   }
-  if (v == "sqrt" || v == "abs" || v == "floor" || v == "round") {
+  if (v == "sqrt" || v == "abs" || v == "floor" || v == "round" || v == "bitmask") {
     return [lt];
   }
   return [lt, lt];
@@ -403,6 +403,9 @@ function lane_operands(v: string, lt: Type): Type[] {
 pub function lane_builtin_result(name: string): Type {
   let w: i32 = lane_builtin_width(name);
   let v: string = lane_builtin_verb(name);
+  if (v == "bitmask") {
+    return TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
+  }
   if (v == "lane") {
     return TypeFloat { width: w, polymorphic: false };
   }

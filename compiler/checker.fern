@@ -674,10 +674,10 @@ function is_f64_primitive(name: string): boolean {
 // typeinfo.lane_builtin_params and lane_builtin_result give their signatures.
 function is_lane_builtin(name: string): boolean {
   let names: string[] = [
-    "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_mul_add", "__f64x2_sqrt",
+    "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt",
     "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max",
     "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with",
-    "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_mul_add", "__f32x4_sqrt",
+    "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with",
   ];
@@ -19461,8 +19461,8 @@ function registered_intrinsics(): string[] {
     "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
-    "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with",
-    "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with",
+    "__f64x2_splat", "__f64x2_of", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with",
+    "__f32x4_splat", "__f32x4_of", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with",
   ];
 }
 
@@ -24221,6 +24221,7 @@ function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
     "__bsd_sum", "__str_hash", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
     "__ctz64", "__popcount64", "__mulhi_u64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
     "__f64x2_of", "__f64x2_splat", "__f64x2_lane",
+    "__f64x2_lt", "__f64x2_ne", "__f64x2_bitmask", "__f32x4_bitmask",
   ] {
     let declared: boolean = false;
     for fd in funcs {
