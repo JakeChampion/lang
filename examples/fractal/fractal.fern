@@ -1,151 +1,164 @@
-// fractal.fern — Mandelbrot tiles as PNG images. Tile (z, x, y) is one of
-// the 2^z by 2^z tiles that cover the square from -2.5 - 2i to 1.5 + 2i,
-// 256 pixels a side, x to the right and y down.
+// Mandelbrot tiles as PNG images.
+// At zoom z, a 2^z by 2^z grid covers the square from -2.5 - 2i to 1.5 + 2i.
+// Each tile has 256 pixels per side. The x axis points right and the y axis points down.
 import "std/deflate";
 import "std/hash";
+import "./binary";
 
 pub const SIZE: i32 = 256;
 
-// Past this zoom, neighbouring pixels are closer than an f64 resolves.
+const ROW_BYTES: i32 = 1 + SIZE * 3;
+
+// Higher zoom levels exceed f64 pixel precision.
 pub const MAX_ZOOM: i32 = 42;
 
-// `Tile` — the PNG and the work that went into it.
-pub struct Tile { png: u8[], iterations: i64 }
+pub struct Tile {
+  png: u8[],
+  iterations: i64,
+}
 
-// `valid(z, x, y)` — whether (z, x, y) names a tile.
-pub function valid(z: i32, x: i64, y: i64): boolean {
+pub fip function valid(z: i32, x: i64, y: i64): boolean {
   if (z < 0 || z > MAX_ZOOM) {
     return false;
   }
-  let n: i64 = 1 as i64 << z as i64;
-  return x >= 0 && y >= 0 && x < n && y < n;
+  let tiles_per_side: i64 = 1 as i64 << z as i64;
+  return x >= 0 && y >= 0 && x < tiles_per_side && y < tiles_per_side;
 }
 
-// `max_iterations(z)` — the escape-time bound at zoom z: deeper views
-// need more iterations to separate points near the boundary.
-pub function max_iterations(z: i32): i32 {
-  let n: i32 = 256 + 64 * z;
-  if (n > 3000) {
+// Deeper views need more iterations to resolve boundary detail.
+pub fip function max_iterations(z: i32): i32 {
+  let limit: i32 = 256 + 64 * z;
+  if (limit > 3000) {
     return 3000;
   }
-  return n;
+  return limit;
 }
 
-// `render(z, x, y)` — tile (z, x, y), which must be `valid`.
+// The caller must validate tile coordinates with valid().
 pub function render(z: i32, x: i64, y: i64): Tile {
   let step: f64 = 4.0 / ((1 as i64 << (z + 8) as i64) as f64);
-  let limit: i32 = max_iterations(z);
-  let raw: u8[] = [];
-  let work: i64 = 0;
-  let py: i32 = 0;
-  while (py < SIZE) {
-    raw = raw.append(0 as u8);
-    let ci: f64 = 2.0 - ((y * (SIZE as i64) + py as i64) as f64 + 0.5) * step;
-    let px: i32 = 0;
-    while (px < SIZE) {
-      let cr: f64 = -2.5 + ((x * (SIZE as i64) + px as i64) as f64 + 0.5) * step;
-      let e: Escape = escape(cr, ci, limit);
-      work = work + e.steps as i64;
-      if (e.at < 0.0) {
-        raw = raw.append(0 as u8).append(0 as u8).append(0 as u8);
-      } else {
-        let t: f64 = e.at.sqrt() * 0.09;
-        t = t - t.floor();
-        raw = raw.append(channel(t, 0)).append(channel(t, 1)).append(channel(t, 2));
+  let raw: u8[] = __alloc_u8(SIZE * ROW_BYTES);
+  let result: EscapeState = EscapeState { limit: max_iterations(z), magnitude_squared: -1.0, steps: 0 };
+  let iterations: i64 = 0;
+  let row: i32 = 0;
+  while (row < SIZE) {
+    let row_start: i32 = row * ROW_BYTES;
+    // PNG filter 0 leaves the RGB bytes unchanged.
+    raw = raw.with(row_start, 0 as u8);
+    let imaginary: f64 = 2.0 - ((y * (SIZE as i64) + row as i64) as f64 + 0.5) * step;
+    let column: i32 = 0;
+    while (column < SIZE) {
+      let real: f64 = -2.5 + ((x * (SIZE as i64) + column as i64) as f64 + 0.5) * step;
+      result = escape(result, real, imaginary);
+      iterations = iterations + result.steps as i64;
+      let red: u8 = 0 as u8;
+      let green: u8 = 0 as u8;
+      let blue: u8 = 0 as u8;
+      if (result.magnitude_squared >= 0.0) {
+        let smooth_count: f64 = result.steps as f64 + 1.0 - (0.5 * result.magnitude_squared.log()).log2();
+        let position: f64 = smooth_count.sqrt() * 0.09;
+        position = position - position.floor();
+        red = channel(position, 0);
+        green = channel(position, 1);
+        blue = channel(position, 2);
       }
-      px = px + 1;
+      let offset: i32 = row_start + 1 + column * 3;
+      raw = write_pixel(raw, offset, red, green, blue);
+      column = column + 1;
     }
-    py = py + 1;
+    row = row + 1;
   }
-  return Tile { png: encode(raw), iterations: work };
+  return Tile { png: encode(raw), iterations: iterations };
 }
 
-struct Escape { at: f64, steps: i32 }
-
-// `escape(cr, ci, limit)` — when c leaves the radius-256 disc, as a
-// continuous iteration count so colour bands blend instead of stepping,
-// or -1 when it stays for `limit` iterations. The main cardioid and the
-// period-2 bulb are inside the set, so they are answered at once.
-function escape(cr: f64, ci: f64, limit: i32): Escape {
-  let q: f64 = (cr - 0.25) * (cr - 0.25) + ci * ci;
-  if (q * (q + cr - 0.25) <= 0.25 * ci * ci || (cr + 1.0) * (cr + 1.0) + ci * ci <= 0.0625) {
-    return Escape { at: -1.0, steps: 0 };
-  }
-  let zr: f64 = 0.0;
-  let zi: f64 = 0.0;
-  let i: i32 = 0;
-  while (i < limit) {
-    let zr2: f64 = zr * zr;
-    let zi2: f64 = zi * zi;
-    if (zr2 + zi2 > 65536.0) {
-      return Escape { at: i as f64 + 1.0 - (0.5 * (zr2 + zi2).log()).log2(), steps: i };
-    }
-    zi = 2.0 * zr * zi + ci;
-    zr = zr2 - zi2 + cr;
-    i = i + 1;
-  }
-  return Escape { at: -1.0, steps: limit };
+struct EscapeState {
+  limit: i32,
+  magnitude_squared: f64,
+  steps: i32,
 }
 
-// The colour gradient: deep blue, white, gold, near black, and back to
-// blue. STOPS are positions in [0, 1); RGB holds three channels per stop.
+// A negative magnitude_squared identifies a point that stays inside the radius-256 disc.
+// The result record reuses its donor for each pixel.
+fip function escape(own result: EscapeState, real: f64, imaginary: f64): EscapeState {
+  let imaginary_squared: f64 = imaginary * imaginary;
+  let cardioid_x: f64 = real - 0.25;
+  let bulb_x: f64 = real + 1.0;
+  let q: f64 = cardioid_x * cardioid_x + imaginary_squared;
+  let in_cardioid: boolean = q * (q + real - 0.25) <= 0.25 * imaginary_squared;
+  let in_bulb: boolean = bulb_x * bulb_x + imaginary_squared <= 0.0625;
+  let z_real: f64 = 0.0;
+  let z_imaginary: f64 = 0.0;
+  let steps: i32 = 0;
+  let escaped_magnitude_squared: f64 = -1.0;
+  if (!in_cardioid && !in_bulb) {
+    while (steps < result.limit) {
+      let real_squared: f64 = z_real * z_real;
+      let imaginary_squared: f64 = z_imaginary * z_imaginary;
+      let magnitude_squared: f64 = real_squared + imaginary_squared;
+      if (magnitude_squared > 65536.0) {
+        escaped_magnitude_squared = magnitude_squared;
+        break;
+      }
+      z_imaginary = 2.0 * z_real * z_imaginary + imaginary;
+      z_real = real_squared - imaginary_squared + real;
+      steps = steps + 1;
+    }
+  }
+  result = EscapeState { ...result, magnitude_squared: escaped_magnitude_squared, steps: steps };
+  return result;
+}
+
+fip function write_pixel(own raw: u8[], offset: i32, red: u8, green: u8, blue: u8): u8[] {
+  return raw.with(offset, red).with(offset + 1, green).with(offset + 2, blue);
+}
+
+// The color gradient cycles through deep blue, white, gold, near black, and blue.
+// STOPS contains positions in [0, 1]. RGB contains three components per stop.
 const STOPS: f64[] = [0.0, 0.16, 0.42, 0.6425, 0.8575, 1.0];
 
-const RGB: f64[] = [0.0, 7.0, 100.0, 32.0, 107.0, 203.0, 237.0, 255.0, 255.0, 255.0, 170.0, 0.0, 0.0, 2.0, 0.0, 0.0, 7.0, 100.0];
+const RGB: f64[] = [
+  0.0, 7.0, 100.0,
+  32.0, 107.0, 203.0,
+  237.0, 255.0, 255.0,
+  255.0, 170.0, 0.0,
+  0.0, 2.0, 0.0,
+  0.0, 7.0, 100.0,
+];
 
-// `channel(t, k)` — channel k of the gradient at t in [0, 1).
-function channel(t: f64, k: i32): u8 {
-  let i: i32 = 0;
-  while (t >= STOPS[i + 1]) {
-    i = i + 1;
+// The gradient position is in [0, 1). Components 0, 1, and 2 select red, green, and blue.
+fip function channel(position: f64, component: i32): u8 {
+  let stop: i32 = 0;
+  while (position >= STOPS[stop + 1]) {
+    stop = stop + 1;
   }
-  let f: f64 = (t - STOPS[i]) / (STOPS[i + 1] - STOPS[i]);
-  let lo: f64 = RGB[3 * i + k];
-  return (lo + (RGB[3 * i + 3 + k] - lo) * f) as u8;
+  let fraction: f64 = (position - STOPS[stop]) / (STOPS[stop + 1] - STOPS[stop]);
+  let start: f64 = RGB[3 * stop + component];
+  let end: f64 = RGB[3 * stop + 3 + component];
+  return (start + (end - start) * fraction) as u8;
 }
 
-// `encode(raw)` — `raw` (SIZE rows, each a filter byte and SIZE RGB
-// pixels) as a PNG file.
+// Encode SIZE rows. Each row contains a filter byte and SIZE RGB pixels.
 function encode(raw: u8[]): u8[] {
   let png: u8[] = [137 as u8, 80 as u8, 78 as u8, 71 as u8, 13 as u8, 10 as u8, 26 as u8, 10 as u8];
-  let head: u8[] = [];
-  head = be32(be32(head, SIZE as u32), SIZE as u32);
-  head = head.append(8 as u8).append(2 as u8).append(0 as u8).append(0 as u8).append(0 as u8);
-  png = chunk(png, "IHDR", head);
-  let z: u8[] = [120 as u8, 1 as u8];
-  let body: u8[] = deflate.deflate(raw);
-  let i: i32 = 0;
-  while (i < body.len()) {
-    z = z.append(body[i]);
-    i = i + 1;
-  }
-  png = chunk(png, "IDAT", be32(z, deflate.adler32(raw)));
-  let none: u8[] = [];
-  return chunk(png, "IEND", none);
+  let header: u8[] = binary.append_u32_be([], SIZE as u32);
+  header = binary.append_u32_be(header, SIZE as u32);
+  // 8-bit RGB, deflate compression, standard filters, no interlace.
+  header = header.append(8 as u8).append(2 as u8).append(0 as u8).append(0 as u8).append(0 as u8);
+  png = chunk(png, "IHDR", header);
+
+  // The zlib stream wraps deflate bytes with a header and an Adler-32 checksum.
+  let compressed: u8[] = [120 as u8, 1 as u8];
+  compressed = binary.append_bytes(compressed, deflate.deflate(raw));
+  compressed = binary.append_u32_be(compressed, deflate.adler32(raw));
+  png = chunk(png, "IDAT", compressed);
+  return chunk(png, "IEND", []);
 }
 
-function chunk(own out: u8[], kind: string, data: u8[]): u8[] {
-  let name: [u8] = kind.as_bytes();
-  let typed: u8[] = [];
-  let i: i32 = 0;
-  while (i < name.len()) {
-    typed = typed.append(name[i]);
-    i = i + 1;
-  }
-  i = 0;
-  while (i < data.len()) {
-    typed = typed.append(data[i]);
-    i = i + 1;
-  }
-  out = be32(out, data.len() as u32);
-  i = 0;
-  while (i < typed.len()) {
-    out = out.append(typed[i]);
-    i = i + 1;
-  }
-  return be32(out, hash.crc32_new().update_array(typed).finish());
-}
-
-function be32(own out: u8[], v: u32): u8[] {
-  return out.append((v >> 24) as u8).append((v >> 16 & 255) as u8).append((v >> 8 & 255) as u8).append((v & 255) as u8);
+function chunk(own png: u8[], kind: string, data: u8[]): u8[] {
+  // The CRC covers the chunk type and data, without the length prefix.
+  let checksum: u32 = hash.crc32_new().update(kind).update_array(data).finish();
+  png = binary.append_u32_be(png, data.len() as u32);
+  png = binary.append_bytes(png, kind.as_bytes());
+  png = binary.append_bytes(png, data);
+  return binary.append_u32_be(png, checksum);
 }
