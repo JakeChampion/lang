@@ -74,7 +74,7 @@ DestructureList
 DestructurePos
             = IDENT | '_' | DestructureList ;
 
-StructDecl  = 'struct' IDENT [ TypeParams ] '{' { FieldDecl } '}' [ ';' ] ;
+StructDecl  = [ 'opaque' ] 'struct' IDENT [ TypeParams ] '{' { FieldDecl } '}' [ ';' ] ;
 FieldDecl   = [ Visibility ] IDENT ':' Type [ ',' | ';' ] ;
 
 EnumDecl    = 'enum' IDENT [ TypeParams ] '{' [ VariantList ] '}' [ ';' ] ;

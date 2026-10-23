@@ -1,0 +1,5 @@
+=== RUN   TestLocalQualifiedCensus
+    zz_local_qualified_census_test.go:11: qualified_struct_patterns 0 
+--- PASS: TestLocalQualifiedCensus (1.83s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	1.837s

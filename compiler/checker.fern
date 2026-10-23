@@ -2862,7 +2862,7 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
       }
       let sig: StructSig = s.lookup_struct(st.name);
       let access: string = "destructure a field of";
-      if (util.str_has_prefix(v.type_name, "@sm;")) {
+      if (parser.destr_marker_split(v.type_name).struct_match) {
         access = "destructure";
       }
       out = util.append_diags(out, opaque_access_diags(sig, s, access, v.line, v.col));

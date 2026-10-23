@@ -63,6 +63,15 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"qualified-record-binding-sites", `import "./shapes";
+function f(whole @ shapes.Open { n, .. }: shapes.Open): i32 { return whole.n + n; }
+function main(): i32 {
+  let shapes.Open { n, .. } = shapes.make();
+  for shapes.Open { n: k, .. } in [shapes.make()] { if (k != n) { return 1; } }
+  if let shapes.Open { n: k, .. } = shapes.make() { return k; }
+  return match (shapes.make()) { shapes.Open { n: k, .. } => k };
+}
+`},
 	// A binding's annotation types a lambda that writes no return type; the
 	// compile parse stamps the return type onto the lambda, and -fmt must print
 	// the lambda as written (#12359).

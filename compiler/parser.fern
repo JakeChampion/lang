@@ -9527,7 +9527,7 @@ function qualified_struct_binding(pat: ast.Pattern, init: ast.Expr, line: i32, c
 // because every stage already reads it to tell the destructure forms apart —
 // and the alternative is three more fields on 66 literals that none of them
 // would read.
-pub struct DestrMarker { at: string, rest_written: boolean, tag: string }
+pub struct DestrMarker { at: string, rest_written: boolean, struct_match: boolean, tag: string }
 
 // destr_marker writes the channel; destr_marker_split reads it back. One
 // function owns the spelling at each end, so no caller peels a component.
@@ -9573,7 +9573,8 @@ pub function strip_pp_marker(marker: string): string {
 pub function destr_marker_split(marker0: string): DestrMarker {
   let at: string = "";
   let m: string = strip_pp_marker(marker0);
-  if (util.str_has_prefix(m, "@sm;")) {
+  let struct_match: boolean = util.str_has_prefix(m, "@sm;");
+  if (struct_match) {
     m = slice_unchecked(m, 4, m.len()) + "";
   }
   if (util.str_has_prefix(m, "@at:")) {
@@ -9592,7 +9593,7 @@ pub function destr_marker_split(marker0: string): DestrMarker {
     rest_written = true;
     m = slice_unchecked(m, 6, m.len()) + "";
   }
-  return DestrMarker { at: at, rest_written: rest_written, tag: m };
+  return DestrMarker { at: at, rest_written: rest_written, struct_match: struct_match, tag: m };
 }
 
 // is_struct_destr_marker reports whether the channel carries the struct form's

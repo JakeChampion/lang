@@ -541,6 +541,7 @@ pub_use_reexport                                     0
 pure_collection_aliases                              0
 pure_copy                                            0
 question_op                                          0
+qualified_struct_patterns                            0
 radix_literals                                       0
 random_bytes                                         0
 range_for                                            0
