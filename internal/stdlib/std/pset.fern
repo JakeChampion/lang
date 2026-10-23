@@ -1,14 +1,14 @@
 // std/pset — a persistent hash set with structural sharing.
 //
 // `PSet[T]` is `std/pmap`'s hash array mapped trie with unit values:
-// O(log32 n) membership / add / remove (at most seven levels), O(1)
+// O(log32 n) membership / insert / remove (at most seven levels), O(1)
 // snapshots, for any `core/cmp.Hash + core/cmp.Eq` element type. Every
 // operation is value-returning:
 //
 //   import "std/pset";
 //   let s: pset.PSet[string] = pset.pset_of(["a", "b", "a"]);
 //   let before: pset.PSet[string] = s;   // O(1) snapshot
-//   s = s.add("c");
+//   s = s.insert("c");
 //   s.len();            // 3
 //   before.len();       // 2
 //
@@ -36,7 +36,7 @@ pub function pset_of[T: cmp.Hash + cmp.Eq](xs: T[]): PSet[T] {
   let s: PSet[T] = pset_new();
   let i: i32 = 0;
   while (i < xs.len()) {
-    s = s.add(xs[i]);
+    s = s.insert(xs[i]);
     i = i + 1;
   }
   return s;
@@ -52,8 +52,8 @@ pub function (s: PSet[T]) is_empty(): boolean {
   return s.root.is_empty();
 }
 
-// `add(x)` — the set with `x`; the receiver unchanged when present.
-pub function (s: PSet[T]) add[T: cmp.Hash + cmp.Eq](x: T): PSet[T] {
+// `insert(x)` — the set with `x`; the receiver unchanged when present.
+pub function (s: PSet[T]) insert[T: cmp.Hash + cmp.Eq](x: T): PSet[T] {
   return PSet { root: s.root.insert(x, 0) };
 }
 
@@ -82,16 +82,16 @@ pub function (s: PSet[T]) to_array(): T[] {
 // into the larger, O(m log32 n).
 pub function (s: PSet[T]) union[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
   if (s.len() >= other.len()) {
-    return __ps_add_all(s, other.to_array());
+    return __ps_insert_all(s, other.to_array());
   }
-  return __ps_add_all(other, s.to_array());
+  return __ps_insert_all(other, s.to_array());
 }
 
-function __ps_add_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T] {
+function __ps_insert_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T] {
   let out: PSet[T] = s;
   let i: i32 = 0;
   while (i < xs.len()) {
-    out = out.add(xs[i]);
+    out = out.insert(xs[i]);
     i = i + 1;
   }
   return out;
@@ -104,7 +104,7 @@ pub function (s: PSet[T]) intersection[T: cmp.Hash + cmp.Eq](other: PSet[T]): PS
   let i: i32 = 0;
   while (i < xs.len()) {
     if (other.contains(xs[i])) {
-      out = out.add(xs[i]);
+      out = out.insert(xs[i]);
     }
     i = i + 1;
   }
@@ -151,7 +151,7 @@ pub function (s: PSet[T]) filter[T: cmp.Hash + cmp.Eq](pred: (T) => boolean): PS
   let i: i32 = 0;
   while (i < xs.len()) {
     if (pred(xs[i])) {
-      out = out.add(xs[i]);
+      out = out.insert(xs[i]);
     }
     i = i + 1;
   }
@@ -172,4 +172,19 @@ pub function (s: PSet[T]) for_each(f: (T) => void): void {
 // built through this module; exposed for tests.
 pub function (s: PSet[T]) is_valid(): boolean {
   return s.root.is_valid();
+}
+
+// `is_superset(other)` — is every element of `other` in this set?
+pub function (s: PSet[T]) is_superset[T: cmp.Hash + cmp.Eq](other: PSet[T]): boolean {
+  return other.is_subset(s);
+}
+
+// `is_disjoint(other)` — do the two sets share no element?
+pub function (s: PSet[T]) is_disjoint[T: cmp.Hash + cmp.Eq](other: PSet[T]): boolean {
+  return s.intersection(other).is_empty();
+}
+
+// `symmetric_difference(other)` — the elements in exactly one of the two.
+pub function (s: PSet[T]) symmetric_difference[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
+  return s.difference(other).union(other.difference(s));
 }

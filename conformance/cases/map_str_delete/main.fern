@@ -5,7 +5,7 @@ function main(): i32 {
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
-    m = m.without("b").0;
-    m = m.without("c").0;
+    m = m.remove("b");
+    m = m.remove("c");
     return m.get_or("a", 0) * 10 + m.len();
 }

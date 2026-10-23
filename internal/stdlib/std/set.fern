@@ -2,7 +2,7 @@
 //
 // `Set[T]` holds the distinct values of an insertion-ordered array
 // (`to_array()` returns them in first-inserted order). Every operation
-// is value-semantic: `add` / `remove` / `union` / … return a NEW set
+// is value-semantic: `insert` / `remove` / `union` / … return a NEW set
 // and leave the receiver untouched, matching the language's immutable-
 // data direction (see docs/LANGUAGE-DIRECTION.md). Element type only
 // needs `cmp.Eq` — membership is decided through the bound's `eq`
@@ -14,14 +14,14 @@
 // # Complexity — read before reaching for this at scale
 //
 // The backing store is a flat array scanned linearly, so `contains` is
-// O(n) and `add` / `remove` are O(n); building an n-element set from
+// O(n) and `insert` / `remove` are O(n); building an n-element set from
 // scratch is therefore O(n²). This is deliberate and fine for the
 // language's niche (CLI-scale collections — tags, seen-ids, small
 // working sets), but it is a trap beyond ~10⁴ elements. The O(1)-
 // membership version wants a hash-backed store (`Map[T, i32]`); that
 // is blocked today by a native codegen bug in returning a struct that
 // wraps a `Map` from a function (a value-semantic `Set` re-wraps its
-// map on every `add`) — tracked separately. When that lands, this
+// map on every `insert`) — tracked separately. When that lands, this
 // module's public API is designed to carry straight over to the
 // hash-backed representation unchanged.
 //
@@ -29,7 +29,7 @@
 //
 //   import "std/set";
 //   let s: set.Set[i32] = set.set_of([1, 2, 2, 3]);
-//   s = s.add(4);
+//   s = s.insert(4);
 //   s.contains(2);   // true
 //   s.len();         // 4  (the duplicate 2 collapsed)
 //   s.to_array();    // [1, 2, 3, 4]  (insertion order)
@@ -59,7 +59,7 @@ pub function set_of[T: cmp.Eq](xs: T[]): Set[T] {
   let s: Set[T] = set_new();
   let i: i32 = 0;
   while (i < xs.len()) {
-    s = s.add(xs[i]);
+    s = s.insert(xs[i]);
     i = i + 1;
   }
   return s;
@@ -87,17 +87,17 @@ pub function (s: Set[T]) is_empty(): boolean {
   return s.xs.len() == 0;
 }
 
-// `add(x)` — the set with `x` added. Returns the receiver unchanged
+// `insert(x)` — the set with `x` added. Returns the receiver unchanged
 // (a cheap shared copy) when `x` is already present, so the "no
 // duplicates" invariant holds.
 //
 // The new element is appended onto a FRESH copy of the backing array
 // rather than onto `s.xs` directly. `s` is a borrowed value the caller
 // still owns, so mutating its array in place would be a value-semantics
-// violation — `add` must leave the receiver untouched. Every combinator
+// violation — `insert` must leave the receiver untouched. Every combinator
 // below follows the same rule (read the receiver's array, write a fresh
 // one), which is why they are all written as copy-into-`ys` loops.
-pub function (s: Set[T]) add[T: cmp.Eq](x: T): Set[T] {
+pub function (s: Set[T]) insert[T: cmp.Eq](x: T): Set[T] {
   if (s.contains(x)) {
     return s;
   }
@@ -154,15 +154,15 @@ pub function (s: Set[T]) union[T: cmp.Eq](other: Set[T]): Set[T] {
   let out: Set[T] = s;
   let i: i32 = 0;
   while (i < other.xs.len()) {
-    out = out.add(other.xs[i]);
+    out = out.insert(other.xs[i]);
     i = i + 1;
   }
   return out;
 }
 
-// `intersect(other)` — the elements present in BOTH sets, in `s`'s
+// `intersection(other)` — the elements present in BOTH sets, in `s`'s
 // order.
-pub function (s: Set[T]) intersect[T: cmp.Eq](other: Set[T]): Set[T] {
+pub function (s: Set[T]) intersection[T: cmp.Eq](other: Set[T]): Set[T] {
   let ys: T[] = [];
   let i: i32 = 0;
   while (i < s.xs.len()) {
@@ -251,4 +251,37 @@ pub function (s: Set[T]) symmetric_difference[T: cmp.Eq](other: Set[T]): Set[T] 
     j = j + 1;
   }
   return Set { xs: ys };
+}
+
+// `filter(pred)` — the elements `pred` accepts, in `s`'s order.
+pub function (s: Set[T]) filter(pred: (T) => boolean): Set[T] {
+  let ys: T[] = [];
+  let i: i32 = 0;
+  while (i < s.xs.len()) {
+    if (pred(s.xs[i])) {
+      ys = ys.append(s.xs[i]);
+    }
+    i = i + 1;
+  }
+  return Set { xs: ys };
+}
+
+// `fold(init, f)` — `f(f(f(init, x0), x1), …)` in insertion order.
+pub function (s: Set[T]) fold[T, A](init: A, f: (A, T) => A): A {
+  let acc: A = init;
+  let i: i32 = 0;
+  while (i < s.xs.len()) {
+    acc = f(acc, s.xs[i]);
+    i = i + 1;
+  }
+  return acc;
+}
+
+// `for_each(f)` — call `f(x)` on every element in insertion order.
+pub function (s: Set[T]) for_each(f: (T) => void): void {
+  let i: i32 = 0;
+  while (i < s.xs.len()) {
+    f(s.xs[i]);
+    i = i + 1;
+  }
 }

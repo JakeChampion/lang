@@ -1,0 +1,286 @@
+[
+  {
+    "name": "Go-check",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/oracle",
+      "-check",
+      "/workspace/lang-qualified-struct-patterns-publish/conformance/cases/qualified_struct_patterns/main.fern"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "Go-interp",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/oracle",
+      "-interp",
+      "/workspace/lang-qualified-struct-patterns-publish/conformance/cases/qualified_struct_patterns/main.fern"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "self-check",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-check",
+      "/workspace/lang-qualified-struct-patterns-publish/conformance/cases/qualified_struct_patterns/main.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "self-interp",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-interp",
+      "/workspace/lang-qualified-struct-patterns-publish/conformance/cases/qualified_struct_patterns/main.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "compile-x86-64-linux",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/fixture-x86-64-linux",
+      "/workspace/lang-qualified-struct-patterns-publish/conformance/cases/qualified_struct_patterns/main.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "run-x86-64-linux",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/fixture-x86-64-linux"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=4 frees=4 live_bytes=0\n"
+  },
+  {
+    "name": "compile-arm64-linux",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/fixture-arm64-linux",
+      "/workspace/lang-qualified-struct-patterns-publish/conformance/cases/qualified_struct_patterns/main.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "run-arm64-linux",
+    "arguments": [
+      "qemu-aarch64",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/fixture-arm64-linux"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=4 frees=4 live_bytes=0\n"
+  },
+  {
+    "name": "compile-wasm32-wasi",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/fixture-wasm32-wasi",
+      "-emit",
+      "command-module",
+      "/workspace/lang-qualified-struct-patterns-publish/conformance/cases/qualified_struct_patterns/main.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "name": "run-wasm32-wasi",
+    "arguments": [
+      "wasmtime",
+      "run",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/fixture-wasm32-wasi"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "leakcheck: allocs=3 frees=3 live_bytes=0\n"
+  },
+  {
+    "name": "let-Go",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/let.fern"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/let.fern:2:24: error[E021]: cannot destructure a field of opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { let shapes.Secret { n } = shapes.secret(); return n; }\n                           ^\n"
+  },
+  {
+    "name": "let-self",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/let.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/let.fern:2:24: error[E021]: cannot destructure a field of opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { let shapes.Secret { n } = shapes.secret(); return n; }\n                           ^\n"
+  },
+  {
+    "name": "parameter-Go",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/parameter.fern"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/parameter.fern:2:12: error[E021]: cannot destructure a field of opaque type shapes.Secret outside the module that defines it\n    function f(shapes.Secret { n }: shapes.Secret): i32 { return n; } function main(): i32 { return f(shapes.secret()); }\n               ^\n"
+  },
+  {
+    "name": "parameter-self",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/parameter.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/parameter.fern:2:12: error[E021]: cannot destructure a field of opaque type shapes.Secret outside the module that defines it\n    function f(shapes.Secret { n }: shapes.Secret): i32 { return n; } function main(): i32 { return f(shapes.secret()); }\n               ^\n"
+  },
+  {
+    "name": "for-Go",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/for.fern"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/for.fern:2:28: error[E021]: cannot destructure a field of opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { for shapes.Secret { n } in [shapes.secret()] { return n; } return 0; }\n                               ^\n"
+  },
+  {
+    "name": "for-self",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/for.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/for.fern:2:28: error[E021]: cannot destructure a field of opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { for shapes.Secret { n } in [shapes.secret()] { return n; } return 0; }\n                               ^\n"
+  },
+  {
+    "name": "match-Go",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/match.fern"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/match.fern:2:50: error[E021]: cannot destructure opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { match (shapes.secret()) { shapes.Secret { n } => { return n; } } }\n                                                     ^\n"
+  },
+  {
+    "name": "match-self",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/match.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/match.fern:2:50: error[E021]: cannot destructure opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { match (shapes.secret()) { shapes.Secret { n } => { return n; } } }\n                                                     ^\n"
+  },
+  {
+    "name": "match-expression-Go",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/match-expression.fern"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/match-expression.fern:2:57: error[E021]: cannot destructure opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { return match (shapes.secret()) { shapes.Secret { n } => n }; }\n                                                            ^\n"
+  },
+  {
+    "name": "match-expression-self",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/match-expression.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/match-expression.fern:2:57: error[E021]: cannot destructure opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { return match (shapes.secret()) { shapes.Secret { n } => n }; }\n                                                            ^\n"
+  },
+  {
+    "name": "if-let-Go",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/if-let.fern"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/if-let.fern:2:31: error[E021]: cannot destructure opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { if let shapes.Secret { n } = shapes.secret() { return n; } return 0; }\n                                  ^\n"
+  },
+  {
+    "name": "if-let-self",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/if-let.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/if-let.fern:2:31: error[E021]: cannot destructure opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { if let shapes.Secret { n } = shapes.secret() { return n; } return 0; }\n                                  ^\n"
+  },
+  {
+    "name": "discard-field-Go",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/oracle",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/discard-field.fern"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/discard-field.fern:2:50: error[E021]: cannot destructure opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { match (shapes.secret()) { shapes.Secret { n: _ } => { return 0; } } }\n                                                     ^\n"
+  },
+  {
+    "name": "discard-field-self",
+    "arguments": [
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/compiler",
+      "-check",
+      "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/discard-field.fern",
+      "/workspace/lang-qualified-struct-patterns-publish/internal/stdlib"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": "/workspace/scratch/lang-qualified-struct-patterns/main-f65-integration/negative/discard-field.fern:2:50: error[E021]: cannot destructure opaque type shapes.Secret outside the module that defines it\n    function main(): i32 { match (shapes.secret()) { shapes.Secret { n: _ } => { return 0; } } }\n                                                     ^\n"
+  }
+]

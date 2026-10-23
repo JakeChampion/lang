@@ -169,7 +169,7 @@ function read_i64(s: string, at: i32): i64 {
 
 // The status a request will get, read without touching the map.
 function classify(entries: Map[string, string], req: Request): i32 {
-  let present: boolean = entries.has(req.key);
+  let present: boolean = entries.contains(req.key);
   if (req.op == op_put()) {
     if (!present && entries.len() >= max_entries()) {
       return st_full();
@@ -206,10 +206,7 @@ function put(own entries: Map[string, string], req: Request): Map[string, string
 }
 
 function delete(own entries: Map[string, string], req: Request): Map[string, string] {
-  // The destructuring spelling: projecting the tuple with `.0` copies the
-  // map (#11121), this one shrinks it in place.
-  let (rest, _) = entries.without(req.key);
-  return rest;
+  return entries.remove(req.key);
 }
 
 function incr(own entries: Map[string, string], req: Request): Map[string, string] {

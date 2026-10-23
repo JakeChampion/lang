@@ -35,8 +35,8 @@ function main(): i32 {
     if (sm.get_or(Point { x: 1, y: 2 }, -1) != 10) { return 1; }   // fresh instance, same value
     if (sm.get_or(Point { x: 3, y: 4 }, -1) != 20) { return 2; }
     if (sm.get_or(Point { x: 9, y: 9 }, -1) != -1) { return 3; }   // absent
-    if (!sm.has(Point { x: 1, y: 2 })) { return 4; }
-    if (sm.has(Point { x: 2, y: 1 })) { return 5; }                // field order matters
+    if (!sm.contains(Point { x: 1, y: 2 })) { return 4; }
+    if (sm.contains(Point { x: 2, y: 1 })) { return 5; }                // field order matters
     // overwrite an existing key
     sm = sm.insert(Point { x: 1, y: 2 }, 99);
     if (sm.len() != 2 || sm.get_or(Point { x: 1, y: 2 }, -1) != 99) { return 6; }

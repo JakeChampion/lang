@@ -55,7 +55,7 @@
 //      O(m log n) rather than O(n + m).
 //   keys / values / fold / for_each / filter / map_values   O(n)
 //   iter                                                     O(n)
-//   from_arrays                                              O(n log n)
+//   from                                                     O(n log n)
 //
 // The balance parameters are delta = 3, ratio = 2 (Hirai & Yamamoto,
 // "Balancing weight-balanced trees", 2011), the pair proven correct
@@ -65,7 +65,7 @@ import "core/iter";
 
 // The map is the tree. `Bin` is (left, key, value, right, size); `Tip`
 // is the empty tree. The size field makes `len()` O(1) and rank queries
-// O(log n). Construct one only through `ordmap_new` / `from_arrays`.
+// O(log n). Construct one only through `ordmap_new` / `from`.
 pub enum OrdMap[K, V] { Tip, Bin(OrdMap[K, V], K, V, OrdMap[K, V], i32) }
 
 // `ordmap_new()` — the empty map. The key and value types are fixed by
@@ -76,20 +76,12 @@ pub function ordmap_new[K, V](): OrdMap[K, V] {
   return e;
 }
 
-// `from_arrays(keys, values)` — the map holding `keys[i] -> values[i]`
-// for every i. A key repeated in `keys` takes its LAST value. The two
-// arrays must have the same length; extra entries in the longer one are
-// ignored.
-pub function from_arrays[K: cmp.Ord, V](keys: K[], values: V[]): OrdMap[K, V] {
+// `from(pairs)` — the map holding each `(k, v)`. A key repeated in
+// `pairs` takes its LAST value.
+pub function from[K: cmp.Ord, V](pairs: (K, V)[]): OrdMap[K, V] {
   let m: OrdMap[K, V] = ordmap_new();
-  let n: i32 = keys.len();
-  if (values.len() < n) {
-    n = values.len();
-  }
-  let i: i32 = 0;
-  while (i < n) {
-    m = m.insert(keys[i], values[i]);
-    i = i + 1;
+  for p in pairs {
+    m = m.insert(p.0, p.1);
   }
   return m;
 }
@@ -834,12 +826,12 @@ pub function (m: OrdMap[K, V]) contains[K: cmp.Ord, V](k: K): boolean {
   }
 }
 
-// `update(k, f)` — the map with the value at `k` replaced by `f(old)`;
-// the receiver unchanged when `k` is absent.
-pub function (m: OrdMap[K, V]) update[K: cmp.Ord, V](k: K, f: (V) => V): OrdMap[K, V] {
+// `update(k, init, f)` — the map with `k -> f(old)`, or `k -> f(init)`
+// when `k` is absent.
+pub function (m: OrdMap[K, V]) update[K: cmp.Ord, V](k: K, init: V, f: (V) => V): OrdMap[K, V] {
   match (node_find(m, k)) {
     Tip => {
-      return m;
+      return node_insert(m, k, f(init));
     },
     Bin(l, nk, nv, r, s) => {
       return node_insert(m, k, f(nv));
@@ -955,10 +947,23 @@ pub function (m: OrdMap[K, V]) filter(pred: (K, V) => boolean): OrdMap[K, V] {
   return node_filter(m, pred);
 }
 
-// `union(other)` — every entry of both; a key in both keeps THIS map's
+// `merge(other)` — every entry of both; a key in both takes `other`'s
 // value. O(m log(n/m + 1)).
-pub function (m: OrdMap[K, V]) union[K: cmp.Ord, V](other: OrdMap[K, V]): OrdMap[K, V] {
-  return node_union(m, other);
+pub function (m: OrdMap[K, V]) merge[K: cmp.Ord, V](other: OrdMap[K, V]): OrdMap[K, V] {
+  return node_union(other, m);
+}
+
+// `entries()` — every `(key, value)` pair, in key order.
+pub function (m: OrdMap[K, V]) entries(): (K, V)[] {
+  let out: (K, V)[] = [];
+  let ks: K[] = m.keys();
+  let vs: V[] = m.values();
+  let i: i32 = 0;
+  while (i < ks.len()) {
+    out = out.append((ks[i], vs[i]));
+    i = i + 1;
+  }
+  return out;
 }
 
 // `intersection(other)` — the entries whose key is in both, with THIS

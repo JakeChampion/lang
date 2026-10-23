@@ -6841,15 +6841,15 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         }
         return args[1];
       }
-      if (name == "has") {
+      if (name == "contains") {
         if (args.len() != 1) {
-          return v_err("map.has: need 1 arg");
+          return v_err("map.contains: need 1 arg");
         }
         return v_bool(map_key_index(m, args[0], funcs, aliases, type_decls, outs) >= 0);
       }
-      if (name == "without") {
+      if (name == "remove") {
         if (args.len() != 1) {
-          return v_err("map.delete: need 1 arg");
+          return v_err("map.remove: need 1 arg");
         }
         // core/map deletes by swap-with-last, so the last entry takes the
         // deleted one's place in iteration order.
@@ -6868,7 +6868,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
           }
           di = di + 1;
         }
-        return v_tuple([v_map(nk, nv), v_bool(at >= 0)]);
+        return v_map(nk, nv);
       }
       if (name == "len") {
         return v_int(m.keys.len());

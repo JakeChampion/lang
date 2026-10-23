@@ -47,12 +47,13 @@ function main(): i32 {
   m = m.insert(K { a: 2, junk: 3 }, 30);
   print("K len " + m.len().to_string());
   print("K get_or " + m.get_or(K { a: 1, junk: 99 }, -1).to_string());
-  print("K has " + yes(m.has(K { a: 2, junk: 0 })));
+  print("K has " + yes(m.contains(K { a: 2, junk: 0 })));
   match (m.get(K { a: 3, junk: 1 })) {
     Some(v) => { print("K get " + v.to_string()); },
     None => { print("K get none"); },
   }
-  let (m2, removed) = m.without(K { a: 2, junk: 77 });
+  let removed: boolean = m.contains(K { a: 2, junk: 77 });
+  let m2 = m.remove(K { a: 2, junk: 77 });
   print("K without " + yes(removed) + " " + m2.len().to_string());
 
   let s: Map[Shape, i32] = map_new(8);

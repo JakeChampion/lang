@@ -4,7 +4,7 @@ function main(): i32 {
     let m: Map[string, i32] = map_new(4);
     m = m.insert("answer", 42);
     m = m.insert("other", 7);
-    if (!m.has("answer")) { return 1; }
+    if (!m.contains("answer")) { return 1; }
     match (m.get("answer")) {
         Some(v) => { return v; },
         None => { return 2; }

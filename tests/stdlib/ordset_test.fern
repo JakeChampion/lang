@@ -16,20 +16,20 @@ function test_of_dedup(): test.TestOutcome {
   return test.assert_true(arr.len() == 3 && arr[0] == 1 && arr[1] == 2 && arr[2] == 3);
 }
 
-function test_add_is_persistent(): test.TestOutcome {
+function test_insert_is_persistent(): test.TestOutcome {
   let a: ordset.OrdSet[i32] = ordset.ordset_of([1, 2]);
-  let b: ordset.OrdSet[i32] = a.add(3);
+  let b: ordset.OrdSet[i32] = a.insert(3);
   if (a.len() != 2 || b.len() != 3) {
-    return test.fail("add mutated receiver");
+    return test.fail("insert mutated receiver");
   }
-  return test.assert_true(!a.contains(3) && b.contains(3) && b.add(3).len() == 3);
+  return test.assert_true(!a.contains(3) && b.contains(3) && b.insert(3).len() == 3);
 }
 
 function test_remove(): test.TestOutcome {
   let s: ordset.OrdSet[i32] = ordset.ordset_new();
   let i: i32 = 0;
   while (i < 500) {
-    s = s.add(i * 31 % 500);
+    s = s.insert(i * 31 % 500);
     i = i + 1;
   }
   let keep: ordset.OrdSet[i32] = s;
@@ -99,7 +99,7 @@ function test_filter_strings(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/ordset");
   r = r.it("of dedups", test_of_dedup);
-  r = r.it("add is persistent", test_add_is_persistent);
+  r = r.it("insert is persistent", test_insert_is_persistent);
   r = r.it("remove", test_remove);
   r = r.it("order and rank", test_order_and_rank);
   r = r.it("algebra", test_algebra);

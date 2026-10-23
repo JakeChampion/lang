@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// `m.without(k)` on a map an alias still reads deletes from a copy, so the
+// `m.remove(k)` on a map an alias still reads deletes from a copy, so the
 // alias keeps every entry, as on native and the interpreter (#9835). The alias
 // may be bound before the delete, through either name, or later in an
 // enclosing loop.
@@ -23,7 +23,8 @@ function main(): i32 {
     m = m.insert(1, 10);
     m = m.insert(2, 20);
     let snapshot: Map[i32, i32] = m;
-    let (rest, had) = m.without(2);
+    let had: boolean = m.contains(2);
+    let rest = m.remove(2);
     return rest.len() * 10 + (if (had) { 1 } else { 0 }) + snapshot.len() * 40 + m.len();
 }
 `, 93},
@@ -34,8 +35,9 @@ function main(): i32 {
     m = m.insert(2, 20);
     m = m.insert(3, 30);
     let snapshot: Map[i32, i32] = m;
-    let (rest, had) = m.without(2);
-    if (!had || rest.has(2) || rest.get_or(3, -1) != 30) { return 99; }
+    let had: boolean = m.contains(2);
+    let rest = m.remove(2);
+    if (!had || rest.contains(2) || rest.get_or(3, -1) != 30) { return 99; }
     let sum: i32 = 0;
     for k in snapshot.keys() { sum = sum + snapshot.get_or(k, 0); }
     return sum + snapshot.get_or(2, -1) + rest.len();
@@ -47,7 +49,8 @@ function main(): i32 {
     m = m.insert(1, 10);
     m = m.insert(2, 20);
     let snapshot: Map[i32, i32] = m;
-    let (rest, had) = snapshot.without(2);
+    let had: boolean = snapshot.contains(2);
+    let rest = snapshot.remove(2);
     let grown: Map[i32, i32] = m;
     grown = grown.insert(3, 30);
     return rest.len() * 10 + m.len() + grown.len() * 30;
@@ -60,8 +63,8 @@ function main(): i32 {
     m = m.insert(2, 20);
     m = m.insert(3, 30);
     let snapshot: Map[i32, i32] = m;
-    m = m.without(1).0;
-    m = m.without(3).0;
+    m = m.remove(1);
+    m = m.remove(3);
     return m.len() * 10 + snapshot.len() + snapshot.get_or(1, 0);
 }
 `, 23},
@@ -74,7 +77,8 @@ function main(): i32 {
     let acc: i32 = 0;
     let r: i32 = 0;
     while (r < 3) {
-        let (rest, had) = m.without(r);
+        let had: boolean = m.contains(r);
+        let rest = m.remove(r);
         if (had) { acc = acc + rest.len(); }
         keep = m;
         r = r + 1;
@@ -88,21 +92,23 @@ function main(): i32 {
     m = m.insert("a" + "k", "x" + "y");
     m = m.insert("b" + "k", "p" + "qr");
     let snapshot: Map[string, string] = m;
-    let (rest, had) = m.without("bk");
-    if (!had || rest.has("bk")) { return 99; }
+    let had: boolean = m.contains("bk");
+    let rest = m.remove("bk");
+    if (!had || rest.contains("bk")) { return 99; }
     return rest.len() * 10 + snapshot.len() + snapshot.get_or("bk", "").len() * 20 + m.get_or("ak", "").len();
 }
 `, 74},
 }
 
 // mapWithoutUnaliased deletes from a map nothing else names, which stays in
-// place: the only allocation the delete adds is the tuple it returns.
+// place: the delete allocates nothing.
 const mapWithoutUnaliased = `import "core/map";
 function main(): i32 {
     let m: Map[i32, i32] = map_new(8);
     m = m.insert(1, 10);
     m = m.insert(2, 20);
-    let (rest, had) = m.without(2);
+    let had: boolean = m.contains(2);
+    let rest = m.remove(2);
     return rest.len() * 10 + (if (had) { 1 } else { 0 });
 }
 `
@@ -134,7 +140,7 @@ func TestSelfHostMapWithoutAliasX86_64(t *testing.T) {
 			}
 			return censusAllocs(t, stderr)
 		}
-		assertWithoutAddsTuple(t, allocs)
+		assertRemoveAllocatesNothing(t, allocs)
 	})
 }
 
@@ -159,19 +165,24 @@ func TestSelfHostMapWithoutAliasWasm(t *testing.T) {
 			}
 			return censusAllocs(t, stderr)
 		}
-		assertWithoutAddsTuple(t, allocs)
+		assertRemoveAllocatesNothing(t, allocs)
 	})
 }
 
-// assertWithoutAddsTuple compares mapWithoutUnaliased against the same program
-// with the delete taken out: a copy of the map would add its box and columns.
-func assertWithoutAddsTuple(t *testing.T, allocs func(string, int) int64) {
+// assertRemoveAllocatesNothing compares mapWithoutUnaliased against the same
+// program with the delete taken out: a copy of the map would add its box and
+// columns.
+func assertRemoveAllocatesNothing(t *testing.T, allocs func(string, int) int64) {
 	t.Helper()
-	noDelete := strings.Replace(mapWithoutUnaliased, "let (rest, had) = m.without(2);", "let rest: Map[i32, i32] = m;\n    let had: boolean = true;", 1)
+	const removal = "let rest = m.remove(2);"
+	if !strings.Contains(mapWithoutUnaliased, removal) {
+		t.Fatalf("mapWithoutUnaliased no longer contains %q", removal)
+	}
+	noDelete := strings.Replace(mapWithoutUnaliased, removal, "let rest: Map[i32, i32] = m;", 1)
 	with := allocs(mapWithoutUnaliased, mapWithoutUnaliasedWant)
 	without := allocs(noDelete, 21)
-	if with != without+1 {
-		t.Fatalf("allocs with the delete = %d, without = %d: want exactly the tuple more", with, without)
+	if with != without {
+		t.Fatalf("allocs with the delete = %d, without = %d: want the same", with, without)
 	}
 }
 

@@ -12,12 +12,14 @@ function mk(): i32 {
     let im: Map[i32, i32] = map_new(8);
     im = im.insert(1, 4);
     im = im.insert(2, 6);
-    let it = im.without(1);
-    im = it.0;
-    if (it.1) { acc = acc + 2; }
-    let im2 = im.without(9);
-    im = im2.0;
-    if (im2.1) { acc = acc + 100; }
+    let it_had: boolean = im.contains(1);
+    let it = im.remove(1);
+    im = it;
+    if (it_had) { acc = acc + 2; }
+    let im2_had: boolean = im.contains(9);
+    let im2 = im.remove(9);
+    im = im2;
+    if (im2_had) { acc = acc + 100; }
     acc = acc + im.get_or(2, 0);
     return acc;
 }

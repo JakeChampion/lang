@@ -4495,13 +4495,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
 	}
 	registerMapMethod("len", nil, ast.NumberType{})
-	registerMapMethod("has", []ast.Type{keyParam}, ast.BoolType{})
+	registerMapMethod("contains", []ast.Type{keyParam}, ast.BoolType{})
 	registerMapMethod("get", []ast.Type{keyParam}, optionV)
 	registerMapMethod("set", []ast.Type{keyParam, valueParam}, mapKV)
 	registerMapMethod("keys", nil, ast.ArrayType{Elem: keyParam})
 	registerMapMethod("values", nil, ast.ArrayType{Elem: valueParam})
-	deleteResult := ast.TupleType{Elems: []ast.Type{mapKV, ast.BoolType{}}}
-	registerMapMethod("delete", []ast.Type{keyParam}, deleteResult)
+	registerMapMethod("remove", []ast.Type{keyParam}, mapKV)
 	registerMapMethod("clear", nil, mapKV)
 	registerMapMethod("get_or", []ast.Type{keyParam, valueParam}, valueParam)
 	mapIterKV := ast.StructType{Name: "MapIter", Args: []ast.Type{keyParam, valueParam}}
@@ -4514,9 +4513,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// name are reused wholesale — purely additive, zero IR change, no
 	// breakage. The mutable-looking names are registered above and then
 	// deleted below, so only these aliases resolve.
-	c.info.Methods["Map.insert"] = "__method_Map_set"     // m.insert(k, v) — value-returning set
-	c.info.Methods["Map.without"] = "__method_Map_delete" // m.without(k) — value-returning delete
-	c.info.Methods["Map.cleared"] = "__method_Map_clear"  // m.cleared() — value-returning clear
+	c.info.Methods["Map.insert"] = "__method_Map_set"    // m.insert(k, v) — value-returning set
+	c.info.Methods["Map.cleared"] = "__method_Map_clear" // m.cleared() — value-returning clear
 
 	// `arr.push(v)` is the one Array method that DOESN'T have a
 	// stdlib function declaration — the IR intercepts the
@@ -4563,7 +4561,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.Methods["Array.with"] = "__method_Array_set"    // arr.with(i, v) — value-returning element set
 	// Remove the mutable-looking spellings (docs/PURE-COLLECTION-API-PLAN.md
 	// §3a, "hard removal" step). The value-returning aliases above
-	// (insert / without / cleared / with) are now the ONLY public names;
+	// (insert / contains / remove / cleared / with) are now the ONLY public names;
 	// the mangled lowerings (__method_Map_set / _delete / _clear /
 	// __method_Array_set) stay — the aliases resolve to them — so this
 	// only deletes the user-facing names, with zero IR change. `arr[i] = v`
@@ -4571,7 +4569,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// `arr.set(i, v)` *method* spelling is withdrawn (use `arr.with`);
 	// `arr.push(x)` is withdrawn (use `arr.append`).
 	delete(c.info.Methods, "Map.set")
-	delete(c.info.Methods, "Map.delete")
 	delete(c.info.Methods, "Map.clear")
 	delete(c.info.Methods, "Array.set")
 	delete(c.info.Methods, "Array.push")
@@ -12348,7 +12345,7 @@ func (c *checker) hasDropImpl(typeName string) bool {
 // discarding their result is the aliasing mistake E055 closes.
 var pureCollectionMutators = map[string]string{
 	"__method_Map_set":    "insert",
-	"__method_Map_delete": "without",
+	"__method_Map_remove": "remove",
 	"__method_Map_clear":  "cleared",
 	"__method_Array_set":  "with",
 	"__method_Array_push": "append",
@@ -12362,11 +12359,13 @@ var pureCollectionMutators = map[string]string{
 // saw. Naming the replacement is the whole difference between "that's
 // gone" and "that's gone, here's what to write".
 var retiredCollectionSpellings = map[string]string{
-	"Array.push": "append",
-	"Array.set":  "with",
-	"Map.set":    "insert",
-	"Map.delete": "without",
-	"Map.clear":  "cleared",
+	"Array.push":  "append",
+	"Array.set":   "with",
+	"Map.set":     "insert",
+	"Map.has":     "contains",
+	"Map.delete":  "remove",
+	"Map.without": "remove",
+	"Map.clear":   "cleared",
 }
 
 // collectionNamespace maps a composite receiver to the name its methods
@@ -12497,6 +12496,9 @@ func (c *checker) boundsAdmitReceiver(mangled string, param, recv ast.Type) bool
 func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) string {
 	msg := fmt.Sprintf("no method %q on %s", method, recv)
 	if repl, ok := retiredCollectionSpellings[typeName+"."+method]; ok {
+		if typeName == "Map" && (method == "has" || method == "without") {
+			return fmt.Sprintf("%s — it was renamed; use %q", msg, repl)
+		}
 		return fmt.Sprintf("%s — the in-place spelling was removed; use %q, which returns the updated %s (assign the result back)",
 			msg, repl, typeName)
 	}
@@ -12666,7 +12668,7 @@ func (c *checker) checkUnusedCollectionResult(e ast.Expr) {
 var fipNonAllocMethods = map[string]bool{"len": true}
 
 // fipNonAllocBuiltins is its sibling for builtin functions: each lowers to
-// instructions or a runtime scan that allocates nothing and returns a scalar
+// instructions or a runtime scan that allocates nothing and returns a scalar or lane value
 // (the byte-scan kernels, the bit counts, a constant, the heap counters, the
 // clock). verifyFipAllocs (E068) stays the backstop for what they emit.
 var fipNonAllocBuiltins = map[string]bool{
@@ -12677,6 +12679,7 @@ var fipNonAllocBuiltins = map[string]bool{
 	"__clz64": true, "__ctz64": true, "__popcount64": true, "__mulhi_u64": true,
 	"__ptr_width": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
 	"monotonic_ns": true,
+	"__f64x2_of":   true, "__f64x2_splat": true, "__f64x2_lane": true,
 }
 
 // checkFipFunctions verifies every `fip function` performs no heap allocation —

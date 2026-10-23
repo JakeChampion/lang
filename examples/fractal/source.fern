@@ -1,0 +1,162 @@
+import "std/http";
+import "std/url";
+import "../../compiler/util";
+import "../../compiler/weave";
+
+const FILES: string[] = ["server.fern", "fractal.fern", "binary.fern", "source.fern", "fractal_test.fern", "source_test.fern"];
+
+const REPOSITORY: string = "https://github.com/JakeChampion/lang/blob/main/";
+
+pub struct Page {
+  name: string,
+  html: string,
+}
+
+// Load only the application files before the server accepts requests.
+pub function load(root: string): Result[Page[], string] {
+  let pages: Page[] = [];
+  for name in FILES {
+    match (read_file(root + "/" + name)) {
+      Ok(text) => {
+        pages = pages.append(Page { name: name, html: render(name, text) });
+      },
+      Err(error) => {
+        return Err("cannot read source file " + root + "/" + name);
+      }
+    }
+  }
+  return Ok(pages);
+}
+
+pub function serve(pages: Page[], path: string): HttpResponse {
+  if (path.len() == 0) {
+    return response(layout("Application source", "<h1>Application source</h1><p>Read the Fern modules and follow their imports.</p>" + navigation("")));
+  }
+  for page in pages {
+    if (page.name == path) {
+      return response(page.html);
+    }
+  }
+  return http.not_found();
+}
+
+function response(html: string): HttpResponse {
+  return http.html(html).with_header("Cache-Control", "no-cache").with_header("X-Content-Type-Options", "nosniff");
+}
+
+pub function render(name: string, text: string): string {
+  let body: string = "<h1>" + weave.html_escape(name) + "</h1>" + navigation(name) + "<pre class=\"code\"><code>";
+  let lines: string[] = text.split("\n");
+  let count: i32 = lines.len();
+  if (text.ends_with("\n")) {
+    count = count - 1;
+  }
+  let index: i32 = 0;
+  while (index < count) {
+    let number: string = (index + 1).to_string();
+    body = body + "<span class=\"line\" id=\"L" + number + "\"><a class=\"line-number\" href=\"#L" + number
+      + "\" aria-label=\"Line " + number + "\">" + number + "</a>" + highlight(lines[index]) + "</span>";
+    index = index + 1;
+  }
+  return layout(name, body + "</code></pre>");
+}
+
+// Match an import declaration before the highlighter escapes its source text.
+pub function highlight(line: string): string {
+  match (import_markup(line)) {
+    Some(html) => {
+      return html;
+    },
+    None => {
+      return weave.highlight_fern(line);
+    }
+  }
+}
+
+function import_markup(line: string): Option[string] {
+  let start: i32 = import_start(line)?;
+  let end: i32 = import_end(line, start)?;
+  let module: string = line.drop(start + 1).take(end - start - 1);
+  let href: string = import_href(module)?;
+  return Some(weave.highlight_fern(line.take(start)) + "<a class=\"import\" href=\"" + weave.html_escape(href) + "\">"
+    + weave.highlight_fern(line.drop(start).take(end - start + 1)) + "</a>" + weave.highlight_fern(line.drop(end + 1)));
+}
+
+function import_start(line: string): Option[i32] {
+  let trimmed: string = line.trim_start();
+  if (!trimmed.starts_with("import ") && !trimmed.starts_with("import\t")) {
+    return None;
+  }
+  let start: i32 = line.len() - trimmed.len() + 6;
+  while (start < line.len() && (line[start] == b' ' || line[start] == b'\t')) {
+    start = start + 1;
+  }
+  if (start >= line.len() || line[start] != b'"') {
+    return None;
+  }
+  return Some(start);
+}
+
+function import_end(line: string, start: i32): Option[i32] {
+  let end: i32 = start + 1;
+  while (end < line.len() && line[end] != b'"') {
+    if (line[end] == b'\\') {
+      return None;
+    }
+    end = end + 1;
+  }
+  if (end == line.len()) {
+    return None;
+  }
+  return Some(end);
+}
+
+pub function import_href(module: string): Option[string] {
+  let path: string = util.resolve_path(module, "examples/fractal", "internal/stdlib");
+  for name in FILES {
+    if (path == "examples/fractal/" + name) {
+      return Some("/_src/" + name);
+    }
+  }
+  if (path.starts_with("internal/stdlib/") || path.starts_with("compiler/")) {
+    let encoded: string[] = [];
+    for segment in path.split("/") {
+      encoded = encoded.append(url.url_encode(segment));
+    }
+    return Some(REPOSITORY + encoded.join("/"));
+  }
+  return None;
+}
+
+function navigation(current: string): string {
+  let html: string = "<nav aria-label=\"Source files\">";
+  for name in FILES {
+    let active: string = "";
+    if (name == current) {
+      active = " aria-current=\"page\"";
+    }
+    html = html + "<a href=\"/_src/" + name + "\"" + active + ">" + name + "</a>";
+  }
+  return html + "</nav>";
+}
+
+function layout(title: string, body: string): string {
+  return "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+    + "<title>" + weave.html_escape(title) + " · Fern source</title><style>" + styles() + "</style></head><body>"
+    + "<header><a href=\"/\">← Fractal explorer</a><a href=\"/_src/\">Application source</a></header><main>" + body + "</main></body></html>";
+}
+
+function styles(): string {
+  return ":root{color-scheme:dark;--muted:#9ca8be;--accent:#7fe0b0}"
+    + "*{box-sizing:border-box}body{margin:0;background:#090d15;color:#e6edf5;font:15px/1.6 system-ui,sans-serif}"
+    + "header{display:flex;justify-content:space-between;gap:1rem;padding:1rem 1.5rem;border-bottom:1px solid #273145}"
+    + "main{max-width:100rem;margin:auto;padding:1.5rem}h1{font-size:1.5rem;overflow-wrap:anywhere}p{color:var(--muted)}"
+    + "a{color:var(--accent);text-underline-offset:.2em}nav{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0 1.5rem}"
+    + "nav a{padding:.3rem .7rem;border:1px solid #273145;border-radius:.4rem;text-decoration:none}nav a[aria-current]{background:#1b3a31}"
+    + ".code{overflow-x:auto;padding:1rem 0;background:#101724;border:1px solid #273145;border-radius:.5rem;font:13px/1.7 ui-monospace,monospace;tab-size:2}"
+    + ".line{display:block;min-height:1.7em;padding-right:1rem}.line:target{background:#293b32}"
+    + ".line-number{display:inline-block;width:5em;padding-right:1.5em;color:var(--muted);text-align:right;text-decoration:none;user-select:none}"
+    + ".code .k{color:#ff9abd}.code .t{color:#b8b0ff}.code .s{color:#a9e0a9}.code .n{color:#e9bf8e}.code .c{color:var(--muted)}"
+    + ".import{color:inherit;text-decoration:underline;text-decoration-color:#648476}.import:hover{background:#203329}"
+    + "a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}@media(max-width:600px){main{padding:.75rem}.line-number{width:3.5em;padding-right:1em}}";
+}

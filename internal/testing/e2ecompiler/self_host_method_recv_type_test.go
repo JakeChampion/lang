@@ -100,7 +100,7 @@ function main(): i32 {
     m = m.insert("a", 7);
     let v: i32 = m.get_or("a", 0);
     let h: i32 = 0;
-    if (m.has("a")) { h = 1; }
+    if (m.contains("a")) { h = 1; }
     return v * 10 + m.len() + h + m.keys().len();
 }`},
 	// Breadth: a user struct whose methods take a handful of ordinary stdlib

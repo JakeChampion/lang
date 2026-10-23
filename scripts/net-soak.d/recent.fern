@@ -14,14 +14,14 @@ function bound(): i32 {
 }
 
 function evict_oldest(r: Recent): Recent {
-  let dropped: (Map[string, i32], boolean) = r.hits.without(r.order[0]);
+  let dropped: Map[string, i32] = r.hits.remove(r.order[0]);
   let rest: string[] = [];
   let i: i32 = 1;
   while (i < r.order.len()) {
     rest = rest.append(r.order[i]);
     i = i + 1;
   }
-  return Recent { hits: dropped.0, order: rest };
+  return Recent { hits: dropped, order: rest };
 }
 
 function handle(r: Recent, req: HttpRequest, plat: platform.Platform): (Recent, HttpResponse) {

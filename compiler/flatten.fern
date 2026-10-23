@@ -1081,12 +1081,10 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
   // T2) rather than a hand-rolled depth-tracking top-level-comma split + per-
   // element space trim; parse_type_ref splits the elements without letting a
   // nested generic's / tuple's inner commas confuse the split, and each element
-  // rendered back is the canonical spelling the recursion expects. A tuple-ARRAY
-  // ("(A, B)[]", array_depth > 0) is not a bare tuple, so it falls through to the
-  // bracket/suffix logic below — matching the former guard, whose ")"-suffix test
-  // failed on the trailing "]".
+  // rendered back is the canonical spelling the recursion expects. A tuple
+  // ARRAY (`(A, B)[]`) takes the same element rewrite, its suffix re-attached.
   let tref: parser.TypeRef = parser.parse_type_ref(tn);
-  if (tref.is_tuple && tref.array_depth == 0) {
+  if (tref.is_tuple) {
     let out: string = "(";
     let ti: i32 = 0;
     while (ti < tref.args.len()) {
@@ -1096,7 +1094,13 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
       out = out + rewrite_type_name(parser.render_type_ref(tref.args[ti]), ctx);
       ti = ti + 1;
     }
-    return out + ")";
+    out = out + ")";
+    let td: i32 = 0;
+    while (td < tref.array_depth) {
+      out = out + "[]";
+      td = td + 1;
+    }
+    return out;
   }
   // A FUNCTION type (`(Flag) => Opt`, `() => i32`): parse_type_ref gives it an
   // EMPTY base with args = the parameters plus the result last, which is the
@@ -1221,7 +1225,15 @@ function rewrite_type_spelling(tn: string, ctx: RewriteCtx): string {
 function rewrite_pattern(p: ast.Pattern, ctx: RewriteCtx): ast.Pattern {
   match (p) {
     ast.PatVariant(pv) => {
-      return ast.PatVariant { ...pv, type_name: rewrite_type_name(pv.type_name, ctx) };
+      let nested: ast.Pattern[] = [];
+      for pat in pv.nested {
+        nested = nested.append(rewrite_pattern(pat, ctx));
+      }
+      let cond: ast.Expr = pv.lit_cond;
+      if (pv.has_lit_cond) {
+        cond = rewrite_expr(cond, ctx);
+      }
+      return ast.PatVariant { ...pv, type_name: rewrite_type_name(pv.type_name, ctx), nested: nested, lit_cond: cond };
     },
     _ => {
       return p;
@@ -1440,6 +1452,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
         cond: rewrite_expr(f.cond, ctx),
         then_body: rewrite_block(f.then_body, ctx),
         else_body: rewrite_block(f.else_body, ctx),
+        sugar: rewrite_record_sugar(f.sugar, ctx),
       };
     },
     ast.StmtWhile(w) => {
@@ -1457,15 +1470,11 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
       };
     },
     ast.StmtMatch(m) => {
-      let arms: ast.MatchArm[] = [];
-      let i: i32 = 0;
-      while (i < m.arms.len()) {
-        let arm_locals: string[] = util.append_all([], ctx.locals);
-        let actx: RewriteCtx = RewriteCtx { ...ctx, locals: astwalk.pattern_binders(m.arms[i].pattern, arm_locals) };
-        arms = arms.append(ast.MatchArm { pattern: rewrite_pattern(m.arms[i].pattern, ctx), body: rewrite_block(m.arms[i].body, actx), line: m.arms[i].line, col: m.arms[i].col, guard: rewrite_expr(m.arms[i].guard, actx), has_guard: m.arms[i].has_guard, alt_cont: false });
-        i = i + 1;
+      let sugar: ast.MatchArm[] = m.sugar;
+      if (has_record_arms(sugar)) {
+        sugar = rewrite_match_arms(sugar, ctx);
       }
-      return ast.StmtMatch { ...m, scrutinee: rewrite_expr(m.scrutinee, ctx), arms: arms };
+      return ast.StmtMatch { ...m, scrutinee: rewrite_expr(m.scrutinee, ctx), arms: rewrite_match_arms(m.arms, ctx), sugar: sugar };
     },
     ast.StmtDefer(d) => {
       // Rewrite the deferred action's cross-module references before
@@ -1477,6 +1486,36 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
     }
   }
   return st;
+}
+
+function has_record_arms(arms: ast.MatchArm[]): boolean {
+  for arm in arms {
+    if let ast.PatVariant(pv) = arm.pattern {
+      if (parser.is_record_pattern(pv)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function rewrite_match_arms(arms: ast.MatchArm[], ctx: RewriteCtx): ast.MatchArm[] {
+  let out: ast.MatchArm[] = [];
+  for arm in arms {
+    let base: string[] = util.append_all([], ctx.locals);
+    let locals: string[] = astwalk.pattern_binders(arm.pattern, base);
+    let actx: RewriteCtx = RewriteCtx { ...ctx, locals: locals };
+    out = out.append(ast.MatchArm { ...arm, pattern: rewrite_pattern(arm.pattern, ctx), body: rewrite_block(arm.body, actx), guard: rewrite_expr(arm.guard, actx) });
+  }
+  return out;
+}
+
+// Retain resolved names in record patterns that the checker desugars after the bundle.
+function rewrite_record_sugar(sg: ast.MatchSugar, ctx: RewriteCtx): ast.MatchSugar {
+  if (!has_record_arms(sg.arms)) {
+    return sg;
+  }
+  return ast.MatchSugar { ...sg, scrut: rewrite_expr(sg.scrut, ctx), arms: rewrite_match_arms(sg.arms, ctx) };
 }
 
 function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl[] {
@@ -2167,7 +2206,8 @@ pub function qualified_name(q: Qualifiers, alias: string, name: string): string 
 // a multi-module program — the compiler itself — lowers to a single
 // namespace and self-compiles.
 pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: string): parser.Module {
-  return bundle_with_prefixes(entry0, imports0, target, assign_prefixes(imports0));
+  // Imported record variants need their declarations before field positions resolve.
+  return parser.resolve_variant_fields_module(bundle_with_prefixes(entry0, imports0, target, assign_prefixes(imports0)));
 }
 
 // The loader uses this same prefix table to attach package provenance.
@@ -2779,9 +2819,8 @@ function main(): i32 {
   if (rewrite_type_name("((Token, i32), string)", ctx) != "((lx__Token, i32), string)") {
     return 203;
   }
-  // A tuple-ARRAY is not a bare tuple: it falls through to the suffix logic, which
-  // leaves a non-own base untouched (the array element is not a rewrite target here).
-  if (rewrite_type_name("(i32, i32)[]", ctx) != "(i32, i32)[]") {
+  // A tuple ARRAY rewrites its elements and keeps every suffix.
+  if (rewrite_type_name("(string, Token)[]", ctx) != "(string, lx__Token)[]" || rewrite_type_name("(i32, lexer.Token)[][]", ctx) != "(i32, lexer__Token)[][]") {
     return 204;
   }
   // FUNCTION types round-trip, parameters and result rewritten. parse_type_ref

@@ -77,10 +77,10 @@ function main(): i32 {
     let j: i32 = 0;
     while (j < 300) {
         if (m.get_or("key" + j.to_string(), 0 - 1) != j * 7) { return 2; }
-        if (!m.has("key" + j.to_string())) { return 3; }
+        if (!m.contains("key" + j.to_string())) { return 3; }
         j = j + 1;
     }
-    if (m.has("key300")) { return 4; }
+    if (m.contains("key300")) { return 4; }
     if (m.get_or("absent", 0 - 1) != 0 - 1) { return 5; }
 
     // Overwrite in place: len must not move, value must.
@@ -92,7 +92,8 @@ function main(): i32 {
     // probe and the last-entry rehash must agree with the map's seed.
     let d: i32 = 0;
     while (d < 60) {
-        let (md, okd) = m.without("key" + d.to_string());
+        let okd: boolean = m.contains("key" + d.to_string());
+        let md = m.remove("key" + d.to_string());
         if (!okd) { return 8; }
         m = md;
         d = d + 1;
@@ -100,7 +101,7 @@ function main(): i32 {
     if (m.len() != 240) { return 9; }
     let g: i32 = 0;
     while (g < 60) {
-        if (m.has("key" + g.to_string())) { return 10; }
+        if (m.contains("key" + g.to_string())) { return 10; }
         g = g + 1;
     }
     // Everything the backfill moved must still be reachable.

@@ -1,0 +1,66 @@
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (3.82s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostQualifiedStructPatterns
+=== RUN   TestSelfHostQualifiedStructPatterns/Go-check
+=== RUN   TestSelfHostQualifiedStructPatterns/self-host-check
+=== RUN   TestSelfHostQualifiedStructPatterns/Go-interp
+=== RUN   TestSelfHostQualifiedStructPatterns/self-host-interp
+=== RUN   TestSelfHostQualifiedStructPatterns/x86-64-linux
+=== RUN   TestSelfHostQualifiedStructPatterns/arm64-linux
+=== RUN   TestSelfHostQualifiedStructPatterns/wasm32-wasi
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/let
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/let/Go
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/let/self-host
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/parameter
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/parameter/Go
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/parameter/self-host
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/for
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/for/Go
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/for/self-host
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/match
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/match/Go
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/match/self-host
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/match-expression
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/match-expression/Go
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/match-expression/self-host
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/if-let
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/if-let/Go
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/if-let/self-host
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/discard-field
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/discard-field/self-host
+=== RUN   TestSelfHostQualifiedStructPatterns/opaque/discard-field/Go
+--- PASS: TestSelfHostQualifiedStructPatterns (25.20s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/Go-check (0.01s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/self-host-check (0.01s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/Go-interp (0.01s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/self-host-interp (0.00s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/x86-64-linux (0.04s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/arm64-linux (0.04s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/opaque/let (0.01s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/let/Go (0.00s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/let/self-host (0.00s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/opaque/parameter (0.01s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/parameter/Go (0.00s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/parameter/self-host (0.00s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/opaque/for (0.01s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/for/Go (0.00s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/for/self-host (0.00s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/opaque/match (0.01s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/match/Go (0.00s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/match/self-host (0.00s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/opaque/match-expression (0.01s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/match-expression/Go (0.00s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/match-expression/self-host (0.00s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/opaque/if-let (0.01s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/if-let/Go (0.00s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/if-let/self-host (0.00s)
+    --- PASS: TestSelfHostQualifiedStructPatterns/opaque/discard-field (0.01s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/discard-field/self-host (0.00s)
+        --- PASS: TestSelfHostQualifiedStructPatterns/opaque/discard-field/Go (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	29.049s

@@ -3633,7 +3633,7 @@ function routed_insert(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   return emit(r, ir.op_load_local(res));
 }
 
-// `without` answers the map and whether the key was there. The receiver is
+// `remove` answers the map. The receiver is
 // made the frame's alone first, by core/map's own copy-on-write, and the
 // delete then runs on it in place. A string or box column's removed entry is
 // the map's unit, which core/map's delete drops from the column without
@@ -3672,9 +3672,7 @@ function routed_delete(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
     }
     r = emit(r, ir.op_end());
   }
-  r = emit(r, ir.op_load_local(box));
-  r = emit(r, ir.op_load_local(found));
-  return emit(r, ir.op_tuple_make_k(2, tuple_kinds(f.values[ins.result])));
+  return emit(r, ir.op_load_local(box));
 }
 
 // A key column holding one unit of each key: a string or a keyed column.

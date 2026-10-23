@@ -2766,10 +2766,9 @@ function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Sta
 
 // A map's methods: `insert` (spelled `set` too, as the AST lowering admits
 // both) hands over the receiver's unit and the key's and takes the map back;
-// `has`, `get_or` and `len` read through borrowed operands and answer a
-// scalar; `keys` and `values` snapshot a column into a fresh array; `without`
-// hands the map back inside a tuple with whether the key was there, and
-// `cleared` builds an empty map of the same shape. The iteration has backend
+// `contains`, `get_or` and `len` read through borrowed operands and answer a
+// scalar; `keys` and `values` snapshot a column into a fresh array; `remove`
+// hands the map back, and `cleared` builds an empty map of the same shape. The iteration has backend
 // ops but no contract here yet.
 function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State): Value {
   let t: typeinfo.Type = s.values[recv];
@@ -2782,7 +2781,7 @@ function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Stat
   if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
     return map_write(c, recv, s, t);
   }
-  if (fa.field == "has" && c.args.len() == 1) {
+  if (fa.field == "contains" && c.args.len() == 1) {
     return map_read(c, recv, s, t, ssasem.map_has(), t_bool());
   }
   if (fa.field == "get_or" && c.args.len() == 2) {
@@ -2797,7 +2796,7 @@ function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Stat
   if (fa.field == "values" && c.args.len() == 0) {
     return map_column(s, recv, ssasem.map_values(), ssasem.map_value(t));
   }
-  if (fa.field == "without" && c.args.len() == 1) {
+  if (fa.field == "remove" && c.args.len() == 1) {
     return map_delete(c, recv, s, t);
   }
   if (fa.field == "cleared" && c.args.len() == 0) {
@@ -2848,17 +2847,16 @@ function map_iter_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s:
 }
 
 // A delete finds the entry by comparing the key — it does not keep it — and
-// hands the map back inside a fresh tuple with whether it was there. The
-// removal releases the entry's key and value through the releases the
-// physical lowering names for the columns, so a column the map owns a unit of
-// per entry gives that unit back with the entry (#9970).
+// hands the map back. The removal releases the entry's key and value through
+// the releases the physical lowering names for the columns, so a column the
+// map owns a unit of per entry gives that unit back with the entry (#9970).
 function map_delete(c: ast.ExprCall, recv: i32, s: State, t: typeinfo.Type): Value {
   let k: Value = map_key_value(c.args[0], s, t, false);
   s = k.s;
   if (!s.ok) {
     return k;
   }
-  return define(s, ssasem.map_delete(), [recv, k.id], 0, "", ssasem.delete_result(t));
+  return define(s, ssasem.map_delete(), [recv, k.id], 0, "", t);
 }
 
 // A column snapshot answers a FRESH array whose ownership follows the column.

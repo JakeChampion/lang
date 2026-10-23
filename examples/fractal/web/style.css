@@ -42,6 +42,7 @@ html, body {
 #intro h1 { margin: 0 0 6px; font-size: 18px; letter-spacing: 0.2px; }
 #intro p { margin: 0 0 12px; color: var(--dim); font-size: 13px; }
 .leaf { color: var(--accent); }
+.source-link { color: var(--accent); text-underline-offset: 3px; }
 
 .row { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; }
 .label { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; }
@@ -107,6 +108,7 @@ html, body {
 @media (max-width: 760px) {
   #intro { left: 12px; right: 12px; top: 12px; width: auto; }
   #intro p { display: none; }
+  #intro .source-row { display: block; }
   #stats { top: auto; bottom: 56px; left: 12px; right: 12px; width: auto; }
   #feed { display: none; }
   #where { left: 12px; bottom: 12px; }
