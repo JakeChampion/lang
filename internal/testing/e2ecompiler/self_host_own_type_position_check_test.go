@@ -30,7 +30,7 @@ func TestSelfHostOwnInTypePositionCheck(t *testing.T) {
 		{"handle to a resource", "resource Conn;\nfunction peek(c: borrow Conn): i32 { return 0; }\nfunction close(c: own Conn): i32 { return peek(c); }", true},
 		{"consuming parameter", "function total(own xs: i32[]): i32 { return xs.len(); }", true},
 		{"consuming function-type slot", "function apply(f: (own i32[]) => i32): i32 { return f([1]); }", true},
-		{"consuming slot over a primitive", "function apply(f: (own string) => i32): i32 { return f(\"ab\"); }", true},
+		{"consuming slot over a primitive", "function apply(f: (own string) => i32): i32 { let text = \"ab\" + \"cd\"; return f(text); }", true},
 		{"consuming slot over a primitive is not a handle", "function id(x: i32): i32 { return x; }\nfunction apply(f: (own string) => i32): i32 { return 0; }\nfunction g(): i32 { return apply(id); }", false},
 		{"borrow in a function-type slot", "function apply(f: (borrow i32) => i32): i32 { return f(1); }", false},
 		{"bare word in a let type", "function f(): i32 { let x: own = 1; return 0; }", false},

@@ -44,6 +44,12 @@ func TestSelfHostREPL(t *testing.T) {
 		`(1, "a")`,
 		"9000000000",
 		"'c'",
+		"let get = (): i32 => x;",
+		"get()",
+		"let x = 8;",
+		"get()",
+		"let scoped = (): i32 => { let y = 5; if (true) { let y = 99; } return y; };",
+		"scoped()",
 		"",
 	}, "\n")
 	want := strings.Join([]string{
@@ -67,6 +73,9 @@ func TestSelfHostREPL(t *testing.T) {
 		"> (1, a)",
 		"> 9000000000",
 		"> c",
+		"> > 6",
+		"> > 6",
+		"> > 5",
 		"> ",
 		"",
 	}, "\n")

@@ -8018,7 +8018,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         if (is_unknown(declared)) {
           return CheckResult { scope: s.bind(v.name, declared), ty: declared };
         }
-        if (!settles_to(v.init, declared, init_scope) && !coercible(t, declared, s)) {
+        if (!settles_to(v.init, declared, init_scope) && !semtypes.lends_array(t, declared) && !coercible(t, declared, s)) {
           let err: typeinfo.Type = t_unknown("var `" + v.name + "`: init type doesn't match annotation `" + v.type_name + "`");
           return CheckResult { scope: s.bind(v.name, declared), ty: err };
         }
@@ -8467,7 +8467,10 @@ function method_binding(c: ast.ExprCall, msig: MethodSig, recv: typeinfo.Type, s
   }
   let mi: i32 = 0;
   while (mi < c.args.len() && mi < msig.param_type_names.len()) {
-    let (n3, t3) = gc_bind_param(parser.parse_type_ref(msig.param_type_names[mi]), check_expr(c.args[mi], s), full, s.type_names(), n2, t2);
+    let ref = parser.parse_type_ref(msig.param_type_names[mi]);
+    let dest = type_from_ref_subst(ref, n2, t2, s.type_names());
+    let actual = fn_value_at(c.args[mi], dest, s);
+    let (n3, t3) = gc_bind_param(ref, actual, full, s.type_names(), n2, t2);
     n2 = n3;
     t2 = t3;
     mi = mi + 1;
@@ -17203,6 +17206,27 @@ function fn_value_settles(e: ast.Expr, want: typeinfo.TypeFunc, s: Scope): boole
     return type_assignable(actual, want, s.unions.unions);
   }
   return false;
+}
+
+// A generic callback takes the known parameter types before it binds a method result.
+function fn_value_at(e: ast.Expr, dest: typeinfo.Type, s: Scope): typeinfo.Type {
+  if (generic_fn_value_arg(e, s)) {
+    if let ast.ExprIdent(id) = e {
+      if let typeinfo.TypeFunc(want) = dest {
+        let sig = s.lookup_sig(id.name);
+        let (names, types) = fn_value_binds(sig, want, s);
+        let params: typeinfo.Type[] = [];
+        let i = 0;
+        while (i < sig.param_type_names.len()) {
+          params = params.append(type_from_ref_subst(sig_param_ref(sig, i), names, types, s.type_names()));
+          i = i + 1;
+        }
+        let result = type_from_ref_subst(sig_ret_ref(sig), names, types, s.type_names());
+        return t_func_own(params, sig.param_own, result);
+      }
+    }
+  }
+  return check_expr(e, s);
 }
 
 // generic_fn_value_arg reports whether `e` names a generic function as a
