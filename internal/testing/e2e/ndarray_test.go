@@ -350,6 +350,12 @@ function main(): i32 {
 // to contract are each a derived-shape error, and
 // docs/ARRAY-ALGEBRA.md §4 makes that an abort rather than a truncation.
 var ndarrayAbortSrcs = map[string]string{
+	"get_unchecked out of bounds": `import "std/ndarray";
+function main(): i32 {
+	let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+	return a.get_unchecked([2, 0]);
+}
+`,
 	"a shape that does not fit its storage": `import "std/ndarray";
 function main(): i32 {
 	let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5], [2, 3]);

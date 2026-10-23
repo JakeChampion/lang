@@ -1,6 +1,5 @@
 import "std/test";
 import "std/uuid" as uuid;
-import "std/string";
 
 // tests/stdlib/uuid_test.fern — pure-Fern coverage of std/uuid's
 // generators. The output is random, so the assertions check the
