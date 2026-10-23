@@ -1,14 +1,12 @@
 # The compiler runs on the build machine's own architecture and
 # cross-compiles, so a build on Apple Silicon does not emulate it.
-FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS build
+# Alpine needs no package install: busybox wget reads https and has
+# sha256sum. An apt-get install fails under rootless podman with one UID.
+FROM --platform=$BUILDPLATFORM alpine:3.20 AS build
 ARG FERN_RELEASE=https://github.com/JakeChampion/lang/releases/download/nightly
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
- && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 RUN case "$(uname -m)" in x86_64) arch=x86_64 ;; aarch64) arch=arm64 ;; *) echo "no fern release for $(uname -m)" >&2; exit 1 ;; esac \
- && curl -fsSLO "$FERN_RELEASE/fern-linux-$arch.tar.gz" \
- && curl -fsSLO "$FERN_RELEASE/fern-linux-$arch.tar.gz.sha256" \
+ && wget -q "$FERN_RELEASE/fern-linux-$arch.tar.gz" "$FERN_RELEASE/fern-linux-$arch.tar.gz.sha256" \
  && sha256sum -c "fern-linux-$arch.tar.gz.sha256" \
  && tar xzf "fern-linux-$arch.tar.gz" -C /usr/local/bin
 COPY server.fern .

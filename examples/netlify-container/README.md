@@ -20,8 +20,10 @@ Other paths get 404. A route with the wrong method gets 405.
 - `Dockerfile`: downloads the nightly Fern release and compiles the server
   for `x86-64-linux`. The result is a static binary of about 1.2 MB. The
   image is `FROM scratch` and holds only that binary.
-- `build.sh`: builds the image for `linux/amd64` with Podman and saves it as
-  `netlify/functions/fern-server.tar`.
+- `build.sh`: builds the image for `linux/amd64` and saves it as
+  `netlify/functions/fern-server.tar`. The Netlify build image has no Docker
+  and no Podman, so the script installs a static, rootless Podman 4.9.5. It
+  uses the same configuration as `netlify/php-on-netlify`.
 - `netlify.toml`: runs `build.sh` and sends every request to the container.
 
 The compiler runs on the architecture of the build machine and
@@ -33,7 +35,7 @@ under x86-64 emulation.
 1. Add the site ID to the targeting of the two feature flags,
    `bitballoon_container_functions` and `netlify-server-play-functions`.
 2. Set the base directory of the site to `examples/netlify-container`.
-3. Deploy from Git. The Netlify build runs `build.sh`, which uses Podman.
+3. Deploy from Git. The Netlify build runs `build.sh`.
 
 To deploy from your own machine, use Docker and the Netlify CLI:
 
