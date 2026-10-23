@@ -401,6 +401,7 @@ var stdlibMethodIndex = map[string]map[string]string{
 		"chars":                     "std/string",
 		"chunks":                    "std/string",
 		"cmp":                       "core/cmp",
+		"cmp_ignore_ascii_case":     "std/string",
 		"codepoint_count":           "std/string",
 		"common_prefix":             "std/string",
 		"common_suffix":             "std/string",
