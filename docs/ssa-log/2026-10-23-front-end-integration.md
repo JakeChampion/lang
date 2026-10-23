@@ -1,6 +1,6 @@
 # Front-end integration
 
-This batch combines eight fixes that share the compiler and checker gates.
+This batch combines nine fixes that share the compiler and checker gates.
 Each issue keeps its own implementation and regression commits.
 One full CI run now checks their interaction.
 
@@ -11,10 +11,12 @@ One full CI run now checks their interaction.
 - Generated stdlib references have module introductions and current links (#12736, #12737).
 - Generic unit payloads support Result and Option combinators (#12845).
 - Indirect calls enforce their ownership contracts (#12847).
+- The interpreter corpus has no remaining exceptions (#12888).
 
 The combined tree passes the full Go checker, monomorphizer, and source checks.
 It also passes the full error corpus and four checker differential suites.
-All five new runnable cases pass on both interpreters and three compiled targets.
+The runnable regression matrix passes on both interpreters and three compiled targets.
+The matrix also passes under the native memory sanitizer.
 All four semantic suites, the full leak census, and the formatter corpus pass.
 The feature census, Go vet, and source formatting pass.
 
