@@ -4204,7 +4204,7 @@ func TestWASMIndirectCallMixedScalarStringParam(t *testing.T) {
 // #4804 motivating case: a `sort_by`-style generic sort driven by a
 // string comparator passed as a fn-value, invoked through call_indirect
 // in a loop. This is the exact shape #4802's mangler follow-up wanted to
-// collapse std/sort's monomorphic string sorts into — blocked on wasm
+// collapse the monomorphic string sorts into — blocked on wasm
 // until the string-param seam here. Single-file (the import-mangling half
 // is #4802); this pins the codegen half runs correctly end-to-end.
 func TestWASMStringComparatorSort(t *testing.T) {

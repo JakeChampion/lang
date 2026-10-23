@@ -3014,7 +3014,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	// read_dir(path): Result[string[], IoError] — list the
 	// non-recursive children of `path`. Entries are base names
-	// (no leading directory), unsorted. Use `std/sort` on the
+	// (no leading directory), unsorted. Use `cmp.sort` on the
 	// result if a deterministic order matters.
 	//
 	// Entries come back as `string`, so this inherits the

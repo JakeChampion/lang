@@ -3100,7 +3100,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       maps = maps.append(rm.map);
       srcs = srcs.append(rm.src);
       // Identity is the FILE, not its basename: two modules can share a
-      // basename (`std/sort` and `coreutils/sort`) and the bundler has
+      // basename (`std/test` and `coreutils/test`) and the bundler has
       // to tell them apart to give each its own prefix (#9762).
       m = flatten.resolve_imports(m, mdir, root);
       loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: flatten.module_ident(mpath), mod: m });

@@ -19,6 +19,7 @@ import (
 // check holds.
 const arrayCallbackVerbsProgram = `
 import "std/array";
+import "core/cmp";
 
 function dup(x: i32): i32[] { return [x, x]; }
 function maxi(a: i32, b: i32): i32 { if (a > b) { return a; } return b; }
@@ -55,15 +56,14 @@ function main(): i32 {
         None => {}
     }
 
-    // sort_by: comparator-driven stable sort, ascending and descending.
-    // (The std/array xs.sort_by(cmp) method delegates to std/sort's generic
-    // sort_by; the free function lives in std/sort, not std/array -- #5348.)
-    let sa: i32[] = [3, 1, 2].sort_by(asc);
+    // core/cmp's sort_by: comparator-driven stable sort, ascending and
+    // descending.
+    let sa: i32[] = cmp.sort_by([3, 1, 2], asc);
     if (sa[0] != 1 || sa[1] != 2 || sa[2] != 3) { return 11; }
-    let sd: i32[] = [3, 1, 2].sort_by(desc);
+    let sd: i32[] = cmp.sort_by([3, 1, 2], desc);
     if (sd[0] != 3 || sd[1] != 2 || sd[2] != 1) { return 12; }
     // sort_by leaves an already-sorted run alone and handles duplicates.
-    let sdup: i32[] = [2, 1, 2, 1].sort_by(asc);
+    let sdup: i32[] = cmp.sort_by([2, 1, 2, 1], asc);
     if (sdup[0] != 1 || sdup[1] != 1 || sdup[2] != 2 || sdup[3] != 2) { return 13; }
 
     return 0;

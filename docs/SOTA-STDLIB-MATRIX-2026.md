@@ -264,9 +264,9 @@ stdlib breadth (`STDLIB-ROADMAP.md`'s territory), not algorithmic progress.
 
 | # | Primitive | Site | Today | Target | Verdict | Phase |
 | --- | --- | --- | --- | --- | --- | --- |
-| 45 | `sort` (unstable) | `core/cmp` | Absent — stable sort is the only option | pdqsort | GAP | 1 |
+| 45 | `sort` (unstable) | `core/cmp` | **Heapsort** — `sort_in_place` and its siblings, O(n log n), in the owned buffer | pdqsort | GAP | 1 |
 | 46 | `stable_sort` | `core/cmp` | **Adaptive natural-run merge** | Timsort | **SHIPPED** (MIN_RUN + galloping open) | 1 |
-| 47 | Integer sort | `std/sort` | **Insertion sort, O(n²)**, on the in-place `i32[]` path | Radix / American flag | **GAP — biggest sort win** | 1 |
+| 47 | Integer sort | `core/cmp` | Comparison sort only | Radix / American flag | **GAP — biggest sort win** | 1 |
 | 48 | Tiny sort (network) | — | Absent | Sorting network | KERNEL — but scalar networks rarely pay, so the input-vs-needle question comes first | 5 |
 | 49 | Tiny sort (insertion) | `core/cmp` | **Insertion below 32** | Insertion below ~24 | **SHIPPED** | — |
 | 50 | Parallel sort | — | Absent | PPQSort / parallel pdqsort | N/A:no-threads | 6 |
@@ -275,19 +275,14 @@ stdlib breadth (`STDLIB-ROADMAP.md`'s territory), not algorithmic progress.
 | 53 | `top_k` | — | Absent | Heap / quickselect hybrid | GAP — needs #162 | 3 |
 | 54 | `median` | `std/array` | Full sort then index | Quickselect | GAP — falls out of #52 | 1 |
 
-`std/sort`'s `sort_by`, `sort_by_i32_key` and `sort_key` still have the old
-fixed bottom-up shape and did not get the adaptive treatment `core/cmp.sort`
-did — that is the cheapest row in this section and it is pure code motion.
+`core/cmp.sort_by_key` still has the old fixed bottom-up shape and did not get
+the adaptive treatment `sort` and `sort_by` did — that is the cheapest row in
+this section and it is pure code motion.
 
-**Row 47 is the one with real headroom, and it is worse than "comparison
-sort".** `std/sort`'s `sort_i32_inplace_asc` / `_desc` are **plain insertion
-sorts** — O(n²), no cutoff, no run detection — over data whose keys are 32-bit
-integers. They exist to dogfood `own` consuming parameters, which they do well,
-but nothing about that requires the quadratic body. An LSD radix sort is O(n·k)
-with no comparisons at all; even routing these through the adaptive
-`core/cmp.sort` that already exists would be a large improvement for anything
-past a few dozen elements. Unblocked, no compiler work, and `i32[]` sorting is
-common enough to deserve the specialised path.
+**Row 47 is the one with real headroom.** Every integer sort is a comparison
+sort: the adaptive merge, or the heapsort behind the `_in_place` family. An LSD
+radix sort is O(n·k) with no comparisons at all. Unblocked, no compiler work,
+and `i32[]` sorting is common enough to deserve the specialised path.
 
 **Row 45 deserves care about the framing.** "pdqsort because Rust uses it" is
 not sufficient here: Fern's sort is *stable*, and stability is an observable
@@ -750,7 +745,7 @@ without a measurement is a guess**, and the ones below are marked accordingly.
 | Reverse search budget | Linear in haystack | `std/string` | Structural: bounds the naive scan before the O(n) copy |
 | Hash block size | 4 bytes | `core/map` | Limited by the absence of an 8-byte load (#6200) |
 | Digit-pair table | 2 digits | `core/int` | Measured: 0.721 s → 0.463 s on 4M conversions |
-| **Radix vs comparison sort** | **unset** | `std/sort` | Row 47 — needs measuring, expect n ≈ 64–256 |
+| **Radix vs comparison sort** | **unset** | `core/cmp` | Row 47 — needs measuring, expect n ≈ 64–256 |
 | **SWAR group probe width** | **unset** | `core/map` | Row 33 — 8 slots per 64-bit word is the natural unit |
 | **Karatsuba crossover** | **n/a** | — | No bigint type |
 

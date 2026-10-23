@@ -458,6 +458,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"string_slice_extract", langSrcAbs(t, "tests/stdlib/string_slice_extract_test.fern"), ""},
 		{"string_classify_transform", langSrcAbs(t, "tests/stdlib/string_classify_transform_test.fern"), ""},
 		{"sort_by_and_ci", langSrcAbs(t, "tests/stdlib/sort_by_and_ci_test.fern"), ""},
+		{"sort_family", langSrcAbs(t, "tests/stdlib/sort_family_test.fern"), ""},
 		{"option_combinators", langSrcAbs(t, "tests/stdlib/option_combinators_test.fern"), ""},
 		{"result_combinators", langSrcAbs(t, "tests/stdlib/result_combinators_test.fern"), ""},
 		// rc_struct_drop releases a struct's rc-array fields at scope exit (a

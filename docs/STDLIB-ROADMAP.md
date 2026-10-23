@@ -288,49 +288,27 @@ already exist (Fern's `print` is the println variant — appends
 a newline). `copy(reader, writer)` deferred — needs a real
 Reader/Writer plumbing decision.
 
-### 10. Generic `sort_by(cmp)` + `sort_key(fn)` · medium · ☑
+### 10. Generic `sort_by(cmp)` + `sort_by_key(fn)` · medium · ☑
 
-**Surface**: `sort_by[T](xs: T[], cmp: fn(T, T) i32)`,
-`sort_key[T, K](xs, fn(T) K)` where `K` is `Ord`.
+**Surface**: one family in core/cmp — `sort[T: Ord]` / `sort_desc`,
+`sort_by[T](xs, order: (T, T) => i32)`, `sort_by_key[T, K: Ord](xs, key)`,
+and `is_sorted_by`. Each returns a new, stably sorted array (an adaptive
+natural-run merge sort); each has an `_in_place` twin that takes the array
+`own` and heapsorts it in its own buffer, allocating nothing and not stable.
+Case-insensitive order is `cmp.sort_by(xs, f)` with `f` calling std/string's
+`a.cmp_ignore_ascii_case(b)`.
 
-**Why**: Current sort is `i32`-only; struct-array sort is
-the common case.
+**Why**: struct-array sort is the common case, and one family replaces the
+seven spellings std/sort, std/array and core/cmp used to share (#12722).
 
-**Inspiration**: Go `sort.Slice`, Rust `sort_by`.
+**Inspiration**: Go `sort.Slice`, Rust `sort_by` / `sort_by_key` /
+`sort_unstable`.
 
-**Notes**: `sort_by[T](xs, cmp)` (comparator-driven, stable
-insertion sort) shipped in `std/array.fern` (#2689), free +
-receiver-method forms. `sort_key[T, K: cmp.Ord](xs, key)` has now
-landed in `std/sort.fern` — the generic-key Schwartzian sort
-(sibling of the i32-pinned `sort_by_i32_key`), dispatching the
-order through `key.cmp(...)` so any `Ord` key (`string`, `u64`, a
-`@derive(Ord)` type) works. Landing it self-host-first surfaced —
-and fixed — two monomorphiser gaps: a type param appearing ONLY in
-a fn-param's return (`key: (T) => K`) was never bound (template
-silently dropped → link error), and an UNBOUNDED element param
-surviving in the return type (`T[]`) left callers unable to recover
-the element type for dispatch. Deprecating `sort_i32_asc/desc` in
-favor of the `Ord`-bound generic remains open.
-**Status**: every non-consuming sort (generic `sort_by` /
-`core/cmp.sort[T: Ord]` and the monomorphic `sort_i32_*` /
-`sort_i64_*` / `sort_u32/u64_*` / `sort_strings_*` families) is now a
-stable bottom-up merge sort, O(n log n) (see
-`docs/LANGUAGE-REVIEW-2026-07.md` Part VIII item 7, which flagged the
-O(n²) insertion sorts). Insertion sort survives only in the `fip`
-`sort_i32_inplace_*` variants, which cannot allocate merge scratch by
-definition. The scalar entry points stay monomorphic for the direct
-`<`/`>` hot-loop compare; the string sorts are monomorphic only for a
-wasm-codegen reason. All three original enablers have landed (modload
-rewrites module-local comparator references from arg positions /
-lambda bodies, #4802; the `call_indirect` seam accepts two-slot
-`string` params, #4804; the `__fern_box_free` funcidx collision is
-fixed, #4816), and a `sort_by[string]` instantiation now compiles +
-runs standalone — but delegating the three string sorts to `sort_by`
-still makes `prop_sort_strings` fail `-target wasm32-wasi` validation (a
-separate two-slot-`string` value-flow defect surfaced only through the
-mangled-module delegation, #4829). They become `sort_by` delegations
-once #4829 closes; the planned deprecation in favor of the `Ord`-bound
-generic remains open.
+**Notes**: `sort_by_key` computes each key once into a parallel array that
+merge-sorts in lockstep. Landing it self-host-first fixed two monomorphiser
+gaps: a type param appearing ONLY in a fn-param's return (`key: (T) => K`)
+was never bound, and an UNBOUNDED element param surviving in the return type
+(`T[]`) left callers unable to recover the element type for dispatch.
 
 ### 11. Time primitives · medium · ☐
 
@@ -616,11 +594,9 @@ think they're free additions to make.
 - **Case-insensitive prefix/suffix**: `s.starts_with_ci(p)`
   / `s.ends_with_ci(s)`. Pairs with the `_ci` search
   variants from bundle 9.
-- **String sort**: `sort_strings_asc(arr)` /
-  `sort_strings_desc(arr)`. Insertion-sort, like the i32
-  variants. Backed by a new `string_cmp(a, b)` three-way
-  comparator since Fern's `<` / `>` operators are
-  numerics-only.
+- **String sort**: now `cmp.sort` / `cmp.sort_desc` over
+  `Ord for string`, whose `a.cmp(b)` is the three-way
+  comparator.
 - **String splitn**: `s.splitn(sep, n)` caps the result at
   n pieces; the last piece carries the unsplit tail. Useful
   for "first token, rest" parsing (HTTP request lines,
@@ -635,8 +611,8 @@ think they're free additions to make.
   size-byte pieces; last piece may be short. size <= 0
   returns `[s]`. Useful for base64 line-wrapping, hex-dump
   formatting.
-- **Case-insensitive string ops**: `string_cmp_ci(a, b)` /
-  `sort_strings_asc_ci(arr)`. Per-byte fold on the
+- **Case-insensitive string ops**: `a.cmp_ignore_ascii_case(b)`,
+  for a case-insensitive `cmp.sort_by`. Per-byte fold on the
   comparison.
 - **i32 radix sugar**: `(n).to_binary()` / `(n).to_oct()`.
 - **i32 bit accessors**: `(n).bit(i)` / `set_bit(i)` /

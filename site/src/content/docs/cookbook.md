@@ -142,14 +142,14 @@ result back, as above.
 ## Sort and de-duplicate
 
 ```fern
-import "std/sort";
+import "core/cmp";
 import "std/set";
 import "std/string";
 
 function main(): i32 {
     let names: string[] = ["elm", "ash", "elm", "beech"];
     let unique: string[] = set.set_of(names).to_array();
-    let sorted: string[] = sort.sort_by(unique, sort.string_cmp);
+    let sorted: string[] = cmp.sort(unique);
     print(sorted.join(", "));   // ash, beech, elm
     return 0;
 }

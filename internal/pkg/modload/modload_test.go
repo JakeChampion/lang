@@ -1401,7 +1401,6 @@ func TestCheckStdlibToStdlibMethodsVisibleAcrossModules(t *testing.T) {
 import "std/array";
 import "std/i32";
 import "std/string";
-import "std/sort";
 function main(): i32 {
     let xs: i32[] = [0 - 3, 4, 0 - 1];
     let ys = xs.abs_each();

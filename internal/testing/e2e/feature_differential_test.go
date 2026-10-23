@@ -675,9 +675,10 @@ function main(): i32 {
 }`},
 	{"stdlib_array_combinators", `import "std/i32";
 import "std/array";
+import "core/cmp";
 function main(): i32 {
     let xs: i32[] = [5, 2, 8, 1, 9, 3];
-    let s = xs.sorted_asc();
+    let s = cmp.sort(xs);
     print((s[0] as i32).to_string());
     print((s[5] as i32).to_string());
     print(xs.sum().to_string());

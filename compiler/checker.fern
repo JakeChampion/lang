@@ -4952,8 +4952,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
           // flows into it — this is what lets a concrete array
           // argument satisfy a generic array parameter, e.g.
           // `sort_by(arr, cmp)` with `arr: string[]` against
-          // `sort_by[T](arr: T[], …)` (std/sort delegating its
-          // string sorts to the generic comparator form — #4829).
+          // `sort_by[T](arr: T[], …)` (core/cmp's comparator sort; #4829).
           // (Scalar `unknown` is NOT treated as a wildcard — a
           // genuinely unresolved value should still surface its
           // assignment error, e.g. `let s: string = badcall()`.)

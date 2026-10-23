@@ -161,12 +161,12 @@ against this file.
 | MIN_RUN extension | Not done — blocked, see below | Timsort's short-run extension | BLOCKED (self-host IR gap) |
 | Galloping merge | None | Timsort's galloping mode | GAP |
 | Integer sort | Comparison sort | Radix / American flag | GAP |
-| `sort_by` | Merge sort over a comparator | Same adaptive treatment as `cmp.sort` | GAP |
-| Unstable sort | None — `sort` is the only option | pdqsort | GAP |
+| `sort_by` | Adaptive natural-run merge over a comparator | Same adaptive treatment as `cmp.sort` | **DONE** |
+| Unstable sort | Heapsort (`cmp.sort_in_place` and siblings) | pdqsort | GAP |
 | Tiny fixed-size sort | None | Sorting networks | BLOCKED (wants SIMD to pay off) |
 
-`sort_by` (in `std/sort`) still has the old fixed bottom-up shape and deserves
-the same treatment; it was left alone here to keep the change reviewable.
+`cmp.sort_by_key` still has the old fixed bottom-up shape and deserves the same
+treatment.
 
 ### Hash tables and hashing
 

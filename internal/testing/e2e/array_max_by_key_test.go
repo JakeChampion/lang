@@ -10,7 +10,7 @@ import (
 // std/array's projection-extremum verbs `max_by_i32_key[T](xs, key) -> Option[T]`
 // and `min_by_i32_key` — the element whose i32 `key(x)` projection is largest /
 // smallest (#4416 roadmap #10, the "which record has the max timestamp" case).
-// The projection sibling of `sort_by_i32_key`; the closure over a generic `T[]`
+// The projection sibling of `cmp.sort_by_key`; the closure over a generic `T[]`
 // lowers on every native backend and the self-host IR path (same shape as
 // `find` / `sort_by`). Empty -> None; ties keep the FIRST extremum.
 //
