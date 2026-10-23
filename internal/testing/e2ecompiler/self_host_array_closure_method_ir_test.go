@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Closure-taking generic array methods (`xs.reduce(f)` / `xs.sort_by(cmp)` /
+// Closure-taking generic array methods (`xs.reduce(f)` /
 // `xs.filter(pred)` and `any` / `all` / `find`) lower on the self-host IR path
 // (array-method monomorphisation, slice 3). The slice-1/2 path folded only
 // closure-free array methods (concat); these carry a closure ("fn") parameter,
@@ -31,9 +31,6 @@ var arrayClosureMethodIRCases = []struct {
 	// reduce: seedless left fold returning Option[T].
 	{"reduce", `import "std/array";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4]; match (xs.reduce((a: i32, b: i32): i32 => { return a + b; })) { Some(v) => { return v; }, None => { return 0; } } }`},
-	// sort_by: comparator-driven sort, read back as a scalar.
-	{"sort_by", `import "std/array";
-function main(): i32 { let xs: i32[] = [3, 1, 2]; let s: i32[] = xs.sort_by((a: i32, b: i32): i32 => { return a - b; }); return s[0] * 100 + s[1] * 10 + s[2]; }`},
 	// filter: predicate keep, reduced to a scalar.
 	{"filter", `import "std/array";
 function main(): i32 { let xs: i32[] = [1, 2, 3, 4, 5, 6]; let e: i32[] = xs.filter((n: i32): boolean => { return n % 2 == 0; }); return e.len() * 100 + e[0] * 10 + e[2]; }`},

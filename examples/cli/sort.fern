@@ -10,14 +10,18 @@
 //   banana
 //   cherry
 //
-// Showcases: core/cmp's generic `sort`, std/sort's case-insensitive
-// `sort_strings_asc_ci`, and post-sort dedupe.
+// Showcases: core/cmp's generic `sort`, a case-insensitive `cmp.sort_by`
+// over std/string's `cmp_ignore_ascii_case`, and post-sort dedupe.
 import "std/string";
 import "std/i32";
 import "std/io";
-import "std/sort";
 import "core/cmp";
 import "std/array";
+
+// fold_order compares two lines with ASCII case folded.
+function fold_order(a: string, b: string): i32 {
+  return a.cmp_ignore_ascii_case(b);
+}
 
 struct Opts { reverse: boolean, numeric: boolean, uniq: boolean, fold: boolean }
 
@@ -109,7 +113,7 @@ function main(): i32 {
     }
     sorted = lines;
   } else if (o.fold) {
-    sorted = sort.sort_strings_asc_ci(lines);
+    sorted = cmp.sort_by(lines, fold_order);
   } else {
     sorted = cmp.sort(lines);
   }

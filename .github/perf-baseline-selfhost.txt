@@ -121,6 +121,11 @@
 # and int_loop (+2 lines), which carry a token's null test on an exit edge.
 # Values are the selfhost-perf-x86_64 lane's measurement of the branch.
 
+# Re-pinned 2026-10-23 (#13050) on sort_inplace (x86-64 1179 -> 1343, arm64
+# 1382 -> 1565, wasm 757 -> 1088): the benchmark runs `cmp.sort_in_place`, a
+# heapsort, in place of std/sort's deleted i32 insertion sort. Values are a
+# local perf-bench-selfhost run of the branch.
+
 # 2026-10-11 — the 35 wasm32-wasi rows re-pinned where the IR optimiser began
 # removing stores to slots nothing reads (#12106): the wasm corpus falls
 # 174,255 -> 158,352 (-9.1%), every row by 1.8-15.8%, measured against main at
@@ -161,7 +166,7 @@ selfhost/arm64-linux/ordmap_insert.emit	3184
 selfhost/arm64-linux/pmap_insert.emit	2899
 selfhost/arm64-linux/pvec_with.emit	3024
 selfhost/arm64-linux/record_update.emit	1578
-selfhost/arm64-linux/sort_inplace.emit	1382
+selfhost/arm64-linux/sort_inplace.emit	1565
 selfhost/arm64-linux/sort_ints.emit	1937
 selfhost/arm64-linux/sort_strings.emit	2847
 selfhost/arm64-linux/string_build.emit	1653
@@ -191,7 +196,7 @@ selfhost/wasm32-wasi/ordmap_insert.emit	7208
 selfhost/wasm32-wasi/pmap_insert.emit	3061
 selfhost/wasm32-wasi/pvec_with.emit	2768
 selfhost/wasm32-wasi/record_update.emit	729
-selfhost/wasm32-wasi/sort_inplace.emit	757
+selfhost/wasm32-wasi/sort_inplace.emit	1088
 selfhost/wasm32-wasi/sort_ints.emit	2189
 selfhost/wasm32-wasi/sort_strings.emit	3140
 selfhost/wasm32-wasi/string_build.emit	1107
@@ -221,7 +226,7 @@ selfhost/x86-64-linux/ordmap_insert.emit	2808
 selfhost/x86-64-linux/pmap_insert.emit	2611
 selfhost/x86-64-linux/pvec_with.emit	2762
 selfhost/x86-64-linux/record_update.emit	1390
-selfhost/x86-64-linux/sort_inplace.emit	1179
+selfhost/x86-64-linux/sort_inplace.emit	1343
 selfhost/x86-64-linux/sort_ints.emit	1656
 selfhost/x86-64-linux/sort_strings.emit	2550
 selfhost/x86-64-linux/string_build.emit	1364

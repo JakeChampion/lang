@@ -1,10 +1,11 @@
 import "std/test";
 import "std/array";
+import "core/cmp";
 
 // tests/stdlib/array_hof_test.fern — pure-Fern coverage of the std/array
 // higher-order combinators NOT already covered by array_combinators_test
 // (which does map / filter / fold / any / all / find): flat_map, reduce
-// (→ Option[T]), and sort_by (a comparator closure). All are generic over the
+// (→ Option[T]), and core/cmp's sort_by (a comparator closure). All are generic over the
 // element type with closure args — the same generic-method-on-array + closure
 // shape that lowers through the self-host IR. The Go-side suite unit-tests
 // these; this is the migration-shaped (pure-Fern, std/test-driven,
@@ -77,13 +78,13 @@ function test_reduce_max(): test.TestOutcome {
 
 function test_sort_by_asc(): test.TestOutcome {
   let xs: i32[] = [3, 1, 2, 5, 4];
-  let out = xs.sort_by((a: i32, b: i32): i32 => a - b);
+  let out = cmp.sort_by(xs, (a: i32, b: i32): i32 => a - b);
   return test.assert_eq_array(out, [1, 2, 3, 4, 5]);
 }
 
 function test_sort_by_desc(): test.TestOutcome {
   let xs: i32[] = [3, 1, 2, 5, 4];
-  let out = xs.sort_by((a: i32, b: i32): i32 => b - a);
+  let out = cmp.sort_by(xs, (a: i32, b: i32): i32 => b - a);
   return test.assert_eq_array(out, [5, 4, 3, 2, 1]);
 }
 

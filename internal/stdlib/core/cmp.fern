@@ -35,7 +35,7 @@ pub trait Eq {
 }
 
 // `cmp(a, b)` returns -1 when a < b, 0 when equal, 1 when a > b — the
-// same shape std/sort's comparators use, so an `Ord` type drops
+// same shape `sort_by`'s comparators have, so an `Ord` type drops
 // straight into a sort.
 pub trait Ord {
   function cmp(self: Self, other: Self): i32;
@@ -958,32 +958,402 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
   return a;
 }
 
+// ---- Sorting ----------------------------------------------------
+// One family: `sort` / `sort_desc` for an `Ord` element, `sort_by` for a
+// comparator, `sort_by_key` for an `Ord` projection. Each returns a new, stably
+// sorted array; each `_in_place` twin sorts an owned array in its own buffer
+// instead, allocating nothing and not stable.
+
 // sort returns a new array with `arr`'s elements in non-decreasing `Ord` order.
-// Generic over any `T: Ord` (incl. `@derive(Ord)` types) — the type-erased,
-// any-`Ord`-element replacement for std/sort's retired per-width `sort_i32_asc`
-// / `sort_i64_asc` / `sort_u32_asc` / `sort_f64_asc` / `sort_strings_asc` family
-// (#5397). The `T: Ord` bound monomorphises the `.cmp` compare per element type
-// on the self-host IR path — an `i32` element lowers to the scalar three-way, a
-// `u32` to the unsigned compare, a `string` to the lexicographic byte compare —
-// so a single body gives every width the direct scalar/dedicated compare the
-// family used to spell by hand.
+// The `T: Ord` bound monomorphises `.cmp` per element type, so an `i32` sorts
+// with the scalar three-way compare and a `string` with the byte compare, with
+// no comparator call.
 //
 // STABLE: equal elements keep their input order. Adaptive natural-run merge
 // sort — O(n) on sorted or reverse-sorted input, O(n log n) worst case. See
 // __cmp_sort_adaptive for the shape and docs/SOTA-STDLIB-BLUEPRINT.md for where
-// it sits against the state of the art (pdqsort for an unstable sibling, and a
-// radix path for integer keys, are both still open).
+// it sits against the state of the art (a radix path for integer keys is still
+// open).
 pub function sort[T: Ord](arr: T[]): T[] {
   return __cmp_sort_adaptive(arr, false);
 }
 
-// sort_desc is `sort`'s descending mirror: a new array with `arr`'s elements in
-// non-increasing `Ord` order. The generic home for the retired per-width
-// descending sorts (`sort_i32_desc` / `sort_i64_desc` / `sort_f64_desc` /
-// `sort_strings_desc`, #5397). Stable on ties, same adaptive shape as `sort` —
-// the two differ only in the sign of the three-way compare.
+// sort_desc is `sort` in non-increasing order: stable, the same adaptive merge
+// with the sign of the compare flipped.
 pub function sort_desc[T: Ord](arr: T[]): T[] {
   return __cmp_sort_adaptive(arr, true);
+}
+
+// sort_by returns a new array with `arr`'s elements ordered by `order(a, b)`,
+// which is < 0 when a comes first, > 0 when b does, 0 when they tie — the
+// shape `Ord.cmp` has, so `sort_by(xs, f)` with `f` calling `.cmp` is `sort`.
+// For any element type, without an `Ord` bound: reverse order, a custom
+// relation, a case-insensitive string order.
+//
+// STABLE and ADAPTIVE, the comparator sibling of `sort`: a natural-run merge
+// sort, O(n) on sorted or reverse-sorted input, O(n log n) worst case.
+//
+//   n < 2   -> the input, untouched
+//   n <= 32 -> one insertion sort, no merging and no per-pass copy
+//   larger  -> detect natural runs, then merge adjacent runs in balanced rounds
+//
+// A descending run is detected with a STRICT compare before being reversed,
+// and a merge takes from the right run only when the left compares strictly
+// greater, so equal elements keep their order. Merging appends into a fresh
+// array, so no merge reads a slot it has already overwritten.
+pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
+  let n: i32 = arr.len();
+  if (n < 2) {
+    return arr;
+  }
+
+  // Own a copy: the descending-run reversal writes in place.
+  let a: T[] = [];
+  let c: i32 = 0;
+  while (c < n) {
+    a = a.append(arr[c]);
+    c = c + 1;
+  }
+
+  if (n <= 32) {
+    a = __cmp_insertion_by(a, 0, n, order);
+    return a;
+  }
+
+  // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
+  let bounds: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    bounds = bounds.append(i);
+    let e: i32 = i + 1;
+    if (e < n) {
+      if (order(a[i], a[e]) > 0) {
+        // Strictly descending: extend, then reverse into order.
+        let falling: boolean = true;
+        while (falling) {
+          e = e + 1;
+          falling = false;
+          if (e < n) {
+            if (order(a[e - 1], a[e]) > 0) {
+              falling = true;
+            }
+          }
+        }
+        let lo: i32 = i;
+        let hi: i32 = e - 1;
+        while (lo < hi) {
+          let t: T = a[lo];
+          a = a.with(lo, a[hi]);
+          a = a.with(hi, t);
+          lo = lo + 1;
+          hi = hi - 1;
+        }
+      } else {
+        let rising: boolean = true;
+        while (rising) {
+          e = e + 1;
+          rising = false;
+          if (e < n) {
+            if (order(a[e - 1], a[e]) <= 0) {
+              rising = true;
+            }
+          }
+        }
+      }
+    }
+    i = e;
+  }
+  bounds = bounds.append(n);
+
+  // Pass 2 — merge adjacent runs in rounds until one remains. Each round
+  // rebuilds the array by appending merged segments, so the output never
+  // aliases the input it is reading.
+  while (bounds.len() > 2) {
+    let out: T[] = [];
+    let next: i32[] = [];
+    let r: i32 = 0;
+    while (r + 1 < bounds.len()) {
+      let mlo: i32 = bounds[r];
+      next = next.append(mlo);
+      if (r + 2 < bounds.len()) {
+        let mmid: i32 = bounds[r + 1];
+        let mhi: i32 = bounds[r + 2];
+        let p: i32 = mlo;
+        let q: i32 = mmid;
+        while (p < mmid && q < mhi) {
+          if (order(a[p], a[q]) > 0) {
+            out = out.append(a[q]);
+            q = q + 1;
+          } else {
+            out = out.append(a[p]);
+            p = p + 1;
+          }
+        }
+        while (p < mmid) {
+          out = out.append(a[p]);
+          p = p + 1;
+        }
+        while (q < mhi) {
+          out = out.append(a[q]);
+          q = q + 1;
+        }
+        r = r + 2;
+      } else {
+        // Odd run out: carry it forward untouched.
+        let mend: i32 = bounds[r + 1];
+        let mk: i32 = mlo;
+        while (mk < mend) {
+          out = out.append(a[mk]);
+          mk = mk + 1;
+        }
+        r = r + 1;
+      }
+    }
+    next = next.append(n);
+    a = out;
+    bounds = next;
+  }
+  return a;
+}
+
+// __cmp_insertion_by insertion-sorts `a[lo:hi]` in
+// place under the comparator, returning the array.
+//
+// The base case for `sort_by`. Insertion sort wins decisively on short spans:
+// no allocation, sequential access, and a nearly-sorted span costs close to a
+// single pass — which is why every serious merge sort dispatches to one below a
+// size threshold rather than merging all the way down.
+//
+// The shift loop stops on a NON-positive compare, so equal elements never move
+// past each other: insertion is stable, and therefore so is `sort_by`.
+//
+// The array is `own` so the writes land in the caller's buffer, which the
+// caller moves in as `a = __cmp_insertion_by(a, ...)`; a borrowed array
+// would be copied whole on the first `.with`, once per call.
+function __cmp_insertion_by[T](own a: T[], lo: i32, hi: i32, order: (T, T) => i32): T[] {
+  let i: i32 = lo + 1;
+  while (i < hi) {
+    let v: T = a[i];
+    let j: i32 = i - 1;
+    let moving: boolean = j >= lo;
+    while (moving) {
+      if (order(a[j], v) > 0) {
+        a = a.with(j + 1, a[j]);
+        j = j - 1;
+        moving = j >= lo;
+      } else {
+        moving = false;
+      }
+    }
+    a = a.with(j + 1, v);
+    i = i + 1;
+  }
+  return a;
+}
+
+// is_sorted_by reports whether `arr` is in non-decreasing order under
+// `order`: no adjacent pair where the later sorts strictly before the earlier.
+pub function is_sorted_by[T](arr: T[], order: (T, T) => i32): boolean {
+  let i: i32 = 1;
+  let n: i32 = arr.len();
+  while (i < n) {
+    if (order(arr[i], arr[i - 1]) < 0) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// sort_by_key returns a new array with `arr`'s elements in ascending order of
+// `key(x)`, for any `Ord` key: records by a `string` name, a `u64` id, a
+// `@derive(Ord)` composite. Each key is computed once, into a parallel array
+// that merge-sorts in lockstep with the elements, so a costly projection is not
+// recomputed O(n log n) times. Stable: the merge takes from the right run only
+// when its key compares strictly less.
+pub function sort_by_key[T, K: Ord](arr: T[], key: (T) => K): T[] {
+  let srcv: T[] = arr;
+  let srck: K[] = [];
+  for x in srcv {
+    srck = srck.append(key(x));
+  }
+  let n: i32 = srcv.len();
+  if (n < 2) {
+    return srcv;
+  }
+  let width: i32 = 1;
+  while (width < n) {
+    let dstv: T[] = [];
+    let dstk: K[] = [];
+    let c: i32 = 0;
+    while (c < n) {
+      dstv = dstv.append(srcv[c]);
+      dstk = dstk.append(srck[c]);
+      c = c + 1;
+    }
+    let lo: i32 = 0;
+    while (lo < n) {
+      let mid: i32 = lo + width;
+      if (mid > n) {
+        mid = n;
+      }
+      let hi: i32 = lo + width + width;
+      if (hi > n) {
+        hi = n;
+      }
+      let i: i32 = lo;
+      let j: i32 = mid;
+      let k: i32 = lo;
+      while (i < mid && j < hi) {
+        if (srck[j].cmp(srck[i]) < 0) {
+          dstv = dstv.with(k, srcv[j]);
+          dstk = dstk.with(k, srck[j]);
+          j = j + 1;
+        } else {
+          dstv = dstv.with(k, srcv[i]);
+          dstk = dstk.with(k, srck[i]);
+          i = i + 1;
+        }
+        k = k + 1;
+      }
+      while (i < mid) {
+        dstv = dstv.with(k, srcv[i]);
+        dstk = dstk.with(k, srck[i]);
+        i = i + 1;
+        k = k + 1;
+      }
+      while (j < hi) {
+        dstv = dstv.with(k, srcv[j]);
+        dstk = dstk.with(k, srck[j]);
+        j = j + 1;
+        k = k + 1;
+      }
+      lo = lo + width + width;
+    }
+    srcv = dstv;
+    srck = dstk;
+    width = width + width;
+  }
+  return srcv;
+}
+
+// sort_in_place sorts `arr` ascending in its own buffer and returns it,
+// allocating nothing. A heapsort: O(n log n) on every input, and NOT stable,
+// so equal elements may change places; `sort` keeps them in order but
+// allocates the result.
+pub function sort_in_place[T: Ord](own arr: T[]): T[] {
+  return __cmp_heap_sort_ord(arr);
+}
+
+// sort_desc_in_place is `sort_in_place` in descending order.
+pub function sort_desc_in_place[T: Ord](own arr: T[]): T[] {
+  return __cmp_reverse_in_place(__cmp_heap_sort_ord(arr));
+}
+
+// sort_by_in_place is `sort_by` in `arr`'s own buffer: a heapsort under
+// `order`, allocating nothing and not stable.
+pub function sort_by_in_place[T](own arr: T[], order: (T, T) => i32): T[] {
+  return __cmp_heap_sort(arr, order);
+}
+
+// sort_by_key_in_place is `sort_by_key` in `arr`'s own buffer: a heapsort
+// comparing `key(a)` with `key(b)`, not stable. It allocates no output, only
+// the comparator closure, so each key is recomputed per comparison; when `key`
+// is costly, `sort_by_key` computes each one once.
+pub function sort_by_key_in_place[T, K: Ord](own arr: T[], key: (T) => K): T[] {
+  return __cmp_heap_sort(arr, (a: T, b: T): i32 => key(a).cmp(key(b)));
+}
+
+// __cmp_heap_sort_ord is __cmp_heap_sort under `T`'s own order. It calls `cmp`
+// directly because a comparator passed as a function value costs an indirect
+// call per comparison.
+function __cmp_heap_sort_ord[T: Ord](own a: T[]): T[] {
+  let n: i32 = a.len();
+  let start: i32 = n / 2 - 1;
+  while (start >= 0) {
+    a = __cmp_sift_down_ord(a, start, n);
+    start = start - 1;
+  }
+  let end: i32 = n - 1;
+  while (end > 0) {
+    let t: T = a[0];
+    a = a.with(0, a[end]);
+    a = a.with(end, t);
+    a = __cmp_sift_down_ord(a, 0, end);
+    end = end - 1;
+  }
+  return a;
+}
+
+function __cmp_sift_down_ord[T: Ord](own a: T[], root: i32, n: i32): T[] {
+  let r: i32 = root;
+  while (2 * r + 1 < n) {
+    let child: i32 = 2 * r + 1;
+    if (child + 1 < n && a[child].cmp(a[child + 1]) < 0) {
+      child = child + 1;
+    }
+    if (a[r].cmp(a[child]) >= 0) {
+      return a;
+    }
+    let t: T = a[r];
+    a = a.with(r, a[child]);
+    a = a.with(child, t);
+    r = child;
+  }
+  return a;
+}
+
+function __cmp_reverse_in_place[T](own a: T[]): T[] {
+  let i: i32 = 0;
+  let j: i32 = a.len() - 1;
+  while (i < j) {
+    let t: T = a[i];
+    a = a.with(i, a[j]);
+    a = a.with(j, t);
+    i = i + 1;
+    j = j - 1;
+  }
+  return a;
+}
+
+// __cmp_heap_sort heapsorts `a` under `order`: build a max-heap, then swap the
+// root to the end of the shrinking heap and sift the new root down.
+function __cmp_heap_sort[T](own a: T[], order: (T, T) => i32): T[] {
+  let n: i32 = a.len();
+  let start: i32 = n / 2 - 1;
+  while (start >= 0) {
+    a = __cmp_sift_down(a, start, n, order);
+    start = start - 1;
+  }
+  let end: i32 = n - 1;
+  while (end > 0) {
+    let t: T = a[0];
+    a = a.with(0, a[end]);
+    a = a.with(end, t);
+    a = __cmp_sift_down(a, 0, end, order);
+    end = end - 1;
+  }
+  return a;
+}
+
+// __cmp_sift_down moves `a[root]` down the heap `a[0..n)` until neither child
+// orders after it.
+function __cmp_sift_down[T](own a: T[], root: i32, n: i32, order: (T, T) => i32): T[] {
+  let r: i32 = root;
+  while (2 * r + 1 < n) {
+    let child: i32 = 2 * r + 1;
+    if (child + 1 < n && order(a[child], a[child + 1]) < 0) {
+      child = child + 1;
+    }
+    if (order(a[r], a[child]) >= 0) {
+      return a;
+    }
+    let t: T = a[r];
+    a = a.with(r, a[child]);
+    a = a.with(child, t);
+    r = child;
+  }
+  return a;
 }
 
 // ---- Eq-bounded sequence verbs ---------------------------------
@@ -1049,7 +1419,7 @@ pub function distinct[T: Eq](xs: T[]): T[] {
 // Display / Eq / Ord / Hash are empty: BigInt already carries `to_string`,
 // `eq`, `cmp` and `hash` with exactly these signatures, and an empty impl
 // adopts the existing method — the same shape as `impl Display for i32`.
-// `cmp` returns -1 / 0 / 1, so a BigInt[] drops straight into std/sort.
+// `cmp` returns -1 / 0 / 1, so a BigInt[] drops straight into `sort`.
 
 impl Display for bigint.BigInt {}
 

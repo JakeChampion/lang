@@ -7,7 +7,7 @@ import (
 
 // charMethodCases exercise std/i32's byte classifiers on a `u8` receiver
 // (to_ascii_lower/upper, is_ascii_digit/alpha/alnum/lower/upper/hex_digit),
-// the ones std/sort and std/string call now that `s[i]` yields u8 (#5629). A
+// the ones std/string calls now that `s[i]` yields u8 (#5629). A
 // fold returns a u8, so the cases that return one widen explicitly — Fern has
 // no implicit unsigned widening. Cross-checked vs Go.
 var charMethodCases = []struct {
@@ -42,15 +42,13 @@ func TestSelfHostCharMethodsX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostSortX86_64 proves the self-hosted compiler compiles the
-// real std/sort (which needed i32.to_lower) and the result sorts. Exercises
-// the `own`-consuming `sort_i32_inplace_asc` — one of std/sort's remaining
-// monomorphic sorts after the per-width family retired to core/cmp (#5397).
+// TestSelfHostSortX86_64 proves the self-hosted compiler compiles core/cmp's
+// `own`-consuming `sort_in_place` and the result sorts.
 func TestSelfHostSortX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	main := "import \"std/sort\";\n" +
-		"function main(): i32 { let r = sort.sort_i32_inplace_asc([5, 2, 8, 1, 9, 3]); return r[0] * 100 + r[5]; }\n"
+	main := "import \"core/cmp\";\n" +
+		"function main(): i32 { let r = cmp.sort_in_place([5, 2, 8, 1, 9, 3]); return r[0] * 100 + r[5]; }\n"
 	asm, progDir := compileSourceModload(t, runner, driverBin, main)
 	progBin := buildBin(t, gcc, progDir, "sortprog", asm)
 	var cmd *exec.Cmd
@@ -61,7 +59,7 @@ func TestSelfHostSortX86_64(t *testing.T) {
 	}
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 109 { // min 1 * 100 + max 9
-		t.Errorf("sort_i32_inplace_asc result exited %d, want 109 (min=1, max=9)", code)
+		t.Errorf("sort_in_place result exited %d, want 109 (min=1, max=9)", code)
 	}
 }
 
@@ -84,13 +82,13 @@ func TestSelfHostCharMethodsArm64(t *testing.T) {
 func TestSelfHostSortArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	_, x86runner, driverBin := buildModloadArm64DriverX86(t)
-	main := "import \"std/sort\";\n" +
-		"function main(): i32 { let r = sort.sort_i32_inplace_asc([5, 2, 8, 1, 9, 3]); return r[0] * 100 + r[5]; }\n"
+	main := "import \"core/cmp\";\n" +
+		"function main(): i32 { let r = cmp.sort_in_place([5, 2, 8, 1, 9, 3]); return r[0] * 100 + r[5]; }\n"
 	asm, progDir := compileSourceModload(t, x86runner, driverBin, main, "-target", "arm64-linux")
 	progBin := buildBin(t, arm64gcc, progDir, "sortprog", asm)
 	cmd := runArm64Bin(qemu, progBin)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 109 {
-		t.Errorf("sort_i32_inplace_asc result exited %d, want 109", code)
+		t.Errorf("sort_in_place result exited %d, want 109", code)
 	}
 }

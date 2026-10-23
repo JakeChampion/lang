@@ -1,22 +1,24 @@
-import "std/sort";
 import "std/string";
 import "core/cmp";
 
 // Property-based audit for string sorts on every compiled backend:
 // core/cmp's generic `sort` / `sort_desc` over `impl Ord for string` (the
-// retired sort_strings_asc / sort_strings_desc, #5397) plus std/sort's
-// sort_strings_asc_ci (which delegates to the generic sort_by merge sort
-// over string_cmp_ci). Deterministic generated corpus => identical inputs
-// everywhere. Asserted laws per trial:
-//   1. ordering    — asc is non-decreasing under string_cmp; desc is
+// retired sort_strings_asc / sort_strings_desc, #5397) plus a case-insensitive
+// `cmp.sort_by` over std/string's `cmp_ignore_ascii_case`. Deterministic
+// generated corpus => identical inputs everywhere. Asserted laws per trial:
+//   1. ordering    — asc is non-decreasing under `cmp`; desc is
 //                    non-increasing; ci is non-decreasing under
-//                    string_cmp_ci
+//                    `cmp_ignore_ascii_case`
 //   2. permutation — output lengths match and every input string is
 //                    findable in the output (multiset check via count)
 //   3. n < 2       — empty and singleton inputs round-trip through the
 //                    return-borrowed-param early-out (the RC-sensitive
 //                    path for pointer-element arrays)
 //   4. stability   — ci-equal keys keep input order
+
+function fold_order(a: string, b: string): i32 {
+    return a.cmp_ignore_ascii_case(b);
+}
 
 function lcg_next(state: i32): i32 {
     return ((state * 1103515245) + 12345) & 2147483647;
@@ -33,7 +35,7 @@ function count_of(xs: string[], target: string): i32 {
 function is_sorted_str(xs: string[]): boolean {
     let i: i32 = 1;
     while (i < xs.len()) {
-        if (sort.string_cmp(xs[i - 1], xs[i]) > 0) { return false; }
+        if (xs[i - 1].cmp(xs[i]) > 0) { return false; }
         i = i + 1;
     }
     return true;
@@ -42,7 +44,7 @@ function is_sorted_str(xs: string[]): boolean {
 function is_sorted_str_desc(xs: string[]): boolean {
     let i: i32 = 1;
     while (i < xs.len()) {
-        if (sort.string_cmp(xs[i - 1], xs[i]) < 0) { return false; }
+        if (xs[i - 1].cmp(xs[i]) < 0) { return false; }
         i = i + 1;
     }
     return true;
@@ -51,7 +53,7 @@ function is_sorted_str_desc(xs: string[]): boolean {
 function is_sorted_str_ci(xs: string[]): boolean {
     let i: i32 = 1;
     while (i < xs.len()) {
-        if (sort.string_cmp_ci(xs[i - 1], xs[i]) > 0) { return false; }
+        if (fold_order(xs[i - 1], xs[i]) > 0) { return false; }
         i = i + 1;
     }
     return true;
@@ -108,7 +110,7 @@ function main(): i32 {
             return 1;
         }
 
-        let ci: string[] = sort.sort_strings_asc_ci(arr);
+        let ci: string[] = cmp.sort_by(arr, fold_order);
         if (!is_sorted_str_ci(ci)) {
             print("ci ordering FAILED at trial " + trial.to_string());
             return 1;
@@ -142,7 +144,7 @@ function main(): i32 {
     }
 
     // ci stability: ci-equal keys keep input order.
-    let s: string[] = sort.sort_strings_asc_ci(["b", "A", "B", "a"]);
+    let s: string[] = cmp.sort_by(["b", "A", "B", "a"], fold_order);
     if (s[0] != "A" || s[1] != "a" || s[2] != "b" || s[3] != "B") {
         print("ci stability FAILED");
         return 1;

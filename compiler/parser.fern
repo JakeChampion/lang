@@ -139,7 +139,7 @@ pub struct TypeAlias { name: string, variants: string[], variant_args: string[],
 // `resolved` is the module IDENTITY the driver resolved `path` to — one
 // string per distinct FILE, where `path` is only what this module wrote.
 // Two modules can spell the same file differently (`./lib/gnu` and `./gnu`)
-// and two files can share a basename (`std/sort` and `coreutils/sort`), so
+// and two files can share a basename (`std/test` and `coreutils/test`), so
 // the basename is not an identity and flatten cannot recover one. Empty when
 // no loader filled it, which is every single-file driver. `line` and `col`
 // locate the declaration's first token: `import`, or the `pub` of a `pub use`.
@@ -12767,7 +12767,7 @@ pub function type_str_vars(ty: string, acc: string[]): string[] {
 // full_ret_binds unifies EVERY param of `fd` against its argument to bind
 // the type vars in `vars` — bounded AND unbounded alike. call_ret_type
 // uses it to recover an unbounded element param that survives the
-// bounded-only substitution (the `T` in `sort_key[T, K: Ord](xs, key):
+// bounded-only substitution (the `T` in `sort_by_key[T, K: Ord](xs, key):
 // T[]`, erased from fd.type_params). A fn-param's own return var is
 // bound from the lambda argument's return type (mirroring infer_inst).
 // lambda_param_types_of returns the DECLARED parameter types of a fn-typed
@@ -13514,9 +13514,9 @@ function decl_call_ret_type(funcs: MFns, fd: FuncDecl, args: ast.Expr[], env: ME
   }
   let rt: string = resolve_proj_in_type(subst_ty(fd.ret_type, fd.type_params, cts), funcs.impls);
   // The bounded-only substitution above can leave an UNBOUNDED type
-  // param in the return type — `sort_key[T, K: Ord](xs, key): T[]`
+  // param in the return type — `sort_by_key[T, K: Ord](xs, key): T[]`
   // erases T from fd.type_params, so `T[]` survives with T unresolved,
-  // and a caller (`let out = sort_key(strs, key)`) then can't recover
+  // and a caller (`let out = sort_by_key(strs, key)`) then can't recover
   // the element type for dispatch. Bind any residual var from the full
   // param unification and substitute.
   let rvars: string[] = type_str_vars(rt, []);
@@ -13529,7 +13529,7 @@ function decl_call_ret_type(funcs: MFns, fd: FuncDecl, args: ast.Expr[], env: ME
 // resolve_residual_ret substitutes the residual type VARS left in a call's
 // return type by unifying the whole parameter list against the arguments.
 // Shared by the two ways a var survives to the return: the PARTIALLY-erased
-// generic (`sort_key[T, K: Ord]`, where the bounded-only substitution leaves T)
+// generic (`sort_by_key[T, K: Ord]`, where the bounded-only substitution leaves T)
 // and the FULLY-erased one (`pick2[T]`, where type_params is empty but the
 // return type still names T). An unbindable var is left as itself, exactly as
 // before.

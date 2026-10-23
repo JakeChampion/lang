@@ -13,7 +13,7 @@ import (
 // (hardcoded exits), each case here is oracle-checked against the interpreter — the
 // interpreter resolves the same imports, so it's an apples-to-apples oracle for the
 // multi-module program. Covers the int-method modules (std/u32, std/u64, std/i64 →
-// core/int) plus more std/sort variants. x86-64 only
+// core/int) plus more sort variants. x86-64 only
 // (the loader driver takes argv file paths, so it can't run under the qemu runner —
 // mirrors TestSelfHostStdlibImport's gate).
 var stdlibModloadIRCases = []struct {

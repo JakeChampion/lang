@@ -20,6 +20,7 @@ import "std/string";
 import "std/array";
 import "std/io_buffered";
 import "std/errno";
+import "core/cmp";
 import "./gnu";
 import "./mode";
 import "./listing";
@@ -1222,7 +1223,7 @@ function walk_order(dir: string, entries: DirEntry[]): DirEntry[] {
       es = es.append(e);
     }
   }
-  return es.sort_by(dirent_cmp);
+  return cmp.sort_by(es, dirent_cmp);
 }
 
 // `made(st, dev, ino)` — this operand has already CREATED a destination

@@ -38,27 +38,25 @@ import "std/test";
 import "std/i32";
 import "std/i64";
 import "std/string";
-import "std/sort";
+import "core/cmp";
 
 // `size` is i64 because `stat` reports it that way — a file is allowed to
 // be bigger than 2 GB, and narrowing here to save a cast would be the tool
 // misreporting what it measured.
 struct Entry { name: string, size: i64, sum: i32 }
 
-// std/sort has no case-sensitive string sort — `sort_strings_asc_ci` folds
-// case, which would make "A.txt" and "a.txt" interchangeable in a file list
-// where they are two different files. `sort_by` with the module's own
-// `string_cmp` is the case-sensitive one.
+// `cmp.sort` orders by bytes, so "A.txt" and "a.txt" stay two different
+// files in the list rather than folding together.
 //
 // Sorting a string[] still leaks the sorted array itself: handing one back
-// through a borrowed param — which every `sort_by` delegation does — strands
-// the whole array, 16 elements plus the buffer per call. (The `.with` half of
-// this, #6407, is fixed; what is left is the return-through-param taint.)
-// Nothing here works around it — the tool wants sorted output and says so —
-// but a long-running watcher polling on a timer would grow, so the reference
-// belongs next to the call rather than in an issue nobody reads from here.
+// through a borrowed param strands the whole array, 16 elements plus the
+// buffer per call. (The `.with` half of this, #6407, is fixed; what is left is
+// the return-through-param taint.) Nothing here works around it — the tool
+// wants sorted output and says so — but a long-running watcher polling on a
+// timer would grow, so the reference belongs next to the call rather than in
+// an issue nobody reads from here.
 function sort_names(xs: string[]): string[] {
-  return sort.sort_by(xs, (a: string, b: string) => sort.string_cmp(a, b));
+  return cmp.sort(xs);
 }
 
 struct Changes { created: string[], modified: string[], deleted: string[] }

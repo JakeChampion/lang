@@ -696,7 +696,21 @@ func TestRunnerSortByAndCiExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/sort comparator + ci", "# pass 13", "# fail 0", "1..13"} {
+	for _, w := range []string{"# Suite: cmp comparator + ci sorts", "# pass 13", "# fail 0", "1..13"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+func TestRunnerSortFamilyExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/sort_family_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: cmp sort family", "# pass 12", "# fail 0", "1..12"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -3028,7 +3042,7 @@ func TestRunnerSortF64Example(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/sort f64", "# pass 5", "# fail 0", "1..5"} {
+	for _, w := range []string{"# Suite: cmp.sort f64", "# pass 5", "# fail 0", "1..5"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
