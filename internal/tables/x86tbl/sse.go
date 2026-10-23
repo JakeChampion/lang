@@ -146,6 +146,11 @@ var SSEOps = []SSEOp{
 	{"movdqa", 0x66, 0x6F, SSENoHalf},
 }
 
+// SSERegOnly is the rows whose source must be an xmm register. With a memory
+// source their opcode is another instruction: 0F 12 is movlps and 0F 16 is
+// movhps.
+var SSERegOnly = []string{"movhlps", "movlhps"}
+
 // SSEHalfOps is the rows of one half, in dispatch order.
 func SSEHalfOps(h SSEHalf) []SSEOp {
 	var out []SSEOp
