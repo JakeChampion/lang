@@ -1,5 +1,5 @@
 // std/regex capture edge cases: regex_captures_all over multiple matches,
-// non-capturing (?:...) groups, the (?i) flag, the no-match shape, an
+// non-capturing (?:...) groups, the (?i) flag, no match being None, an
 // empty-capable group participating with an empty span, a nullable star
 // body terminating, counted repetition of a group, and span parity between
 // regex_captures and regex_search. Each check sets a bit; all eight
@@ -14,49 +14,75 @@ function main(): i32 {
     r = r + 1;
   }
 
-  let nc: regex.RCaps = regex.regex_captures("(?:ab)+(c)", "ababc");
+  let nc: regex.RCaps = require_caps(regex.regex_captures("(?:ab)+(c)", "ababc"));
   if (nc.group_count() == 1 && require_regex_text(nc.group(0)) == "ababc" && require_regex_text(nc.group(1)) == "c") {
     r = r + 2;
   }
 
-  let ci: regex.RCaps = regex.regex_captures("(?i)(HEL+O)", "say hello");
+  let ci: regex.RCaps = require_caps(regex.regex_captures("(?i)(HEL+O)", "say hello"));
   if (require_regex_text(ci.group(1)) == "hello") {
     r = r + 4;
   }
 
-  let nm: regex.RCaps = regex.regex_captures("(x)(y)", "abc");
-  if (!nm.found && nm.group_count() == 0 && require_regex_text(nm.group(0)) == "" && nm.group_start(1) == 0 - 1) {
-    r = r + 8;
+  match (regex.regex_captures("(x)(y)", "abc")) {
+    Some(_) => {},
+    None => {
+      r = r + 8;
+    }
   }
 
   // (a*) matches empty AT position 0 of "bbb": participation with an
   // empty span, not an unset group.
-  let z: regex.RCaps = regex.regex_captures("(a*)", "bbb");
-  if (z.found && z.has_group(1) && z.group_start(1) == 0 && z.group_end(1) == 0) {
+  let z: regex.RCaps = require_caps(regex.regex_captures("(a*)", "bbb"));
+  if (z.has_group(1) && at(z.group_start(1), 0) && at(z.group_end(1), 0)) {
     r = r + 16;
   }
 
   // a star over a nullable body must terminate (epsilon-cycle dedup)
-  let nul: regex.RCaps = regex.regex_captures("(a?)*b", "aaab");
+  let nul: regex.RCaps = require_caps(regex.regex_captures("(a?)*b", "aaab"));
   if (require_regex_text(nul.group(0)) == "aaab") {
     r = r + 32;
   }
 
   // counted repetition duplicates the group node; the span is the last copy's
-  let cr: regex.RCaps = regex.regex_captures("(ab){2}", "abab");
+  let cr: regex.RCaps = require_caps(regex.regex_captures("(ab){2}", "abab"));
   if (require_regex_text(cr.group(0)) == "abab" && require_regex_text(cr.group(1)) == "ab") {
     r = r + 64;
   }
 
   // the capture engine reports the same leftmost-longest span the
   // position-set matcher does
-  let caps: regex.RCaps = regex.regex_captures("(a|ab)", "xab");
-  let span: regex.RMatch = regex.regex_search("(a|ab)", "xab");
-  if (caps.group_start(0) == span.start && caps.group_end(0) == span.end && require_regex_text(caps.group(1)) == "ab") {
+  let caps: regex.RCaps = require_caps(regex.regex_captures("(a|ab)", "xab"));
+  let span: regex.RMatch = require_match(regex.regex_search("(a|ab)", "xab"));
+  if (at(caps.group_start(0), span.start) && at(caps.group_end(0), span.end) && require_regex_text(caps.group(1)) == "ab") {
     r = r + 128;
   }
 
   return r;
+}
+
+// require_caps and require_match are the match, exiting 1 when there is none.
+function require_caps(result: Option[regex.RCaps]): regex.RCaps {
+  if let Some(c) = result {
+    return c;
+  }
+  exit(1);
+  return regex.RCaps { text: "", starts: [], ends: [], names: [] };
+}
+
+function require_match(result: Option[regex.RMatch]): regex.RMatch {
+  if let Some(m) = result {
+    return m;
+  }
+  exit(1);
+  return regex.RMatch { start: 0, end: 0 };
+}
+
+function at(o: Option[i32], want: i32): boolean {
+  if let Some(v) = o {
+    return v == want;
+  }
+  return false;
 }
 
 function require_regex_text(result: Option[string]): string {

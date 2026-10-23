@@ -3,21 +3,25 @@
 // The Thompson-NFA matcher (`regex_match` / `regex_search`) answers "does it
 // match, and where". The capture engine answers "what did each group match".
 // `regex_captures` runs a linear-time Pike VM (no backtracking blow-up) and
-// returns an `RCaps` carrying every group's span; groups are numbered by their
+// returns an `RCaps` carrying every group's span (or None when nothing
+// matches); groups are numbered by their
 // `(` from 1, and a `(?<name>…)` group is ALSO reachable by name. None of this
 // is built into the language — it is ordinary Fern over the raw-byte matcher,
 // and it lowers on every backend (interp / x86-64 / arm64 / wasm).
 import "std/regex" as regex;
 import "std/string";
+import "std/option";
 
 function main(): i32 {
   // Parse a request-log line into named fields with one pattern.
   let line: string = "GET /api/users 200 15ms";
   let pat: string = "(?<method>\\w+) (?<path>\\S+) (?<status>\\d+) (?<ms>\\d+)ms";
-  let m: regex.RCaps = regex.regex_captures(pat, line);
+  let Some(m) = regex.regex_captures(pat, line) else {
+    return 1;
+  };
 
   // Named extraction — `.group_named` resolves the label to its span. The
-  // same groups are still positional: `.group_index("status") == 3`.
+  // same groups are still positional: `.group_index("status")` is Some(3).
   let status: i32 = require_regex_text(m.group_named("status")).parse_int_or(0);  // 200
   let ms: i32 = require_regex_text(m.group_named("ms")).parse_int_or(0);  // 15
 
@@ -31,7 +35,7 @@ function main(): i32 {
   // index, and the ${name} rewrite all came out right (a regression in any
   // one of them changes the exit code).
   let result: i32 = status + ms + fields;
-  if (require_regex_text(m.group_named("method")) == "GET" && m.group_index("path") == 2 && swapped == "1=a 2=b") {
+  if (require_regex_text(m.group_named("method")) == "GET" && m.group_index("path").unwrap_or(0) == 2 && swapped == "1=a 2=b") {
     return result;
   }
   return 0;

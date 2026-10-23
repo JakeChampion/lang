@@ -84,7 +84,7 @@ var selfHostProgCases = []struct {
 	{"prim-recv-opt-match", `function (n: i64) tryadd(x: i64): Option[i64] { if (x > 0 as i64) { return Some(n + x); } return None; } function main(): i32 { let a: i64 = 3 as i64; match (a.tryadd(4 as i64)) { Some(v) => { return v as i32; }, None => { return 0; } } }`, 7},
 	// A direct `match (r.caps.get(k))` where `caps` is a Map-typed struct FIELD,
 	// not a map IDENT: the get resolves against the field's Map[K,V] (#3457:
-	// std/peg's PegResult.caps and any map-in-struct).
+	// std/peg's PegMatch.caps and any map-in-struct).
 	{"map-field-get-opt-match", `import "core/map";
 struct R { caps: Map[string, i32] } function mk(): R { let m: Map[string, i32] = map_new(4); m = m.insert("a", 7); return R { caps: m }; } function main(): i32 { let r: R = mk(); match (r.caps.get("a")) { Some(v) => { return v; }, None => { return 0; } } }`, 7},
 	// Array.build (parser.fern desugar): for-in builds [1,4,9]; sum 14.
