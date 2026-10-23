@@ -2568,6 +2568,8 @@ function arm64_vec_entry_sizes(e: i32): i32 {
 
 // BEGIN GENERATED ARM64 V3INT_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Three-register integer ops. 15 = BHSD, 7 = BHS.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function arm64_v3int_entry(mnem: string): i32 {
   match (mnem) {
     "add" => {
@@ -2772,6 +2774,8 @@ function arm64_gas_fp_size(code: i32, szhi: boolean): i32 {
 // BEGIN GENERATED ARM64 VFP3_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // arm64_vfp3_entry: three-register lane-wise FP. The szHi bit is stored in the
 // size-mask slot, which is free here because the arrangement set is fixed.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function arm64_vfp3_entry(mnem: string): i32 {
   match (mnem) {
     "fadd" => {
@@ -2817,6 +2821,8 @@ function arm64_vfp3_entry(mnem: string): i32 {
 
 // BEGIN GENERATED ARM64 VFP2_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // arm64_vfp2_entry: two-register lane-wise FP, same szHi convention.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function arm64_vfp2_entry(mnem: string): i32 {
   match (mnem) {
     "fneg" => {
@@ -7340,6 +7346,8 @@ function arm64_mulwide_base(mnem: string): i64 {
 }
 
 // arm64_condsel_base maps a mnemonic to its base word (every register field zero); -1 = not one.
+// fern-lint: allow cyclomatic-complexity
+// A generated table: one arm for each row.
 function arm64_condsel_base(mnem: string): i64 {
   match (mnem) {
     "csel" => {

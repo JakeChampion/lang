@@ -56,11 +56,22 @@ var blocks = []block{
 	},
 }
 
+// lintLimit is the complexity limit of compiler/lint.fern. A generated
+// table scores one more than its rows, so a long one carries an `allow`.
+const lintLimit = 10
+
+func allowLongTable(b *strings.Builder, rows int) {
+	if rows+1 > lintLimit {
+		b.WriteString("// fern-lint: allow cyclomatic-complexity\n// A generated table: one arm for each row.\n")
+	}
+}
+
 // lookup renders a mnemonic-to-value function as a string match: one arm
 // per row and the wildcard returning -1, the shape a hand-written table
 // reads as. A string match lowers to the same str_eq chain an if-chain
 // would, so the form costs nothing at run time.
 func lookup(b *strings.Builder, fn, param string, rows []string) {
+	allowLongTable(b, len(rows))
 	fmt.Fprintf(b, "function %s(%s: string): i32 {\n    match (%s) {\n", fn, param, param)
 	for _, r := range rows {
 		fmt.Fprintf(b, "        %s,\n", r)
@@ -101,6 +112,7 @@ func genNamedTables() string {
 			continue
 		}
 		fmt.Fprintf(&b, "// %s: %s.\n", f.PredicateName(), f.Doc)
+		allowLongTable(&b, len(spellings))
 		fmt.Fprintf(&b, "function %s(mnem: string): boolean {\n    return ", f.PredicateName())
 		for i, t := range spellings {
 			if i > 0 {
@@ -234,6 +246,13 @@ func genSSETables() string {
 		"// forms; the by-immediate forms are the 0F 71/72/73 groups\n" +
 		"// (x86_gas_vshift_op).\n")
 	writeSSEHalf(&b, "x86_gas_sse_int_op", x86tbl.SSEIntHalf)
+	var terms []string
+	for _, m := range x86tbl.SSERegOnly {
+		terms = append(terms, fmt.Sprintf("mnem == %q", m))
+	}
+	b.WriteString("\n// x86_gas_sse_reg_only: an SSE table row whose source must be an xmm\n" +
+		"// register. Its opcode with a memory source is another instruction.\n")
+	fmt.Fprintf(&b, "function x86_gas_sse_reg_only(mnem: string): boolean {\n    return %s;\n}\n", strings.Join(terms, " || "))
 	return b.String()
 }
 
