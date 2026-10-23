@@ -9,6 +9,7 @@
 //   let cfg: Config = parsed.unwrap_or(default_config());
 //
 // Callback combinators accept strings and composite values on every backend.
+// There is no `unwrap` or `expect`; std/option's header says why.
 
 import "core/cmp";
 

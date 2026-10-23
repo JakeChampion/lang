@@ -279,7 +279,7 @@ function main(): i32 {
   let before: i64 = __heap_alloc_count();
   state = state.update(input);
   if (__heap_alloc_count() != before) { return 71; }
-  if (state.finish() != 3631681148 || state.len() != 4096 as u64) { return 72; }
+  if (state.finish() != 3631681148 || state.byte_count() != 4096 as u64) { return 72; }
   if (__rc_underflow_count() != 0) { return 73; }
   return 0;
 }

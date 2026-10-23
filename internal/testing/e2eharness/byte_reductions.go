@@ -30,7 +30,7 @@ func ByteReductionsSource(compiled bool) string {
     buf_free(h);
     if (large.len() != 16843010 || sum(large) != 254) { return 12; }
     let wrapped: hash.SysvSum = hash.sysv_sum_new().update_array(large).update_array(large);
-    if (wrapped.sum != 508 || wrapped.len() != (33686020 as u64)) { return 14; }
+    if (wrapped.sum != 508 || wrapped.byte_count() != (33686020 as u64)) { return 14; }
     let prefix_builder: usize = buf_new(8421505);
     buf_push_bytes_range(prefix_builder, large, 0, 8421505);
     let prefix: u8[] = buf_take_bytes(prefix_builder);
@@ -81,8 +81,8 @@ function main(): i32 {
         let right: u8[] = copy_range(bytes, split, n);
         let bc: hash.BsdSum = hash.bsd_sum_new().update_array(left).update_array(right);
         let sc: hash.SysvSum = hash.sysv_sum_new().update_array(left).update_array(right);
-        if (bc.finish() != (bsd(bytes, 0) as u32) || bc.len() != (n as u64)) { return 6; }
-        if (sc.sum != (sum(bytes) as u32) || sc.len() != (n as u64)) { return 7; }
+        if (bc.finish() != (bsd(bytes, 0) as u32) || bc.byte_count() != (n as u64)) { return 6; }
+        if (sc.sum != (sum(bytes) as u32) || sc.byte_count() != (n as u64)) { return 7; }
         for seed in seeds {
             if (bsd(bytes, seed) != slow_bsd(bytes, seed)) { return 2; }
             let first: u8[] = copy_range(bytes, 0, n / 2);

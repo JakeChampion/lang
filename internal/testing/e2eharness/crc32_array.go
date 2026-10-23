@@ -98,7 +98,7 @@ function main(): i32 {
         }
         let array: hash.Cksum = hash.cksum_new().update_array(left).update_array(right);
         let view: hash.Cksum = hash.cksum_new().update_bytes(bytes);
-        if (array.finish() != view.finish() || array.len() != (n as u64)) { return 3; }
+        if (array.finish() != view.finish() || array.byte_count() != (n as u64)) { return 3; }
     }
     let bytes: u8[] = pattern(256);
     let held: u8[] = bytes;
