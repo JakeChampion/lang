@@ -3573,9 +3573,11 @@ function __entry_split(entry: string): (string, i32) {
     rest = slice_unchecked(entry, close + 1, entry.len()).to_owned();
   } else {
     if let Some(colon) = entry.index_of(":") {
-      if (!slice_unchecked(entry, colon + 1, entry.len()).to_owned().contains(":")) {
-        name = slice_unchecked(entry, 0, colon).to_owned();
-        rest = slice_unchecked(entry, colon, entry.len()).to_owned();
+      if let Some(last) = entry.last_index_of(":") {
+        if (colon == last) {
+          name = slice_unchecked(entry, 0, colon).to_owned();
+          rest = slice_unchecked(entry, colon, entry.len()).to_owned();
+        }
       }
     }
   }
