@@ -14,4 +14,9 @@ The checker no longer reads that marker prefix itself.
 The qualified-pattern and complexity suites pass in 29.049 seconds.
 All seven opaque-field refusals still report one E021 per checker.
 The formatter parity case passes in 1.691 seconds.
-A fresh bootstrap and complete size report will check the marker representation change.
+
+Stages two and three match at 14,248,048 bytes.
+Their SHA-256 is 8345c20b922d9f4fbf2e6ef457558384a013ded4b6aa77c11c8e9a494ccbba78.
+All eleven strict size rows pass without baseline changes.
+The ten stock-driver builds complete in 124.376 seconds.
+The source fingerprint matches the reviewed tree.
