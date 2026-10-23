@@ -100,7 +100,7 @@ function takes_next_value(a: string): boolean {
   if (a == "-n") {
     return true;
   }
-  if (!a.starts_with("--") || a.index_of("=") >= 0) {
+  if (!a.starts_with("--") || a.contains("=")) {
     return false;
   }
   let name: string = slice_unchecked(a, 2, a.len()) + "";

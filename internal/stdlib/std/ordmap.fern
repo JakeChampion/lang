@@ -904,9 +904,13 @@ pub function (m: OrdMap[K, V]) value_at(i: i32): Option[V] {
   }
 }
 
-// `index_of(k)` — the rank of `k` in key order, or -1 when absent.
-pub function (m: OrdMap[K, V]) index_of[K: cmp.Ord, V](k: K): i32 {
-  return node_index_of(m, k);
+// `index_of(k)` — the rank of `k` in key order, or None when absent.
+pub function (m: OrdMap[K, V]) index_of[K: cmp.Ord, V](k: K): Option[i32] {
+  let i: i32 = node_index_of(m, k);
+  if (i < 0) {
+    return None;
+  }
+  return Some(i);
 }
 
 // `keys()` / `values()` — the entries in ascending key order.

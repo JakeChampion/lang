@@ -21,9 +21,15 @@ pub function consistent(row: ssaprepare.Emitted): void {
   for site in row.sites {
     require(site.input >= 0 && site.input < homes.len() && site.input_home == homes[site.input], 143);
     require(site.text != "" && site.text.contains(site.join + ":\n"), 144);
-    let at = row.assembly.index_of(site.text);
-    require(at > previous && at == row.assembly.last_index_of(site.text), 145);
-    previous = at;
+    match (only_at(row.assembly, site.text)) {
+      Some(at) => {
+        require(at > previous, 145);
+        previous = at;
+      },
+      None => {
+        require(false, 145);
+      }
+    }
     require(site.cached >= -1 && site.cached < homes.len(), 146);
     if (site.flags) {
       require(site.result == -1 && site.result_home == -1, 147);
@@ -33,10 +39,33 @@ pub function consistent(row: ssaprepare.Emitted): void {
   }
 }
 
+// only_at is where `sub` stands in `text` when it occurs there exactly once.
+function only_at(text: string, sub: string): Option[i32] {
+  if let Some(first) = text.index_of(sub) {
+    if let Some(last) = text.last_index_of(sub) {
+      if (first == last) {
+        return Some(first);
+      }
+    }
+  }
+  return None;
+}
+
+function occurs_once(text: string, sub: string): boolean {
+  match (only_at(text, sub)) {
+    Some(at) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+}
+
 pub function output(out: ssaprepare.Output): void {
   for row in out.bodies {
     consistent(row);
-    require(row.assembly != "" && out.text.index_of(row.assembly) >= 0 && out.text.index_of(row.assembly) == out.text.last_index_of(row.assembly), 149);
+    require(row.assembly != "" && occurs_once(out.text, row.assembly), 149);
   }
 }
 

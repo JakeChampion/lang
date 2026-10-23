@@ -598,12 +598,13 @@ function char_width(value: string, letter: string, defchar: i32, defwidth: i32):
 // Returns (first, last, status): 0 a range, 1 not one, and the fatal
 // wordings are reported here.
 function parse_range(arg: string, what: string): (u64, u64, i32) {
-  let colon: i32 = arg.index_of(":");
   let head: string = arg;
   let tail: string = "";
-  if (colon >= 0) {
+  let ranged: boolean = false;
+  if let Some(colon) = arg.index_of(":") {
     head = slice_unchecked(arg, 0, colon) + "";
     tail = slice_unchecked(arg, colon + 1, arg.len()) + "";
+    ranged = true;
   }
   let f: (u64, i32) = gnu.parse_number(head);
   if (gnu.count_overflow(f.1)) {
@@ -615,7 +616,7 @@ function parse_range(arg: string, what: string): (u64, u64, i32) {
     exit(1);
   }
   let last: u64 = 18446744073709551615 as u64;
-  if (colon < 0) {
+  if (!ranged) {
     if (f.1 != 0) {
       return (0 as u64, 0 as u64, 1);
     }

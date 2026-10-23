@@ -147,8 +147,7 @@ pub function parse(s: string): Option[SemVer] {
   // Split off build metadata at the first '+'.
   let core_pre: string = s;
   let build: string = "";
-  let plus: i32 = s.index_of("+");
-  if (plus >= 0) {
+  if let Some(plus) = s.index_of("+") {
     core_pre = __sv_slice(s, 0, plus);
     build = __sv_slice(s, plus + 1, s.len());
     if (build.len() == 0) {
@@ -158,8 +157,7 @@ pub function parse(s: string): Option[SemVer] {
   // Split off prerelease at the first '-'.
   let core: string = core_pre;
   let pre: string = "";
-  let dash: i32 = core_pre.index_of("-");
-  if (dash >= 0) {
+  if let Some(dash) = core_pre.index_of("-") {
     core = __sv_slice(core_pre, 0, dash);
     pre = __sv_slice(core_pre, dash + 1, core_pre.len());
     if (pre.len() == 0) {

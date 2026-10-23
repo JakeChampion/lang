@@ -112,8 +112,7 @@ pub function compressible(content_type: string): boolean {
 }
 
 function __media_type(content_type: string): string {
-  let semi: i32 = content_type.index_of(";");
-  if (semi >= 0) {
+  if let Some(semi) = content_type.index_of(";") {
     return content_type.slice_snap(0, semi).trim().to_lower();
   }
   return content_type.trim().to_lower();

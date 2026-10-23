@@ -58,8 +58,8 @@ function main(): i32 { if (regex.regex_match("(ab)+c", "ababc")) { return 42; } 
 	// (Pike-VM thread simulation with RThread[] state).
 	{"captures", `import "std/regex";
 function main(): i32 {
-    let m: regex.RCaps = regex.regex_captures("(\\d+)-(\\d+)", "order 123-456 shipped");
-    if (m.found && require_regex_text(m.group(1)) == "123" && require_regex_text(m.group(2)) == "456" && m.group_count() == 2) { return 42; }
+    let Some(m) = regex.regex_captures("(\\d+)-(\\d+)", "order 123-456 shipped") else { return 1; };
+    if (require_regex_text(m.group(1)) == "123" && require_regex_text(m.group(2)) == "456" && m.group_count() == 2) { return 42; }
     return 0;
 }
 function require_regex_text(result: Option[string]): string {
@@ -73,7 +73,7 @@ function require_regex_text(result: Option[string]): string {
 	// Non-capturing (?:...) group + captures_all over multiple matches.
 	{"captures-all", `import "std/regex";
 function main(): i32 {
-    let nc: regex.RCaps = regex.regex_captures("(?:ab)+(c)", "ababc");
+    let Some(nc) = regex.regex_captures("(?:ab)+(c)", "ababc") else { return 1; };
     let all: regex.RCaps[] = regex.regex_captures_all("(\\w+)@(\\w+)", "a@b c@d");
     if (nc.group_count() == 1 && require_regex_text(nc.group(1)) == "c" && all.len() == 2 && require_regex_text(all[1].group(2)) == "d") { return 42; }
     return 0;
@@ -104,10 +104,14 @@ function require_regex_text(result: Option[string]): string {
 	// + ${name} template through the self-host IR path.
 	{"named-groups", `import "std/regex";
 function main(): i32 {
-    let m: regex.RCaps = regex.regex_captures("(?<y>\\d+)-(?<m>\\d+)", "12-34");
+    let Some(m) = regex.regex_captures("(?<y>\\d+)-(?<m>\\d+)", "12-34") else { return 1; };
     let t: string = require_regex_text(regex.regex_replace_groups("(?<w>\\w+)", "hi", "[${w}]"));
-    if (require_regex_text(m.group_named("y")) == "12" && m.group_index("m") == 2 && t == "[hi]") { return 42; }
+    if (require_regex_text(m.group_named("y")) == "12" && index_is(m.group_index("m"), 2) && t == "[hi]") { return 42; }
     return 0;
+}
+function index_is(o: Option[i32], want: i32): boolean {
+    if let Some(v) = o { return v == want; }
+    return false;
 }
 function require_regex_text(result: Option[string]): string {
     match (result) {
