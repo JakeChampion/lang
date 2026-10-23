@@ -1,4 +1,4 @@
-# 2026-10-23: integrated PR sources 0b03aff204, Perf run 40015080180; deterministic rows remeasured.
+# 2026-10-23: integrated PR sources 0b03aff204, Perf run 40015080180. Deterministic rows use these measurements.
 # 2026-10-23: deflate rows measured at 49c290377 in Perf run 40010926319, after main integration.
 # Retired- and static-instruction baselines for the bench corpus,
 # checked against every run by scripts/ci-check-perf.

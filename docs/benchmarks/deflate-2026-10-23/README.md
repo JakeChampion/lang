@@ -67,10 +67,10 @@ instructions, which is about 1,500 instructions for each input byte.
 ### Integrated CI baseline
 
 [Perf run 40010926319](https://github.com/JakeChampion/lang/actions/runs/40010926319)
-measured commit `49c290377dfe6a930d3939efa99126c32be79880`, after integrating main.
+measured commit `49c290377dfe6a930d3939efa99126c32be79880`, after the main merge.
 The reports in `ci-perf-x86_64.txt` and `ci-perf-aarch64.txt` retain the exact
-instruction and emitted-text counts. The deflate baseline now banks those
-measurements; the strict comparator passes for both reports.
+instruction and emitted-text counts. The deflate baseline uses those
+measurements. The strict comparator passes for both reports.
 
 | Architecture | Encode instructions | Decode instructions |
 | --- | ---: | ---: |
@@ -81,5 +81,5 @@ These counts cover the CI benchmark inputs, separately from the Silesia wall
 time comparison above.
 
 `ci-selfhost-size.txt` retains the same run's exact emitted-size counts for
-the two deflate programs on all three targets; their baseline rows are banked
-from those measurements too.
+the two deflate programs on all three targets.
+Their baseline rows use those measurements too.
