@@ -6,10 +6,4 @@
 # Same contract as the compiled legs' lists: a listed case must still diverge,
 # and a case not listed must pass, so the list can only shrink.
 
-a_builtin_method_does_not_see_the_programs_variants #12888 Result.unwrap_or is undefined beside a program variant named Ok
-byte_slice_after_set_len_regrows #12888 __arr_set_len is not a builtin here
-concrete_view_methods #12888 an array-view method returns the wrong value (exit 1)
-defer_binding_siblings #12888 a deferred action does not see its block's binding (undefined identifier: items)
-defer_binding_value_block #12888 a deferred action in a value block reads the wrong binding
-generic_view_methods #12888 a generic array-view method returns the wrong value (exit 6)
-rc_corpus_recursive_enum_drop_constant_stack #12888 overflows the native stack (#12691)
+# No known divergences.

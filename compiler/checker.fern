@@ -28537,6 +28537,14 @@ function any_width_open(ts: typeinfo.Type[]): boolean {
 }
 
 function annotate_callee(c: ast.ExprCall, ct: typeinfo.Type, s: Scope): ast.Expr {
+  if let ast.ExprIdent(id) = c.callee {
+    if let typeinfo.TypeUnion(u) = ct {
+      if (!s.is_bound(id.name) && !s.has_sig(id.name)) {
+        // A constructor retains the enum selected in its lexical module.
+        return ast.ExprIdent { ...id, ty: u.name };
+      }
+    }
+  }
   if let ast.ExprLambda(lm) = c.callee {
     if (parser.is_value_block(c)) {
       return annotate_lambda_expr(lm, s, "", ct);
