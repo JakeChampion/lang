@@ -432,15 +432,15 @@ not register pressure. The order to take that in:
 ### Cold calls (arm64)
 
 On arm64 the allocator does not count every call as a call
-(`regalloc_linear_fixed` with `cold_calls`). `ssa.cold_positions` sorts the
+(`regalloc_linear_fixed` with a cold-position array). `ssa.cold_positions` sorts the
 call positions into four kinds:
 
 - An array push (`COLD_SLOW`) calls only on its slow path, to grow the array.
 - A call in a cold block (`COLD_BRANCH`) is inside a loop, in a block that
   does not dominate the loop's latch (`ssa.cold_blocks`). Some iterations
   do not run it: an error branch, a fallback.
-- An inline rc primitive (`COLD_INLINE`, `ssa.rc_inlined`) is not a call at
-  all.
+- An inline rc primitive (`COLD_INLINE`, `ssa.rc_inlined`) has no call cost
+  outside size mode. A size build retains its call constraints.
 - Every other call is a call.
 
 An integer value live across only the first three kinds can sit in a caller
