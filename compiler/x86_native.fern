@@ -5801,6 +5801,18 @@ function x86_gas_sse_fp_op(mnem: string): i32 {
     "cvttpd2dq" => {
       return 102 * 256 + 230;
     },
+    "cvtps2pd" => {
+      return 90;
+    },
+    "cvtpd2ps" => {
+      return 102 * 256 + 90;
+    },
+    "movhlps" => {
+      return 18;
+    },
+    "movlhps" => {
+      return 22;
+    },
     _ => {
       return 0 - 1;
     }

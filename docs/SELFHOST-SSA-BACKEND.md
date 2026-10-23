@@ -467,6 +467,14 @@ The arms read an operand from its home or from a scratch (`%xmm1` /
 no arm writes the destination before it reads the operand. The wasm
 emitter declares a `(local v128)` for each `LowerResult.v128_slots` entry.
 It takes two `v128` scratch locals in a body with a lane op.
+
+`vget` and `vset` read and write the group of array elements from an index.
+`vget` lifts as a two-operand lane op and `vset` as kind 62, like `vstore`.
+Their array and index stay in the integer class. Each arm checks the first
+and the last index of the group against the length. It then moves the group
+from the address of its first element (`ssa_vgroup`). An f64 group is one
+16-byte move, and an f32 group is two f64 pairs, narrowed or widened.
+
 `TestSelfHostLaneIR` runs a program built from the IR constructors over
 every op on all three targets.
 

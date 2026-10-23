@@ -1,0 +1,45 @@
+// A generic function passed to an array method takes its type arguments
+// from the method's parameter, with the receiver's element type bound and
+// the method's own type parameter left open (#12977). Its instance then
+// binds that parameter, so `xs.map(one_plus)` needs no destination. A
+// generic function called through a function value binds its type
+// parameters from the arguments, so `T.one()` in its body names the bound
+// type, an i64 included (#12979).
+import "std/f64";
+import "std/num" as num;
+
+function neg[T: num.Neg](x: T): T {
+  return x.neg();
+}
+
+function one_plus[T: num.Add + num.One](x: T): T {
+  return T.one().add(x);
+}
+
+function big(x: f64): boolean {
+  return x > 0.75;
+}
+
+function plus[T: num.Add](a: T, b: T): T {
+  return a.add(b);
+}
+
+function apply(f: (f64) => f64, x: f64): f64 {
+  return f(x);
+}
+
+function main(): i32 {
+  let xs: f64[] = [0.5, -2.0, 1.0];
+  let ns: f64[] = xs.map(neg);
+  print(ns[0].to_string() + " " + ns[1].to_string() + " " + ns[2].to_string());
+  let os: f64[] = xs.map(one_plus);
+  print(os[0].to_string() + " " + os[1].to_string());
+  print(xs.map(one_plus).filter(big).len().to_string());
+  print(xs.fold(0.0, plus).to_string());
+  let ys: f32[] = [1.5, 2.25];
+  print((ys.fold(1.0 as f32, plus) as f64).to_string());
+  let ks: i64[] = [3, 4];
+  print(ks.map(one_plus)[1].to_string());
+  print(apply(one_plus, 0.5).to_string());
+  return 0;
+}

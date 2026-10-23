@@ -484,7 +484,7 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
     what = k + ":" + util.i32_to_string(op.i32_imm);
   }
   let kind: i32 = 10;
-  if (k == "vstore") {
+  if (ir.lane_writes(op.kind_tag)) {
     kind = 62;
   } else if (argc == 2) {
     kind = 9;
@@ -494,7 +494,7 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
   let v: i32 = nvals;
   nvals = nvals + 1;
   insts = insts.append(ssa.SInst { kind_tag: kind, result: v, args: args, imm: op.width, str: what });
-  if (k != "vstore") {
+  if (!ir.lane_writes(op.kind_tag)) {
     stack = stack.append(v);
   }
   return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: true };

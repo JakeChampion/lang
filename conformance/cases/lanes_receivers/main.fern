@@ -1,0 +1,42 @@
+// A lane type can be a method receiver and a type argument: a trait of the
+// program's own is implemented for f64x2 and f32x4, and a generic function
+// bound by it runs at each.
+import "std/f64";
+
+trait Doubled {
+  function doubled(self: Self): Self;
+  function first(self: Self): f64;
+}
+
+impl Doubled for f64x2 {
+  function doubled(self: f64x2): f64x2 {
+    return self + self;
+  }
+  function first(self: f64x2): f64 {
+    return __f64x2_lane(self, 0);
+  }
+}
+
+impl Doubled for f32x4 {
+  function doubled(self: f32x4): f32x4 {
+    return self * __f32x4_splat(2.0);
+  }
+  function first(self: f32x4): f64 {
+    return __f32x4_lane(self, 0) as f64;
+  }
+}
+
+function quadrupled[T: Doubled](x: T): T {
+  return x.doubled().doubled();
+}
+
+function main(): i32 {
+  let a: f64x2 = __f64x2_of(1.5, -2.0);
+  let b: f32x4 = __f32x4_splat(0.25);
+  print(a.doubled().first().to_string());
+  print(quadrupled(a).first().to_string());
+  print(__f64x2_lane(quadrupled(a), 1).to_string());
+  print(quadrupled(b).first().to_string());
+  print((__f32x4_lane(quadrupled(b), 3) as f64).to_string());
+  return 0;
+}
