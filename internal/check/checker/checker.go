@@ -12750,6 +12750,9 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.ArrayLit:
+				if x.Const {
+					return false
+				}
 				c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (array literal)", kw, fn.Name)
 			case *ast.FString:
 				c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (string interpolation)", kw, fn.Name)
