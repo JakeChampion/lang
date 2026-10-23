@@ -58,9 +58,9 @@ function ctx_new(sysv: boolean): Ctx {
 
 function ctx_update(c: Ctx, chunk: u8[]): Ctx {
   if (c.sysv) {
-    return Ctx { ...c, sv: c.sv.update_array(chunk) };
+    return Ctx { ...c, sv: c.sv.update(chunk) };
   }
-  return Ctx { ...c, bsd: c.bsd.update_array(chunk) };
+  return Ctx { ...c, bsd: c.bsd.update(chunk) };
 }
 
 function ctx_checksum(c: Ctx): i64 {

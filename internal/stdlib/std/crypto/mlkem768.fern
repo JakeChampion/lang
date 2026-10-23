@@ -248,7 +248,7 @@ function __dot(a: [i32], v: [i32]): i32[] {
 // so the rejection may branch.
 function __sample_ntt(own a: i32[], at: i32, rho: [u8], j: i32, i: i32): i32[] {
   let seed: u8[] = __bytes_into(__alloc_u8(34), 0, rho, 0, 32).with(32, j as u8).with(33, i as u8);
-  let x: crypto.ShakeReader = crypto.shake128_new().update_bytes(seed).reader();
+  let x: crypto.ShakeReader = crypto.shake128_new().update(seed).reader();
   let n: i32 = 0;
   while (n < 256) {
     let next: (u8[], crypto.ShakeReader) = x.squeeze(168);
@@ -391,11 +391,11 @@ function __decompress(own f: i32[], d: i32): i32[] {
 
 // __h is H = SHA3-256 and __g is G = SHA3-512 over a || b.
 function __h(b: [u8]): u8[] {
-  return crypto.sha3_256_new().update_bytes(b).final_bytes();
+  return crypto.sha3_256_new().update(b).final_bytes();
 }
 
 function __g(a: [u8], b: [u8]): u8[] {
-  return crypto.sha3_512_new().update_bytes(a).update_bytes(b).final_bytes();
+  return crypto.sha3_512_new().update(a).update(b).final_bytes();
 }
 
 // __keygen is K-PKE.KeyGen inside ML-KEM.KeyGen_internal (Algorithms 13
@@ -532,7 +532,7 @@ pub function decaps(dk: [u8], c: [u8]): Result[u8[], MlKemError] {
   }
   let m: u8[] = __decrypt(__decode12(dk, 0), c);
   let kr: u8[] = __g(m, h);
-  let rejected: u8[] = crypto.shake256_new().update_bytes(dk[2368:2400]).update_bytes(c).reader().squeeze(32).0;
+  let rejected: u8[] = crypto.shake256_new().update(dk[2368:2400]).update(c).reader().squeeze(32).0;
   let again: u8[] = __encrypt(__decode12(ek, 0), ek[1152:1184], m, kr[32:64]);
   let diff: i32 = 0;
   let i: i32 = 0;

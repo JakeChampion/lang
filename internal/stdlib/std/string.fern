@@ -614,10 +614,10 @@ pub function (s: string) strip_quotes(): Option[string] {
 // `s.leading_count(b)` — number of leading bytes equal to b.
 // "    hello".leading_count(32) == 4 (count of spaces).
 // Useful for indent detection / column alignment.
-pub function (s: string) leading_count(b: i32): i32 {
+pub function (s: string) leading_count(b: u8): i32 {
   let n: i32 = s.len();
   let i: i32 = 0;
-  while (i < n && s[i] as i32 == b) {
+  while (i < n && s[i] as i32 == b as i32) {
     i = i + 1;
   }
   return i;
@@ -626,10 +626,10 @@ pub function (s: string) leading_count(b: i32): i32 {
 // `s.trailing_count(b)` — number of trailing bytes equal to b.
 // "hello   ".trailing_count(32) == 3. Symmetric to
 // leading_count.
-pub function (s: string) trailing_count(b: i32): i32 {
+pub function (s: string) trailing_count(b: u8): i32 {
   let n: i32 = s.len();
   let i: i32 = 0;
-  while (i < n && s[n - 1 - i] as i32 == b) {
+  while (i < n && s[n - 1 - i] as i32 == b as i32) {
     i = i + 1;
   }
   return i;
@@ -1413,14 +1413,14 @@ pub function (s: string) split_at(i: i32): (string, string) {
 }
 
 // `s.replace_byte(from, to)` returns owned bytes with each byte equal to
-// from replaced by to (converted to u8). Use replace(old, new) for text.
-pub function (s: string) replace_byte(from: i32, to: i32): u8[] {
+// from replaced by to. Use replace(old, new) for text.
+pub function (s: string) replace_byte(from: u8, to: u8): u8[] {
   let n: i32 = s.len();
   let buf: u8[] = __alloc_u8(n);
   let i: i32 = 0;
   while (i < n) {
     let b: i32 = s[i] as i32;
-    if (b == from) {
+    if (b == from as i32) {
       buf = buf.with(i, to as u8);
     } else {
       buf = buf.with(i, b as u8);
@@ -2227,22 +2227,22 @@ pub function (s: string) rsplitn(sep: string, n: i32): string[] {
   return out.append(head);
 }
 
-// `s.first()` / `s.last()` — first / last byte as Option[i32].
+// `s.first()` / `s.last()` — first / last byte as Option[u8].
 // None on empty. Convenience over `s.at(0)` / `s.at(len(s) - 1)`
 // — the indices are easy to mis-write.
-pub function (s: string) first(): Option[i32] {
+pub function (s: string) first(): Option[u8] {
   if (s.len() == 0) {
     return None;
   }
-  return Some(s[0] as i32);
+  return Some(s[0]);
 }
 
-pub function (s: string) last(): Option[i32] {
+pub function (s: string) last(): Option[u8] {
   let n: i32 = s.len();
   if (n == 0) {
     return None;
   }
-  return Some(s[n - 1] as i32);
+  return Some(s[n - 1]);
 }
 
 // __floor_boundary / __ceil_boundary — clamp i to [0, len] and
@@ -2565,7 +2565,7 @@ function __fill_lead_len(b: i32): i32 {
 // character, repeated whole.
 //
 // The padding functions used to repeat `ch[0]`, a single BYTE, so a
-// multibyte fill emitted a fragment of one: `"a".pad_start(4, "é")`
+// multibyte fill emitted a fragment of one: `"a".pad_start(4, 'é')`
 // wrote three copies of 0xC3 and handed back a `string` that was not
 // valid UTF-8 (#5634). A fill that does not divide `need` now leaves
 // the remainder unfilled instead — the result can be up to one
@@ -2594,22 +2594,19 @@ function __fill_bytes(ch: string, need: i32): u8[] {
 // alignment shape for tables, hex dumps, fixed-width column
 // output.
 //
-// `ch`'s first CHARACTER is the fill, repeated whole. A
+// The fill is one character, repeated whole. A
 // multibyte fill that does not divide the padding leaves the
 // remainder unfilled rather than splitting a character — see
-// __fill_bytes. Empty `ch` degenerates to no padding.
-pub function (s: string) pad_start(n: i32, ch: string): string {
+// __fill_bytes.
+pub function (s: string) pad_start(n: i32, ch: char): string {
   let sl: i32 = s.len();
   if (sl >= n) {
-    return s;
-  }
-  if (ch.len() == 0) {
     return s;
   }
   // Result is exactly n bytes; fill one buffer (O(n)) instead of the
   // `pad = pad + ch[0:1]` loop, which recopied the growing pad each
   // step (O(need²) — the #4379 hot path). `need` fill bytes, then s.
-  let fill: u8[] = __fill_bytes(ch, n - sl);
+  let fill: u8[] = __fill_bytes(string_from_codepoint(ch), n - sl);
   let fl: i32 = fill.len();
   let buf: u8[] = __alloc_u8(fl + sl);
   let i: i32 = 0;
@@ -2625,17 +2622,14 @@ pub function (s: string) pad_start(n: i32, ch: string): string {
   return string_from_bytes_unchecked(buf);
 }
 
-pub function (s: string) pad_end(n: i32, ch: string): string {
+pub function (s: string) pad_end(n: i32, ch: char): string {
   let sl: i32 = s.len();
   if (sl >= n) {
     return s;
   }
-  if (ch.len() == 0) {
-    return s;
-  }
   // Result is exactly n bytes; fill one buffer (O(n)). s, then `need`
   // fill bytes.
-  let fill: u8[] = __fill_bytes(ch, n - sl);
+  let fill: u8[] = __fill_bytes(string_from_codepoint(ch), n - sl);
   let fl: i32 = fill.len();
   let buf: u8[] = __alloc_u8(sl + fl);
   let j: i32 = 0;
@@ -2870,19 +2864,19 @@ pub function (s: string) pad_end_str(width: i32, fill: string): string {
 
 // `s.center(width, ch)` — center s within a width-byte field,
 // padding equally on both sides with `ch`. Odd-padding splits
-// leave the extra byte on the right. `ch`'s first CHARACTER is
-// the fill, repeated whole (see __fill_bytes), so a multibyte
+// leave the extra byte on the right. The fill is one character,
+// repeated whole (see __fill_bytes), so a multibyte
 // fill is never split. Already-long strings pass through
 // unchanged.
-pub function (s: string) center(width: i32, ch: string): string {
+pub function (s: string) center(width: i32, ch: char): string {
   let sLen: i32 = s.len();
-  if (sLen >= width || ch.len() == 0) {
+  if (sLen >= width) {
     return s;
   }
   let total: i32 = width - sLen;
   let lpad: i32 = total / 2;
   let rpad: i32 = total - lpad;
-  return string_from_bytes_unchecked(__fill_bytes(ch, lpad)) + s + string_from_bytes_unchecked(__fill_bytes(ch, rpad));
+  return string_from_bytes_unchecked(__fill_bytes(string_from_codepoint(ch), lpad)) + s + string_from_bytes_unchecked(__fill_bytes(string_from_codepoint(ch), rpad));
 }
 
 // `s.reverse_words()` — split on ASCII whitespace, reverse
@@ -2962,11 +2956,11 @@ pub function (s: string) first_line(): Option[string] {
 // to `s[i]` which traps on OOB; useful in tokeniser loops
 // where the end check would otherwise need an explicit bounds
 // guard at every step.
-pub function (s: string) at(i: i32): Option[i32] {
+pub function (s: string) at(i: i32): Option[u8] {
   if (i < 0 || i >= s.len()) {
     return None;
   }
-  return Some(s[i] as i32);
+  return Some(s[i]);
 }
 
 // `s.to_array()` returns one string per Unicode scalar, like split("").
@@ -3349,8 +3343,8 @@ pub function (s: string) count_matches(sub: string): i32 {
 // intrinsic answers differently. A byte outside 0..255 counts 0 in both, which
 // is the correct answer rather than a sentinel, so the guard the intrinsic
 // keeps for direct callers is unreachable from here.
-pub function (s: string) count_byte(b: i32): i32 {
-  return __count_byte(s, b);
+pub function (s: string) count_byte(b: u8): i32 {
+  return __count_byte(s, b as i32);
 }
 
 // `s.replace_n(old, new, n)` — like replace() but caps at
@@ -4951,13 +4945,13 @@ pub function (s: string) replace_at(i: i32, new: string): string {
 
 // `s.without_byte(b)` returns owned bytes with every byte equal to b removed.
 // Use replace(old, "") or without_chars(set) for text.
-pub function (s: string) without_byte(b: i32): u8[] {
+pub function (s: string) without_byte(b: u8): u8[] {
   let n: i32 = s.len();
   let buf: u8[] = __alloc_u8(n);
   let pos: i32 = 0;
   let i: i32 = 0;
   while (i < n) {
-    if (s[i] as i32 != b) {
+    if (s[i] as i32 != b as i32) {
       buf = buf.with(pos, s[i] as u8);
       pos = pos + 1;
     }

@@ -30,7 +30,7 @@ function lines(n: i32): u8[] {
 function read(stream: string): string {
   match (brotli.decompress(hex.hex_decode(stream), 1048576)) {
     Ok(out) => {
-      return out.len().to_string() + " " + hash.crc32_new().update_array(out).finish().to_string();
+      return out.len().to_string() + " " + hash.crc32_new().update(out).finish().to_string();
     },
     Err(e) => {
       return e.message();
@@ -40,7 +40,7 @@ function read(stream: string): string {
 }
 
 function sum(bs: u8[]): string {
-  return bs.len().to_string() + " " + hash.crc32_new().update_array(bs).finish().to_string();
+  return bs.len().to_string() + " " + hash.crc32_new().update(bs).finish().to_string();
 }
 
 function english(): string {

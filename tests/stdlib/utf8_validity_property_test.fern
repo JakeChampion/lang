@@ -137,9 +137,9 @@ function check_width_ops(input: u8[]): test.TestOutcome {
   let s: string = build(input);
   let w: i32 = input.len() * 3 % 24;
   return first_fail([
-    ok("pad_start", s.pad_start(w, "é")),
-    ok("pad_end", s.pad_end(w, "中")),
-    ok("center", s.center(w, "ß")),
+    ok("pad_start", s.pad_start(w, 'é')),
+    ok("pad_end", s.pad_end(w, '中')),
+    ok("center", s.center(w, 'ß')),
     ok("indent", s.indent("  ")),
     ok("wrap", s.wrap("[", "]")),
   ]);

@@ -1,0 +1,182 @@
+import "std/string";
+import "std/option";
+import "std/hex" as hex;
+import "std/base64" as b64;
+import "std/base32" as b32;
+import "std/hash" as hash;
+import "std/crypto" as crypto;
+import "std/utf8" as utf8;
+import "std/stream" as stream;
+
+function text_copy(): string {
+  let bytes: u8[] = [0 as u8, 104 as u8, 195 as u8, 169 as u8, 0 as u8];
+  let borrowed: [u8] = bytes[1:4];
+  match (utf8.from_bytes(borrowed)) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return "bad";
+    }
+  }
+}
+
+function sums(text: string): i32 {
+  let bytes: [u8] = text.as_bytes();
+  let owned: u8[] = text.bytes();
+  let padded: string = "!" + text + "?";
+  let all: [u8] = padded.as_bytes();
+  let window: [u8] = all[1:1 + text.len()];
+  for seed in [0, 1, -1, -2147483648, 2147483647] {
+    let crc: i32 = __crc32_cksum(seed, text);
+    if (__crc32_cksum_array(seed, bytes) != crc || __crc32_cksum_array(seed, owned) != crc || __crc32_cksum_array(seed, window) != crc) {
+      return 1;
+    }
+    let bsd: i32 = __bsd_sum(text, seed);
+    if (__bsd_sum_bytes(bytes, seed) != bsd || __bsd_sum_bytes(owned, seed) != bsd || __bsd_sum_bytes(window, seed) != bsd) {
+      return 2;
+    }
+  }
+  let sum: i32 = __sum_bytes(text);
+  if (__sum_bytes_array(bytes) != sum || __sum_bytes_array(owned) != sum || __sum_bytes_array(window) != sum) {
+    return 3;
+  }
+  if (hash.cksum_new().update(bytes).finish() != hash.cksum_new().update(owned).finish() || hash.bsd_sum_new().update(bytes).finish() != hash.bsd_sum_new().update(window).finish() || hash.sysv_sum_new().update(bytes).finish() != hash.sysv_sum_new().update(owned).finish()) {
+    return 4;
+  }
+  return 0;
+}
+
+function codecs(bytes: [u8]): i32 {
+  if (hex.hex_encode(bytes) != "616263" || hex.hex_encode_upper(bytes) != "616263") {
+    return 10;
+  }
+  if (b64.base64_encode(bytes) != "YWJj" || b64.base64url_encode(bytes) != "YWJj" || b32.base32_encode(bytes) != "MFRGG===") {
+    return 11;
+  }
+  if (hash.xxh64(bytes, 0 as u64) != 0x44bc2cf5ad770999 || hash.cksum_of(bytes) != 1219131554 || hash.crc32_of(bytes) != 891568578 || hash.bsd_sum_of(bytes) != 16556 || hash.sysv_sum_of(bytes) != 294) {
+    return 12;
+  }
+
+  if (crypto.md5_hex(bytes) != "900150983cd24fb0d6963f7d28e17f72") {
+    return 20;
+  }
+  if (hex.hex_encode(crypto.md5_bytes(bytes)) != "900150983cd24fb0d6963f7d28e17f72") {
+    return 21;
+  }
+  if (crypto.sha1_hex(bytes) != "a9993e364706816aba3e25717850c26c9cd0d89d") {
+    return 22;
+  }
+  if (hex.hex_encode(crypto.sha1_bytes(bytes)) != "a9993e364706816aba3e25717850c26c9cd0d89d") {
+    return 23;
+  }
+  if (crypto.sha224_hex(bytes) != "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7") {
+    return 24;
+  }
+  if (hex.hex_encode(crypto.sha224_bytes(bytes)) != "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7") {
+    return 25;
+  }
+  if (crypto.sha256_hex(bytes) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
+    return 26;
+  }
+  if (hex.hex_encode(crypto.sha256_bytes(bytes)) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
+    return 27;
+  }
+  if (crypto.sha384_hex(bytes) != "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7") {
+    return 28;
+  }
+  if (hex.hex_encode(crypto.sha384_bytes(bytes)) != "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7") {
+    return 29;
+  }
+  if (crypto.sha512_hex(bytes) != "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f") {
+    return 30;
+  }
+  if (hex.hex_encode(crypto.sha512_bytes(bytes)) != "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f") {
+    return 31;
+  }
+  if (crypto.sm3_hex(bytes) != "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0") {
+    return 32;
+  }
+  if (hex.hex_encode(crypto.sm3_bytes(bytes)) != "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0") {
+    return 33;
+  }
+  if (crypto.blake2b_hex(bytes, 64) != "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923") {
+    return 34;
+  }
+  if (hex.hex_encode(crypto.blake2b_bytes(bytes, 64)) != "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923") {
+    return 35;
+  }
+  if (crypto.sha3_256_hex(bytes) != "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532") {
+    return 36;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let view: [u8] = "abc".as_bytes();
+  let owned: u8[] = [97 as u8, 98 as u8, 99 as u8];
+  let padded: u8[] = [0 as u8, 97 as u8, 98 as u8, 99 as u8, 255 as u8];
+  let slice: [u8] = padded[1:4];
+  let a: i32 = codecs(view);
+  let b: i32 = codecs(owned);
+  let c: i32 = codecs(slice);
+  if (a != 0) {
+    return a;
+  }
+  if (b != 0) {
+    return b;
+  }
+  if (c != 0) {
+    return c;
+  }
+  let key: [u8] = "key".as_bytes();
+  let mac: u8[] = crypto.hmac_sha256(key, view);
+  if (hex.hex_encode(mac) != "9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab" || crypto.hmac_sha256_hex(key, view) != "9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab" || !crypto.hmac_verify(key, view, mac) || !crypto.hmac_verify_hex(key, view, "9c196e32dc0175f86f4b1cb89289d6619de6bee699e4c378e68309ed97a1a6ab")) {
+    return 50;
+  }
+  let password: [u8] = "password".as_bytes();
+  let salt: [u8] = "salt".as_bytes();
+  let derived: u8[] = crypto.pbkdf2_sha256(password, salt, 1, 32);
+  if (hex.hex_encode(derived) != "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b" || !crypto.pbkdf2_verify(password, salt, 1, derived) || !crypto.pbkdf2_verify_hex(password, salt, 1, "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b")) {
+    return 51;
+  }
+  if (!crypto.consteq(view, slice) || crypto.consteq(view, "abd".as_bytes()) || crypto.consteq(view, "ab".as_bytes())) {
+    return 52;
+  }
+  let first: Option[u8] = "abc".first();
+  let last: Option[u8] = "abc".last();
+  let at: Option[u8] = "abc".at(1);
+  if (!first.is_some() || first.unwrap_or(0 as u8) != 97 as u8 || last.unwrap_or(0 as u8) != 99 as u8 || at.unwrap_or(0 as u8) != 98 as u8 || "".first().is_some() || "x".at(-1).is_some()) {
+    return 60;
+  }
+  if (" a ".count_byte(32 as u8) != 2 || "  a".leading_count(32 as u8) != 2 || "a  ".trailing_count(32 as u8) != 2 || "abc".replace_byte(98 as u8, 255 as u8)[1] != 255 as u8 || "abc".without_byte(98 as u8).len() != 2) {
+    return 61;
+  }
+  if ("x".pad_start(3, '0') != "00x" || "x".pad_end(3, '.') != "x.." || "x".center(5, '-') != "--x--" || "x".pad_start(4, 'é') != "éx" || "x".center(9, '𝄞') != "𝄞x𝄞") {
+    return 62;
+  }
+  let (byte, cursor) = stream.stream_from_string("abc").read_byte();
+  let typed: Option[u8] = byte;
+  if (typed.unwrap_or(0 as u8) != 97 as u8) {
+    return 63;
+  }
+  if (text_copy() != "hé") {
+    return 70;
+  }
+  let invalid: u8[] = [255 as u8, 97 as u8];
+  let invalid_view: [u8] = invalid;
+  if (utf8.from_bytes(invalid_view).is_some() || utf8.from_bytes_lossy(invalid_view) != "�a") {
+    return 71;
+  }
+  for text in ["", "a", "abcdef", "abcdefg", "abcdefgh", "abcdefghijklmno", "abcdefghijklmnop", "abcdefghijklmnopqrstuvwxyz012345", "0123456789".repeat(41)] {
+    let result: i32 = sums(text);
+    if (result != 0) {
+      return 80 + result;
+    }
+  }
+  if (owned[0] != 97 as u8 || owned[1] != 98 as u8 || owned[2] != 99 as u8 || padded[0] != 0 as u8 || padded[4] != 255 as u8) {
+    return 90;
+  }
+  print("byte APIs passed");
+  return 0;
+}

@@ -1864,15 +1864,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__sum_bytes_array"] = &ast.FuncType{
-		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}},
+		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8}}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__crc32_cksum_array"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}, ast.ArrayType{Elem: ast.NumberType{Width: 8}}},
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}, ast.SliceType{Elem: ast.NumberType{Width: 8}}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__bsd_sum_bytes"] = &ast.FuncType{
-		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}},
+		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
 	c.info.FuncSigs["__memchr_bytes"] = &ast.FuncType{

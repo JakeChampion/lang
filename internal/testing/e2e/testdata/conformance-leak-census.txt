@@ -123,6 +123,8 @@ both_arms_read_p                                     0
 break_continue                                       0
 byte_slice_after_set_len_regrows                     0
 byte_view_of_a_field_after_a_failed_try              0
+byte_views_in_binary_codecs                         0
+byte_views_in_codecs                                0
 bytes_writer                                         0
 c2_consuming_reuse                                   0
 call_of_a_call_through_a_function_value              0
@@ -452,6 +454,7 @@ match_wildcard                                       0
 math_range                                           0
 method_type_arg_names_the_method                     0
 method_written_type_arg_result                       0
+minimum_i32_crc_seed                                0
 mock_platform_log                                    0
 module_scoped_variant                                0
 multi_file                                           0

@@ -40,14 +40,14 @@ function test_empty(): test.TestOutcome {
 }
 
 function test_abc(): test.TestOutcome {
-  return test.assert_eq(crypto.sm3_new().update("abc").final_hex(), "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0");
+  return test.assert_eq(crypto.sm3_new().update("abc".as_bytes()).final_hex(), "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0");
 }
 
 // The standard's second vector: "abcd" sixty-four bytes' worth, which is
 // exactly one block and so pads into a second.
 function test_multiblock(): test.TestOutcome {
   return test.assert_eq(
-    crypto.sm3_new().update("abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd").final_hex(),
+    crypto.sm3_new().update("abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd".as_bytes()).final_hex(),
     "debe9ff92275b8a138604889c18e5a4d6fdb70e5387e5765293dcba39c0c5732",
   );
 }
@@ -56,13 +56,13 @@ function test_multiblock(): test.TestOutcome {
 // byte, which is where a length-field off-by-one shows up.
 function test_fiftysix(): test.TestOutcome {
   return test.assert_eq(
-    crypto.sm3_new().update("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq").final_hex(),
+    crypto.sm3_new().update("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".as_bytes()).final_hex(),
     "639b6cc5e64d9e37a390b192df4fa1ea0720ab747ff692b9f38c4e66ad7b8c05",
   );
 }
 
 function test_bytes_len(): test.TestOutcome {
-  return test.assert_eq(crypto.sm3_new().update("abc").final_bytes().len(), 32);
+  return test.assert_eq(crypto.sm3_new().update("abc".as_bytes()).final_bytes().len(), 32);
 }
 
 // One million 'a' as 1000 updates of 1000 bytes: 1000 is not a multiple of the
@@ -72,7 +72,7 @@ function test_million_a_chunked(): test.TestOutcome {
   let chunk: string = __thousand_a();
   let i: i32 = 0;
   while (i < 1000) {
-    h = h.update(chunk);
+    h = h.update(chunk.as_bytes());
     i = i + 1;
   }
   return test.assert_eq(h.final_hex(), "c8aaf89429554029e231941a2acc0ad61ff2a5acd8fadd25847a3a732b3b02c3");
@@ -85,12 +85,12 @@ function test_seven_byte_updates(): test.TestOutcome {
   let h: crypto.Sm3 = crypto.sm3_new();
   let i: i32 = 0;
   while (i + 7 <= 10003) {
-    h = h.update_bytes(msg[i:i + 7]);
+    h = h.update(msg[i:i + 7]);
     i = i + 7;
   }
-  h = h.update_bytes(msg[i:10003]);
+  h = h.update(msg[i:10003]);
   let chunked: string = h.final_hex();
-  let whole: string = crypto.sm3_new().update(string_from_bytes_unchecked(msg)).final_hex();
+  let whole: string = crypto.sm3_new().update(msg).final_hex();
   if (chunked != "c7badae448ca76f384615885c394c4691998ee17da0e0ee68bf404dde5895544") {
     return test.fail("chunked: " + chunked);
   }
@@ -99,8 +99,8 @@ function test_seven_byte_updates(): test.TestOutcome {
 
 // update_bytes takes the same bytes as u8[]; the one-shot helpers agree.
 function test_update_bytes_and_oneshot(): test.TestOutcome {
-  let via_bytes: string = crypto.sm3_new().update_bytes("abc".bytes()).final_hex();
-  if (via_bytes != crypto.sm3_hex("abc")) {
+  let via_bytes: string = crypto.sm3_new().update("abc".bytes()).final_hex();
+  if (via_bytes != crypto.sm3_hex("abc".as_bytes())) {
     return test.fail("one-shot differs: " + via_bytes);
   }
   return test.assert_eq(via_bytes, "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0");

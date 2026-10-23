@@ -21,7 +21,7 @@ function __seq(start: i32): u8[] {
 }
 
 function __h(b: [u8]): string {
-  return crypto.sha3_256_new().update_bytes(b).final_hex();
+  return crypto.sha3_256_new().update(b).final_hex();
 }
 
 function __flip(b: [u8], at: i32, bit: u8): u8[] {
@@ -160,7 +160,7 @@ function test_implicit_rejection(): test.TestOutcome {
     return test.fail("first byte");
   }
   let last: u8[] = __flip(ct, 1087, 0x80 as u8);
-  let j: u8[] = crypto.shake256_new().update_bytes(__seq(32)).update_bytes(last).reader().squeeze(32).0;
+  let j: u8[] = crypto.shake256_new().update(__seq(32)).update(last).reader().squeeze(32).0;
   if (hex.hex_encode(j) != "7d194c520c0dc58f59ee1712f1242d3cbfbf8cee04bf1d7b64b56904cca784f0") {
     return test.fail("J(z || c)");
   }

@@ -122,11 +122,11 @@ function test_slugify_edges(): test.TestOutcome {
 // ---- fitting / padding ----
 
 function test_pad_start(): test.TestOutcome {
-  return test.assert_eq("7".pad_start(3, "0"), "007");
+  return test.assert_eq("7".pad_start(3, '0'), "007");
 }
 
 function test_pad_end(): test.TestOutcome {
-  return test.assert_eq("7".pad_end(3, "."), "7..");
+  return test.assert_eq("7".pad_end(3, '.'), "7..");
 }
 
 function test_truncate(): test.TestOutcome {

@@ -275,25 +275,25 @@ function ctx_new(kind: i32, bits: i32): Ctx {
 function ctx_update(c: Ctx, chunk: u8[]): Ctx {
   match (c) {
     CMd5(h) => {
-      return CMd5(h.update_array(chunk));
+      return CMd5(h.update(chunk));
     },
     CSha1(h) => {
-      return CSha1(h.update_array(chunk));
+      return CSha1(h.update(chunk));
     },
     CSha2(h) => {
-      return CSha2(h.update_array(chunk));
+      return CSha2(h.update(chunk));
     },
     CSha5(h) => {
-      return CSha5(h.update_array(chunk));
+      return CSha5(h.update(chunk));
     },
     CB2(h) => {
-      return CB2(h.update_array(chunk));
+      return CB2(h.update(chunk));
     },
     CSm3(h) => {
-      return CSm3(h.update_array(chunk));
+      return CSm3(h.update(chunk));
     },
     CSha3(h) => {
-      return CSha3(h.update_array(chunk));
+      return CSha3(h.update(chunk));
     }
   }
 }

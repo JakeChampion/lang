@@ -455,7 +455,7 @@ function table_digit(c: i32): i32 {
 }
 
 // ---- TZif -------------------------------------------------------------------
-function be32(bs: u8[], o: i32): i64 {
+function be32(bs: [u8], o: i32): i64 {
   let v: i64 = 0;
   let i: i32 = 0;
   while (i < 4) {
@@ -465,7 +465,7 @@ function be32(bs: u8[], o: i32): i64 {
   return v;
 }
 
-function be32s(bs: u8[], o: i32): i64 {
+function be32s(bs: [u8], o: i32): i64 {
   let v: i64 = be32(bs, o);
   if (v > 2147483647 as i64) {
     return v - 4294967296 as i64;
@@ -473,7 +473,7 @@ function be32s(bs: u8[], o: i32): i64 {
   return v;
 }
 
-function be64s(bs: u8[], o: i32): i64 {
+function be64s(bs: [u8], o: i32): i64 {
   let v: i64 = 0;
   let i: i32 = 0;
   while (i < 8) {
@@ -487,7 +487,7 @@ function be64s(bs: u8[], o: i32): i64 {
 // says the header is not there at all.
 struct Counts { isut: i32, isstd: i32, leap: i32, time: i32, type_: i32, chars: i32 }
 
-function read_counts(bs: u8[], off: i32): Counts {
+function read_counts(bs: [u8], off: i32): Counts {
   let bad: Counts = Counts { isut: 0 - 1, isstd: 0, leap: 0, time: 0, type_: 0, chars: 0 };
   if (off < 0 || off + 44 > bs.len()) {
     return bad;
@@ -540,7 +540,7 @@ function read_zone_file(path: string): Option[Zone] {
 
 // Binary TZif data is accepted only when every returned designation and
 // the POSIX footer are valid UTF-8. Invalid text makes the file unusable.
-pub function parse_tzif(bs: u8[]): Option[Zone] {
+pub function parse_tzif(bs: [u8]): Option[Zone] {
   let h1: Counts = read_counts(bs, 0);
   if (h1.isut < 0 || h1.type_ < 1) {
     return None;
@@ -583,7 +583,7 @@ pub function parse_tzif(bs: u8[]): Option[Zone] {
 
 // The caller has checked the complete block's bounds and selected the
 // authoritative table width. Decode its types and transitions together.
-function read_zone_block(bs: u8[], c: Counts, off: i32, width: i32, footer: string): Option[Zone] {
+function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: string): Option[Zone] {
   // The transition times, then the index into the type table that each
   // one selects, then the types themselves.
   let idx_off: i32 = off + c.time * width;
@@ -647,7 +647,7 @@ function read_zone_block(bs: u8[], c: Counts, off: i32, width: i32, footer: stri
 
 // One entry of the designation table: the NUL-terminated string at
 // `at` bytes into the block of `len` that starts at `base`.
-function designation(bs: u8[], base: i32, len: i32, at: i32): Option[string] {
+function designation(bs: [u8], base: i32, len: i32, at: i32): Option[string] {
   if (at < 0 || at >= len) {
     return Some("");
   }
@@ -664,7 +664,7 @@ function designation(bs: u8[], base: i32, len: i32, at: i32): Option[string] {
 // The footer of a version-2 file: a newline, the rule, a newline. An
 // empty rule (the two newlines with nothing between) means the file
 // says nothing about times past its table.
-function read_footer(bs: u8[], start: i32): Option[string] {
+function read_footer(bs: [u8], start: i32): Option[string] {
   if (start >= bs.len() || bs[start] as i32 != 10) {
     return Some("");
   }

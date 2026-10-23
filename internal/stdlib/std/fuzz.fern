@@ -252,7 +252,7 @@ function __fuzz_escape(bs: u8[]): string {
     } else if (b >= 32 && b < 127) {
       out = out + (b as u8).to_ascii_string();
     } else {
-      out = out + "\\x" + b.to_hex().pad_start(2, "0");
+      out = out + "\\x" + b.to_hex().pad_start(2, '0');
     }
     i = i + 1;
   }

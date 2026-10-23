@@ -89,7 +89,7 @@ function main(): i32 {
   while (step > 0 && n <= last || step < 0 && n >= last) {
     let piece: string = n.to_string();
     if (equal_width) {
-      piece = piece.pad_start(pad, "0");
+      piece = piece.pad_start(pad, '0');
     }
     if (count > 0) {
       out = out + sep;

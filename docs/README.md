@@ -34,6 +34,7 @@ which ones.
 | `STR-VIEW-CONTRACT.md` | [policy] | What enforces the borrowed `str` contract (#8635). |
 | `STRINGS-SOTA.md` | [policy] | String state of the art and Fern's string decisions D1–D11 (UTF-8, byte indices, char, guaranteed validity), and the October 2026 migration audit. |
 | `ASSOCIATED-TYPES.md` | [reference] | Trait associated types and `Base::Name` projections (`Self::Item`, `T::Item`) as shipped. |
+| `BYTE-API.md` | [reference] | Byte views at codec inputs, owned outputs, byte access and character fills. |
 | `BLOCK-EXPRESSIONS.md` | [reference] | Block-expression syntax and value rules. |
 | `CELL-TYPE-PLAN.md` | [reference] | `Cell[T]`, the one mutable slot: which element types it admits, why E057 refuses the rest, and how it is implemented. |
 | `DYN-TRAITS.md` | [reference] | `dyn Trait` runtime dispatch and its RC handling; slices 1–4 shipped, remaining leaking positions listed. |

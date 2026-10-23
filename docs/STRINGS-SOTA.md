@@ -919,7 +919,7 @@ decision originally carried — "`string_from_bytes`, file/socket reads,
 env/args, FFI returns" — is incomplete in a way that matters. It misses
 the stdlib's own **byte-container APIs**, which use `string` as a raw
 byte bag and routinely hold bytes that are not UTF-8 at all:
-`crypto.sha256_bytes` / `hmac_sha256_bytes` / `pbkdf2_sha256` /
+`crypto.sha256_bytes` / `hmac_sha256` / `pbkdf2_sha256` /
 `hkdf_*`, `base64_decode`, `base32_decode`, `hex_decode`, and the
 `tcp_recv` / `read_file` builtins (`random_bytes` has since moved to
 `u8[]`). A 32-byte SHA-256
@@ -1078,9 +1078,8 @@ recorded in [the byte-stream report](string-log/2026-10-02-byte-streams.md).
 `__sum_bytes_array(bytes)` and `__bsd_sum_bytes(bytes, seed)` reduce borrowed
 byte arrays without converting them to text. The first wraps at 32 bits;
 the second continues the 16-bit BSD checksum. Packed native arrays reuse
-the existing kernels. `hash.BsdSum.update_array` and
-`hash.SysvSum.update_array` expose the path for owned reader buffers while
-preserving the existing view APIs. Target, ownership, bootstrap, size and
+the existing kernels. `hash.BsdSum.update` and
+`hash.SysvSum.update` borrow owned reader buffers and views through one method. Target, ownership, bootstrap, size and
 native measurement evidence is recorded in
 [the reduction report](string-log/2026-10-03-byte-reductions.md).
 

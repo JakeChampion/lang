@@ -114,7 +114,7 @@ function test_corpus_gzip(): test.TestOutcome {
         }
         k = k + 1;
       }
-      return test.assert_eq(hash.crc32_new().update_bytes(out[:]).finish() == 524053769 as u32, true);
+      return test.assert_eq(hash.crc32_new().update(out[:]).finish() == 524053769 as u32, true);
     },
     Err(e) => {
       return test.fail(e.message());

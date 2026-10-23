@@ -435,7 +435,7 @@ pub function public_key(seed: [u8]): Result[u8[], Ed25519Error] {
   if (seed.len() != 32) {
     return Err(SeedLength(seed.len()));
   }
-  let h: u8[] = crypto.sha512_new().update_bytes(seed).final_bytes();
+  let h: u8[] = crypto.sha512_new().update(seed).final_bytes();
   return Ok(__encode(__mul_base(__scalar(h))));
 }
 
@@ -445,12 +445,12 @@ pub function sign(seed: [u8], msg: [u8]): Result[u8[], Ed25519Error] {
   if (seed.len() != 32) {
     return Err(SeedLength(seed.len()));
   }
-  let h: u8[] = crypto.sha512_new().update_bytes(seed).final_bytes();
+  let h: u8[] = crypto.sha512_new().update(seed).final_bytes();
   let a: u8[] = __scalar(h);
   let public: u8[] = __encode(__mul_base(a));
-  let r: u8[] = __reduce(crypto.sha512_new().update_bytes(h[32:64]).update_bytes(msg).final_bytes());
+  let r: u8[] = __reduce(crypto.sha512_new().update(h[32:64]).update(msg).final_bytes());
   let big_r: u8[] = __encode(__mul_base(r));
-  let k: u8[] = __reduce(crypto.sha512_new().update_bytes(big_r).update_bytes(public).update_bytes(msg).final_bytes());
+  let k: u8[] = __reduce(crypto.sha512_new().update(big_r).update(public).update(msg).final_bytes());
   return Ok(__concat(big_r, __mul_add(k, a, r)));
 }
 
@@ -466,7 +466,7 @@ pub function verify(public_key: [u8], msg: [u8], sig: [u8]): boolean {
   }
   match (__decode(public_key)) {
     Some(a) => {
-      let k: u8[] = __reduce(crypto.sha512_new().update_bytes(sig[0:32]).update_bytes(public_key).update_bytes(msg).final_bytes());
+      let k: u8[] = __reduce(crypto.sha512_new().update(sig[0:32]).update(public_key).update(msg).final_bytes());
       return __same(__encode(__double_mul(k, __neg(a), s)), sig, 32);
     },
     None => {

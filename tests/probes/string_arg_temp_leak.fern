@@ -42,7 +42,7 @@
 // ABI a <= 7-byte string is SSO-inline, so short intermediates allocate nothing
 // and there is no block to lose. The two-word ABI (arm64 / TwoWordOverride,
 // wasm) heap-allocates them — which is why `to_rgb_hex`, three
-// `to_hex().pad_start(2, "0")` chains, reported a leak on arm64 and a clean run
+// `to_hex().pad_start(2, '0')` chains, reported a leak on arm64 and a clean run
 // on x86-64 for byte-identical source. The strings below exceed the SSO window
 // so both backends show it. Any new rc/string fixture should do the same, or it
 // under-reports by however much fits inline.
@@ -61,7 +61,7 @@ function temp(): i32 {
   let acc: i32 = 0;
   let k: i32 = 1;
   while (k < 40) {
-    let s: string = (k * 66049).to_binary().pad_start(40, "0");
+    let s: string = (k * 66049).to_binary().pad_start(40, '0');
     let i: i32 = 0;
     while (i < s.len()) {
       acc = (acc * 31 + s[i] as i32) % 100003;
@@ -77,7 +77,7 @@ function bound(): i32 {
   let k: i32 = 1;
   while (k < 40) {
     let h: string = (k * 66049).to_binary();
-    let s: string = h.pad_start(40, "0");
+    let s: string = h.pad_start(40, '0');
     let i: i32 = 0;
     while (i < s.len()) {
       acc = (acc * 31 + s[i] as i32) % 100003;

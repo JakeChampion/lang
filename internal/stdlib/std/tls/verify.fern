@@ -634,7 +634,7 @@ function __parsed(chain: u8[][]): Result[x509.Certificate[], VerifyError] {
 
 // denied_key is whether the certificate's key is on DENIED_SPKI.
 pub function denied_key(c: x509.Certificate): boolean {
-  let h: string = hex.hex_encode(crypto.sha256_new().update_bytes(c.spki).final_bytes());
+  let h: string = hex.hex_encode(crypto.sha256_new().update(c.spki).final_bytes());
   for d in DENIED_SPKI {
     if (h == d) {
       return true;

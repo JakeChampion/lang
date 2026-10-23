@@ -151,16 +151,16 @@ function plain_new(sel: i32): Plain {
 function plain_update(p: Plain, chunk: u8[]): Plain {
   match (p) {
     PCrc(c) => {
-      return PCrc(c.update_array(chunk));
+      return PCrc(c.update(chunk));
     },
     PCrc32(c) => {
-      return PCrc32(c.update_array(chunk));
+      return PCrc32(c.update(chunk));
     },
     PBsd(c) => {
-      return PBsd(c.update_array(chunk));
+      return PBsd(c.update(chunk));
     },
     PSysv(c) => {
-      return PSysv(c.update_array(chunk));
+      return PSysv(c.update(chunk));
     }
   }
 }

@@ -38,7 +38,7 @@ function __b32_decode_char(c: i32): i32 {
 }
 
 // `base32_encode(b)` — RFC 4648 base32, `=`-padded to 8-char groups.
-pub function base32_encode(bs: u8[]): string {
+pub function base32_encode(bs: [u8]): string {
   let out: u8[] = [];
   let acc: i32 = 0;
   let bits: i32 = 0;

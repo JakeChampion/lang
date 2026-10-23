@@ -24,7 +24,7 @@ import "core/int";
 function main(): i32 {
     match (deflate.gunzip(hex.hex_decode("` + deflateCorpusGzipHex + `"), 1048576)) {
         Ok(out) => {
-            if (hash.crc32_new().update_bytes(out[:]).finish() == 524053769 as u32) {
+            if (hash.crc32_new().update(out[:]).finish() == 524053769 as u32) {
                 print(int.int_to_string(out.len()) + " crc-ok");
                 return 0;
             }

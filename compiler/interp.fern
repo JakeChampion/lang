@@ -5448,7 +5448,8 @@ function eval_expr(e: ast.Expr, env: Env): Value {
           return call_method(ov, "neg", [], env.funcs, env.aliases, env.type_decls, env.outs);
         }
       }
-      return eval_unary(u.op, ov);
+      // Apply the checked result width after negating a wide magnitude.
+      return coerce_int_width(eval_unary(u.op, ov), u.ty);
     },
     ast.ExprCall(c) => {
       return eval_expr_call(c, env);

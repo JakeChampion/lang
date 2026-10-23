@@ -46,7 +46,7 @@ function __hex_value(c: i32): i32 {
   return 0 - 1;
 }
 
-pub function hex_encode(bs: u8[]): string {
+pub function hex_encode(bs: [u8]): string {
   let n: i32 = bs.len();
   if (n == 0) {
     return "";
@@ -67,7 +67,7 @@ pub function hex_encode(bs: u8[]): string {
 // uppercase hex (MAC addresses, some checksums, fingerprints). Decodes
 // with the same `hex_decode` / `hex_decode_strict` (both accept either
 // case).
-pub function hex_encode_upper(bs: u8[]): string {
+pub function hex_encode_upper(bs: [u8]): string {
   let n: i32 = bs.len();
   if (n == 0) {
     return "";

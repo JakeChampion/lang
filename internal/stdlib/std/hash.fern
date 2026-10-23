@@ -2,7 +2,7 @@
 // prints and the two sum(1) checksums (BSD `sum -r`, System V `sum -s`).
 //
 // These share std/crypto's streaming shape — a value with `update` /
-// `update_bytes` that is rebound (`c = c.update(chunk)`) and read out with
+// `update` that is rebound (`c = c.update(chunk)`) and read out with
 // `finish()` — but live apart from it because none of them is a hash
 // function in the cryptographic sense: a CRC detects line noise, not an
 // adversary, and putting it under `crypto` would suggest otherwise. This is
@@ -67,61 +67,8 @@ pub function cksum_new(): Cksum {
   return Cksum { crc: 0, len: 0 as u64, table: __cksum_tables() };
 }
 
-function __cksum_absorb(c: Cksum, bs: [u8]): Cksum {
-  let t: u32[] = c.table;
-  let crc: u32 = c.crc;
-  let n: i32 = bs.len();
-  let i: i32 = 0;
-  let lim: i32 = n - 8;
-  let w0: u32 = 0;
-  let w1: u32 = 0;
-  while (i <= lim) {
-    w0 = crc ^ (bs[i] as u32 << 24 | bs[i + 1] as u32 << 16 | bs[i + 2] as u32 << 8 | bs[i + 3] as u32);
-    w1 = bs[i + 4] as u32 << 24 | bs[i + 5] as u32 << 16 | bs[i + 6] as u32 << 8 | bs[i + 7] as u32;
-    crc = t[1792 + (w0 >> 24 & 255) as i32]
-      ^ t[1536 + (w0 >> 16 & 255) as i32]
-      ^ t[1280 + (w0 >> 8 & 255) as i32]
-      ^ t[1024 + (w0 & 255) as i32]
-      ^ t[768 + (w1 >> 24 & 255) as i32]
-      ^ t[512 + (w1 >> 16 & 255) as i32]
-      ^ t[256 + (w1 >> 8 & 255) as i32]
-      ^ t[(w1 & 255) as i32];
-    i = i + 8;
-  }
-  while (i < n) {
-    crc = crc << 8 ^ t[((crc >> 24 ^ bs[i] as u32) & 255) as i32];
-    i = i + 1;
-  }
-  return Cksum { ...c, crc: crc, len: c.len + n as u64 };
-}
-
-// update(chunk) — the fused kernel rather than the table
-// (docs/ATLAS-PLATFORM-PLAN.md §3; #9128). Every backend answers
-// __crc32_cksum, and the two natives fold sixteen bytes a step with a
-// carry-less multiply where this loop reads one. The bytes never leave the
-// string either: `as_bytes` was a second walk over the same memory before
-// the table walk that followed it.
-//
-// The crc rides as an i32 because that is the only 32-bit integer the
-// builtin family speaks; the cast is a reinterpretation, and the polynomial
-// steps are the same arithmetic on either signedness.
-//
-// __cksum_absorb stays for update_bytes, which has no string to hand the
-// kernel, and finish() still folds the length through the table.
-pub function (c: Cksum) update(chunk: string): Cksum {
-  return Cksum {
-    ...c, crc: __crc32_cksum(c.crc as i32, chunk) as u32,
-    len: c.len + chunk.len() as u64,
-  };
-}
-
-pub function (c: Cksum) update_bytes(chunk: [u8]): Cksum {
-  c = __cksum_absorb(c, chunk);
-  return c;
-}
-
-// Packed arrays use the same accelerated CRC kernel as text input.
-pub function (c: Cksum) update_array(chunk: u8[]): Cksum {
+// Borrow byte input and use the existing checksum kernel for its layout.
+pub function (c: Cksum) update(chunk: [u8]): Cksum {
   return Cksum {
     ...c, crc: __crc32_cksum_array(c.crc as i32, chunk) as u32,
     len: c.len + chunk.len() as u64,
@@ -148,7 +95,7 @@ pub function (c: Cksum) finish(): u32 {
 }
 
 // cksum_of(s) — the one-shot checksum of `s`.
-pub function cksum_of(s: string): u32 {
+pub function cksum_of(s: [u8]): u32 {
   return cksum_new().update(s).finish();
 }
 
@@ -219,223 +166,11 @@ function __crc32_absorb(c: Crc32, bs: [u8]): Crc32 {
   return Crc32 { ...c, crc: crc, len: c.len + n as u64 };
 }
 
-pub function (c: Crc32) update(chunk: string): Crc32 {
-  c = __crc32_absorb(c, chunk.as_bytes());
-  return c;
-}
-
-pub function (c: Crc32) update_bytes(chunk: [u8]): Crc32 {
+// Borrow byte input and use the existing checksum kernel for its layout.
+pub function (c: Crc32) update(chunk: [u8]): Crc32 {
   c = __crc32_absorb(c, chunk);
   return c;
 }
 
-// Match the owned-buffer entry points of the other streaming checksums.
-pub function (c: Crc32) update_array(chunk: u8[]): Crc32 {
-  return __crc32_absorb(c, chunk);
-}
-
-// byte_count() — the number of bytes absorbed, the second field cksum prints.
+// byte_count() reports the number of bytes absorbed.
 pub function (c: Crc32) byte_count(): u64 {
-  return c.len;
-}
-
-// finish() — the register complemented. Reads the state without
-// consuming it: more `update`s may follow.
-pub function (c: Crc32) finish(): u32 {
-  return c.crc ^ 0xffffffff;
-}
-
-// crc32_of(s) — the one-shot checksum of `s`.
-pub function crc32_of(s: string): u32 {
-  return crc32_new().update(s).finish();
-}
-
-// === BSD sum (`sum -r`): 16-bit rotate-and-add, 1 KiB blocks ===
-
-pub struct BsdSum {
-  sum: u32,
-  len: u64,
-}
-
-pub function bsd_sum_new(): BsdSum {
-  return BsdSum { sum: 0, len: 0 as u64 };
-}
-
-function __bsd_sum_absorb(s: BsdSum, bs: [u8]): BsdSum {
-  let sum: u32 = s.sum;
-  let n: i32 = bs.len();
-  let i: i32 = 0;
-  while (i < n) {
-    sum = (sum >> 1 | sum << 15) & 0xffff;
-    sum = sum + bs[i] as u32 & 0xffff;
-    i = i + 1;
-  }
-  return BsdSum { sum: sum, len: s.len + n as u64 };
-}
-
-// update(chunk) runs the string kernel. update_bytes accepts a borrowed view;
-// update_array uses the raw-array kernel for an owned buffer.
-pub function (s: BsdSum) update(chunk: string): BsdSum {
-  return BsdSum { sum: __bsd_sum(chunk, s.sum as i32) as u32, len: s.len + chunk.len() as u64 };
-}
-
-pub function (s: BsdSum) update_bytes(chunk: [u8]): BsdSum {
-  s = __bsd_sum_absorb(s, chunk);
-  return s;
-}
-
-// Borrow an owned raw buffer without copying it or interpreting it as text.
-pub function (s: BsdSum) update_array(chunk: u8[]): BsdSum {
-  return BsdSum { sum: __bsd_sum_bytes(chunk, s.sum as i32) as u32, len: s.len + chunk.len() as u64 };
-}
-
-// finish() — the 16-bit checksum (0..65535).
-pub function (s: BsdSum) finish(): u32 {
-  return s.sum;
-}
-
-pub function (s: BsdSum) byte_count(): u64 {
-  return s.len;
-}
-
-// blocks() — the 1 KiB block count sum(1) prints, rounded up.
-pub function (s: BsdSum) blocks(): u64 {
-  return (s.len + 1023 as u64) / (1024 as u64);
-}
-
-// bsd_sum_of(s) — the one-shot checksum of `s`.
-pub function bsd_sum_of(s: string): u32 {
-  return bsd_sum_new().update(s).finish();
-}
-
-// === System V sum (`sum -s`): folded 32-bit byte sum, 512-byte blocks ===
-
-pub struct SysvSum {
-  sum: u32,
-  len: u64,
-}
-
-pub function sysv_sum_new(): SysvSum {
-  return SysvSum { sum: 0, len: 0 as u64 };
-}
-
-function __sysv_sum_absorb(s: SysvSum, bs: [u8]): SysvSum {
-  let sum: u32 = s.sum;
-  let n: i32 = bs.len();
-  let i: i32 = 0;
-  while (i < n) {
-    sum = sum + bs[i] as u32;
-    i = i + 1;
-  }
-  return SysvSum { sum: sum, len: s.len + n as u64 };
-}
-
-// The string entry point is the one the utilities run: `cksum -a sysv` and
-// `sum -s` both read 64 KiB chunks as strings, so this is where the kernel
-// matters. `update_bytes` keeps the indexed loop because `[u8]` is not the
-// kernel family's operand type — the same split `__count_byte` has, where
-// `s.count_byte(b)` is string-only and there is no `[u8]` counterpart.
-//
-// The two must agree byte for byte, and what pins them is
-// tests/stdlib/hash_checksums_test.fern: it streams the 10,003-byte
-// non-UTF-8 pattern through BOTH and compares the results.
-// Read the byte count directly from chunk. as_bytes() also answers it without
-// copying, but this string-only kernel already has the source descriptor.
-pub function (s: SysvSum) update(chunk: string): SysvSum {
-  return SysvSum {
-    sum: s.sum + __sum_bytes(chunk) as u32,
-    len: s.len + chunk.len() as u64,
-  };
-}
-
-pub function (s: SysvSum) update_bytes(chunk: [u8]): SysvSum {
-  s = __sysv_sum_absorb(s, chunk);
-  return s;
-}
-
-// The packed-array counterpart uses the same native reduction as update.
-pub function (s: SysvSum) update_array(chunk: u8[]): SysvSum {
-  return SysvSum { sum: s.sum + __sum_bytes_array(chunk) as u32, len: s.len + chunk.len() as u64 };
-}
-
-// finish() — the 16-bit checksum: the wrapped 32-bit byte sum folded to
-// 16 bits, then folded once more so the carry of the first fold lands.
-pub function (s: SysvSum) finish(): u32 {
-  let r: u32 = (s.sum & 0xffff) + (s.sum >> 16);
-  return (r & 0xffff) + (r >> 16);
-}
-
-pub function (s: SysvSum) byte_count(): u64 {
-  return s.len;
-}
-
-// blocks() — the 512-byte block count sum(1) prints, rounded up.
-pub function (s: SysvSum) blocks(): u64 {
-  return (s.len + 511 as u64) / (512 as u64);
-}
-
-// sysv_sum_of(s) — the one-shot checksum of `s`.
-pub function sysv_sum_of(s: string): u32 {
-  return sysv_sum_new().update(s).finish();
-}
-
-// === XXH64: Yann Collet's 64-bit hash, the checksum zstd frames carry ===
-
-// xxh64(bs, seed) — XXH64 of `bs` under `seed`.
-pub function xxh64(bs: u8[], seed: u64): u64 {
-  let n: i32 = bs.len();
-  let at: i32 = 0;
-  let h: u64 = seed + 0x27D4EB2F165667C5;
-  if (n >= 32) {
-    let v: u64[] = [seed + 0x9E3779B185EBCA87 + 0xC2B2AE3D27D4EB4F, seed + 0xC2B2AE3D27D4EB4F, seed, seed - 0x9E3779B185EBCA87];
-    while (at + 32 <= n) {
-      v = [__xxh_round(v[0], __le64(bs, at)), __xxh_round(v[1], __le64(bs, at + 8)), __xxh_round(v[2], __le64(bs, at + 16)), __xxh_round(v[3], __le64(bs, at + 24))];
-      at = at + 32;
-    }
-    h = __rotl64(v[0], 1) + __rotl64(v[1], 7) + __rotl64(v[2], 12) + __rotl64(v[3], 18);
-    for x in v {
-      h = (h ^ __xxh_round(0, x)) * 0x9E3779B185EBCA87 + 0x85EBCA77C2B2AE63;
-    }
-  }
-  return __xxh_tail(bs, at, h + n as u64);
-}
-
-// __xxh_tail(bs, at, h) — the bytes past the last 32-byte stripe folded
-// into `h`, then the final mix.
-function __xxh_tail(bs: u8[], at: i32, h: u64): u64 {
-  let n: i32 = bs.len();
-  while (at + 8 <= n) {
-    h = __rotl64(h ^ __xxh_round(0, __le64(bs, at)), 27) * 0x9E3779B185EBCA87 + 0x85EBCA77C2B2AE63;
-    at = at + 8;
-  }
-  if (at + 4 <= n) {
-    let w: u64 = bs[at] as u64 | bs[at + 1] as u64 << 8 | bs[at + 2] as u64 << 16 | bs[at + 3] as u64 << 24;
-    h = __rotl64(h ^ w * 0x9E3779B185EBCA87, 23) * 0xC2B2AE3D27D4EB4F + 0x165667B19E3779F9;
-    at = at + 4;
-  }
-  while (at < n) {
-    h = __rotl64(h ^ bs[at] as u64 * 0x27D4EB2F165667C5, 11) * 0x9E3779B185EBCA87;
-    at = at + 1;
-  }
-  h = (h ^ h >> 33) * 0xC2B2AE3D27D4EB4F;
-  h = (h ^ h >> 29) * 0x165667B19E3779F9;
-  return h ^ h >> 32;
-}
-
-function __xxh_round(acc: u64, input: u64): u64 {
-  return __rotl64(acc + input * 0xC2B2AE3D27D4EB4F, 31) * 0x9E3779B185EBCA87;
-}
-
-function __rotl64(x: u64, r: u64): u64 {
-  return x << r | x >> 64 - r;
-}
-
-function __le64(bs: u8[], at: i32): u64 {
-  let v: u64 = 0;
-  let i: i32 = 7;
-  while (i >= 0) {
-    v = v << 8 | bs[at + i] as u64;
-    i = i - 1;
-  }
-  return v;
-}

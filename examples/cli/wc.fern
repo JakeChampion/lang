@@ -57,16 +57,16 @@ function add(a: Counts, b: Counts): Counts {
 function format_row(c: Counts, sh: Show, label: string): string {
   let out: string = "";
   if (sh.lines) {
-    out = out + c.lines.to_string().pad_start(7, " ");
+    out = out + c.lines.to_string().pad_start(7, ' ');
   }
   if (sh.words) {
-    out = out + c.words.to_string().pad_start(8, " ");
+    out = out + c.words.to_string().pad_start(8, ' ');
   }
   if (sh.bytes) {
-    out = out + c.bytes.to_string().pad_start(8, " ");
+    out = out + c.bytes.to_string().pad_start(8, ' ');
   }
   if (sh.chars) {
-    out = out + c.chars.to_string().pad_start(8, " ");
+    out = out + c.chars.to_string().pad_start(8, ' ');
   }
   if (!label.is_empty()) {
     out = out + " " + label;

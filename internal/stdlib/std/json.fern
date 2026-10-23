@@ -1166,7 +1166,7 @@ function __json_message(s: string, off: i32): string {
   }
   // A non-ASCII byte renders as hex — quoting it alone could split a
   // multibyte code point.
-  return "unexpected byte '\\x" + b.to_hex().pad_start(2, "0") + "'";
+  return "unexpected byte '\\x" + b.to_hex().pad_start(2, '0') + "'";
 }
 
 // json_parse_result is json_parse plus the position of the failure.

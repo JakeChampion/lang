@@ -22,26 +22,28 @@ import "std/utf8" as utf8;
 // CALL renders 1/0 on the self-host and true/false on native — a real
 // divergence, tracked separately, and not what this case is here to pin.
 function show(label: string, s: string): void {
-    let verdict: string = "INVALID";
-    if (utf8.is_valid_utf8(s)) { verdict = "valid"; }
-    print(label + "=" + s + " len=" + s.len().to_string() + " " + verdict);
+  let verdict: string = "INVALID";
+  if (utf8.is_valid_utf8(s)) {
+    verdict = "valid";
+  }
+  print(label + "=" + s + " len=" + s.len().to_string() + " " + verdict);
 }
 
 function main(): i32 {
-    // multibyte fills: whole characters only, always valid
-    show("pad_start", "a".pad_start(4, "é"));
-    show("pad_end", "a".pad_end(4, "é"));
-    show("center", "a".center(6, "ß"));
-    show("exact", "ab".pad_start(6, "é"));
-    show("four_byte", "a".center(9, "𝄞"));
+  // multibyte fills: whole characters only, always valid
+  show("pad_start", "a".pad_start(4, 'é'));
+  show("pad_end", "a".pad_end(4, 'é'));
+  show("center", "a".center(6, 'ß'));
+  show("exact", "ab".pad_start(6, 'é'));
+  show("four_byte", "a".center(9, '𝄞'));
 
-    // single-byte fills: unchanged, exact width
-    show("zeros", "42".pad_start(5, "0"));
-    show("spaces", "ab".pad_end(5, " "));
-    show("dashes", "x".center(7, "-"));
+  // single-byte fills: unchanged, exact width
+  show("zeros", "42".pad_start(5, '0'));
+  show("spaces", "ab".pad_end(5, ' '));
+  show("dashes", "x".center(7, '-'));
 
-    // degenerate cases pass through
-    show("already_long", "long".pad_start(2, "0"));
-    show("empty_fill", "q".pad_start(5, ""));
-    return 0;
+  // Widths that cannot fit a whole fill character pass through.
+  show("already_long", "long".pad_start(2, '0'));
+  show("no_whole_fill", "q".pad_start(2, 'é'));
+  return 0;
 }
