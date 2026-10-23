@@ -9,11 +9,10 @@ import (
 	"github.com/jakechampion/lang/internal/tables/strerror"
 )
 
-// std/net carries its own errno numbers because a Fern module cannot read
-// internal/tables/strerror's table. This reads the module as data and pins every
-// row to that table on each OS, and the variant order of `NetError` to the
-// errno-name list, so neither copy can drift: a number corrected in one
-// place fails here until the other follows.
+// std/net names the errno each NetError variant stands for as a std/errno
+// constant, in variant order. This reads the module as data and pins that list
+// to the variants and to internal/tables/strerror, so a variant added without
+// its errno, or an errno the table does not carry, fails here.
 
 const netSrc = "std/net.fern"
 
@@ -35,28 +34,6 @@ func netListBody(t *testing.T, s, name string) string {
 	return m[1]
 }
 
-func netStrings(t *testing.T, s, name string) []string {
-	t.Helper()
-	var out []string
-	for _, m := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(netListBody(t, s, name), -1) {
-		out = append(out, m[1])
-	}
-	return out
-}
-
-func netInts(t *testing.T, s, name string) []int {
-	t.Helper()
-	var out []int
-	for _, m := range regexp.MustCompile(`-?\d+`).FindAllString(netListBody(t, s, name), -1) {
-		n, err := strconv.Atoi(m)
-		if err != nil {
-			t.Fatalf("%s(): %q is not an integer", name, m)
-		}
-		out = append(out, n)
-	}
-	return out
-}
-
 // The variant each errno name stands for, in the order both lists keep.
 var netVariants = map[string]string{
 	"EADDRINUSE":    "AddrInUse",
@@ -72,30 +49,27 @@ var netVariants = map[string]string{
 	"EINTR":         "Interrupted",
 }
 
-func TestNetErrnoTablesMatchStrerror(t *testing.T) {
-	s := readNet(t)
-	names := netStrings(t, s, "__net_errno_names")
-	if len(names) != len(netVariants) {
-		t.Fatalf("__net_errno_names has %d entries, want %d: %v", len(names), len(netVariants), names)
+// netErrnoNames is __net_errnos's list as the errno names it spells.
+func netErrnoNames(t *testing.T, s string) []string {
+	t.Helper()
+	var out []string
+	for _, m := range regexp.MustCompile(`errno\.(\w+)`).FindAllStringSubmatch(netListBody(t, s, "__net_errnos"), -1) {
+		out = append(out, m[1])
 	}
-	for os, list := range map[string]string{
-		strerror.Linux:  "__net_errnos_linux",
-		strerror.Darwin: "__net_errnos_darwin",
-		strerror.Wasi:   "__net_errnos_wasi",
-	} {
-		nums := netInts(t, s, list)
-		if len(nums) != len(names) {
-			t.Fatalf("%s has %d entries, __net_errno_names has %d", list, len(nums), len(names))
+	return out
+}
+
+func TestNetErrnosMatchStrerror(t *testing.T) {
+	names := netErrnoNames(t, readNet(t))
+	if len(names) != len(netVariants) {
+		t.Fatalf("__net_errnos has %d entries, want %d: %v", len(names), len(netVariants), names)
+	}
+	for _, name := range names {
+		if _, ok := netVariants[name]; !ok {
+			t.Errorf("__net_errnos names %s, which no NetError variant stands for", name)
 		}
-		for i, name := range names {
-			want := strerror.Number(os, name)
-			if want == 0 {
-				t.Errorf("%s: %s has no number in internal/tables/strerror", os, name)
-				continue
-			}
-			if nums[i] != want {
-				t.Errorf("%s[%d] = %d for %s, internal/tables/strerror says %d", list, i, nums[i], name, want)
-			}
+		if strerror.Number(strerror.Linux, name) == 0 {
+			t.Errorf("__net_errnos names %s, which internal/tables/strerror has no Linux number for", name)
 		}
 	}
 	// EWOULDBLOCK must be EAGAIN's number everywhere, or `WouldBlock` would
@@ -124,13 +98,13 @@ func TestNetErrorVariantsFollowErrnoList(t *testing.T) {
 		}
 		variants = append(variants, v)
 	}
-	names := netStrings(t, s, "__net_errno_names")
+	names := netErrnoNames(t, s)
 	if len(variants) != len(names)+1 || variants[len(variants)-1] != "Other" {
 		t.Fatalf("NetError variants %v: want the %d named errnos then Other", variants, len(names))
 	}
 	for i, name := range names {
 		if variants[i] != netVariants[name] {
-			t.Errorf("NetError variant %d is %s, __net_errno_names[%d] is %s (%s)", i, variants[i], i, name, netVariants[name])
+			t.Errorf("NetError variant %d is %s, __net_errnos[%d] is %s (%s)", i, variants[i], i, name, netVariants[name])
 		}
 	}
 	// The index ladders that map between the two must name every variant

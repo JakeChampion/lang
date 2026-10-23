@@ -548,10 +548,9 @@ function name_chars(): string {
 // are pasted back in front of a sibling's name and printed, and GNU
 // prints `renamed to 0` rather than `renamed to ./0`.
 function dir_prefix(path: string): string {
-  let cut: i32 = path.last_index_of("/");
-  if (cut < 0) {
+  let Some(cut) = path.last_index_of("/") else {
     return "";
-  }
+  };
   return slice_unchecked(path, 0, cut + 1) + "";
 }
 

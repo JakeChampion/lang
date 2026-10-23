@@ -525,10 +525,10 @@ function __segment(pattern: string, s: string, last: boolean): Result[Segment, R
 // wildcard, and `?` or `#`, which end a request's path before it is
 // matched and so could never be met.
 function __literal(pattern: string, s: string): Result[Segment, RouteError] {
-  if (s.index_of("{") >= 0 || s.index_of("}") >= 0) {
+  if (s.contains("{") || s.contains("}")) {
     return Err(BadPattern(pattern, "a brace inside the segment " + s));
   }
-  if (s.index_of("?") >= 0 || s.index_of("#") >= 0) {
+  if (s.contains("?") || s.contains("#")) {
     return Err(BadPattern(pattern, "a query or fragment in the segment " + s));
   }
   return Ok(PathLiteral(s));

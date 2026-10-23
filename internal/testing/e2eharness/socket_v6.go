@@ -154,6 +154,7 @@ function main(): i32 {
 func NetV6Probe() string {
 	return `import "core/int";
 import "std/net";
+import "std/errno";
 
 // recv reads once from fd within five seconds: the bytes, none at the end
 // of the stream, when nothing came, or when the read failed.
@@ -186,10 +187,8 @@ function lo6(port: i32): net.SocketAddr {
 }
 
 // The host has no IPv6: EAFNOSUPPORT, or wasmtime's not-supported.
-function no_v6(errno: i32): boolean {
-    if (target_os() == "darwin") { return errno == 47; }
-    if (target_os() == "wasi") { return errno == 5 || errno == 58; }
-    return errno == 97;
+function no_v6(e: net.NetError): boolean {
+    return e.errno() == errno.EAFNOSUPPORT || e.errno() == errno.ENOTSUP;
 }
 
 function main(): i32 {
@@ -197,7 +196,7 @@ function main(): i32 {
     match (net.listen_at(lo6(0), net.listen_options())) {
         Ok(fd) => { ln = fd; },
         Err(e) => {
-            if (no_v6(e.errno())) {
+            if (no_v6(e)) {
                 print("nov6");
                 return 43;
             }
