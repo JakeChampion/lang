@@ -1,0 +1,6 @@
+variant Num expects 1 payload argument(s); call it as Num(...)
+variant Token.Pair expects 2 payload argument(s); call it as Token.Pair(...)
+variant shapes.Shape.Circle expects 1 payload argument(s); call it as shapes.Shape.Circle(...)
+variant shapes.Shape.Rect expects 2 payload argument(s); call it as shapes.Shape.Rect(...)
+variant Some expects 1 payload argument(s); call it as Some(...)
+variant Result.Err expects 1 payload argument(s); call it as Result.Err(...)

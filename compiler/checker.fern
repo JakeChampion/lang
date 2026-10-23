@@ -3016,11 +3016,11 @@ function union_of_variant(name: string, unions: UnionTable): string {
   return union_sig_of_variant(name, unions).name;
 }
 
-// variant_carries_payload reports whether the bare variant `name` needs a
-// constructor call (`A(5)`) rather than standing as a value. The payload is a
-// struct sig either way, but WHICH one depends on how the variant was declared:
-// an enum variant's payload is a struct the enum owns, so it is looked up
-// through that owner, while a union alias's variant IS a declared struct.
+// variant_value_payloads is how many payloads variant `name` carries, so how
+// many its constructor call takes: an enum variant's fields, one for a union's
+// struct member, one for Some / Ok / Err. `en` is the enum a qualified
+// reference names, or "" for a bare one. Zero means the variant stands as a
+// value.
 //
 // Asking the struct table by name alone gets this wrong when a plain struct
 // shares a payloadless variant's name (#9900): the table is keyed by the bare
@@ -3028,13 +3028,86 @@ function union_of_variant(name: string, unions: UnionTable): string {
 // — the struct, declared first, reading its own fields as the variant's
 // payload. Scoping the enum case to the owner keeps the two namespaces apart
 // the way native's `info.Structs` and `variantOf` are.
-function variant_carries_payload(s: Scope, name: string): boolean {
+function variant_value_payloads(s: Scope, en: string, name: string): i32 {
   let owner: UnionSig = union_sig_of_variant(name, s.unions);
+  if (en.len() > 0) {
+    owner = s.lookup_union(en);
+  }
   if (owner.is_enum) {
     let vs: StructSig = s.lookup_owned_struct(name, owner.name);
-    return vs.enum_owner == owner.name && vs.field_names.len() > 0;
+    if (vs.enum_owner == owner.name) {
+      return vs.field_names.len();
+    }
+    return 0;
   }
-  return s.lookup_struct(name).field_names.len() > 0;
+  if (owner.name.len() > 0) {
+    if (s.lookup_struct(name).field_names.len() > 0) {
+      return 1;
+    }
+    return 0;
+  }
+  let builtin: string = parser.builtin_enum_of(name);
+  if (builtin.len() == 0 || en.len() > 0 && en != builtin) {
+    return 0;
+  }
+  if (builtin == "Option" || builtin == "Result") {
+    if (name == "None") {
+      return 0;
+    }
+    return 1;
+  }
+  let injected: StructSig = s.lookup_owned_struct(name, builtin);
+  if (injected.enum_owner == builtin) {
+    return injected.field_names.len();
+  }
+  return 0;
+}
+
+// payload_variant_value_diag is E036 for a payload variant read as a value
+// instead of called; `shown` is the reference as written.
+function payload_variant_value_diag(shown: string, payloads: i32, line: i32, col: i32): util.Diag {
+  return dg_at("E036", "variant " + shown + " expects " + util.i32_to_string(payloads) + " payload argument(s); call it as " + shown + "(...)", line, col);
+}
+
+// no_variant_diag is E036 for `Enum.Variant` naming a variant the enum lacks.
+function no_variant_diag(en: string, field: string, line: i32, col: i32): util.Diag {
+  return dg_at("E036", "enum " + util.demangle(en) + " has no variant \"" + written_variant(field) + "\"", line, col);
+}
+
+// shown_variant is how a diagnostic names the variant of a pattern or
+// reference: bare, without its enum qualifier or module prefix.
+function shown_variant(name: string): string {
+  return written_variant(variant_pattern_name(name));
+}
+
+// unknown_variant_diag is E014 for a match arm naming a variant that the
+// scrutinee's enum `u` does not declare.
+function unknown_variant_diag(name: string, u: UnionSig, line: i32, col: i32): util.Diag {
+  let shown: string = written_variant(name);
+  let hint: string = " — a bare name in arm position is a VARIANT, not a binding; for a catch-all use `_`, binding the scrutinee to a variable first if you need its value";
+  let best: string = "";
+  let best_d: i32 = 0;
+  for v in u.variants {
+    let d: i32 = util.levenshtein(shown, written_variant(v));
+    if (d <= shown.len() / 3 + 1 && (best.len() == 0 || d < best_d)) {
+      best = written_variant(v);
+      best_d = d;
+    }
+  }
+  if (best.len() > 0) {
+    hint = " (did you mean \"" + best + "\"?)";
+  }
+  return dg_at("E014", "variant \"" + shown + "\" is not part of enum " + util.demangle(u.name) + hint, line, col);
+}
+
+// written_variant is a variant name as its source spells it, without the
+// module prefix an imported enum's variants carry.
+function written_variant(name: string): string {
+  let d: i32 = util.dunder_at(name);
+  if (d < 0) {
+    return name;
+  }
+  return slice_unchecked(name, d + 2, name.len()) + "";
 }
 
 // is_resolvable_value reports whether a bare identifier in VALUE position
@@ -6593,7 +6666,7 @@ function binds_nothing(e: ast.Expr, s: Scope): boolean {
 // which as a bare value names none of the enum's type arguments.
 function generic_unit_variant(name: string, s: Scope): boolean {
   let owner: UnionSig = union_sig_of_variant(name, s.unions);
-  return owner.is_enum && owner.type_params.len() > 0 && !variant_carries_payload(s, name);
+  return owner.is_enum && owner.type_params.len() > 0 && variant_value_payloads(s, "", name) == 0;
 }
 
 // bound_names_tp: one of `bounds` spells `tp`, so bound_bindings may be what
@@ -7336,7 +7409,7 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
     return t_unknown("ambiguous variant `" + id.name + "`");
   }
   let un: string = union_of_variant(id.name, s.unions);
-  if (un.len() > 0 && !s.has_sig(id.name) && !variant_carries_payload(s, id.name)) {
+  if (un.len() > 0 && !s.has_sig(id.name) && variant_value_payloads(s, "", id.name) == 0) {
     return t_union(un);
   }
   // Builtin no-payload variants (`None`, `JNull`, the IoError set)
@@ -13026,7 +13099,7 @@ function payload_arity_diags(pv: ast.PatVariant, variant: string, structs: Struc
       nb = nb + 1;
     }
     if (nb != pc) {
-      out = out.append(dg_at("E015", payload_count_message(pv.type_name, pc, nb), line, col));
+      out = out.append(dg_at("E015", payload_count_message(shown_variant(pv.type_name), pc, nb), line, col));
     }
   }
   return out;
@@ -13056,7 +13129,7 @@ function record_pattern_diags(pvin: ast.PatVariant, structs: StructTable, line: 
   // entry and every message below reads off `pv`. The SIG is still resolved
   // from the original spelling, whose qualifier names the owning enum — the
   // one thing that tells two enums' same-named variants apart.
-  let pv: ast.PatVariant = ast.PatVariant { ...pvin, type_name: variant_pattern_name(pvin.type_name) };
+  let pv: ast.PatVariant = ast.PatVariant { ...pvin, type_name: shown_variant(pvin.type_name) };
   let out: util.Diag[] = [];
   let ss: StructSig = find_variant_sig(structs, pvin.type_name);
   if (ss.name.len() == 0) {
@@ -13284,7 +13357,7 @@ function match_diags(stmts: ast.Stmt[], structs: StructTable, unions: UnionTable
               out = util.append_diags(out, payloadless_binder_diags(pv, structs, unions, m.arms[a].line, m.arms[a].col));
               if (pv.type_name.len() > 0) {
                 if (util.has_str(seen, pv.type_name)) {
-                  out = out.append(dg_at("E028", "variant \"" + pv.type_name + "\" already covered earlier in this match", m.arms[a].line, m.arms[a].col));
+                  out = out.append(dg_at("E028", "variant \"" + shown_variant(pv.type_name) + "\" already covered earlier in this match", m.arms[a].line, m.arms[a].col));
                 } else if (!m.arms[a].has_guard) {
                   // Only an UNGUARDED arm fully covers its variant. A
                   // guarded arm (`V(x) when cond =>`) may fall through, so
@@ -14314,7 +14387,7 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
     return out;
   }
   if (c.args.len() != want) {
-    out = out.append(dg_at("E036", util.arity_message("variant " + vname, want, c.args.len(), "argument"), c.line, c.col));
+    out = out.append(dg_at("E036", util.arity_message("variant " + written_variant(vname), want, c.args.len(), "argument"), c.line, c.col));
   }
   // Callable payloads can contain the enum's type variables too. Compare
   // their instantiated contracts, just as a match reads their payloads.
@@ -14325,7 +14398,7 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
     let pt: typeinfo.Type = variant_pattern_payload_type(s, qname, whole, i);
     out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
     if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !coercible(at, pt, s)) {
-      out = out.append(dg_at("E036", "variant " + vname + " payload " + util.i32_to_string(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
+      out = out.append(dg_at("E036", "variant " + written_variant(vname) + " payload " + util.i32_to_string(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
     }
     i = i + 1;
   }
@@ -15478,7 +15551,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       let cqen: string = qual_enum_name(mfa.obj, s);
       if (cqen.len() > 0 && !assoc_call_req(mfa.obj, mfa.field, s, mfa.const_read).found) {
         if (!qual_variant_exists(cqen, mfa.field, s)) {
-          out = out.append(dg_at("E036", "enum " + cqen + " has no variant \"" + mfa.field + "\"", mfa.line, mfa.col));
+          out = out.append(no_variant_diag(cqen, mfa.field, mfa.line, mfa.col));
         } else {
           out = util.append_diags(out, variant_ctor_diags(cqen + "." + mfa.field, c, s));
         }
@@ -16793,7 +16866,12 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
   let qen: string = qual_enum_name(fa.obj, s);
   if (qen.len() > 0) {
     if (!qual_variant_exists(qen, fa.field, s)) {
-      out = out.append(dg_at("E036", "enum " + qen + " has no variant \"" + fa.field + "\"", fa.line, fa.col));
+      out = out.append(no_variant_diag(qen, fa.field, fa.line, fa.col));
+    } else {
+      let payloads: i32 = variant_value_payloads(s, qen, fa.field);
+      if (payloads > 0) {
+        out = out.append(payload_variant_value_diag(util.demangle(qen) + "." + written_variant(fa.field), payloads, fa.line, fa.col));
+      }
     }
     return out;
   }
@@ -17072,16 +17150,13 @@ function any_holds_view(ts: typeinfo.Type[], s: Scope, seen: string[]): (boolean
 
 function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.Diag[] {
   // E036: a payload-bearing variant referenced bare — a union member
-  // (`type U = P | Q`, P a struct) or an enum variant with a payload
-  // (`A(i32)`) used as a value WITHOUT calling its constructor. Both
-  // are registered as a union variant whose backing struct has >= 1
-  // field, so `variant_in_unions` is true and variant_carries_payload
-  // finds those fields; a nullary variant has none and stays a valid
-  // bare value. The constructor CALL form (`P(...)` / `A(5)`) is an
-  // ExprCall callee handled elsewhere, so it isn't flagged. Mirrors
-  // the Go checker ("variant X expects a payload; call it as X(...)").
-  // Checked before E001 — these names DO resolve (as variants), so
-  // is_resolvable_value would otherwise let them pass silently.
+  // (`type U = P | Q`, P a struct), an enum variant with a payload
+  // (`A(i32)`) or Some / Ok / Err used as a value WITHOUT calling its
+  // constructor; a nullary variant stays a valid bare value. The
+  // constructor CALL form (`P(...)` / `A(5)`) is an ExprCall callee
+  // handled elsewhere, so it isn't flagged. Checked before E001 — these
+  // names DO resolve (as variants), so is_resolvable_value would
+  // otherwise let them pass silently.
   //
   // A BINDING of the same name shadows the variant, and then the read
   // is of the local — `let Wrap = 3; return Wrap;` is native-clean.
@@ -17090,8 +17165,12 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
   // no lookup at all, so it needs the shadowing test spelled out. The
   // sibling rules already gate on exactly this (the qualified-ref
   // detection and vref_expr's ambiguity rule). #6658.
-  if (!s.known(id.name) && !s.has_sig(id.name) && variant_in_unions(id.name, s.unions) && variant_carries_payload(s, id.name)) {
-    out = out.append(dg_at("E036", "variant " + id.name + " expects a payload; call it as " + id.name + "(...)", id.line, id.col));
+  let payloads: i32 = 0;
+  if (!s.known(id.name) && !s.has_sig(id.name)) {
+    payloads = variant_value_payloads(s, "", id.name);
+  }
+  if (payloads > 0) {
+    out = out.append(payload_variant_value_diag(written_variant(id.name), payloads, id.line, id.col));
   } else if (!s.known(id.name) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name))) {
     out = out.append(generic_fn_value_diag(id, s.lookup_sig(id.name)));
   } else if (lane_fn_value(id, s)) {
@@ -18367,12 +18446,12 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                             covered = covered.append(cbare + "");
                           }
                           if (!util.has_str(usig.variants, cbare)) {
-                            out = out.append(dg_at("E014", "variant \"" + cbare + "\" is not part of enum " + mun.name, elem.line, elem.col));
+                            out = out.append(unknown_variant_diag(cbare, usig, elem.line, elem.col));
                           }
                         } else if (cur.lookup_union(cqual).name.len() > 0) {
                           // E029: qualifier is a known enum/union, but
                           // not the scrutinee's.
-                          out = out.append(dg_at("E029", "variant pattern qualifier \"" + cqual + "\" does not match scrutinee enum " + mun.name, elem.line, elem.col));
+                          out = out.append(dg_at("E029", "variant pattern qualifier \"" + util.demangle(cqual) + "\" does not match scrutinee enum " + util.demangle(mun.name), elem.line, elem.col));
                         }
                       } else {
                         // (unknown qualifier: Go reports a module-source
@@ -18388,7 +18467,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                         // something outside the scrutinee's
                         // enum/union, reported at the arm.
                         if (!util.has_str(usig.variants, cpv.type_name)) {
-                          out = out.append(dg_at("E014", "variant \"" + cpv.type_name + "\" is not part of enum " + mun.name, elem.line, elem.col));
+                          out = out.append(unknown_variant_diag(cpv.type_name, usig, elem.line, elem.col));
                         } else if (!parser.is_record_pattern(cpv) && variant_owner_count(cpv.type_name, cur.structs) >= 2) {
                           out = util.append_diags(out, payload_arity_diags(cpv, mun.name + "." + cpv.type_name, cur.structs, elem.line, elem.col));
                         }
@@ -18401,7 +18480,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                 let lit_rows: CoverPat[][] = literal_payload_rows(m.arms);
                 for variant in usig.variants {
                   if (!util.has_str(covered, variant) && !rows_cover(lit_rows, mst, variant, cur)) {
-                    out = out.append(dg_at("E030", "match does not cover variant " + variant + " of enum " + mun.name + " — add an arm for it, or a `_` arm", m.line, m.col));
+                    out = out.append(dg_at("E030", "match does not cover variant " + written_variant(variant) + " of enum " + util.demangle(mun.name) + " — add an arm for it, or a `_` arm", m.line, m.col));
                   }
                 }
               }

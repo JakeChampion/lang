@@ -16577,7 +16577,7 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 		c.errfCode(pos, "E043", "unknown enum type %q", et.Name)
 		return
 	}
-	c.checkVariantQualifier(pos, el.VariantModule, ed)
+	badQualifier := c.checkVariantQualifier(pos, el.VariantModule, ed)
 	var variant *ast.EnumVariant
 	for j := range ed.Variants {
 		if ed.Variants[j].Name == el.VariantName {
@@ -16586,8 +16586,10 @@ func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatEle
 		}
 	}
 	if variant == nil {
-		c.errfCode(pos, "E014", "variant %q is not part of enum %s%s",
-			el.VariantName, ed.Name, variantSpellingHint(el.VariantName, ed))
+		if !badQualifier {
+			c.errfCode(pos, "E014", "variant %q is not part of enum %s%s",
+				el.VariantName, c.enumHintName(ed.Name), variantSpellingHint(el.VariantName, ed))
+		}
 		return
 	}
 	if el.VariantFieldNames != nil {
@@ -16900,7 +16902,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			c.checkBlock(arm.Body, s)
 			continue
 		}
-		c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
+		badQualifier := c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
 		// Find the variant on this enum.
 		varIdx := -1
 		var variant *ast.EnumVariant
@@ -16912,8 +16914,10 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			}
 		}
 		if varIdx < 0 {
-			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
-				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
+			if !badQualifier {
+				c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+					arm.VariantName, c.enumHintName(ed.Name), unknownVariantHint(arm.VariantName, ed))
+			}
 			c.checkBlock(arm.Body, s)
 			continue
 		}
@@ -16977,7 +16981,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		for _, v := range ed.Variants {
 			if !covered[v.Name] {
 				c.errfCode(n.P, "E030", "match does not cover variant %s of enum %s — add an arm for it, or a `_` arm",
-					v.Name, ed.Name)
+					v.Name, c.enumHintName(ed.Name))
 			}
 		}
 	}
@@ -17794,7 +17798,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			c.errfCode(arm.P, "E035", "tuple pattern requires a tuple scrutinee, got enum %s", ed.Name)
 			continue
 		}
-		c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
+		badQualifier := c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
 		varIdx := -1
 		var variant *ast.EnumVariant
 		for j := range ed.Variants {
@@ -17805,8 +17809,10 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			}
 		}
 		if varIdx < 0 {
-			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
-				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
+			if !badQualifier {
+				c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+					arm.VariantName, c.enumHintName(ed.Name), unknownVariantHint(arm.VariantName, ed))
+			}
 			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
 			continue
 		}
@@ -17861,7 +17867,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		for _, v := range ed.Variants {
 			if !covered[v.Name] {
 				c.errfCode(n.P, "E030", "match does not cover variant %s of enum %s — add an arm for it, or a `_` arm",
-					v.Name, ed.Name)
+					v.Name, c.enumHintName(ed.Name))
 			}
 		}
 	}
@@ -24112,19 +24118,25 @@ func isBareNumericLiteral(e ast.Expr) bool {
 // `Color.Red` type-checked as a statement and was rejected as an expression —
 // one construct with two answers depending only on its position (#6576). One
 // function now, so they cannot drift again.
-func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) {
+//
+// It reports whether the qualifier is wrong; a variant missing from the
+// scrutinee enum is then not reported again as E014.
+func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) bool {
 	if qualifier == "" {
-		return
+		return false
 	}
 	if _, qualIsEnum := c.info.Enums[qualifier]; qualIsEnum {
 		if qualifier != ed.Name {
 			c.errfCode(p, "E029", "variant pattern qualifier %q does not match scrutinee enum %s",
 				c.enumHintName(qualifier), c.enumHintName(ed.Name))
+			return true
 		}
-		return
+		return false
 	}
 	if ed.SourceModule != "" && qualifier != ed.SourceModule {
 		c.errfCode(p, "E029", "variant pattern qualifier names module %q, but enum %s lives in module %q",
 			qualifier, c.enumHintName(ed.Name), ed.SourceModule)
+		return true
 	}
+	return false
 }
