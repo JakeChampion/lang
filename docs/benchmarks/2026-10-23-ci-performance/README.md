@@ -13,7 +13,7 @@ Per-metric tolerances remain unchanged.
 
 Recursive enum array cleanup now uses a loop for its final child.
 That adds about 50 to 60 static instructions to the persistent-container benchmarks.
-Their dynamic counts remain within 0.01 percent of the previous baseline.
+Their dynamic counts remain within 0.1 percent of the previous baseline.
 This trades a small helper-size increase for bounded cleanup stack space.
 
 The report also records smaller changes from the native memory and runtime updates on main.
