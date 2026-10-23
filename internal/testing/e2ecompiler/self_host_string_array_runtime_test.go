@@ -14,6 +14,7 @@ import (
 
 func TestSelfHostStringArrayReleaseRuntime(t *testing.T) {
 	h := selfHostCLIForHost(t)
+	h.cli = e2eharness.RuntimeCLI(t)
 	// These raw boxes deliberately forge counts and release a handle twice.
 	// The runtime probes bypass the certifier, as the sanitizer tests do.
 	const src = `function element(): usize {

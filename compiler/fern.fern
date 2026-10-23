@@ -5662,11 +5662,20 @@ function abs_dir(p: string): string {
   return p;
 }
 
+// run_runtime compiles an internal runtime module with its private primitive catalog.
+pub function run_runtime(av: string[]): i32 {
+  return run_with_gate(av, "", no_fetcher(), checker.build_runtime_gate_diags_with_file);
+}
+
 // run_with is the CLI over `av`. A non-empty `embedded_root` is the stdlib
 // root a build carrying its own stdlib supplies (fern_main.fern), so no
 // positional names one and every positional past the entry is the program's;
 // `fetcher` is how `-fetch`, `-add url:…` and `-resolve` download.
 pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i32 {
+  return run_with_gate(av, embedded_root, fetcher, checker.build_gate_diags_with_file);
+}
+
+function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, gate: (parser.Module, string) => util.Diag[]): i32 {
   let entry_path: string = "";
   let out_path: string = "";
   let root: string = embedded_root;
@@ -6211,7 +6220,7 @@ pub function run_with(av: string[], embedded_root: string, fetcher: Fetcher): i3
   // diagnostic except the partial-port rules measured to false-positive —
   // and a hit is reported with the same `line:col: error[CODE]: message`
   // shape as `-check`.
-  if (eprint_findings(st, errors_of(checker.build_gate_diags_with_file(merged, modloader.base_name(entry_display(entry_path)))), entry_path, b.files, b.maps)) {
+  if (eprint_findings(st, errors_of(gate(merged, modloader.base_name(entry_display(entry_path)))), entry_path, b.files, b.maps)) {
     return 1;
   }
   if (eprint_findings(st, errors_of(executable_entry_diags(merged, target, shared, emit)), entry_path, b.files, b.maps)) {
