@@ -8480,7 +8480,19 @@ function method_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv
     let mat: typeinfo.Type = check_expr(c.args[mi], s);
     let want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
     out = util.append_diags(out, int_dest_range_diags(c.args[mi], want));
-    if (!is_unknown(want) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
+    // An unresolved function value gets E040 from its destination check.
+    // Its abstract signature must not add a second mismatch here.
+    let unresolved_value: boolean = false;
+    if (generic_fn_value_arg(c.args[mi], s)) {
+      if let ast.ExprIdent(id) = c.args[mi] {
+        if let typeinfo.TypeFunc(wf) = want {
+          let sig: FuncSig = s.lookup_sig(id.name);
+          let (bn, bt) = fn_value_binds(sig, wf, s);
+          unresolved_value = bn.len() != sig.all_type_params.len();
+        }
+      }
+    }
+    if (!unresolved_value && !is_unknown(want) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
       out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + method + "\": expected " + type_label(want) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
     }
     out = util.append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
@@ -17144,6 +17156,11 @@ function fn_value_settles(e: ast.Expr, want: typeinfo.TypeFunc, s: Scope): boole
       result = want.ret_type;
     }
     let actual: typeinfo.Type = t_func_own(params, sig.param_own, result);
+    // A method's unbound result variable can take the instantiated result.
+    // A variable of the enclosing function remains a fixed contract.
+    if (is_unknown(want.ret_type) && !util.has_str(s.tparams, callable_typevar_name(want.ret_type))) {
+      return type_assignable(actual, typeinfo.TypeFunc { ...want, ret_type: result }, s.unions.unions);
+    }
     return type_assignable(actual, want, s.unions.unions);
   }
   return false;
@@ -26162,18 +26179,26 @@ function fn_value_inst(e: ast.Expr, dest: typeinfo.Type, s: Scope, gens: parser.
 // generic function as a value ask for, each against the parameter it is passed
 // to.
 function arg_value_insts(c: ast.ExprCall, s: Scope, gens: parser.FuncDecl[], depth: i32, own acc: Inst[]): Inst[] {
-  let ast.ExprIdent(cid) = c.callee else {
-    return acc;
-  };
-  if (s.defines(cid.name)) {
+  let needs_dest: boolean = false;
+  for a in c.args {
+    if (generic_fn_value_arg(a, s)) {
+      needs_dest = true;
+    }
+  }
+  if (!needs_dest) {
     return acc;
   }
-  let sig: FuncSig = s.lookup_sig(cid.name);
+  if let ast.ExprIdent(cid) = c.callee {
+    if (s.defines(cid.name)) {
+      return acc;
+    }
+  }
+  let dests: typeinfo.Type[] = s.call_param_types(c);
   let out: Inst[] = acc;
   let i: i32 = 0;
-  while (i < c.args.len() && i < sig.param_types.len()) {
+  while (i < c.args.len() && i < dests.len()) {
     if (generic_fn_value_arg(c.args[i], s)) {
-      let inst: Inst = fn_value_inst(c.args[i], bound_param_dest(c, i, sig.param_types[i], s), s, gens, depth);
+      let inst: Inst = fn_value_inst(c.args[i], bound_param_dest(c, i, dests[i], s), s, gens, depth);
       if (inst.name.len() > 0) {
         out = out.append(inst);
       }
