@@ -16,3 +16,11 @@ Go vet passes.
 The complete Go checker and monomorphization suites pass.
 The Go parser suite also passes.
 The source records retain the measured scopes and times.
+
+Stages two and three match at 14,252,160 bytes.
+Their SHA-256 is e172556e14d186c2ce5797077d097e17660aaaa7f434e80c39f3c1ea78a3af6c.
+All eleven strict driver-size rows pass without baseline changes.
+The ten stock-driver builds complete in 96.850 seconds.
+
+The broader checker, pattern, value-block, semantic-execution, and consuming-call suite passes in 273.188 seconds.
+The recorded source fingerprint matches the measured tree.
