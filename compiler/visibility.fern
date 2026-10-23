@@ -338,10 +338,9 @@ pub function export_diags(entry: parser.Module, entry_ident: string, loaded: fla
 // first `.` the way flatten.rewrite_type_name does.
 
 // qual_type_parts splits `mod.Name` into its two halves, with any generic or
-// array suffix stripped off the name — `facade.Point[]` looks up `Point`, and
-// `m.Box[T]` looks up `Box`. Without that cut the lookup asks for `Point[]`,
-// finds nothing, and the rule silently never fires. Returns "" for `qual` when
-// the string carries no qualifier.
+// array suffix removed. A variant suffix also stops the type name, so
+// m.Enum.Variant checks the visibility of Enum. Returns an empty qualifier
+// when the string has no dot.
 function qual_type_parts(tn: string): (string, string) {
   let dot: i32 = 0 - 1;
   let i: i32 = 0;
@@ -360,7 +359,7 @@ function qual_type_parts(tn: string): (string, string) {
   let cut: i32 = rest.len();
   let j: i32 = 0;
   while (j < rest.len()) {
-    if (rest[j] == b'[') {
+    if (rest[j] == b'[' || rest[j] == b'.') {
       cut = j;
       j = rest.len();
     }
@@ -504,6 +503,19 @@ function type_diags(cx: VisCtx): util.Diag[] {
   return out;
 }
 
+function pattern_type_diags(p: ast.Pattern, cx: VisCtx, line: i32, col: i32, acc: util.Diag[]): util.Diag[] {
+  if let ast.PatVariant(v) = p {
+    acc = check_type_name(v.type_name, cx, line, col, acc);
+    for child in v.nested {
+      acc = pattern_type_diags(child, cx, line, col, acc);
+    }
+    for child in v.tup_pats {
+      acc = pattern_type_diags(child, cx, line, col, acc);
+    }
+  }
+  return acc;
+}
+
 // stmt_type_diags walks a statement for declared type names and struct-literal
 // type names. Deliberately shallow on expressions: a struct literal is the only
 // expression carrying a type NAME, and it is reached through the statement
@@ -562,6 +574,7 @@ function stmt_type_diags(st: ast.Stmt, cx: VisCtx, acc: util.Diag[]): util.Diag[
       acc = expr_type_diags(m.scrutinee, cx, acc);
       let ai: i32 = 0;
       while (ai < m.arms.len()) {
+        acc = pattern_type_diags(m.arms[ai].pattern, cx, m.arms[ai].line, m.arms[ai].col, acc);
         let bi: i32 = 0;
         while (bi < m.arms[ai].body.len()) {
           acc = stmt_type_diags(m.arms[ai].body[bi], cx, acc);

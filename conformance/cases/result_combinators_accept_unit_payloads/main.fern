@@ -1,0 +1,55 @@
+import "std/result";
+import "std/option";
+
+function success(): Result[void, i32] {
+  return Ok(());
+}
+
+function failure(): Result[void, i32] {
+  return Err(3);
+}
+
+function change(e: i32): string {
+  if (e == 3) {
+    return "changed";
+  }
+  return "wrong";
+}
+
+function unit_to_int(u: void): i32 {
+  return 7;
+}
+
+function identity[T](x: T): T {
+  return x;
+}
+
+function main(): i32 {
+  if (!failure().is_err() || !success().is_ok() || success().is_err() || failure().is_ok()) {
+    return 1;
+  }
+  let err: Option[i32] = failure().err();
+  if (err.unwrap_or(0) != 3 || success().err().is_some()) {
+    return 2;
+  }
+  let ok: Option[void] = success().ok();
+  if (!ok.is_some() || failure().ok().is_some()) {
+    return 3;
+  }
+  let mapped_ok: Result[void, string] = success().map_err(change);
+  let mapped_err: Result[void, string] = failure().map_err(change);
+  if (!mapped_ok.is_ok() || mapped_err.err().unwrap_or("") != "changed") {
+    return 4;
+  }
+  let mapped_unit: Option[i32] = ok.map(unit_to_int);
+  if (mapped_unit.unwrap_or(0) != 7) {
+    return 5;
+  }
+  let unit = identity(());
+  let rebuilt: Option[void] = Some(unit);
+  if (!rebuilt.is_some()) {
+    return 6;
+  }
+  print("unit payload combinators pass");
+  return 0;
+}

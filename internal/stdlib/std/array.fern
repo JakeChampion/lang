@@ -1,15 +1,8 @@
 // std/array — methods on arrays: map, filter, fold, zip, windows, and more.
 //
-// A method is a receiver function: `pub function (xs: T[]) name(…)` for
-// anything usable at more than one element type, and a pinned receiver,
-// `pub function (arr: string[]) join(…)`, for a verb specific to one.
-//
-// The namespace is keyed on the method NAME, so a pinned receiver must not
-// take a name an element-polymorphic verb would want (E006).
-//
-// No prelude: a program `import "std/array";` explicitly to
-// call `arr.sum()` / `arr.join(",")` / etc.
-// (docs/PRELUDE-TO-MODULES.md, Phase 5).
+// Import std/array to use its receiver methods.
+// Generic methods operate on T[] values. Other methods select a specific
+// element type, such as string[] for join.
 
 import "std/sort";
 // core/cmp supplies the `Eq` trait that bounds the equality-driven verbs
@@ -1751,11 +1744,8 @@ pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
 // Method forms of the combinators above, so pipelines read
 // left-to-right — `xs.map(f).filter(keep)` instead of the inside-out
 // `filter(map(xs, f), keep)`. Enabled by element-polymorphic method
-// receivers (#2692); each just delegates to the free function. Same
-// callback constraint as the free versions: a callback whose
-// parameter / return is a composite (`string`, `Option`, …) hits the
-// indirect-call codegen limitation (#2753) on the native + wasm
-// backends, so keep callbacks scalar / bool / pointer-shaped there.
+// receivers (#2692). Each delegates to the free function. Callbacks accept
+// strings and composite values on every backend.
 
 // `xs.is_empty()` — true iff `xs` has no elements.
 pub function (xs: T[]) is_empty(): boolean {

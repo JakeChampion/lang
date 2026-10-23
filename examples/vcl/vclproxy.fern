@@ -157,9 +157,8 @@ function report_problems(path: string, ps: check.Problem[]): void {
   }
 }
 
-// serve wires the loaded policy to the socket. The cache lives in a Cell
-// created HERE, before the accept loop, so it survives the per-request
-// arena and every request sees what earlier ones stored.
+// serve wires the loaded policy to the socket.
+// The server holds the cache cell, so each request sees the previous updates.
 function serve(decls: ast.Decl[], port: i32): i32 {
   let d: machine.Driver = machine.Driver { run_sub: machine.interpreting(decls).run_sub, backends: machine.backends_of(decls), fetch: real_fetch };
   // The cache outlives each request as a STRING: `Cell` holds a scalar or

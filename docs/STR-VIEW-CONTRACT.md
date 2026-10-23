@@ -2,6 +2,15 @@
 
 Status: [policy] decided 2026-09-05: O2 for `str`, a two-word `[u8]`, O3 refused; implemented under #8635.
 
+Current array-view rule (2026-10-22, #13007): both checkers accept an owned
+`T[]` as the initializer of a local `[T]`. The element types must match
+exactly. The compiler creates the full-range view `xs[:]`. A literal takes
+its element type from the local annotation. The view keeps its storage alive,
+including storage from a temporary array. An update to the owner preserves
+the old contents for the view through copy-on-write. The conformance case
+`local_array_views_keep_their_storage` tests this rule in both interpreters
+and on all three targets. The review below records the earlier design work.
+
 `STRINGS-SOTA.md` settled the *representation* questions (D1–D11): UTF-8, byte
 indices, SSO, the owned/borrowed split itself. This document is about the
 question that survey did not ask and 2026-08 answered empirically: **what

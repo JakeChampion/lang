@@ -10,6 +10,7 @@ The lane tests, pattern-head tests, allocation census, and complexity gate also 
 Main supplies the complete Wasm lane-bounds repair.
 The pattern branch retains that implementation.
 The previous archive describes the earlier source.
+
 Stages two and three match at 14,194,016 bytes.
 Their SHA-256 is 909fc143497a762ebf5e7d19783ea8448a039abcaa0fc56ab0057aad9b8f88b3.
 All eleven strict size rows pass without baseline changes.

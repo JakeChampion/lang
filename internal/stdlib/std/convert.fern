@@ -23,6 +23,8 @@
 // Generic use over a bound works too — `function widen[U: convert.From[i32]]
 // (proto: U, v: i32): U { return U.from(v); }` resolves `U.from` against the
 // bound. See docs/TRAITS.md.
+
+// From constructs a value from another type.
 pub trait From[T] {
   function from(v: T): Self;
 }

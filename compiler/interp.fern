@@ -7,6 +7,7 @@
 
 import "./ast";
 import "./lexer";
+import "./lexical";
 import "./parser";
 import "./util";
 import "./aborts";
@@ -69,8 +70,9 @@ pub struct VFloat32 { v: f64 }
 // value plane is untyped, so an EMPTY array has no element to read the type
 // off, and a `T[]` parameter would have nothing to pin `T` to. Empty for an
 // array that never passed through an annotation; only type-argument inference
-// reads it.
-pub struct VArr { elements: Value[], elem: string }
+// reads it. `view` preserves the receiver namespace. `reserved` retains
+// storage hidden by __arr_set_len so a later host write can regrow it.
+pub struct VArr { elements: Value[], elem: string, view: boolean, reserved: Value[] }
 
 // VTuple holds an immutable fixed-arity sequence of values.
 // Each slot's runtime type stays whatever the source emitted;
@@ -164,7 +166,7 @@ pub struct VHandle { r: Option[Reader], w: Option[Writer], d: Option[Dir] }
 // a builtin writes into"): the elements in a host cell every frame the
 // variable was passed through shares. Like the capture cells it lives only in
 // an Env slot, and lookup reads through it.
-pub struct VCellA { c: Cell[i64[]], elem: string }
+pub struct VCellA { c: Cell[i64[]], elem: string, length: Cell[i32] }
 
 // VCellV is the capture cell for any other value a closure reads and its
 // enclosing body reassigns: a string, an array, a map, a struct. E057 keeps a
@@ -301,10 +303,16 @@ function box_i64(n: i64): Value {
 // the constant's width the same way, and a reference type's zero is the null
 // word the compiled paths store, which is v_int(0) here.
 function zero_value_of(type_name: string): Value {
+  if (parser.spelling_is_view(type_name)) {
+    return VArr { elements: [], elem: parser.array_method_element(type_name), view: true, reserved: [] };
+  }
+  if (name_ends_with(type_name, "[]")) {
+    return v_arr_of([], slice_unchecked(type_name, 0, type_name.len() - 2) + "");
+  }
   if (type_name == "f64" || type_name == "f32") {
     return v_float(0.0);
   }
-  if (type_name == "string") {
+  if (type_name == "string" || type_name == "str") {
     return v_string("");
   }
   if (type_name == "boolean" || type_name == "bool") {
@@ -391,12 +399,15 @@ function coerce_int_width(val: Value, type_name: string): Value {
   // A declared array type stamps an EMPTY array with its element type, the
   // only place that type can enter an untyped value plane (see VArr.elem).
   // A non-empty array needs no stamp — its elements name the type.
-  if (name_ends_with(type_name, "[]")) {
+  if (name_ends_with(type_name, "[]") || parser.spelling_is_view(type_name)) {
     match (val) {
       VArr(a) => {
-        if (a.elements.len() == 0 && a.elem.len() == 0) {
-          return v_arr_of(a.elements, slice_unchecked(type_name, 0, type_name.len() - 2) + "");
+        let elem: string = a.elem;
+        let declared: string = parser.array_method_element(type_name);
+        if (elem.len() == 0 && parser.type_str_vars(declared, []).len() == 0) {
+          elem = declared;
         }
+        return VArr { ...a, elem: elem, view: parser.spelling_is_view(type_name) };
       },
       _ => {
         return val;
@@ -742,11 +753,11 @@ function v_float32(x: f64): Value {
 }
 
 function v_arr(elements: Value[]): Value {
-  return VArr { elements: elements, elem: "" };
+  return VArr { elements: elements, elem: "", view: false, reserved: [] };
 }
 
 function v_arr_of(elements: Value[], elem: string): Value {
-  return VArr { elements: elements, elem: elem };
+  return VArr { elements: elements, elem: elem, view: false, reserved: [] };
 }
 
 function v_tuple(elements: Value[]): Value {
@@ -1249,11 +1260,20 @@ function deref_cell(v: Value): Value {
       return VFloat { v: cf.c.get() };
     },
     VCellA(ca) => {
-      let els: Value[] = [];
+      let full: Value[] = [];
       for x in ca.c.get() {
-        els = els.append(v_int(x as i32));
+        full = full.append(v_int(x as i32));
       }
-      return v_arr_of(els, ca.elem);
+      let els: Value[] = full;
+      if (ca.length.get() < full.len()) {
+        els = [];
+        let i: i32 = 0;
+        while (i < ca.length.get()) {
+          els = els.append(full[i]);
+          i = i + 1;
+        }
+      }
+      return VArr { elements: els, elem: ca.elem, view: false, reserved: full };
     },
     VCellV(cv) => {
       return cell_any_value(cv.c.get(), cell_new(0));
@@ -1545,8 +1565,8 @@ function cellify_env(e: Env, names: string[]): Env {
 
 // ---- arrays a builtin writes into ------------------------------------------
 //
-// tcp_recv_into, udp_recvfrom and reactor_wait fill an array the caller owns,
-// and every holder of that array sees what they wrote: the program's variable,
+// Host input fills an array the caller owns. __arr_set_len changes its length,
+// and each frame sees the writes through the program's variable,
 // however many functions passed it down. The interpreter's arrays are values,
 // so for the length of one statement a variable it passes to an OUT position
 // is held in a VCellA, which the builtin writes and every frame the variable
@@ -1564,7 +1584,7 @@ function cellify_env(e: Env, names: string[]): Env {
 pub struct OutTable { names: string[], keys: string[] }
 
 function builtin_outs(): OutTable {
-  return OutTable { names: ["tcp_recv_into", "udp_recvfrom", "reactor_wait"], keys: ["tcp_recv_into#1", "udp_recvfrom#1", "udp_recvfrom#2", "reactor_wait#1"] };
+  return OutTable { names: ["tcp_recv_into", "udp_recvfrom", "reactor_wait", "__arr_set_len"], keys: ["tcp_recv_into#1", "udp_recvfrom#1", "udp_recvfrom#2", "reactor_wait#1", "__arr_set_len#0"] };
 }
 
 function out_key(callee: string, k: i32): string {
@@ -1693,10 +1713,20 @@ function eval_out_stmt(st: ast.Stmt, env: Env): StepResult {
     if (idx >= 0) {
       if let VArr(a) = celled.values[idx] {
         let xs: i64[] = [];
-        for e in a.elements {
-          xs = xs.append(vint_as_i64(e));
+        let capacity: i32 = a.elements.len();
+        if (a.reserved.len() > capacity) {
+          capacity = a.reserved.len();
         }
-        celled = celled.update(n, VCellA { c: cell_new(xs), elem: a.elem });
+        let i: i32 = 0;
+        while (i < capacity) {
+          if (i < a.elements.len()) {
+            xs = xs.append(vint_as_i64(a.elements[i]));
+          } else {
+            xs = xs.append(vint_as_i64(a.reserved[i]));
+          }
+          i = i + 1;
+        }
+        celled = celled.update(n, VCellA { c: cell_new(xs), elem: a.elem, length: cell_new(a.elements.len()) });
         made = made.append(n);
       }
     }
@@ -1740,7 +1770,23 @@ function eval_call_arg(arg: ast.Expr, callee: string, k: i32, env: Env): Value {
 function store_out(args: Value[], k: i32, xs: i64[]): void {
   if (k < args.len()) {
     if let VCellA(ca) = args[k] {
-      ca.c.set(xs);
+      let old: i64[] = ca.c.get();
+      if (xs.len() >= old.len()) {
+        ca.c.set(xs);
+        ca.length.set(xs.len());
+      } else {
+        let merged: i64[] = [];
+        let i: i32 = 0;
+        while (i < old.len()) {
+          if (i < xs.len()) {
+            merged = merged.append(xs[i]);
+          } else {
+            merged = merged.append(old[i]);
+          }
+          i = i + 1;
+        }
+        ca.c.set(merged);
+      }
     }
   }
 }
@@ -5535,6 +5581,9 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
         is_variant = true;
         variant_name = name;
         variant_enum = variant_owner(name, env.type_decls);
+        if (id.ty.len() > 0) {
+          variant_enum = id.ty;
+        }
       }
     },
     ast.ExprFieldAccess(fa) => {
@@ -5727,7 +5776,7 @@ function method_target_index(name: string, recv: Value, env: Env): i32 {
   let i: i32 = 0;
   while (i < env.funcs.len()) {
     let fd: parser.FuncDecl = env.funcs[i];
-    if (fd.name == name && fd.receiver_name.len() > 0 && util.base_type_name(fd.receiver_type) == rt) {
+    if (fd.name == name && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
       return i;
     }
     i = i + 1;
@@ -5889,7 +5938,7 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
         out = out.append(a.elements[i]);
         i = i + 1;
       }
-      return v_arr(out);
+      return VArr { elements: out, elem: a.elem, view: true, reserved: [] };
     },
     _ => {
       return v_err("can only slice array or string");
@@ -6398,7 +6447,7 @@ function tyarg_match(decl: string, tp: string, v: Value): string {
   if (decl == tp) {
     return tyarg_of_value(v);
   }
-  if (decl == tp + "[]") {
+  if (decl == tp + "[]" || decl == "[" + tp + "]") {
     match (v) {
       VArr(a) => {
         if (a.elements.len() > 0) {
@@ -6499,7 +6548,10 @@ function value_type_name(v: Value): string {
     VLanes(l) => {
       return typeinfo.lanes_spelling(l.width);
     },
-    VArr(_) => {
+    VArr(a) => {
+      if (a.view) {
+        return "ArrayView";
+      }
       return "Array";
     },
     VMap(_) => {
@@ -6518,11 +6570,26 @@ function value_type_name(v: Value): string {
 // declared, generic arguments aside.
 function has_receiver_method(funcs: parser.FuncDecl[], recv_type: string, name: string): boolean {
   for fd in funcs {
-    if (fd.name == name && fd.receiver_name.len() > 0 && util.base_type_name(fd.receiver_type) == recv_type) {
+    if (fd.name == name && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == recv_type) {
       return true;
     }
   }
   return false;
+}
+
+// Runtime arrays retain their source namespace. String views share the
+// string method surface, as the checker specifies.
+function runtime_receiver_name(spelling: string): string {
+  if (parser.spelling_is_view(spelling)) {
+    return "ArrayView";
+  }
+  if (is_array_recv_type(spelling)) {
+    return "Array";
+  }
+  if (spelling == "str") {
+    return "string";
+  }
+  return util.base_type_name(spelling);
 }
 
 // dyn_method_name resolves the method a call NAMES to the definition the
@@ -6678,7 +6745,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
           bs = bs.append(v_int(sv.v[bi] as i32));
           bi = bi + 1;
         }
-        return v_arr(bs);
+        return VArr { elements: bs, elem: "u8", view: name == "as_bytes", reserved: [] };
       }
     },
     VArr(av) => {
@@ -6688,7 +6755,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         }
         return v_int(av.elements.len());
       }
-      if (name == "with") {
+      if (name == "with" && !av.view) {
         if (args.len() != 2) {
           return v_err("array.with: need 2 args");
         }
@@ -6711,7 +6778,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
         }
         return v_arr(wout);
       }
-      if (name == "append") {
+      if (name == "append" && !av.view) {
         if (args.len() != 1) {
           return v_err("array.append: need 1 arg");
         }
@@ -6855,7 +6922,7 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
     // Generic struct arguments are erased from VStruct's nominal name.
     // Method registration uses that same base identity. Keep the full module
     // prefix so unrelated structs with the same short name cannot match.
-    let receiver_base: string = util.base_type_name(fd.receiver_type);
+    let receiver_base: string = runtime_receiver_name(fd.receiver_type);
     let rt_match: boolean = receiver_base == recv_type;
     if (!rt_match && byte_recv && fd.receiver_type == "u8") {
       rt_match = true;
@@ -8419,6 +8486,20 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
       }
     }
   }
+  if (name == "__arr_set_len") {
+    if (args.len() != 2 || !is_i32_arg(args[1])) {
+      return v_err("__arr_set_len: expected an array and a length");
+    }
+    if let VCellA(a) = args[0] {
+      let n: i32 = vint_bits(args[1]);
+      if (n < 0 || n > a.c.get().len()) {
+        return v_err("__arr_set_len: length exceeds reserved storage");
+      }
+      a.length.set(n);
+      return v_void();
+    }
+    return v_err("__arr_set_len: expected an array binding");
+  }
   if (name == "cell_new") {
     if (args.len() != 1) {
       return v_err("cell_new takes exactly 1 argument");
@@ -9197,7 +9278,7 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, env: Env): StepResult {
 function receiver_has_method(funcs: parser.FuncDecl[], recv: Value, name: string): boolean {
   let rt: string = value_type_name(recv);
   for fd in funcs {
-    if (fd.name == name && fd.receiver_name.len() > 0 && util.base_type_name(fd.receiver_type) == rt) {
+    if (fd.name == name && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
       return true;
     }
   }
@@ -9359,7 +9440,13 @@ pub function new_session(): Session {
 // type. `for i in LOW..HIGH` becomes a counting while-loop, since StmtFor only
 // iterates arrays, and a `defer` moves to its scope exits (#4348 item 1).
 function lowered(raw: parser.Module): parser.Module {
-  return parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(parser.erase_view_module(checker.annotate_module(raw)))));
+  let typed: parser.Module = checker.annotate_module(raw);
+  let funcs: parser.FuncDecl[] = [];
+  for fd in typed.funcs {
+    funcs = funcs.append(lexical.resolve_func(fd).func);
+  }
+  let resolved: parser.Module = parser.Module { ...typed, funcs: funcs };
+  return parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(resolved)));
 }
 
 // declare adds a line's declarations; a function declared again replaces the
