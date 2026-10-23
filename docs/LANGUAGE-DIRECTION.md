@@ -2,6 +2,10 @@
 
 Status: [reference] living record of the language's direction; most of its shipping plan has landed.
 
+The shipping notes include historical behavior.
+Arenas and the implicit Url prelude are removed. Closures capture variables by reference.
+See [the arena decision](ARENA-DECISION.md) and [closure capture](CLOSURE-CAPTURE.md) for the current rules.
+
 Where the language is going, what shapes we've decided on, and what
 we've explicitly chosen NOT to copy. Living document — update as
 each phase lands.
@@ -181,11 +185,10 @@ default-correct unless we have a specific reason to deviate.
   `RC-PERCEUS-PLAN.md` (and `RC-STRINGS-PLAN.md` for string
   reclamation). This is the clearest case of the self-hosting goal
   reshaping a founding design decision: the arena-and-forget model
-  remains right for the *stated* edge/CLI use case, but the compiler
-  itself is not short-lived, and the two workloads want different
-  memory models. We carry both — arena scopes (`arena { … }`, the
-  per-handler arena) on top of RC — and lean on Perceus to keep RC
-  cheap where the arena already guarantees the lifetime.
+  no longer applies to any target. Runtime reference counts serve short-lived
+  handlers and long-running applications. Explicit arena scopes and per-handler
+  arenas are removed. Perceus removes redundant reference-count operations and
+  reuses storage when the old value is dead.
 - **Odin's array swizzling / SoA programming.** Cute for gamedev,
   off-target for CLI / edge.
 - **Implicit numeric widening (C / TS / JS).** Universally
@@ -1460,28 +1463,11 @@ the Fern's abstraction layers.
   #5730 moved them to `u8[]` so a `string` can carry the D9
   invariant that it is well-formed UTF-8.)
 
-- **~~Closure capture semantics~~ — settled by-value at closure-
-  creation time.** The closureconv pass evaluates each
-  captured name once at the `MakeClosure` site and stores
-  the value in a freshly-allocated env block; the hoisted
-  function reads it via env-relative loads. For pointer-
-  shaped types (`string`, arrays, slices, structs, enums,
-  closures themselves) the value is the heap / wrapper
-  pointer at capture time — so mutations *through* the
-  pointer are visible to the closure (the closure shares
-  the same underlying buffer) but reassigning the outer
-  variable to a new pointer is not. For scalar types
-  (`i32`, `u32`, `i64`, `f32`, `f64`, `boolean`) the value
-  itself is copied; later mutations of the outer scalar
-  don't reach the closure. Escape analysis (statically
-  verifying the captured pointer's parent arena outlives
-  the closure) is deferred — the current model leans on
-  the bump allocator: closures stay valid while the arena
-  that owns their captures is alive, which in practice
-  means "until the request handler returns". Settle the
-  formal escape rules when re-lowering for
-  defunctionalisation; until then the rule is "captures
-  must outlive the closure".
+- **Closure capture semantics use shared variables.** Both front ends and
+  interpreters observe later assignments in the enclosing scope.
+  A closure can update a captured scalar. Reassignment of a captured reference
+  value inside the closure produces E049. Reference counts preserve the values
+  that an escaping closure needs. See [closure capture](CLOSURE-CAPTURE.md).
 
 All five questions in this section are now resolved by what
 shipped. New open questions should be appended as they
@@ -1574,15 +1560,12 @@ guessing.
   named-but-coupled helpers. Keep 70 as a soft target for
   *new* helpers; let existing well-factored long
   functions stay.
-- *Zero dynamic allocation after init.* The compiler is a
-  process that runs once per CLI invocation — Go's GC
-  handles its memory, and dynamic allocation of AST nodes
-  is correct. The *language* enforces static-after-init via
-  the per-request arena; the *compiler* doesn't need to.
-- *Static allocation in the language runtime.* Conflicts
-  with the per-request arena model — handler code allocates
-  freely, the arena resets at request end. Cheaper and
-  simpler than reserving fixed-size buffers up-front.
+- *Zero dynamic allocation after init.* General-purpose programs allocate
+  during execution. Reference counts reclaim unused values. The self-host
+  compiler uses the same runtime.
+- *Static allocation in the language runtime.* The runtime permits
+  allocation during a request and releases values after their last reference.
+  Programs can select fixed buffers when their workload needs them.
 - *No recursion.* Fern user code is fine with recursion
   (matches every modern language). The IR layer avoids
   recursion in code paths that need bounded execution (the

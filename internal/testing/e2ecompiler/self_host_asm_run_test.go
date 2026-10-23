@@ -1464,7 +1464,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		if strings.Contains(string(out), "__fn_:") {
 			t.Fatalf("expected no empty-name function emission, got asm:\n%s", out)
 		}
-		if !strings.Contains(stderr.String(), "P001") || !strings.Contains(stderr.String(), "malformed function declaration") {
+		if !strings.Contains(stderr.String(), `error[P001]: at top level: expected a name, got "use" (1:10)`) {
 			t.Errorf("expected P001 parse diagnostic, got stderr:\n%s", stderr.String())
 		}
 	})

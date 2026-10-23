@@ -1,0 +1,43 @@
+function first(b: [u8]): u8 {
+  return b[0];
+}
+
+function make_bytes(): u8[] {
+  return [8, 9, 10];
+}
+
+function count[T](owned: T[]): i32 {
+  let view: [T] = owned;
+  return view.len();
+}
+
+function main(): i32 {
+  let buf: [u8] = [3 as u8, 250 as u8, 7 as u8];
+  if (first(buf) != 3 || buf[1] != 250 || buf.len() != 3) {
+    return 1;
+  }
+  let owner: u8[] = [4, 5, 6];
+  let view: [u8] = owner;
+  owner = owner.with(1, 42 as u8);
+  if (owner[1] != 42 || view[1] != 5) {
+    return 2;
+  }
+  let temporary: [u8] = make_bytes();
+  if (temporary[2] != 10 || temporary.len() != 3) {
+    return 3;
+  }
+  let empty: [u8] = [];
+  if (empty.len() != 0) {
+    return 4;
+  }
+  let words: string[] = ["first", "second"];
+  let word_view: [string] = words;
+  words = words.with(0, "changed");
+  if (word_view[0] != "first" || words[0] != "changed") {
+    return 5;
+  }
+  if (count(owner) != 3) {
+    return 6;
+  }
+  return 0;
+}

@@ -267,6 +267,7 @@ general_reuse_crosstype                              0
 general_reuse_struct                                 0
 general_reuse_tuple                                  0
 generic_array_method_chain                           0
+generic_array_callbacks_keep_their_types              0
 generic_array_methods                                0
 generic_assoc_result_self                            0
 generic_assoc_through_type_param                     0
@@ -340,10 +341,12 @@ if_let_struct_rename                                 0
 if_let_tuple_elems                                   0
 if_let_tuple_literal_elem_else                       0
 if_let_variant_pattern_rename_rest                   0
+imported_enum_qualifies_its_variants                  0
 inclusive_range                                      0
 inclusive_range_type_max                             0
 index_takes_any_integer_type                         0
 indirect_call_owned_param                            0
+indirect_owned_arguments_follow_their_contract        0
 inline_hints                                         0
 insert_dedup                                         0
 int_bit_accessors                                    0
@@ -394,6 +397,7 @@ let_else_variant_binding_outlives_stmt               0
 literal_local_takes_its_use_width                    0
 literal_payload_pattern                              0
 literal_tree_takes_its_destination_width             0
+local_array_views_keep_their_storage                  0
 log_leveled                                          0
 loop_form                                            0
 loop_rotation_shapes                                 0
@@ -767,6 +771,7 @@ rc_corpus_projection_accessor_receiver_borrows       0
 rc_corpus_push_elem_param_counted_pointer_field      0
 rc_corpus_push_elem_param_scalar_only_owned_by_default 0
 rc_corpus_push_loop_structs                          0
+rc_corpus_recursive_array_drop_constant_stack        0
 rc_corpus_recursive_enum_drop_constant_stack         0
 rc_corpus_returned_bare_param_kept_by_caller         0
 rc_corpus_scope_dead_move                            0
@@ -888,6 +893,7 @@ regex_ops                                            0
 regex_replace_edge                                   0
 regex_replace_groups                                 0
 regex_wordbound                                      0
+result_combinators_accept_unit_payloads               0
 result_err_path                                      0
 result_match                                         0
 result_of_a_call_through_a_function_field_is_released 0
@@ -948,6 +954,7 @@ strength_reduction_mul                               0
 string_and_i64                                       0
 string_arr                                           0
 string_builder                                       0
+string_callbacks_in_collection_combinators           0
 string_camel_pascal                                  0
 string_case_predicates                               0
 string_concat                                        0

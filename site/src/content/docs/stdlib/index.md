@@ -5,11 +5,11 @@ sidebar:
   order: 0
 ---
 
-One page per module, listing its public functions, structs, enums,
-traits and constants with their doc comments. Every page is generated
-from the Fern source it documents and rebuilt with the site, so it can't
-drift from the code — to fix a description, edit the doc comment above
-the declaration ([how](../contributing/)).
+One page per module lists its public functions, structs, enums, traits, and constants.
+The generator reads declarations and documentation from the Fern source.
+Edit the source comment to correct a description ([how](../contributing/)).
+The [library guide](https://github.com/JakeChampion/lang/blob/main/docs/STDLIB.md)
+covers conventions across modules.
 
 ## Importing a module
 

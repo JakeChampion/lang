@@ -968,13 +968,13 @@ pub function (m: OrdMap[K, V]) difference[K: cmp.Ord, V](other: OrdMap[K, V]): O
   return node_difference(m, other);
 }
 
-// `split(k)` — the entries below `k` and the entries above it, as two
-// maps (an entry AT `k` is in neither). O(log n).
+// split_lt returns the entries below k, excluding an entry at k. O(log n).
 pub function (m: OrdMap[K, V]) split_lt[K: cmp.Ord, V](k: K): OrdMap[K, V] {
   let sp: OrdSplit[K, V] = node_split(m, k);
   return sp.lt;
 }
 
+// split_gt returns the entries above k, excluding an entry at k. O(log n).
 pub function (m: OrdMap[K, V]) split_gt[K: cmp.Ord, V](k: K): OrdMap[K, V] {
   let sp: OrdSplit[K, V] = node_split(m, k);
   return sp.gt;

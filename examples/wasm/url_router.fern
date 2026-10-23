@@ -2,8 +2,8 @@
 // parsing + query-string handling. Returns a JSON object
 // describing what it parsed out of req.path.
 //
-// Showcases: `url_parse` returning Option[Url], the auto-
-// injected Url struct (scheme / host / port / path / query /
+// Showcases: std/url's `url_parse` returning Option[Url], the
+// Url struct (scheme / host / port / path / query /
 // fragment), `query_parse` returning Map[string, string[]]
 // (multi-value semantics — `?tag=a&tag=b` collects both),
 // the pipe operator `|>`, defunctionalised closures via
@@ -15,7 +15,7 @@
 //   $ curl 'http://localhost:8080/search?q=lang&tag=fast&tag=small'
 //   {"path":"/search","q":"lang","tags":["fast","small"]}
 // HttpRequest / HttpResponse + the synthesised serve main;
-// Url + url_parse + query_parse; JsonValue + json_encode; the
+// std/url's Url + url_parse + query_parse; JsonValue + json_encode; the
 // Map runtime; (string).split-style methods needed by the JSON
 // encoder's internals.
 import "std/http";

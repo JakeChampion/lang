@@ -1,0 +1,6 @@
+import "std/http";
+import "std/platform";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  return http.plain("hello world");
+}

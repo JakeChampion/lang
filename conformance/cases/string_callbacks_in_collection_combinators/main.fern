@@ -1,0 +1,36 @@
+import "std/option";
+import "std/result";
+import "std/array";
+
+function greet(s: string): string {
+  return "hello " + s;
+}
+
+function long(s: string): boolean {
+  return s.len() > 1;
+}
+
+function join(a: string, b: string): string {
+  return a + b;
+}
+
+function main(): i32 {
+  let option: Option[string] = Some("world");
+  let result: Result[string, string] = Ok("Fern");
+  let words: string[] = ["a", "bc", "def"];
+  let mapped: string[] = words.map(greet);
+  if (option.map(greet).unwrap_or("") != "hello world") {
+    return 1;
+  }
+  if (result.map(greet).unwrap_or("") != "hello Fern") {
+    return 2;
+  }
+  if (mapped[1] != "hello bc" || words.filter(long).len() != 2) {
+    return 3;
+  }
+  if (words.fold("", join) != "abcdef") {
+    return 4;
+  }
+  print("string callbacks pass");
+  return 0;
+}

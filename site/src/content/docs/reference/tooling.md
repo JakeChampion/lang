@@ -33,7 +33,7 @@ any flag that has no value: `-cover=false`, `-g=true`.
 | `arm64-linux` (default) | Static ELF. ARMv8.2-A with the crypto extensions. |
 | `arm64-android` | Static position-independent ELF for Android. |
 | `arm64-darwin` | Static, signed Mach-O for Apple Silicon (latest macOS). |
-| `x86-64-linux` | Static ELF. x86-64-v3 (Haswell, 2013, with AVX2). |
+| `x86-64-linux` | Static ELF. x86-64-v3 with AES-NI (Haswell, 2013, with AVX2). |
 | `wasm32-wasi` | WASI Preview 2 component; run with `wasmtime run`. |
 | `wasm32-wasi-http` | `wasi:http/incoming-handler` component; run with `wasmtime serve`. |
 | `arm64-freestanding`, `x86-64-freestanding` | Check only (`fern -check -target …`): no OS underneath, so no host capabilities at all. No backend emits for them yet. |
