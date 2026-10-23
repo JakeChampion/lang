@@ -23,8 +23,13 @@ function empty(kind: i32): Op {
 }
 
 function address(s: string): Address {
-  let at = s.index_of("(");
-  if (at < 0 || !s.ends_with(")")) {
+  let at = 0;
+  if let Some(open) = s.index_of("(") {
+    at = open;
+  } else {
+    return Address { base: -1, offset: 0 };
+  }
+  if (!s.ends_with(")")) {
     return Address { base: -1, offset: 0 };
   }
   let displacement = slice_unchecked(s, 0, at) + "";

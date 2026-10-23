@@ -535,9 +535,9 @@ think they're free additions to make.
   (computed as `abs(a*b)/gcd` with the gcd-first ordering
   to keep the intermediate multiply small).
 - **Rightmost string search**: `s.last_index_of(needle)`
-  (symmetric to index_of). Empty needle returns `len(s)`
-  per the Python rfind / Go LastIndex "match every gap"
-  convention.
+  (symmetric to index_of, `None` when absent). An empty needle
+  is found at `len(s)`, per the Python rfind / Go LastIndex
+  "match every gap" convention.
 - **`s.capitalize()`**: uppercase the first code point, leave the
   rest unchanged (`to_ascii_capitalize` is the byte-wise twin).
   Different from `to_upper` (which

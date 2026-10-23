@@ -323,10 +323,9 @@ pub function iana_zone(name: string): Option[Zone] {
     return None;
   }
   let names: string = iana_names();
-  let at: i32 = names.index_of(";" + name + "=");
-  if (at < 0) {
+  let Some(at) = names.index_of(";" + name + "=") else {
     return None;
-  }
+  };
   let off: (i32, i32) = table_uint(names, at + name.len() + 2);
   return Some(decode_record(iana_records(), off.0));
 }

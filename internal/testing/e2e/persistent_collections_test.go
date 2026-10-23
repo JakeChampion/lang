@@ -39,7 +39,7 @@ function main(): i32 {
     if (m.len() != 0 || snap.len() != 600 || !snap.is_valid()) { return 7; }
     let ks: i32[] = snap.keys();
     if (ks.len() != 600 || ks[0] != 0 || ks[599] != 599) { return 8; }
-    if (snap.index_of(300) != 300 || snap.key_at(5).unwrap_or(-1) != 5) { return 9; }
+    if (snap.index_of(300).unwrap_or(-1) != 300 || snap.index_of(9999).is_some() || snap.key_at(5).unwrap_or(-1) != 5) { return 9; }
     if (snap.fold(0, (a: i32, k: i32, v: i32) => a + k) != 179700) { return 10; }
     let s: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
     s = s.insert("b", 2);
@@ -145,7 +145,7 @@ function main(): i32 {
     let arr: i32[] = a.to_array();
     if (arr.len() != 4 || arr[0] != 1 || arr[3] != 9) { return 2; }
     if (a.union(b).len() != 5 || a.intersection(b).len() != 2 || a.difference(b).len() != 2) { return 3; }
-    if (a.min().unwrap_or(-1) != 1 || a.max().unwrap_or(-1) != 9 || a.at(2).unwrap_or(-1) != 5 || a.index_of(9) != 3) { return 4; }
+    if (a.min().unwrap_or(-1) != 1 || a.max().unwrap_or(-1) != 9 || a.at(2).unwrap_or(-1) != 5 || a.index_of(9).unwrap_or(-1) != 3 || a.index_of(4).is_some()) { return 4; }
     let snap: ordset.OrdSet[i32] = a;
     a = a.remove(3);
     if (a.len() != 3 || snap.len() != 4 || !snap.contains(3) || a.contains(3)) { return 5; }

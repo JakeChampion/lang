@@ -58,7 +58,10 @@ function rep(c: string, n: i32): string {
 }
 
 function chk(s: string, needle: string): boolean {
-    return s.last_index_of(needle) == ref_rfind(s, needle);
+    match (s.last_index_of(needle)) {
+        Some(i) => { return i == ref_rfind(s, needle); },
+        None => { return ref_rfind(s, needle) == 0 - 1; }
+    }
 }
 
 function main(): i32 {
@@ -130,8 +133,8 @@ function main(): i32 {
         Some(p) => { if (p.0.len() != 350 || p.1.len() != 400) { return 27; } },
         None => { return 28; },
     }
-    match (rep("a", 900).rfind(rep("a", 60) + "b")) { Some(v) => { return 29; }, None => { } }
-    match ("hello".rfind("l")) { Some(v) => { if (v != 3) { return 30; } }, None => { return 31; } }
+    match (rep("a", 900).last_index_of(rep("a", 60) + "b")) { Some(v) => { return 29; }, None => { } }
+    match ("hello".last_index_of("l")) { Some(v) => { if (v != 3) { return 30; } }, None => { return 31; } }
 
     return 42;
 }

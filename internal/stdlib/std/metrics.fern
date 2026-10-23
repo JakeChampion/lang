@@ -330,11 +330,12 @@ pub const EOF: string = "# EOF\n";
 pub function frames(buf: string): (string[], string) {
   let out: string[] = [];
   let rest: string = buf;
-  let at: i32 = rest.index_of(EOF);
-  while (at >= 0) {
+  while (true) {
+    let Some(at) = rest.index_of(EOF) else {
+      break;
+    };
     out = out.append(rest.take(at));
     rest = rest.drop(at + EOF.len());
-    at = rest.index_of(EOF);
   }
   return (out, rest);
 }
@@ -369,8 +370,10 @@ function __merge_line(m: __Merged, line: string): __Merged {
   if (line.starts_with("# ")) {
     return __merge_head(m, line);
   }
-  let sp: i32 = line.last_index_of(" ");
-  if (sp <= 0) {
+  let Some(sp) = line.last_index_of(" ") else {
+    return m;
+  };
+  if (sp == 0) {
     return m;
   }
   return __merge_sample(m, line.take(sp), line.drop(sp + 1));
@@ -505,8 +508,7 @@ function __merged_sample(m: __Merged, k: i32): string {
 // before its labels, less a histogram's `_bucket`, `_sum` or `_count`.
 function __family_of(key: string): string {
   let name: string = key;
-  let brace: i32 = key.index_of("{");
-  if (brace >= 0) {
+  if let Some(brace) = key.index_of("{") {
     name = key.take(brace);
   }
   if (name.ends_with("_bucket")) {
@@ -606,7 +608,7 @@ pub function (e: Exporter) wake[D: async.Driver](drv: D, fd: i32, answer: (strin
     }
   }
   let head: string = e.heads[at] + string_from_bytes_unchecked(got);
-  if (got.len() > 0 && head.index_of("\r\n\r\n") < 0 && head.len() < 8192) {
+  if (got.len() > 0 && !head.contains("\r\n\r\n") && head.len() < 8192) {
     return Exporter { ...e, heads: e.heads.with(at, head) };
   }
   __answer(fd, head, answer);
@@ -644,16 +646,14 @@ function __answer(fd: i32, head: string, answer: (string) => HttpResponse): void
 // __path_of(head) — the path of the request line's target, less its
 // query; None for a line that is not `METHOD target HTTP/…`.
 function __path_of(head: string): Option[string] {
-  let eol: i32 = head.index_of("\r\n");
-  if (eol < 0) {
+  let Some(eol) = head.index_of("\r\n") else {
     return None;
-  }
+  };
   let words: string[] = head.take(eol).split(" ");
   if (words.len() != 3 || !words[2].starts_with("HTTP/") || !words[1].starts_with("/")) {
     return None;
   }
-  let q: i32 = words[1].index_of("?");
-  if (q >= 0) {
+  if let Some(q) = words[1].index_of("?") {
     return Some(words[1].take(q));
   }
   return Some(words[1]);

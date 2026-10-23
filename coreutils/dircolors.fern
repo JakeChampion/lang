@@ -474,9 +474,8 @@ function help_text(): string {
 // $SHELL names csh when its last path component is exactly `csh` or
 // `tcsh`. A trailing slash is not stripped, so `/bin/csh/` is not one.
 function shell_is_csh(shell: string): boolean {
-  let cut: i32 = shell.last_index_of("/");
   let base: string = shell;
-  if (cut >= 0) {
+  if let Some(cut) = shell.last_index_of("/") {
     base = slice_unchecked(shell, cut + 1, shell.len()) + "";
   }
   return base == "csh" || base == "tcsh";
