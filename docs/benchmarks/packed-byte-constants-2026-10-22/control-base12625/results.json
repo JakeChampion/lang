@@ -1,0 +1,112 @@
+{
+  "source_git": "12625f42bccd4e1b9cdbfe302d612849bdb72306",
+  "compiler_sha256": "f35d621aa4d5cd40469a1d1e05f2b6c5a9ffe2c12b66c64000da34e4b819e884",
+  "producer_sha256": "3be44999ff7041c0a240210726a73b854f5d3b9d419e1f34d222d3d6442df8d8",
+  "compiler_build_mode": "alloc-pprof with -g",
+  "rows": [
+    {
+      "label": "small.bin-bytes",
+      "input_bytes": 100000,
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/small.bin-bytes.s",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/small.bin-bytes.fern",
+        "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+      ],
+      "wall_seconds": 1.480814434000422,
+      "user_seconds": 1.40295,
+      "system_seconds": 0.077168,
+      "max_rss_kib": 184828,
+      "minor_faults": 42808,
+      "major_faults": 0,
+      "assembly_bytes": 482511,
+      "assembly_sha256": "9a063ac788fc4b266e18195aa16103d7a77b61e13d241924b38f96608df6b9a6",
+      "profile_sha256": "b7cff75d9114f975e13a93e18eada1aac050e38520bc956e33536f2a1eeef855"
+    },
+    {
+      "label": "small.bin-text",
+      "input_bytes": 100000,
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/small.bin-text.s",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/small.bin-text.fern",
+        "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+      ],
+      "wall_seconds": 0.12116464599967003,
+      "user_seconds": 0.112398,
+      "system_seconds": 0.008329999999999999,
+      "max_rss_kib": 29824,
+      "minor_faults": 2213,
+      "major_faults": 0,
+      "assembly_bytes": 118680,
+      "assembly_sha256": "b0b85e40ced1402ff7ab13985f8de36512ec9b77520b29b42ff0a53aad728d99",
+      "profile_sha256": "8b3d2fb64cb77da1011c0e14457a0b2b6aa21d0d7263ae1fd5077e41f3178416"
+    },
+    {
+      "label": "large.bin-bytes",
+      "input_bytes": 1000000,
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/large.bin-bytes.s",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/large.bin-bytes.fern",
+        "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+      ],
+      "wall_seconds": 7.496454308999091,
+      "user_seconds": 6.652048,
+      "system_seconds": 0.8360339999999999,
+      "max_rss_kib": 1623420,
+      "minor_faults": 402482,
+      "major_faults": 0,
+      "assembly_bytes": 4657512,
+      "assembly_sha256": "f95965a9b0dc6e9b42b961a1f41a45f0c630a74105a094cef88e871f83b882ab",
+      "profile_sha256": "80b9cd18b97e3fb9df69b52af7f4da9cbc5fd2556319d824339e248dd881782e"
+    },
+    {
+      "label": "large.bin-text",
+      "input_bytes": 1000000,
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/large.bin-text.s",
+        "/workspace/scratch/lang-packed-byte-constants/profile-base12625/large.bin-text.fern",
+        "/workspace/lang-byte-literal-control-12625/internal/stdlib"
+      ],
+      "wall_seconds": 0.13903929099978996,
+      "user_seconds": 0.126904,
+      "system_seconds": 0.011474999999999999,
+      "max_rss_kib": 29824,
+      "minor_faults": 2749,
+      "major_faults": 0,
+      "assembly_bytes": 1018681,
+      "assembly_sha256": "b265fc187106c2d5a1759edc1dfde27663968db0d4002bcdaaf0d3aeeef16187",
+      "profile_sha256": "5dc92157452b3e436f96a8cd7e8355ab78bea01fce8d2ce853a7415174625a48"
+    }
+  ]
+}

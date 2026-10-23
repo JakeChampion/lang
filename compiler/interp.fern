@@ -5421,6 +5421,13 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       }
       return v_arr(elems);
     },
+    ast.ExprBytes(bs) => {
+      let elems: Value[] = [];
+      for b in bs.value {
+        elems = elems.append(v_int(b as i32));
+      }
+      return v_arr(elems);
+    },
     ast.ExprIndex(x) => {
       return eval_expr_index(x, env);
     },

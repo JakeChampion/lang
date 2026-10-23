@@ -113,7 +113,7 @@ pub function fresh_alloc_what(o: ir.Op): string {
   if (t == 142) {
     return "tuple literal";
   }
-  if (t == 87) {
+  if (t == 87 || ir.is_array_literal_copy(o)) {
     return "array literal";
   }
   if (t == 120) {

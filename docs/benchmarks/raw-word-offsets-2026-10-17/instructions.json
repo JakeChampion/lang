@@ -1,0 +1,20 @@
+{
+  "cpu": [
+    0
+  ],
+  "iterations": 1000000,
+  "checksum": "888000000\n",
+  "rows": {
+    "baseline": {
+      "compiler_sha256": "c7a08b71fdf8e9150c2e15e3bbf4fc194698ffd47f61139af74a13cdbf43b2d2",
+      "binary_sha256": "1dfd18385324791c6177cfe1c5e0a631eb21b56ab827bdbff9b228fd63c7e454",
+      "instructions": 14001213
+    },
+    "candidate": {
+      "compiler_sha256": "fa2044688f104f101bf9698758212f50a9576163bf4ccdab02ec782548cbb370",
+      "binary_sha256": "ad4783863b4dc9b8f147b3c86f8d3b5e8fcf0072c19fef2443c3502e421d1f60",
+      "instructions": 13001213
+    }
+  },
+  "source_sha256": "c8c0282b4492a7fc59b85bec1a8828bd13d0d7a685c194185efbc10b5d30500e"
+}

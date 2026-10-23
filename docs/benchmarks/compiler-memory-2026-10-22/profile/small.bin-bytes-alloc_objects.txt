@@ -1,0 +1,47 @@
+Main binary filename not available.
+Fern bounded reservoir: retained=1302 dropped=0
+Type: alloc_objects
+Showing nodes accounting for 83328, 100% of 83328 total
+Dropped 198 nodes (cum <= 416)
+Showing top 40 nodes out of 76
+      flat  flat%   sum%        cum   cum%
+     52672 63.21% 63.21%      52672 63.21%  __fn___fern_str_concat
+     28480 34.18% 97.39%      28480 34.18%  __fern_arr_box
+      1472  1.77% 99.16%       1472  1.77%  __fn___fern_str_grow_fresh_range
+       704  0.84%   100%        704  0.84%  __fn___fern_string_from_bytes_u8
+         0     0%   100%        704  0.84%  __fern_alloc_bytes
+         0     0%   100%       2752  3.30%  __fern_alloc_u8
+         0     0%   100%       6784  8.14%  __fern_arr_push
+         0     0%   100%       2176  2.61%  __fern_arr_push_owned
+         0     0%   100%        704  0.84%  __fn___fern_arr_slice
+         0     0%   100%      16576 19.89%  __fn_asm_ir__emit_entry_runtime
+         0     0%   100%       1216  1.46%  __fn_asm_ir__emit_function_via_ir_named
+         0     0%   100%       1216  1.46%  __fn_asm_ir__emit_function_via_ir_pre
+         0     0%   100%      16512 19.82%  __fn_asm_ir__emit_ir_runtime
+         0     0%   100%      16256 19.51%  __fn_asm_ir__emit_ir_runtime_fern_fn
+         0     0%   100%      65792 78.96%  __fn_asm_ir__emit_module_or_error_sub
+         0     0%   100%        704  0.84%  __fn_asm_ir__emit_ssa_allocated_x86
+         0     0%   100%       1792  2.15%  __fn_checker__annotate_module
+         0     0%   100%       4096  4.92%  __fn_checker__build_gate_diags
+         0     0%   100%       4736  5.68%  __fn_checker__builtin_sig
+         0     0%   100%       4096  4.92%  __fn_checker__check_module
+         0     0%   100%       2432  2.92%  __fn_checker__check_module_pass
+         0     0%   100%        512  0.61%  __fn_checker__colliding_variant_names
+         0     0%   100%        448  0.54%  __fn_checker__e064_unknown_name
+         0     0%   100%        448  0.54%  __fn_checker__handle_misuse_diags
+         0     0%   100%        448  0.54%  __fn_checker__handle_type_diags
+         0     0%   100%       3968  4.76%  __fn_checker__module_env
+         0     0%   100%        704  0.84%  __fn_checker__raw_floor_sigs
+         0     0%   100%       3712  4.45%  __fn_checker__type_from_name
+         0     0%   100%        640  0.77%  __fn_checker__type_from_ref_names
+         0     0%   100%       2432  2.92%  __fn_checker__type_from_spelling
+         0     0%   100%       3392  4.07%  __fn_checker__type_names
+         0     0%   100%        768  0.92%  __fn_checker__with_spellings
+         0     0%   100%      48000 57.60%  __fn_irverifygate__open_memo
+         0     0%   100%        512  0.61%  __fn_load_checked
+         0     0%   100%      83328   100%  __fn_main
+         0     0%   100%        512  0.61%  __fn_parser__add_builtin_variant
+         0     0%   100%        768  0.92%  __fn_parser__erase_view_struct
+         0     0%   100%        768  0.92%  __fn_parser__erase_view_structs
+         0     0%   100%       1024  1.23%  __fn_parser__inject_builtin_enums
+         0     0%   100%        640  0.77%  __fn_parser__parse_module

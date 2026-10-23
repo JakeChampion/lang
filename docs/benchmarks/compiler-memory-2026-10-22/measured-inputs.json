@@ -1,0 +1,110 @@
+[
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/baseline/large.bin-bytes.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/baseline/large.bin-bytes.fern.input.gz",
+    "measured_sha256": "0c164b4d5eb0e89d0c8c3880e1236a4fadc4b6f47a139f1e8b47155ed1dc84fb",
+    "formatted_sha256": "a7da47edd6f66f1ef6626b53cac904f3848b8192de0cb98fa04449f0a2e2eea4"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/baseline/large.bin-text.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/baseline/large.bin-text.fern.input.gz",
+    "measured_sha256": "574daaa599eb6c7f24ad7dc4be0be5a240336a2b3706d47dc126a608e4dfae01",
+    "formatted_sha256": "4e09f163240e517f388ce59634c0c63af20659da4ea20fed59d0c540a68b7dd7"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/baseline/small.bin-bytes.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/baseline/small.bin-bytes.fern.input.gz",
+    "measured_sha256": "560174e3e3cfb324dd2c2a32ec8549183504ddc7976ec1713aaad9f64b73ab2f",
+    "formatted_sha256": "c523ec1711e389644baf7a8b83ad8283039fd2840cd29008301ac3b2054e8270"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/baseline/small.bin-text.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/baseline/small.bin-text.fern.input.gz",
+    "measured_sha256": "2d4f08daa95221102edbc802d239fc1393747a6b35f870a0ff3b4a4b68c2cd31",
+    "formatted_sha256": "3e1e61729d0604ad04fe422b8223a2ca028f95c083efd0e845509cb2b900aef1"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/control-base12625/large.bin-bytes.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/control-base12625/large.bin-bytes.fern.input.gz",
+    "measured_sha256": "0c164b4d5eb0e89d0c8c3880e1236a4fadc4b6f47a139f1e8b47155ed1dc84fb",
+    "formatted_sha256": "a7da47edd6f66f1ef6626b53cac904f3848b8192de0cb98fa04449f0a2e2eea4"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/control-base12625/large.bin-text.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/control-base12625/large.bin-text.fern.input.gz",
+    "measured_sha256": "574daaa599eb6c7f24ad7dc4be0be5a240336a2b3706d47dc126a608e4dfae01",
+    "formatted_sha256": "4e09f163240e517f388ce59634c0c63af20659da4ea20fed59d0c540a68b7dd7"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/control-base12625/small.bin-bytes.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/control-base12625/small.bin-bytes.fern.input.gz",
+    "measured_sha256": "560174e3e3cfb324dd2c2a32ec8549183504ddc7976ec1713aaad9f64b73ab2f",
+    "formatted_sha256": "c523ec1711e389644baf7a8b83ad8283039fd2840cd29008301ac3b2054e8270"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/control-base12625/small.bin-text.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/control-base12625/small.bin-text.fern.input.gz",
+    "measured_sha256": "2d4f08daa95221102edbc802d239fc1393747a6b35f870a0ff3b4a4b68c2cd31",
+    "formatted_sha256": "3e1e61729d0604ad04fe422b8223a2ca028f95c083efd0e845509cb2b900aef1"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/final/large.bin-bytes.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/final/large.bin-bytes.fern.input.gz",
+    "measured_sha256": "0c164b4d5eb0e89d0c8c3880e1236a4fadc4b6f47a139f1e8b47155ed1dc84fb",
+    "formatted_sha256": "a7da47edd6f66f1ef6626b53cac904f3848b8192de0cb98fa04449f0a2e2eea4"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/final/large.bin-text.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/final/large.bin-text.fern.input.gz",
+    "measured_sha256": "574daaa599eb6c7f24ad7dc4be0be5a240336a2b3706d47dc126a608e4dfae01",
+    "formatted_sha256": "4e09f163240e517f388ce59634c0c63af20659da4ea20fed59d0c540a68b7dd7"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/final/small.bin-bytes.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/final/small.bin-bytes.fern.input.gz",
+    "measured_sha256": "560174e3e3cfb324dd2c2a32ec8549183504ddc7976ec1713aaad9f64b73ab2f",
+    "formatted_sha256": "c523ec1711e389644baf7a8b83ad8283039fd2840cd29008301ac3b2054e8270"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/final/small.bin-text.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/final/small.bin-text.fern.input.gz",
+    "measured_sha256": "2d4f08daa95221102edbc802d239fc1393747a6b35f870a0ff3b4a4b68c2cd31",
+    "formatted_sha256": "3e1e61729d0604ad04fe422b8223a2ca028f95c083efd0e845509cb2b900aef1"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/large-executables/1000000.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/large-executables/1000000.fern.input.gz",
+    "measured_sha256": "e4ce922b9764a98b8a1ad8ad2b1fd1caff764c8ebb99c23d6e043633f1ae9ea3",
+    "formatted_sha256": "7a5c61619c12aff22ed12fa858f3e727a99bdc3a9b1bf7adaa63c26471549248"
+  },
+  {
+    "path": "docs/benchmarks/packed-byte-constants-2026-10-22/large-executables/10000000.fern",
+    "raw_input": "docs/benchmarks/packed-byte-constants-2026-10-22/large-executables/10000000.fern.input.gz",
+    "measured_sha256": "07f88464576c47b586d8710f274bb449dc6139f6403525751e9eaa2c6f25690c",
+    "formatted_sha256": "9d608f1b26ce31b5f82e98b5d33deca78f408dcb23c84195399e39511b3c64aa"
+  },
+  {
+    "path": "docs/benchmarks/compiler-memory-2026-10-22/profile/large.bin-bytes.fern",
+    "raw_input": "docs/benchmarks/compiler-memory-2026-10-22/profile/large.bin-bytes.fern.input.gz",
+    "measured_sha256": "0c164b4d5eb0e89d0c8c3880e1236a4fadc4b6f47a139f1e8b47155ed1dc84fb",
+    "formatted_sha256": "a7da47edd6f66f1ef6626b53cac904f3848b8192de0cb98fa04449f0a2e2eea4"
+  },
+  {
+    "path": "docs/benchmarks/compiler-memory-2026-10-22/profile/large.bin-text.fern",
+    "raw_input": "docs/benchmarks/compiler-memory-2026-10-22/profile/large.bin-text.fern.input.gz",
+    "measured_sha256": "574daaa599eb6c7f24ad7dc4be0be5a240336a2b3706d47dc126a608e4dfae01",
+    "formatted_sha256": "4e09f163240e517f388ce59634c0c63af20659da4ea20fed59d0c540a68b7dd7"
+  },
+  {
+    "path": "docs/benchmarks/compiler-memory-2026-10-22/profile/small.bin-bytes.fern",
+    "raw_input": "docs/benchmarks/compiler-memory-2026-10-22/profile/small.bin-bytes.fern.input.gz",
+    "measured_sha256": "560174e3e3cfb324dd2c2a32ec8549183504ddc7976ec1713aaad9f64b73ab2f",
+    "formatted_sha256": "c523ec1711e389644baf7a8b83ad8283039fd2840cd29008301ac3b2054e8270"
+  },
+  {
+    "path": "docs/benchmarks/compiler-memory-2026-10-22/profile/small.bin-text.fern",
+    "raw_input": "docs/benchmarks/compiler-memory-2026-10-22/profile/small.bin-text.fern.input.gz",
+    "measured_sha256": "2d4f08daa95221102edbc802d239fc1393747a6b35f870a0ff3b4a4b68c2cd31",
+    "formatted_sha256": "3e1e61729d0604ad04fe422b8223a2ca028f95c083efd0e845509cb2b900aef1"
+  }
+]

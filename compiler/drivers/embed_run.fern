@@ -89,35 +89,21 @@ function bytes_are(bs: u8[], want: u8[]): boolean {
   return true;
 }
 
-// bytes_of renders a `u8[]` literal as its elements' decimal spellings joined
-// by commas, or "" for any other node and "?" for an element that is not a
-// u8 number.
+// bytes_of reads the compact literal's byte payload independently of its lowering.
 function bytes_of(e: ast.Expr): string {
   let out: string = "";
   match (e) {
-    ast.ExprArray(arr) => {
-      if (arr.elem_ty != "u8") {
-        return "";
-      }
-      for el in arr.elements {
+    ast.ExprBytes(bs) => {
+      for b in bs.value {
         if (out.len() > 0) {
           out = out + ",";
         }
-        out = out + u8_text(el);
+        out = out + util.i32_to_string(b as i32);
       }
     },
     _ => {}
   }
   return out;
-}
-
-function u8_text(e: ast.Expr): string {
-  if let ast.ExprNumber(n) = e {
-    if (n.suffix == "u8") {
-      return n.text;
-    }
-  }
-  return "?";
 }
 
 // var_init_of digs the first StmtVar initialiser out of `main`.

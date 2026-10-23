@@ -1,0 +1,35 @@
+{
+  "source_sha256": "e58e3518a6c49d5b2485d9d460ee61a36bb282786da327e70518ff96588d229a",
+  "rows": {
+    "baseline": {
+      "compiler_sha256": "c7a08b71fdf8e9150c2e15e3bbf4fc194698ffd47f61139af74a13cdbf43b2d2",
+      "command": [
+        "/workspace/scratch/lang-main-4fdf/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/raw-word-offsets-formatted/baseline",
+        "/workspace/lang-raw-word-current/docs/benchmarks/raw-word-offsets-2026-10-17/probe.fern",
+        "/workspace/lang-raw-word-immediates/internal/stdlib"
+      ],
+      "binary_sha256": "1dfd18385324791c6177cfe1c5e0a631eb21b56ab827bdbff9b228fd63c7e454",
+      "matches_archived_binary": true,
+      "stdout": "888000000\n"
+    },
+    "candidate": {
+      "compiler_sha256": "fa2044688f104f101bf9698758212f50a9576163bf4ccdab02ec782548cbb370",
+      "command": [
+        "/workspace/scratch/lang-raw-word-immediates/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/raw-word-offsets-formatted/candidate",
+        "/workspace/lang-raw-word-current/docs/benchmarks/raw-word-offsets-2026-10-17/probe.fern",
+        "/workspace/lang-raw-word-immediates/internal/stdlib"
+      ],
+      "binary_sha256": "ad4783863b4dc9b8f147b3c86f8d3b5e8fcf0072c19fef2443c3502e421d1f60",
+      "matches_archived_binary": true,
+      "stdout": "888000000\n"
+    }
+  }
+}

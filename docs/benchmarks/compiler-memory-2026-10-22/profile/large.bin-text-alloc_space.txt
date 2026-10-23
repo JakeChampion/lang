@@ -1,0 +1,47 @@
+Main binary filename not available.
+Fern bounded reservoir: retained=1302 dropped=0
+Type: alloc_space
+Showing nodes accounting for 5.43MB, 99.47% of 5.46MB total
+Dropped 180 nodes (cum <= 0.03MB)
+Showing top 40 nodes out of 88
+      flat  flat%   sum%        cum   cum%
+    2.99MB 54.66% 54.66%     2.99MB 54.66%  __fern_arr_box
+    2.35MB 43.08% 97.74%     2.35MB 43.08%  __fn___fern_str_concat
+    0.09MB  1.73% 99.47%     0.09MB  1.73%  __fn___fern_str_grow_fresh_range
+         0     0% 99.47%     0.03MB  0.54%  __fern_alloc_bytes
+         0     0% 99.47%     0.39MB  7.06%  __fern_alloc_u8
+         0     0% 99.47%     1.40MB 25.59%  __fern_arr_push
+         0     0% 99.47%     1.21MB 22.21%  __fern_arr_push_owned
+         0     0% 99.47%     0.03MB   0.6%  __fn___fern_arr_slice
+         0     0% 99.47%     1.60MB 29.27%  __fn_asm_ir__emit_entry_runtime
+         0     0% 99.47%     0.12MB  2.28%  __fn_asm_ir__emit_function_via_ir_named
+         0     0% 99.47%     0.12MB  2.28%  __fn_asm_ir__emit_function_via_ir_pre
+         0     0% 99.47%     1.60MB 29.22%  __fn_asm_ir__emit_ir_runtime
+         0     0% 99.47%     1.58MB 28.99%  __fn_asm_ir__emit_ir_runtime_fern_fn
+         0     0% 99.47%     4.18MB 76.56%  __fn_asm_ir__emit_module_or_error_sub
+         0     0% 99.47%     0.07MB  1.36%  __fn_asm_ir__emit_ssa_allocated_x86
+         0     0% 99.47%     0.04MB  0.67%  __fn_asm_ir__ssa_allocate
+         0     0% 99.47%     0.13MB  2.46%  __fn_asmcore__entry_check_errors
+         0     0% 99.47%     0.28MB  5.08%  __fn_asmcore__new_state
+         0     0% 99.47%     0.14MB  2.63%  __fn_checker__annotate_module
+         0     0% 99.47%     0.05MB  0.87%  __fn_checker__annotate_module_in
+         0     0% 99.47%     0.33MB  6.10%  __fn_checker__build_gate_diags
+         0     0% 99.47%     0.23MB  4.21%  __fn_checker__builtin_sig
+         0     0% 99.47%     0.33MB  6.10%  __fn_checker__check_module
+         0     0% 99.47%     0.18MB  3.23%  __fn_checker__check_module_pass
+         0     0% 99.47%     0.05MB  0.97%  __fn_checker__colliding_variant_names
+         0     0% 99.47%     0.03MB  0.55%  __fn_checker__e064_unknown_name
+         0     0% 99.47%     0.03MB   0.5%  __fn_checker__handle_type_diags
+         0     0% 99.47%     0.30MB  5.50%  __fn_checker__module_env
+         0     0% 99.47%     0.04MB  0.64%  __fn_checker__prepared_module
+         0     0% 99.47%     0.03MB  0.55%  __fn_checker__pretype_module_in
+         0     0% 99.47%     0.06MB  1.11%  __fn_checker__raw_floor_sigs
+         0     0% 99.47%     0.19MB  3.49%  __fn_checker__type_from_name
+         0     0% 99.47%     0.15MB  2.83%  __fn_checker__type_from_spelling
+         0     0% 99.47%     0.17MB  3.13%  __fn_checker__type_names
+         0     0% 99.47%     0.07MB  1.32%  __fn_checker__with_spellings
+         0     0% 99.47%     0.16MB  2.91%  __fn_ir__pops_by_kind
+         0     0% 99.47%     0.05MB  1.00%  __fn_irverifygate__gate
+         0     0% 99.47%     0.12MB  2.27%  __fn_irverifygate__gate_unreported
+         0     0% 99.47%     2.19MB 40.17%  __fn_irverifygate__open_memo
+         0     0% 99.47%     0.06MB  1.13%  __fn_load_checked

@@ -1,0 +1,21 @@
+Source: 89eaede22c77142b65d9fa7aa2ae2f947d112e5f
+Go: 1.27.3
+Stage0 SHA-256: 80667735ba7936ace5f1925ec03bcdde5a1bfe36aaa3c9f7e080fdecdcaf24ee
+
+The commands below use a checkout at the source commit and the pinned tools.
+SOURCE_ROOT is that checkout. OUTPUT_ROOT is a separate artifact directory.
+The caller supplies GCC, QEMU, wasmtime and GDB as described in docs/LOCAL-DEV-LOOP.md.
+
+cd SOURCE_ROOT
+go test ./internal/testing/e2ecompiler -run '^(TestSelfHostTailArrayAllocation|TestSelfHostRawWordConstantOffsets|TestSelfHostAllocReuseLargeDonor|TestSelfHostHardenArm64|TestSelfHostFeatureCensus|TestSelfHostLaneParamPastRegisters)$' -count=1 -timeout 15m
+go test ./internal/testing/e2ecompiler -run '^TestSelfHost(SSATailCall|SemanticTailRecursion|ReleaseUniqueTail|AllocReuseRegisterEntry|LoopReuse|CPUProfile|AllocationProfile|ProfileSyscallABI|ConstExprFold|CCall|IRKindRegistry|SSAKindRegistry|RepoComplexityRatchet)' -count=1 -timeout 20m
+
+STAGE0 -target x86-64-linux -o OUTPUT_ROOT/stage1 SOURCE_ROOT/compiler/fern.fern SOURCE_ROOT/internal/stdlib
+OUTPUT_ROOT/stage1 -target x86-64-linux -o OUTPUT_ROOT/stage2 SOURCE_ROOT/compiler/fern.fern SOURCE_ROOT/internal/stdlib
+OUTPUT_ROOT/stage2 -target x86-64-linux -o OUTPUT_ROOT/stage3 SOURCE_ROOT/compiler/fern.fern SOURCE_ROOT/internal/stdlib
+cmp OUTPUT_ROOT/stage2 OUTPUT_ROOT/stage3
+
+export FERN_WARM_DRIVER=$(awk '!/^#/ && NF==2 {print $1}' .github/selfhost-driver-sizes.txt | paste -sd,)
+export FERN_DRIVER_SIZE_REPORT=OUTPUT_ROOT/driver-sizes.txt
+go test ./internal/testing/e2ecompiler -run '^TestSelfHostWarmStockDriver$' -count=1 -timeout 20m
+FERN_CI_SIZE_GATE_STRICT=1 FERN_SIZE_REPORT_COMPLETE=1 scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt OUTPUT_ROOT/driver-sizes.txt

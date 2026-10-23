@@ -1,0 +1,114 @@
+{
+  "compiler_sha256": "a8de45640ae581d99560982db934d4c51a74b897cd923c5158fc762f3dda72e2",
+  "source_git": "95a86695aa1b7d1125ac30bc09e70aa3d0774c4b",
+  "rows": [
+    {
+      "input_bytes": 1000000,
+      "target": "x86-64-linux",
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/bootstrap-final/stage3",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/assets",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/1000000-x86-64-linux",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/1000000.fern",
+        "/workspace/lang-packed-byte-constants/internal/stdlib"
+      ],
+      "exit": 0,
+      "wall_seconds": 0.20188997799959907,
+      "user_seconds": 0.155045,
+      "system_seconds": 0.046006,
+      "max_rss_kib": 80408,
+      "output_bytes": 1004128,
+      "output_sha256": "350bbc9aa0b77a784b41effb017c61ab27aa5f943291e11501404dcc6908596f",
+      "run_command": [
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/1000000-x86-64-linux"
+      ],
+      "run_exit": 0
+    },
+    {
+      "input_bytes": 1000000,
+      "target": "wasm32-wasi",
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/bootstrap-final/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/assets",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/1000000-wasm32-wasi",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/1000000.fern",
+        "/workspace/lang-packed-byte-constants/internal/stdlib"
+      ],
+      "exit": 0,
+      "wall_seconds": 0.16193175700027496,
+      "user_seconds": 0.12953599999999998,
+      "system_seconds": 0.032140999999999996,
+      "max_rss_kib": 68248,
+      "output_bytes": 1002908,
+      "output_sha256": "d287b1e403c5364b75d883e3dd3615cac806aa2ad02de4a478dbb7363952c778",
+      "run_command": [
+        "wasmtime",
+        "run",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/1000000-wasm32-wasi"
+      ],
+      "run_exit": 0
+    },
+    {
+      "input_bytes": 10000000,
+      "target": "x86-64-linux",
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/bootstrap-final/stage3",
+        "-target",
+        "x86-64-linux",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/assets",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/10000000-x86-64-linux",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/10000000.fern",
+        "/workspace/lang-packed-byte-constants/internal/stdlib"
+      ],
+      "exit": 0,
+      "wall_seconds": 1.8046476959989377,
+      "user_seconds": 1.609167,
+      "system_seconds": 0.195065,
+      "max_rss_kib": 494360,
+      "output_bytes": 10004128,
+      "output_sha256": "8008d5ed1472bc59922ccd94d6a4a4dd6f36a68108f9876e395becd9b61e35f9",
+      "run_command": [
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/10000000-x86-64-linux"
+      ],
+      "run_exit": 0
+    },
+    {
+      "input_bytes": 10000000,
+      "target": "wasm32-wasi",
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/bootstrap-final/stage3",
+        "-target",
+        "wasm32-wasi",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/assets",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/10000000-wasm32-wasi",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/10000000.fern",
+        "/workspace/lang-packed-byte-constants/internal/stdlib"
+      ],
+      "exit": 0,
+      "wall_seconds": 1.5997672989997227,
+      "user_seconds": 1.347324,
+      "system_seconds": 0.246938,
+      "max_rss_kib": 506008,
+      "output_bytes": 10002923,
+      "output_sha256": "cbbe282fb29bd159048ab16af563442a1f5f8d75eb27bc58433668740ae01d8e",
+      "run_command": [
+        "wasmtime",
+        "run",
+        "/workspace/scratch/lang-packed-byte-constants/large-executables/10000000-wasm32-wasi"
+      ],
+      "run_exit": 0
+    }
+  ]
+}

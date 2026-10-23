@@ -1,0 +1,13 @@
+{
+  "source_git": "c84f7c6a58d02ab5c47724d2286eaa67c15a6f9f",
+  "assets": {
+    "small.bin": {
+      "bytes": 100000,
+      "sha256": "9db292bd6952aaec826aed867a01e152418d574219b8e098074b93b7a0620228"
+    },
+    "large.bin": {
+      "bytes": 1000000,
+      "sha256": "35b73174dfab33f5a928a1936b00563cbb89977f74dda7d50860f72a71b39845"
+    }
+  }
+}

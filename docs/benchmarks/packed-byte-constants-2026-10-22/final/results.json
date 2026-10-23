@@ -1,0 +1,112 @@
+{
+  "source_git": "95a86695aa1b7d1125ac30bc09e70aa3d0774c4b",
+  "compiler_sha256": "7d9f932d91f720de03cdf495c1308f23dd621a381579e63746ff3826d7f2fbfb",
+  "producer_sha256": "3be44999ff7041c0a240210726a73b854f5d3b9d419e1f34d222d3d6442df8d8",
+  "compiler_build_mode": "alloc-pprof with -g",
+  "rows": [
+    {
+      "label": "small.bin-bytes",
+      "input_bytes": 100000,
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/small.bin-bytes.s",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/small.bin-bytes.fern",
+        "/workspace/lang-packed-byte-constants/internal/stdlib"
+      ],
+      "wall_seconds": 0.12573778000114544,
+      "user_seconds": 0.113773,
+      "system_seconds": 0.011465,
+      "max_rss_kib": 29824,
+      "minor_faults": 2748,
+      "major_faults": 0,
+      "assembly_bytes": 482511,
+      "assembly_sha256": "9a063ac788fc4b266e18195aa16103d7a77b61e13d241924b38f96608df6b9a6",
+      "profile_sha256": "8b87c6ebb71d9f3c2edebd02c4e9c9e5d8abf9fb8f71fea01e973832748a3e18"
+    },
+    {
+      "label": "small.bin-text",
+      "input_bytes": 100000,
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/small.bin-text.s",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/small.bin-text.fern",
+        "/workspace/lang-packed-byte-constants/internal/stdlib"
+      ],
+      "wall_seconds": 0.13117728199904377,
+      "user_seconds": 0.117604,
+      "system_seconds": 0.013221,
+      "max_rss_kib": 29824,
+      "minor_faults": 2210,
+      "major_faults": 0,
+      "assembly_bytes": 118680,
+      "assembly_sha256": "b0b85e40ced1402ff7ab13985f8de36512ec9b77520b29b42ff0a53aad728d99",
+      "profile_sha256": "d18f583b53ea69ee3b92a02e99e1490237a9d696d614991046f069ca5decdac1"
+    },
+    {
+      "label": "large.bin-bytes",
+      "input_bytes": 1000000,
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/large.bin-bytes.s",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/large.bin-bytes.fern",
+        "/workspace/lang-packed-byte-constants/internal/stdlib"
+      ],
+      "wall_seconds": 0.1856333050000103,
+      "user_seconds": 0.164817,
+      "system_seconds": 0.020131,
+      "max_rss_kib": 46352,
+      "minor_faults": 8203,
+      "major_faults": 0,
+      "assembly_bytes": 4657512,
+      "assembly_sha256": "f95965a9b0dc6e9b42b961a1f41a45f0c630a74105a094cef88e871f83b882ab",
+      "profile_sha256": "02475ac62233a85c358f737d2f154e55dd57eb88501613dbe9a7beb4e287f490"
+    },
+    {
+      "label": "large.bin-text",
+      "input_bytes": 1000000,
+      "command": [
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/large.bin-text.s",
+        "/workspace/scratch/lang-packed-byte-constants/profile-final/large.bin-text.fern",
+        "/workspace/lang-packed-byte-constants/internal/stdlib"
+      ],
+      "wall_seconds": 0.1203645650002727,
+      "user_seconds": 0.11085199999999999,
+      "system_seconds": 0.008102,
+      "max_rss_kib": 29824,
+      "minor_faults": 2748,
+      "major_faults": 0,
+      "assembly_bytes": 1018681,
+      "assembly_sha256": "b265fc187106c2d5a1759edc1dfde27663968db0d4002bcdaaf0d3aeeef16187",
+      "profile_sha256": "b8c8197b201218dceb1d112e15b5747c384df0f8d8ca244c3daf1263168c1ac4"
+    }
+  ]
+}
