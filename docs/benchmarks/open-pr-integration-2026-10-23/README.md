@@ -22,9 +22,21 @@ targets. Other earlier advisory size rows are outside this baseline update.
 `selfhost-cold-calls.txt` records the 20 ARM rows that the cold-call change affects.
 Their values use the combined source report.
 `alloc-report.txt` records 28,679,178 allocations and the same number of frees.
-The allocation baseline uses these combined source counts.
+These counts describe that earlier source snapshot.
 
 These reports describe the combined source scope.
 
 Apply the values to the branch only after it contains these sources.
 Validate that branch in CI.
+
+[Perf run 40026009089](https://github.com/JakeChampion/lang/actions/runs/40026009089)
+measured source commit `160186731f229749a09aaaaf288e5e82c2767189`.
+This source includes the receiver diagnostic fix and the latest FIP table.
+All native gates pass. The emitted-size report has no changes from the earlier run.
+
+`latest-alloc-report.txt` records 28,702,174 allocations and the same number of frees.
+The source growth adds 22,996 events, or 0.08 percent, to the earlier total.
+`latest-cliff-report.txt` records 30,973,448 copied bytes and 270,615 append crossings.
+The source growth adds 5,712 bytes and nine crossings to the earlier report.
+The allocation and cliff baselines use these latest counts.
+`latest-selfhost-size-report.txt` retains the full emitted-size report.
