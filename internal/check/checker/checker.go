@@ -12505,12 +12505,24 @@ func (c *checker) boundsAdmitReceiver(mangled string, param, recv ast.Type) bool
 	return true
 }
 
+// stdlibReceiverMatches binds the declaration's receiver parameters.
+// The substituted type must match the actual receiver exactly.
+func (c *checker) stdlibReceiverMatches(typeName, method string, recv ast.Type) bool {
+	pattern := stdlibMethodReceiverPatterns[typeName+"."+method]
+	if pattern == nil {
+		return true
+	}
+	sub := map[string]ast.Type{}
+	return c.unifyType(pattern, recv, sub) && ast.Equal(substituteType(pattern, sub), recv)
+}
+
 // unknownMethodMessage builds the E043 text for a method call whose
 // receiver is a non-struct with a method namespace of its own — an
 // array, a map, a slice. The bare "field access on non-struct value of
 // type i32[]" it replaces names neither the method nor the receiver's
 // actual API, which is the worst case for exactly the two situations
 // that produce it: a typo, and a spelling that was deliberately retired.
+
 func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) string {
 	msg := fmt.Sprintf("no method %q on %s", method, recv)
 	if repl, ok := retiredCollectionSpellings[typeName+"."+method]; ok {
@@ -12521,8 +12533,8 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 			msg, repl, typeName)
 	}
 	declared := stdlibMethodIndex[typeName]
-	if receiver := stdlibMethodReceivers[typeName][method]; receiver != "" {
-		return fmt.Sprintf("%s — %q is declared for %s", msg, method, receiver)
+	if receiver := stdlibMethodReceivers[typeName][method]; receiver != "" && !c.stdlibReceiverMatches(typeName, method, recv) {
+		return fmt.Sprintf("%s — %q is declared for %s in %q", msg, method, receiver, declared[method])
 	}
 	if mod := declared[method]; mod != "" && !c.moduleAlreadyImports(mod) {
 		// The f-string desugar is the one way to reach this without writing
@@ -12537,7 +12549,7 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 	if s := diag.Suggest(method, names); s != "" {
 		return fmt.Sprintf("%s — did you mean %q?", msg, s)
 	}
-	if s := diag.Suggest(method, slices.Sorted(maps.Keys(declared))); s != "" && stdlibMethodReceivers[typeName][s] == "" && !c.moduleAlreadyImports(declared[s]) {
+	if s := diag.Suggest(method, slices.Sorted(maps.Keys(declared))); s != "" && c.stdlibReceiverMatches(typeName, s, recv) && !c.moduleAlreadyImports(declared[s]) {
 		return fmt.Sprintf("%s — did you mean %q, which needs `import %q`?", msg, s, declared[s])
 	}
 	if len(declared) > 0 {

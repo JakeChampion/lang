@@ -93,6 +93,15 @@ type hintTextCase struct {
 }
 
 var hintTextCases = []hintTextCase{
+	{name: "E043 matching IoError receiver", src: `function probe(x: Option[IoError]): void { x.failure(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/io_outcome"`},
+	{name: "E043 matching nested Option receiver", src: `function probe(x: Option[Option[i32]]): void { x.flatten(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/option"`},
+	{name: "E043 matching Option Result receiver", src: `function probe(x: Option[Result[i32, string]]): void { x.transpose(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/option"`},
+	{name: "E043 matching nested Result receiver", src: `function probe(x: Result[Result[i32, string], string]): void { x.flatten(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/result"`},
+	{name: "E043 matching Result failure receiver", src: `function probe(x: Result[void, IoError]): void { x.failure(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/io_outcome"`},
+	{name: "E043 matching generic tuple receiver", src: `function probe[A, B](x: Option[(A, B)]): void { x.unzip(); } function main(): i32 { return 0; }`, code: "E043", spelling: `import "std/option"`},
+	{name: "E043 matching restricted receiver near miss", src: `function probe(x: Option[IoError]): void { x.failur(); } function main(): i32 { return 0; }`, code: "E043", spelling: `did you mean "failure", which needs`},
+	{name: "E043 mismatching repeated Result parameter", src: `function probe(x: Result[Result[i32, string], i32]): void { x.flatten(); } function main(): i32 { return 0; }`, code: "E043", spelling: `is declared for Result[Result[T, E], E] in "std/result"`},
+	{name: "E043 generic receiver is not IoError", src: `function probe[A](x: Option[A]): void { x.failure(); } function main(): i32 { return 0; }`, code: "E043", spelling: `is declared for Option[IoError] in "std/io_outcome"`},
 	{name: "E043 narrow Option receiver", src: `function main(): i32 { let x: Option[i32] = Some(1); x.failure(); return 0; }`, code: "E043", spelling: `"failure" is declared for Option[IoError]`},
 	{name: "E043 nested Option receiver", src: `function main(): i32 { let x: Option[i32] = Some(1); x.unzip(); return 0; }`, code: "E043", spelling: `"unzip" is declared for Option[(T, U)]`},
 	{name: "E021 unsafe object reason", src: `trait Bad { function copy(self: Self): Self; } function f(x: dyn Bad): i32 { return 0; } function main(): i32 { return 0; }`, code: "E021", spelling: `method "copy" returns Self, so it cannot be used as`},
