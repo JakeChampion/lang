@@ -6302,7 +6302,7 @@ function main(): i32 {
 // three dispatch via the constrained-string-receiver pattern
 // in the checker; bodies live in the prelude as plain loops.
 // Tests cover the happy paths plus boundary cases (empty
-// array, not-found returns -1 from index_of and false from
+// array, not-found returns None from index_of and false from
 // contains, separator edge cases for join).
 func TestArm64ArrayJoin(t *testing.T) {
 	src := `
