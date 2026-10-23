@@ -12519,17 +12519,30 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 		return fmt.Sprintf("%s — the in-place spelling was removed; use %q, which returns the updated %s (assign the result back)",
 			msg, repl, typeName)
 	}
-	if s := diag.Suggest(method, c.methodsFor(typeName, recv)); s != "" {
+	declared := stdlibMethodIndex[typeName]
+	if receiver := stdlibMethodReceivers[typeName][method]; receiver != "" {
+		return fmt.Sprintf("%s — %q is declared for %s", msg, method, receiver)
+	}
+	if mod := declared[method]; mod != "" && !c.moduleAlreadyImports(mod) {
+		// The f-string desugar is the one way to reach this without writing
+		// a method call.
+		note := ""
+		if method == "to_string" {
+			note = " (an f-string like `f\"{x}\"` desugars to `x.to_string()`)"
+		}
+		return fmt.Sprintf("%s — add `import %q`%s", msg, mod, note)
+	}
+	names := c.methodsFor(typeName, recv)
+	if s := diag.Suggest(method, names); s != "" {
 		return fmt.Sprintf("%s — did you mean %q?", msg, s)
 	}
-	// A scalar or string receiver keeps most of its methods in a stdlib
-	// module, so the likeliest cause of an unrecognised name is a missing
-	// import rather than a wrong name. Listing the two builtins the type
-	// has without it would point the reader away from the fix.
-	if mod := scalarModuleFor(recv); mod != "" && !c.moduleAlreadyImports(mod) {
-		return fmt.Sprintf("%s — if it comes from %s, add `import %q`", msg, mod, mod)
+	if s := diag.Suggest(method, slices.Sorted(maps.Keys(declared))); s != "" && stdlibMethodReceivers[typeName][s] == "" && !c.moduleAlreadyImports(declared[s]) {
+		return fmt.Sprintf("%s — did you mean %q, which needs `import %q`?", msg, s, declared[s])
 	}
-	if names := c.methodsFor(typeName, recv); len(names) > 0 {
+	if len(declared) > 0 {
+		msg += ", and no stdlib module declares one"
+	}
+	if len(names) > 0 {
 		return fmt.Sprintf("%s (it has: %s)", msg, strings.Join(names, ", "))
 	}
 	return msg
@@ -12984,94 +12997,6 @@ func (c *checker) errTypeParamAssoc(tid *ast.Ident, field string) {
 // (replacing one identifier with another always re-parses). namePos is
 // the field NAME token's own position (FieldInit.NamePos /
 // FieldAccess.FieldPos); a zero position (synthetic node) skips the fix.
-// builtinUnionModule is the stdlib module that declares the methods of the
-// built-in union t, or "".
-func builtinUnionModule(t ast.Type) string {
-	if e, ok := t.(ast.EnumType); ok {
-		switch e.Name {
-		case "Option":
-			return "std/option"
-		case "Result":
-			return "std/result"
-		}
-	}
-	return ""
-}
-
-// scalarMethodModule returns the stdlib module that defines `method` on the
-// scalar type `t`, or "" when there is no such pairing. It exists so a method
-// call on a scalar whose module was not imported gets a diagnostic naming the
-// import, rather than the raw "field access on non-struct value" E043 — which
-// describes the desugared shape rather than the user's code, and is especially
-// confusing for f-strings (`f"{n}"` becomes `n.to_string()`).
-//
-// Deliberately narrow: only method names these modules actually define on the
-// scalar receivers, so a typo'd method still gets the generic error rather than
-// a confidently wrong import suggestion. Since the auto-prelude was removed
-// (Phase 5) a program sees only what it imports, which is what makes this class
-// of confusion reachable at all. #5494.
-func scalarMethodModule(t ast.Type, method string) string {
-	mod := scalarModuleFor(t)
-	if mod == "" {
-		return ""
-	}
-	// to_string is the one every scalar module defines, and the f-string
-	// desugar target — the case that motivates this. Keep the set tight.
-	switch method {
-	case "to_string", "to_string_radix", "to_string_padded", "to_string_with_sep", "to_string_prec":
-		return mod
-	}
-	return ""
-}
-
-// scalarModuleFor names the stdlib module that carries a scalar type's
-// method surface, or "" for a type whose methods aren't in one. Unlike
-// scalarMethodModule it does not check that the module actually defines
-// the method — callers that only want to say "if this method exists, it
-// comes from here" use this one.
-func scalarModuleFor(t ast.Type) string {
-	var mod string
-	switch x := t.(type) {
-	case ast.NumberType:
-		if !x.IsSigned() {
-			if x.NormalWidth() == 64 || x.IsPointerWidth() {
-				mod = "std/u64"
-			} else if x.NormalWidth() == 8 {
-				// u8's method surface lives in std/i32, not std/u32:
-				// every `pub function (b: u8) …` in the stdlib is
-				// declared there. Pointing at std/u32 made the hint
-				// unfollowable — importing it changed nothing and the
-				// identical error repeated, with no reason to try
-				// elsewhere. Bytes reach users constantly (indexing a
-				// string yields u8), so this is a common first error.
-				mod = "std/i32"
-			} else {
-				mod = "std/u32"
-			}
-		} else if x.NormalWidth() == 64 {
-			mod = "std/i64"
-		} else {
-			mod = "std/i32"
-		}
-	case ast.FloatType:
-		mod = "std/f64"
-	case ast.StringType:
-		mod = "std/string"
-	case ast.StrType:
-		// A `str` view shares the `string` method surface (methodTypeName maps
-		// it to "string"), so its methods come from the same module. Without
-		// this case the message fell through to the builtin list — "it has:
-		// as_bytes, len" — which is the outcome the comment above forbids, and
-		// it is reached by FOLLOWING another diagnostic: E043/E002/E003 on a
-		// `str` in an owned position all say "add `.to_owned()`", and
-		// `.to_owned()` is one of the methods that needs the import.
-		mod = "std/string"
-	default:
-		return ""
-	}
-	return mod
-}
-
 // unknownVariantHint explains an arm name that is not a variant. Two
 // distinct mistakes reach here and the bare message serves neither:
 //
@@ -21486,36 +21411,14 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 	st, ok := tt.(ast.StructType)
 	if !ok {
 		if tt != nil {
-			// A method call on a SCALAR whose defining stdlib module was not
-			// imported lands here, and the bare E043 actively misleads: it
-			// talks about struct field access on code the user may not have
-			// written at all. An f-string desugars `f"{n}"` to
-			// `n.to_string()`, so `write(f"x{n}y")` without `import "std/i32"`
-			// reports "field access on non-struct value of type i32" pointing
-			// at the f-string. Name the import instead (#5494).
-			if mod := scalarMethodModule(tt, n.Field); mod != "" {
-				// The f-string note only makes sense for to_string — it is the
-				// only method the desugar produces, and the only way a user can
-				// reach this without writing a method call themselves.
-				hint := ""
-				if n.Field == "to_string" {
-					hint = " (an f-string like `f\"{x}\"` desugars to `x.to_string()`)"
-				}
-				c.errfCode(n.P, "E043",
-					"no method %q on %s — add `import %q`%s", n.Field, tt, mod, hint)
-				return nil
-			}
-			// A receiver with a method namespace of its own — an
-			// array, a map, a slice — reaching here means the
-			// method does not exist. Say so, and say what does.
-			if tn, ok := collectionNamespace(tt); ok && len(c.methodsOn(tn)) > 0 {
+			// A receiver with a method namespace of its own, or whose methods
+			// live in stdlib modules, gets the method advice: the import that
+			// declares the method, a near miss, or what the receiver has. The
+			// bare "field access on non-struct" would describe the desugared
+			// shape, not the reader's code: `f"{n}"` becomes `n.to_string()`
+			// (#5494).
+			if tn, ok := collectionNamespace(tt); ok && (len(c.methodsOn(tn)) > 0 || len(stdlibMethodIndex[tn]) > 0) {
 				c.errUnknownMethod(n, tn, tt)
-				return nil
-			}
-			// Option's and Result's methods live in std/option and
-			// std/result, which a program sees only when it imports them.
-			if mod := builtinUnionModule(tt); mod != "" && !c.moduleAlreadyImports(mod) {
-				c.errfCode(n.P, "E043", "no method %q on %s — if it comes from %s, add `import %q`", n.Field, tt, mod, mod)
 				return nil
 			}
 			c.errfCode(n.P, "E043", "field access on non-struct value of type %s", tt)

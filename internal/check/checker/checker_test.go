@@ -800,7 +800,7 @@ func TestChainedMethodCallErrorReportedOnce(t *testing.T) {
 		if err == nil {
 			t.Fatalf("expected a type error for %q, got none", src)
 		}
-		return strings.Count(err.Error(), "field access on non-struct")
+		return strings.Count(err.Error(), "no method \"")
 	}
 	if n := count(`function main(): i32 { let n: i32 = 5; return n.foo().bar(); }`); n != 1 {
 		t.Errorf("chained call: E043 reported %d times, want 1", n)
@@ -9383,10 +9383,9 @@ function main(): i32 { return g(); }`); err != nil {
 }
 
 // TestScalarModuleHintIsFollowable: E043's "add `import …`" hint must name a
-// module that actually carries the method. For `u8` it named `std/u32`,
-// which declares no u8 methods at all — every `pub function (b: u8) …` in
-// the stdlib is in `std/i32`. Following the advice reproduced the identical
-// error, with nothing to suggest trying elsewhere.
+// module that actually declares the method. For `u8` it once named `std/u32`,
+// which declares no u8 methods, so following the advice reproduced the
+// identical error.
 //
 // Bytes reach users constantly (indexing a string yields u8), so this is a
 // common first error. TestByteDisplayGateAndDispatchAgree above already
@@ -9398,14 +9397,15 @@ func TestScalarModuleHintIsFollowable(t *testing.T) {
 		decl    string
 		wantMod string
 	}{
-		{"u8 points at std/i32", `let s: string = "A"; let b: u8 = s[0]; print(b.to_string());`, `std/i32`},
+		// u8's to_string is core/cmp's `impl Display for u8`.
+		{"u8 points at core/cmp", `let s: string = "A"; let b: u8 = s[0]; print(b.to_string());`, `core/cmp`},
 		{"u32 still points at std/u32", `let x: u32 = 5; print(x.to_string());`, `std/u32`},
 		{"u64 still points at std/u64", `let x: u64 = 5; print(x.to_string());`, `std/u64`},
 		// usize's to_string is std/u64's, which every usize fits; the hint
 		// named std/u32, which has none.
 		{"usize points at std/u64", `let x: usize = 5; print(x.to_string());`, `std/u64`},
 		{"i64 still points at std/i64", `let x: i64 = 5; print(x.to_string());`, `std/i64`},
-		// A `str` view had NO hint at all: scalarModuleFor had no StrType case,
+		// A `str` view had NO hint at all: the hint had no case for it,
 		// so the message fell through to the builtin list ("it has: as_bytes,
 		// len") — the outcome that function's own comment forbids, and the one
 		// a reader reaches by FOLLOWING E043 (TestStrToOwnedAdviceIsFollowable).
