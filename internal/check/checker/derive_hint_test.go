@@ -315,7 +315,7 @@ function main(): i32 { return 0; }`,
 		local: `import "std/regex";
 pub function (m: regex.RMatch) to_string(): string { return "m"; }
 function main(): i32 {
-    let a: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
+    let a: regex.RMatch = regex.RMatch { start: 0, end: 0 };
     print(a);
     return 0;
 }`,
@@ -326,7 +326,7 @@ function main(): i32 {
 import "core/map";
 function main(): i32 {
     let m: Map[regex.RMatch, i32] = Map {};
-    m = m.insert(regex.RMatch { found: true, start: 0, end: 0 }, 1);
+    m = m.insert(regex.RMatch { start: 0, end: 0 }, 1);
     return 0;
 }`,
 	},
@@ -336,8 +336,8 @@ function main(): i32 {
 func foreignProg(body string) string {
 	return `import "std/regex";
 function main(): i32 {
-    let a: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
-    let b: regex.RMatch = regex.RMatch { found: true, start: 0, end: 0 };
+    let a: regex.RMatch = regex.RMatch { start: 0, end: 0 };
+    let b: regex.RMatch = regex.RMatch { start: 0, end: 0 };
 ` + body + `
 }`
 }

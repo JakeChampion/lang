@@ -189,11 +189,10 @@ import "std/option";
 
 function main(): i32 {
     let line: string = "2026-10-07 ERROR disk full on /dev/sda1";
-    let m: regex.RCaps = regex.regex_captures("^(?<date>\\d{4}-\\d{2}-\\d{2}) (?<level>[A-Z]+) (.*)$", line);
-    if (!m.found) {
+    let Some(m) = regex.regex_captures("^(?<date>\\d{4}-\\d{2}-\\d{2}) (?<level>[A-Z]+) (.*)$", line) else {
         eprint("not a log line");
         return 1;
-    }
+    };
     print(m.group_named("level").unwrap_or(""));   // ERROR
     print(m.group(3).unwrap_or(""));               // disk full on /dev/sda1
     let masked: string = regex.regex_replace_all("[0-9]", "call 555-0100", "#").unwrap_or("");

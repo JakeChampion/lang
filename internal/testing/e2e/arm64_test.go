@@ -7266,17 +7266,21 @@ function main(): i32 {
 func TestArm64StdlibBundle19(t *testing.T) {
 	src := `
 import "std/http";
+function is(o: Option[i32], want: i32): boolean {
+    if let Some(v) = o { return v == want; }
+    return false;
+}
 function main(): i32 {
     // digit_value
-    if ((48 as u8).digit_value() != 0) { return 1; }
-    if ((57 as u8).digit_value() != 9) { return 2; }
-    if ((65 as u8).digit_value() != (0 - 1)) { return 3; }
+    if (!is((48 as u8).digit_value(), 0)) { return 1; }
+    if (!is((57 as u8).digit_value(), 9)) { return 2; }
+    if let Some(_) = (65 as u8).digit_value() { return 3; }
 
     // hex_value
-    if ((48 as u8).hex_value() != 0) { return 4; }
-    if ((97 as u8).hex_value() != 10) { return 5; }
-    if ((70 as u8).hex_value() != 15) { return 6; }
-    if ((71 as u8).hex_value() != (0 - 1)) { return 7; }
+    if (!is((48 as u8).hex_value(), 0)) { return 4; }
+    if (!is((97 as u8).hex_value(), 10)) { return 5; }
+    if (!is((70 as u8).hex_value(), 15)) { return 6; }
+    if let Some(_) = (71 as u8).hex_value() { return 7; }
 
     // count_byte
     if ("hello".count_byte(108) != 2) { return 8; }

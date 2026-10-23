@@ -879,14 +879,14 @@ pub function (sh: Shared) adopt(key: string, fd: i32, tls: client.Session, hc: h
 }
 
 // `(sh).pick(key)` — the socket of a driven connection to `key` with room
-// for a stream, -1 for none.
-pub function (sh: Shared) pick(key: string): i32 {
+// for a stream, or None.
+pub function (sh: Shared) pick(key: string): Option[i32] {
   for d in sh.rows.get() {
     if (d.key == key && d.streams < SHARED_STREAMS && !d.h2.closed() && !d.h2.going_away()) {
-      return d.fd;
+      return Some(d.fd);
     }
   }
-  return 0 - 1;
+  return None;
 }
 
 // `(sh).submit(fd, out)` — a request opened as a stream on the connection
@@ -2091,8 +2091,7 @@ enum __SharedPick { OnLoop(i32), OnTask(__Conn) }
 // bounds, then the look again.
 function __shared_socket[T: Transport](tr: T, req: Request, t: __Target, started: i64, key: string, guard: boolean, roots: Option[verify.Roots], sh: Shared): Result[__SharedPick, FetchError] {
   while (true) {
-    let fd: i32 = sh.pick(key);
-    if (fd >= 0) {
+    if let Some(fd) = sh.pick(key) {
       return Ok(OnLoop(fd));
     }
     if (sh.dialing(key)) {

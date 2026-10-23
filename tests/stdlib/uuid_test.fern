@@ -70,24 +70,31 @@ function test_nil(): test.TestOutcome {
 
 function test_version_extract(): test.TestOutcome {
   // Version comes from index 14: v4 → 4, v7 → 7, nil → 0.
-  if (uuid.uuid_version(uuid.uuid_v4()) != 4) {
+  if (!has_version(uuid.uuid_v4(), 4)) {
     return test.fail("v4");
   }
-  if (uuid.uuid_version(uuid.uuid_v7()) != 7) {
+  if (!has_version(uuid.uuid_v7(), 7)) {
     return test.fail("v7");
   }
-  return test.assert_eq(uuid.uuid_version(uuid.uuid_nil()), 0);
+  return test.assert_is_some_eq_i32(uuid.uuid_version(uuid.uuid_nil()), 0);
 }
 
 function test_version_malformed(): test.TestOutcome {
-  // Wrong length / missing hyphens / empty → -1.
-  if (uuid.uuid_version("not-a-uuid") != -1) {
+  // Wrong length / missing hyphens / empty → None.
+  if let Some(_) = uuid.uuid_version("not-a-uuid") {
     return test.fail("short");
   }
-  if (uuid.uuid_version("f47ac10b58cc4372a5670e02b2c3d479") != -1) {
+  if let Some(_) = uuid.uuid_version("f47ac10b58cc4372a5670e02b2c3d479") {
     return test.fail("no hyphens");
   }
-  return test.assert_eq(uuid.uuid_version(""), -1);
+  return test.assert_is_none_i32(uuid.uuid_version(""));
+}
+
+function has_version(s: string, want: i32): boolean {
+  if let Some(v) = uuid.uuid_version(s) {
+    return v == want;
+  }
+  return false;
 }
 
 function main(): i32 {
