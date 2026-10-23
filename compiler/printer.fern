@@ -3174,15 +3174,26 @@ function print_type_params(fd: parser.FuncDecl): string {
     if (i > 0) {
       out = out + ", ";
     }
-    out = out + fd.type_params[i];
-    if (i < fd.bound_traits.len() && fd.bound_traits[i].len() > 0) {
-      // Multi-trait bounds are stored `+`-joined; native spells them
-      // ` + `.
-      out = out + ": " + join_plus(fd.bound_traits[i]);
+    let bound: string = "";
+    if (i < fd.bound_traits.len()) {
+      bound = fd.bound_traits[i];
     }
+    out = out + print_tparam(fd.type_params[i], bound);
     i = i + 1;
   }
   return out + "]";
+}
+
+// print_tparam spells one generic parameter: `const N: i32`, or a name with
+// its bounds, which are stored `+`-joined.
+function print_tparam(name: string, bound: string): string {
+  if (parser.is_const_bound(bound)) {
+    return "const " + name + ": i32";
+  }
+  if (bound.len() == 0) {
+    return name;
+  }
+  return name + ": " + join_plus(bound);
 }
 
 // join_plus respells a `+`-joined trait list with native's ` + ` separator.
@@ -3582,10 +3593,7 @@ function print_type_params_except(fd: parser.FuncDecl, skip: string[]): string {
     if (j > 0) {
       out = out + ", ";
     }
-    out = out + names[j];
-    if (bounds[j].len() > 0) {
-      out = out + ": " + join_plus(bounds[j]);
-    }
+    out = out + print_tparam(names[j], bounds[j]);
     j = j + 1;
   }
   return out + "]";
@@ -3602,10 +3610,11 @@ function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
       if (tpi > 0) {
         out = out + ", ";
       }
-      out = out + id.type_params[tpi];
-      if (tpi < id.bounds.len() && id.bounds[tpi].len() > 0) {
-        out = out + ": " + join_plus(id.bounds[tpi]);
+      let bound: string = "";
+      if (tpi < id.bounds.len()) {
+        bound = id.bounds[tpi];
       }
+      out = out + print_tparam(id.type_params[tpi], bound);
       tpi = tpi + 1;
     }
     out = out + "]";
