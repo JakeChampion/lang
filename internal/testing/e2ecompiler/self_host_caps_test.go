@@ -214,6 +214,48 @@ func TestSelfHostPackageCapabilityDifferentialX86_64(t *testing.T) {
 	}
 }
 
+// A trait default the app inherits is package b's code: both compilers refuse
+// the build with E070 at the default in b's file, its chain naming the method
+// as declared.
+func TestSelfHostCapsTraitDefaultDifferentialX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("package capability differential runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+	proj := t.TempDir()
+	for name, src := range map[string]string{
+		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nb = { path = \"../b\", capabilities = [] }\n",
+		"app/main.fern": "import \"b\";\nstruct R { n: i32 }\nimpl b.Leaky for R {\n  function size(self: Self): i32 { return self.n; }\n}\nfunction main(): i32 {\n  let r: R = R { n: 1 };\n  return r.grab();\n}\n",
+		"b/fern.toml":   "[package]\nname = \"b\"\n",
+		"b/lib.fern":    "pub trait Leaky {\n  function size(self: Self): i32;\n  function grab(self: Self): i32 {\n    if let Ok(t) = read_file(\"/etc/hostname\") {\n      return t.len();\n    }\n    return self.size();\n  }\n}\n",
+	} {
+		p := filepath.Join(proj, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entry := filepath.Join(proj, "app", "main.fern")
+	nativeOut, _ := exec.Command(buildFernCLIBin(t), "-o", filepath.Join(proj, "native.bin"), entry).CombinedOutput()
+	shOut, _ := exec.Command(driverBin, "-o", filepath.Join(proj, "selfhost.bin"), entry, stdlib).CombinedOutput()
+	const want = "error b fs read_file grab → read_file lib.fern:3:3"
+	if got := strings.Join(capsDiagnostics(string(nativeOut)), "; "); got != want {
+		t.Errorf("native E070 = %q, want %q\n%s", got, want, nativeOut)
+	}
+	if got := strings.Join(capsDiagnostics(string(shOut)), "; "); got != want {
+		t.Errorf("self-host E070 = %q, want %q\n%s", got, want, shOut)
+	}
+}
+
 // TestSelfHostCapabilitiesReportAgreesWithNative pins report mode
 // (`-capabilities`, phase 1 of docs/PACKAGE-CAPABILITIES-BRIEF.md): the same
 // packages, each reaching the same capabilities, from both compilers.

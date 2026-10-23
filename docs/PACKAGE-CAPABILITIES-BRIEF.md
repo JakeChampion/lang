@@ -190,13 +190,6 @@ side:
   provenance using the bundler's assigned prefixes and `FuncDecl.module`,
   including when basenames collide; it never infers authority from a
   function's mangled-looking name. Stdlib modules fold into their callers.
-- **The example chain is spelled differently.** The compiler and the
-  oracle both mangle an imported function as `<module>__<name>`, but the
-  oracle's module is the dependency's lib FILE (`lib__save`) and the
-  compiler's is the name the import used (`helper__save`). The severity, package,
-  capability and builtin all match exactly — the differential in
-  `internal/testing/e2ecompiler/self_host_caps_test.go` compares those and
-  normalises the chain.
 
 Phase 3 also runs in the self-host loader. `pkggrants.fern` collects every
 consulted manifest with explicit grants, resolves its dependency directories
