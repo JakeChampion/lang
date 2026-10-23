@@ -434,8 +434,9 @@ A lane op (`ir.lane_kind_names`, `docs/SIMD-GENERIC-KERNELS.md` §6) lifts
 to one instruction. The kind is 10 with one operand, 9 with two, 61 with
 three and 62 for the store. The op name is in `str` and the element width
 (64 or 32) in `imm`. Its 128-bit result is a lane value (`ssa.lane_values`).
+
 A parameter is a lane value when the lift marks it from the body's
-`v128_slots` (`ssa_lift.lift_with_lanes`), and a call result when the
+`v128_slots` (`ssa_lift.lift_with_lanes`). A call result is one when the
 lowering marks the call (`ir.lane_call`).
 
 A phi that joins a lane value and a copy of one are lane values too

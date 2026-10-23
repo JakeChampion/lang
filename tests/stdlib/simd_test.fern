@@ -4,8 +4,9 @@ import "std/f64";
 import "std/num" as num;
 
 // tests/stdlib/simd_test.fern — one kernel, several evaluators
-// (docs/SIMD-GENERIC-KERNELS.md): the same generic body on f64, on
-// Dual (its derivative) and on DoubleDouble (about 106 bits).
+// (docs/SIMD-GENERIC-KERNELS.md): the same generic body on f64, on the
+// lane types f64x2 and f32x4, on Dual (its derivative) and on DoubleDouble
+// (about 106 bits).
 //
 // Run:
 //   fern -interp tests/stdlib/simd_test.fern
@@ -325,6 +326,264 @@ function test_sweep_against_float(): test.TestOutcome {
   return test.pass();
 }
 
+// The lane types run the same kernels, and each lane gives the scalar's
+// answer exactly: the lane operators round as the scalar ones do, and Math
+// applies the scalar function to each lane.
+function test_kernel_on_f64x2(): test.TestOutcome {
+  let x: f64x2 = __f64x2_of(2.0, 1.0);
+  if (cubic(x).lane(0) != cubic(2.0) || cubic(x).lane(1) != cubic(1.0)) {
+    return test.fail("cubic on f64x2");
+  }
+  let c: f64x2 = clamp_sum(__f64x2_of(1.0, 3.0));
+  if (c.lane(0) != 3.0 || c.lane(1) != 5.0) {
+    return test.fail("clamp_sum on f64x2");
+  }
+  let s: f64x2 = sigmoid(__f64x2_of(0.5, -2.0));
+  if (s.lane(0) != sigmoid(0.5) || s.lane(1) != sigmoid(-2.0)) {
+    return test.fail("sigmoid on f64x2");
+  }
+  return test.pass();
+}
+
+function test_kernel_on_f32x4(): test.TestOutcome {
+  let x: f32x4 = __f32x4_of(2.0, 1.0, -0.5, 1.5);
+  let y: f32x4 = cubic(x);
+  let c: f32x4 = clamp_sum(x);
+  let k: i32 = 0;
+  while (k < 4) {
+    let e: f32 = x.lane(k) as f32;
+    if (y.lane(k) != cubic(e) as f64 || c.lane(k) != clamp_sum(e) as f64) {
+      return test.fail("lane " + k.to_string() + " of f32x4");
+    }
+    k = k + 1;
+  }
+  if (lanes_of(x) != 4 || lanes_of(__f64x2_splat(0.0)) != 2) {
+    return test.fail("LANES of the lane types");
+  }
+  return test.pass();
+}
+
+// The masks are 1.0 and 0.0 in each lane, as on a scalar, and NaN is IEEE.
+function test_lane_masks(): test.TestOutcome {
+  let z: f64 = 0.0;
+  let nan: f64 = z / z;
+  let a: f64x2 = __f64x2_of(1.0, nan);
+  let b: f64x2 = __f64x2_of(2.0, nan);
+  let lt: f64x2 = a.lt(b);
+  let ne: f64x2 = a.ne(a);
+  let eq: f64x2 = simd.eq(a, a);
+  if (lt.lane(0) != 1.0 || lt.lane(1) != 0.0 || ne.lane(0) != 0.0 || ne.lane(1) != 1.0 || eq.lane(0) != 1.0 || eq.lane(1) != 0.0) {
+    return test.fail("f64x2 lt, ne and eq");
+  }
+  let pick: f64x2 = f64x2.select(lt, a, __f64x2_splat(7.0));
+  if (pick.lane(0) != 1.0 || pick.lane(1) != 7.0) {
+    return test.fail("f64x2 select");
+  }
+  let m: f32x4 = f32x4.select(__f32x4_of(1.0, 0.0, -0.0, 2.0), __f32x4_splat(1.0), __f32x4_splat(2.0));
+  if (m.lane(0) != 1.0 || m.lane(1) != 2.0 || m.lane(2) != 2.0 || m.lane(3) != 1.0) {
+    return test.fail("f32x4 select reads a non-zero lane as true");
+  }
+  return test.pass();
+}
+
+// `lane` past the last lane reads the last lane; `ldexp` is exact per lane;
+// the std/num identities are lane-wise and `neg` keeps the sign of zero.
+function test_lane_helpers(): test.TestOutcome {
+  let v: f32x4 = __f32x4_of(1.0, 2.0, 3.0, 4.0);
+  if (v.lane(3) != 4.0 || v.lane(9) != 4.0 || __f64x2_of(5.0, 6.0).lane(4) != 6.0) {
+    return test.fail("lane past the last lane");
+  }
+  let l: f64x2 = __f64x2_of(3.0, -1.5).ldexp(__f64x2_of(4.0, -1.0));
+  if (l.lane(0) != 48.0 || l.lane(1) != -0.75) {
+    return test.fail("f64x2 ldexp");
+  }
+  let lf: f32x4 = v.ldexp(__f32x4_of(1.0, -1.0, 0.0, 2.0));
+  if (lf.lane(0) != 2.0 || lf.lane(1) != 1.0 || lf.lane(2) != 3.0 || lf.lane(3) != 16.0) {
+    return test.fail("f32x4 ldexp");
+  }
+  let one: f64x2 = f64x2.one();
+  let zero: f32x4 = f32x4.zero();
+  if (one.lane(1) != 1.0 || zero.lane(2) != 0.0) {
+    return test.fail("lane-wise zero and one");
+  }
+  let nz: f64x2 = __f64x2_splat(0.0).neg();
+  if (1.0 / nz.lane(0) > 0.0) {
+    return test.fail("neg of 0.0 is -0.0");
+  }
+  return test.pass();
+}
+
+// Every Math function on f64x2 and f32x4, lane by lane, against the scalar.
+function test_lane_math_sweep(): test.TestOutcome {
+  let names: string[] = ["exp", "log", "sin", "cos", "tan", "tanh", "atan", "expm1", "log1p", "pow"];
+  let i: i32 = 0;
+  while (i < 30) {
+    let x: f64 = -2.9 + 0.2 * (i as f64);
+    let p: f64 = 0.1 + 0.2 * (i as f64);
+    let xv: f64x2 = __f64x2_of(x, -x);
+    let pv: f64x2 = __f64x2_of(p, p + 0.05);
+    let y: f64x2 = __f64x2_splat(1.7);
+    let k: i32 = 0;
+    while (k < 10) {
+      let g: f64x2 = lane_math(k, xv, pv, y);
+      let j: i32 = 0;
+      while (j < 2) {
+        let w: f64 = scalar_math(k, xv.lane(j), pv.lane(j), 1.7);
+        if (!same_f64(g.lane(j), w)) {
+          return test.fail("f64x2 " + names[k] + " lane " + j.to_string() + ": " + g.lane(j).to_string() + " vs " + w.to_string());
+        }
+        j = j + 1;
+      }
+      let xf: f32x4 = __f32x4_of(x as f32, -(x as f32), (x * 0.5) as f32, (x * 0.25) as f32);
+      let pf: f32x4 = __f32x4_of(p as f32, (p + 0.05) as f32, (p * 2.0) as f32, (p * 0.5) as f32);
+      let gf: f32x4 = lane_math_f32(k, xf, pf, __f32x4_splat(1.7));
+      j = 0;
+      while (j < 4) {
+        let w: f32 = scalar_math_f32(k, xf.lane(j) as f32, pf.lane(j) as f32, 1.7);
+        if (!same_f64(gf.lane(j), w as f64)) {
+          return test.fail("f32x4 " + names[k] + " lane " + j.to_string() + ": " + gf.lane(j).to_string() + " vs " + w.to_string());
+        }
+        j = j + 1;
+      }
+      k = k + 1;
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
+
+// same_f64 is bit-for-bit equality, with every NaN equal to every NaN.
+function same_f64(a: f64, b: f64): boolean {
+  if (a != a) {
+    return b != b;
+  }
+  return f64_bits(a) == f64_bits(b);
+}
+
+function lane_math(k: i32, x: f64x2, p: f64x2, y: f64x2): f64x2 {
+  if (k == 0) {
+    return x.exp();
+  }
+  if (k == 1) {
+    return p.log();
+  }
+  if (k == 2) {
+    return x.sin();
+  }
+  if (k == 3) {
+    return x.cos();
+  }
+  if (k == 4) {
+    return x.tan();
+  }
+  if (k == 5) {
+    return x.tanh();
+  }
+  if (k == 6) {
+    return x.atan();
+  }
+  if (k == 7) {
+    return x.expm1();
+  }
+  if (k == 8) {
+    return p.log1p();
+  }
+  return p.pow(y);
+}
+
+function scalar_math(k: i32, x: f64, p: f64, y: f64): f64 {
+  if (k == 0) {
+    return x.exp();
+  }
+  if (k == 1) {
+    return p.log();
+  }
+  if (k == 2) {
+    return x.sin();
+  }
+  if (k == 3) {
+    return x.cos();
+  }
+  if (k == 4) {
+    return x.tan();
+  }
+  if (k == 5) {
+    return x.tanh();
+  }
+  if (k == 6) {
+    return x.atan();
+  }
+  if (k == 7) {
+    return x.expm1();
+  }
+  if (k == 8) {
+    return p.log1p();
+  }
+  return p.pow(y);
+}
+
+function lane_math_f32(k: i32, x: f32x4, p: f32x4, y: f32x4): f32x4 {
+  if (k == 0) {
+    return x.exp();
+  }
+  if (k == 1) {
+    return p.log();
+  }
+  if (k == 2) {
+    return x.sin();
+  }
+  if (k == 3) {
+    return x.cos();
+  }
+  if (k == 4) {
+    return x.tan();
+  }
+  if (k == 5) {
+    return x.tanh();
+  }
+  if (k == 6) {
+    return x.atan();
+  }
+  if (k == 7) {
+    return x.expm1();
+  }
+  if (k == 8) {
+    return p.log1p();
+  }
+  return p.pow(y);
+}
+
+function scalar_math_f32(k: i32, x: f32, p: f32, y: f32): f32 {
+  if (k == 0) {
+    return x.exp();
+  }
+  if (k == 1) {
+    return p.log();
+  }
+  if (k == 2) {
+    return x.sin();
+  }
+  if (k == 3) {
+    return x.cos();
+  }
+  if (k == 4) {
+    return x.tan();
+  }
+  if (k == 5) {
+    return x.tanh();
+  }
+  if (k == 6) {
+    return x.atan();
+  }
+  if (k == 7) {
+    return x.expm1();
+  }
+  if (k == 8) {
+    return p.log1p();
+  }
+  return p.pow(y);
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("simd");
   r = r.it("kernel on f64", test_kernel_on_f64);
@@ -345,5 +604,10 @@ function main(): i32 {
   r = r.it("double-double over f32", test_dd_f32);
   r = r.it("eq is IEEE for NaN", test_eq_nan);
   r = r.it("sweep against std/f64", test_sweep_against_float);
+  r = r.it("kernels on f64x2", test_kernel_on_f64x2);
+  r = r.it("kernels on f32x4", test_kernel_on_f32x4);
+  r = r.it("lane masks", test_lane_masks);
+  r = r.it("lane helpers", test_lane_helpers);
+  r = r.it("lane Math against the scalar", test_lane_math_sweep);
   return r.finish();
 }
