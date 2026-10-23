@@ -24051,6 +24051,9 @@ function fda_stmts(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: FuncDecl[]
 // cast is an ExprUnary whose op is `as_<type>`, refused before its operand.
 pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
   match (e) {
+    ast.ExprBytes(_) => {
+      return ("is an array literal", true);
+    },
     ast.ExprNumber(n) => {
       return ("", false);
     },

@@ -1,0 +1,47 @@
+Main binary filename not available.
+Fern bounded reservoir: retained=8192 dropped=33729
+Type: alloc_objects
+Showing nodes accounting for 2680650, 99.91% of 2682944 total
+Dropped 81 nodes (cum <= 13414)
+Showing top 40 nodes out of 92
+      flat  flat%   sum%        cum   cum%
+   2135589 79.60% 79.60%    2135589 79.60%  __fern_arr_box
+    359271 13.39% 92.99%     359271 13.39%  __fn___fern_str_concat
+    185790  6.92% 99.91%     185790  6.92%  __fn___fern_string_from_bytes_u8
+         0     0% 99.91%     214305  7.99%  __fern_alloc_bytes
+         0     0% 99.91%      13756  0.51%  __fn_asm_ir__emit_entry_runtime
+         0     0% 99.91%     216152  8.06%  __fn_asm_ir__emit_function_via_ir_named
+         0     0% 99.91%     216152  8.06%  __fn_asm_ir__emit_function_via_ir_pre
+         0     0% 99.91%      13428   0.5%  __fn_asm_ir__emit_ir_runtime
+         0     0% 99.91%     378273 14.10%  __fn_asm_ir__emit_module_or_error_sub
+         0     0% 99.91%     107422  4.00%  __fn_asm_ir__emit_ssa_allocated_x86
+         0     0% 99.91%     107422  4.00%  __fn_asm_ir__ssa_block_inst
+         0     0% 99.91%     107422  4.00%  __fn_asm_ir__ssa_inst
+         0     0% 99.91%     108730  4.05%  __fn_asmcore__EmitState__lift
+         0     0% 99.91%     107095  3.99%  __fn_asmcore__const_agg_pack
+         0     0% 99.91%     104476  3.89%  __fn_asmcore__emit_const_agg_blocks
+         0     0% 99.91%     104476  3.89%  __fn_asmcore__emit_const_agg_data
+         0     0% 99.91%     104476  3.89%  __fn_asmcore__emit_const_agg_data_from
+         0     0% 99.91%     102678  3.83%  __fn_astwalk__map_expr_acc__constfold__TargetAcc
+         0     0% 99.91%     296408 11.05%  __fn_astwalk__map_expr_acc__embed__FoldAcc
+         0     0% 99.91%      92868  3.46%  __fn_astwalk__map_expr_acc__i32
+         0     0% 99.91%     102834  3.83%  __fn_astwalk__map_expr_acc__lexical__Scope
+         0     0% 99.91%     102678  3.83%  __fn_astwalk__map_exprs_acc__constfold__TargetAcc
+         0     0% 99.91%      92868  3.46%  __fn_astwalk__map_exprs_acc__i32
+         0     0% 99.91%     102834  3.83%  __fn_astwalk__map_exprs_acc__lexical__Scope
+         0     0% 99.91%     102678  3.83%  __fn_astwalk__map_stmt_acc__constfold__TargetAcc
+         0     0% 99.91%     296408 11.05%  __fn_astwalk__map_stmt_acc__embed__FoldAcc
+         0     0% 99.91%      92868  3.46%  __fn_astwalk__map_stmt_acc__i32
+         0     0% 99.91%     102834  3.83%  __fn_astwalk__map_stmt_acc__lexical__Scope
+         0     0% 99.91%     102678  3.83%  __fn_astwalk__map_stmts_acc__constfold__TargetAcc
+         0     0% 99.91%     296408 11.05%  __fn_astwalk__map_stmts_acc__embed__FoldAcc
+         0     0% 99.91%     102678  3.83%  __fn_astwalk__map_stmts_acc_changed__constfold__TargetAcc
+         0     0% 99.91%     296408 11.05%  __fn_astwalk__map_stmts_acc_changed__embed__FoldAcc
+         0     0% 99.91%      92868  3.46%  __fn_astwalk__map_stmts_acc_changed__i32
+         0     0% 99.91%     101171  3.77%  __fn_checker__annotate_block
+         0     0% 99.91%     101171  3.77%  __fn_checker__annotate_expr
+         0     0% 99.91%     103460  3.86%  __fn_checker__annotate_module
+         0     0% 99.91%     101171  3.77%  __fn_checker__annotate_module_in
+         0     0% 99.91%     101171  3.77%  __fn_checker__annotate_stmt
+         0     0% 99.91%     101171  3.77%  __fn_checker__annotate_typed
+         0     0% 99.91%     100844  3.76%  __fn_checker__unsettled

@@ -1,0 +1,35 @@
+{
+  "source_sha256": "107d14be0cc8f6e7e7d632e57e3cdebb489290d6bd3b5b1d53e8a6ac65edc8bf",
+  "rows": {
+    "baseline": {
+      "compiler_sha256": "c7a08b71fdf8e9150c2e15e3bbf4fc194698ffd47f61139af74a13cdbf43b2d2",
+      "command": [
+        "/workspace/scratch/lang-main-4fdf/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/tail-array-allocation-formatted/baseline",
+        "/workspace/lang-tail-array-current/docs/benchmarks/tail-array-allocation-2026-10-17/probe.fern",
+        "/workspace/lang-tail-array-allocation/internal/stdlib"
+      ],
+      "binary_sha256": "da5eed9a66fa3a9325819ee50551e5f836725e7e900e4600ae175f2a33c25ed4",
+      "matches_archived_binary": true,
+      "stdout": "4500000\n"
+    },
+    "candidate": {
+      "compiler_sha256": "dc4cefc16f5987336b93a1ceaf9867602d9c03dcb5952ab977c4e0e06a8fb32d",
+      "command": [
+        "/workspace/scratch/lang-tail-array-allocation/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/tail-array-allocation-formatted/candidate",
+        "/workspace/lang-tail-array-current/docs/benchmarks/tail-array-allocation-2026-10-17/probe.fern",
+        "/workspace/lang-tail-array-allocation/internal/stdlib"
+      ],
+      "binary_sha256": "4ff595247569cb6a9151f58432da5bfb1b10215de763d56d88656a424e5715d7",
+      "matches_archived_binary": true,
+      "stdout": "4500000\n"
+    }
+  }
+}

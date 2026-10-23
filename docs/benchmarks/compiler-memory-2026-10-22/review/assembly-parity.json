@@ -1,0 +1,90 @@
+{
+  "compiler_sha256": "8f88f1647673290606699ae8b3c6ebb399332e838a139132da5e6469e29db543",
+  "control_source_git": "0aec3ba221ee25ca5bb212e0d2aa20ab2443103a",
+  "rows": [
+    {
+      "label": "small.bin-bytes",
+      "command": [
+        "/workspace/scratch/lang-compiler-memory-review/bootstrap/stage3",
+        "-embed",
+        "/workspace/scratch/lang-compiler-memory-combined/profile/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-compiler-memory-review/assembly-parity/small.bin-bytes.s",
+        "/workspace/scratch/lang-compiler-memory-combined/profile/small.bin-bytes.fern",
+        "/workspace/lang-native-memory-publish/internal/stdlib"
+      ],
+      "exit": 0,
+      "stderr": "",
+      "assembly_sha256": "9a063ac788fc4b266e18195aa16103d7a77b61e13d241924b38f96608df6b9a6",
+      "control_sha256": "9a063ac788fc4b266e18195aa16103d7a77b61e13d241924b38f96608df6b9a6",
+      "identical": true
+    },
+    {
+      "label": "small.bin-text",
+      "command": [
+        "/workspace/scratch/lang-compiler-memory-review/bootstrap/stage3",
+        "-embed",
+        "/workspace/scratch/lang-compiler-memory-combined/profile/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-compiler-memory-review/assembly-parity/small.bin-text.s",
+        "/workspace/scratch/lang-compiler-memory-combined/profile/small.bin-text.fern",
+        "/workspace/lang-native-memory-publish/internal/stdlib"
+      ],
+      "exit": 0,
+      "stderr": "",
+      "assembly_sha256": "b0b85e40ced1402ff7ab13985f8de36512ec9b77520b29b42ff0a53aad728d99",
+      "control_sha256": "b0b85e40ced1402ff7ab13985f8de36512ec9b77520b29b42ff0a53aad728d99",
+      "identical": true
+    },
+    {
+      "label": "large.bin-bytes",
+      "command": [
+        "/workspace/scratch/lang-compiler-memory-review/bootstrap/stage3",
+        "-embed",
+        "/workspace/scratch/lang-compiler-memory-combined/profile/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-compiler-memory-review/assembly-parity/large.bin-bytes.s",
+        "/workspace/scratch/lang-compiler-memory-combined/profile/large.bin-bytes.fern",
+        "/workspace/lang-native-memory-publish/internal/stdlib"
+      ],
+      "exit": 0,
+      "stderr": "",
+      "assembly_sha256": "f95965a9b0dc6e9b42b961a1f41a45f0c630a74105a094cef88e871f83b882ab",
+      "control_sha256": "f95965a9b0dc6e9b42b961a1f41a45f0c630a74105a094cef88e871f83b882ab",
+      "identical": true
+    },
+    {
+      "label": "large.bin-text",
+      "command": [
+        "/workspace/scratch/lang-compiler-memory-review/bootstrap/stage3",
+        "-embed",
+        "/workspace/scratch/lang-compiler-memory-combined/profile/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-compiler-memory-review/assembly-parity/large.bin-text.s",
+        "/workspace/scratch/lang-compiler-memory-combined/profile/large.bin-text.fern",
+        "/workspace/lang-native-memory-publish/internal/stdlib"
+      ],
+      "exit": 0,
+      "stderr": "",
+      "assembly_sha256": "b265fc187106c2d5a1759edc1dfde27663968db0d4002bcdaaf0d3aeeef16187",
+      "control_sha256": "b265fc187106c2d5a1759edc1dfde27663968db0d4002bcdaaf0d3aeeef16187",
+      "identical": true
+    }
+  ]
+}

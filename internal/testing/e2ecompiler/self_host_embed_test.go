@@ -129,15 +129,11 @@ func TestSelfHostEmbedBytesEveryTarget(t *testing.T) {
 	}
 }
 
-// TestSelfHostEmbedBytesCompileLinear pins compiling a bytes asset to time
-// linear in its size. Each byte is one element of one u8[] literal, so a big
-// asset is one block of that many instructions, and a lookup that scanned a
-// block's whole step list per instruction made it quadratic: 100 KB took 61 s.
-// The gate is a ratio of compile CPU times on the same machine, each the least
-// of five compiles. For 8x the bytes the linear compile measures 6.9-7.1x on an
-// idle x86-64 runner and up to 9.7x beside the shard's other tests, which
-// inflate the larger, memory-bound compile more; the quadratic form cost about
-// 25x. The limit sits between the two.
+// TestSelfHostEmbedBytesCompileLinear guards the quadratic scan fixed in #12853.
+// Constant byte arrays now remain packed through lowering (#12857). Keep the
+// original 8x input ratio and 12x CPU limit: a scan over every scalar instruction
+// for each byte took about 25x before the earlier fix. The minimum of five runs
+// reduces interference from other tests on the same runner.
 func TestSelfHostEmbedBytesCompileLinear(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compiles two large assets; skipped under -short")

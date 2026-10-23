@@ -1,0 +1,62 @@
+Main binary filename not available.
+Fern bounded reservoir: retained=8192 dropped=400759
+Type: alloc_space
+Showing nodes accounting for 1528.53MB, 99.74% of 1532.55MB total
+Dropped 36 nodes (cum <= 7.66MB)
+Showing top 55 nodes out of 89
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%  1532.55MB   100%  __fn_main
+         0     0%     0%  1532.55MB   100%  __fn_run_with
+         0     0%     0%  1532.55MB   100%  _start
+ 1360.09MB 88.75% 88.75%  1360.09MB 88.75%  __fern_arr_box
+         0     0% 88.75%  1115.51MB 72.79%  __fn_semlower__target_substitution
+         0     0% 88.75%  1070.20MB 69.83%  __fn_semlower__produced_rows
+         0     0% 88.75%  1070.17MB 69.83%  __fn_semlower__substitution_of
+         0     0% 88.75%   605.34MB 39.50%  __fn_semlower__inferred_rows
+         0     0% 88.75%   604.85MB 39.47%  __fn_semlower__produced_body
+         0     0% 88.75%   604.85MB 39.47%  __fn_semlower__rows_lowered
+         0     0% 88.75%   604.85MB 39.47%  __fn_ssarc__lower
+         0     0% 88.75%   414.79MB 27.07%  __fn_ssarc__block_body
+         0     0% 88.75%   414.79MB 27.07%  __fn_ssarc__instruction_body
+         0     0% 88.75%   414.79MB 27.07%  __fn_ssarc__region
+         0     0% 88.75%   246.58MB 16.09%  __fn_semlower__rows_planned
+         0     0% 88.75%   246.58MB 16.09%  __fn_ssaunits__plan_analyzed
+         0     0% 88.75%   218.28MB 14.24%  __fn_semsource__produce_module
+         0     0% 88.75%   205.02MB 13.38%  __fn_ir__op_drop
+         0     0% 88.75%   186.84MB 12.19%  __fn_semsource__build
+         0     0% 88.75%   158.10MB 10.32%  __fn_ssaunits__constants
+         0     0% 88.75%   139.13MB  9.08%  __fn_asm_ir__emit_module_or_error_sub
+         0     0% 88.75%   134.31MB  8.76%  __fn_astwalk__map_expr_acc__embed__FoldAcc
+         0     0% 88.75%   134.31MB  8.76%  __fn_astwalk__map_stmt_acc__embed__FoldAcc
+         0     0% 88.75%   134.31MB  8.76%  __fn_astwalk__map_stmts_acc__embed__FoldAcc
+         0     0% 88.75%   134.31MB  8.76%  __fn_astwalk__map_stmts_acc_changed__embed__FoldAcc
+         0     0% 88.75%   134.31MB  8.76%  __fn_embed__fa_expr$wrap
+         0     0% 88.75%   134.31MB  8.76%  __fn_load_checked
+         0     0% 88.75%   122.07MB  7.97%  __fn_util__i32_to_string
+         0     0% 88.75%   118.61MB  7.74%  __fn_semsource__define
+         0     0% 88.75%   118.61MB  7.74%  __fn_semsource__expr
+         0     0% 88.75%   118.61MB  7.74%  __fn_semsource__produce
+         0     0% 88.75%   118.61MB  7.74%  __fn_semsource__stmt
+         0     0% 88.75%   118.61MB  7.74%  __fn_semsource__stmts
+         0     0% 88.75%   107.74MB  7.03%  __fn_ir__cleanup
+         0     0% 88.75%   107.74MB  7.03%  __fn_ir__optimize_ops
+         0     0% 88.75%   100.62MB  6.57%  __fn_asm_ir__emit_function_via_ir_named
+         0     0% 88.75%   100.62MB  6.57%  __fn_asm_ir__emit_function_via_ir_pre
+   97.65MB  6.37% 95.12%    97.65MB  6.37%  __fn___fern_str_concat
+         0     0% 95.12%    93.70MB  6.11%  __fn_ir__const_struct_values
+         0     0% 95.12%    82.32MB  5.37%  __fn_ssaunits__without_constant_drops
+         0     0% 95.12%    72.57MB  4.73%  __fn_ssarc__constant
+   70.79MB  4.62% 99.74%    70.79MB  4.62%  __fn___fern_string_from_bytes_u8
+         0     0% 99.74%    68.23MB  4.45%  __fn_semsource__complete
+         0     0% 99.74%    68.23MB  4.45%  __fn_semsource__renumber
+         0     0% 99.74%    68.18MB  4.45%  __fn_asmcore__EmitState__lift
+         0     0% 99.74%    68.18MB  4.45%  __fn_ssa_lift__lift_impl
+         0     0% 99.74%    68.18MB  4.45%  __fn_ssa_lift__lift_with_lanes
+         0     0% 99.74%    52.04MB  3.40%  __fn_checker__annotate_module
+         0     0% 99.74%    51.87MB  3.38%  __fn_checker__annotate_block
+         0     0% 99.74%    51.87MB  3.38%  __fn_checker__annotate_expr
+         0     0% 99.74%    51.87MB  3.38%  __fn_checker__annotate_module_in
+         0     0% 99.74%    51.87MB  3.38%  __fn_checker__annotate_stmt
+         0     0% 99.74%    51.87MB  3.38%  __fn_checker__annotate_typed
+         0     0% 99.74%    51.87MB  3.38%  __fn_checker__unsettled
+         0     0% 99.74%    51.29MB  3.35%  __fern_alloc_bytes

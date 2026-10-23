@@ -1,0 +1,47 @@
+Main binary filename not available.
+Fern bounded reservoir: retained=8192 dropped=33729
+Type: alloc_space
+Showing nodes accounting for 917.31MB, 100% of 917.46MB total
+Dropped 95 nodes (cum <= 4.59MB)
+Showing top 40 nodes out of 78
+      flat  flat%   sum%        cum   cum%
+     900MB 98.10% 98.10%      900MB 98.10%  __fern_arr_box
+   11.65MB  1.27% 99.37%    11.65MB  1.27%  __fn___fern_str_concat
+    5.67MB  0.62%   100%     5.67MB  0.62%  __fn___fern_string_from_bytes_u8
+         0     0%   100%     6.54MB  0.71%  __fern_alloc_bytes
+         0     0%   100%   249.97MB 27.25%  __fern_alloc_u8
+         0     0%   100%   513.59MB 55.98%  __fern_arr_push
+         0     0%   100%   513.43MB 55.96%  __fern_arr_push_owned
+         0     0%   100%    10.74MB  1.17%  __fn_asm_ir__emit_function_via_ir_named
+         0     0%   100%    10.74MB  1.17%  __fn_asm_ir__emit_function_via_ir_pre
+         0     0%   100%    17.50MB  1.91%  __fn_asm_ir__emit_module_or_error_sub
+         0     0%   100%     7.46MB  0.81%  __fn_asmcore__EmitState__lift
+         0     0%   100%     4.71MB  0.51%  __fn_astwalk__map_expr_acc__constfold__TargetAcc
+         0     0%   100%    13.85MB  1.51%  __fn_astwalk__map_expr_acc__embed__FoldAcc
+         0     0%   100%     4.71MB  0.51%  __fn_astwalk__map_expr_acc__lexical__Scope
+         0     0%   100%     4.71MB  0.51%  __fn_astwalk__map_exprs_acc__constfold__TargetAcc
+         0     0%   100%     4.71MB  0.51%  __fn_astwalk__map_exprs_acc__lexical__Scope
+         0     0%   100%     4.71MB  0.51%  __fn_astwalk__map_stmt_acc__constfold__TargetAcc
+         0     0%   100%    13.85MB  1.51%  __fn_astwalk__map_stmt_acc__embed__FoldAcc
+         0     0%   100%     4.71MB  0.51%  __fn_astwalk__map_stmt_acc__lexical__Scope
+         0     0%   100%     4.71MB  0.51%  __fn_astwalk__map_stmts_acc__constfold__TargetAcc
+         0     0%   100%    13.85MB  1.51%  __fn_astwalk__map_stmts_acc__embed__FoldAcc
+         0     0%   100%     4.71MB  0.51%  __fn_astwalk__map_stmts_acc_changed__constfold__TargetAcc
+         0     0%   100%    13.85MB  1.51%  __fn_astwalk__map_stmts_acc_changed__embed__FoldAcc
+         0     0%   100%     5.55MB  0.61%  __fn_checker__annotate_block
+         0     0%   100%     5.55MB  0.61%  __fn_checker__annotate_expr
+         0     0%   100%     5.69MB  0.62%  __fn_checker__annotate_module
+         0     0%   100%     5.55MB  0.61%  __fn_checker__annotate_module_in
+         0     0%   100%     5.55MB  0.61%  __fn_checker__annotate_stmt
+         0     0%   100%     5.55MB  0.61%  __fn_checker__annotate_typed
+         0     0%   100%     5.39MB  0.59%  __fn_checker__unsettled
+         0     0%   100%     4.71MB  0.51%  __fn_constfold__fold_target_name
+         0     0%   100%     4.71MB  0.51%  __fn_constfold__to_expr$wrap
+         0     0%   100%    13.85MB  1.51%  __fn_embed__fa_expr$wrap
+         0     0%   100%     9.81MB  1.07%  __fn_ir__cleanup
+         0     0%   100%       30MB  3.27%  __fn_ir__const_struct_values
+         0     0%   100%    19.03MB  2.07%  __fn_ir__op_drop
+         0     0%   100%     9.81MB  1.07%  __fn_ir__optimize_ops
+         0     0%   100%     4.71MB  0.51%  __fn_ircore__lift_lambdas_typed
+         0     0%   100%     4.71MB  0.51%  __fn_lexical__body
+         0     0%   100%     4.71MB  0.51%  __fn_lexical__expr_at$wrap
