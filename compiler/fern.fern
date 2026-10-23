@@ -3193,13 +3193,13 @@ function imported_parse_findings(b: Bundle): Finding[] {
   return ok;
 }
 
-// parse_findings is asmcore.parse_errors, shared by `-check`, `-fmt`, the
+// parse_findings is asmcore.parse_errors_before_check, shared by `-check`, `-fmt`, the
 // language server and the build path, so they cannot disagree about a program
 // that did not parse. It runs on the MERGED module, before tree-shaking,
 // because a default on an uncalled function is dead code: shaking drops the
 // declaration, and with it the only evidence the source did not parse.
 function parse_findings(mod: parser.Module): Finding[] {
-  return errors_of(asmcore.parse_errors(mod));
+  return errors_of(asmcore.parse_errors_before_check(mod));
 }
 
 // fold_embedded_assets loads `-embed DIR` and substitutes every asset call in
