@@ -14,6 +14,14 @@ func TestSelfHostFractalTiles(t *testing.T) {
 	testFractalTargets(t, path)
 }
 
+func TestSelfHostFractalSource(t *testing.T) {
+	path, err := filepath.Abs("../../../examples/fractal/source_test.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	testFractalTargets(t, path)
+}
+
 func TestSelfHostFractalFipKernels(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"fractal.fern", "binary.fern"} {
