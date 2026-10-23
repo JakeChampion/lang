@@ -1,3 +1,4 @@
+# 2026-10-23: TLS source ce205d8481, Perf run 40037771835. Main emits 19554 bytes for this row.
 # Emitted-size baseline for the SELF-HOSTED compiler over bench,
 # checked against every run by scripts/ci-check-perf.
 #
@@ -182,7 +183,7 @@ selfhost/wasm32-wasi/ascii_scan.emit	1224
 selfhost/wasm32-wasi/call_overhead.emit	158
 selfhost/wasm32-wasi/closure_call.emit	503
 selfhost/wasm32-wasi/enum_match.emit	616
-selfhost/wasm32-wasi/http_hello.emit	18505
+selfhost/wasm32-wasi/http_hello.emit	19599
 selfhost/wasm32-wasi/int_loop.emit	110
 selfhost/wasm32-wasi/map_int.emit	7294
 selfhost/wasm32-wasi/map_probe_chain.emit	7319
