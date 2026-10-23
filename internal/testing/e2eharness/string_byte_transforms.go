@@ -3,6 +3,13 @@ package e2eharness
 const StringByteTransformsProgram = `import "std/string";
 import "std/array";
 import "std/utf8" as utf8;
+// found_at is a search result as an index, -1 when absent.
+function found_at(o: Option[i32]): i32 {
+    match (o) {
+        Some(i) => { return i; },
+        None => { return 0 - 1; }
+    }
+}
 function main(): i32 {
     let reversed: u8[] = "é".reverse_bytes();
     if (!reversed.equal([169 as u8, 195 as u8])) { return 1; }
@@ -32,11 +39,11 @@ function main(): i32 {
     }
     let hay: string = "é".repeat(1024);
     let needle: string = "é".repeat(63) + "ê";
-    if (hay.last_index_of(needle) != 0 - 1) { return 13; }
-    if (hay.index_of(needle) != 0 - 1) { return 14; }
+    if (found_at(hay.last_index_of(needle)) != 0 - 1) { return 13; }
+    if (found_at(hay.index_of(needle)) != 0 - 1) { return 14; }
     let joined: string = needle + hay;
-    if (joined.last_index_of(needle) != 0) { return 15; }
-    if ((hay + needle).index_of(needle) != hay.len()) { return 16; }
+    if (found_at(joined.last_index_of(needle)) != 0) { return 15; }
+    if (found_at((hay + needle).index_of(needle)) != hay.len()) { return 16; }
     return 0;
 }
 `

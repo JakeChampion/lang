@@ -93,10 +93,9 @@ pub function max_age(cc: string): Option[f64] {
   if (lower.contains("no-store") || lower.contains("no-cache") || lower.contains("private")) {
     return Some(0.0);
   }
-  let at: i32 = lower.index_of("max-age=");
-  if (at < 0) {
+  let Some(at) = lower.index_of("max-age=") else {
     return None;
-  }
+  };
   let digits: string = leading_digits(slice_unchecked(lower, at + 8, lower.len()).to_owned());
   if (digits.len() == 0) {
     return None;

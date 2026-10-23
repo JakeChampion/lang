@@ -42,7 +42,7 @@ function main(): i32 {
     if (nested(Some(in_use)) != -3) { print("7"); return 1; }
     if (nested(None) != -1) { print("8"); return 1; }
     if (other.errno() != 7) { print("9"); return 1; }
-    if (!intr.eq(net.error_from_errno(intr.errno()))) { print("10"); return 1; }
+    if (intr.errno() != 4) { print("10"); return 1; }
     if (intr.message() != "Interrupted system call") { print("11"); return 1; }
     if (family(net.ipv4(1, 2, 3, 4)) != 4) { print("12"); return 1; }
     if (family(net.ipv6_loopback()) != 16) { print("13"); return 1; }

@@ -188,11 +188,12 @@ function test_body_trailers_interim(): test.TestOutcome {
 function count(s: string, needle: string): string {
   let n: i32 = 0;
   let rest: string = s;
-  let at: i32 = rest.index_of(needle);
-  while (at >= 0) {
+  while (true) {
+    let Some(at) = rest.index_of(needle) else {
+      break;
+    };
     n = n + 1;
     rest = rest.drop(at + needle.len());
-    at = rest.index_of(needle);
   }
   return n.to_string();
 }

@@ -18,14 +18,11 @@ var stringCases = []struct {
 	main string
 	exit int
 }{
-	{"index-of", `return "hello world".index_of("world");`, 6},
-	// Option-returning search family: find / rfind / find_ci wrap the
-	// -1-sentinel primitives in Option, so "not found" is None. Match on
-	// the result to recover the index (or a sentinel exit code).
-	{"find-hit", `match ("hello world".find("world")) { Some(i) => { return i; }, None => { return 99; } } return 0;`, 6},
-	{"find-miss", `match ("abc".find("zz")) { Some(_) => { return 1; }, None => { return 7; } } return 0;`, 7},
-	{"rfind-hit", `match ("hello hello".rfind("hello")) { Some(i) => { return i; }, None => { return 99; } } return 0;`, 6},
-	{"find-ci-hit", `match ("Hello World".find_ci("WORLD")) { Some(i) => { return i; }, None => { return 99; } } return 0;`, 6},
+	// The search family answers None when the needle is absent.
+	{"index-of-hit", `match ("hello world".index_of("world")) { Some(i) => { return i; }, None => { return 99; } } return 0;`, 6},
+	{"index-of-miss", `match ("abc".index_of("zz")) { Some(_) => { return 1; }, None => { return 7; } } return 0;`, 7},
+	{"last-index-of-hit", `match ("hello hello".last_index_of("hello")) { Some(i) => { return i; }, None => { return 99; } } return 0;`, 6},
+	{"index-of-ci-hit", `match ("Hello World".index_of_ci("WORLD")) { Some(i) => { return i; }, None => { return 99; } } return 0;`, 6},
 	{"trim-len", `return "  hi  ".trim().len();`, 2},
 	{"to-upper", `let u: string = "abc".to_ascii_upper(); return u[0] as i32;`, 65},
 	{"to-lower", `let u: string = "ABC".to_ascii_lower(); return u[0] as i32;`, 97},

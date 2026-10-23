@@ -1093,7 +1093,7 @@ function combo_tokens(name: string): (string, boolean) {
 // Anything with a colon in it is meant to be one, so a malformed one is
 // `invalid argument` rather than an unknown mode.
 function looks_like_saved(tok: string): boolean {
-  return tok.index_of(":") >= 0;
+  return tok.contains(":");
 }
 
 function parse_hex(s: string): (i64, boolean) {
@@ -1209,11 +1209,10 @@ function scan_device(s: Scan, path: string): Scan {
 // on an option that takes none, leaves it to become a mode.
 function scan_long(s: Scan, a: string, argv: string[], i: i32): (Scan, i32, boolean) {
   let body: string = slice_unchecked(a, 2, a.len()) + "";
-  let eq: i32 = body.index_of("=");
   let name: string = body;
   let value: string = "";
   let has_value: boolean = false;
-  if (eq >= 0) {
+  if let Some(eq) = body.index_of("=") {
     name = slice_unchecked(body, 0, eq) + "";
     value = slice_unchecked(body, eq + 1, body.len()) + "";
     has_value = true;

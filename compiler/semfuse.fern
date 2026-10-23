@@ -4,7 +4,7 @@
 // Intermediate arrays are never built; scan reserves its output once. A lazy
 // core/iter chain (#6795) fuses the same way: `iter.of(xs)` or
 // `iter.range(lo, hi)`, then `map`, `filter`, `take` and `flat_map` adapters,
-// ending in `fold` or `count`. Its adapter calls take the place of stages, and
+// ending in `fold` or `len`. Its adapter calls take the place of stages, and
 // its root is replaced by the array or the integers the loop runs over. This
 // runs on the typed semantic graphs every backend lowers from, before
 // ownership planning accounts for the output.
@@ -101,7 +101,7 @@ function context(funcs: ssasem.Func[], names: string[], usable: boolean[], trust
     if (report) {
       report_verbs = report_verbs.append(v);
     }
-    if (!util.has_str(["map", "filter", "take", "take_while", "flat_map", "fold", "reduce", "scan", "count", "of", "range"], v)) {
+    if (!util.has_str(["map", "filter", "take", "take_while", "flat_map", "fold", "reduce", "scan", "len", "of", "range"], v)) {
       v = "";
     }
     verbs = verbs.append(v);
@@ -155,7 +155,7 @@ function verb_of(name: string): string {
 // is folded to `__smm_<Recv>_<verb>`, and a type name is never a lower-case
 // verb, so the first `_<verb>` there that a suffix or the end follows is it.
 function iter_verb_of(name: string): string {
-  let verbs: string[] = ["map", "filter", "take", "flat_map", "skip", "enumerate", "zip", "fold", "count", "collect", "find", "any", "all"];
+  let verbs: string[] = ["map", "filter", "take", "flat_map", "skip", "enumerate", "zip", "fold", "len", "collect", "find", "any", "all"];
   let n: string = slice_unchecked(name, 0, dollar_at(name)) + "";
   if (n == "iter__range") {
     return "range";
@@ -431,7 +431,7 @@ function sink_verb(ins: ssa.SInst, cx: Context): string {
     return "";
   }
   let v: string = verb_at(cx, ins.str);
-  if ((v == "fold" || v == "scan") && ins.args.len() == 3 || v == "reduce" && ins.args.len() == 2 || v == "count" && ins.args.len() == 1) {
+  if ((v == "fold" || v == "scan") && ins.args.len() == 3 || v == "reduce" && ins.args.len() == 2 || v == "len" && ins.args.len() == 1) {
     return v;
   }
   return "";
@@ -533,10 +533,10 @@ function purity_decision(f: ssasem.Func, cx: Context, defs: Def[], c: Chain): De
   return Decision { reason: semarrayreport.fusion_fused(), stage: c.sink };
 }
 
-// checked_fns is every stage's operand and the sink's function; a count has
+// checked_fns is every stage's operand and the sink's function; a len has
 // none of its own.
 function checked_fns(c: Chain, sink: ssa.SInst): i32[] {
-  if (c.verb == "count") {
+  if (c.verb == "len") {
     return c.fns;
   }
   return c.fns.append(sink.args[sink.args.len() - 1]);
@@ -729,10 +729,10 @@ function non_scalar_stage(f: ssasem.Func, c: Chain): i32 {
   return 0 - 1;
 }
 
-// sink_not_scalar: a count's result is not an integer, or a fold's or scan's
+// sink_not_scalar: a len's result is not an integer, or a fold's or scan's
 // accumulator is not a scalar of its seed's type.
 function sink_not_scalar(f: ssasem.Func, verb: string, sink: ssa.SInst): boolean {
-  if (verb == "count") {
+  if (verb == "len") {
     return !ssasem.is_integer(f.values[sink.result]);
   }
   if (verb == "fold") {
@@ -1029,7 +1029,7 @@ function unwind(st: Stepped): Stepped {
 function sink_step(c: Chain, combine: i32, t: typeinfo.Type, st: Stepped, yes: i32): Stepped {
   let s: Build = st.s;
   let l: Loop = st.l;
-  if (c.verb == "count") {
+  if (c.verb == "len") {
     let one: Emitted = emit(s, 1, t, [], 1, "");
     let more: Emitted = emit(one.s, 9, t, [l.cur[0], one.v], 0, "+");
     return Stepped { ...st, s: close(more.s, br(l.head)), l: back(l, more.s.id, l.cur.with(0, more.v)) };
@@ -1097,7 +1097,7 @@ function finish(f: ssasem.Func, c: Chain, s: Build, l: Loop, finals: i32[], resu
   if (c.verb == "scan") {
     return emit_at(s, 7, [finals[l.out_at]], result);
   }
-  if (c.verb == "fold" || c.verb == "count") {
+  if (c.verb == "fold" || c.verb == "len") {
     return emit_at(s, 7, [finals[0]], result);
   }
   let whole: typeinfo.Type = f.values[result];
@@ -1203,7 +1203,7 @@ function enter(f: ssasem.Func, c: Chain, s: Build, acc_t: typeinfo.Type, seed: i
 }
 
 // seed_inits gives the accumulator its starting values: the seed of a peeled
-// reduction, a fold's or scan's own initial value, a count's zero start, or
+// reduction, a fold's or scan's own initial value, a len's zero start, or
 // zero and a "no element yet" flag for a reduce, whose `yes` constant records
 // an arrival.
 function seed_inits(verb: string, sink: ssa.SInst, s: Build, acc_t: typeinfo.Type, seed: i32, start: i32): Opened {
@@ -1213,7 +1213,7 @@ function seed_inits(verb: string, sink: ssa.SInst, s: Build, acc_t: typeinfo.Typ
   if (verb == "fold" || verb == "scan") {
     return Opened { s: s, l: Loop { ...no_loop(), inits: [sink.args[1]] }, yes: 0 - 1 };
   }
-  if (verb == "count") {
+  if (verb == "len") {
     return Opened { s: s, l: Loop { ...no_loop(), inits: [start] }, yes: 0 - 1 };
   }
   let bool_t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };

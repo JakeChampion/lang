@@ -52,8 +52,8 @@ var fstringIRCases = []struct {
 	{"nested-call-chain", `let s: string = "ab"; let t: string = f"{s.repeat(s.len()).repeat(2).len()}"; return t[0] as i32;`, 56},
 	// String literal holding braces: "}{".len() == 2, "<2>"[1] == 50.
 	{"brace-literal", `let t: string = f"<{"}{".len()}>"; return t[1] as i32;`, 50},
-	// Call argument holding a brace: "a{b}c".index_of("}") == 3, "3"[0] == 51.
-	{"brace-literal-arg", `let t: string = f"{"a{b}c".index_of("}")}"; return t[0] as i32;`, 51},
+	// Call argument holding a brace: "a{b}}c".count("}") == 2, "2"[0] == 50.
+	{"brace-literal-arg", `let t: string = f"{"a{b}}c".count("}")}"; return t[0] as i32;`, 50},
 	// Nested f-string: "[7]" (len 3).
 	{"nested-fstring", `let n: i32 = 7; let t: string = f"[{f"{n}"}]"; return t.len();`, 3},
 }

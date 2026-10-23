@@ -2212,8 +2212,7 @@ function option_name(argv: string[], short: string, long: string): string {
 }
 
 function arg_name_end(a: string): i32 {
-  let eq: i32 = a.index_of("=");
-  if (eq >= 0) {
+  if let Some(eq) = a.index_of("=") {
     return eq;
   }
   return a.len();

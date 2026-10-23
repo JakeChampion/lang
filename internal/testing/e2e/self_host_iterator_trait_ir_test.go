@@ -111,7 +111,7 @@ func TestNativeIteratorTraitModule(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
     let s = iter.sum(iter.range(0, 5));            // 10
-    let c = iter.range(2, 9).count();              // 7
+    let c = iter.range(2, 9).len();                // 7
     let xs = iter.range(0, 4).collect();           // [0,1,2,3]
     let t = 0;
     for x in xs { t = t + x; }                     // 6
@@ -131,8 +131,8 @@ function main(): i32 {
 }
 
 // TestNativeIteratorTraitModuleAdapters exercises the shipped module's
-// closure-free adapters (nth / min / max / product / last / position /
-// contains / count_value) end-to-end.
+// closure-free adapters (nth / min / max / product / last / index_of /
+// contains / count) end-to-end.
 func TestNativeIteratorTraitModuleAdapters(t *testing.T) {
 	src := `import "core/iter" as iter;
 function main(): i32 {
@@ -146,10 +146,10 @@ function main(): i32 {
     let f = 0;
     match (iter.last(iter.range(0, 5))) { Some(v) => { f = v; }, None => {} }       // 4
     let g = 0;
-    match (iter.position(iter.range(0, 9), 7)) { Some(v) => { g = v; }, None => {} } // 7
+    match (iter.index_of(iter.range(0, 9), 7)) { Some(v) => { g = v; }, None => {} } // 7
     let h = 0;
     if (iter.contains(iter.range(0, 5), 3)) { h = 1; }                             // 1
-    let k = iter.count_value(iter.range(0, 5), 2);                                 // 1
+    let k = iter.count(iter.range(0, 5), 2);                                       // 1
     return a + c + d + e + f + g + h + k;                                         // 48+1+1 = 50
 }
 `
@@ -167,7 +167,7 @@ function main(): i32 {
 
 // TestNativeIteratorTraitModuleGeneric exercises the GENERIC face of the
 // shipped `core/iter` module: a user type that implements `iter.Iterator[T]`
-// for a non-i32 element type (`boolean`) and drives the trait's `count` /
+// for a non-i32 element type (`boolean`) and drives the trait's `len` /
 // `collect` methods over it. This proves the stdlib trait is genuinely
 // generic (#2691), not the old i32-only shape — the methods take their
 // element type from the impl.
@@ -176,7 +176,7 @@ func TestNativeIteratorTraitModuleGeneric(t *testing.T) {
 struct BoolSeq { n: i32 }
 impl iter.Iterator[boolean] for BoolSeq { function next(self: Self): Option[(boolean, Self)] { if (self.n <= 0) { return None; } return Some((true, BoolSeq { n: self.n - 1 })); } }
 function main(): i32 {
-    let c = (BoolSeq { n: 3 }).count();              // 3
+    let c = (BoolSeq { n: 3 }).len();                // 3
     let bs = (BoolSeq { n: 2 }).collect();           // [true, true]
     let k = 0;
     for b in bs { if (b) { k = k + 1; } }            // 2

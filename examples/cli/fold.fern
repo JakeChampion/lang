@@ -39,9 +39,10 @@ function fold_line(line: string, width: i32, at_spaces: boolean): void {
     if (at_spaces) {
       // Prefer the last space within the first `width` columns.
       let head: str = rest.take(width);
-      let sp: i32 = head.last_index_of(" ");
-      if (sp > 0) {
-        brk = sp + 1;
+      if let Some(sp) = head.last_index_of(" ") {
+        if (sp > 0) {
+          brk = sp + 1;
+        }
       }
     }
     print(rest.take(brk));

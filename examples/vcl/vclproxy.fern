@@ -52,7 +52,7 @@ import "./store";
 function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
   let empty: runtime.Headers = runtime.headers_new();
   let host: string = b.host;
-  if (host.index_of(":") >= 0) {
+  if (host.contains(":")) {
     host = "[" + host + "]";
   }
   let req: fetch.Request = wire.request_of(t.bereq, "http://" + host + ":" + b.port.to_string());
@@ -100,9 +100,10 @@ function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
 function client_ip_of(h: HeaderMap): string {
   match (h.get("X-Forwarded-For")) {
     Some(v) => {
-      let comma: i32 = v.index_of(",");
-      if (comma > 0) {
-        return slice_unchecked(v, 0, comma).to_owned().trim().to_owned();
+      if let Some(comma) = v.index_of(",") {
+        if (comma > 0) {
+          return slice_unchecked(v, 0, comma).to_owned().trim().to_owned();
+        }
       }
       return v.trim().to_owned();
     },
