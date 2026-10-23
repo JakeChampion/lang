@@ -27,7 +27,7 @@ pub struct Sunk { f: ssasem.Func, reread: i32 }
 // out of each block, counting only the uses that name them; and, by value,
 // the positions of the blocks that use it other than to read a projection of
 // it or test its variant.
-struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][], kids: i32[][], grown: i32[][] }
+struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos: i32[], spent: i32[][], kids: i32[][], grown: i32[][], first: i32[] }
 
 // A phi operand a block's edge hands on, rewritten to the block's re-read.
 struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
@@ -99,7 +99,7 @@ function earlier_read(rd: Reads, reads: ssa.SInst[], r: ssa.SInst, bi: i32, same
   for u in reads {
     let ub: i32 = rd.at[u.result];
     if (u.result != r.result && ub != bi && ssadeps.dom_holds(rd.dom, bi, ub) && semcse.same_slot(u, r, same, values)
-      && child_used_above(rd, rd.spent, bi, u.result, 0)) {
+      && (child_used_above(rd, rd.spent, bi, u.result, 0) || child_live_out(rd, bi, u.result, 0))) {
       return semcse.stand_in(same, u.result);
     }
   }
@@ -164,7 +164,7 @@ function projection(kind: i32): boolean {
 }
 
 // `at` is crossing_projections'.
-struct Tree { par: i32[], parent: boolean[], kids: i32[][] }
+struct Tree { par: i32[], parent: boolean[], kids: i32[][], first: i32[] }
 
 function reads_of(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): Reads {
   let deps: i32[][] = [];
@@ -173,23 +173,40 @@ function reads_of(g: ssa.SFunc, values: typeinfo.Type[], at: i32[]): Reads {
   }
   let t: Tree = projection_tree(g, values, deps);
   let pos: i32[] = ssa.block_positions(g);
-  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent_by(g, t.parent, deps, pos), kids: t.kids, grown: grown_by(g, deps) };
+  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent_by(g, t.parent, deps, pos), kids: t.kids, grown: grown_by(g, deps), first: t.first };
 }
 
+// The children of each read are kept under the block's first read of the same
+// slot (`first`), since semcse merges the two only after this pass.
 function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): Tree {
   let par: i32[] = __alloc_i32(values.len());
   let parent: boolean[] = __alloc_bool(values.len());
   let kids: i32[][] = deps;
+  let first: i32[] = identity(values.len());
   for b in g.blocks {
+    let seen: ssa.SInst[] = [];
     for ins in b.insts {
       if (counted_projection(ins, values)) {
+        first = first.with(ins.result, twin_of(seen, ins, first, values));
+        seen = seen.append(ins);
+        let p: i32 = first[ins.args[0]];
         par = par.with(ins.result, ins.args[0]);
         parent = parent.with(ins.args[0], true).with(ins.result, true);
-        kids = kids.with(ins.args[0], kids[ins.args[0]].append(ins.result));
+        kids = kids.with(p, kids[p].append(ins.result));
       }
     }
   }
-  return Tree { par: par, parent: parent, kids: kids };
+  return Tree { par: par, parent: parent, kids: kids, first: first };
+}
+
+// The first of `seen` that reads the slot `ins` reads, else `ins` itself.
+function twin_of(seen: ssa.SInst[], ins: ssa.SInst, first: i32[], values: typeinfo.Type[]): i32 {
+  for s in seen {
+    if (semcse.same_slot(s, ins, first, values)) {
+      return first[s.result];
+    }
+  }
+  return ins.result;
 }
 
 function grown_by(g: ssa.SFunc, deps: i32[][]): i32[][] {
@@ -216,6 +233,8 @@ function spent_by(g: ssa.SFunc, parent: boolean[], deps: i32[][], pos: i32[]): i
           spent = spend(spent, parent, a, bi);
         }
       }
+      // A record update spends its donor too, which `imm` names.
+      spent = spend(spent, parent, ssasem.update_base(ins), bi);
     }
     if (b.term.kind_tag == 1) {
       spent = spend(spent, parent, b.term.value, bi);
@@ -483,8 +502,10 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
 // re-read would hold the parent to here. Nor may anything spend the parent
 // while the child lives: a parent handed on, a record moved into a loop say,
 // would have to be kept for the re-read and copied by whoever it went to.
+// Nor may a child of the first read be live out of the block, which only the
+// first read lets the plan take.
 function read_above(rd: Reads, bi: i32, v: i32): boolean {
-  return read_above_for(rd, bi, v, v) && !child_used_above(rd, rd.grown, bi, v, 0);
+  return read_above_for(rd, bi, v, v) && !child_used_above(rd, rd.grown, bi, v, 0) && !child_live_out(rd, bi, v, 0);
 }
 
 // Whether a projection read off `v`, at any depth, has a use `by` names in a
@@ -497,13 +518,28 @@ function child_used_above(rd: Reads, by: i32[][], bi: i32, v: i32, depth: i32): 
   if (depth > 8) {
     return true;
   }
-  for c in rd.kids[v] {
+  for c in rd.kids[rd.first[v]] {
     for s in by[c] {
       if (s != bi && ssadeps.dom_holds(rd.dom, bi, s)) {
         return true;
       }
     }
     if (child_used_above(rd, by, bi, c, depth + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether a projection read off `v`, at any depth, is still live out of the
+// block at `bi`. Such a projection reaches the parent through `v`, so the plan
+// refuses the take of a second read of `v`'s slot at `bi`.
+function child_live_out(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
+  if (depth > 8) {
+    return false;
+  }
+  for c in rd.kids[rd.first[v]] {
+    if (ssalive.live_out_has(rd.flow, bi, c) || child_live_out(rd, bi, c, depth + 1)) {
       return true;
     }
   }
