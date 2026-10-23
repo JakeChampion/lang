@@ -215,7 +215,7 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// withMsg because the codes alone cannot see it: the sequence is
 		// E026,E028,E028 either way. Only the variant names in the messages
 		// distinguish the inner E028 from the outer one.
-		{"nested-match-arm-order", "enum Outer { P, Q }\nenum Inner { X, Y }\nfunction main(): i32 {\n    let o = P;\n    let i = X;\n    match (o) {\n        _ => {\n            match (i) {\n                Inner.X => { return 1; },\n                Inner.X => { return 2; },\n                _ => { return 3; }\n            }\n        },\n        Outer.Q => { return 4; },\n        Outer.Q => { return 5; }\n    }\n}\n", "E026(wildcard `_` arm must be last in the match),E028(variant \"Inner.X\" already covered earlier in this match),E028(variant \"Outer.Q\" already covered earlier in this match)", true},
+		{"nested-match-arm-order", "enum Outer { P, Q }\nenum Inner { X, Y }\nfunction main(): i32 {\n    let o = P;\n    let i = X;\n    match (o) {\n        _ => {\n            match (i) {\n                Inner.X => { return 1; },\n                Inner.X => { return 2; },\n                _ => { return 3; }\n            }\n        },\n        Outer.Q => { return 4; },\n        Outer.Q => { return 5; }\n    }\n}\n", "E026(wildcard `_` arm must be last in the match),E028(variant \"X\" already covered earlier in this match),E028(variant \"Q\" already covered earlier in this match)", true},
 		// dupvar_diags reaching into lambda bodies — the last instance of the
 		// same class match_diags had, found by sweeping eight diagnostic triggers
 		// in a top-level and an in-lambda variant and diffing against the Go
