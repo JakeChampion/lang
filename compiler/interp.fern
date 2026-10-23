@@ -149,6 +149,9 @@ pub struct VCell { kind: string, ci: Cell[i32], cl: Cell[i64], cf: Cell[f64], cs
 // not a diagnostic.
 pub struct VTry { box: Value }
 
+// A value expression carries an enclosing return or loop jump across its operands.
+pub struct VControl { box: Value, sig: i32 }
+
 // VType is a TYPE standing in for a value — the object of a receiver-less
 // ("associated") trait call, which dispatches on the type itself rather than
 // on a receiver: `i32.zero()`, or `T.zero()` inside a generic whose `T` this
@@ -180,7 +183,7 @@ pub struct VCellV { c: Cell[string] }
 // the low 32 of the word.
 pub struct VLanes { width: i32, bits: i64[] }
 
-pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VLanes | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VType | VHandle | VCellA | VCellV;
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VLanes | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VControl | VType | VHandle | VCellA | VCellV;
 
 function v_int(n: i32): Value {
   return VInt { v: n, is_char: false };
@@ -832,6 +835,9 @@ function v_absent(): Value {
 // every function boundary catches and converts back into a return value).
 function is_err(v: Value): boolean {
   match (v) {
+    VControl(_) => {
+      return true;
+    },
     VErr(_) => {
       return true;
     },
@@ -5542,6 +5548,15 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
 // eval_expr_call_expect is eval_expr_call with the type the call's binding
 // declares, which pins a type parameter only the callee's result names.
 function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value {
+  if let ast.ExprLambda(lm) = c.callee {
+    if (c.args.len() == 0 && lm.params.len() == 0 && (lm.origin == parser.ORIGIN_BLOCK || lm.origin == parser.ORIGIN_IF_EXPR || lm.origin == parser.ORIGIN_MATCH_EXPR)) {
+      let step = eval_value_body(lm.body, env, expect);
+      if (step.sig == 0 || step.sig == 1 && is_err(step.ret)) {
+        return step.ret;
+      }
+      return VControl { box: step.ret, sig: step.sig };
+    }
+  }
   // Bare-ident callee → plain function call OR
   // closure call when the name is bound to a VFunc.
   // FieldAccess callee → method call.
@@ -8772,6 +8787,9 @@ function value_eq(a: Value, b: Value): boolean {
     VTry(_) => {
       return false;
     },
+    VControl(_) => {
+      return false;
+    },
     VType(_) => {
       // A type is not a value: it only ever sits in the object position of
       // an associated call, never in an operand one.
@@ -8809,7 +8827,71 @@ function step_none(env: Env): StepResult {
 }
 
 function step_stop(env: Env, v: Value): StepResult {
+  if let VControl(control) = v {
+    return StepResult { env: env, ret: control.box, sig: control.sig };
+  }
   return StepResult { env: env, ret: v, sig: 1 };
+}
+
+function eval_value_body(body: ast.Stmt[], env: Env, expect: string): StepResult {
+  if (body.len() == 0) {
+    return step_stop(env, v_err("value expression has no terminal value"));
+  }
+  let cur = env;
+  let assigned = body_assign_names(body, []);
+  let i: i32 = 0;
+  while (i + 1 < body.len()) {
+    cur = cellify_captures(cur, body[i], assigned);
+    let step = eval_out_stmt(body[i], cur);
+    if (step.sig != 0) {
+      return step;
+    }
+    cur = step.env;
+    i = i + 1;
+  }
+  match (body[body.len() - 1]) {
+    ast.StmtReturn(r) => {
+      let value: Value = v_void();
+      if let ast.ExprCall(call) = r.value {
+        value = eval_expr_call_expect(call, cur, expect);
+      } else {
+        value = eval_expr(r.value, cur);
+      }
+      if (is_err(value)) {
+        return step_stop(cur, value);
+      }
+      return StepResult { env: cur, ret: value, sig: 0 };
+    },
+    ast.StmtIf(branch) => {
+      let condition = eval_expr(branch.cond, cur);
+      if (is_err(condition)) {
+        return step_stop(cur, condition);
+      }
+      let yes: boolean = false;
+      match (condition) {
+        VBool(b) => {
+          yes = b.v;
+        },
+        VInt(n) => {
+          yes = n.v != 0;
+        },
+        _ => {
+          return step_stop(cur, v_err("value condition is not boolean"));
+        }
+      }
+      if (yes) {
+        return eval_value_body(branch.then_body, cur, expect);
+      }
+      return eval_value_body(branch.else_body, cur, expect);
+    },
+    ast.StmtMatch(m) => {
+      return eval_match_stmt_mode(m, cur, true, expect);
+    },
+    _ => {
+      return step_stop(cur, v_err("value expression has no terminal value"));
+    }
+  }
+  return step_stop(cur, v_err("value expression has no terminal value"));
 }
 
 // eval_while_stmt runs a `while` / `loop`. Kept out of eval_stmt, whose frame every
@@ -8882,6 +8964,10 @@ function eval_while_stmt(w: ast.StmtWhile, env: Env): StepResult {
 // interpreted call nests.
 @noinline
 function eval_match_stmt(m: ast.StmtMatch, env: Env): StepResult {
+  return eval_match_stmt_mode(m, env, false, "");
+}
+
+function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, expect: string): StepResult {
   // Evaluate the scrutinee. An error in the scrutinee
   // propagates without running any arm.
   let sv: Value = eval_expr(m.scrutinee, env);
@@ -9004,7 +9090,7 @@ function eval_match_stmt(m: ast.StmtMatch, env: Env): StepResult {
         }
       }
       if (pass) {
-        let step: StepResult = eval_block(arm.body, bodyEnv);
+        let step: StepResult = if (value_form) { eval_value_body(arm.body, bodyEnv, expect) } else { eval_block(arm.body, bodyEnv) };
         return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
       }
     }

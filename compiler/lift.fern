@@ -859,7 +859,7 @@ struct ClosureLift { body: ast.Stmt[], acc: LiftAcc, changed: boolean }
 // try_lift_binding attempts to lift the capturing lambda bound at body[idx] to
 // fname. Returns changed=true with the rewritten body + appended lifted fn when
 // every guard holds, else the inputs unchanged.
-function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.ExprLambda, fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], assigns: string[], structs: irtables.StructTab, mfuncs: MFuncs): ClosureLift {
+function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.ExprLambda, fd: parser.FuncDecl, prefix: string, acc: LiftAcc, gfns: string[], assigns: string[], structs: irtables.StructTab, mfuncs: MFuncs): ClosureLift {
   let caps: string[] = lambda_captures(lam, fd);
   // A capture-FREE lambda binding (`let f = (x) => {…}; f(a)`) is lifted
   // the same way, with no capture args — `f(a)` becomes a direct call to the
@@ -904,7 +904,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     lparams = lparams.append(ast.ParamDecl { ...lcp, own: false, has_default: false, default_value: parser.e_unknown("") });
     cj = cj + 1;
   }
-  let lname: string = "__lam_" + util.i32_to_string(acc.counter);
+  let lname: string = prefix + util.i32_to_string(acc.counter);
   let notp: string[] = [];
   let lbody: ast.Stmt[] = lam.body;
   if (lam.origin == ast.ORIGIN_NESTED_FN) {
@@ -974,7 +974,7 @@ function cl_replace_at(body: ast.Stmt[], at: i32, ns: ast.Stmt): ast.Stmt[] {
 // capturing closure (`while (…) { let f = (n) => { return n + base; }; …
 // f(i) … }`) was never lifted, taking the whole module off the IR path (the
 // loop-local capturing-closure IR gap).
-function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs): ClosureLift {
+function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, prefix: string, acc: LiftAcc, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs): ClosureLift {
   // Only a lambda BINDING consults the block's reassign set, and most blocks
   // hold none — the walk recurses into every one of them.
   let assigns: string[] = [];
@@ -995,7 +995,7 @@ function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, g
               assigns = irtables.body_assign_targets(body);
               assigns_done = true;
             }
-            let lifted: ClosureLift = try_lift_binding(body, i, v.name, lam, fd, acc, gfns, assigns, structs, mfuncs);
+            let lifted: ClosureLift = try_lift_binding(body, i, v.name, lam, fd, prefix, acc, gfns, assigns, structs, mfuncs);
             if (lifted.changed) {
               return lifted;
             }
@@ -1009,23 +1009,23 @@ function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, g
         // outside the loop (`base` / `c.base`) types fine; the escape
         // check runs on the loop-local scope (the binding isn't visible
         // outside it).
-        let sw: ClosureLift = closure_lift_one(w.body, fd, acc, gfns, structs, mfuncs);
+        let sw: ClosureLift = closure_lift_one(w.body, fd, prefix, acc, gfns, structs, mfuncs);
         if (sw.changed) {
           return ClosureLift { body: cl_replace_at(body, i, ast.StmtWhile { cond: w.cond, body: sw.body, label: w.label, line: 0, is_loop: w.is_loop, todo: w.todo }), acc: sw.acc, changed: true };
         }
       },
       ast.StmtFor(fr) => {
-        let sf: ClosureLift = closure_lift_one(fr.body, fd, acc, gfns, structs, mfuncs);
+        let sf: ClosureLift = closure_lift_one(fr.body, fd, prefix, acc, gfns, structs, mfuncs);
         if (sf.changed) {
           return ClosureLift { body: cl_replace_at(body, i, ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: sf.body, label: fr.label, line: 0, col: 0 }), acc: sf.acc, changed: true };
         }
       },
       ast.StmtIf(f) => {
-        let st: ClosureLift = closure_lift_one(f.then_body, fd, acc, gfns, structs, mfuncs);
+        let st: ClosureLift = closure_lift_one(f.then_body, fd, prefix, acc, gfns, structs, mfuncs);
         if (st.changed) {
           return ClosureLift { body: cl_replace_at(body, i, ast.StmtIf { ...f, cond: f.cond, then_body: st.body, else_body: f.else_body }), acc: st.acc, changed: true };
         }
-        let se: ClosureLift = closure_lift_one(f.else_body, fd, acc, gfns, structs, mfuncs);
+        let se: ClosureLift = closure_lift_one(f.else_body, fd, prefix, acc, gfns, structs, mfuncs);
         if (se.changed) {
           return ClosureLift { body: cl_replace_at(body, i, ast.StmtIf { ...f, cond: f.cond, then_body: f.then_body, else_body: se.body }), acc: se.acc, changed: true };
         }
@@ -1033,7 +1033,7 @@ function closure_lift_one(body: ast.Stmt[], fd: parser.FuncDecl, acc: LiftAcc, g
       ast.StmtMatch(mm) => {
         let ami: i32 = 0;
         while (ami < mm.arms.len()) {
-          let sm: ClosureLift = closure_lift_one(mm.arms[ami].body, fd, acc, gfns, structs, mfuncs);
+          let sm: ClosureLift = closure_lift_one(mm.arms[ami].body, fd, prefix, acc, gfns, structs, mfuncs);
           if (sm.changed) {
             let narms: ast.MatchArm[] = [];
             let q: i32 = 0;
@@ -1752,8 +1752,19 @@ function iife_arms_all_marked(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
 // and rebuilt by hand so its arm bodies recurse through this walk; its
 // scrutinee and guards go through the full lift like any other condition.
 function lift_iife_body(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: irtables.StructTab): (ast.Stmt[], InlineCloAcc) {
+  let scope: parser.FuncDecl = iife_scope_fd(fd, stmts);
+  let scope_vars: VarDecls = iife_scope_vars(vars, stmts);
+  let body: ast.Stmt[] = stmts;
+  let lifted: LiftAcc = LiftAcc { funcs: funcs, counter: counter };
+  let more: boolean = true;
+  while (more) {
+    let cl: ClosureLift = closure_lift_one(body, scope, clo_owner_name(scope) + "$direct", lifted, gfns, structs, mfuncs);
+    body = cl.body;
+    lifted = cl.acc;
+    more = cl.changed;
+  }
   function ve(x: ast.Expr, a: InlineCloAcc): (ast.Expr, InlineCloAcc, boolean) {
-    return ilc_expr_at(x, a, fd, vars, gfns, structs, mfuncs);
+    return ilc_expr_at(x, a, scope, scope_vars, gfns, structs, mfuncs);
   }
   function vs(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
     match (s) {
@@ -1781,7 +1792,7 @@ function lift_iife_body(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, 
         return (ast.StmtMatch { ...mm, scrutinee: sr.expr, arms: narms }, InlineCloAcc { funcs: fs, counter: ct }, true);
       },
       ast.StmtVar(_) => {
-        return (s, a, false);
+        return ilc_stmt_at(s, a, scope, scope_vars, gfns, structs, mfuncs);
       },
       ast.StmtReturn(_) => {
         return (s, a, true);
@@ -1813,7 +1824,7 @@ function lift_iife_body(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarDecls, 
     }
     return (s, a, true);
   }
-  return astwalk.map_stmts_acc(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ve);
+  return astwalk.map_stmts_acc(body, InlineCloAcc { funcs: lifted.funcs, counter: lifted.counter }, vs, ve);
 }
 
 // ilc_keep_expr claims every expression unchanged — the expression visitor for
@@ -5387,7 +5398,7 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
         lsigs = mfuncs_extend(lsigs, [acc.funcs[joined]]);
         joined = joined + 1;
       }
-      let cl: ClosureLift = closure_lift_one(cbody, fd, acc, lgfns, mstab, lsigs);
+      let cl: ClosureLift = closure_lift_one(cbody, fd, "__lam_", acc, lgfns, mstab, lsigs);
       cbody = cl.body;
       acc = cl.acc;
       more = cl.changed;

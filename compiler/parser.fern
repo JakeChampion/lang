@@ -7674,7 +7674,7 @@ function parse_let_pattern(p: Par, start: Par, qualified_record: boolean, vline:
     lsp_p = lsp_ap;
     lsp_pats = lsp_pats.append(lsp_alt);
   }
-  let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("=").with_no_struct(!qualified_record));
+  let (lsp_init, lsp_ip) = parse_expr(lsp_p.expect("=").with_no_struct(false));
   lsp_ip = lsp_ip.with_no_struct(p.no_struct);
   if (qualified_record && lsp_pats.len() == 1 && lsp_ip.peek_keyword() != "else") {
     let binding: ast.Stmt = qualified_struct_binding(lsp_pat, lsp_init, vline, vcol);
@@ -7808,7 +7808,7 @@ function parse_let_stmt(p: Par): (ast.Stmt, Par) {
   if (p.peek_is_pat_literal() || p.peek_at_literal()) {
     let (lel_at, lel_atp) = take_at_binding(p);
     let (lel_lits, lel_his, lel_hrs, lel_incs, lel_p) = parse_lit_alts(lel_atp);
-    let (lel_init, lel_ip) = parse_expr(lel_p.expect("=").with_no_struct(true));
+    let (lel_init, lel_ip) = parse_expr(lel_p.expect("=").with_no_struct(false));
     lel_ip = lel_ip.with_no_struct(p.no_struct);
     let (lel_else, lel_rest, lel_restp) = parse_let_else_tail(lel_ip);
     p = lel_restp;

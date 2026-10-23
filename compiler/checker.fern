@@ -27218,8 +27218,8 @@ pub function variant_shape_sig(s: Scope, name: string, owner: string): StructSig
 
 // value_block_tail_type is the type of a `{ …; tail }` block: its final
 // `return`, checked with the leading statements bound. An earlier `return`
-// leaves the enclosing function, so it says nothing about the block. A bare
-// literal tail stays unknown: it adapts to whatever receives the block.
+// leaves the enclosing function, so it says nothing about the block.
+// Integer literal tails retain their polymorphic type for the receiver.
 function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
   if (body.len() == 0) {
     return t_unknown("empty value block");
@@ -27230,7 +27230,7 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
     }
   }
   if let ast.StmtReturn(r) = body[body.len() - 1] {
-    if (parser.bare_return(r.value) || int_literal_tree(r.value)) {
+    if (parser.bare_return(r.value)) {
       return t_unknown("value block tail");
     }
     let bs: Scope = s;
@@ -27240,6 +27240,9 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
       i = i + 1;
     }
     let t: typeinfo.Type = check_expr(r.value, bs);
+    if (int_literal_tree(r.value)) {
+      return unsettled_marked(t, r.value, bs.lit_locals, true);
+    }
     if (!names_whole_type(t, bs)) {
       return t_unknown("value block tail");
     }
