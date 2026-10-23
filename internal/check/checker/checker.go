@@ -12940,6 +12940,23 @@ func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
 	c.errors = append(c.errors, e)
 }
 
+// errTypeParamAssoc reports E001 for `T.field(…)` where no bound on the type
+// parameter `T` declares `field`: an associated call goes through a bound,
+// never through what an instantiation happens to provide.
+func (c *checker) errTypeParamAssoc(tid *ast.Ident, field string) {
+	why := fmt.Sprintf("%s has no bound; bound it by a trait that declares %s()", tid.Name, field)
+	if bounds := c.typeParamDecl(tid.Name).Bounds[tid.Name]; len(bounds) > 0 {
+		why = fmt.Sprintf("its bound %s declares none", demangle(strings.Join(bounds, " + ")))
+	}
+	c.errors = append(c.errors, &Error{
+		Pos:     tid.P,
+		Span:    len(tid.Name),
+		Msg:     fmt.Sprintf("type parameter %s has no associated function %q: %s", tid.Name, field, why),
+		Path:    c.currentModule(),
+		ErrCode: "E001",
+	})
+}
+
 // errUnknownField reports an E043 unknown-field error (struct literal
 // or field access), attaching a machine-applicable respelling fix when
 // a declared field is a near miss — the same sound family as errIdent
@@ -19197,6 +19214,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tp, OwnerTrait: boundTrait, Assoc: true}
 							return ast.SubstSelf(tm.Result, tp)
 						}
+						c.errTypeParamAssoc(tid, fa.Field)
+						for _, arg := range n.Args {
+							c.checkExpr(arg, s)
+						}
+						return nil
 					}
 					_, isStruct := c.info.Structs[tid.Name]
 					_, isEnum := c.info.Enums[tid.Name]

@@ -1,0 +1,7 @@
+==260709== Cachegrind, a high-precision tracing profiler
+==260709== Copyright (C) 2002-2024, and GNU GPL'd, by Nicholas Nethercote et al.
+==260709== Using Valgrind-3.24.0 and LibVEX; rerun with -h for copyright info
+==260709== Command: /workspace/scratch/lang-raw-word-immediates/instructions/base/probe
+==260709== 
+==260709== 
+==260709== I refs:        14,001,213

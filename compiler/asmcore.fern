@@ -8,6 +8,7 @@ import "./rtbytecopy";
 import "./ir";
 import "./irtables";
 import "./ssa";
+import "./byteconst";
 import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
@@ -350,6 +351,13 @@ pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
     xi = xi + 1;
   }
   return out;
+}
+
+pub function tail_allocator(ins: ssa.SInst): string {
+  if (ins.kind_tag == 50 && ins.str == "raw_arr_box" && ins.args.len() == 1) {
+    return "__fern_arr_box";
+  }
+  return "";
 }
 
 // FloatAbi is unit_float_abi's answer: the functions with an f64 or lane
@@ -8727,6 +8735,9 @@ function infer_expr_binary_type(b: ast.ExprBinary, s: EmitState): Ty {
 
 pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
   match (e) {
+    ast.ExprBytes(_) => {
+      return ty_array_i32();
+    },
     ast.ExprNumber(n) => {
       if (n.is_float) {
         return ty_f64();
@@ -9036,6 +9047,9 @@ pub struct ConstAggPack { state: EmitState, text: string }
 // each one's flat and register arms, so no copy of it can drift from another;
 // `entry` is the suffix of the entry a backend's function values name.
 pub function const_agg_pack(own s: EmitState, packed: string, entry: string): ConstAggPack {
+  if (ir.const_struct_is_bytes(packed)) {
+    return ConstAggPack { state: s, text: "8|" + ir.const_struct_payload(packed) };
+  }
   let body: string = ir.const_struct_fn_body(packed);
   if (body.len() > 0) {
     return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) + entry };
@@ -9776,6 +9790,9 @@ function unknown_error_stmt_at(st: ast.Stmt, own a: UnkScan): UnkScan {
 
 function unknown_error_expr_at(e: ast.Expr, own a: UnkScan): UnkScan {
   match (e) {
+    ast.ExprBytes(_) => {
+      return a;
+    },
     ast.ExprUnknown(u) => {
       // A bare `return;`'s placeholder value is not an error, and a
       // REPORTED token's error is already in the list.
@@ -11186,12 +11203,12 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
       bar = bar + 1;
     }
     let shp: string = slice_unchecked(e, 0, bar) + "";
-    let vals: string[] = ir.const_struct_values(e);
     if (shp == "8") {
-      st = emit_const_bytes_block(st, i, vals);
+      st = emit_const_bytes_block(st, i, ir.const_struct_payload(e));
       i = i + 1;
       continue;
     }
+    let vals: string[] = ir.const_struct_values(e);
     // The [tag, payload] box `__fern_arr_box(2)` makes for an option.
     if (shp == "o") {
       st = st.write("    .quad 2\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + vals[0] + "\n    .quad 0\n");
@@ -11266,22 +11283,14 @@ pub function emit_const_agg_refs(s: EmitState): EmitState {
 // writing into the padding: the immortal rc takes the in-place path, and a
 // constant with room would be grown in place, every later evaluation seeing
 // the bytes and the length an earlier one appended (#10647).
-function emit_const_bytes_block(st: EmitState, i: i32, vals: string[]): EmitState {
+function emit_const_bytes_block(st: EmitState, i: i32, words: string): EmitState {
+  let count: i32 = byteconst.count_words(words);
   st = st.write("    .quad 0\n");
   st = st.write("    .quad -1\n");
   st = st.write(const_agg_label(st, i) + ":\n");
-  st = st.write("    .quad " + util.i32_to_string(vals.len()) + "\n");
-  if (vals.len() > 0) {
-    let line: string = "    .byte ";
-    let vi: i32 = 0;
-    while (vi < vals.len()) {
-      if (vi > 0) {
-        line = line + ", ";
-      }
-      line = line + vals[vi];
-      vi = vi + 1;
-    }
-    st = st.write(line + "\n");
+  st = st.write("    .quad " + util.i32_to_string(count) + "\n");
+  if (count > 0) {
+    st = st.write("    .byte " + byteconst.spaced_words(words) + "\n");
   }
   return st.write("    .balign 8\n");
 }

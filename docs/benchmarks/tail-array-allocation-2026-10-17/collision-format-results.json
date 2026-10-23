@@ -1,0 +1,58 @@
+{
+  "x86-64-linux": {
+    "old": {
+      "command": [
+        "/workspace/scratch/lang-tail-array-allocation/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/tail-array-collision-format/x86-64-linux-old",
+        "/workspace/scratch/tail-array-collision-format/old.fern",
+        "/workspace/lang-tail-array-allocation/internal/stdlib"
+      ],
+      "sha256": "bed529c02cb677452cdf8cb8c9e657fd99322cc2b53e0469195a5cf5a492cb2f",
+      "exit": 0
+    },
+    "formatted": {
+      "command": [
+        "/workspace/scratch/lang-tail-array-allocation/stage3",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/workspace/scratch/tail-array-collision-format/x86-64-linux-formatted",
+        "/workspace/lang-tail-array-current/docs/benchmarks/tail-array-allocation-2026-10-17/collision.fern",
+        "/workspace/lang-tail-array-allocation/internal/stdlib"
+      ],
+      "sha256": "bed529c02cb677452cdf8cb8c9e657fd99322cc2b53e0469195a5cf5a492cb2f",
+      "exit": 0
+    }
+  },
+  "arm64-linux": {
+    "old": {
+      "command": [
+        "/workspace/scratch/lang-tail-array-allocation/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/tail-array-collision-format/arm64-linux-old",
+        "/workspace/scratch/tail-array-collision-format/old.fern",
+        "/workspace/lang-tail-array-allocation/internal/stdlib"
+      ],
+      "sha256": "f2440576d3d3d305705b4ca131fbeecc7f73ca5c461cec8e6b362702b206d874",
+      "exit": 0
+    },
+    "formatted": {
+      "command": [
+        "/workspace/scratch/lang-tail-array-allocation/stage3",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/workspace/scratch/tail-array-collision-format/arm64-linux-formatted",
+        "/workspace/lang-tail-array-current/docs/benchmarks/tail-array-allocation-2026-10-17/collision.fern",
+        "/workspace/lang-tail-array-allocation/internal/stdlib"
+      ],
+      "sha256": "f2440576d3d3d305705b4ca131fbeecc7f73ca5c461cec8e6b362702b206d874",
+      "exit": 0
+    }
+  }
+}

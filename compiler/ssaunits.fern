@@ -752,7 +752,7 @@ function contract_error(f: ssasem.Func, modes: i32[], view: SchemaView): string 
 // released when the box is. So is a cell, over its one element; a read of a
 // cell hands out a unit of the element rather than borrowing the slot.
 function construction(kind: i32): boolean {
-  return kind == ssasem.array_new() || kind == ssasem.array_reserve() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new() || kind == ssasem.dyn_box()
+  return kind == ssasem.array_new() || kind == ssasem.bytes_new() || kind == ssasem.array_reserve() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new() || kind == ssasem.dyn_box()
     || kind == ssasem.closure_new() || kind == ssasem.cell_new() || kind == ssasem.map_new()
     || kind == ssasem.map_cleared();
 }
@@ -1319,6 +1319,9 @@ function placeable(f: ssasem.Func, raw: boolean[], out: string[], ins: ssa.SInst
 struct BoxWords { text: string, waiting: boolean }
 
 function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: string[], ins: ssa.SInst, fields: semrecords.Field[]): BoxWords {
+  if (ins.kind_tag == ssasem.bytes_new()) {
+    return BoxWords { text: "|" + ins.str, waiting: false };
+  }
   let words: string = "|";
   let j: i32 = 0;
   while (j < fields.len()) {
@@ -1443,6 +1446,9 @@ struct Construction { ok: boolean, fields: semrecords.Field[] }
 function built_fields(f: ssasem.Func, ins: ssa.SInst): Construction {
   let none: semrecords.Field[] = [];
   let t: typeinfo.Type = f.values[ins.result];
+  if (ins.kind_tag == ssasem.bytes_new()) {
+    return Construction { ok: true, fields: none };
+  }
   if (ins.kind_tag == ssasem.array_new()) {
     if let typeinfo.TypeArray(a) = t {
       let elems: semrecords.Field[] = [];
@@ -3513,6 +3519,9 @@ function settled(own sole: boolean[], links: SoleLinks): boolean[] {
 // reserved allocation, a literal built at run time, an empty one, or a fresh
 // row's result.
 function fresh_array(ins: ssa.SInst, consts: string[], fresh: FreshRows): boolean {
+  if (ins.kind_tag == ssasem.bytes_new()) {
+    return ins.imm == 0 || consts[ins.result] == "";
+  }
   if (ins.kind_tag == ssasem.array_new()) {
     return ins.args.len() == 0 || consts[ins.result] == "";
   }

@@ -9387,7 +9387,7 @@ pub function is_destr_marker(type_name: string): boolean {
 //
 // Empty ParamDestr.names signals a parse problem (a malformed binding list, a
 // tuple with fewer than 2 positions, or a missing `:`); callers degrade the
-// same way they do for parse_param's empty-name result.
+// same way they do for parse_param's __invalid_param sentinel.
 function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
   let tline: i32 = p.peek_line();
   let tcol: i32 = p.peek_col();
@@ -10051,7 +10051,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   if (p.peek_punct() == ";") {
     p = p.advance();
     // A body-less decl is an `@import` signature — a destructured
-    // param has nothing to bind into, so degrade to the empty-name
+    // param has nothing to bind into, so degrade to the __invalid_param
     // FuncDecl the caller treats as a parse failure.
     if (pd.len() > 0) {
       return (FuncDecl { stdlib: "", no_inline: false, name: "", receiver_name: receiver_name, receiver_type: receiver_type, receiver_own: receiver_own, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: [], bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [] }, p);
@@ -24095,6 +24095,9 @@ function fda_stmts(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: FuncDecl[]
 // cast is an ExprUnary whose op is `as_<type>`, refused before its operand.
 pub function default_nonconst_reason(e: ast.Expr): (string, boolean) {
   match (e) {
+    ast.ExprBytes(_) => {
+      return ("is an array literal", true);
+    },
     ast.ExprNumber(n) => {
       return ("", false);
     },

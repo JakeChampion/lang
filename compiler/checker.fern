@@ -7196,6 +7196,9 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
     ast.ExprArray(a) => {
       return check_array_expr(a, s);
     },
+    ast.ExprBytes(_) => {
+      return t_array(t_u8());
+    },
     ast.ExprIndex(x) => {
       return check_index_expr(x, s);
     },
@@ -9430,7 +9433,10 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
   // Without them `T.default()` in a `@derive(cmp.Default) struct Pair[T]`
   // body read `T` as a value and drew an undefined-name E001 (#8461).
   // A generic enum's derived methods are spelled the same way, and their
-  // parameters come from the enum's declaration (#11776).
+  // parameters come from the enum's declaration (#11776). Each is bounded by
+  // the trait being derived, as the Go checker's bindDeriveTypeParams does,
+  // so the body's `T.default()` resolves through that bound.
+  let declared_from: i32 = tps.len();
   if (fd.receiver_type.len() > 0) {
     let rbase: string = util.base_type_name(fd.receiver_type);
     let rtvs: string[] = s.lookup_struct(rbase).type_params;
@@ -9449,6 +9455,13 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
   }
   while (tbs.len() < tps.len()) {
     tbs = tbs.append("");
+  }
+  let k: i32 = declared_from;
+  while (k < tps.len()) {
+    if (tbs[k].len() == 0) {
+      tbs = tbs.with(k, fd.impl_trait);
+    }
+    k = k + 1;
   }
   // The unbounded parameters are type variables of the body too.
   for tv in fd.all_type_params {
@@ -10203,6 +10216,9 @@ function merge_view_names(a: string[], b: string[]): string[] {
 // `id_sl(a)[0:1]` needs this arm to see `a`.
 function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   match (e) {
+    ast.ExprBytes(_) => {
+      return ViewRoots { local: true, params: [] };
+    },
     ast.ExprArray(_) => {
       let none: string[] = [];
       return ViewRoots { local: true, params: none };
@@ -10315,6 +10331,9 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
           }
         }
         match (v.init) {
+          ast.ExprBytes(_) => {
+            localarr = localarr.append(v.name);
+          },
           ast.ExprArray(_) => {
             localarr = localarr.append(v.name);
           },
@@ -13948,44 +13967,10 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
       return int_literal_tree(e);
     },
     typeinfo.TypeArray(wa) => {
-      match (e) {
-        ast.ExprArray(arr) => {
-          // Each element is a coercion site of its own, and one that does
-          // not coerce into a dyn slot is E034 (array_elem_check).
-          if (is_dyn_slot(wa.elem)) {
-            return true;
-          }
-          for element in arr.elements {
-            if (!array_element_settles(element, wa.elem, s)) {
-              return false;
-            }
-          }
-          return true;
-        },
-        _ => {
-          return false;
-        }
-      }
+      return array_literal_settles(e, wa.elem, s);
     },
     typeinfo.TypeTuple(wt) => {
-      match (e) {
-        ast.ExprTuple(tl) => {
-          if (tl.elements.len() != wt.elements.len()) {
-            return false;
-          }
-          let i: i32 = 0;
-          while (i < wt.elements.len()) {
-            if (!settles_or_nested(tl.elements[i], wt.elements[i], s)) {
-              return false;
-            }
-            i = i + 1;
-          }
-          return true;
-        },
-        _ => {
-          return false;
-        }
-      }
+      return tuple_literal_settles(e, wt.elements, s);
     },
     typeinfo.TypeUnion(_) => {
       return ctor_boxes_into(e, want, s) || ctor_payload_settles(e, want, s);
@@ -13996,6 +13981,46 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
     _ => {
       return false;
     }
+  }
+  return false;
+}
+
+function array_literal_settles(e: ast.Expr, elem: typeinfo.Type, s: Scope): boolean {
+  match (e) {
+    ast.ExprArray(arr) => {
+      // Each element is a coercion site. A failed dyn coercion is E034.
+      if (is_dyn_slot(elem)) {
+        return true;
+      }
+      for element in arr.elements {
+        if (!array_element_settles(element, elem, s)) {
+          return false;
+        }
+      }
+      return true;
+    },
+    ast.ExprBytes(_) => {
+      return type_eq(elem, t_u8());
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function tuple_literal_settles(e: ast.Expr, elements: typeinfo.Type[], s: Scope): boolean {
+  if let ast.ExprTuple(tl) = e {
+    if (tl.elements.len() != elements.len()) {
+      return false;
+    }
+    let i: i32 = 0;
+    while (i < elements.len()) {
+      if (!settles_or_nested(tl.elements[i], elements[i], s)) {
+        return false;
+      }
+      i = i + 1;
+    }
+    return true;
   }
   return false;
 }
@@ -14806,17 +14831,6 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope, const_read: bool
       if (ht.found) {
         return ht;
       }
-      // An UNBOUNDED parameter may get its associated function from its
-      // instantiation, which is the shape
-      // `@derive(cmp.Default) struct Pair[T]` reaches through `T.default()`.
-      // Only the qualifier position takes this: tp_assoc_req stays the
-      // bound-driven answer the E021 associated-vs-method rule reads. The
-      // return type is unrecoverable, as every erased parameter's is (#8461).
-      // A bounded parameter must resolve through its declared traits above:
-      // treating the qualifier alone as a hit also accepts T.nope().
-      if (!const_read && util.index_of_str(s.tparams, oid.name) >= 0 && tp_bound_for(oid.name, s.tparams, s.tbounds).len() == 0) {
-        return AssocHit { found: true, ret: "", owner: "", params: [], is_const: false };
-      }
       return assoc_miss();
     },
     _ => {
@@ -14824,6 +14838,19 @@ function assoc_call_req(obj: ast.Expr, field: string, s: Scope, const_read: bool
     }
   }
   return assoc_miss();
+}
+
+// tparam_assoc_diag is E001 for `T.field(…)` where no bound on the type
+// parameter `T` declares `field`: an associated call goes through a bound,
+// never through what an instantiation happens to provide.
+function tparam_assoc_diag(tid: ast.ExprIdent, field: string, s: Scope): util.Diag {
+  let why: string = tid.name + " has no bound; bound it by a trait that declares " + field + "()";
+  let k: i32 = util.index_of_str(s.tparams, tid.name);
+  if (k < s.tbounds.len() && s.tbounds[k].len() > 0) {
+    why = "its bound " + util.demangle(s.tbounds[k]) + " declares none";
+  }
+  let d: util.Diag = dg_at("E001", "type parameter " + tid.name + " has no associated function \"" + field + "\": " + why, tid.line, tid.col);
+  return util.Diag { ...d, length: util.show_type_vars(tid.name).len() };
 }
 
 // assoc_hit_type is assoc_call_req's typing half: the associated call's
@@ -15447,6 +15474,15 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       }
       if (mfa.const_read) {
         return out.append(dg_at("E043", util.demangle(assoc_base_name(mfa.obj)) + " has no associated constant \"" + mfa.field + "\"", c.line, c.col));
+      }
+      if let ast.ExprIdent(tid) = mfa.obj {
+        if (!s.known(tid.name) && util.has_str(s.tparams, tid.name)) {
+          out = out.append(tparam_assoc_diag(tid, mfa.field, s));
+          for arg in c.args {
+            out = util.append_diags(out, call_diags(arg, s));
+          }
+          return out;
+        }
       }
       out = call_diags(mfa.obj, s);
       match (check_expr(mfa.obj, s)) {
@@ -18800,7 +18836,7 @@ function (s: Scope) method_fix(d: util.Diag, fa: ast.ExprFieldAccess, recv: type
 // in `s` declares it. Its fix is a retired name's replacement, or else the
 // closest name `s` can resolve.
 function undefined_name(name: string, s: Scope, line: i32, col: i32): util.Diag {
-  let d: util.Diag = util.Diag { ...dg_at("E001", "cannot find \"" + name + "\" in this scope", line, col), length: name.len() };
+  let d: util.Diag = util.Diag { ...dg_at("E001", "cannot find \"" + name + "\" in this scope", line, col), length: util.show_type_vars(name).len() };
   // A retired name is too far from its replacement for a respelling to find.
   if (name == "string_from_bytes") {
     return with_fix(d, name, line, col, "string_from_bytes_unchecked", " (or `std/utf8.from_bytes`, which validates and returns `Option[string]`)");
@@ -18962,6 +18998,9 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
 // than folded into the generic one.
 function const_expr_err(e: ast.Expr, earlier: string[]): string {
   match (e) {
+    ast.ExprBytes(_) => {
+      return "";
+    },
     ast.ExprNumber(_) => {
       return "";
     },
@@ -21910,6 +21949,9 @@ function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
 // path this walk follows is assumed to be able to.
 function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   match (e) {
+    ast.ExprBytes(_) => {
+      return false;
+    },
     ast.ExprNumber(_) => {
       return false;
     },

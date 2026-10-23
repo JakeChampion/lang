@@ -860,7 +860,7 @@ function line_mark(k: i32): boolean {
 }
 
 function construction_kind(k: i32): boolean {
-  return k == ssasem.record_new() || k == ssasem.variant_new() || k == ssasem.tuple_new() || k == ssasem.array_new();
+  return k == ssasem.record_new() || k == ssasem.variant_new() || k == ssasem.tuple_new() || k == ssasem.array_new() || k == ssasem.bytes_new();
 }
 
 // const_int, const_bool, const_i64, const_float and const_str.
