@@ -4434,10 +4434,29 @@ function push_str_unique_sorted(xs: string[], v: string): string[] {
   return out;
 }
 
+// Match the declaration's receiver after its type parameters bind.
+function (s: Scope) stdlib_receiver_matches(ns: string, method: string, recv: typeinfo.Type): boolean {
+  let written: string = stdlib_methods.receiver_of(ns, method);
+  if (written.len() == 0) {
+    return true;
+  }
+  let ref: parser.TypeRef = parser.parse_type_ref(written);
+  let params: string[] = stdlib_methods.receiver_params(ns, method);
+  let (names, types) = gc_bind_param(ref, recv, params, s.type_names(), [], []);
+  if (names.len() != params.len()) {
+    return false;
+  }
+  // The ordinary type comparison ignores nominal arguments.
+  // The resolved spelling retains nested arguments and callable ownership.
+  let expected: typeinfo.Type = type_from_ref_subst(ref, names, types, s.type_names());
+  return type_label(expected) == type_label(recv);
+}
+
 // unknown_method_message: the E043 text for a method call on a receiver whose
 // namespace has no such method. `ns` is the namespace its methods register
 // under ("Array", "string", "i32"), `label` the receiver as the reader spelled
 // it.
+
 function (s: Scope) unknown_method_message(ns: string, method: string, label: string, recv: typeinfo.Type): string {
   let base: string = "no method \"" + method + "\" on " + label;
   let repl: string = retired_collection_spelling(ns, method);
@@ -4453,8 +4472,8 @@ function (s: Scope) unknown_method_message(ns: string, method: string, label: st
       + "\", which returns the updated " + ns + " (assign the result back)";
   }
   let declared_receiver: string = stdlib_methods.receiver_of(ns, method);
-  if (declared_receiver.len() > 0) {
-    return base + " — \"" + method + "\" is declared for " + declared_receiver;
+  if (declared_receiver.len() > 0 && !s.stdlib_receiver_matches(ns, method, recv)) {
+    return base + " — \"" + method + "\" is declared for " + declared_receiver + " in \"" + stdlib_methods.module_of(ns, method) + "\"";
   }
   let import_advice: string = s.stdlib_import_advice(ns, method);
   if (import_advice.len() > 0) {
@@ -4465,7 +4484,7 @@ function (s: Scope) unknown_method_message(ns: string, method: string, label: st
   if (did.len() > 0) {
     return base + " — did you mean \"" + did + "\"?";
   }
-  let near_advice: string = s.stdlib_near_advice(ns, method);
+  let near_advice: string = s.stdlib_near_advice(ns, method, recv);
   if (near_advice.len() > 0) {
     return base + near_advice;
   }
@@ -4508,9 +4527,9 @@ function (s: Scope) stdlib_import_advice(ns: string, method: string): string {
 
 // stdlib_near_advice: a near miss among the methods stdlib modules declare on
 // the `ns` surface, with the import it needs, or "".
-function (s: Scope) stdlib_near_advice(ns: string, method: string): string {
+function (s: Scope) stdlib_near_advice(ns: string, method: string, recv: typeinfo.Type): string {
   let near: string = util.suggest(method, stdlib_methods.methods_on(ns));
-  if (near.len() == 0 || stdlib_methods.receiver_of(ns, near).len() > 0) {
+  if (near.len() == 0 || !s.stdlib_receiver_matches(ns, near, recv)) {
     return "";
   }
   let mod: string = stdlib_methods.module_of(ns, near);

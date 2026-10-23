@@ -2,6 +2,8 @@
 
 package checker
 
+import "github.com/jakechampion/lang/internal/syntax/ast"
+
 // Generated from the stdlib sources by TestStdlibMethodIndex. After a stdlib
 // change, run `go test ./internal/check/checker -run TestStdlibMethodIndex -update`.
 //
@@ -722,4 +724,14 @@ var stdlibMethodReceivers = map[string]map[string]string{
 		"flatten":   "Result[Result[T, E], E]",
 		"transpose": "Result[Option[T], E]",
 	},
+}
+
+var stdlibMethodReceiverPatterns = map[string]ast.Type{
+	"Option.failure":   ast.EnumType{Name: "Option", Args: []ast.Type{ast.EnumType{Name: "IoError", Args: []ast.Type(nil)}}},
+	"Option.flatten":   ast.EnumType{Name: "Option", Args: []ast.Type{ast.EnumType{Name: "Option", Args: []ast.Type{ast.ParamType{Name: "T"}}}}},
+	"Option.transpose": ast.EnumType{Name: "Option", Args: []ast.Type{ast.EnumType{Name: "Result", Args: []ast.Type{ast.ParamType{Name: "T"}, ast.ParamType{Name: "E"}}}}},
+	"Option.unzip":     ast.EnumType{Name: "Option", Args: []ast.Type{ast.TupleType{Elems: []ast.Type{ast.ParamType{Name: "T"}, ast.ParamType{Name: "U"}}}}},
+	"Result.failure":   ast.EnumType{Name: "Result", Args: []ast.Type{ast.VoidType{}, ast.EnumType{Name: "IoError", Args: []ast.Type(nil)}}},
+	"Result.flatten":   ast.EnumType{Name: "Result", Args: []ast.Type{ast.EnumType{Name: "Result", Args: []ast.Type{ast.ParamType{Name: "T"}, ast.ParamType{Name: "E"}}}, ast.ParamType{Name: "E"}}},
+	"Result.transpose": ast.EnumType{Name: "Result", Args: []ast.Type{ast.EnumType{Name: "Option", Args: []ast.Type{ast.ParamType{Name: "T"}}}, ast.ParamType{Name: "E"}}},
 }
