@@ -1,0 +1,4 @@
+{'label': 'small.bin-bytes', 'wall_seconds': 1.480814434000422, 'max_rss_kib': 184828, 'assembly_bytes': 482511}
+{'label': 'small.bin-text', 'wall_seconds': 0.12116464599967003, 'max_rss_kib': 29824, 'assembly_bytes': 118680}
+{'label': 'large.bin-bytes', 'wall_seconds': 7.496454308999091, 'max_rss_kib': 1623420, 'assembly_bytes': 4657512}
+{'label': 'large.bin-text', 'wall_seconds': 0.13903929099978996, 'max_rss_kib': 29824, 'assembly_bytes': 1018681}

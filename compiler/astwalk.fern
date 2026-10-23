@@ -88,6 +88,9 @@ pub function fold_expr_nodes[T](e: ast.Expr, own acc: T, visit_stmt: (ast.Stmt, 
     return acc;
   }
   match (e) {
+    ast.ExprBytes(_) => {
+      return acc;
+    },
     ast.ExprIdent(_) => {
       return acc;
     },
@@ -418,6 +421,9 @@ pub function fold_stmt_own_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr,
 // rewrite of the compile path must not rewrite the author's source shape.
 pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
   match (e) {
+    ast.ExprBytes(_) => {
+      return visit(e);
+    },
     ast.ExprNumber(_) => {
       return visit(e);
     },

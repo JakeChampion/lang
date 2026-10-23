@@ -1,0 +1,29 @@
+Main binary filename not available.
+Fern bounded reservoir: retained=1302 dropped=0
+Type: alloc_space
+Showing nodes accounting for 228.97MB, 99.95% of 229.09MB total
+Dropped 255 nodes (cum <= 1.15MB)
+      flat  flat%   sum%        cum   cum%
+  226.61MB 98.92% 98.92%   226.61MB 98.92%  __fern_arr_box
+    2.36MB  1.03% 99.95%     2.36MB  1.03%  __fn___fern_str_concat
+         0     0% 99.95%   222.12MB 96.96%  __fern_alloc_bytes
+         0     0% 99.95%     3.12MB  1.36%  __fern_arr_push
+         0     0% 99.95%     2.90MB  1.26%  __fern_arr_push_owned
+         0     0% 99.95%     1.31MB  0.57%  __fn_asm_ir__emit_entry_runtime
+         0     0% 99.95%     1.30MB  0.57%  __fn_asm_ir__emit_ir_runtime
+         0     0% 99.95%     1.29MB  0.56%  __fn_asm_ir__emit_ir_runtime_fern_fn
+         0     0% 99.95%     4.44MB  1.94%  __fn_asm_ir__emit_module_or_error_sub
+         0     0% 99.95%     2.32MB  1.01%  __fn_irverifygate__open_memo
+         0     0% 99.95%   229.09MB   100%  __fn_main
+         0     0% 99.95%   229.09MB   100%  __fn_run_with
+         0     0% 99.95%   223.86MB 97.72%  __fn_semlower__produced_rows
+         0     0% 99.95%   223.33MB 97.48%  __fn_semlower__substitution_of
+         0     0% 99.95%   223.36MB 97.50%  __fn_semlower__target_substitution
+         0     0% 99.95%   222.14MB 96.96%  __fn_semsource__build
+         0     0% 99.95%   222.11MB 96.95%  __fn_semsource__expr
+         0     0% 99.95%   222.10MB 96.95%  __fn_semsource__packed_bytes
+         0     0% 99.95%   222.11MB 96.95%  __fn_semsource__produce
+         0     0% 99.95%   223.26MB 97.45%  __fn_semsource__produce_module
+         0     0% 99.95%   222.11MB 96.95%  __fn_semsource__stmt
+         0     0% 99.95%   222.11MB 96.95%  __fn_semsource__stmts
+         0     0% 99.95%   229.09MB   100%  _start

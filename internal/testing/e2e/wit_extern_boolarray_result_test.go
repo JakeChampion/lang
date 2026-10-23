@@ -80,7 +80,7 @@ func TestExternBoolArrayResultCustomProvider(t *testing.T) {
 	os.WriteFile(filepath.Join(userWit, "deps", "test", "src.wit"),
 		[]byte("package local:test@0.1.0;\ninterface src { bits: func(n: u32) -> list<bool>; }\n"), 0o644)
 	os.WriteFile(filepath.Join(userWit, "world.wit"),
-		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import local:test/src@0.1.0;\n}\n"), 0o644)
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/src@0.1.0;\n}\n"), 0o644)
 	emptyWat := filepath.Join(dir, "empty.wat")
 	emptyWasm := filepath.Join(dir, "empty.wasm")
 	embedded := filepath.Join(dir, "embedded.wasm")

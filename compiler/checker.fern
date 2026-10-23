@@ -3568,6 +3568,7 @@ function impl_type_name(t: typeinfo.Type): string {
     typeinfo.TypeBool(_) => {},
     typeinfo.TypeString(_) => {},
     typeinfo.TypeFloat(_) => {},
+    typeinfo.TypeLanes(_) => {},
     typeinfo.TypeStruct(_) => {},
     typeinfo.TypeUnion(_) => {},
     typeinfo.TypeMap(_) => {},
@@ -7189,6 +7190,9 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
     ast.ExprArray(a) => {
       return check_array_expr(a, s);
     },
+    ast.ExprBytes(_) => {
+      return t_array(t_u8());
+    },
     ast.ExprIndex(x) => {
       return check_index_expr(x, s);
     },
@@ -10203,6 +10207,9 @@ function merge_view_names(a: string[], b: string[]): string[] {
 // `id_sl(a)[0:1]` needs this arm to see `a`.
 function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   match (e) {
+    ast.ExprBytes(_) => {
+      return ViewRoots { local: true, params: [] };
+    },
     ast.ExprArray(_) => {
       let none: string[] = [];
       return ViewRoots { local: true, params: none };
@@ -10310,6 +10317,9 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
     match (st) {
       ast.StmtVar(v) => {
         match (v.init) {
+          ast.ExprBytes(_) => {
+            localarr = localarr.append(v.name);
+          },
           ast.ExprArray(_) => {
             localarr = localarr.append(v.name);
           },
@@ -13943,44 +13953,10 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
       return int_literal_tree(e);
     },
     typeinfo.TypeArray(wa) => {
-      match (e) {
-        ast.ExprArray(arr) => {
-          // Each element is a coercion site of its own, and one that does
-          // not coerce into a dyn slot is E034 (array_elem_check).
-          if (is_dyn_slot(wa.elem)) {
-            return true;
-          }
-          for element in arr.elements {
-            if (!array_element_settles(element, wa.elem, s)) {
-              return false;
-            }
-          }
-          return true;
-        },
-        _ => {
-          return false;
-        }
-      }
+      return array_literal_settles(e, wa.elem, s);
     },
     typeinfo.TypeTuple(wt) => {
-      match (e) {
-        ast.ExprTuple(tl) => {
-          if (tl.elements.len() != wt.elements.len()) {
-            return false;
-          }
-          let i: i32 = 0;
-          while (i < wt.elements.len()) {
-            if (!settles_or_nested(tl.elements[i], wt.elements[i], s)) {
-              return false;
-            }
-            i = i + 1;
-          }
-          return true;
-        },
-        _ => {
-          return false;
-        }
-      }
+      return tuple_literal_settles(e, wt.elements, s);
     },
     typeinfo.TypeUnion(_) => {
       return ctor_boxes_into(e, want, s) || ctor_payload_settles(e, want, s);
@@ -13991,6 +13967,46 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
     _ => {
       return false;
     }
+  }
+  return false;
+}
+
+function array_literal_settles(e: ast.Expr, elem: typeinfo.Type, s: Scope): boolean {
+  match (e) {
+    ast.ExprArray(arr) => {
+      // Each element is a coercion site. A failed dyn coercion is E034.
+      if (is_dyn_slot(elem)) {
+        return true;
+      }
+      for element in arr.elements {
+        if (!array_element_settles(element, elem, s)) {
+          return false;
+        }
+      }
+      return true;
+    },
+    ast.ExprBytes(_) => {
+      return type_eq(elem, t_u8());
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function tuple_literal_settles(e: ast.Expr, elements: typeinfo.Type[], s: Scope): boolean {
+  if let ast.ExprTuple(tl) = e {
+    if (tl.elements.len() != elements.len()) {
+      return false;
+    }
+    let i: i32 = 0;
+    while (i < elements.len()) {
+      if (!settles_or_nested(tl.elements[i], elements[i], s)) {
+        return false;
+      }
+      i = i + 1;
+    }
+    return true;
   }
   return false;
 }
@@ -14955,7 +14971,7 @@ function lanes_inside_diags(t: typeinfo.Type, line: i32, col: i32): util.Diag[] 
   if (!lanes_inside(t)) {
     return [];
   }
-  return [dg_at("E085", type_label(t) + " holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", line, col)];
+  return [dg_at("E085", util.demangle_all(type_label(t)) + " holds a lane value inside another type; a lane value lives only in a local, a parameter or a result", line, col)];
 }
 
 // e085_decl_diags is E085 for the declared types of a module: a parameter, a
@@ -14978,7 +14994,7 @@ function e085_decl_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeName
     for field in esd.fields {
       let ft: typeinfo.Type = type_from_spelling(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn);
       if (holds_lanes(ft)) {
-        out = out.append(dg_at("E085", "a field or payload of type " + type_label(ft) + " holds a lane value; a lane value lives only in a local, a parameter or a result", esd.line, esd.col));
+        out = out.append(dg_at("E085", "a field or payload of type " + util.demangle_all(type_label(ft)) + " holds a lane value; a lane value lives only in a local, a parameter or a result", esd.line, esd.col));
       }
     }
   }
@@ -16911,7 +16927,7 @@ function lambda_lane_diags(lm: ast.ExprLambda, s: Scope): util.Diag[] {
   let seen: string[] = [];
   for name in astwalk.collect_lambda_idents(lm, []) {
     if (!util.has_str(seen, name) && s.is_bound(name) && is_lanes(s.lookup(name))) {
-      out = out.append(dg_at("E085", "a lambda cannot capture \"" + name + "\" of type " + type_label(s.lookup(name)) + "; a lane value lives only in a local, a parameter or a result", lm.line, lm.col));
+      out = out.append(dg_at("E085", "a lambda cannot capture \"" + name + "\" of type " + util.demangle_all(type_label(s.lookup(name))) + "; a lane value lives only in a local, a parameter or a result", lm.line, lm.col));
     }
     seen = seen.append(name);
   }
@@ -17084,6 +17100,11 @@ function fn_value_settles(e: ast.Expr, want: typeinfo.TypeFunc, s: Scope): boole
       i = i + 1;
     }
     let result: typeinfo.Type = type_from_ref_subst(sig_ret_ref(sig), bn, bt, s.type_names());
+    // A result the callable leaves open, as a method's own type parameter
+    // is, takes what the function gives.
+    if (is_unknown(want.ret_type)) {
+      result = want.ret_type;
+    }
     let actual: typeinfo.Type = t_func_own(params, sig.param_own, result);
     return type_assignable(actual, want, s.unions.unions);
   }
@@ -17452,11 +17473,30 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
         if (mfa.field == "with") {
           return [t_i32(), at.elem];
         }
+        return s.array_method_param_types(c, rt, mfa.field, at.view);
       }
     },
     _ => {}
   }
   return [];
+}
+
+// array_method_param_types is the parameter types of the array receiver
+// method `field` that the call `c` names, with the receiver's element type and
+// the call's type arguments bound. Empty when no such method is imported.
+function (s: Scope) array_method_param_types(c: ast.ExprCall, recv: typeinfo.Type, field: string, view: boolean): typeinfo.Type[] {
+  let asig: MethodSig = s.array_recv_method(field, view);
+  let out: typeinfo.Type[] = [];
+  if (asig.name.len() == 0) {
+    return out;
+  }
+  let mb: MethodBinding = method_binding(c, asig, recv, s);
+  let i: i32 = 0;
+  while (i < asig.param_types.len()) {
+    out = out.append(receiver_bound(asig.param_types[i], param_type_name_at(asig, i), mb, s));
+    i = i + 1;
+  }
+  return out;
 }
 
 // for_iter_diags reports E083 for a `for` over a value it cannot walk: no
@@ -18901,7 +18941,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   // methods; `u8` when std/i32's 21 ascii classifiers moved onto the
   // byte type (both #5629). That is the same bug twice, so the whole
   // integer family is listed now rather than one width at a time.
-  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char") {
+  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "char" || typeinfo.lanes_width(rt) > 0) {
     return true;
   }
   for ch in rt {
@@ -18946,6 +18986,9 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
 // than folded into the generic one.
 function const_expr_err(e: ast.Expr, earlier: string[]): string {
   match (e) {
+    ast.ExprBytes(_) => {
+      return "";
+    },
     ast.ExprNumber(_) => {
       return "";
     },
@@ -21873,6 +21916,9 @@ function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
 // path this walk follows is assumed to be able to.
 function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   match (e) {
+    ast.ExprBytes(_) => {
+      return false;
+    },
     ast.ExprNumber(_) => {
       return false;
     },

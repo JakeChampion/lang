@@ -408,14 +408,9 @@ function content(c: ast.ExprCall, a: Assets, idx: i32, name: string): Content {
   return Content { lit: ast.ExprCall { ...c }, err: msg + " is not valid UTF-8 — read it as u8[] with " + name + "_bytes" };
 }
 
-// bytes_literal is the `u8[]` literal holding `bs`, one element per byte. The
-// element type is stamped so an empty file needs no annotation.
+// The byte array keeps its payload compact through the compiler passes.
 function bytes_literal(bs: u8[], line: i32, col: i32): ast.Expr {
-  let elems: ast.Expr[] = [];
-  for b in bs {
-    elems = elems.append(ast.ExprNumber { text: util.i32_to_string(b as i32), suffix: "u8", raw: "", is_float: false, line: line, col: col });
-  }
-  return ast.ExprArray { elements: elems, elem_ty: "u8", line: line, col: col };
+  return ast.ExprBytes { value: bs, line: line, col: col };
 }
 
 // resolve_one turns `__fern_asset("name")` into the string literal holding that

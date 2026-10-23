@@ -295,7 +295,11 @@ pub function op_f32_from_bits(): Op {
 // or four f32 lanes (`width` 32). The ops take and give lane values except
 // where named: `vsplat` takes an f64 (an f32 lane rounds it), `vextract`
 // gives one, `vreplace` takes a lane value and an f64, `vload` takes an
-// address and `vstore` an address and a lane value. A compare gives the lane
+// address and `vstore` an address and a lane value. `vget` takes an array and
+// an index and gives the lane value of the group of elements from the index,
+// and `vset` takes an array, an index and a lane value and writes the group.
+// Each checks every index of the group, and an f32 lane reads and writes its
+// element's 8-byte slot. A compare gives the lane
 // mask, all ones where it holds; `vselect` takes a, b and then that mask (the
 // order wasm's bitselect reads), giving a where it is set. `vmin` / `vmax`
 // are `b < a ? b : a` / `a < b ? b : a`, as wasm's pmin / pmax, and `vround`
@@ -305,7 +309,7 @@ pub function op_f32_from_bits(): Op {
 
 pub const LANE_KIND_FIRST: i32 = 447;
 
-pub const LANE_KIND_LAST: i32 = 476;
+pub const LANE_KIND_LAST: i32 = 478;
 
 pub function lane_kind_names(): string[] {
   return [
@@ -314,12 +318,18 @@ pub function lane_kind_names(): string[] {
     "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround",
     "veq", "vne", "vlt", "vle", "vgt", "vge",
     "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
+    "vget", "vset",
   ];
 }
 
 // lane_kind_pops parallels lane_kind_names: each op's operand count.
 function lane_kind_pops(): i32[] {
-  return [1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 1, 2];
+  return [1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 1, 2, 2, 3];
+}
+
+// lane_writes names vstore and vset, the lane ops that push nothing.
+pub function lane_writes(id: i32): boolean {
+  return id == LANE_KIND_FIRST + 29 || id == LANE_KIND_LAST;
 }
 
 pub function is_lane_kind(id: i32): boolean {
@@ -755,6 +765,16 @@ pub function op_str_slice_frame(base: i32): Op {
 // and the register backends the 8-byte slot copy.
 pub function op_arr_slice(width: i32): Op {
   return Op { source: 0, decl: 0 - 1, kind_tag: 96, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+
+// A copy that initializes an array literal is a constructor allocation.
+// Its immediate distinguishes it from a conditional copy in a based operation.
+pub function op_array_literal_copy(width: i32): Op {
+  return Op { ...op_arr_slice(width), i32_imm: 2 };
+}
+
+pub function is_array_literal_copy(o: Op): boolean {
+  return o.kind_tag == 96 && o.i32_imm == 2;
 }
 
 // Raw-memory intrinsics (issue #2649, Tier-2 floor — see docs/RUNTIME-INTRINSICS.md).
@@ -2915,6 +2935,17 @@ pub function const_struct_type(packed: string): string {
     i = i + 1;
   }
   return slice_unchecked(packed, 0, i) + "";
+}
+
+pub function const_struct_payload(packed: string): string {
+  let i: i32 = 0;
+  while (i < packed.len() && packed[i] != 124 as u8) {
+    i = i + 1;
+  }
+  if (i == packed.len()) {
+    return "";
+  }
+  return slice_unchecked(packed, i + 1, packed.len()) + "";
 }
 
 pub function const_struct_values(packed: string): string[] {
@@ -6611,7 +6642,7 @@ pub function pure_value_op(o: Op): boolean {
 
 pub function op_pushes(o: Op): i32 {
   let t: i32 = o.kind_tag;
-  if (t == 19 || t == 159 || t == LANE_KIND_LAST) {  // store_local, drop, vstore
+  if (t == 19 || t == 159 || lane_writes(t)) {  // store_local, drop, vstore, vset
     return 0;
   }
   if (t == 288) {  // line: a marker, nothing in and nothing out

@@ -1,0 +1,19 @@
+import "std/i64";
+
+@noinline
+function fresh(n: i32): i32[] {
+  return __raw_array(__raw_arr_box(n));
+}
+
+function main(): i32 {
+  let i: i32 = 0;
+  let n: i32 = args().len() * 1000000;
+  let sum: i64 = 0i64;
+  while (i < n) {
+    let a: i32[] = fresh((i & 7) + 1);
+    sum = sum + a.len() as i64;
+    i = i + 1;
+  }
+  print(sum.to_string());
+  return 0;
+}

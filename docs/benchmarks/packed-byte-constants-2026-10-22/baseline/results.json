@@ -1,0 +1,112 @@
+{
+  "source_git": "c84f7c6a58d02ab5c47724d2286eaa67c15a6f9f",
+  "compiler_sha256": "b05eaf25ef07a679c40506d4cbd6901fa171b3d3e0359c5b91753b5868c3bb4d",
+  "producer_sha256": "3be44999ff7041c0a240210726a73b854f5d3b9d419e1f34d222d3d6442df8d8",
+  "compiler_build_mode": "alloc-pprof with -g",
+  "rows": [
+    {
+      "label": "small.bin-bytes",
+      "input_bytes": 100000,
+      "command": [
+        "/workspace/scratch/lang-byte-literal-profile/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-byte-literal-profile/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-byte-literal-profile/small.bin-bytes.s",
+        "/workspace/scratch/lang-byte-literal-profile/small.bin-bytes.fern",
+        "/workspace/lang-byte-literal-control/internal/stdlib"
+      ],
+      "wall_seconds": 1.5146921169998677,
+      "user_seconds": 1.438015,
+      "system_seconds": 0.076065,
+      "max_rss_kib": 186360,
+      "minor_faults": 43176,
+      "major_faults": 0,
+      "assembly_bytes": 482511,
+      "assembly_sha256": "9a063ac788fc4b266e18195aa16103d7a77b61e13d241924b38f96608df6b9a6",
+      "profile_sha256": "e05c36f1f40ede7e74eaa52144415e77f59efe983dfaec80e10003a7978d14e5"
+    },
+    {
+      "label": "small.bin-text",
+      "input_bytes": 100000,
+      "command": [
+        "/workspace/scratch/lang-byte-literal-profile/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-byte-literal-profile/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-byte-literal-profile/small.bin-text.s",
+        "/workspace/scratch/lang-byte-literal-profile/small.bin-text.fern",
+        "/workspace/lang-byte-literal-control/internal/stdlib"
+      ],
+      "wall_seconds": 0.22308090099977562,
+      "user_seconds": 0.21120899999999998,
+      "system_seconds": 0.0113,
+      "max_rss_kib": 29696,
+      "minor_faults": 3440,
+      "major_faults": 0,
+      "assembly_bytes": 118680,
+      "assembly_sha256": "b0b85e40ced1402ff7ab13985f8de36512ec9b77520b29b42ff0a53aad728d99",
+      "profile_sha256": "ad452e1ec5f93d020eedad76f991135fa2212bc0eee6e67f679837ad87358b48"
+    },
+    {
+      "label": "large.bin-bytes",
+      "input_bytes": 1000000,
+      "command": [
+        "/workspace/scratch/lang-byte-literal-profile/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-byte-literal-profile/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-byte-literal-profile/large.bin-bytes.s",
+        "/workspace/scratch/lang-byte-literal-profile/large.bin-bytes.fern",
+        "/workspace/lang-byte-literal-control/internal/stdlib"
+      ],
+      "wall_seconds": 6.251252661999388,
+      "user_seconds": 5.484926,
+      "system_seconds": 0.756614,
+      "max_rss_kib": 1625464,
+      "minor_faults": 402957,
+      "major_faults": 0,
+      "assembly_bytes": 4657512,
+      "assembly_sha256": "f95965a9b0dc6e9b42b961a1f41a45f0c630a74105a094cef88e871f83b882ab",
+      "profile_sha256": "ce0c0cc2b9bda06b829e69a852fbac6404c70f9d37a728d9ffc317dca6c70367"
+    },
+    {
+      "label": "large.bin-text",
+      "input_bytes": 1000000,
+      "command": [
+        "/workspace/scratch/lang-byte-literal-profile/compiler-alloc",
+        "-embed",
+        "/workspace/scratch/lang-byte-literal-profile/assets",
+        "-target",
+        "x86-64-linux",
+        "-emit",
+        "asm",
+        "-o",
+        "/workspace/scratch/lang-byte-literal-profile/large.bin-text.s",
+        "/workspace/scratch/lang-byte-literal-profile/large.bin-text.fern",
+        "/workspace/lang-byte-literal-control/internal/stdlib"
+      ],
+      "wall_seconds": 0.23285870300060196,
+      "user_seconds": 0.224398,
+      "system_seconds": 0.007901,
+      "max_rss_kib": 29696,
+      "minor_faults": 3922,
+      "major_faults": 0,
+      "assembly_bytes": 1018681,
+      "assembly_sha256": "b265fc187106c2d5a1759edc1dfde27663968db0d4002bcdaaf0d3aeeef16187",
+      "profile_sha256": "3ab87d01ac5ccac49b4ada110a25a5f430674591b229e66f650d2c3dcdec7553"
+    }
+  ]
+}

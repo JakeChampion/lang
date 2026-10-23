@@ -79,6 +79,9 @@ pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_args
 // sizes elements from it via ast.ElemSizeBytesFor.
 pub struct ExprArray { elements: Expr[], elem_ty: string, line: i32, col: i32 }
 
+// A constant byte array needs no expression node for each element.
+pub struct ExprBytes { value: u8[], line: i32, col: i32 }
+
 // ExprLambda is a function-valued expression: `(a: T, b: T): U => body`
 // — same shape as FuncDecl minus the name.
 // Capture semantics happen at the runtime layer; the parser
@@ -215,7 +218,7 @@ pub struct ExprZero { type_name: string, line: i32, col: i32 }
 
 pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool | ExprBinary | ExprUnary | ExprCall
   | ExprArray | ExprTuple | ExprIndex | ExprSlice | ExprStructLit | ExprFieldAccess | ExprLambda
-  | ExprMapLit | ExprFString | ExprUnknown | ExprZero;
+  | ExprMapLit | ExprFString | ExprUnknown | ExprZero | ExprBytes;
 
 // expr_line / expr_col are the 1-based source position an expression node
 // carries, or 0 for the three that carry none (ExprBool, ExprIndex,
@@ -335,6 +338,9 @@ pub function expr_line(e: Expr): i32 {
     ExprArray(al) => {
       return al.line;
     },
+    ExprBytes(bs) => {
+      return bs.line;
+    },
     ExprTuple(tl) => {
       return tl.line;
     },
@@ -398,6 +404,9 @@ pub function expr_ty(e: Expr): string {
     ExprArray(al) => {
       return "";
     },
+    ExprBytes(_) => {
+      return "u8[]";
+    },
     ExprTuple(tl) => {
       return "";
     },
@@ -457,6 +466,9 @@ pub function expr_col(e: Expr): i32 {
     },
     ExprArray(al) => {
       return al.col;
+    },
+    ExprBytes(bs) => {
+      return bs.col;
     },
     ExprTuple(tl) => {
       return tl.col;

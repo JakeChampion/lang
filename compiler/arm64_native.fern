@@ -3483,6 +3483,9 @@ function arm64_gas_vecgen_handles(mnem: string): boolean {
 // instruction's own element size: the NARROW side for xtn/shrn (the result),
 // the narrow SOURCE for sshll/uxtl (the input).
 function arm64_gas_emit_narrowwide(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+  if (arm64_gas_fcvt_nl(mnem) >= 0) {
+    return arm64_gas_emit_fcvt_nl(a, mnem, ops);
+  }
   if (mnem == "xtn" || mnem == "xtn2") {
     if (ops.len() != 2) {
       return a;
@@ -3494,7 +3497,9 @@ function arm64_gas_emit_narrowwide(own a: Arm64Asm, mnem: string, ops: string[])
     ));
     return a;
   }
-  if (mnem == "shrn" || mnem == "shrn2") {
+  let kind: i32 = arm64_gas_shll_kind(mnem);
+  if (kind < 0) {
+    // shrn and shrn2, the rest of the narrow family.
     if (ops.len() != 3) {
       return a;
     }
@@ -3506,7 +3511,6 @@ function arm64_gas_emit_narrowwide(own a: Arm64Asm, mnem: string, ops: string[])
     ));
     return a;
   }
-  let kind: i32 = arm64_gas_shll_kind(mnem);
   let alias: boolean = kind >= 4;
   if (ops.len() != 3 && !alias) {
     return a;
@@ -3524,6 +3528,52 @@ function arm64_gas_emit_narrowwide(own a: Arm64Asm, mnem: string, ops: string[])
     20, arm64_gas_esize(sc) + amt, kind % 4 >= 2, kind % 2 == 1,
   ));
   return a;
+}
+
+// arm64_gas_emit_fcvt_nl encodes fcvtn and fcvtl. Size 1 is the f64 side, and
+// the `2` forms read or write the high half.
+function arm64_gas_emit_fcvt_nl(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+  if (ops.len() != 2) {
+    return a;
+  }
+  arm64_push_arr(a.code, arm64_vec2misc(
+    [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+    arm64_gas_fcvt_nl(mnem), 1, arm64_str_indexof(mnem, "2") == mnem.len() - 1, false,
+  ));
+  return a;
+}
+
+// arm64_gas_bad_fcvt_nl vets fcvtn (the destination is the narrow side) and
+// fcvtl (the source is), each over the f32 and f64 arrangements.
+function arm64_gas_bad_fcvt_nl(mnem: string, ops: string[]): string {
+  if (ops.len() != 2) {
+    return mnem + ":arity";
+  }
+  if (arm64_gas_vreg_any(ops[0]) < 0 || arm64_gas_vreg_any(ops[1]) < 0) {
+    return mnem + ":reg";
+  }
+  let narrow: i32 = arm64_gas_vreg_arrof(ops[0]);
+  let wide: i32 = arm64_gas_vreg_arrof(ops[1]);
+  if (arm64_gas_fcvt_nl(mnem) == 23) {
+    narrow = arm64_gas_vreg_arrof(ops[1]);
+    wide = arm64_gas_vreg_arrof(ops[0]);
+  }
+  if (arm64_gas_arr_size(narrow) != 2 || !arm64_gas_narrow_wide_ok(narrow, wide, arm64_str_indexof(mnem, "2") == mnem.len() - 1)) {
+    return mnem + ":arr";
+  }
+  return "";
+}
+
+// arm64_gas_fcvt_nl is the two-register-misc opcode of fcvtn (f64 to f32,
+// 22) and fcvtl (f32 to f64, 23), with or without the `2`, and -1 otherwise.
+function arm64_gas_fcvt_nl(mnem: string): i32 {
+  if (mnem == "fcvtn" || mnem == "fcvtn2") {
+    return 22;
+  }
+  if (mnem == "fcvtl" || mnem == "fcvtl2") {
+    return 23;
+  }
+  return 0 - 1;
 }
 
 // arm64_gas_emit_vecgen encodes one of them. Operand shapes are vetted by
@@ -3650,8 +3700,7 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
     ));
     return a;
   }
-  if (arm64_gas_shll_kind(mnem) >= 0 || mnem == "xtn" || mnem == "xtn2"
-    || mnem == "shrn" || mnem == "shrn2") {
+  if (arm64_gas_shll_kind(mnem) >= 0 || arm64_gas_family(mnem) == arm64_fam_narrow()) {
     return arm64_gas_emit_narrowwide(a, mnem, ops);
   }
   if (mnem == "ext") {
@@ -5080,6 +5129,9 @@ function arm64_gas_bad_sha(mnem: string, ops: string[]): string {
 // low one, from the same opcode. A mismatched pair is a valid word for a
 // different instruction.
 function arm64_gas_bad_narrowwide(mnem: string, ops: string[]): string {
+  if (arm64_gas_fcvt_nl(mnem) >= 0) {
+    return arm64_gas_bad_fcvt_nl(mnem, ops);
+  }
   let kind: i32 = arm64_gas_shll_kind(mnem);
   let is_xtn: boolean = mnem == "xtn" || mnem == "xtn2";
   let is_shrn: boolean = mnem == "shrn" || mnem == "shrn2";
@@ -6665,14 +6717,28 @@ function arm64_gas_family_len5_f(mnem: string): i32 {
 }
 
 function arm64_gas_family_len5_f_fc(mnem: string): i32 {
-  if (mnem == "fcsel") {
+  let c: u8 = mnem[2];
+  if (c == b'c' && mnem == "fccmp") {
     return arm64_fam_fpcond();
   }
-  if (mnem == "fccmp") {
-    return arm64_fam_fpcond();
-  }
-  if (mnem == "fcmpe") {
+  if (c == b'm' && mnem == "fcmpe") {
     return arm64_fam_fcmp();
+  }
+  if (c == b's' && mnem == "fcsel") {
+    return arm64_fam_fpcond();
+  }
+  if (c == b'v') {
+    return arm64_gas_family_len5_f_fc_fcv(mnem);
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len5_f_fc_fcv(mnem: string): i32 {
+  if (mnem == "fcvtn") {
+    return arm64_fam_narrow();
+  }
+  if (mnem == "fcvtl") {
+    return arm64_fam_narrow();
   }
   return 0 - 1;
 }
@@ -6964,6 +7030,12 @@ function arm64_gas_family_len6_f_fc(mnem: string): i32 {
   }
   if (mnem == "fcvtzu") {
     return arm64_fam_fcvtz();
+  }
+  if (mnem == "fcvtn2") {
+    return arm64_fam_narrow();
+  }
+  if (mnem == "fcvtl2") {
+    return arm64_fam_narrow();
   }
   return 0 - 1;
 }

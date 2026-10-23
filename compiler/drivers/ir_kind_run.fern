@@ -106,6 +106,7 @@ function main(): i32 {
     "vsplat", "vextract", "vreplace", "vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vfma",
     "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround", "veq", "vne", "vlt", "vle", "vgt", "vge",
     "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
+    "vget", "vset",
   ];
   if (!ir.kind_retired(198) || ir.kind_name(198) != "invalid") {
     failures = failures + 1;

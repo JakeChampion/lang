@@ -90,14 +90,13 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// sends an exit-using program to the io wrap (shape 14).
 		{"noio-exit-refused", false, `function main(): i32 { exit(0); return 0; }`, nil},
 
-		// Mode 2 — stdout. The $__fern_fd_write shim serves every writer, so print /
-		// write / putchar all use the same two imports.
+		// Mode 2 uses stderr for runtime aborts. Scalar putchar needs only stdout.
 		{"io-write", true, `function main(): i32 { write("hi"); return 0; }`,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout"}},
 		{"io-putchar", true, `function main(): i32 { putchar(72); putchar(105); return 0; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
 		{"io-fstring", true, "import \"std/i32\";\nfunction main(): i32 { let n: i32 = 21; write(f\"answer={n * 2}\"); return 0; }",
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout"}},
 		// eprint reorders the trio (get-stderr first) to match
 		// component_full_io_eprint, and keeps stdout imported even when the
 		// program never writes to it.
@@ -108,7 +107,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// exit adds wasi:cli/exit last (component_full_io_exit's shape); the IR
 		// emits `call $__fern_proc_exit`, which the mode-2 shim defines over it.
 		{"io-exit", true, `function main(): i32 { write("bye"); exit(0); return 0; }`,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/exit@0.2.0 exit"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:cli/exit@0.2.0 exit"}},
 
 		// The preview2-backed builtins. Their helper bodies (*_p2) define the
 		// same $__fern_* functions the IR already calls, so mode 2 swaps the
@@ -116,13 +115,13 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// canonical interface order — random, wall-clock, monotonic-clock — after
 		// the stdout pair, because the framings alias positionally.
 		{"io-random-i32", true, `function main(): i32 { if (random_i32() != 0) { write("r"); } return 0; }`,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:random/random@0.2.0 get-random-u64"}},
 		{"io-random-bytes", true, `function main(): i32 { let b: u8[] = random_bytes(4); if (b.len() == 4) { write("b"); } return 0; }`,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:random/random@0.2.0 get-random-u64"}},
 		{"io-clock-wall", true, `function main(): i32 { if (now_unix_ms() > 0) { write("w"); } return 0; }`,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/wall-clock@0.2.0 now"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:clocks/wall-clock@0.2.0 now"}},
 		{"io-clock-mono", true, `function main(): i32 { if (monotonic_ns() > 0) { write("m"); } return 0; }`,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/monotonic-clock@0.2.0 now"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:clocks/monotonic-clock@0.2.0 now"}},
 		// A no-I/O component has no import to satisfy the byte source, so the
 		// gate refuses random there. Unreachable through the CLI (component_shape
 		// sends every random program to the io wrap).
@@ -132,24 +131,24 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// cabi_realloc — the guest allocator the canonical ABI materialises the
 		// list into, without which `component new` rejects the module.
 		{"io-env", true, `function main(): i32 { match (env("HOME")) { Some(v) => { write(v); }, None => { write("none"); } } return 0; }`,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-environment"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:cli/environment@0.2.0 get-environment"}},
 		{"io-args", true, `function main(): i32 { let a: string[] = args(); write(a[0]); return 0; }`,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:cli/environment@0.2.0 get-arguments"}},
 
 		// The filesystem pair, last of component_shape's categories to move.
 		// Their mode-2 bodies box a real IoError variant rather than a raw wasi
 		// error code (#5795), and fs sits last in the import order, which is the
 		// slot component_full_io_fs / _fs_write / _fs_rw alias.
 		{"io-read-file", true, `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 1; } } return 2; }`,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:filesystem/preopens@0.2.0 get-directories", "wasi:filesystem/types@0.2.0 [method]descriptor.open-at", "wasi:filesystem/types@0.2.0 [resource-drop]descriptor", "wasi:filesystem/types@0.2.0 [method]descriptor.read-via-stream", "wasi:io/streams@0.2.0 [method]input-stream.blocking-read", "wasi:io/streams@0.2.0 [resource-drop]input-stream"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:filesystem/preopens@0.2.0 get-directories", "wasi:filesystem/types@0.2.0 [method]descriptor.open-at", "wasi:filesystem/types@0.2.0 [resource-drop]descriptor", "wasi:filesystem/types@0.2.0 [method]descriptor.read-via-stream", "wasi:io/streams@0.2.0 [method]input-stream.blocking-read", "wasi:io/streams@0.2.0 [resource-drop]input-stream"}},
 		{"io-write-file", true, `function main(): i32 { match (write_file("o.txt", "x")) { Err(e) => { return 1; }, Ok(_) => { return 0; } } return 2; }`,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:filesystem/preopens@0.2.0 get-directories", "wasi:filesystem/types@0.2.0 [method]descriptor.open-at", "wasi:filesystem/types@0.2.0 [resource-drop]descriptor", "wasi:filesystem/types@0.2.0 [method]descriptor.write-via-stream", "wasi:io/streams@0.2.0 [resource-drop]output-stream"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:filesystem/preopens@0.2.0 get-directories", "wasi:filesystem/types@0.2.0 [method]descriptor.open-at", "wasi:filesystem/types@0.2.0 [resource-drop]descriptor", "wasi:filesystem/types@0.2.0 [method]descriptor.write-via-stream", "wasi:io/streams@0.2.0 [resource-drop]output-stream"}},
 
 		// now_unix_ms() is an i64, so this composes the clock import with the
 		// wide `.to_string()` formatter ($__fern_i64_to_str, #5826) — the last
 		// per-function IR gap a component core hit.
 		{"clock-tostring", true, "import \"std/i64\";\nfunction main(): i32 { write(now_unix_ms().to_string()); return 0; }",
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/wall-clock@0.2.0 now"}},
+			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:clocks/wall-clock@0.2.0 now"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bin := runBin

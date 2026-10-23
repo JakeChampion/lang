@@ -3065,6 +3065,9 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
 // Everything else declines and the spine carries the recursion.
 function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: VarDecls, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs): (ast.Expr, InlineCloAcc, boolean) {
   match (e) {
+    ast.ExprBytes(_) => {
+      return (e, acc, false);
+    },
     ast.ExprCall(call) => {
       // Wrap each fn-typed-param argument into an env box; recurse the rest
       // (so a nested aggregate / fn-arg call inside a non-fn argument is
@@ -3483,6 +3486,9 @@ function lift_inline_closures_expr(e: ast.Expr, fd: parser.FuncDecl, vars: VarDe
 // as a value (passed, returned, stored, captured) is boxed into a uniform box.
 function value_use_idents_expr(e: ast.Expr, own acc: string[]): string[] {
   match (e) {
+    ast.ExprBytes(_) => {
+      return acc;
+    },
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(_) => {},
