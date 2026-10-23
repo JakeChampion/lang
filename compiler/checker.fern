@@ -3046,6 +3046,12 @@ function variant_value_payloads(s: Scope, en: string, name: string): i32 {
     }
     return 0;
   }
+  return builtin_variant_payloads(s, en, name);
+}
+
+// builtin_variant_payloads is variant_value_payloads for a variant no enum in
+// scope declares: Option's and Result's, and the injected enums'.
+function builtin_variant_payloads(s: Scope, en: string, name: string): i32 {
   let builtin: string = parser.builtin_enum_of(name);
   if (builtin.len() == 0 || en.len() > 0 && en != builtin) {
     return 0;
