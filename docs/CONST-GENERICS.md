@@ -1,7 +1,7 @@
 # Const generics
 
-Status: CG1a ships. A function takes a const parameter, and each call writes
-its const argument (§4). CG1b, CG2 and CG3 are plans.
+Status: [plan] CG1a ships. A function takes a const parameter, and each call
+writes its const argument (§4). CG1b, CG2 and CG3 are plans.
 
 A const parameter is a generic parameter whose argument is an integer, not a
 type. `Vec[N, T]` is the first consumer: it is a lane type of `N` lanes of
