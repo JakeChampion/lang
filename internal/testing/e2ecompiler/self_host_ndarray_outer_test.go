@@ -70,7 +70,7 @@ function main(): i32 {
   let labels: ndarray.NdArray[string] = ints.outer(names, (x: i64, y: string): string => x.to_string() + y);
   let flat: string[] = labels.to_flat();
   if (flat.len() != 6 || flat[0] != "1a" || flat[1] != "1b" || flat[2] != "1c" || flat[3] != "2a" || flat[4] != "2b" || flat[5] != "2c") { return 10; }
-  if (names.get([1]) != "b" || ints.get([1]) != 2i64 || a.get([1, 2]) != 6.0 || b.get([1, 1]) != 10.0) { return 11; }
+  if (names.get_unchecked([1]) != "b" || ints.get_unchecked([1]) != 2i64 || a.get_unchecked([1, 2]) != 6.0 || b.get_unchecked([1, 1]) != 10.0) { return 11; }
   return 0;
 }
 `

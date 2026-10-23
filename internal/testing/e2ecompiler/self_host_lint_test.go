@@ -276,11 +276,11 @@ func TestSelfHostLintConfiguration(t *testing.T) {
 		}
 	}
 	unquoted := map[string]string{"fern.toml": "[lint]\ncyclomatic-complexity = deny\n", "a.fern": lintNoisyFn}
-	if _, errOut, code := lintRun(t, unquoted, "a.fern"); code != 2 || !strings.Contains(errOut, `fern.toml: line 2: [lint] cyclomatic-complexity: expected a quoted string or a number, got "deny"`) {
+	if _, errOut, code := lintRun(t, unquoted, "a.fern"); code != 2 || !strings.Contains(errOut, `fern.toml:2:1: error[E088]: [lint] cyclomatic-complexity: expected a quoted string or a number, got "deny"`) {
 		t.Errorf("unquoted severity: exit %d, stderr %q", code, errOut)
 	}
 	bad := map[string]string{"fern.toml": "[lint.options]\nmax = 3\n", "a.fern": lintNoisyFn}
-	if _, errOut, code := lintRun(t, bad, "a.fern"); code != 2 || !strings.Contains(errOut, "fern.toml: line 2: [lint.options] key \"max\" must be spelled <rule>.<option>") {
+	if _, errOut, code := lintRun(t, bad, "a.fern"); code != 2 || !strings.Contains(errOut, "fern.toml:2:1: error[E088]: [lint.options] key \"max\" must be spelled <rule>.<option>") {
 		t.Errorf("bad [lint.options] key: exit %d, stderr %q", code, errOut)
 	}
 }

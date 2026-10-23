@@ -1941,6 +1941,34 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   }
   let takes: i32[] = tuple_takes(f, a, owned, defs);
   let held: boolean[] = held_elements(f, a, owned, defs, sup);
+  let asked: boolean[] = twin_holds(f, a, defs, owned, held);
+  let past: PayloadTakes = takes_past_holds(f, a, owned, asked, defs);
+  // A second take out of a read the ask took but slot_held refused would
+  // move the value out of a box something still holds, so a take goes in
+  // only once its source is owned.
+  let added: boolean = false;
+  let grew: boolean = true;
+  while (grew) {
+    grew = false;
+    i = 0;
+    while (i < past.taken.len()) {
+      if (past.taken[i] && !payloads[i] && owned[defs[i].args[0]] && !slot_held(defs, asked, i)) {
+        payloads = payloads.with(i, true);
+        likely = likely.with(i, past.likely[i]);
+        owned = owned.with(i, true);
+        pt = PayloadTakes { ...pt, crossing: pt.crossing || past.crossing };
+        added = true;
+        grew = true;
+      }
+      i = i + 1;
+    }
+  }
+  // The second takes stand on the holds they were asked over, so those stay.
+  // A read of a newly taken value that outlives the use it is spent in is
+  // held as reads of the first takes are.
+  if (added) {
+    held = either(asked, held_elements(f, a, owned, defs, sup));
+  }
   // A taken payload or tuple element is a unit of its own at the read
   // already, moved out of the box or retained there by the lowering's
   // uniqueness test (ssarc.steal); the hold read it as still anchored to its
@@ -1983,6 +2011,137 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     deps = through_takes(parents, deps, takes, held, payloads);
   }
   return Units { owned: owned, parents: parents, deps: deps, takes: takes, held: held, payloads: payloads, reflow: reflow, likely: likely };
+}
+
+// The payload takes a hold lets through: a read retained at its own read is
+// a unit of its own and no longer keeps its source alive, so a slot of that
+// source can be taken where the source dies, although the held read outlives
+// it. The takes are asked again over the chains the holds cut.
+function takes_past_holds(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], held: boolean[], defs: ssa.SInst[]): PayloadTakes {
+  let none: PayloadTakes = PayloadTakes { taken: __alloc_bool(f.graph.nvals), crossing: false, likely: __alloc_bool(f.graph.nvals) };
+  if (count_true(held) == 0) {
+    return none;
+  }
+  let parents: i32[][] = a.parents;
+  let deps: i32[][] = a.dependencies;
+  let w: i32 = 0;
+  while (w < held.len()) {
+    if (held[w]) {
+      parents = parents.with(w, []);
+      deps = deps.with(w, []);
+    }
+    w = w + 1;
+  }
+  deps = through_takes(parents, deps, no_takes(f.graph.nvals), held, __alloc_bool(f.graph.nvals));
+  let flow: ssalive.Flow = ssadeps.analyze(f.graph, deps);
+  if (!flow.ok) {
+    return none;
+  }
+  let cut: ssasem.Analysis = ssasem.Analysis { ...a, parents: parents, dependencies: deps, flow: flow, anchored: ssasem.anchored_of(deps, f.graph.nvals) };
+  return payload_takes(f, cut, owned, defs);
+}
+
+// `held` with the reads the takes of second field reads need held. A record
+// field read twice, the second time where the record can give the field up,
+// is taken only if no read off the first read is still in hand past the
+// second: such a read holds its own unit, and the take moves the field out
+// from under the first read.
+function twin_holds(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], held: boolean[]): boolean[] {
+  let out: boolean[] = held;
+  let reads: i32[][] = field_reads(f, owned);
+  let bare: ssalive.Flow = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
+  let bi: i32 = 0;
+  while (bi < f.graph.blocks.len()) {
+    let pos: i32 = 0;
+    for ins in f.graph.blocks[bi].insts {
+      if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1 && ins.result >= 0 && ins.args[0] < reads.len()) {
+        for first in reads[ins.args[0]] {
+          if (first != ins.result && defs[first].imm == ins.imm && defs[first].str == ins.str) {
+            out = holds_off(f, a, defs, bare, first, ins.result, bi, pos, out);
+          }
+        }
+      }
+      pos = pos + 1;
+    }
+    bi = bi + 1;
+  }
+  return out;
+}
+
+// `out` with each read off `first` still in hand past (`bi`, `pos`), where
+// `r` reads the slot `first` reads.
+function holds_off(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bare: ssalive.Flow, first: i32, r: i32, bi: i32, pos: i32, own out: boolean[]): boolean[] {
+  let k: i32 = a.anchored.start[first];
+  while (k < a.anchored.start[first + 1]) {
+    let w: i32 = a.anchored.at[k];
+    if (w != r && !out[w] && retainable_read(f, defs, w) && (ssalive.live_out_has(bare, bi, w) || ssasem.read_after(a.uses, bi, pos, w))) {
+      out = out.with(w, true);
+    }
+    k = k + 1;
+  }
+  return out;
+}
+
+// The record field reads of each owned value, by the value read.
+function field_reads(f: ssasem.Func, owned: boolean[]): i32[][] {
+  let out: i32[][] = empty_chains(f.graph.nvals);
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1 && ins.result >= 0) {
+        let root: i32 = ins.args[0];
+        if (root >= 0 && root < out.len() && root < owned.len() && owned[root]) {
+          out = out.with(root, out[root].append(ins.result));
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function empty_chains(n: i32): i32[][] {
+  let out: i32[][] = [];
+  while (out.len() < n) {
+    out = out.append([]);
+  }
+  return out;
+}
+
+function either(a: boolean[], b: boolean[]): boolean[] {
+  let out: boolean[] = a;
+  let i: i32 = 0;
+  while (i < b.len() && i < out.len()) {
+    if (b[i]) {
+      out = out.with(i, true);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// Whether a held read other than `r` reads the slot `r` reads. The hold cut
+// that read's chain, so the second ask of the takes no longer sees it as a
+// use of the root, but it loads the slot the take would empty.
+function slot_held(defs: ssa.SInst[], held: boolean[], r: i32): boolean {
+  let d: ssa.SInst = defs[r];
+  let w: i32 = 0;
+  while (w < held.len()) {
+    let h: ssa.SInst = defs[w];
+    if (held[w] && w != r && h.kind_tag == d.kind_tag && h.imm == d.imm && h.str == d.str && h.args.len() > 0 && h.args[0] == d.args[0]) {
+      return true;
+    }
+    w = w + 1;
+  }
+  return false;
+}
+
+function no_takes(n: i32): i32[] {
+  let out: i32[] = __alloc_i32(n);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, 0 - 1);
+    i = i + 1;
+  }
+  return out;
 }
 
 // A value read through one that became a unit of its own reaches the storage
@@ -2098,18 +2257,23 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned:
 function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], sup: SupplyTable): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   let direct: ssalive.Flow = ssalive.compute_checked(f.graph, a.parents);
+  let bare: ssalive.Flow = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
   let consumed: boolean[] = consumed_values(f, owned, sup);
   let before: i32 = 0 - 1;
   let count: i32 = 0;
   while (count != before) {
     before = count;
-    out = hold_pass(f, a, defs, direct, consumed, owned, out, sup);
+    out = hold_pass(f, a, defs, Flows { direct: direct, bare: bare }, consumed, owned, out, sup);
     count = count_true(out);
   }
   return out;
 }
 
-function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[], sup: SupplyTable): boolean[] {
+// The liveness the holds read: through a value's direct parents, and by its
+// own uses alone.
+struct Flows { direct: ssalive.Flow, bare: ssalive.Flow }
+
+function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: Flows, consumed: boolean[], owned: boolean[], own out: boolean[], sup: SupplyTable): boolean[] {
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     let b: ssa.SBlock = f.graph.blocks[bi];
@@ -2117,7 +2281,7 @@ function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct
     while (pos < b.insts.len()) {
       let ins: ssa.SInst = b.insts[pos];
       if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-        out = hold_at(f, a, defs, direct, consumed, owned, out, ins, bi, pos, sup.at(bi, pos));
+        out = hold_at(f, a, defs, flows, consumed, owned, out, ins, bi, pos, sup.at(bi, pos));
       }
       pos = pos + 1;
     }
@@ -2128,14 +2292,30 @@ function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct
 }
 
 // hold_pass at the instruction `ins`, `pos` in block `bi`.
-function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[], ins: ssa.SInst, bi: i32, pos: i32, supplies: Supply[]): boolean[] {
+function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], flows: Flows, consumed: boolean[], owned: boolean[], own out: boolean[], ins: ssa.SInst, bi: i32, pos: i32, supplies: Supply[]): boolean[] {
   for got in supplies {
     if (owned[got.value] || out[got.value]) {
       let past: i32[] = outliving(f, a, defs, owned, out, got.value, bi, pos, 0 - 1, ins.args);
       out = mark_all(out, past);
     }
   }
-  for v in dying_reads(f, a, direct, owned, out, supplies, bi, pos) {
+  // An owned record an update rebuilds is consumed there too, as its box is
+  // the update's to reuse, so a read of it still in hand past the update
+  // takes a unit of its own rather than keep the record alive. Only a read
+  // used past the update itself is held: one in hand only as the parent of
+  // such a read is not needed once that read holds its own unit.
+  let donor: i32 = ssasem.update_base(ins);
+  if (donor >= 0 && donor < owned.len() && owned[donor]) {
+    for w in outliving(f, a, defs, owned, out, donor, bi, pos, 0 - 1, []) {
+      if (ssalive.live_out_has(flows.bare, bi, w) || ssasem.read_after(a.uses, bi, pos, w)) {
+        out = out.with(w, true);
+      }
+    }
+  }
+  for v in dying_reads(f, a, flows.direct, owned, out, supplies, bi, pos) {
+    if (v == donor) {
+      continue;
+    }
     for w in outliving(f, a, defs, owned, out, v, bi, pos, 0 - 1, []) {
       if (wanted(a.anchored, consumed, w)) {
         out = out.with(w, true);

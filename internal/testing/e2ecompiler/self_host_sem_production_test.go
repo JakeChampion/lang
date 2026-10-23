@@ -1446,7 +1446,7 @@ import "std/ndarray" as ndarray;
 function main(): i32 {
     let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
     let m: ndarray.NdArray[i32] = a.transpose().map((x: i32): i32 => x * 2);
-    return m.get([1, 1]);
+    return m.get_unchecked([1, 1]);
 }`},
 	// The sibling root, one layer in. `map_rank[T, U](k: i32, f: (NdArray[T])
 	// => NdArray[U])` pins U only inside the callback's BRACKETED return, and
@@ -1469,7 +1469,7 @@ function sum_cell(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
 function main(): i32 {
     let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
     let sums: ndarray.NdArray[i32] = a.map_rank(1, sum_cell);
-    return sums.get([1]);
+    return sums.get_unchecked([1]);
 }`},
 	// The struct monomorphiser mangled every type spelling on a declaration —
 	// parameters, return, receiver, struct fields — but not the two a CALLABLE

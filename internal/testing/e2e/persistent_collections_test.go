@@ -118,7 +118,14 @@ function main(): i32 {
     }
     let w: pvec.PVec[i32] = v;
     i = 0;
-    while (i < 2100) { w = w.pop(); if (!w.is_valid() || w.len() != 2099 - i) { return 5; } i = i + 1; }
+    while (i < 2100) {
+        match (w.pop()) {
+            Some((rest, x)) => { if (x != (2099 - i) * 2) { return 5; } w = rest; },
+            None => { return 5; }
+        }
+        if (!w.is_valid() || w.len() != 2099 - i) { return 5; }
+        i = i + 1;
+    }
     if (!w.is_empty() || v.len() != 2100 || v.last().unwrap_or(-1) != 4198) { return 6; }
     let arr: i32[] = snap.to_array();
     if (arr.len() != 2100 || arr[2099] != 2099 || snap.fold(0, (a: i32, x: i32) => a + x) != 2203950) { return 7; }

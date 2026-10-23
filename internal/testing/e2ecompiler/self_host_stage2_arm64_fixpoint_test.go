@@ -49,8 +49,8 @@ func childFailure(err error) string {
 //
 // COST. Stage 1 is the expensive half and it runs NATIVELY (~3 min for 35 MB of
 // asm); the aarch64 link is ~5 s. Stage 2 is qemu, and the per-case cost is
-// dominated by stdlib LOADING rather than emit: ~55 s for a stdlib-importing
-// test against ~2 s for a bare compiler module. The `self` case — gen2
+// dominated by stdlib LOADING rather than emit, so each case loads the stdlib
+// and costs up to ~55 s. The `self` case — gen2
 // recompiling the whole compiler under qemu — is far heavier again and is gated
 // behind FERN_STAGE2_SELF=1 rather than paid on every run.
 func TestSelfHostStage2FixpointArm64(t *testing.T) {

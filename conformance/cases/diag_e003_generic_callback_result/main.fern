@@ -1,0 +1,16 @@
+// A generic function passed as a callback binds the method's result variable
+// to the result of its instance, so a wrong annotation is an E003.
+function identity[T](x: T): T {
+  return x;
+}
+
+function (xs: [T]) transform[U](f: (T) => U): U {
+  return f(xs[0]);
+}
+
+function main(): i32 {
+  let ints: i64[] = [4294967296, 9];
+  let view: [i64] = ints[:];
+  let picked: string = view.transform(identity);
+  return 0;
+}

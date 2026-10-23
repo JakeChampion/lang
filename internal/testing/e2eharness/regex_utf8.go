@@ -23,6 +23,10 @@ function text_is(value: Option[string], expected: string): boolean {
     }
 }
 
+function at(value: Option[i32], want: i32): boolean {
+    match (value) { Some(v) => { return v == want; }, None => { return false; } }
+}
+
 function text_none(value: Option[string]): boolean {
     match (value) { Some(text) => { return false; }, None => { return true; } }
 }
@@ -47,7 +51,7 @@ function check(): i32 {
         while (i < captures.len()) {
             let c = captures[i];
             if (!text_none(c.group(0)) || !text_none(c.group(1))) { buf_free(h); return 7; }
-            if (c.group_start(1) != i || c.group_end(1) != i + 1) { buf_free(h); return 8; }
+            if (!at(c.group_start(1), i) || !at(c.group_end(1), i + 1)) { buf_free(h); return 8; }
             let raw = c.group_bytes(1);
             if (raw.len() != 1 || raw[0] != bytes[i]) { buf_free(h); return 9; }
             buf_push_bytes_range(h, raw, 0, raw.len());
@@ -56,7 +60,7 @@ function check(): i32 {
         let rebuilt = buf_take_bytes(h);
         buf_free(h);
         if (!same_bytes(rebuilt, bytes)) { return 10; }
-        let named = regex.regex_captures("(?<a>.)(?<b>.*)", text);
+        let Some(named) = regex.regex_captures("(?<a>.)(?<b>.*)", text) else { return 11; };
         if (!text_none(named.group_named("a")) || !text_none(named.group_named("b"))) { return 11; }
         if (!same_bytes(named.group_named_bytes("a"), [bytes[0]])) { return 12; }
         if (!text_is(regex.regex_replace_groups("(?<a>.)(?<b>.*)", text, "${a}${b}"), text)) { return 13; }
@@ -95,12 +99,11 @@ function check(): i32 {
             Some(parts) => { if (parts.len() != 1 || parts[0] != text) { return 32; } },
             None => { return 33; },
         }
-        let c = regex.regex_captures("NEVER", text);
-        if (!text_is(c.group(1), "") || !text_is(c.group_named("missing"), "")) { return 34; }
-        if (c.group_bytes(1).len() != 0 || c.group_named_bytes("missing").len() != 0) { return 35; }
+        if let Some(_) = regex.regex_captures("NEVER", text) { return 34; }
+        if (regex.regex_captures_all("NEVER", text).len() != 0) { return 35; }
     }
-    let absent = regex.regex_captures("a(b)?", "a");
-    if (!text_is(absent.group(1), "") || absent.has_group(1)) { return 36; }
+    let Some(absent) = regex.regex_captures("a(b)?", "a") else { return 36; };
+    if (!text_is(absent.group(1), "") || absent.has_group(1) || !text_is(absent.group_named("missing"), "") || absent.group_named_bytes("missing").len() != 0) { return 36; }
     if (!text_is(regex.regex_replace_groups("(é)", "aéb", "€$$$1𐀀"), "a€$é𐀀b")) { return 37; }
     if (!text_is(regex.regex_replace_groups("(é)", "é", "${missing}$x$"), "$x$")) { return 38; }
     if (!text_is(regex.regex_replace_groups("(é)", "é", "${unclosed"), "${unclosed")) { return 39; }

@@ -70,7 +70,7 @@ func runFetch(start string) error {
 			}
 			depMan, err := manifest.Load(depDir)
 			if err != nil {
-				return fmt.Errorf("dependency %q: %w", name, err)
+				return err
 			}
 			if depMan != nil {
 				if err := walk(depMan); err != nil {
