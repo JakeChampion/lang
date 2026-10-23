@@ -48,7 +48,7 @@ function special(): boolean {
   // Captures in a failed alternative are discarded before validation.
   let discarded: peg.Pattern = PChoice([PSeq([PCap("bad", PAny), PLit("x")]), PCap("v", PLit("é"))]);
   let good: peg.PegResult = peg.peg_match_pattern(discarded, "é");
-  if (!good.ok || good.caps.has("bad") || good.caps.get_or("v", "") != "é") { return false; }
+  if (!good.ok || good.caps.contains("bad") || good.caps.get_or("v", "") != "é") { return false; }
   // A later valid capture must not expose earlier invalid text, even when
   // both captures use the same name.
   let repeated: peg.Pattern = PSeq([PCap("v", PAny), PAny, PCap("v", PLit("a"))]);
