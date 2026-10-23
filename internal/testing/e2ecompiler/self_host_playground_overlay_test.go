@@ -412,7 +412,7 @@ func playgroundReportsMissing(t *testing.T, bin string) {
 	if code == 0 {
 		t.Fatalf("driver accepted a program importing a module it cannot resolve")
 	}
-	if want := `playground: stdin:1:1: error: unknown stdlib module "std/nosuchmodule"`; !strings.Contains(stderr, want) {
+	if want := `playground: stdin:1:1: error[E086]: unknown stdlib module "std/nosuchmodule"`; !strings.Contains(stderr, want) {
 		t.Errorf("the diagnostic does not place the import:\n%s\nwant %s", stderr, want)
 	}
 }
