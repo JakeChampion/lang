@@ -1,0 +1,4 @@
+argument 1 to "merge": expected Map[i32, string], got i32
+argument 2 to "update": expected string, got i32
+argument 3 to "update": expected (string) => string, got i32
+method "merge" takes 1 argument but was given 0
