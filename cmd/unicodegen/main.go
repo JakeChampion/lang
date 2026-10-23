@@ -205,7 +205,7 @@ var fullLower = []fullCase{
 // not a synonym for lowercasing: `ß` folds to `ss` (lowercase leaves it
 // alone), `ſ` LATIN SMALL LETTER LONG S folds to `s`, and `µ` MICRO SIGN
 // folds to the Greek `μ`. Only the 297 code points where the fold differs
-// from `to_lower_char` are stored; everything else falls through to the
+// from the char `to_lower` are stored; everything else falls through to the
 // simple lowercase table, which keeps this table a quarter the size of a
 // complete one.
 //
