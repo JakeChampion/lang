@@ -1,6 +1,9 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
+	"testing"
+)
 
 // `__str_bytes` and `__raw_data` answer the address of a string's bytes on
 // every target (#10586). A register-backend string box keeps a data pointer in
@@ -32,6 +35,7 @@ function main(): i32 {
 // Every target emits str_data.
 func TestSelfHostStrBytesEveryTarget(t *testing.T) {
 	h := selfHostCLIForHost(t)
+	h.cli = e2eharness.RuntimeCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			got, _ := routedMapRun(t, h.cli, h.stdlib, strBytesProg, target)

@@ -945,7 +945,7 @@ pub function runtime_lowering(src: string): physicalbody.Lowered {
   // The builtin enums' variants (IoError's NotFound, …), which a program's
   // module carries from module_with_builtins.
   let mod: parser.Module = parser.Module { ...parsed, structs: parser.inject_builtin_enums(unpositioned(parsed.structs)) };
-  let diags: util.Diag[] = checker.build_gate_diags(mod);
+  let diags: util.Diag[] = checker.build_runtime_gate_diags(mod);
   if (diags.len() > 0) {
     return runtime_refused(first_name(mod), "does not type-check: " + diags[0].message);
   }

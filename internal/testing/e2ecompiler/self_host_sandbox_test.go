@@ -33,12 +33,17 @@ const sandboxSocketProg = `function main(): i32 {
 // and whether it succeeded.
 func sandboxCompile(t *testing.T, src string, sandbox bool, args ...string) (string, bool) {
 	t.Helper()
+	return sandboxCompileWith(t, selfHostCLIForHost(t).cli, src, sandbox, args...)
+}
+
+func sandboxCompileWith(t *testing.T, compiler string, src string, sandbox bool, args ...string) (string, bool) {
+	t.Helper()
 	h := selfHostCLIForHost(t)
 	srcPath := filepath.Join(t.TempDir(), "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(h.cli, append(append([]string{"-target", "x86-64-linux"}, args...), srcPath, h.stdlib)...)
+	cmd := exec.Command(compiler, append(append([]string{"-target", "x86-64-linux"}, args...), srcPath, h.stdlib)...)
 	var env []string
 	if sandbox {
 		env = append(env, "FERN_SANDBOX=1")
@@ -180,10 +185,10 @@ func TestSelfHostSandboxRefusesRunTimeSyscallNumber(t *testing.T) {
 }
 `
 	exe := filepath.Join(t.TempDir(), "prog")
-	if out, ok := sandboxCompile(t, src, false, "-o", exe); !ok {
+	if out, ok := sandboxCompileWith(t, e2eharness.RuntimeCLI(t), src, false, "-o", exe); !ok {
 		t.Fatalf("control compile without the sandbox failed:\n%s", out)
 	}
-	out, ok := sandboxCompile(t, src, true, "-o", exe)
+	out, ok := sandboxCompileWith(t, e2eharness.RuntimeCLI(t), src, true, "-o", exe)
 	if ok {
 		t.Fatal("FERN_SANDBOX=1 compiled a program whose syscall number is a run-time value")
 	}
