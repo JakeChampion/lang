@@ -1530,12 +1530,23 @@ function array_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type):
     return "array index type";
   }
   if let typeinfo.TypeArray(a) = f.values[ins.args[0]] {
-    if (!semtypes.equal(a.elem, result)) {
+    if (!semtypes.equal(a.elem, result) && !lane_group(a.elem, result)) {
       return "array projection type";
     }
     return "";
   }
   return "array container type";
+}
+
+// lane_group reports a lane value `t` whose lanes are elements of type
+// `elem`: a read or a `with` of the group of elements from an index.
+pub function lane_group(elem: typeinfo.Type, t: typeinfo.Type): boolean {
+  if let typeinfo.TypeLanes(l) = t {
+    if let typeinfo.TypeFloat(e) = elem {
+      return e.width == l.width;
+    }
+  }
+  return false;
 }
 
 function tuple_projection_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
@@ -1622,7 +1633,7 @@ function with_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (a.view) {
       return "with receiver must own storage";
     }
-    if (!semtypes.equal(a.elem, f.values[ins.args[2]])) {
+    if (!semtypes.equal(a.elem, f.values[ins.args[2]]) && !lane_group(a.elem, f.values[ins.args[2]])) {
       return "with element type";
     }
     return "";

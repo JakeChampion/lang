@@ -39,6 +39,7 @@ import "./wasm_aes";
 import "./physicalbody";
 import "./wasmlocals";
 import "./rtbytecopy";
+import "./wasm_abort";
 
 // Linear-memory layout: the low scratch, then a unit's string literals, then
 // its aggregate constants, then the fl_cells-entry small freelist head array,
@@ -351,6 +352,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   }
   if (module_allocates(cache)) {
     out = out.append("@allocates");
+  }
+  if (module_emits_op_cached(cache, "arr_get") || module_emits_op_cached(cache, "arr_set")) {
+    out = out.append("@abort_checks");
   }
   if (module_uses_arr_slice(cache)) {
     out = out.append("@uses_arr_slice");
@@ -3555,12 +3559,22 @@ pub function component_io_imports(needs: string[], stderr: boolean, proxy: boole
   return o + fs_imports_p2(needs);
 }
 
-// component_uses_stderr reports whether a component core needs the stderr
-// stream: an eprint, or a stderr() Writer, which lowers to the constant fd 2
-// and so leaves no need of its own. component_shape picks the stderr framing on
-// the same called name, so the imports and the framing agree.
+// Runtime aborts, eprint, and stderr writers need the host's stderr stream.
 pub function component_uses_stderr(mod: parser.Module, needs: string[]): boolean {
-  return need(needs, "eprint_str") || called_names(mod).has("stderr");
+  return needs_abort(needs) || need(needs, "eprint_str") || called_names(mod).has("stderr");
+}
+
+pub function needs_abort(needs: string[]): boolean {
+  return need(needs, "@allocates") || need(needs, "@abort_checks");
+}
+
+// Canonical-ABI bridges allocate even when no lowered instruction does.
+// Keep framing, metadata, and runtime emission on the same needs.
+function runtime_needs(mod: parser.Module, needs: string[]): string[] {
+  if (module_extern_needs_heap(mod) && !needs_abort(needs)) {
+    return needs.append("@abort_checks");
+  }
+  return needs;
 }
 
 // needs_wall_clock reports whether the module reads the WALL clock (now_ns /
@@ -3827,7 +3841,7 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
   let g: ircore.Lowered = ircore.gate(lm, sub);
   let cache: irtables.LowerResult[] = g.cache;
   if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
-    return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical), needs: needs_of(cache) };
+    return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical), needs: runtime_needs(lm, needs_of(cache)) };
   }
   // A module the lowering took whole but the component framing cannot
   // import for is not an IR bail, so name the op rather than blame the IR.
@@ -5280,8 +5294,8 @@ pub function fn_support_section_units(nss: string[], all_fns: string[], counts: 
 // as a huge unsigned) and `idx >= len` — and traps (`unreachable`, which
 // wasmtime surfaces as exit 134) when out of range. On the in-range path it
 // leaves `base, idx` back on the stack for the caller's load/store sequence.
-function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
-  let s: string = wasm_arr_index_trap(base_local, idx_local);
+function wasm_arr_bounds_check(base_local: i32, idx_local: i32, cause: string): string {
+  let s: string = wasm_arr_index_trap(base_local, idx_local, cause);
   s = s + "    local.get " + util.i32_to_string(base_local) + "\n";
   s = s + "    local.get " + util.i32_to_string(idx_local) + "\n";
   return s;
@@ -5289,13 +5303,13 @@ function wasm_arr_bounds_check(base_local: i32, idx_local: i32): string {
 
 // wasm_arr_index_trap pops the base and traps unless the index in idx_local
 // is below its length, leaving nothing.
-function wasm_arr_index_trap(base_local: i32, idx_local: i32): string {
+function wasm_arr_index_trap(base_local: i32, idx_local: i32, cause: string): string {
   let s: string = "";
   s = s + "    local.tee " + util.i32_to_string(base_local) + "\n";
   s = s + "    i32.load\n";
   s = s + "    local.get " + util.i32_to_string(idx_local) + "\n";
   s = s + "    i32.le_u\n";
-  return s + "    if\n      unreachable\n    end\n";
+  return s + "    if\n      call $__fern_abort_" + cause + "\n      unreachable\n    end\n";
 }
 
 // emit_map_hash_seed_wat renders map_hash_seed: core/map's per-process
@@ -5771,7 +5785,39 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
   if (k == "vround") {
     return emit_wasm_lane_round(o.width, sh, vtmp, vtmp2);
   }
+  if (util.has_str(["vget", "vset"], k)) {
+    return emit_wasm_lane_group(o.width, cx.base, k == "vset");
+  }
   return "    " + wasm_lane_verb(k, sh) + "\n";
+}
+
+// emit_wasm_lane_group is vget or vset: the group of elements from the index,
+// after a check of its first and last index, with the address of its first
+// element in the index local. An f32 group is two f64 pairs: a read demotes
+// each and moves the second into the high 64 bits, and a write promotes the
+// low half and then the high half.
+function emit_wasm_lane_group(width: i32, base: i32, set: boolean): string {
+  let arr: string = util.i32_to_string(base);
+  let at: string = "    local.get " + util.i32_to_string(base + 4) + "\n";
+  let v: string = "    local.get " + util.i32_to_string(base + 5) + "\n";
+  let out: string = "";
+  if (set) {
+    out = "    local.set " + util.i32_to_string(base + 5) + "\n";
+  }
+  out = out + "    local.set " + util.i32_to_string(base + 4) + "\n" + wasm_arr_index_trap(base, base + 4);
+  out = out + "    local.get " + arr + "\n    i32.load\n" + at + "    i32.const " + util.i32_to_string(128 / width - 1) + "\n    i32.add\n    i32.le_u\n    if\n      unreachable\n    end\n";
+  out = out + "    local.get " + arr + "\n" + at + "    i32.const 8\n    i32.mul\n    i32.add\n    i32.const 8\n    i32.add\n    local.set " + util.i32_to_string(base + 4) + "\n";
+  let hi: string = at + "    i32.const 16\n    i32.add\n";
+  if (set && width == 64) {
+    return out + at + v + "    v128.store\n";
+  }
+  if (set) {
+    return out + at + v + "    f64x2.promote_low_f32x4\n    v128.store\n" + hi + v + "    f64x2.extract_lane 1\n    f64x2.splat\n    f64x2.promote_low_f32x4\n    v128.store\n";
+  }
+  if (width == 64) {
+    return out + at + "    v128.load\n";
+  }
+  return out + at + "    v128.load\n    f32x4.demote_f64x2_zero\n" + hi + "    v128.load\n    f32x4.demote_f64x2_zero\n    f64x2.extract_lane 0\n    f64x2.replace_lane 1\n";
 }
 
 // wasm_lane_verb is the wasm instruction of a lane op with the same operand
@@ -6134,7 +6180,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
       parts = parts.append("    i32.popcnt\n");
     }
   } else if (o.kind_tag == 80) {  // heap_bump_bytes
-    parts = emit_wasm_heap_bump_bytes(cagg_vals, str_vals, parts);
+    parts = emit_wasm_heap_bump_bytes(parts);
   } else if (o.kind_tag == 315) {  // heap_alloc_count
     // The allocator's call count (#9596): an i64 global $__fern_alloc
     // ticks at its entry, so the freelist pop is counted exactly like
@@ -8372,8 +8418,8 @@ pub function substr_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_substr (param $s i32) (param $start i32) (param $end i32) (result i32)\n";
   o = o + "    (local $len i32) (local $p i32) (local $i i32)\n";
-  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $s))) (then (unreachable)))\n";
-  o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $s))) (then (call $__fern_abort_str) (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (call $__fern_abort_str) (unreachable)))\n";
   o = o + "    (local.set $len (i32.sub (local.get $end) (local.get $start)))\n";
   o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
   o = o + "    (i32.store (local.get $p) (local.get $len))\n";
@@ -8905,7 +8951,7 @@ pub function scale_f64_helper(): string {
 pub function array_reserve_helper(): string {
   return "  (func $__fern_arr_reserve (param $n i32) (param $stride i32) (result i32)\n"
     + "    (local $out i32)\n"
-    + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (unreachable)))\n"
+    + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (call $__fern_abort_alloc) (unreachable)))\n"
     + "    (local.set $out (call $__fern_arr_elems (local.get $n) (local.get $stride)))\n"
     + "    (i32.store (local.get $out) (i32.const 0))\n"
     + "    (i32.store offset=4 (local.get $out) (local.get $n))\n"
@@ -8917,12 +8963,12 @@ pub function inner_mul_add_f64_helper(): string {
   let o: string = "  (func $__fern_inner_mul_add_f64 (param $a i32) (param $b i32) (param $rows i32) (param $extent i32) (param $columns i32) (param $init f64) (result i32)\n";
   o = o + "    (local $size i64) (local $out i32) (local $p i32) (local $left i32) (local $right i32) (local $row i32) (local $col i32) (local $k i32) (local $acc v128) (local $sacc f64)\n";
   for dim in ["rows", "extent", "columns"] {
-    o = o + "    (if (i32.lt_s (local.get $" + dim + ") (i32.const 0)) (then (unreachable)))\n";
+    o = o + "    (if (i32.lt_s (local.get $" + dim + ") (i32.const 0)) (then (call $__fern_abort_arr) (unreachable)))\n";
   }
-  o = o + "    (if (i64.ne (i64.mul (i64.extend_i32_u (local.get $rows)) (i64.extend_i32_u (local.get $extent))) (i64.extend_i32_u (i32.load (local.get $a)))) (then (unreachable)))\n";
-  o = o + "    (if (i64.ne (i64.mul (i64.extend_i32_u (local.get $extent)) (i64.extend_i32_u (local.get $columns))) (i64.extend_i32_u (i32.load (local.get $b)))) (then (unreachable)))\n";
+  o = o + "    (if (i64.ne (i64.mul (i64.extend_i32_u (local.get $rows)) (i64.extend_i32_u (local.get $extent))) (i64.extend_i32_u (i32.load (local.get $a)))) (then (call $__fern_abort_arr) (unreachable)))\n";
+  o = o + "    (if (i64.ne (i64.mul (i64.extend_i32_u (local.get $extent)) (i64.extend_i32_u (local.get $columns))) (i64.extend_i32_u (i32.load (local.get $b)))) (then (call $__fern_abort_arr) (unreachable)))\n";
   o = o + "    (local.set $size (i64.mul (i64.extend_i32_u (local.get $rows)) (i64.extend_i32_u (local.get $columns))))\n";
-  o = o + "    (if (i64.gt_u (local.get $size) (i64.const 2147483647)) (then (unreachable)))\n";
+  o = o + "    (if (i64.gt_u (local.get $size) (i64.const 2147483647)) (then (call $__fern_abort_alloc) (unreachable)))\n";
   o = o + "    (local.set $out (call $__fern_arr_elems (i32.wrap_i64 (local.get $size)) (i32.const 8)))\n    (i32.store (local.get $out) (i32.wrap_i64 (local.get $size)))\n    (i32.store offset=4 (local.get $out) (i32.wrap_i64 (local.get $size)))\n";
   o = o + "    (if (i64.eqz (local.get $size)) (then (return (local.get $out))))\n    (local.set $p (i32.add (local.get $out) (i32.const 8)))\n";
   o = o + "    (block $done (loop $row_loop\n      (br_if $done (i32.ge_u (local.get $row) (local.get $rows)))\n      (local.set $col (i32.const 0))\n      (local.set $left (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (i32.mul (local.get $row) (local.get $extent)) (i32.const 8))))\n";
@@ -8941,7 +8987,7 @@ pub function outer_mul_f64_helper(): string {
   o = o + "    (local $n i32) (local $m i32) (local $size i64) (local $o i32) (local $p i32) (local $i i32) (local $j i32) (local $pairs i32) (local $left f64) (local $vv v128)\n";
   o = o + "    (local.set $n (i32.load (local.get $a)))\n    (local.set $m (i32.load (local.get $b)))\n";
   o = o + "    (local.set $size (i64.mul (i64.extend_i32_u (local.get $n)) (i64.extend_i32_u (local.get $m))))\n";
-  o = o + "    (if (i64.gt_u (local.get $size) (i64.const 2147483647)) (then (unreachable)))\n";
+  o = o + "    (if (i64.gt_u (local.get $size) (i64.const 2147483647)) (then (call $__fern_abort_alloc) (unreachable)))\n";
   o = o + "    (local.set $o (call $__fern_arr_elems (i32.wrap_i64 (local.get $size)) (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $o) (i32.wrap_i64 (local.get $size)))\n";
   o = o + "    (i32.store offset=4 (local.get $o) (i32.wrap_i64 (local.get $size)))\n";
@@ -9128,7 +9174,7 @@ pub function str_repeat_helper(): string {
   // overflowing product traps instead of wrapping to a small block.
   o = o + "    (if (i32.lt_s (local.get $n) (i32.const 0)) (then (local.set $n (i32.const 0))))\n";
   o = o + "    (local.set $t64 (i64.mul (i64.extend_i32_u (local.get $l)) (i64.extend_i32_u (local.get $n))))\n";
-  o = o + "    (if (i64.gt_u (local.get $t64) (i64.const 2147483639)) (then (unreachable)))\n";
+  o = o + "    (if (i64.gt_u (local.get $t64) (i64.const 2147483639)) (then (call $__fern_abort_alloc) (unreachable)))\n";
   o = o + "    (local.set $total (i32.wrap_i64 (local.get $t64)))\n";
   o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $total))))\n";
   o = o + "    (i32.store (local.get $p) (local.get $total))\n";
@@ -9280,7 +9326,7 @@ pub function str_replace_helper(): string {
   // Check the full result before narrowing or allocating, reserving the
   // same string header and allocator headroom as str_repeat_helper.
   o = o + "    (local.set $t64 (i64.add (i64.extend_i32_u (local.get $lh)) (i64.mul (i64.extend_i32_u (local.get $cnt)) (i64.sub (i64.extend_i32_u (local.get $ln)) (i64.extend_i32_u (local.get $lo))))))\n";
-  o = o + "    (if (i64.gt_u (local.get $t64) (i64.const 2147483639)) (then (unreachable)))\n";
+  o = o + "    (if (i64.gt_u (local.get $t64) (i64.const 2147483639)) (then (call $__fern_abort_alloc) (unreachable)))\n";
   o = o + "    (local.set $total (i32.wrap_i64 (local.get $t64)))\n";
   o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $total))))\n";
   o = o + "    (i32.store (local.get $p) (local.get $total))\n";
@@ -9558,8 +9604,8 @@ pub function arr_slice_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_arr_slice (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
   o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
-  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
-  o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (call $__fern_abort_slice) (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (call $__fern_abort_slice) (unreachable)))\n";
   o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
   o = o + "    (local.set $na (call $__fern_arr_elems (local.get $n) (i32.const 4)))\n";
   o = o + "    (i32.store (local.get $na) (local.get $n))\n";
@@ -9688,7 +9734,7 @@ function buf_text_helpers(): string {
     + "        (local.set $i (i32.sub (local.get $i) (local.get $part))))\n"
     + "        (else (local.set $i (i32.add (local.get $i) (local.get $part)))))\n"
     + "      (br $count)))\n"
-    + "    (if (i64.gt_u (local.get $total) (i64.const 2147483643)) (then (unreachable)))\n"
+    + "    (if (i64.gt_u (local.get $total) (i64.const 2147483643)) (then (call $__fern_abort_alloc) (unreachable)))\n"
     + "    (local.set $box (call $__fern_str_box (i32.add (i32.wrap_i64 (local.get $total)) (i32.const 4))))\n"
     + "    (i32.store (local.get $box) (i32.wrap_i64 (local.get $total)))\n"
     + "    (local.set $out (i32.add (local.get $box) (i32.const 4)))\n"
@@ -9896,7 +9942,7 @@ pub function buf_helpers(needs: string[]): string {
   if (need(needs, "buf_push_range")) {
     o = o + "  (func $__fern_buf_push_range (param $h i32) (param $s i32) (param $lo i32) (param $hi i32)\n";
     o = o + "    (local $n i32) (local $i i32) (local $d i32) (local $len i32)\n";
-    o = o + "    (if (i32.or (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.gt_s (local.get $hi) (i32.load (local.get $s)))) (i32.gt_s (local.get $lo) (local.get $hi))) (then (unreachable)))\n";
+    o = o + "    (if (i32.or (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.gt_s (local.get $hi) (i32.load (local.get $s)))) (i32.gt_s (local.get $lo) (local.get $hi))) (then (call $__fern_abort_slice) (unreachable)))\n";
     o = o + "    (local.set $n (i32.sub (local.get $hi) (local.get $lo)))\n";
     o = o + "    (if (i32.eqz (local.get $n)) (then (return)))\n";
     o = o + "    (local.set $len (i32.load (i32.add (local.get $h) (i32.const 4))))\n";
@@ -10124,8 +10170,8 @@ pub function string_from_bytes_range_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_string_from_bytes_range (param $arr i32) (param $from i32) (param $end i32) (result i32)\n";
   o = o + "    (local $n i32) (local $s i32)\n";
-  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $arr))) (then (unreachable)))\n";
-  o = o + "    (if (i32.gt_u (local.get $from) (local.get $end)) (then (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $arr))) (then (call $__fern_abort_slice) (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $from) (local.get $end)) (then (call $__fern_abort_slice) (unreachable)))\n";
   o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $from)))\n";
   o = o + "    (local.set $s (call $__fern_str_box (i32.add (i32.const 4) (local.get $n))))\n";
   o = o + "    (i32.store (local.get $s) (local.get $n))\n";
@@ -11304,6 +11350,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   // The over-release detector global lives here (before $__fern_arr_dec,
   // which bumps it, and before rc_runtime_helpers, which also reads it).
   o = o + "  (global $__fern_rc_underflow (mut i32) (i32.const 0))\n";
+  o = o + "  (global $__fern_heap_base i32 (i32.const " + hb + "))\n";
   o = o + "  (global $heap (mut i32) (i32.const " + hb + "))\n";
   if (count) {
     // The allocator's call count (#9596), read back by kind_tag 315. A
@@ -11338,7 +11385,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   // A request past 2^31 wraps in the 8-round below, yielding a block far
   // smaller than the caller asked for. Nothing that big fits a 4 GiB
   // linear memory anyway.
-  o = o + "    (if (i32.gt_u (local.get $n) (i32.const 2147483647)) (then (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $n) (i32.const 2147483647)) (then (call $__fern_abort_alloc) (unreachable)))\n";
   o = o + "    (local.set $n (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8)))\n";
   o = o + lc_bump_alloc("(local.get $n)", lc);
   if (count) {
@@ -11374,14 +11421,14 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   // The bump is i32, so a heap that lands below the pointer it started
   // from has wrapped past 4 GiB: the grow below would compute a tiny page
   // count and $p would be handed out as a live block.
-  o = o + "    (if (i32.lt_u (global.get $heap) (local.get $p)) (then (unreachable)))\n";
+  o = o + "    (if (i32.lt_u (global.get $heap) (local.get $p)) (then (call $__fern_abort_oom) (unreachable)))\n";
   // Grow linear memory when the bump pointer passes the current capacity
   // (memory.size pages * 64KiB). Without this the bump allocator traps
   // once a program allocates past the initial pages. A refused grow
   // returns -1, and taking that for success turns heap exhaustion into an
   // out-of-bounds trap at some later, unrelated store.
   o = o + "    (if (i32.gt_u (global.get $heap) (i32.mul (memory.size) (i32.const 65536)))\n";
-  o = o + "      (then (if (i32.eq (memory.grow (i32.div_u (i32.add (i32.sub (global.get $heap) (i32.mul (memory.size) (i32.const 65536))) (i32.const 65535)) (i32.const 65536))) (i32.const -1)) (then (unreachable)))))\n";
+  o = o + "      (then (if (i32.eq (memory.grow (i32.div_u (i32.add (i32.sub (global.get $heap) (i32.mul (memory.size) (i32.const 65536))) (i32.const 65535)) (i32.const 65536))) (i32.const -1)) (then (call $__fern_abort_oom) (unreachable)))))\n";
   o = o + "    (local.get $p))\n";
   // $__fern_large_cap(n) rounds a >= 512 KiB byte count up to its large-tier
   // capacity, native's 3-significant-bit scheme; $__fern_large_cls(cap) is the
@@ -11459,12 +11506,12 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "  (func $__fern_str_grow_fresh (param $a i32) (param $b i32) (result i32)\n";
   o = o + "    (call $__fern_str_grow_fresh_bytes (local.get $a) (i32.add (local.get $b) (i32.const 4)) (i32.load (local.get $b))))\n";
   o = o + "  (func $__fern_str_grow_fresh_range (param $a i32) (param $s i32) (param $lo i32) (param $hi i32) (result i32)\n";
-  o = o + "    (if (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.or (i32.lt_s (local.get $hi) (local.get $lo)) (i32.gt_s (local.get $hi) (i32.load (local.get $s))))) (then (unreachable)))\n";
+  o = o + "    (if (i32.or (i32.lt_s (local.get $lo) (i32.const 0)) (i32.or (i32.lt_s (local.get $hi) (local.get $lo)) (i32.gt_s (local.get $hi) (i32.load (local.get $s))))) (then (call $__fern_abort_str) (unreachable)))\n";
   o = o + "    (call $__fern_str_grow_fresh_bytes (local.get $a) (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $lo)) (i32.sub (local.get $hi) (local.get $lo))))\n";
   o = o + "  (func $__fern_str_grow_fresh_bytes (param $a i32) (param $src i32) (param $lb i32) (result i32)\n";
   o = o + "    (local $la i32) (local $need i32) (local $n i32) (local $w i32) (local $base i32)\n";
   o = o + "    (local.set $la (i32.load (local.get $a)))\n";
-  o = o + "    (if (i32.gt_u (i32.add (local.get $la) (local.get $lb)) (i32.const 1073741824)) (then (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (i32.add (local.get $la) (local.get $lb)) (i32.const 1073741824)) (then (call $__fern_abort_alloc) (unreachable)))\n";
   // The block the grown string needs: the 8-byte header, the length word
   // and the bytes, rounded to 8.
   o = o + "    (local.set $need (i32.and (i32.add (i32.add (local.get $la) (local.get $lb)) (i32.const 19)) (i32.const -8)))\n";
@@ -11519,7 +11566,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "  (func $__fern_arr_elems (param $n i32) (param $stride i32) (result i32)\n";
   o = o + "    (local $b i64)\n";
   o = o + "    (local.set $b (i64.mul (i64.extend_i32_u (local.get $n)) (i64.extend_i32_u (local.get $stride))))\n";
-  o = o + "    (if (i64.gt_u (local.get $b) (i64.const 2147483631)) (then (unreachable)))\n";
+  o = o + "    (if (i64.gt_u (local.get $b) (i64.const 2147483631)) (then (call $__fern_abort_alloc) (unreachable)))\n";
   o = o + "    (call $__fern_arr_box (i32.wrap_i64 (local.get $b))))\n";
   // $__fern_str_box(p) -> s: rc-header a heap STRING block. `p` is the
   // string payload size (4-byte len word + bytes); the 8-byte rc+bsz
@@ -11650,7 +11697,7 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   let o: string = "";
   // Match the native bounds abort without routing 134 through WASI's
   // command-exit status, whose permitted range excludes it.
-  o = o + "  (func $__fern_oob_abort (result i32) (unreachable))\n";
+  o = o + "  (func $__fern_oob_abort (result i32) (call $__fern_abort_arr) (unreachable))\n";
   // ($__fern_rc_underflow is defined in heap_alloc_helpers, emitted first.)
   // __alloc(n) -> ptr: forward to the bump allocator.
   o = o + "  (func $__alloc (param $n i32) (result i32)\n";
@@ -11741,8 +11788,8 @@ pub function arr_slice8_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_arr_slice8 (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
   o = o + "    (local $n i32) (local $na i32) (local $i i32)\n";
-  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
-  o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (call $__fern_abort_slice) (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (call $__fern_abort_slice) (unreachable)))\n";
   o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
   o = o + "    (local.set $na (call $__fern_arr_elems (local.get $n) (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $na) (local.get $n))\n";
@@ -11777,9 +11824,9 @@ pub function bytes_range_helper(empty: i32): string {
   let o: string = "  (func $__fern_bytes_range (param $v i32) (param $from i32) (param $to i32) (result i32)\n";
   o = o + "    (local $n i32) (local $p i32) (local $m i32) (local $r i32)\n";
   o = o + bytes_view_decode();
-  o = o + "    (if (i32.lt_s (local.get $from) (i32.const 0)) (then (unreachable)))\n";
-  o = o + "    (if (i32.lt_s (local.get $to) (local.get $from)) (then (unreachable)))\n";
-  o = o + "    (if (i32.gt_s (local.get $to) (local.get $n)) (then (unreachable)))\n";
+  o = o + "    (if (i32.lt_s (local.get $from) (i32.const 0)) (then (call $__fern_abort_slice) (unreachable)))\n";
+  o = o + "    (if (i32.lt_s (local.get $to) (local.get $from)) (then (call $__fern_abort_slice) (unreachable)))\n";
+  o = o + "    (if (i32.gt_s (local.get $to) (local.get $n)) (then (call $__fern_abort_slice) (unreachable)))\n";
   o = o + "    (local.set $m (i32.sub (local.get $to) (local.get $from)))\n";
   o = o + bytes_copy_out("$m", "(i32.add (local.get $p) (local.get $from))", empty);
   return o;
@@ -11794,11 +11841,11 @@ pub function bytes_into_helper(): string {
   o = o + "    (local $n i32) (local $p i32) (local $dn i32) (local $r i32)\n";
   o = o + bytes_view_decode();
   o = o + "    (local.set $dn (i32.load (local.get $dst)))\n";
-  o = o + "    (if (i32.lt_s (local.get $m) (i32.const 0)) (then (unreachable)))\n";
-  o = o + "    (if (i32.lt_s (local.get $at) (i32.const 0)) (then (unreachable)))\n";
-  o = o + "    (if (i32.lt_s (local.get $from) (i32.const 0)) (then (unreachable)))\n";
-  o = o + "    (if (i32.gt_s (local.get $at) (i32.sub (local.get $dn) (local.get $m))) (then (unreachable)))\n";
-  o = o + "    (if (i32.gt_s (local.get $from) (i32.sub (local.get $n) (local.get $m))) (then (unreachable)))\n";
+  o = o + "    (if (i32.lt_s (local.get $m) (i32.const 0)) (then (call $__fern_abort_slice) (unreachable)))\n";
+  o = o + "    (if (i32.lt_s (local.get $at) (i32.const 0)) (then (call $__fern_abort_slice) (unreachable)))\n";
+  o = o + "    (if (i32.lt_s (local.get $from) (i32.const 0)) (then (call $__fern_abort_slice) (unreachable)))\n";
+  o = o + "    (if (i32.gt_s (local.get $at) (i32.sub (local.get $dn) (local.get $m))) (then (call $__fern_abort_slice) (unreachable)))\n";
+  o = o + "    (if (i32.gt_s (local.get $from) (i32.sub (local.get $n) (local.get $m))) (then (call $__fern_abort_slice) (unreachable)))\n";
   o = o + "    (if (i32.eqz (local.get $m)) (then (return (local.get $dst))))\n";
   o = o + "    (if (i32.eqz (call $__fern_rc_is_unique (local.get $dst))) (then\n";
   o = o + "      (local.set $r (call $__fern_arr_elems (local.get $dn) (i32.const 1)))\n";
@@ -11877,8 +11924,8 @@ pub function arr_slice_u8_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_arr_slice_u8 (param $a i32) (param $start i32) (param $end i32) (result i32)\n";
   o = o + "    (local $n i32) (local $na i32)\n";
-  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (unreachable)))\n";
-  o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $end) (i32.load (local.get $a))) (then (call $__fern_abort_slice) (unreachable)))\n";
+  o = o + "    (if (i32.gt_u (local.get $start) (local.get $end)) (then (call $__fern_abort_slice) (unreachable)))\n";
   o = o + "    (local.set $n (i32.sub (local.get $end) (local.get $start)))\n";
   o = o + "    (local.set $na (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
   o = o + "    (i32.store (local.get $na) (local.get $n))\n";
@@ -12217,7 +12264,7 @@ function preview1_imports(needs: string[], lc: boolean): string {
   }
   // print_str / eprint_str / putchar write via WASI fd_write
   // — import it only when the module writes to stdout or stderr.
-  if (lc || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || (need(needs, "write_file") || need(needs, "write_file_bytes")) || need(needs, "writer_write") || (need(needs, "write_some") || need(needs, "write_bytes") || need(needs, "write_some_bytes"))) {
+  if (lc || needs_abort(needs) || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || (need(needs, "write_file") || need(needs, "write_file_bytes")) || need(needs, "writer_write") || (need(needs, "write_some") || need(needs, "write_bytes") || need(needs, "write_some_bytes"))) {
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $__fern_fd_write (param i32 i32 i32 i32) (result i32)))\n");
   }
   // read_file / write_file open paths under preopen fd 3: path_open +
@@ -12734,6 +12781,8 @@ function path_fs_bodies(parts: string[], needs: string[], mode: i32): string[] {
 // parallel copy; this is not).
 pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: string[], fn_sigs: string[], mode: i32, sw: asmcore.Switches): string {
   let lc: boolean = census_on(sw);
+  needs = runtime_needs(mod, needs);
+  let reports_abort: boolean = mode != 1 && needs_abort(needs);
   let stab: irtables.StructTab = irtables.struct_tab(mod.structs);
   let parts: string[] = [];
   parts = parts.append("(module\n");
@@ -12758,12 +12807,21 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // before anything runs, so they are gathered ahead of the memory section
   // rather than at their first use below.
   let sv: string[] = unit_strs(units);
+  let abort_offsets: i32[] = [];
+  if (reports_abort) {
+    for text in wasm_abort.texts() {
+      let at: i32 = sv.len();
+      sv = sv.append(text);
+      abort_offsets = abort_offsets.append(str_offset(sv, at));
+    }
+  }
   // The strerror texts $__fern_build_io_error selects from are literals like
   // any other: they join the pool here so the data section carries them.
   if (needs_io_error(needs)) {
     sv = with_strerror_texts(sv);
   }
   let cv: string[] = unit_caggs(units);
+  parts = parts.append(wasm_abort.helpers(abort_offsets, mode));
   parts = parts.append("  (memory (export \"memory\") " + util.i32_to_string(memory_min_pages(sv, cv)) + ")\n");
   // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
   // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
@@ -16817,11 +16875,13 @@ function wait_builtins(): string[] {
   ];
 }
 
-// lowered_shape is component_shape, or -1 when the lowered `bodies` call an
-// exit the framing it picks from `mod`'s calls does not import: an
-// unreachable branch aborts through exit (semreach leaves such branches
-// where the source names no exit), and only the lowering shows it.
+// Runtime aborts need stderr even when the source calls no host function.
+// Those cores use the world composer. An implicit exit also needs that path
+// when the fixed framing has no exit import.
 pub function lowered_shape(mod: parser.Module, sw: asmcore.Switches, bodies: irtables.LowerResult[]): i32 {
+  if (needs_abort(runtime_needs(mod, needs_of(bodies)))) {
+    return 0 - 1;
+  }
   let shape: i32 = component_shape(mod, sw);
   if (shape >= 0 && !host_needs(mod, census_on(sw)).ex && module_emits_op_cached(bodies, "exit")) {
     return 0 - 1;
@@ -17135,22 +17195,11 @@ function emit_wasm_temp_dir(parts: string[]): string[] {
   return parts;
 }
 
-function emit_wasm_heap_bump_bytes(cagg_vals: string[], str_vals: string[], parts: string[]): string[] {
-  // bump high-water mark = $heap − heap_base. The $heap global is
-  // initialised to heap_base (heap_alloc_helpers), so this reads 0
-  // before the first allocation — matching the register backends and
-  // native's __fern_heap_bump_bytes. heap_base is recomputed from the
-  // data-section layout (identical to heap_base_for(mod), since
-  // str_vals / cagg_vals are this unit's and whole-program emit is one
-  // unit).
-  //
-  // The op's declared result is i64 (asmcore types the builtin i64 so
-  // a >2 GiB mark cannot read back negative), so zero-extend the i32
-  // address difference. Zero-, not sign-extend: the cursor never sits
-  // below heap_base, so the difference is a non-negative byte count.
-  parts = parts.append("    global.get $heap\n    i32.const " + util.i32_to_string(heap_base_for_strs(str_vals, cagg_vals)) + "\n    i32.sub\n    i64.extend_i32_u\n");
-
-  return parts;
+function emit_wasm_heap_bump_bytes(parts: string[]): string[] {
+  // Read the linked runtime's base. Unit-local literal lists exclude other
+  // units and the abort reporter's static text, so they cannot derive it.
+  // Zero-extend the non-negative cursor difference to the declared i64.
+  return parts.append("    global.get $heap\n    global.get $__fern_heap_base\n    i32.sub\n    i64.extend_i32_u\n");
 }
 
 // The packed empty byte array, a constant block like any other.
@@ -17264,7 +17313,7 @@ function emit_wasm_arr_get(arrtmp: i32, bctmp: i32, o: ir.Op, parts: string[]): 
   // The check alone (ir.check_only): a zero of the element's type stands in
   // for the element nothing reads.
   if (o.i32_imm == 2) {
-    parts = parts.append(wasm_arr_index_trap(arrtmp, bctmp));
+    parts = parts.append(wasm_arr_index_trap(arrtmp, bctmp, "arr"));
     if (o.width == 64 && o.unsigned) {
       return parts.append("    i64.const 0\n");
     }
@@ -17281,7 +17330,7 @@ function emit_wasm_arr_get(arrtmp: i32, bctmp: i32, o: ir.Op, parts: string[]): 
   if (o.i32_imm == 1) {
     parts = parts.append("    local.get " + util.i32_to_string(bctmp) + "\n");
   } else {
-    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
+    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "arr"));
   }
   if (o.width == 64 && o.unsigned) {
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i64.load\n");
@@ -17311,9 +17360,9 @@ function emit_wasm_arr_get(arrtmp: i32, bctmp: i32, o: ir.Op, parts: string[]): 
 function emit_wasm_str_index(arrtmp: i32, bctmp: i32, check: boolean, parts: string[]): string[] {
   parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
   if (check) {
-    return parts.append(wasm_arr_index_trap(arrtmp, bctmp)).append("    i32.const 0\n");
+    return parts.append(wasm_arr_index_trap(arrtmp, bctmp, "str")).append("    i32.const 0\n");
   }
-  parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
+  parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "str"));
   parts = parts.append("    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n");
   return parts;
 }
@@ -17329,22 +17378,22 @@ function emit_wasm_arr_set(arrtmp: i32, bctmp: i32, eltmp: i32, f64tmp: i32, i64
   if (o.width == 64 && o.unsigned) {
     parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n");
     parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
-    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
+    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "arr"));
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
   } else if (o.width == 64) {
     parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
     parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
-    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
+    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "arr"));
     parts = parts.append("    i32.const 8\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
   } else if (ir.is_packed(o)) {
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
     parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
-    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
+    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "arr"));
     parts = parts.append("    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n");
   } else {
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
     parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
-    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
+    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp, "arr"));
     parts = parts.append("    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   }
 

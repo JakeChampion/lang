@@ -130,6 +130,11 @@ function arr_make_op(elem: typeinfo.Type, n: i32): ir.Op {
 }
 
 function arr_get_op(elem: typeinfo.Type, unchecked: boolean): ir.Op {
+  // A lane read checks its whole group itself, whatever the bounds pass
+  // proved of its first index.
+  if let typeinfo.TypeLanes(l) = elem {
+    return ir.op_lane("vget", l.width);
+  }
   if (ssasem.is_wide(elem) && unchecked) {
     return ir.op_arr_get_i64_nc();
   }
@@ -4768,7 +4773,7 @@ function with_write(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   r = emit(r, ir.op_load_local(scratch));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[2]));
-  r = emit(r, with_set_op(p, ins, elem));
+  r = emit(r, with_set_op(f, p, ins, elem));
   return emit(r, ir.op_load_local(scratch));
 }
 
@@ -4819,13 +4824,16 @@ function with_field(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   r = emit(r, ir.op_load_local(res));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[2]));
-  r = emit(r, with_set_op(p, ins, elem));
+  r = emit(r, with_set_op(f, p, ins, elem));
   return emit(r, ir.op_load_local(res));
 }
 
 // A with writes a box of its receiver's length, so an index the plan saw
 // checked against the receiver, or one ssabounds proved, needs no check.
-function with_set_op(p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.Op {
+function with_set_op(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, elem: typeinfo.Type): ir.Op {
+  if let typeinfo.TypeLanes(l) = f.values[ins.args[2]] {
+    return ir.op_lane("vset", l.width);
+  }
   if (ins.imm == 1 || p.checked_writes[ins.result]) {
     return ir.in_bounds(arr_set_op(elem));
   }

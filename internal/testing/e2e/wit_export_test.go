@@ -159,7 +159,7 @@ function add(a: i32, b: i32): i32 { return a + b; }`
 		t.Fatalf("write math dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
-		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import local:test/math@0.1.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/math@0.1.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write user world: %v", err)
 	}
 	run(wasmtools, "parse", mustWrite(t, dir, "ue.wat", "(module)"), "-o", filepath.Join(dir, "ue.wasm"))
@@ -289,7 +289,7 @@ func TestExportStringResultLiftRunsViaConsumer(t *testing.T) {
 		t.Fatalf("write strings dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
-		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import local:test/strings@0.1.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/strings@0.1.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write user world: %v", err)
 	}
 	run(wasmtools, "parse", mustWrite(t, dir, "ue.wat", "(module)"), "-o", filepath.Join(dir, "ue.wasm"))
@@ -409,7 +409,7 @@ function greet(): string { return "hi"; }`
 		t.Fatalf("write strings dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
-		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import local:test/strings@0.1.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/strings@0.1.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write user world: %v", err)
 	}
 	run(wasmtools, "parse", mustWrite(t, dir, "ue.wat", "(module)"), "-o", filepath.Join(dir, "ue.wasm"))
@@ -526,7 +526,7 @@ function len_of(s: string): i32 { return s.len(); }`
 		t.Fatalf("write strings dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
-		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import local:test/strings@0.1.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/strings@0.1.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write user world: %v", err)
 	}
 	run(wasmtools, "parse", mustWrite(t, dir, "ue.wat", "(module)"), "-o", filepath.Join(dir, "ue.wasm"))

@@ -424,13 +424,8 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmComponentFullIO exercises component_full_io: the stdout
-// I/O component framing (wat_component.fern), embedded as \xNN blobs around
-// the user core. Given a core that uses the preview2 stdout imports and
-// exports _lang_run, it must reproduce the I/O component `fern -target
-// wasm32-wasi` builds, byte-for-byte. The test feeds the core section of that
-// build for a printing program to component_full_io and asserts byte-equality
-// + that the component prints under wasmtime.
+// TestSelfHostWasmComponentFullIO checks the fixed stdout template.
+// A scalar putchar program needs no abort reporter or stderr import.
 func TestSelfHostWasmComponentFullIO(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -448,7 +443,7 @@ func TestSelfHostWasmComponentFullIO(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	if err := os.WriteFile(progPath, []byte(`function main(): i32 { write("hi"); return 0; }`), 0o644); err != nil {
+	if err := os.WriteFile(progPath, []byte(`function main(): i32 { putchar(104); putchar(105); return 0; }`), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
 	refPath := filepath.Join(dir, "ref.wasm")
@@ -559,20 +554,9 @@ func TestSelfHostWasmComponentStdout(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIODriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io component assembler produced 0 bytes")
 	}
@@ -648,30 +632,8 @@ function main(): i32 {
 }
 `
 
-// componentCompileIODriver reads a preview2 stdout core WAT, assembles it,
-// and wraps it into a wasi:cli/run I/O component via component_full_io.
-const componentCompileIODriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOFS exercises component_full_io_fs: the
-// read_file + stdout component framing (wat_component.fern), embedded as
-// \xNN blobs around the core. Given the core of a read_file program's
-// `fern -target wasm32-wasi` build, it must reproduce that build's file-I/O
-// component byte-for-byte and run (reading a preopened file and printing its
-// contents).
+// TestSelfHostWasmComponentFullIOFS composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -681,7 +643,6 @@ func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-fs e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -706,18 +667,7 @@ func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOFSDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs component assembler produced 0 bytes")
 	}
@@ -760,26 +710,6 @@ func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 	}
 }
 
-// componentFullIOFSDriver reads a (preview2 read_file+stdout) core and wraps
-// it into a wasi:cli/run component via component_full_io_fs.
-const componentFullIOFSDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_fs(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentReadFile exercises the fully self-hosted preview2
 // read_file path: source -> emit_module_run_io_fs (a run core importing the
 // wasi:filesystem read interfaces + the stdout shim, with a preview2
@@ -804,20 +734,9 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOFSDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs component assembler produced 0 bytes")
 	}
@@ -971,29 +890,8 @@ function main(): i32 {
 }
 `
 
-// componentCompileIOFSDriver reads a preview2 read_file+stdout core WAT,
-// assembles it, and wraps it via component_full_io_fs.
-const componentCompileIOFSDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOFSWrite is the write counterpart of
-// TestSelfHostWasmComponentFullIOFS: given the write_file + stdout core of a
-// `fern -target wasm32-wasi` build, the self-host's component_full_io_fs_write
-// framing must reproduce that build's file-write component byte-for-byte and
-// run (creating a preopened file with the written contents).
+// TestSelfHostWasmComponentFullIOFSWrite composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1003,7 +901,6 @@ func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-fs-write e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -1028,18 +925,7 @@ func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOFSWriteDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-write component assembler produced 0 bytes")
 	}
@@ -1087,26 +973,6 @@ func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 	}
 }
 
-// componentFullIOFSWriteDriver reads a (preview2 write_file+stdout) core and
-// wraps it into a wasi:cli/run component via component_full_io_fs_write.
-const componentFullIOFSWriteDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_fs_write(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentWriteFile exercises the fully self-hosted preview2
 // write_file path: source -> emit_module_run_io_fs (a run core importing the
 // wasi:filesystem write interfaces + the stdout shim, with a preview2
@@ -1132,20 +998,9 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOFSWriteDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-write component assembler produced 0 bytes")
 	}
@@ -1230,29 +1085,8 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 	})
 }
 
-// componentCompileIOFSWriteDriver reads a preview2 write_file+stdout core WAT,
-// assembles it, and wraps it via component_full_io_fs_write.
-const componentCompileIOFSWriteDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs_write(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOFSRW is the read+write counterpart of the
-// io-fs framing tests: given the read_file + write_file + stdout core of a
-// `fern -target wasm32-wasi` build, the self-host's component_full_io_fs_rw
-// framing must reproduce that build's combined file-I/O component
-// byte-for-byte and run (copying a preopened file and printing a marker).
+// TestSelfHostWasmComponentFullIOFSRW composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1262,7 +1096,6 @@ func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-fs-rw e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -1287,18 +1120,7 @@ func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOFSRWDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw component assembler produced 0 bytes")
 	}
@@ -1348,26 +1170,6 @@ func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 	}
 }
 
-// componentFullIOFSRWDriver reads a (preview2 read_file+write_file+stdout)
-// core and wraps it into a wasi:cli/run component via component_full_io_fs_rw.
-const componentFullIOFSRWDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_fs_rw(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentReadWriteFile exercises the fully self-hosted
 // preview2 read+write path: source -> emit_module_run_io_fs (a run core
 // importing both the wasi:filesystem read and write interfaces + the stdout
@@ -1393,20 +1195,9 @@ func TestSelfHostWasmComponentReadWriteFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOFSRWDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw component assembler produced 0 bytes")
 	}
@@ -1477,28 +1268,8 @@ func TestSelfHostWasmComponentReadWriteFile(t *testing.T) {
 	})
 }
 
-// componentCompileIOFSRWDriver reads a preview2 read_file+write_file+stdout
-// core WAT, assembles it, and wraps it via component_full_io_fs_rw.
-const componentCompileIOFSRWDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs_rw(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIORandom is the random+stdout framing test:
-// given the random_bytes + stdout core of a `fern -target wasm32-wasi` build,
-// the self-host's component_full_io_random framing must reproduce that build's
-// component byte-for-byte, validate, and run.
+// TestSelfHostWasmComponentFullIORandom composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1508,7 +1279,6 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-random e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -1533,18 +1303,7 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIORandomDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-random component assembler produced 0 bytes")
 	}
@@ -1583,26 +1342,6 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 	}
 }
 
-// componentFullIORandomDriver reads a (preview2 random+stdout) core and wraps
-// it into a wasi:cli/run component via component_full_io_random.
-const componentFullIORandomDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_random(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentRandom exercises the fully self-hosted preview2
 // random path: source -> wasm_ir in run-I/O mode (a run core importing
 // wasi:random/random's get-random-u64 + the stdout shim, with a preview2
@@ -1627,20 +1366,9 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIORandomDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-random component assembler produced 0 bytes")
 	}
@@ -1704,28 +1432,8 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 	})
 }
 
-// componentCompileIORandomDriver reads a preview2 random+stdout core WAT,
-// assembles it, and wraps it via component_full_io_random.
-const componentCompileIORandomDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_random(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOEnv is the env+stdout framing test: given
-// the env + stdout core of a `fern -target wasm32-wasi` build, the self-host's
-// component_full_io_env framing must reproduce that build's component
-// byte-for-byte, validate, and run (reading a preopened env var).
+// TestSelfHostWasmComponentFullIOEnv composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1735,7 +1443,6 @@ func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-env e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -1760,18 +1467,7 @@ func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-env component assembler produced 0 bytes")
 	}
@@ -1811,26 +1507,6 @@ func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 	}
 }
 
-// componentFullIOEnvDriver reads a (preview2 env+stdout) core and wraps it
-// into a wasi:cli/run component via component_full_io_env.
-const componentFullIOEnvDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_env(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentEnv exercises the fully self-hosted preview2 env
 // path: source -> wasm_ir in run-I/O mode (a run core importing
 // wasi:cli/environment's get-environment + the stdout shim + cabi_realloc,
@@ -1855,20 +1531,9 @@ func TestSelfHostWasmComponentEnv(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-env component assembler produced 0 bytes")
 	}
@@ -1932,28 +1597,8 @@ func TestSelfHostWasmComponentEnv(t *testing.T) {
 	})
 }
 
-// componentCompileIOEnvDriver reads a preview2 env+stdout core WAT, assembles
-// it, and wraps it via component_full_io_env.
-const componentCompileIOEnvDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_env(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOArgs is the args+stdout framing test: given
-// the args + stdout core of a `fern -target wasm32-wasi` build, the self-host's
-// component_full_io_args framing must reproduce that build's component
-// byte-for-byte, validate, and run.
+// TestSelfHostWasmComponentFullIOArgs composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1963,7 +1608,6 @@ func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-args e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -1988,18 +1632,7 @@ func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOArgsDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-args component assembler produced 0 bytes")
 	}
@@ -2039,26 +1672,6 @@ func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 	}
 }
 
-// componentFullIOArgsDriver reads a (preview2 args+stdout) core and wraps it
-// into a wasi:cli/run component via component_full_io_args.
-const componentFullIOArgsDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_args(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentArgs exercises the fully self-hosted preview2 args
 // path: source -> wasm_ir in run-I/O mode (a run core importing
 // wasi:cli/environment's get-arguments + the stdout shim + cabi_realloc, with
@@ -2083,20 +1696,9 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOArgsDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-args component assembler produced 0 bytes")
 	}
@@ -2151,28 +1753,8 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 	})
 }
 
-// componentCompileIOArgsDriver reads a preview2 args+stdout core WAT,
-// assembles it, and wraps it via component_full_io_args.
-const componentCompileIOArgsDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_args(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOClock is the clock+stdout framing test:
-// given the now_unix_ms + stdout core of a `fern -target wasm32-wasi` build,
-// the self-host's component_full_io_clock framing must reproduce that build's
-// component byte-for-byte, validate, and run.
+// TestSelfHostWasmComponentFullIOClock composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2182,7 +1764,6 @@ func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-clock e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -2207,18 +1788,7 @@ func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOClockDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-clock component assembler produced 0 bytes")
 	}
@@ -2257,26 +1827,6 @@ func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 	}
 }
 
-// componentFullIOClockDriver reads a (preview2 clock+stdout) core and wraps
-// it into a wasi:cli/run component via component_full_io_clock.
-const componentFullIOClockDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_clock(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentClock exercises the fully self-hosted preview2
 // wall-clock path: source -> wasm_ir in run-I/O mode (a run core importing
 // wasi:clocks/wall-clock's now + the stdout shim, with preview2 now_unix_ms /
@@ -2301,20 +1851,9 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOClockDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-clock component assembler produced 0 bytes")
 	}
@@ -2371,28 +1910,8 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 	})
 }
 
-// componentCompileIOClockDriver reads a preview2 clock+stdout core WAT,
-// assembles it, and wraps it via component_full_io_clock.
-const componentCompileIOClockDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_clock(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOClockMono is the monotonic-clock+stdout
-// framing test: given a `fern -target wasm32-wasi` build's monotonic_ns +
-// stdout core, the self-host's component_full_io_clock_mono framing must
-// reproduce that build's component byte-for-byte, validate, and run.
+// TestSelfHostWasmComponentFullIOClockMono composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2402,7 +1921,6 @@ func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-clock-mono e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -2427,18 +1945,7 @@ func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOClockMonoDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-clock-mono component assembler produced 0 bytes")
 	}
@@ -2477,26 +1984,6 @@ func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 	}
 }
 
-// componentFullIOClockMonoDriver reads a (preview2 monotonic-clock+stdout)
-// core and wraps it via component_full_io_clock_mono.
-const componentFullIOClockMonoDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_clock_mono(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentClockMono exercises the fully self-hosted preview2
 // monotonic-clock path: source -> wasm_ir in run-I/O mode (a run core
 // importing wasi:clocks/monotonic-clock's now + the stdout shim, with a
@@ -2521,20 +2008,9 @@ func TestSelfHostWasmComponentClockMono(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOClockMonoDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-clock-mono component assembler produced 0 bytes")
 	}
@@ -2581,31 +2057,8 @@ func TestSelfHostWasmComponentClockMono(t *testing.T) {
 	})
 }
 
-// componentCompileIOClockMonoDriver reads a preview2 monotonic-clock+stdout
-// core WAT, assembles it, and wraps it via component_full_io_clock_mono.
-const componentCompileIOClockMonoDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_clock_mono(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOFSReadEnv is the read_file+env+stdout
-// combination framing test: given a `fern -target wasm32-wasi` build's
-// read+env+stdout core, the self-host's component_full_io_fs_read_env framing
-// must reproduce that build's component byte-for-byte, validate, and run.
-// Proves the canonical-import-order reorder lets a multi-import combination
-// wire up byte-identically (no per-combination blob needed beyond the
-// framing).
+// TestSelfHostWasmComponentFullIOFSReadEnv composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2615,7 +2068,6 @@ func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-fs-read-env e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -2640,18 +2092,7 @@ func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOFSReadEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-read-env component assembler produced 0 bytes")
 	}
@@ -2693,26 +2134,6 @@ func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 	}
 }
 
-// componentFullIOFSReadEnvDriver reads a (preview2 read+env+stdout) core and
-// wraps it via component_full_io_fs_read_env.
-const componentFullIOFSReadEnvDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_fs_read_env(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentReadEnv exercises the fully self-hosted preview2
 // read_file+env path end to end: source -> emit_module_run_io_fs (a run core
 // importing both env's get-environment and the fs read chain + the stdout
@@ -2738,20 +2159,9 @@ func TestSelfHostWasmComponentReadEnv(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOFSReadEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-read-env component assembler produced 0 bytes")
 	}
@@ -2808,29 +2218,8 @@ func TestSelfHostWasmComponentReadEnv(t *testing.T) {
 	})
 }
 
-// componentCompileIOFSReadEnvDriver reads a preview2 read+env+stdout core WAT,
-// assembles it, and wraps it via component_full_io_fs_read_env.
-const componentCompileIOFSReadEnvDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs_read_env(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOFSRWEnv is the read+write+env+stdout
-// combination framing test: given a `fern -target wasm32-wasi` build's core,
-// the self-host's component_full_io_fs_rw_env framing must reproduce that
-// build's component byte-for-byte, validate, and run. The richest realistic
-// edge-handler shape.
+// TestSelfHostWasmComponentFullIOFSRWEnv composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2840,7 +2229,6 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-fs-rw-env e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -2865,18 +2253,7 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOFSRWEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw-env component assembler produced 0 bytes")
 	}
@@ -2925,26 +2302,6 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 	}
 }
 
-// componentFullIOFSRWEnvDriver reads a (read+write+env+stdout) core and wraps
-// it via component_full_io_fs_rw_env.
-const componentFullIOFSRWEnvDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_fs_rw_env(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentReadWriteEnv exercises the fully self-hosted
 // preview2 read+write+env path end to end -- the full edge-handler shape:
 // read a config file, read an env var, write an output file, respond.
@@ -2967,20 +2324,9 @@ func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOFSRWEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw-env component assembler produced 0 bytes")
 	}
@@ -3036,30 +2382,8 @@ func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 	})
 }
 
-// componentCompileIOFSRWEnvDriver reads a read+write+env+stdout core WAT,
-// assembles it, and wraps it via component_full_io_fs_rw_env.
-const componentCompileIOFSRWEnvDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs_rw_env(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIORandomWrite is the random+write+stdout
-// combination framing test: given a `fern -target wasm32-wasi` build's core,
-// the self-host's component_full_io_random_write framing must reproduce that
-// build's component byte-for-byte, validate, and run. Mixes a memory-free
-// import (random, lowered without memory) with the memory-dependent fs write
-// chain.
+// TestSelfHostWasmComponentFullIORandomWrite composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3069,7 +2393,6 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-random-write e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -3094,18 +2417,7 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIORandomWriteDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-random-write component assembler produced 0 bytes")
 	}
@@ -3151,26 +2463,6 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 	}
 }
 
-// componentFullIORandomWriteDriver reads a (random+write+stdout) core and
-// wraps it via component_full_io_random_write.
-const componentFullIORandomWriteDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_random_write(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentRandomWrite exercises the fully self-hosted preview2
 // random+write path end to end -- the token-generating handler shape: draw a
 // random id, persist it to a file, respond.
@@ -3193,20 +2485,9 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIORandomWriteDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-random-write component assembler produced 0 bytes")
 	}
@@ -3259,29 +2540,8 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 	})
 }
 
-// componentCompileIORandomWriteDriver reads a random+write+stdout core WAT,
-// assembles it, and wraps it via component_full_io_random_write.
-const componentCompileIORandomWriteDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_random_write(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOEprint is the eprint+stdout framing test:
-// given a `fern -target wasm32-wasi` build's eprint+stdout core, the
-// self-host's component_full_io_eprint framing must reproduce that build's
-// component byte-for-byte, validate, and run (writing to both stdout and
-// stderr).
+// TestSelfHostWasmComponentFullIOEprint composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3291,7 +2551,6 @@ func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-eprint e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -3316,18 +2575,7 @@ func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOEprintDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-eprint component assembler produced 0 bytes")
 	}
@@ -3372,26 +2620,6 @@ func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 	}
 }
 
-// componentFullIOEprintDriver reads a (eprint+stdout) core and wraps it via
-// component_full_io_eprint.
-const componentFullIOEprintDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_eprint(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentEprint exercises the fully self-hosted preview2
 // eprint path end to end: source -> wasm_ir in run-I/O mode (a run core
 // importing wasi:cli/stderr's get-stderr + the stdout pair, with a preview2
@@ -3416,20 +2644,9 @@ func TestSelfHostWasmComponentEprint(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOEprintDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-eprint component assembler produced 0 bytes")
 	}
@@ -3495,28 +2712,8 @@ func TestSelfHostWasmComponentEprint(t *testing.T) {
 	})
 }
 
-// componentCompileIOEprintDriver reads a eprint+stdout core WAT, assembles it,
-// and wraps it via component_full_io_eprint.
-const componentCompileIOEprintDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_eprint(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOExit is the exit+stdout framing test: given a
-// `fern -target wasm32-wasi` build's exit+stdout core, the self-host's
-// component_full_io_exit framing must reproduce that build's component
-// byte-for-byte, validate, and run (exit(0) terminates cleanly after stdout).
+// TestSelfHostWasmComponentFullIOExit composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3526,7 +2723,6 @@ func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-exit e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -3551,18 +2747,7 @@ func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOExitDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-exit component assembler produced 0 bytes")
 	}
@@ -3605,26 +2790,6 @@ func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 	}
 }
 
-// componentFullIOExitDriver reads a (exit+stdout) core and wraps it via
-// component_full_io_exit.
-const componentFullIOExitDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_exit(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentExit exercises the fully self-hosted preview2 exit
 // path end to end: source -> wasm_ir in run-I/O mode (a run core importing
 // wasi:cli/exit + the stdout pair, with a preview2 $__fern_exit) ->
@@ -3649,20 +2814,9 @@ func TestSelfHostWasmComponentExit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io.fern"), []byte(p2IODriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	ioBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io.fern", "wasm_run_io")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOExitDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-exit component assembler produced 0 bytes")
 	}
@@ -3725,29 +2879,8 @@ func TestSelfHostWasmComponentExit(t *testing.T) {
 	})
 }
 
-// componentCompileIOExitDriver reads a exit+stdout core WAT, assembles it, and
-// wraps it via component_full_io_exit.
-const componentCompileIOExitDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_exit(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOFSArgsRead is the args+read_file+stdout
-// combination framing test: given a `fern -target wasm32-wasi` build's core,
-// the self-host's component_full_io_fs_args_read framing must reproduce that
-// build's component byte-for-byte, validate, and run. The canonical CLI-tool
-// shape.
+// TestSelfHostWasmComponentFullIOFSArgsRead composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3757,7 +2890,6 @@ func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-fs-args-read e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -3782,18 +2914,7 @@ func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOFSArgsReadDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-args-read component assembler produced 0 bytes")
 	}
@@ -3835,26 +2956,6 @@ func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 	}
 }
 
-// componentFullIOFSArgsReadDriver reads a (args+read+stdout) core and wraps it
-// via component_full_io_fs_args_read.
-const componentFullIOFSArgsReadDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_fs_args_read(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentArgsRead exercises the fully self-hosted preview2
 // args+read path end to end -- the canonical CLI-tool shape: read a filename
 // from argv, read that file, print it.
@@ -3877,20 +2978,9 @@ func TestSelfHostWasmComponentArgsRead(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOFSArgsReadDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-args-read component assembler produced 0 bytes")
 	}
@@ -3951,30 +3041,8 @@ func TestSelfHostWasmComponentArgsRead(t *testing.T) {
 	})
 }
 
-// componentCompileIOFSArgsReadDriver reads an args+read+stdout core WAT,
-// assembles it, and wraps it via component_full_io_fs_args_read.
-const componentCompileIOFSArgsReadDriver = `
-function main(): i32 {
-    match (read_file("core.wat")) {
-        Ok(wat) => {
-            let core: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
-            let comp: i32[] = component_full_io_fs_args_read(core);
-            let i: i32 = 0;
-            while (i < comp.len()) { print_int(comp[i]); write("\n"); i = i + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
-// TestSelfHostWasmComponentFullIOFSRWArgs is the args+read+write+stdout framing
-// test (file-transform CLI shape): given a `fern -target wasm32-wasi` build's
-// core, the self-host's component_full_io_fs_rw_args framing must reproduce
-// that build's component byte-for-byte, validate, and run (copy a file named in
-// argv to another). Its prefix is io_fs_rw_head() + an args tail (phase-3
-// composition).
+// TestSelfHostWasmComponentFullIOFSRWArgs composes a reference core in Wasm.
+// Its bytes must match the native composer and run under wasmtime.
 func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3984,7 +3052,6 @@ func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH; skipping component-full-io-fs-rw-args e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	fernBin := filepath.Join(dir, "fern")
@@ -4009,18 +3076,7 @@ func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentFullIOFSRWArgsDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw-args component assembler produced 0 bytes")
 	}
@@ -4069,26 +3125,6 @@ func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 	}
 }
 
-// componentFullIOFSRWArgsDriver reads a (args+read+write+stdout) core and wraps
-// it via component_full_io_fs_rw_args.
-const componentFullIOFSRWArgsDriver = `
-function main(): i32 {
-    match (read_file_bytes("core.bin")) {
-        Ok(s) => {
-            let core: i32[] = [];
-            let i: i32 = 0;
-            while (i < s.len()) { core = core.append((s[i] as i32)); i = i + 1; }
-            let comp: i32[] = component_full_io_fs_rw_args(core);
-            let j: i32 = 0;
-            while (j < comp.len()) { print_int((comp[j] as i32)); write("\n"); j = j + 1; }
-            return 0;
-        },
-        Err(e) => { return 1; }
-    }
-    return 2;
-}
-`
-
 // TestSelfHostWasmComponentArgsReadWrite exercises the fully self-hosted
 // preview2 args+read+write path end to end -- the file-transform CLI shape:
 // read a file named in argv[1], write it to argv[2].
@@ -4111,20 +3147,9 @@ func TestSelfHostWasmComponentArgsReadWrite(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_io_fs.fern"), []byte(p2FSDriver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_io_fs.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 	fsBin := buildSelfHostBin(t, gcc, dir, "wasm_run_io_fs.fern", "wasm_run_io_fs")
 
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../../compiler", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(componentCompileIOFSRWArgsDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
+	asmWat := worldComponentAssemblerWAT(t)
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw-args component assembler produced 0 bytes")
 	}

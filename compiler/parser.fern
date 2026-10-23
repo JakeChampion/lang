@@ -12566,26 +12566,25 @@ function fn_value_inst_key(fd: FuncDecl, expected: string, funcs: MFns): string 
   if (ret.len() == 0 || ps.len() != fd.params.len()) {
     return "";
   }
+  // Only a concrete spelling binds: a type variable left in one belongs to
+  // the callee (`(A, f64) => A` for array fold's `f`) or to the enclosing
+  // template, and binds nothing here.
   let binds: MEnv = MEnv { mnames: [], mtypes: [] };
   let i: i32 = 0;
   while (i < ps.len()) {
-    binds = bind_unify(param_spelling(fd.params[i]), ps[i], fd.type_params, binds, funcs);
+    if (type_str_vars(ps[i], []).len() == 0) {
+      binds = bind_unify(param_spelling(fd.params[i]), ps[i], fd.type_params, binds, funcs);
+    }
     i = i + 1;
   }
   let fret: string = fd.ret_type;
   if (fret == "fn") {
     fret = "(" + fd.ret_fn_param_types + ") => " + fd.ret_fn_ret;
   }
-  binds = bind_unify(fret, ret, fd.type_params, binds, funcs);
-  let key: string = binds_to_key(fd.type_params, binds);
-  // A binding to a type variable is the enclosing template's, not a type:
-  // its clone's body comes back here with the variable substituted.
-  for part in split_inst_key(key) {
-    if (type_str_vars(part, []).len() > 0) {
-      return "";
-    }
+  if (type_str_vars(ret, []).len() == 0) {
+    binds = bind_unify(fret, ret, fd.type_params, binds, funcs);
   }
-  return key;
+  return binds_to_key(fd.type_params, binds);
 }
 
 // param_spelling is a parameter's full type spelling: a function-typed one's
@@ -12749,7 +12748,9 @@ function method_param_spellings(c: ast.ExprCall, fa: ast.ExprFieldAccess, env: M
 // at the spelling of the parameter it is passed to, as a `let` rewrites its
 // initialiser at the annotation. A spelling still in a type variable of the
 // enclosing template keys nothing: the clone's body comes back here with it
-// substituted.
+// substituted. A function value may meet a spelling that keeps the callee's
+// own variable (`(f64) => U` for array map's `f`): fn_value_inst_key keys it
+// only when its own type parameters are all bound.
 function mono_call_args(c: ast.ExprCall, env: MEnv, funcs: MFns, ins: Insts): (ast.Expr[], Insts) {
   let nargs: ast.Expr[] = [];
   let cur: Insts = ins;
@@ -12760,7 +12761,7 @@ function mono_call_args(c: ast.ExprCall, env: MEnv, funcs: MFns, ins: Insts): (a
   let i: i32 = 0;
   while (i < c.args.len()) {
     let ra: RExpr = RExpr { rexpr: c.args[i], rins: cur };
-    if (i < pspell.len() && arg_wants_expected(c.args[i], env, funcs) && type_str_vars(pspell[i], []).len() == 0) {
+    if (i < pspell.len() && arg_wants_expected(c.args[i], env, funcs) && (type_str_vars(pspell[i], []).len() == 0 || generic_fn_value_name(c.args[i], env, funcs).len() > 0)) {
       ra = mono_call_expected(c.args[i], pspell[i], env, funcs, cur);
     } else {
       ra = mono_expr(c.args[i], env, funcs, cur);
@@ -14049,14 +14050,12 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
               }
               let ct3: string = infer_folded_inst(funcs.decls[amg], raw, c.type_args, env, funcs);
               if (ct3.len() > 0) {
-                let ro: RExpr = mono_expr(fac.obj, env, funcs, cur);
-                cur = ro.rins;
-                let folded: ast.Expr[] = [ro.rexpr];
-                let fk: i32 = 0;
-                while (fk < nargs.len()) {
-                  folded = folded.append(nargs[fk]);
-                  fk = fk + 1;
-                }
+                // The arguments meet the folded function's parameters, so a
+                // generic function passed as one takes its type arguments
+                // from them.
+                let fcall = ast.ExprCall { callee: ast.ExprIdent { name: amn, line: fac.line, col: fac.col, ty: "" }, args: raw, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
+                let (folded, fins) = mono_call_args(fcall, env, funcs, ins);
+                cur = fins;
                 cur = cur.iadd(amn, ct3);
                 return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: amn + "__" + sanitize_key(ct3), line: fac.line, col: fac.col, ty: "" }, args: folded, line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: cur };
               }
@@ -27931,10 +27930,10 @@ function dv_default_expr(t: string): ast.Expr {
     return e_bool(false);
   }
   if (t == "f32" || t == "f64") {
-    return e_number("0.0", "", true);
+    return e_number("0.0", t, true);
   }
   if (dv_is_scalar(t)) {
-    return e_number("0", "", false);
+    return e_number("0", t, false);
   }
   let noargs: ast.Expr[] = [];
   return e_call(e_field_access(e_ident(t), "default"), noargs);
@@ -28041,14 +28040,14 @@ function dv_is_num_scalar(t: string): boolean {
 function dv_num_identity_expr(t: string, one: boolean): ast.Expr {
   if (t == "f32" || t == "f64") {
     if (one) {
-      return e_number("1.0", "", true);
+      return e_number("1.0", t, true);
     }
-    return e_number("0.0", "", true);
+    return e_number("0.0", t, true);
   }
   if (one) {
-    return e_number("1", "", false);
+    return e_number("1", t, false);
   }
-  return e_number("0", "", false);
+  return e_number("0", t, false);
 }
 
 // struct_default_derivable reports whether EVERY field of `sd` has a
