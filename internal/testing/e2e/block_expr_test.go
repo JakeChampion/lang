@@ -392,6 +392,45 @@ function main(): i32 {
 	backendsAgree(t, src, interpOracle(t, src, "r=105"))
 }
 
+// A void lambda can end in a match or an if-else whose branches only run
+// statements, one of them returning early (#13063).
+func TestBlockExprCompiledVoidLambdaBranchTail(t *testing.T) {
+	src := `import "std/i32";
+enum M { A(i32), B(string), C }
+function each(xs: M[], f: (M) => void): void {
+	for x in xs {
+		f(x);
+	}
+}
+function main(): i32 {
+	each([A(7), B("x"), C], (m: M): void => {
+		match (m) {
+			A(n) => {
+				print("a=" + n.to_string());
+			},
+			B(s) => {
+				print("b=" + s);
+			},
+			C => {
+				return;
+			}
+		}
+	});
+	let sign: (i32) => void = (n: i32): void => {
+		if (n > 0) {
+			print("pos");
+		} else {
+			print("neg");
+		}
+	};
+	sign(3);
+	sign(-3);
+	return 0;
+}
+`
+	backendsAgree(t, src, interpOracle(t, src, "a=7\nb=x\npos\nneg"))
+}
+
 // Block-locals don't leak and each block gets its own scope: the same
 // name `k` is rebound in two sibling block-exprs without collision, and
 // both contribute to the result (10 + 20 = 30). Confirms the
