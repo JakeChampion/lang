@@ -2539,7 +2539,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
       let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1)), origin);
       let shown: string = display_path(rm.shown, root);
       if (rm.map.doc.len() > 0) {
-        shown = rm.map.doc;
+        shown = display_path(rm.map.doc, root);
       }
       files = files.append(shown);
       maps = maps.append(rm.map);

@@ -322,8 +322,9 @@ func TestSelfHostEmbedCarriesTheStdlib(t *testing.T) {
 		"    let n: i32 = 0;\n" +
 		"    let io_len: i32 = 0;\n" +
 		"    for a in __fern_assets() {\n" +
-		"        if (a.0.len() > 5 && a.0[a.0.len() - 5] == b'.') { n = n + 1; }\n" +
-		"        if (a.0 == \"std/io.fern\") { io_len = a.1.len(); }\n" +
+		"        let name: string = a.0;\n" +
+		"        if ((name.len() >= 5 && slice_unchecked(name, name.len() - 5, name.len()) == \".fern\") || (name.len() >= 8 && slice_unchecked(name, name.len() - 8, name.len()) == \".fern.md\")) { n = n + 1; }\n" +
+		"        if (name == \"std/io.fern.md\") { io_len = a.1.len(); }\n" +
 		"    }\n" +
 		"    if (n < 60) { return 1; }\n" +
 		"    if (io_len < 100) { return 2; }\n" +
@@ -342,9 +343,9 @@ func TestSelfHostEmbedCarriesTheStdlib(t *testing.T) {
 	switch code := run.ProcessState.ExitCode(); code {
 	case 0:
 	case 1:
-		t.Fatalf("fewer than 60 .fern modules reached the binary — the walk lost files\n%s", out)
+		t.Fatalf("fewer than 60 .fern or .fern.md modules reached the binary — the walk lost files\n%s", out)
 	case 2:
-		t.Fatalf("std/io.fern arrived with no contents — the walk kept names but not bytes\n%s", out)
+		t.Fatalf("std/io.fern.md arrived with no contents — the walk kept names but not bytes\n%s", out)
 	default:
 		t.Fatalf("stdlib-embedding program exited %d\n%s", code, out)
 	}
