@@ -2,6 +2,7 @@
 // A sign is optional. Whitespace and non-ASCII digits are invalid.
 
 import "std/error";
+import "core/cmp";
 import "std/i32";
 
 pub enum IntError {
@@ -26,6 +27,12 @@ pub function (e: IntError) message(): string {
 }
 
 impl error.Error for IntError {}
+
+impl cmp.Display for IntError {}
+
+pub function (e: IntError) to_string(): string {
+  return e.message();
+}
 
 // Parse the complete string, including the full signed 64-bit range.
 pub function int64(text: string): Result[i64, IntError] {
