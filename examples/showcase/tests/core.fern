@@ -1,0 +1,167 @@
+import "std/test";
+import "std/http";
+import "std/json";
+import "std/http/compress";
+import "std/option";
+import "std/result";
+import "std/array";
+import "../rally";
+import "../mosaic";
+import "../wave";
+import "../metrics";
+import "../notes";
+import "../common";
+import "../encoding";
+import "../../fractal/source";
+
+function game_physics(): test.TestOutcome {
+  let initial = rally.initial(false);
+  let game = rally.Game { ...initial, running: true };
+  let moved = rally.advance(rally.Game { ...game }, 1.0, 0.0, 8.0);
+  if (moved.x <= 0.5 || moved.x > 0.522 || moved.left > 0.581 || moved.right < 0.419) {
+    return test.fail("elapsed time or paddle speed was not bounded");
+  }
+  let hit = rally.advance(rally.Game { ...game, x: 0.07, y: 0.5, vx: -0.8, vy: 0.0 }, 0.5, 0.5, 0.02);
+  if (hit.vx <= 0.0) {
+    return test.fail("paddle did not reflect the ball");
+  }
+  let wall = rally.advance(rally.Game { ...game, y: 0.015, vy: -0.4 }, 0.5, 0.5, 0.05);
+  if (wall.vy <= 0.0 || wall.y < 0.014) {
+    return test.fail("wall did not reflect overshoot");
+  }
+  let scored = rally.advance(rally.Game { ...game, x: 1.019, vx: 0.8 }, 0.5, 0.5, 0.02);
+  return test.assert_true(scored.left_score == 1 && scored.x == 0.5 && !initial.running);
+}
+
+function shared_board(): test.TestOutcome {
+  let state = mosaic.state();
+  if (mosaic.room(state, "../secret").is_ok()) {
+    return test.fail("invalid room was accepted");
+  }
+  let Ok(room) = mosaic.room(state, "test") else {
+    return test.fail("expected a valid result");
+  };
+  if (mosaic.paint(room, mosaic.Stroke { color: 3, points: [0, 2560] }).is_ok() || mosaic.snapshot(room).revision != 0) {
+    return test.fail("invalid stroke partly committed");
+  }
+  let index: i32 = 0;
+  while (index < 260) {
+    let Ok(change) = mosaic.paint(room, mosaic.Stroke { color: index % 12, points: [index] }) else {
+      return test.fail("expected a valid result");
+    };
+    if (change.revision != (index + 1) as i64) {
+      return test.fail("revision did not increase");
+    }
+    index = index + 1;
+  }
+  let Some(reset) = mosaic.changes(room, Some(0)) else {
+    return test.fail("expected an event");
+  };
+  let Some(replay) = mosaic.changes(room, Some(258)) else {
+    return test.fail("expected an event");
+  };
+  if (reset.name != "snapshot" || replay.name != "paint" || replay.id != "259" || mosaic.changes(room, Some(260)).is_some()) {
+    return test.fail("journal replay or reset differs");
+  }
+  if (state.rooms.get()[0].history.len() != 256 || mosaic.room(state, "test").is_err()) {
+    return test.fail("room or history bound differs");
+  }
+  let Ok(image) = mosaic.export_png(room) else {
+    return test.fail("PNG export failed");
+  };
+  return test.assert_true(image.body_bytes()[0] == 137);
+}
+
+function audio_format(): test.TestOutcome {
+  for query in ["bpm=0", "bpm=181", "bpm=no", "voice=unknown", "notes=1,2", "notes=8,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"] {
+    if (wave.parse_pattern(http.request("GET", "/wave/render.wav?" + query)).is_ok()) {
+      return test.fail("invalid pattern was accepted");
+    }
+  }
+  let Ok(pattern) = wave.parse_pattern(http.request("GET", "/wave/render.wav?bpm=120")) else {
+    return test.fail("expected a valid result");
+  };
+  let bytes = wave.render(pattern);
+  if (bytes.len() != 96044 || bytes[0] != b'R' || bytes[8] != b'W' || bytes[20] != 1 || bytes[22] != 1 || bytes[34] != 16) {
+    return test.fail("WAV header or sample count differs");
+  }
+  return test.pass();
+}
+
+function nullable_metrics(): test.TestOutcome {
+  if (metrics.status_number("VmRSS:\t12 kB\nThreads:\t1\n", "VmRSS", 1024).unwrap_or(0) != 12288) {
+    return test.fail("RSS units differ");
+  }
+  if (metrics.status_number("VmRSS: -1 kB", "VmRSS", 1024).is_some() || metrics.status_number("VmRSS: 9223372036854775807 kB", "VmRSS", 1024).is_some()) {
+    return test.fail("invalid metric was accepted");
+  }
+  if (metrics.cpu_ticks("2 (name ) with spaces) R 0 0 0 0 0 0 0 0 0 0 23 7").unwrap_or(0) != 30) {
+    return test.fail("proc command name changed CPU field offsets");
+  }
+  return test.assert_true(metrics.status_number("", "VmRSS", 1024).is_none());
+}
+
+@derive(json.Json, json.FromJson)
+struct Reading { bytes: Option[i64], label: Option[string] }
+
+function json_options(): test.TestOutcome {
+  let reading = Reading { bytes: Some(123 as i64), label: None };
+  let encoded = reading.to_json();
+  let Ok(decoded) = Reading.from_json(encoded) else {
+    return test.fail("expected a valid result");
+  };
+  if (encoded != "{\"bytes\":123,\"label\":null}" || decoded.bytes.unwrap_or(0) != 123 || decoded.label.is_some()) {
+    return test.fail("derived optional JSON did not round trip");
+  }
+  let nested: Option[Option[i32]] = Some(Some(42));
+  let empty: Option[i32] = None;
+  return test.assert_true(nested.to_json() == "42" && empty.to_json() == "null");
+}
+
+function form_and_proxy(): test.TestOutcome {
+  let state = notes.state();
+  let page = notes.document(state, http.request("GET", "/notes/"), "", 200);
+  let cookie = page.headers.get("Set-Cookie").unwrap_or("").split(";")[0];
+  let token = cookie.splitn("=", 2)[1];
+  if (!notes.valid_token(state, token) || notes.valid_token(state, token + "0")) {
+    return test.fail("signed token verification differs");
+  }
+  let request = http.request("GET", "/").with_header("Accept-Encoding", "gzip").with_header("Netlify-Original-Accept-Encoding", "br, zstd");
+  return test.assert_true(encoding.request(request, "Netlify-Original-Accept-Encoding").headers.get("Accept-Encoding").unwrap_or("") == "br, zstd" && encoding.request(request, "").headers.get("Accept-Encoding").unwrap_or("") == "gzip");
+}
+
+function literate_source(): test.TestOutcome {
+  let document = "# A real lesson\n\nLearn this function.\n\n```fern\n<<*>>=\nimport \"./common\";\npub function value(): i32 { return 42; }\n```\n";
+  let files = ["showcase/server.fern.md", "showcase/common.fern.md"];
+  let html = source.render_files(files[0], document, files);
+  let pages = [source.Page { name: files[0], html: html }];
+  return test.assert_true(html.contains("A real lesson") && html.contains("href=\"/_src/showcase/common.fern.md\"") && html.contains("<span class=\"k\">return</span>") && source.serve(pages, "showcase/server.fern").status == 200);
+}
+
+function streams_stay_lazy(): test.TestOutcome {
+  let calls: Cell[i32] = cell_new(0);
+  for content_type in ["text/event-stream", "application/octet-stream"] {
+    let stream = http.chunks(200, (index: i32): Option[u8[]] => {
+      calls.set(calls.get() + 1);
+      return None;
+    }).with_content_type(content_type);
+    let response = compress.response(http.request("GET", "/").with_header("Accept-Encoding", "gzip, zstd"), stream, compress.options());
+    if (response.headers.has("Content-Encoding") || calls.get() != 0) {
+      return test.fail("compression evaluated a stream producer");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("Fern showcase");
+  runner = runner.it("authoritative physics and bounded time", game_physics);
+  runner = runner.it("atomic strokes and resumable bounded journal", shared_board);
+  runner = runner.it("validated pattern and PCM WAV", audio_format);
+  runner = runner.it("procfs units and nullable fields", nullable_metrics);
+  runner = runner.it("generic optional JSON round trip", json_options);
+  runner = runner.it("signed form token and proxy negotiation", form_and_proxy);
+  runner = runner.it("woven lessons and import aliases", literate_source);
+  runner = runner.it("compression preserves lazy streams", streams_stay_lazy);
+  return runner.finish();
+}

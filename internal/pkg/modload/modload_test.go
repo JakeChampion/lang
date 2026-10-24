@@ -753,6 +753,32 @@ function main(): i32 { return util.exposed(); }`,
 	}
 }
 
+func TestLoadQualifiesStructStaticMethods(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"factory.fern": `pub trait Make { function make(): Self; }
+pub struct Input { value: i32 }
+struct Private { value: i32 }
+impl Make for Input { function make(): Input { return Input { value: 40 }; } }
+impl Make for Private { function make(): Private { return Private { value: 2 }; } }
+pub function generic[Input: Make](): Input { return Input.make(); }
+pub function check(): i32 {
+  let first: Input = Input.make();
+  let second: Private = Private.make();
+  let Input: Input = Input { value: 1 };
+  return first.value + second.value + Input.value;
+}`,
+		"main.fern": `import "./factory";
+function main(): i32 { return factory.check(); }`,
+	})
+	prog, _, err := modload.Load(filepath.Join(dir, "main.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("struct static methods or shadowed names did not resolve: %v", err)
+	}
+}
+
 func TestLoadCombinesPubConstAcrossModules(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"limits.fern": `pub const MAX: i32 = 100;`,

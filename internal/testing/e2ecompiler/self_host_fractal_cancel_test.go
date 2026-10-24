@@ -18,7 +18,7 @@ func TestSelfHostFractalCancellation(t *testing.T) {
 		t.Skip("live cancellation gate runs natively on x86-64 Linux")
 	}
 	cli := buildSelfHostCLI(t)
-	entry, err := filepath.Abs("../../../examples/fractal/server.fern")
+	entry, err := filepath.Abs("../../../examples/fractal/server.fern.md")
 	if err != nil {
 		t.Fatal(err)
 	}

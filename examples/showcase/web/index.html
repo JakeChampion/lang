@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      name="description"
+      content="Six working web applications. One native Fern server. Explore multiplayer games, live data, shared art, sound, and the hypertext web."
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Fern, in action — small binary, big possibilities</title>
+    <link rel="stylesheet" href="/assets/showcase.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#examples">Skip to examples</a>
+    <header class="site-nav">
+      <a class="brand" href="/" aria-label="Fern, in action home"
+        ><span class="brand-mark" aria-hidden="true">✳</span> fern<span
+          class="brand-suffix"
+        >
+          / in action</span
+        ></a
+      >
+      <nav>
+        <a href="/_src/">The source</a
+        ><a href="https://jakechampion.github.io/lang/">The language ↗</a
+        ><a href="https://github.com/JakeChampion/lang">GitHub ↗</a>
+      </nav>
+    </header>
+    <main class="shell">
+      <section class="home-hero">
+        <div class="hero-copy">
+          <div class="eyebrow">A language with places to go</div>
+          <h1>Small binary.<br /><em>Big possibilities.</em></h1>
+          <p>
+            Six working applications. One native Fern server. Come for the
+            fractals, stay for the multiplayer, shared canvases, and little
+            musical accidents.
+          </p>
+          <div class="hero-links">
+            <a class="button primary" href="#examples"
+              >Explore the examples <span aria-hidden="true">↓</span></a
+            ><a href="/_src/">Read every line ↗</a>
+          </div>
+        </div>
+        <div
+          class="hero-art"
+          role="img"
+          aria-label="One native Fern server connects six applications through HTTP, WebSocket, and server-sent events."
+        >
+          <svg viewBox="0 0 500 410" aria-hidden="true">
+            <path
+              class="diagram-line"
+              d="M250 200V83H100M250 200V83H397M250 200H83M250 200H419M250 200V313H120M250 200V313H382"
+            />
+            <rect
+              class="diagram-node"
+              x="54"
+              y="55"
+              width="95"
+              height="56"
+              rx="7"
+            />
+            <rect
+              class="diagram-node"
+              x="350"
+              y="55"
+              width="95"
+              height="56"
+              rx="7"
+            />
+            <rect
+              class="diagram-node"
+              x="32"
+              y="173"
+              width="102"
+              height="56"
+              rx="7"
+            />
+            <rect
+              class="diagram-node"
+              x="367"
+              y="173"
+              width="102"
+              height="56"
+              rx="7"
+            />
+            <rect
+              class="diagram-node"
+              x="71"
+              y="285"
+              width="104"
+              height="56"
+              rx="7"
+            />
+            <rect
+              class="diagram-node"
+              x="333"
+              y="285"
+              width="104"
+              height="56"
+              rx="7"
+            />
+            <g class="diagram-label" text-anchor="middle">
+              <text x="101" y="87">FRACTAL</text>
+              <text x="397" y="87">RALLY</text>
+              <text x="83" y="205">MOSAIC</text>
+              <text x="419" y="205">WAVE LAB</text>
+              <text x="123" y="317">GUESTBOOK</text>
+              <text x="385" y="317">PULSE</text>
+            </g>
+            <rect
+              class="diagram-core"
+              x="190"
+              y="156"
+              width="120"
+              height="88"
+              rx="12"
+            />
+            <text
+              x="250"
+              y="196"
+              fill="#deedab"
+              font-family="Georgia,serif"
+              font-size="30"
+              text-anchor="middle"
+            >
+              fern
+            </text>
+            <text
+              x="250"
+              y="219"
+              fill="#a9c292"
+              font-family="monospace"
+              font-size="8"
+              letter-spacing="2"
+              text-anchor="middle"
+            >
+              NATIVE SERVER
+            </text>
+            <g fill="#719364">
+              <circle r="3" cx="250" cy="83" />
+              <circle r="3" cx="250" cy="313" />
+            </g>
+          </svg>
+          <div class="hero-art-caption">
+            <span>ONE PROCESS. MANY POSSIBILITIES.</span
+            ><span>HTTP / WS / SSE</span>
+          </div>
+        </div>
+      </section>
+      <div class="build-strip">
+        <span>Not mockups. <strong>Try the real thing.</strong></span>
+        <div class="strip-values">
+          <span><strong id="binary-size">Native</strong> binary</span
+          ><span><strong>06</strong> applications</span
+          ><span><strong>100%</strong> inspectable</span
+          ><a href="/pulse/"
+            >Server <strong id="instance">connecting</strong> ↗</a
+          >
+        </div>
+      </div>
+      <section id="examples" aria-labelledby="gallery-title">
+        <div class="gallery-top">
+          <h2 id="gallery-title">Choose your next rabbit hole.</h2>
+          <div class="filter-tabs" aria-label="Filter examples">
+            <button type="button" data-filter="all" aria-pressed="true">
+              All six</button
+            ><button type="button" data-filter="live" aria-pressed="false">
+              Live together</button
+            ><button type="button" data-filter="media" aria-pressed="false">
+              Make something</button
+            ><button type="button" data-filter="html" aria-pressed="false">
+              The web
+            </button>
+          </div>
+        </div>
+        <div class="gallery">
+          <a class="example wide" href="/fractal/" data-categories="media"
+            ><div class="example-preview fractal-preview" aria-hidden="true">
+              <div class="fractal-tiles">
+                <img data-fractal="0" alt="" /><img
+                  data-fractal="1"
+                  alt=""
+                /><img data-fractal="2" alt="" /><img data-fractal="3" alt="" />
+              </div>
+              <span class="preview-caption">A DIFFERENT WORLD, EVERY ZOOM</span>
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>01 / INFINITE EXPLORATION</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>The fractal explorer</h3>
+              <p>
+                Take a very deep breath. Then dive 4 trillion times into the
+                Mandelbrot set, one server-rendered tile at a time.
+              </p>
+              <div class="example-tags">
+                <span>SIMD</span><span>PNG encoding</span
+                ><span>HTTP + WebSocket</span>
+              </div>
+            </div></a
+          >
+          <a class="example narrow" href="/rally/" data-categories="live"
+            ><div class="example-preview rally-preview" aria-hidden="true">
+              <div class="mini-court">
+                <div class="mini-score">0 0</div>
+                <span class="mini-paddle"></span
+                ><span class="mini-paddle right"></span
+                ><span class="mini-ball"></span>
+              </div>
+              <span class="preview-caption">A CLASSIC. WITH A CONNECTION.</span>
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>02 / REAL-TIME PLAY</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Rally</h3>
+              <p>
+                A paddle, a ball, and a worthy opponent. Play the server or
+                invite a friend into your own live game room.
+              </p>
+              <div class="example-tags">
+                <span>WebSocket</span><span>Server-owned physics</span
+                ><span>Multiplayer</span>
+              </div>
+            </div></a
+          >
+          <a class="example" href="/mosaic/" data-categories="live media"
+            ><div class="example-preview mosaic-preview" aria-hidden="true">
+              <canvas id="mosaic-preview" width="64" height="40"></canvas
+              ><span class="preview-caption"
+                >LEAVE A PIXEL. FIND A FRIEND.</span
+              >
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>03 / MAKE IT TOGETHER</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>A little shared canvas</h3>
+              <p>
+                Pick a color and leave your mark. Every brushstroke travels
+                through Fern to everyone else in the room.
+              </p>
+              <div class="example-tags">
+                <span>Server-sent events</span><span>Resumable updates</span
+                ><span>PNG export</span>
+              </div>
+            </div></a
+          >
+          <a class="example" href="/wave/" data-categories="media"
+            ><div class="example-preview wave-preview" aria-hidden="true">
+              <div class="mini-sequence">
+                <span style="height: 40%"></span
+                ><span style="height: 18%"></span
+                ><span style="height: 58%"></span
+                ><span style="height: 18%"></span
+                ><span style="height: 80%"></span
+                ><span style="height: 18%"></span
+                ><span style="height: 100%"></span
+                ><span style="height: 80%"></span
+                ><span style="height: 58%"></span
+                ><span style="height: 18%"></span
+                ><span style="height: 44%"></span
+                ><span style="height: 18%"></span
+                ><span style="height: 30%"></span
+                ><span style="height: 58%"></span
+                ><span style="height: 80%"></span
+                ><span style="height: 18%"></span>
+              </div>
+              <span class="preview-caption"
+                >SIXTEEN STEPS. YOUR KIND OF NOISE.</span
+              >
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>04 / SOUND FROM SCRATCH</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Wave lab</h3>
+              <p>
+                A pocket-sized music studio. Compose a loop, choose an
+                oscillator, and let Fern turn your pattern into a real WAV file.
+              </p>
+              <div class="example-tags">
+                <span>Audio synthesis</span><span>Binary codecs</span
+                ><span>HTTP caching</span>
+              </div>
+            </div></a
+          >
+          <a class="example narrow" href="/notes/" data-categories="html"
+            ><div class="example-preview notes-preview" aria-hidden="true">
+              <div class="mini-note">
+                The web can still<br />feel like a place.<small
+                  >LEAVE A LITTLE SOMETHING. ↗</small
+                >
+              </div>
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>05 / THE HYPERTEXT WEB</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>The guestbook</h3>
+              <p>
+                A small corner for hellos and discoveries. Real HTML forms,
+                signed cookies, and an Atom feed. JavaScript not required.
+              </p>
+              <div class="example-tags">
+                <span>Server-rendered HTML</span><span>Forms + cookies</span
+                ><span>No JavaScript</span>
+              </div>
+            </div></a
+          >
+          <a class="example wide" href="/pulse/" data-categories="live html"
+            ><div class="example-preview pulse-preview" aria-hidden="true">
+              <div class="pulse-mini-top">
+                <span>● LIVE FROM THE SERVER</span><span>PROCESS / MEMORY</span>
+              </div>
+              <div class="pulse-big">
+                <span id="home-rss">—</span> <small>RSS</small>
+              </div>
+              <div class="pulse-mini-bars">
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i
+                ><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              </div>
+            </div>
+            <div class="example-body">
+              <div class="example-meta">
+                <span>06 / UNDER THE HOOD</span
+                ><span class="open-arrow" aria-hidden="true">↗</span>
+              </div>
+              <h3>Pulse</h3>
+              <p>
+                The server, with the lid off. Watch real memory, CPU, requests,
+                and latency change as you explore the other applications.
+              </p>
+              <div class="example-tags">
+                <span>RSS + cgroups</span><span>Live telemetry</span
+                ><span>Prometheus</span>
+              </div>
+            </div></a
+          >
+        </div>
+        <p
+          id="filter-result"
+          class="skip-link"
+          role="status"
+          aria-live="polite"
+        ></p>
+      </section>
+      <section class="source-callout">
+        <div>
+          <div class="eyebrow" style="margin-bottom: 16px">
+            NOTHING BEHIND THE CURTAIN
+          </div>
+          <h2>Curiosity comes with source code.</h2>
+          <p>
+            Each application links to its actual implementation. Follow the
+            imports, inspect the protocols, and take an idea into your next Fern
+            project.
+          </p>
+        </div>
+        <a class="button" href="/_src/">Open the source browser ↗</a>
+      </section>
+      <footer class="site-footer">
+        <span>✳ Fern, in action. Built to be explored.</span>
+        <div>
+          <a href="https://jakechampion.github.io/lang/">Documentation</a
+          ><a
+            href="https://github.com/JakeChampion/lang/tree/main/examples/showcase"
+            >Build it yourself ↗</a
+          >
+        </div>
+      </footer>
+    </main>
+    <script type="module" src="/home.mjs"></script>
+  </body>
+</html>
