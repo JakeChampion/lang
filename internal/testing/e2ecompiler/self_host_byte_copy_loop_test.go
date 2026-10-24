@@ -36,6 +36,12 @@ const byteCopyLoopFunctions = `@noinline function bytes(n: i32): u8[] {
   while (i < n) { a = a.append(a[start + i]); i = i + 1; }
   return a;
 }
+struct Counts { ns: i32[] }
+@noinline function counted(own a: u8[], c: Counts, k: i32, dist: i32): u8[] {
+  let i = 0; let start = a.len() - dist;
+  while (i < c.ns[k]) { a = a.append(a[start + i]); i = i + 1; }
+  return a;
+}
 @noinline function repeat(a: u8[], n: i32, dist: i32): u8[] {
   let out: u8[] = []; let i = 0;
   while (i < a.len()) { out = out.append(a[i]); i = i + 1; }
@@ -86,6 +92,7 @@ func TestSelfHostByteCopyLoops(t *testing.T) {
   for d in dists {
     if (!same(back(bytes(70), 129, d), repeat(bytes(70), 129, d)) || back(bytes(70), 0 - 1, d).len() != 70) { return 6; }
     if (!same(rebased(bytes(70), 129, d), repeat(bytes(70), 129, d)) || rebased(bytes(70), 0 - 1, d).len() != 70) { return 7; }
+    if (!same(counted(bytes(70), Counts { ns: [0, 129] }, 1, d), repeat(bytes(70), 129, d)) || counted(bytes(70), Counts { ns: [0, 129] }, 0, d).len() != 70) { return 8; }
   }
   return 0;
 }`, input, copies)
@@ -239,6 +246,7 @@ func TestSelfHostByteCopyLoopBounds(t *testing.T) {
 			"back-zero":       "back(a, 2, 0)",
 			"rebased-before":  "rebased(a, 2, 5)",
 			"rebased-at-end":  "rebased(a, 2, 0)",
+			"count-index":     "counted(a, Counts { ns: [1] }, 3, 1)",
 		} {
 			t.Run(target+"/"+name, func(t *testing.T) {
 				program := byteCopyLoopFunctions + "function main(): i32 { let a = bytes(4); let src = bytes(4); let out = " + call + "; return out.len(); }"

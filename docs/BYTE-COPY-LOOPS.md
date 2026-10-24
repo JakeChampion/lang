@@ -23,7 +23,9 @@ copy. Its distance is the receiver's length before the loop minus `from`.
 
 The arrays must be owned `u8[]` values, the source and offsets invariant, and
 the body exactly the read, update and increment. Counts may be invariant
-values, integer literals or the length of an invariant value. The pass keeps
+values, integer literals or the length of an invariant value. A count can
+also be a header computation over invariant values, such as `c.ns[k]`. The
+header runs at least once, so the pass computes it once before the call. The pass keeps
 the final index, including zero for a negative count. Other reads of the
 receiver's evolving phi keep their scalar walk. Additional effects, extra
 loop-carried state and other loop shapes also keep it.
