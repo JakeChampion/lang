@@ -12794,6 +12794,8 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.ArrayLit:
+				// A substituted constant reads static storage. The IR verifies
+				// the allocation contract after lowering.
 				if x.Const {
 					return false
 				}

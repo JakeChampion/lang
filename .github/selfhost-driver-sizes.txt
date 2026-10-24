@@ -573,14 +573,14 @@
 # #13040's sources is 25008 bytes (+0.1%) larger than the compiler from main
 # at 8207edec. fern.fern/stage2 (+1.6%) and checker_modload_run (+2.4%) stay
 # inside the tolerance and keep their rows.
-fern.fern/stage2 14037248
-fern.fern 14260976
-drivers/asm_load_run.fern 11324144
-drivers/asm_modload_run.fern 9965328
-drivers/asm_ir_run.fern 9615440
-drivers/asm_run.fern 8812464
-drivers/wasm_ir_run.fern 8797456
-drivers/wasm_run.fern 8801584
-drivers/wasm_runio_run.fern 8783248
-drivers/asm_pathprobe_run.fern 5867376
-drivers/checker_modload_run.fern 2985696
+fern.fern/stage2 14372960
+fern.fern 14377056
+drivers/asm_load_run.fern 11435648
+drivers/asm_modload_run.fern 10072736
+drivers/asm_ir_run.fern 9722800
+drivers/asm_run.fern 8911536
+drivers/wasm_ir_run.fern 8888272
+drivers/wasm_run.fern 8888304
+drivers/wasm_runio_run.fern 8870000
+drivers/asm_pathprobe_run.fern 5896160
+drivers/checker_modload_run.fern 3136256

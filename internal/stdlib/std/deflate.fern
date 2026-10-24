@@ -819,6 +819,12 @@ pub function deflate(input: [u8]): u8[] {
   return __deflated(input, 15, true);
 }
 
+// A greedy single-candidate search trades compression ratio for CPU time.
+// The output is an ordinary raw DEFLATE stream accepted by the same decoders.
+pub function deflate_fast(input: [u8]): u8[] {
+  return __deflated_tokens(input, __fast_tokens(input), true);
+}
+
 // `gzip(input)` — `input` as one gzip member (RFC 1952) around its
 // `deflate` stream: no name, no modification time, the operating system
 // unknown.
@@ -1020,7 +1026,10 @@ function __put_match(w: __Bits, length: i32, distance: i32, lit: __Code, dist: _
 // a code of its own, whichever is shortest; the last block ended as
 // `final` says, an empty stored block after it otherwise.
 function __deflated(input: [u8], window_bits: i32, final: boolean): u8[] {
-  let toks: i32[] = __tokens(input, 1 << window_bits);
+  return __deflated_tokens(input, __tokens(input, 1 << window_bits), final);
+}
+
+function __deflated_tokens(input: [u8], toks: i32[], final: boolean): u8[] {
   let fixed: (__Code, __Code) = (__fixed_lit(), __fixed_dist());
   let empty: u8[] = [];
   let w: __Bits = __Bits { out: empty, acc: 0, n: 0 };
@@ -1495,6 +1504,38 @@ function __tokens(input: [u8], window: i32): i32[] {
   }
   if (held.0 >= 0) {
     return out.append(input[n - 1] as i32);
+  }
+  return out;
+}
+
+// One hash candidate per position, with no lazy match or predecessor chain.
+function __fast_tokens(input: [u8]): i32[] {
+  let head: i32[] = __filled(32768, -1);
+  let out: i32[] = [];
+  let pos: i32 = 0;
+  while (pos < input.len()) {
+    let length: i32 = 0;
+    let distance: i32 = 0;
+    if (pos + 2 < input.len()) {
+      let candidate: i32 = head[__hash3(input, pos)];
+      if (candidate >= 0 && pos - candidate <= 32768) {
+        length = __common(input, candidate, pos);
+        distance = pos - candidate;
+      }
+    }
+    if (length >= 3) {
+      out = out.append(length << 16 | distance);
+    } else {
+      out = out.append(input[pos] as i32);
+      length = 1;
+    }
+    let end: i32 = pos + length;
+    while (pos < end) {
+      if (pos + 2 < input.len()) {
+        head = head.with(__hash3(input, pos), pos);
+      }
+      pos = pos + 1;
+    }
   }
   return out;
 }

@@ -53,7 +53,7 @@ const ogImage = `${siteUrl.replace(/\/$/, "")}${base.replace(/\/$/, "")}/og.png`
 // up, under "Other", so a new stdlib module is never invisible — it just
 // wants a home.
 const STDLIB_GROUPS = [
-  ["Text", ["ansi", "format", "glob", "peg", "regex", "strdist", "string",
+  ["Text", ["ansi", "format", "glob", "parse", "peg", "regex", "strdist", "string",
     "table", "textwrap", "unicode", "utf8"]],
   ["Data & encoding", ["base32", "base64", "binary", "brotli", "brotli_dictionary", "codec", "crypto", "crypto_aead", "crypto_aes_gcm", "crypto_chacha20poly1305",
     "crypto_ecdsa", "crypto_ed25519", "crypto_field25519", "crypto_mlkem768", "crypto_montgomery", "crypto_p256", "crypto_rsa", "crypto_sha2", "crypto_x25519", "csv", "deflate", "hash", "hex", "json", "png", "protobuf", "semver", "url", "uuid", "zstd"]],
