@@ -2,7 +2,9 @@ package e2ecompiler
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -130,5 +132,24 @@ func TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression(t *testing.T) {
 	}
 	if !ratchetUnder(baseExcess/2, baseExcess) {
 		t.Error(fmt.Sprintf("halving the excess (%d) should be worth banking", baseExcess/2))
+	}
+}
+
+func TestSelfHostRatchetIncludesLiterateSources(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("the ratchet driver reads native paths")
+	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/lint_ratchet_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/lint_ratchet_run.fern", "lint_ratchet_run")
+	input := t.TempDir()
+	document := "# Complexity\n\n```fern\n<<*>>=\nfunction complex(n: i32): i32 {\n" +
+		strings.Repeat("  if (n > 0) { n = n - 1; }\n", 11) + "  return n;\n}\n```\n"
+	if err := os.WriteFile(filepath.Join(input, "complex.fern.md"), []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command(bin, input).CombinedOutput(); err != nil || !strings.Contains(string(output), " worst complex 12 excess 2\n") {
+		t.Fatalf("literate complexity: %v\n%s", err, output)
 	}
 }

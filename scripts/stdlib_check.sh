@@ -22,6 +22,7 @@ fi
 check_module() {
 	f=$1
 	mod=${f#internal/stdlib/}
+	mod=${mod%.md}
 	mod=${mod%.fern}
 	dir=$(mktemp -d)
 	trap 'rm -rf "$dir"' EXIT
@@ -33,7 +34,7 @@ check_module() {
 }
 export -f check_module
 
-mapfile -t modules < <(find internal/stdlib -name '*.fern' | sort | grep -v '/_test[^/]*\.fern$')
+mapfile -t modules < <(find internal/stdlib \( -name '*.fern' -o -name '*.fern.md' \) | sort | grep -v '/_test[^/]*\.fern\(.md\)\?$')
 checked=${#modules[@]}
 status=0
 if [ "$checked" -gt 0 ]; then

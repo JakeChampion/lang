@@ -1,6 +1,7 @@
 import "../coverreport";
 import "../lexer";
 import "../lint";
+import "../modloader";
 import "../parser";
 import "../util";
 
@@ -13,7 +14,10 @@ function fern_files(dir: string): string[] {
         for f in fern_files(p) {
           out = out.append(f);
         }
-      } else if (util.str_has_suffix(n, ".fern")) {
+      } else if (util.str_has_suffix(n, ".fern") || util.str_has_suffix(n, ".fern.md")) {
+        if (util.str_has_suffix(n, ".fern.md") && util.has_str(names, slice_unchecked(n, 0, n.len() - 3) + "")) {
+          continue;
+        }
         out = out.append(p);
       }
     }
@@ -33,23 +37,27 @@ function main(): i32 {
     let excess: i32 = 0;
     let problems: string = "";
     for f in fern_files(av[i]) {
-      if let Ok(src) = read_file(f) {
-        let lx: lexer.LexResult = lexer.tokenize_full(src);
-        let m: parser.Module = parser.parse_module(lx.tokens);
-        for fd in lint.lint_file(cfg, f, src, m, lx.comments, no_cover) {
-          if (fd.rule == lint.COMPLEXITY) {
-            excess = excess + fd.value - cfg.max;
-          } else {
-            problems = problems + "directive " + f + ":" + util.i32_to_string(fd.line) + ": " + fd.msg + "\n";
-          }
+      let source: modloader.Resolved = modloader.read_module(modloader.no_buffers(), util.without_fern_ext(f) + ".fern");
+      if (!source.ok) {
+        eprint(source.err_path + ": " + source.err);
+        return 1;
+      }
+      let src: string = source.src;
+      let lx: lexer.LexResult = lexer.tokenize_full(src);
+      let m: parser.Module = parser.parse_module(lx.tokens);
+      for fd in lint.lint_file(cfg, f, src, m, lx.comments, no_cover) {
+        if (fd.rule == lint.COMPLEXITY) {
+          excess = excess + fd.value - cfg.max;
+        } else {
+          problems = problems + "directive " + f + ":" + util.i32_to_string(fd.line) + ": " + fd.msg + "\n";
         }
-        for fd in m.funcs {
-          if (lint.scored(m, fd)) {
-            let s: i32 = lint.score(fd);
-            if (s > worst) {
-              worst = s;
-              worst_name = lint.display_name(fd);
-            }
+      }
+      for fd in m.funcs {
+        if (lint.scored(m, fd)) {
+          let s: i32 = lint.score(fd);
+          if (s > worst) {
+            worst = s;
+            worst_name = lint.display_name(fd);
           }
         }
       }

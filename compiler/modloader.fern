@@ -70,6 +70,14 @@ function read_text(bufs: Buffers, path: string): Result[string, IoError] {
 }
 
 pub function read_module(bufs: Buffers, path: string): Resolved {
+  let plain: i32 = util.index_of_str(bufs.paths, util.clean_path(path));
+  if (plain >= 0) {
+    return Resolved { ...res_none(), src: bufs.srcs[plain], ok: true, shown: path };
+  }
+  let document: i32 = util.index_of_str(bufs.paths, util.clean_path(path + ".md"));
+  if (document >= 0) {
+    return tangle_module(path, path + ".md", bufs.srcs[document]);
+  }
   match (read_text(bufs, path)) {
     Ok(s) => {
       return Resolved { ...res_none(), src: s, ok: true, shown: path };
@@ -115,9 +123,32 @@ pub function no_overlay(): Overlay {
   return Overlay { paths: [], srcs: [], sealed: false, files: no_buffers() };
 }
 
+pub function embedded_sources(assets: (string, string)[], sealed: boolean): Overlay {
+  let paths: string[] = [];
+  let srcs: string[] = [];
+  let files: Buffers = no_buffers();
+  for asset in assets {
+    let name: string = asset.0;
+    if (!util.is_stdlib_path(name) || !util.str_has_suffix(name, ".fern") && !util.str_has_suffix(name, ".fern.md")) {
+      continue;
+    }
+    let module: string = util.without_fern_ext(name);
+    if (!util.has_str(paths, module)) {
+      paths = paths.append(module);
+      srcs = srcs.append(asset.1);
+    }
+    files = Buffers { paths: files.paths.append(util.clean_path("stdlib://" + name)), srcs: files.srcs.append(asset.1) };
+  }
+  return Overlay { paths: paths, srcs: srcs, sealed: sealed, files: files };
+}
+
 pub function resolve_module(ov: Overlay, dir: string, path: string): Resolved {
   let oi: i32 = util.index_of_str(ov.paths, rel_path(path));
   if (oi >= 0) {
+    let source: string = "stdlib://" + rel_path(path) + ".fern";
+    if (util.has_str(ov.files.paths, util.clean_path(source)) || util.has_str(ov.files.paths, util.clean_path(source + ".md"))) {
+      return read_module(ov.files, source);
+    }
     return Resolved { ...res_none(), src: ov.srcs[oi], ok: true, shown: "stdlib://" + rel_path(path) + ".fern" };
   }
   if (ov.sealed) {
@@ -651,11 +682,11 @@ pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModul
   if (!parts[idx].is_entry) {
     let id: string = parts[idx].ident;
     if (util.str_has_prefix(id, "stdlib://")) {
-      let k: i32 = util.index_of_str(ov.paths, slice_unchecked(id, 9, id.len()) + "");
-      if (k < 0) {
+      let source: Resolved = resolve_module(ov, "", slice_unchecked(id, 9, id.len()) + "");
+      if (!source.ok) {
         return None;
       }
-      return Some(ov.srcs[k]);
+      return Some(source.src);
     }
     path = id + ".fern";
   }

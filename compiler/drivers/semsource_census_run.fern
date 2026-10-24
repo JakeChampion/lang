@@ -192,20 +192,8 @@ function report(merged: parser.Module, tab: irtables.StructTab): void {
   hist_print("-- rc refusals --", rc_why);
 }
 
-const STDLIB_EXT: string = ".fern";
-
 function embedded_stdlib(): modloader.Overlay {
-  let paths: string[] = [];
-  let srcs: string[] = [];
-  for a in __fern_assets() {
-    let name: string = a.0;
-    if (name.len() > STDLIB_EXT.len()
-      && slice_unchecked(name, name.len() - STDLIB_EXT.len(), name.len()) == STDLIB_EXT) {
-      paths = paths.append(slice_unchecked(name, 0, name.len() - STDLIB_EXT.len()) + "");
-      srcs = srcs.append(a.1 + "");
-    }
-  }
-  return modloader.Overlay { ...modloader.no_overlay(), paths: paths, srcs: srcs };
+  return modloader.embedded_sources(__fern_assets(), false);
 }
 
 function main(): i32 {

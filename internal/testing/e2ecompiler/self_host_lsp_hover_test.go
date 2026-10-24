@@ -348,10 +348,12 @@ func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 		"t.fern.md":      "```fern\n<<*>>=\nfunction greeting(): i32 { return 7; }\nfunction main(): i32 { return greeting(); }\n```\n",
 		"chunks.fern.md": "# Doc\n\n```fern\n<<*>>=\nfunction helper(n: i32): i32 { return n + 1; }\nfunction main(): i32 {\n  <<body>>\n}\n```\n\nThe body.\n\n```fern\n<<body>>=\nlet v: i32 = helper(41);\nreturn v;\n```\n",
 		"array.fern":     "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [1, 2];\n  let m: Option[i32] = xs.avg();\n  return xs.len();\n}\n",
+		"option.fern":    "import \"std/option\";\nfunction main(): i32 {\n  let value: Option[i32] = Some(42);\n  return value.unwrap_or(0);\n}\n",
 		"std.fern":       "import \"std/string\";\nfunction main(): i32 {\n  let s: string = \"abc\";\n  let r: string = string.repeat_char(1 as char, 2);\n  if (s.starts_with(\"a\")) {\n    return r.len();\n  }\n  return 0;\n}\n",
 	})
 	stringFern := filepath.Join(s.stdlib, "std", "string.fern")
 	arrayFern := filepath.Join(s.stdlib, "std", "array.fern")
+	optionFern := filepath.Join(s.stdlib, "std", "option.fern.md")
 	declAt := func(file, decl, name string) lspRange {
 		for i, l := range strings.Split(string(mustRead(t, file)), "\n") {
 			if strings.HasPrefix(l, decl) {
@@ -384,7 +386,7 @@ func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 		}
 		return a
 	}
-	askLSP(t, s, dir, []string{"t.fern.md", "chunks.fern.md", "std.fern", "array.fern"}, []lspAsk{
+	askLSP(t, s, dir, []string{"t.fern.md", "chunks.fern.md", "std.fern", "array.fern", "option.fern"}, []lspAsk{
 		defAsk("literate-definition", "t.fern.md", 3, 33, "t.fern.md", rng(2, 9, 17)),
 		hoverAsk("literate-hover", "t.fern.md", 3, 33, "function greeting(): i32", rng(3, 30, 38)),
 		hoverAsk("moved-chunk-call", "chunks.fern.md", 14, 14, "function helper(i32): i32", rng(14, 13, 19)),
@@ -400,5 +402,7 @@ func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 		defAsk("array-method", "array.fern", 3, 27, arrayFern, declAt(arrayFern, "pub function (arr: i32[]) avg(", "avg")),
 		hoverAsk("array-len", "array.fern", 4, 13, "(method on Array) function len(): i32", rng(4, 12, 15)),
 		defAsk("array-len", "array.fern", 4, 13, "", lspRange{}),
+		documented(hoverAsk("literate-stdlib-method", "option.fern", 3, 18, "(method on Option) function unwrap_or(T): T", rng(3, 15, 24)), optionFern, "pub function (o: Option[T]) unwrap_or("),
+		defAsk("literate-stdlib-method", "option.fern", 3, 18, optionFern, declAt(optionFern, "pub function (o: Option[T]) unwrap_or(", "unwrap_or")),
 	})
 }

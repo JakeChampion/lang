@@ -72,7 +72,8 @@ indentation:
 ```fern
 <<classify one number>>=
 if (divisible(i, 15)) {
-  putchar(70); putchar(66);
+  putchar(70);
+  putchar(66);
 } else if (divisible(i, 3)) {
   putchar(70);
 } else if (divisible(i, 5)) {

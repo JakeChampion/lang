@@ -364,6 +364,17 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 		t.Errorf("wasm-hosted and natively-hosted output differ: %d vs %d bytes", len(wat), len(nativeWat))
 	}
 
+	t.Run("literate-standard-library", func(t *testing.T) {
+		for _, mode := range []struct{ flag, want string }{{"-check", "0"}, {"-interp", "42"}} {
+			cmd := exec.Command("wasmtime", "run", "--invoke", "main", mod, mode.flag)
+			cmd.Dir = t.TempDir()
+			cmd.Stdin = strings.NewReader(literateStdlibProgram)
+			if output, err := cmd.Output(); err != nil || strings.TrimSpace(string(output)) != mode.want {
+				t.Fatalf("%s: %v\n%s", mode.flag, err, output)
+			}
+		}
+	})
+
 	chk := exec.Command("wasmtime", "run", "--invoke", "main", mod, "-check")
 	chk.Dir = t.TempDir()
 	chk.Stdin = strings.NewReader("function main(): i32 { return nosuchthing; }\n")

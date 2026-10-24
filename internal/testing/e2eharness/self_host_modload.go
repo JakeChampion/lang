@@ -4,8 +4,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/stdlib"
 )
 
 func WriteSelfHostModloadProject(t *testing.T) string {
@@ -36,7 +37,7 @@ func CopyStdlibTree(t *testing.T, dst string) {
 		if d.IsDir() {
 			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
 		}
-		if !strings.HasSuffix(path, ".fern") {
+		if stdlib.ModuleName(path) == "" {
 			return nil
 		}
 		b, rerr := os.ReadFile(path)

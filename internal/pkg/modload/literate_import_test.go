@@ -73,6 +73,23 @@ func TestImportPrefersPlainFern(t *testing.T) {
 	}
 }
 
+func TestImportLiterateStandardLibrary(t *testing.T) {
+	dir := t.TempDir()
+	main := write(t, dir, "main.fern", "import \"std/option\";\nfunction main(): i32 { let value: Option[i32] = Some(42); return value.unwrap_or(0); }\n")
+	_, sources, documents, err := LoadWithLiterate(main, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "stdlib://std/option.fern"
+	if _, ok := sources[key]; !ok {
+		t.Fatalf("missing logical module %s", key)
+	}
+	doc, ok := documents[key]
+	if !ok || doc.DocPath != key+".md" || len(doc.LineMap) == 0 || !strings.Contains(doc.DocSrc, "# Optional values") {
+		t.Fatalf("missing standard library provenance: %#v", doc)
+	}
+}
+
 func keys(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

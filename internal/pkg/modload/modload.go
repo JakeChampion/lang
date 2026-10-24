@@ -706,6 +706,16 @@ func readSource(path string, overrides map[string]string) (string, error) {
 }
 
 func readModuleSource(path string, overrides map[string]string) (string, *LiterateModule, error) {
+	if strings.HasPrefix(path, stdlibPrefix) {
+		m, err := stdlib.ReadModule(strings.TrimPrefix(path, stdlibPrefix))
+		if err != nil {
+			return "", nil, err
+		}
+		if m.DocPath == "" {
+			return m.Code, nil, nil
+		}
+		return m.Code, &LiterateModule{DocPath: stdlibPrefix + m.DocPath, DocSrc: m.DocSource, LineMap: m.LineMap}, nil
+	}
 	src, err := readSource(path, overrides)
 	if err == nil {
 		return src, nil, nil

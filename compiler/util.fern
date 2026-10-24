@@ -1278,6 +1278,9 @@ pub function module_name(import_path: string): string {
 }
 
 pub function without_fern_ext(path: string): string {
+  if (str_has_suffix(path, ".fern.md")) {
+    return slice_unchecked(path, 0, path.len() - 8) + "";
+  }
   if (str_has_suffix(path, ".fern")) {
     return slice_unchecked(path, 0, path.len() - 5) + "";
   }
