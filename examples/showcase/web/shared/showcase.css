@@ -403,6 +403,7 @@
     font-weight: 520;
     letter-spacing: -0.067em;
     margin: 26px 0;
+    overflow-wrap: anywhere;
   }
   .hero-copy h1 em {
     color: var(--green);
@@ -1449,7 +1450,7 @@
     padding: 55px 0;
   }
   .hero-copy h1 {
-    font-size: 80px;
+    font-size: clamp(60px, 7.6vw, 80px);
   }
   .hero-art {
     aspect-ratio: 1;
@@ -1505,12 +1506,12 @@
     padding: 0 20px;
   }
   .home-hero {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     padding: 40px 0 30px;
     gap: 32px;
   }
   .hero-copy h1 {
-    font-size: 76px;
+    font-size: clamp(52px, 18vw, 76px);
     margin: 22px 0;
   }
   .hero-copy > p {
@@ -1548,6 +1549,10 @@
   }
   .filter-tabs button {
     padding: 6px 10px;
+  }
+  .filter-tabs,
+  .hero-links {
+    flex-wrap: wrap;
   }
   .gallery {
     gap: 20px;

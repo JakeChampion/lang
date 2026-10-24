@@ -73,7 +73,9 @@ await a.waitForFunction(() =>
   document.querySelector("#connection").textContent.includes("Live"),
 );
 await a.locator("#pause").click();
-await a.waitForTimeout(80);
+await a.waitForFunction(
+  () => document.querySelector("#fps").textContent === "PAUSED",
+);
 const stopped = await a.locator("#field").getAttribute("data-frames");
 await a.waitForTimeout(120);
 assert.equal(await a.locator("#field").getAttribute("data-frames"), stopped);
@@ -153,6 +155,23 @@ const mobile = await browser.newContext({
   isMobile: true,
   hasTouch: true,
 });
+for (const width of [320, 360, 375, 430, 721]) {
+  const p = await mobile.newPage();
+  await p.setViewportSize({ width, height: 844 });
+  await p.goto(base + "/");
+  for (const filter of ["All seven", "Make something", "The web"]) {
+    await p.getByRole("button", { name: filter, exact: true }).click();
+    const size = await p.evaluate(() => [
+      document.documentElement.scrollWidth,
+      document.documentElement.clientWidth,
+    ]);
+    assert.ok(
+      size[0] <= width + 1 && size[0] <= size[1] + 1,
+      `homepage at ${width}px (${filter}) overflow: ${size}`,
+    );
+  }
+  await p.close();
+}
 for (const route of [
   "/",
   "/rally/",
@@ -168,7 +187,7 @@ for (const route of [
   await p.waitForTimeout(250);
   const size = await p.evaluate(() => [
     document.documentElement.scrollWidth,
-    innerWidth,
+    document.documentElement.clientWidth,
   ]);
   assert.ok(size[0] <= size[1] + 1, route + " overflow " + size);
   await p.close();
