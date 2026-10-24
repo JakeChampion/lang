@@ -515,3 +515,26 @@ net/h2o-h3/c64m32.server_sys_us_per_req	2.32
 net/fern/held.bytes_per_connection	1008
 net/fern/held.bytes_per_suspended_handler	6115
 net/fern/held.bytes_per_stream	5686
+
+# lane: net-soak
+soak/static.requests	30846688
+soak/static.failed	0
+soak/static.rss_warm_kb	3248
+soak/static.rss_end_kb	3248
+soak/static.rss_growth_kb	0
+soak/static.allocs	269954
+soak/static.live_bytes	0
+soak/echo.requests	23065847
+soak/echo.failed	0
+soak/echo.rss_warm_kb	3308
+soak/echo.rss_end_kb	3308
+soak/echo.rss_growth_kb	0
+soak/echo.allocs	1124322587
+soak/echo.live_bytes	0
+soak/recent.requests	17489504
+soak/recent.failed	0
+soak/recent.rss_warm_kb	3212
+soak/recent.rss_end_kb	3212
+soak/recent.rss_growth_kb	0
+soak/recent.allocs	406771179
+soak/recent.live_bytes	0
