@@ -1,5 +1,11 @@
 import { $, status, toast, copy, mountFullscreen, json } from "/assets/ui.mjs";
-import { destination, decode, move, reconcile } from "./protocol.mjs";
+import {
+  destination,
+  decode,
+  move,
+  reconcile,
+  extrapolate,
+} from "./protocol.mjs";
 const canvas = $("arena"),
   context = canvas.getContext("2d"),
   keys = new Set(),
@@ -10,6 +16,7 @@ let socket,
   id = 0,
   frame,
   previous = new Map(),
+  tickSpan = 1,
   received = 0,
   lastDraw = 0,
   lastSent = 0,
@@ -139,6 +146,7 @@ function connect() {
         return;
       }
       if (frame && value.tick <= frame.tick) return;
+      tickSpan = frame ? value.tick - frame.tick : 1;
       previous = new Map(
         (frame?.players || value.players).map((p) => [p.id, p]),
       );
@@ -311,20 +319,11 @@ function draw(now) {
     const age = Math.min(0.15, Math.max(0, (now - received + rtt / 2) / 1000));
     for (const player of frame.players) {
       const old = previous.get(player.id) || player;
-      const x =
+      const position =
         player.id === id && local
-          ? local.x
-          : Math.max(
-              0,
-              Math.min(1024, player.x + ((player.x - old.x) * age) / 0.1),
-            );
-      const y =
-        player.id === id && local
-          ? local.y
-          : Math.max(
-              0,
-              Math.min(640, player.y + ((player.y - old.y) * age) / 0.1),
-            );
+          ? local
+          : extrapolate(player, old, tickSpan, age);
+      const { x, y } = position;
       context.fillStyle = `hsl(${(player.id * 137.508) % 360} 55% 65%)`;
       context.beginPath();
       context.arc(

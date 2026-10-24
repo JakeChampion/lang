@@ -75,3 +75,16 @@ export function reconcile(player, history) {
     { x: player.x, y: player.y },
   );
 }
+
+export function extrapolate(player, previous, ticks, seconds) {
+  const dx = player.x - previous.x,
+    dy = player.y - previous.y,
+    distance = Math.hypot(dx, dy),
+    duration = Math.max(1, ticks) * 0.1,
+    age = Math.max(0, Math.min(0.15, seconds)),
+    scale = distance ? Math.min(age / duration, (180 * age) / distance) : 0;
+  return {
+    x: Math.max(0, Math.min(1024, player.x + dx * scale)),
+    y: Math.max(0, Math.min(640, player.y + dy * scale)),
+  };
+}

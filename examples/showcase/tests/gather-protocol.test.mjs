@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  extrapolate,
   decode,
   destination,
   move,
@@ -57,5 +58,24 @@ test("prediction bounds elapsed time and replays only unacknowledged input", () 
       { seq: 3, x: 100, y: 0, dt: 0.05 },
     ]),
     { x: 9, y: 0 },
+  );
+});
+
+test("peer prediction accounts for skipped ticks and bounds speed and age", () => {
+  assert.deepEqual(extrapolate({ x: 36, y: 0 }, { x: 0, y: 0 }, 2, 0.1), {
+    x: 54,
+    y: 0,
+  });
+  assert.deepEqual(extrapolate({ x: 36, y: 0 }, { x: 0, y: 0 }, 2, 10), {
+    x: 63,
+    y: 0,
+  });
+  assert.deepEqual(extrapolate({ x: 100, y: 0 }, { x: 0, y: 0 }, 1, 0.1), {
+    x: 118,
+    y: 0,
+  });
+  assert.deepEqual(
+    extrapolate({ x: 1020, y: 638 }, { x: 1002, y: 620 }, 1, 0.1),
+    { x: 1024, y: 640 },
   );
 });
