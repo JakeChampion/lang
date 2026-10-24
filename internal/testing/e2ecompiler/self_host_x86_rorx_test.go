@@ -37,8 +37,8 @@ function main(): i32 {
 // rotated three times and the schedule spills.
 const rotateProg = `import "std/crypto";
 function main(): i32 {
-    if (crypto.sha256_hex("abc") != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { return 1; }
-    if (crypto.sha512_hex("abc") != "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f") { return 2; }
+    if (crypto.sha256_hex("abc".as_bytes()) != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") { return 1; }
+    if (crypto.sha512_hex("abc".as_bytes()) != "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f") { return 2; }
     return 42;
 }
 `

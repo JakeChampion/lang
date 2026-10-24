@@ -118,7 +118,7 @@ function test_invalid_tiles(): test.TestOutcome {
 function test_output_paths(): test.TestOutcome {
   match (fractal.render(42, 0, 0)) {
     Ok(tile) => {
-      if (hash.crc32_new().update_array(tile.png).finish() != 757427088 as u32) {
+      if (hash.crc32_new().update(tile.png).finish() != 757427088 as u32) {
         return test.fail("short-orbit tile PNG differs");
       }
     },
@@ -128,7 +128,7 @@ function test_output_paths(): test.TestOutcome {
   }
   match (fractal.render(20, 195329, 524288)) {
     Ok(tile) => {
-      if (hash.crc32_new().update_array(tile.png).finish() != 4160868373 as u32) {
+      if (hash.crc32_new().update(tile.png).finish() != 4160868373 as u32) {
         return test.fail("shared bounded tile PNG differs");
       }
     },
@@ -138,7 +138,7 @@ function test_output_paths(): test.TestOutcome {
   }
   match (fractal.render_exact(14, 7193, 7652)) {
     Ok(tile) => {
-      if (hash.crc32_new().update_array(tile.png).finish() != 581054115 as u32) {
+      if (hash.crc32_new().update(tile.png).finish() != 581054115 as u32) {
         return test.fail("direct lane-refill tile PNG differs");
       }
     },

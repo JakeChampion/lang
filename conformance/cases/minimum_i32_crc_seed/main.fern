@@ -1,0 +1,28 @@
+import "std/i32";
+
+function main(): i32 {
+  for seed in [0, 1, -1, -2147483648, 2147483647] {
+    print(seed);
+    print(__crc32_cksum(seed, "abc"));
+  }
+  if (__crc32_cksum(-2147483648, "abc") != -1069450740) {
+    return 1;
+  }
+  let small: i32 = -2147483648;
+  if (__crc32_cksum(small, "abc") != -1069450740) {
+    return 2;
+  }
+  let wide: i64 = -100000i64;
+  if (-wide * 100000i64 != 10000000000i64) {
+    return 3;
+  }
+  let explicit: i64[] = [-2147483648i64];
+  if (-explicit[0] != 2147483648i64) {
+    return 4;
+  }
+  let unsigned: u64 = 1 as u64;
+  if (-unsigned != 18446744073709551615 as u64) {
+    return 5;
+  }
+  return 0;
+}

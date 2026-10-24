@@ -382,7 +382,7 @@ function __boundary(plat: platform.Platform): string {
       bytes = bytes.append((x >> shift & 255) as u8);
     }
   }
-  return hex.hex_encode(bytes);
+  return hex.encode(bytes);
 }
 
 // `Range` — what a `Range` field asks of a representation: `Part(start,

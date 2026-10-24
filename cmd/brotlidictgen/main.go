@@ -52,13 +52,14 @@ func generate(data []byte) (string, error) {
 // `+"`go run ./cmd/brotlidictgen`"+`.
 
 import "std/base64";
+import "std/codec";
 
 // SIZE is the dictionary's length in bytes.
 pub const SIZE: i32 = %d;
 
 // bytes is the dictionary.
-pub function bytes(): u8[] {
-  return base64.base64_decode("%s");
+pub function bytes(): Result[u8[], codec.DecodeError] {
+  return base64.decode("%s");
 }
 `, size, digest, size, base64.StdEncoding.EncodeToString(data)), nil
 }

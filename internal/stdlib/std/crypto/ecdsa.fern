@@ -14,7 +14,6 @@ import "std/crypto";
 import "std/crypto/sha2";
 import "std/crypto/montgomery" as mont;
 import "std/crypto/p256";
-import "std/hex";
 import "std/error";
 import "core/cmp";
 
@@ -87,29 +86,37 @@ function __hex_int(s: string): bigint.BigInt {
   return v;
 }
 
+function __bytes_int(bytes: [u8]): bigint.BigInt {
+  let value: bigint.BigInt = bigint.zero();
+  for byte in bytes {
+    value = value.shl(8).add(bigint.from_u64(byte as u64));
+  }
+  return value;
+}
+
 // A curve's constants: its field prime, order, b, base point and size in
 // bytes.
-struct CurveHex { p: string, n: string, b: string, gx: string, gy: string, bytes: i32 }
+struct CurveData { p: string, n: string, b: u8[], gx: u8[], gy: u8[], bytes: i32 }
 
-function __hexes(c: Curve): CurveHex {
+function __curve_data(c: Curve): CurveData {
   match (c) {
     P256 => {
-      return CurveHex { p: "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", n: "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", b: "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b", gx: "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296", gy: "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", bytes: 32 };
+      return CurveData { p: "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", n: "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", b: [90 as u8, 198 as u8, 53 as u8, 216 as u8, 170 as u8, 58 as u8, 147 as u8, 231 as u8, 179 as u8, 235 as u8, 189 as u8, 85 as u8, 118 as u8, 152 as u8, 134 as u8, 188 as u8, 101 as u8, 29 as u8, 6 as u8, 176 as u8, 204 as u8, 83 as u8, 176 as u8, 246 as u8, 59 as u8, 206 as u8, 60 as u8, 62 as u8, 39 as u8, 210 as u8, 96 as u8, 75 as u8], gx: [107 as u8, 23 as u8, 209 as u8, 242 as u8, 225 as u8, 44 as u8, 66 as u8, 71 as u8, 248 as u8, 188 as u8, 230 as u8, 229 as u8, 99 as u8, 164 as u8, 64 as u8, 242 as u8, 119 as u8, 3 as u8, 125 as u8, 129 as u8, 45 as u8, 235 as u8, 51 as u8, 160 as u8, 244 as u8, 161 as u8, 57 as u8, 69 as u8, 216 as u8, 152 as u8, 194 as u8, 150 as u8], gy: [79 as u8, 227 as u8, 66 as u8, 226 as u8, 254 as u8, 26 as u8, 127 as u8, 155 as u8, 142 as u8, 231 as u8, 235 as u8, 74 as u8, 124 as u8, 15 as u8, 158 as u8, 22 as u8, 43 as u8, 206 as u8, 51 as u8, 87 as u8, 107 as u8, 49 as u8, 94 as u8, 206 as u8, 203 as u8, 182 as u8, 64 as u8, 104 as u8, 55 as u8, 191 as u8, 81 as u8, 245 as u8], bytes: 32 };
     },
     P384 => {
-      return CurveHex { p: "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff", n: "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973", b: "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef", gx: "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7", gy: "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f", bytes: 48 };
+      return CurveData { p: "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff", n: "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973", b: [179 as u8, 49 as u8, 47 as u8, 167 as u8, 226 as u8, 62 as u8, 231 as u8, 228 as u8, 152 as u8, 142 as u8, 5 as u8, 107 as u8, 227 as u8, 248 as u8, 45 as u8, 25 as u8, 24 as u8, 29 as u8, 156 as u8, 110 as u8, 254 as u8, 129 as u8, 65 as u8, 18 as u8, 3 as u8, 20 as u8, 8 as u8, 143 as u8, 80 as u8, 19 as u8, 135 as u8, 90 as u8, 198 as u8, 86 as u8, 57 as u8, 141 as u8, 138 as u8, 46 as u8, 209 as u8, 157 as u8, 42 as u8, 133 as u8, 200 as u8, 237 as u8, 211 as u8, 236 as u8, 42 as u8, 239 as u8], gx: [170 as u8, 135 as u8, 202 as u8, 34 as u8, 190 as u8, 139 as u8, 5 as u8, 55 as u8, 142 as u8, 177 as u8, 199 as u8, 30 as u8, 243 as u8, 32 as u8, 173 as u8, 116 as u8, 110 as u8, 29 as u8, 59 as u8, 98 as u8, 139 as u8, 167 as u8, 155 as u8, 152 as u8, 89 as u8, 247 as u8, 65 as u8, 224 as u8, 130 as u8, 84 as u8, 42 as u8, 56 as u8, 85 as u8, 2 as u8, 242 as u8, 93 as u8, 191 as u8, 85 as u8, 41 as u8, 108 as u8, 58 as u8, 84 as u8, 94 as u8, 56 as u8, 114 as u8, 118 as u8, 10 as u8, 183 as u8], gy: [54 as u8, 23 as u8, 222 as u8, 74 as u8, 150 as u8, 38 as u8, 44 as u8, 111 as u8, 93 as u8, 158 as u8, 152 as u8, 191 as u8, 146 as u8, 146 as u8, 220 as u8, 41 as u8, 248 as u8, 244 as u8, 29 as u8, 189 as u8, 40 as u8, 154 as u8, 20 as u8, 124 as u8, 233 as u8, 218 as u8, 49 as u8, 19 as u8, 181 as u8, 240 as u8, 184 as u8, 192 as u8, 10 as u8, 96 as u8, 177 as u8, 206 as u8, 29 as u8, 126 as u8, 129 as u8, 157 as u8, 122 as u8, 67 as u8, 29 as u8, 124 as u8, 144 as u8, 234 as u8, 14 as u8, 95 as u8], bytes: 48 };
     }
   }
-  return __hexes(P256);
+  return __curve_data(P256);
 }
 
 function __params(c: Curve): Params {
-  let h: CurveHex = __hexes(c);
+  let h: CurveData = __curve_data(c);
   return __curve(h.p, h.n, h.b, h.gx, h.gy, h.bytes);
 }
 
-function __curve(p: string, n: string, b: string, gx: string, gy: string, bytes: i32): Params {
-  return Params { p: __hex_int(p), n: __hex_int(n), b: __hex_int(b), g: Point { x: __hex_int(gx), y: __hex_int(gy), z: bigint.from_u64(1 as u64) }, bytes: bytes };
+function __curve(p: string, n: string, b: [u8], gx: [u8], gy: [u8], bytes: i32): Params {
+  return Params { p: __hex_int(p), n: __hex_int(n), b: __bytes_int(b), g: Point { x: __bytes_int(gx), y: __bytes_int(gy), z: bigint.from_u64(1 as u64) }, bytes: bytes };
 }
 
 function __infinity(): Point {
@@ -342,10 +349,10 @@ struct Proj { x: i64[], y: i64[], z: i64[] }
 struct Signer { fp: mont.Modulus, fn: mont.Modulus, b: i64[], g: Proj, bytes: i32 }
 
 function __signer(c: Curve): Signer {
-  let h: CurveHex = __hexes(c);
+  let h: CurveData = __curve_data(c);
   let fp: mont.Modulus = mont.modulus(h.p, h.bytes);
-  let g: Proj = Proj { x: mont.from_bytes(fp, hex.hex_decode(h.gx)), y: mont.from_bytes(fp, hex.hex_decode(h.gy)), z: fp.one };
-  return Signer { fp: fp, fn: mont.modulus(h.n, h.bytes), b: mont.from_bytes(fp, hex.hex_decode(h.b)), g: g, bytes: h.bytes };
+  let g: Proj = Proj { x: mont.from_bytes(fp, h.gx), y: mont.from_bytes(fp, h.gy), z: fp.one };
+  return Signer { fp: fp, fn: mont.modulus(h.n, h.bytes), b: mont.from_bytes(fp, h.b), g: g, bytes: h.bytes };
 }
 
 // private_key(curve, d) — d checked to be in [1, n) at the curve's size.

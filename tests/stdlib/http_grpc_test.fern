@@ -3,6 +3,7 @@ import "std/http";
 import "std/http/grpc";
 import "std/headers";
 import "std/hex";
+import "std/codec";
 import "std/stream";
 
 // tests/stdlib/http_grpc_test.fern — std/http/grpc: the message framing
@@ -11,7 +12,7 @@ import "std/stream";
 
 function test_framing(): test.TestOutcome {
   let framed: u8[] = grpc.frame("abc".bytes()).concat(grpc.frame([]));
-  let got: string = hex.hex_encode(framed) + " ";
+  let got: string = hex.encode(framed) + " ";
   match (grpc.next_message(framed)) {
     Ok(first) => {
       match (first) {
@@ -65,7 +66,7 @@ function partial(bytes: u8[]): string {
 }
 
 function test_partial_and_refused(): test.TestOutcome {
-  let got: string = partial(hex.hex_decode("00000000")) + "|" + partial(hex.hex_decode("000000000361")) + "|" + partial(hex.hex_decode("0100000000")) + "|" + partial(hex.hex_decode("0080000000"));
+  let got: string = partial(__codec_bytes(hex.decode("00000000"))) + "|" + partial(__codec_bytes(hex.decode("000000000361"))) + "|" + partial(__codec_bytes(hex.decode("0100000000"))) + "|" + partial(__codec_bytes(hex.decode("0080000000")));
   return test.assert_eq(got, "more|more|compressed message|message length past 2 GiB");
 }
 
@@ -107,7 +108,7 @@ function test_status_and_responses(): test.TestOutcome {
   let t: HeaderMap = grpc.status(grpc.DEADLINE_EXCEEDED, "deadline exceeded 100% sure\n");
   let resp: HttpResponse = grpc.response(["ab".bytes(), "c".bytes()], grpc.OK, "");
   let err: HttpResponse = grpc.error(grpc.UNIMPLEMENTED, "no such method");
-  let got: string = t.names.join(",") + " " + t.values.join("|") + " " + resp.status.to_string() + " " + hex.hex_encode(resp.body_bytes()) + " " + resp.trailers.values.join("|") + " " + err.body_bytes().len().to_string() + " " + err.trailers.values.join("|");
+  let got: string = t.names.join(",") + " " + t.values.join("|") + " " + resp.status.to_string() + " " + hex.encode(resp.body_bytes()) + " " + resp.trailers.values.join("|") + " " + err.body_bytes().len().to_string() + " " + err.trailers.values.join("|");
   return test.assert_eq(got, "Grpc-Status,Grpc-Message 4|deadline exceeded 100%25 sure%0A 200 00000000026162000000000163 0 0 12|no such method");
 }
 
@@ -119,4 +120,18 @@ function main(): i32 {
   r = r.it("what is gRPC", test_is_grpc);
   r = r.it("status trailers and responses", test_status_and_responses);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

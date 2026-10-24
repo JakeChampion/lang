@@ -1,6 +1,6 @@
 // std/uuid — UUID generation and validation (RFC 4122 / RFC 9562).
 //
-// `uuid_v4()` — a random version-4 UUID. `uuid_v7()` — a
+// `v4()` — a random version-4 UUID. `v7()` — a
 // time-ordered version-7 UUID (48-bit Unix-ms timestamp prefix +
 // random tail), useful as a sortable identifier. Both render the
 // canonical hyphenated lowercase form `xxxxxxxx-xxxx-xxxx-xxxx-
@@ -11,28 +11,58 @@
 
 import "std/hex";
 import "std/i32";
+import "std/error";
+import "core/cmp";
+
+@derive(cmp.Eq)
+pub enum ParseErrorKind { InvalidLength, InvalidSeparator, InvalidByte(u8) }
+
+@derive(cmp.Eq)
+pub struct ParseError { offset: i32, kind: ParseErrorKind }
+
+impl error.Error for ParseError {}
+
+impl cmp.Display for ParseError {}
+
+pub function (e: ParseError) message(): string {
+  return e.to_string();
+}
+
+pub function (e: ParseError) to_string(): string {
+  let reason: string = "expected 36 bytes";
+  match (e.kind) {
+    ParseErrorKind.InvalidLength => {},
+    ParseErrorKind.InvalidSeparator => {
+      reason = "expected a hyphen";
+    },
+    ParseErrorKind.InvalidByte(byte) => {
+      reason = "invalid hexadecimal byte " + (byte as i32).to_string();
+    }
+  }
+  return "uuid byte " + e.offset.to_string() + ": " + reason;
+}
 
 // canonical renders 16 bytes as the hyphenated 8-4-4-4-12 form.
 function canonical(b: u8[]): string {
-  let h: string = hex.hex_encode(b);
+  let h: string = hex.encode(b);
   return slice_unchecked(h, 0, 8) + "-" + slice_unchecked(h, 8, 12) + "-" + slice_unchecked(h, 12, 16)
     + "-" + slice_unchecked(h, 16, 20) + "-" + slice_unchecked(h, 20, 32);
 }
 
-// uuid_v4(): a random UUID. Bytes 6 and 8 carry the version (4)
+// v4(): a random UUID. Bytes 6 and 8 carry the version (4)
 // and the RFC 4122 variant (10xx); every other byte is random.
-pub function uuid_v4(): string {
+pub function v4(): string {
   let b: u8[] = random_bytes(16);
   b = b.with(6, b[6] & 15 | 64);  // version 4 in the high nibble
   b = b.with(8, b[8] & 63 | 128);  // variant 10xx in the high bits
   return canonical(b);
 }
 
-// uuid_v7(): a time-ordered UUID. The first 48 bits are the
+// v7(): a time-ordered UUID. The first 48 bits are the
 // big-endian Unix-millisecond timestamp; byte 6 carries version 7,
 // byte 8 the variant, and the remaining 74 bits are random. Two
 // v7s minted in the same millisecond order by their random tail.
-pub function uuid_v7(): string {
+pub function v7(): string {
   let ms: i64 = now_unix_ms();
   let r: u8[] = random_bytes(10);  // 10 random bytes for the tail
   let b: u8[] = [];
@@ -52,46 +82,57 @@ pub function uuid_v7(): string {
   return canonical(b);
 }
 
-// `uuid_nil()` — the all-zeros "nil" UUID (RFC 4122 §5.9), the
-// canonical sentinel / default value.
-pub function uuid_nil(): string {
-  return "00000000-0000-0000-0000-000000000000";
-}
+// The all-zero UUID is the RFC 9562 nil value.
+pub const NIL: string = "00000000-0000-0000-0000-000000000000";
 
-// `uuid_is_nil(s)` — true iff `s` is exactly the nil UUID.
-pub function uuid_is_nil(s: string): boolean {
-  return s == uuid_nil();
+// `is_nil(s)` — true iff `s` is exactly the nil UUID.
+pub function is_nil(s: string): boolean {
+  return s == NIL;
 }
 
 // `is_valid(s)` — true if `s` has the canonical UUID shape: 8-4-4-4-12
 // hex digits separated by hyphens, 36 characters. The version and variant
 // nibbles are not checked.
 pub function is_valid(s: string): boolean {
-  if (s.len() != 36) {
-    return false;
-  }
-  let i: i32 = 0;
-  while (i < 36) {
-    if (i == 8 || i == 13 || i == 18 || i == 23) {
-      if (s[i] != 45) {  // '-'
-        return false;
-      }
-    } else {
-      if (!s[i].is_ascii_hex_digit()) {
-        return false;
-      }
+  match (__problem(s)) {
+    None => {
+      return true;
+    },
+    Some(_) => {
+      return false;
     }
-    i = i + 1;
   }
-  return true;
 }
 
-// `uuid_version(s)` — the version number a UUID encodes in the first
-// nibble of its 3rd group (index 14): `4` for `uuid_v4()`, `7` for
-// `uuid_v7()`, `0` for `uuid_nil()`; None unless `is_valid(s)`.
-pub function uuid_version(s: string): Option[i32] {
-  if (!is_valid(s)) {
-    return None;
+function __problem(s: string): Option[ParseError] {
+  if (s.len() != 36) {
+    let offset: i32 = if (s.len() < 36) { s.len() } else { 36 };
+    return Some(ParseError { offset: offset, kind: ParseErrorKind.InvalidLength });
   }
-  return s[14].hex_value();
+  for i in 0..36 {
+    if (i == 8 || i == 13 || i == 18 || i == 23) {
+      if (s[i] != 45) {
+        return Some(ParseError { offset: i, kind: ParseErrorKind.InvalidSeparator });
+      }
+    } else if (!s[i].is_ascii_hex_digit()) {
+      return Some(ParseError { offset: i, kind: ParseErrorKind.InvalidByte(s[i]) });
+    }
+  }
+  return None;
+}
+
+// Version checks the UUID shape and returns its version nibble.
+// It accepts either hexadecimal case and permits every version and variant nibble.
+pub function version(s: string): Result[i32, ParseError] {
+  if let Some(problem) = __problem(s) {
+    return Err(problem);
+  }
+  let byte: i32 = s[14] as i32;
+  if (byte <= 57) {
+    return Ok(byte - 48);
+  }
+  if (byte <= 70) {
+    return Ok(byte - 55);
+  }
+  return Ok(byte - 87);
 }

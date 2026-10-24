@@ -1,23 +1,8 @@
-// std/hex — lowercase hex encode / decode.
-//
-// `hex_encode(b)` / `hex_decode(s)` — round-trip
-// content-preserving on raw bytes. Encode emits lowercase
-// `0-9a-f`. Decode accepts both cases; terminates at the
-// first non-hex character or at an odd-length tail without
-// raising — partial inputs round-trip cleanly. Companion
-// to base64 with no `=` padding.
-//
-// Bytes are `u8[]` on both sides (#5730, decision D9):
-// arbitrary hex decodes to arbitrary bytes, which are not
-// UTF-8 and so must not be typed as a `string`, and encoding
-// is the inverse — its job is rendering bytes as text. Read a
-// decode result back as text with `std/utf8.from_bytes` when
-// the bytes are supposed to be text; encode a string's bytes
-// with `std/string`'s `s.bytes()`.
-//
-// No prelude: these are in scope only after a program
-// declares `import "std/hex";` (docs/PRELUDE-TO-MODULES.md,
-// Phase 5).
+// std/hex encodes bytes as hexadecimal text and checks text before decode.
+// Decode accepts either case. Invalid bytes and odd lengths return typed errors.
+// Encode borrows bytes. Decode returns an owned byte array.
+
+import "std/codec";
 
 function __hex_lower_char(d: i32): i32 {
   if (d < 10) {  // '0' + d
@@ -46,7 +31,7 @@ function __hex_value(c: i32): i32 {
   return 0 - 1;
 }
 
-pub function hex_encode(bs: u8[]): string {
+pub function encode(bs: [u8]): string {
   let n: i32 = bs.len();
   if (n == 0) {
     return "";
@@ -62,12 +47,11 @@ pub function hex_encode(bs: u8[]): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// `hex_encode_upper(b)` — like `hex_encode` but emits uppercase
+// `encode_upper(b)` — like `encode` but emits uppercase
 // `0-9A-F`. Useful where a protocol / display convention calls for
 // uppercase hex (MAC addresses, some checksums, fingerprints). Decodes
-// with the same `hex_decode` / `hex_decode_strict` (both accept either
-// case).
-pub function hex_encode_upper(bs: u8[]): string {
+// with the same `decode` (which accepts either case).
+pub function encode_upper(bs: [u8]): string {
   let n: i32 = bs.len();
   if (n == 0) {
     return "";
@@ -83,62 +67,25 @@ pub function hex_encode_upper(bs: u8[]): string {
   return string_from_bytes_unchecked(buf);
 }
 
-pub function hex_decode(s: string): u8[] {
-  let sLen: i32 = s.len();
-  // Walk forward to count consecutive valid hex chars;
-  // first non-hex (or odd-length tail) terminates.
-  let n: i32 = 0;
-  while (n < sLen) {
-    if (__hex_value(s[n] as i32) < 0) {
-      break;
-    }
-    n = n + 1;
-  }
-  let pairs: i32 = n / 2;
-  if (pairs == 0) {
-    return [];
-  }
-  let buf: u8[] = __alloc_u8(pairs);
+// Decode requires complete hexadecimal input. Error offsets count bytes.
+pub function decode(input: string): Result[u8[], codec.DecodeError] {
   let i: i32 = 0;
-  while (i < pairs) {
-    let hi: i32 = __hex_value(s[i * 2] as i32);
-    let lo: i32 = __hex_value(s[i * 2 + 1] as i32);
-    buf = buf.with(i, (hi << 4 | lo) as u8);
+  while (i < input.len()) {
+    if (__hex_value(input[i] as i32) < 0) {
+      return Err(codec.error("hex", i, codec.InvalidByte(input[i])));
+    }
     i = i + 1;
   }
-  return buf;
-}
-
-// `hex_decode_strict(s)` — like `hex_decode` but returns `None` on malformed
-// input instead of silently truncating at the first non-hex char or an odd
-// tail. Decoding an attacker-supplied signature with the lenient variant
-// hides tampering (a bad nibble just shortens the output); the strict variant
-// makes malformed input observable (#4384). Every character must be a hex
-// digit (either case) and the length must be even (an odd tail can't form a
-// byte). `""` decodes to `Some([])`.
-pub function hex_decode_strict(s: string): Option[u8[]] {
-  let sLen: i32 = s.len();
-  let k: i32 = 0;
-  while (k < sLen) {
-    if (__hex_value(s[k] as i32) < 0) {
-      return None;
-    }
-    k = k + 1;
+  if (input.len() % 2 != 0) {
+    return Err(codec.error("hex", input.len(), codec.InvalidLength));
   }
-  if (sLen % 2 != 0) {
-    return None;
-  }
-  if (sLen == 0) {
-    return Some([]);
-  }
-  let pairs: i32 = sLen / 2;
-  let buf: u8[] = __alloc_u8(pairs);
-  let i: i32 = 0;
-  while (i < pairs) {
-    let hi: i32 = __hex_value(s[i * 2] as i32);
-    let lo: i32 = __hex_value(s[i * 2 + 1] as i32);
-    buf = buf.with(i, (hi << 4 | lo) as u8);
+  let bytes: u8[] = __alloc_u8(input.len() / 2);
+  i = 0;
+  while (i < bytes.len()) {
+    let hi: i32 = __hex_value(input[i * 2] as i32);
+    let lo: i32 = __hex_value(input[i * 2 + 1] as i32);
+    bytes = bytes.with(i, (hi << 4 | lo) as u8);
     i = i + 1;
   }
-  return Some(buf);
+  return Ok(bytes);
 }

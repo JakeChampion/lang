@@ -1197,6 +1197,10 @@ func stmtLastLine(s ast.Stmt) int {
 		if x.Init != nil {
 			return lastLine(x.Init)
 		}
+	case *ast.Destructure:
+		if x.Init != nil {
+			return lastLine(x.Init)
+		}
 	case *ast.ExprStmt:
 		return lastLine(x.Expr)
 	}
@@ -1211,7 +1215,7 @@ func stmtLastLine(s ast.Stmt) int {
 // formatter doesn't attach yet.
 func isSingleLineStmt(s ast.Stmt) bool {
 	switch s.(type) {
-	case *ast.Return, *ast.Var, *ast.ExprStmt, *ast.Break, *ast.Continue, *ast.Defer:
+	case *ast.Return, *ast.Var, *ast.Destructure, *ast.ExprStmt, *ast.Break, *ast.Continue, *ast.Defer:
 		return true
 	}
 	return false

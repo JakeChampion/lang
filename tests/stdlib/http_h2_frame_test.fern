@@ -1,6 +1,7 @@
 import "std/test";
 import "std/http/h2/frame";
 import "std/hex";
+import "std/codec";
 import "core/int";
 
 // tests/stdlib/http_h2_frame_test.fern — std/http/h2/frame: each frame
@@ -10,7 +11,7 @@ import "core/int";
 
 // shown is a frame read from hex, as text.
 function shown(block: string): string {
-  return read_at(hex.hex_decode(block), 0, frame.MIN_FRAME_SIZE);
+  return read_at(__codec_bytes(hex.decode(block)), 0, frame.MIN_FRAME_SIZE);
 }
 
 function read_at(buf: u8[], from: i32, max_frame: i32): string {
@@ -42,7 +43,7 @@ function flag(on: boolean, name: string): string {
 function describe(f: frame.Frame): string {
   match (f) {
     frame.Data(d) => {
-      return "DATA " + int.int_to_string(d.stream) + flag(d.end_stream, "END_STREAM") + " " + hex.hex_encode(d.data) + " pad " + int.int_to_string(d.padding);
+      return "DATA " + int.int_to_string(d.stream) + flag(d.end_stream, "END_STREAM") + " " + hex.encode(d.data) + " pad " + int.int_to_string(d.padding);
     },
     frame.Headers(h) => {
       let p: string = "";
@@ -52,7 +53,7 @@ function describe(f: frame.Frame): string {
         },
         None => {}
       }
-      return "HEADERS " + int.int_to_string(h.stream) + flag(h.end_stream, "END_STREAM") + flag(h.end_headers, "END_HEADERS") + p + " " + hex.hex_encode(h.block) + " pad " + int.int_to_string(h.padding);
+      return "HEADERS " + int.int_to_string(h.stream) + flag(h.end_stream, "END_STREAM") + flag(h.end_headers, "END_HEADERS") + p + " " + hex.encode(h.block) + " pad " + int.int_to_string(h.padding);
     },
     frame.PriorityFrame(stream, pr) => {
       return "PRIORITY " + int.int_to_string(stream) + " dep " + int.int_to_string(pr.dependency) + " w " + int.int_to_string(pr.weight) + flag(pr.exclusive, "exclusive");
@@ -68,22 +69,22 @@ function describe(f: frame.Frame): string {
       return out;
     },
     frame.PushPromise(p) => {
-      return "PUSH_PROMISE " + int.int_to_string(p.stream) + " promised " + int.int_to_string(p.promised) + flag(p.end_headers, "END_HEADERS") + " " + hex.hex_encode(p.block);
+      return "PUSH_PROMISE " + int.int_to_string(p.stream) + " promised " + int.int_to_string(p.promised) + flag(p.end_headers, "END_HEADERS") + " " + hex.encode(p.block);
     },
     frame.Ping(ack, data) => {
-      return "PING" + flag(ack, "ACK") + " " + hex.hex_encode(data);
+      return "PING" + flag(ack, "ACK") + " " + hex.encode(data);
     },
     frame.GoAway(g) => {
-      return "GOAWAY last " + int.int_to_string(g.last_stream) + " " + int.int_to_string(g.code) + " " + hex.hex_encode(g.debug);
+      return "GOAWAY last " + int.int_to_string(g.last_stream) + " " + int.int_to_string(g.code) + " " + hex.encode(g.debug);
     },
     frame.WindowUpdate(stream, increment) => {
       return "WINDOW_UPDATE " + int.int_to_string(stream) + " +" + int.int_to_string(increment);
     },
     frame.Continuation(stream, end_headers, block) => {
-      return "CONTINUATION " + int.int_to_string(stream) + flag(end_headers, "END_HEADERS") + " " + hex.hex_encode(block);
+      return "CONTINUATION " + int.int_to_string(stream) + flag(end_headers, "END_HEADERS") + " " + hex.encode(block);
     },
     frame.Unknown(u) => {
-      return "UNKNOWN " + int.int_to_string(u.kind) + " flags " + int.int_to_string(u.flags) + " stream " + int.int_to_string(u.stream) + " " + hex.hex_encode(u.payload);
+      return "UNKNOWN " + int.int_to_string(u.kind) + " flags " + int.int_to_string(u.flags) + " stream " + int.int_to_string(u.stream) + " " + hex.encode(u.payload);
     }
   }
   return "";
@@ -92,11 +93,11 @@ function describe(f: frame.Frame): string {
 // round is a frame encoded, then read back: its bytes and what was read.
 function round(f: frame.Frame): string {
   let bytes: u8[] = frame.encode(f);
-  return hex.hex_encode(bytes) + " -> " + read_at(bytes, 0, frame.MAX_FRAME_SIZE);
+  return hex.encode(bytes) + " -> " + read_at(bytes, 0, frame.MAX_FRAME_SIZE);
 }
 
 function test_preface(): test.TestOutcome {
-  return test.assert_eq(hex.hex_encode(frame.preface()), "505249202a20485454502f322e300d0a0d0a534d0d0a0d0a");
+  return test.assert_eq(hex.encode(frame.preface()), "505249202a20485454502f322e300d0a0d0a534d0d0a0d0a");
 }
 
 // Every type encodes to the bytes §6 lays out and reads back as itself.
@@ -128,8 +129,8 @@ function test_padding_and_priority(): test.TestOutcome {
 // A frame arrives in pieces: nothing until its header is whole, nothing
 // until its payload is, then the frame and what it took.
 function test_partial(): test.TestOutcome {
-  let whole: u8[] = hex.hex_decode("000004080000000000" + "0000ffff" + "000000040100000000");
-  let got: string = read_at(hex.hex_decode("0000040800"), 0, frame.MIN_FRAME_SIZE) + "|" + read_at(hex.hex_decode("000004080000000000" + "0000"), 0, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 0, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 13, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 22, frame.MIN_FRAME_SIZE);
+  let whole: u8[] = __codec_bytes(hex.decode("000004080000000000" + "0000ffff" + "000000040100000000"));
+  let got: string = read_at(__codec_bytes(hex.decode("0000040800")), 0, frame.MIN_FRAME_SIZE) + "|" + read_at(__codec_bytes(hex.decode("000004080000000000" + "0000")), 0, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 0, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 13, frame.MIN_FRAME_SIZE) + "|" + read_at(whole, 22, frame.MIN_FRAME_SIZE);
   return test.assert_eq(got, "partial|partial|WINDOW_UPDATE 0 +65535 [13]|SETTINGS ACK [9]|partial");
 }
 
@@ -154,7 +155,7 @@ function test_malformed(): test.TestOutcome {
   got = got + shown("000003080000000000" + "0000ff") + "\n";
   got = got + shown("000004080000000005" + "00000000") + "\n";
   got = got + shown("000001090400000000" + "86") + "\n";
-  got = got + read_at(hex.hex_decode("004001000100000001"), 0, frame.MIN_FRAME_SIZE);
+  got = got + read_at(__codec_bytes(hex.decode("004001000100000001")), 0, frame.MIN_FRAME_SIZE);
   return test.assert_eq(got, "h2 frame: connection error 1: DATA on stream 0\nh2 frame: connection error 1: padding of 3 bytes in a payload of 3\nh2 frame: connection error 1: a PADDED frame with no pad length\nh2 frame: connection error 6: HEADERS with PRIORITY shorter than its priority\nh2 frame: stream 5 error 6: PRIORITY of 4 bytes\nh2 frame: connection error 6: RST_STREAM of 3 bytes\nh2 frame: connection error 1: SETTINGS on stream 1\nh2 frame: connection error 6: SETTINGS ACK with a payload\nh2 frame: connection error 6: SETTINGS of 5 bytes\nh2 frame: connection error 1: SETTINGS_ENABLE_PUSH of 2\nh2 frame: connection error 3: SETTINGS_INITIAL_WINDOW_SIZE over 2^31-1\nh2 frame: connection error 1: SETTINGS_MAX_FRAME_SIZE of 4096\nh2 frame: connection error 1: SETTINGS_MAX_FRAME_SIZE of 16777216\nh2 frame: connection error 6: PING of 7 bytes\nh2 frame: connection error 1: PING on stream 1\nh2 frame: connection error 6: GOAWAY of 4 bytes\nh2 frame: connection error 6: WINDOW_UPDATE of 3 bytes\nh2 frame: stream 5 error 1: WINDOW_UPDATE of 0\nh2 frame: connection error 1: CONTINUATION on stream 0\nh2 frame: connection error 6: frame of 16385 bytes over the 16384 allowed");
 }
 
@@ -163,9 +164,9 @@ function test_malformed(): test.TestOutcome {
 // `encode` writes them, in hex.
 function framed_whole(stream: i32, block: u8[], data: u8[]): string {
   if (data.len() == 0) {
-    return hex.hex_encode(frame.encode(frame.Headers(frame.HeadersFrame { stream: stream, end_stream: true, end_headers: true, priority: None, block: block, padding: 0 })));
+    return hex.encode(frame.encode(frame.Headers(frame.HeadersFrame { stream: stream, end_stream: true, end_headers: true, priority: None, block: block, padding: 0 })));
   }
-  return hex.hex_encode(frame.encode(frame.Headers(frame.HeadersFrame { stream: stream, end_stream: false, end_headers: true, priority: None, block: block, padding: 0 })).concat(frame.encode(frame.Data(frame.DataFrame { stream: stream, end_stream: true, data: data, padding: 0 }))));
+  return hex.encode(frame.encode(frame.Headers(frame.HeadersFrame { stream: stream, end_stream: false, end_headers: true, priority: None, block: block, padding: 0 })).concat(frame.encode(frame.Data(frame.DataFrame { stream: stream, end_stream: true, data: data, padding: 0 }))));
 }
 
 // in_one_buffer is the same two frames written in one buffer: the block
@@ -175,7 +176,7 @@ function in_one_buffer(stream: i32, block: u8[], data: u8[]): string {
   for b in block {
     buf = buf.append(b);
   }
-  return hex.hex_encode(frame.headers_data(buf, stream, data[0:data.len()], data.len()));
+  return hex.encode(frame.headers_data(buf, stream, data[0:data.len()], data.len()));
 }
 
 // A response written in one buffer is byte for byte the two frames
@@ -199,7 +200,7 @@ function test_headers_data(): test.TestOutcome {
       }
     }
   }
-  if (hex.hex_encode(frame.header_into(__alloc_u8(11), 2, frame.DATA, 1, 65537, 300)) != "0000" + "00012c" + "00" + "01" + "00010001") {
+  if (hex.encode(frame.header_into(__alloc_u8(11), 2, frame.DATA, 1, 65537, 300)) != "0000" + "00012c" + "00" + "01" + "00010001") {
     got = got + "header_into\n";
   }
   return test.assert_eq(got, "");
@@ -208,7 +209,7 @@ function test_headers_data(): test.TestOutcome {
 // plain is `plain_headers_at` over a frame in hex at offset 2, with its
 // stream and END_STREAM when it is one.
 function plain(block: string): string {
-  let buf: u8[] = [0 as u8, 0 as u8].concat(hex.hex_decode(block));
+  let buf: u8[] = [0 as u8, 0 as u8].concat(__codec_bytes(hex.decode(block)));
   let Some(len) = frame.plain_headers_at(buf, 2, frame.MIN_FRAME_SIZE) else {
     return "-";
   };
@@ -248,4 +249,18 @@ function main(): i32 {
   r = r.it("a frame in pieces", test_partial);
   r = r.it("malformed frames", test_malformed);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

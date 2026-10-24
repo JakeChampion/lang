@@ -26,7 +26,7 @@ pub struct Field { number: i32, wire: i32, word: i64, bytes: u8[] }
 // appearing once per occurrence; Err names the fault: a tag or varint cut
 // short or over 10 bytes, a length past the end, a field number of 0, a
 // group.
-pub function decode(bytes: u8[]): Result[Field[], string] {
+pub function decode(bytes: [u8]): Result[Field[], string] {
   let out: Field[] = [];
   let at: i32 = 0;
   while (at < bytes.len()) {
@@ -57,7 +57,7 @@ pub function decode(bytes: u8[]): Result[Field[], string] {
 }
 
 // __value reads the field after its tag: `(field, next)`.
-function __value(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i32), string] {
+function __value(bytes: [u8], at: i32, number: i32, wire: i32): Result[(Field, i32), string] {
   if (wire == VARINT) {
     match (__varint(bytes, at)) {
       Ok(v) => {
@@ -82,7 +82,7 @@ function __value(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i
 }
 
 // __fixed reads a 32- or 64-bit word, little-endian on the wire.
-function __fixed(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i32), string] {
+function __fixed(bytes: [u8], at: i32, number: i32, wire: i32): Result[(Field, i32), string] {
   let n: i32 = 8;
   if (wire == FIXED32) {
     n = 4;
@@ -102,7 +102,7 @@ function __fixed(bytes: u8[], at: i32, number: i32, wire: i32): Result[(Field, i
 
 // __delimited reads a length-delimited field: its length as a varint,
 // then that many bytes.
-function __delimited(bytes: u8[], at: i32, number: i32): Result[(Field, i32), string] {
+function __delimited(bytes: [u8], at: i32, number: i32): Result[(Field, i32), string] {
   match (__varint(bytes, at)) {
     Ok(len) => {
       let n: i32 = len.0 as i32;
@@ -125,7 +125,7 @@ function __delimited(bytes: u8[], at: i32, number: i32): Result[(Field, i32), st
 }
 
 // __varint reads a varint at `at`: `(value, next)`, up to ten bytes.
-function __varint(bytes: u8[], at: i32): Result[(i64, i32), string] {
+function __varint(bytes: [u8], at: i32): Result[(i64, i32), string] {
   let value: i64 = 0 as i64;
   let shift: i32 = 0;
   let i: i32 = at;
@@ -188,13 +188,17 @@ pub function varint_field(number: i32, value: i64): u8[] {
 
 // `bytes_field(number, value)` — a length-delimited field: bytes, a
 // string's bytes, or an embedded message.
-pub function bytes_field(number: i32, value: u8[]): u8[] {
-  return encode_varint(number as i64 << 3 | BYTES as i64).concat(encode_varint(value.len() as i64)).concat(value);
+pub function bytes_field(number: i32, value: [u8]): u8[] {
+  let out: u8[] = encode_varint(number as i64 << 3 | BYTES as i64).concat(encode_varint(value.len() as i64));
+  for byte in value {
+    out = out.append(byte);
+  }
+  return out;
 }
 
 // `string_field(number, value)` — `bytes_field` of a string.
 pub function string_field(number: i32, value: string): u8[] {
-  return bytes_field(number, value.bytes());
+  return bytes_field(number, value.as_bytes());
 }
 
 // `encode_varint(value)` — a varint, ten bytes for a negative value as

@@ -31,7 +31,7 @@ What Fern's prelude / built-ins cover today, as a baseline:
   `parse_int`, `parse_float`.
 - **bytes**: `is_digit`, `is_alpha`, `is_alnum`, `is_ascii`,
   `is_ascii_white_space`, `is_hex_digit`.
-- **encoding**: `base64_encode` / `_decode`, `hex_encode` /
+- **encoding**: `encode` / `_decode`, `encode` /
   `_decode`, `url_encode` / `_decode` / `url_parse`,
   `query_parse`, `json_encode` / `json_parse`.
 - **maps**: `Map[K, V]` with `set` / `get` / `get_or` / `has`

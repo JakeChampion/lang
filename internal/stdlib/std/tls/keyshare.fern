@@ -22,7 +22,6 @@ import "std/crypto/ecdsa";
 import "std/crypto/mlkem768";
 import "std/crypto/montgomery";
 import "std/crypto/x25519";
-import "std/hex";
 import "std/error";
 import "core/cmp";
 
@@ -198,13 +197,13 @@ pub function (e: KeyShareError) message(): string {
 // hi * 2^256 + lo, reduced in Montgomery form without a branch on it.
 const P256_ORDER: string = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
 
-const P256_R256: string = "ffffffff00000000000000004319055258e8617b0c46353d039cdaaf";
+const P256_R256: u8[] = [255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 67, 25, 5, 82, 88, 232, 97, 123, 12, 70, 53, 61, 3, 156, 218, 175];
 
 // __p256_key is the scalar a 40-byte draw makes; only the one draw in 2^256
 // that reduces to zero is refused.
 function __p256_key(entropy: [u8]): Result[ecdsa.PrivateKey, KeyShareError] {
   let order: montgomery.Modulus = montgomery.modulus(P256_ORDER, 32);
-  let hi: i64[] = montgomery.mul(order, montgomery.from_bytes(order, entropy[0:8]), montgomery.from_bytes(order, hex.hex_decode(P256_R256)));
+  let hi: i64[] = montgomery.mul(order, montgomery.from_bytes(order, entropy[0:8]), montgomery.from_bytes(order, P256_R256));
   let d: i64[] = montgomery.add(order, hi, montgomery.from_bytes(order, entropy[8:40]));
   match (ecdsa.private_key(ecdsa.P256, montgomery.to_bytes(order, d))) {
     Ok(k) => {

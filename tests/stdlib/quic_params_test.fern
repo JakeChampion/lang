@@ -2,6 +2,7 @@ import "std/test";
 import "std/quic/params";
 import "std/quic/frames";
 import "std/hex";
+import "std/codec";
 import "std/i64";
 import "std/option";
 
@@ -13,7 +14,7 @@ import "std/option";
 function cid(o: Option[u8[]]): string {
   match (o) {
     Some(b) => {
-      return hex.hex_encode(b);
+      return hex.encode(b);
     },
     None => {
       return "-";
@@ -26,7 +27,7 @@ function shown(p: params.Params): string {
 }
 
 function decoded(block: string, from_server: boolean): string {
-  match (params.decode(hex.hex_decode(block), from_server)) {
+  match (params.decode(__codec_bytes(hex.decode(block)), from_server)) {
     Ok(p) => {
       return shown(p);
     },
@@ -45,9 +46,9 @@ function test_rfc9001_client(): test.TestOutcome {
 function test_round_trip(): test.TestOutcome {
   let p: params.Params = params.Params {
     ...params.defaults(),
-    original_destination_connection_id: Some(hex.hex_decode("8394c8f03e515708")),
+    original_destination_connection_id: Some(__codec_bytes(hex.decode("8394c8f03e515708"))),
     max_idle_timeout: 30000 as i64,
-    stateless_reset_token: Some(hex.hex_decode("00112233445566778899aabbccddeeff")),
+    stateless_reset_token: Some(__codec_bytes(hex.decode("00112233445566778899aabbccddeeff"))),
     max_udp_payload_size: 1472 as i64,
     initial_max_data: 1048576 as i64,
     initial_max_stream_data_bidi_local: 262144 as i64,
@@ -58,11 +59,11 @@ function test_round_trip(): test.TestOutcome {
     max_ack_delay: 20 as i64,
     disable_active_migration: true,
     active_connection_id_limit: 4 as i64,
-    initial_source_connection_id: Some(hex.hex_decode("f067a5502a4262b5")),
+    initial_source_connection_id: Some(__codec_bytes(hex.decode("f067a5502a4262b5"))),
   };
-  let server: string = decoded(hex.hex_encode(params.encode(p, true)), true);
-  let client: string = decoded(hex.hex_encode(params.encode(p, false)), false);
-  let empty: string = hex.hex_encode(params.encode(params.defaults(), false));
+  let server: string = decoded(hex.encode(params.encode(p, true)), true);
+  let client: string = decoded(hex.encode(params.encode(p, false)), false);
+  let empty: string = hex.encode(params.encode(params.defaults(), false));
   return test.assert_eq(server + "\n" + client + "\n[" + empty + "]", "odcid 8394c8f03e515708 idle 30000 token 00112233445566778899aabbccddeeff udp 1472 data 1048576 local 262144 remote 262144 uni 262144 streams 100/3 ack 3/20 migration false cids 4 iscid f067a5502a4262b5 rscid -\nodcid - idle 30000 token - udp 1472 data 1048576 local 262144 remote 262144 uni 262144 streams 100/3 ack 3/20 migration false cids 4 iscid f067a5502a4262b5 rscid -\n[]");
 }
 
@@ -106,4 +107,18 @@ function main(): i32 {
   r = r.it("unknown and reserved parameters are skipped", test_unknown_skipped);
   r = r.it("refusals (RFC 9000 §18.2)", test_refusals);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

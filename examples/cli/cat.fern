@@ -65,7 +65,7 @@ function emit(text: string, o: Opts, counter: i32, prev_blank: boolean): (i32, b
       counter = counter + 1;
       // GNU cat right-aligns the line number in a 6-wide field
       // followed by a tab.
-      let num: string = counter.to_string().pad_start(6, " ");
+      let num: string = counter.to_string().pad_start(6, ' ');
       print(num + "\t" + rendered);
     } else {
       print(rendered);

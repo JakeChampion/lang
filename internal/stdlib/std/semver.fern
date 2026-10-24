@@ -18,6 +18,50 @@
 //   - BUILD METADATA IS IGNORED for precedence (1.0.0+a == 1.0.0+b).
 
 import "std/string";
+import "std/error";
+import "core/cmp";
+import "std/i32";
+
+@derive(cmp.Eq)
+pub enum ParseErrorKind { ExpectedCore, ExpectedNumber, LeadingZero, NumberOutOfRange, EmptyIdentifier, InvalidByte(u8) }
+
+@derive(cmp.Eq)
+pub struct ParseError { offset: i32, kind: ParseErrorKind }
+
+impl error.Error for ParseError {}
+
+impl cmp.Display for ParseError {}
+
+pub function (e: ParseError) message(): string {
+  return e.to_string();
+}
+
+pub function (e: ParseError) to_string(): string {
+  let reason: string = "expected major.minor.patch";
+  match (e.kind) {
+    ParseErrorKind.ExpectedCore => {},
+    ParseErrorKind.ExpectedNumber => {
+      reason = "expected a numeric component";
+    },
+    ParseErrorKind.LeadingZero => {
+      reason = "numeric identifier has a leading zero";
+    },
+    ParseErrorKind.NumberOutOfRange => {
+      reason = "numeric component exceeds i32";
+    },
+    ParseErrorKind.EmptyIdentifier => {
+      reason = "empty identifier";
+    },
+    ParseErrorKind.InvalidByte(byte) => {
+      reason = "invalid byte " + (byte as i32).to_string();
+    }
+  }
+  return "semver byte " + e.offset.to_string() + ": " + reason;
+}
+
+function __sv_error(offset: i32, kind: ParseErrorKind): ParseError {
+  return ParseError { offset: offset, kind: kind };
+}
 
 // major.minor.patch plus optional prerelease / build (each "" when
 // absent). Construct via `parse`, not a raw literal, so validation runs.
@@ -44,16 +88,49 @@ function __sv_all_digits(s: string): boolean {
   return true;
 }
 
-// __sv_num parses a numeric version core field: all-digits, and no
-// leading zero unless the value is exactly "0" (§2). None otherwise.
-function __sv_num(s: string): Option[i32] {
-  if (!__sv_all_digits(s)) {
-    return None;
+// Numeric core components use the range of SemVer's i32 fields.
+function __sv_num(s: string, offset: i32): Result[i32, ParseError] {
+  if (s.len() == 0) {
+    return Err(__sv_error(offset, ParseErrorKind.ExpectedNumber));
   }
-  if (s.len() > 1 && s[0] == 48) {  // leading zero
-    return None;
+  for i in 0..s.len() {
+    if (s[i] < 48 || s[i] > 57) {
+      return Err(__sv_error(offset + i, ParseErrorKind.InvalidByte(s[i])));
+    }
   }
-  return s.parse_int();
+  if (s.len() > 1 && s[0] == 48) {
+    return Err(__sv_error(offset, ParseErrorKind.LeadingZero));
+  }
+  match (s.parse_int()) {
+    Some(number) => {
+      return Ok(number);
+    },
+    None => {
+      return Err(__sv_error(offset, ParseErrorKind.NumberOutOfRange));
+    }
+  }
+}
+
+function __sv_identifiers(s: string, offset: i32, prerelease: boolean): Result[boolean, ParseError] {
+  let start: i32 = 0;
+  for i in 0..s.len() + 1 {
+    if (i == s.len() || s[i] == 46) {
+      if (i == start) {
+        return Err(__sv_error(offset + i, ParseErrorKind.EmptyIdentifier));
+      }
+      let identifier: string = __sv_slice(s, start, i);
+      if (prerelease && identifier.len() > 1 && identifier[0] == 48 && __sv_all_digits(identifier)) {
+        return Err(__sv_error(offset + start, ParseErrorKind.LeadingZero));
+      }
+      start = i + 1;
+    } else {
+      let byte: u8 = s[i];
+      if (!(byte >= 48 && byte <= 57 || byte >= 65 && byte <= 90 || byte >= 97 && byte <= 122 || byte == 45)) {
+        return Err(__sv_error(offset + i, ParseErrorKind.InvalidByte(byte)));
+      }
+    }
+  }
+  return Ok(true);
 }
 
 // __sv_slice returns the bytes [start, end) of `s` as a fresh string
@@ -138,77 +215,31 @@ function __sv_cmp_ident(x: string, y: string): i32 {
   return __sv_str_cmp(x, y);
 }
 
-// `parse(s)` — parse a SemVer string, `None` if malformed. Requires
-// exactly `major.minor.patch` (each a valid numeric identifier); an
-// optional `-prerelease` and `+build` follow. Prerelease / build
-// identifiers must be non-empty; a numeric prerelease identifier may not
-// have a leading zero.
-pub function parse(s: string): Option[SemVer] {
-  // Split off build metadata at the first '+'.
+// Parse checks the complete SemVer syntax. Error offsets count bytes.
+// Numeric core components must fit i32. Numeric prerelease identifiers have no size limit.
+pub function parse(s: string): Result[SemVer, ParseError] {
   let core_pre: string = s;
   let build: string = "";
   if let Some(plus) = s.index_of("+") {
     core_pre = __sv_slice(s, 0, plus);
     build = __sv_slice(s, plus + 1, s.len());
-    if (build.len() == 0) {
-      return None;
-    }
+    let valid: boolean = __sv_identifiers(build, plus + 1, false)?;
   }
-  // Split off prerelease at the first '-'.
   let core: string = core_pre;
   let pre: string = "";
   if let Some(dash) = core_pre.index_of("-") {
     core = __sv_slice(core_pre, 0, dash);
     pre = __sv_slice(core_pre, dash + 1, core_pre.len());
-    if (pre.len() == 0) {
-      return None;
-    }
+    let valid: boolean = __sv_identifiers(pre, dash + 1, true)?;
   }
   let parts: string[] = core.split(".");
   if (parts.len() != 3) {
-    return None;
+    return Err(__sv_error(core.len(), ParseErrorKind.ExpectedCore));
   }
-  let maj: Option[i32] = __sv_num(parts[0]);
-  let min: Option[i32] = __sv_num(parts[1]);
-  let pat: Option[i32] = __sv_num(parts[2]);
-  match (maj) {
-    None => {
-      return None;
-    },
-    Some(mj) => {
-      match (min) {
-        None => {
-          return None;
-        },
-        Some(mn) => {
-          match (pat) {
-            None => {
-              return None;
-            },
-            Some(pt) => {
-              // Validate each prerelease identifier: non-empty; a
-              // purely-numeric one has no leading zero.
-              if (pre.len() > 0) {
-                let ids: string[] = pre.split(".");
-                let i: i32 = 0;
-                while (i < ids.len()) {
-                  let id: string = ids[i];
-                  if (id.len() == 0) {
-                    return None;
-                  }
-                  if (__sv_all_digits(id) && id.len() > 1 && id[0] == 48) {
-                    return None;
-                  }
-                  i = i + 1;
-                }
-              }
-              return Some(SemVer { major: mj, minor: mn, patch: pt, prerelease: pre, build: build });
-            }
-          }
-        }
-      }
-    }
-  }
+  let major: i32 = __sv_num(parts[0], 0)?;
+  let minor: i32 = __sv_num(parts[1], parts[0].len() + 1)?;
+  let patch: i32 = __sv_num(parts[2], parts[0].len() + parts[1].len() + 2)?;
+  return Ok(SemVer { major: major, minor: minor, patch: patch, prerelease: pre, build: build });
 }
 
 // `(a).compare(b)` — SemVer precedence: -1 if a < b, 0 if equal, 1 if

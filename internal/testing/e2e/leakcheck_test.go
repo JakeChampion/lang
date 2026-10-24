@@ -1357,7 +1357,7 @@ function main(): i32 {
     let acc: i32 = 0;
     let k: i32 = 1;
     while (k < 40) {
-        let s: string = (k * 66049).to_binary().pad_start(40, "0");
+        let s: string = (k * 66049).to_binary().pad_start(40, '0');
         let i: i32 = 0;
         while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
         k = k + 1;
@@ -1375,7 +1375,7 @@ function main(): i32 {
     let k: i32 = 1;
     while (k < 40) {
         let h: string = (k * 66049).to_binary();
-        let s: string = h.pad_start(40, "0");
+        let s: string = h.pad_start(40, '0');
         let i: i32 = 0;
         while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
         k = k + 1;
@@ -1392,7 +1392,7 @@ function main(): i32 {
     let acc: i32 = 0;
     let k: i32 = 1;
     while (k < 40) {
-        let s: string = (k * 66049).to_binary().pad_start(2, "0");
+        let s: string = (k * 66049).to_binary().pad_start(2, '0');
         let i: i32 = 0;
         while (i < s.len()) { acc = (acc * 31 + (s[i] as i32)) % 100003; i = i + 1; }
         k = k + 1;

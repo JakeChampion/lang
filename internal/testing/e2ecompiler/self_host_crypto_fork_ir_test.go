@@ -29,10 +29,10 @@ func cryptoForkSource(constructor, abc, abd string) string {
 	return fmt.Sprintf(`import "std/crypto";
 function exercise(): i32 {
     let h = crypto.%s;
-    h = h.update("ab");
+    h = h.update("ab".as_bytes());
     let keep = h;
-    h = h.update("c");
-    keep = keep.update("d");
+    h = h.update("c".as_bytes());
+    keep = keep.update("d".as_bytes());
     if (h.final_hex() != %q) { return 1; }
     if (keep.final_hex() != %q) { return 2; }
     return 0;

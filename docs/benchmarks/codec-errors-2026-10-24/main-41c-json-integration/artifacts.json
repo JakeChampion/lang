@@ -1,0 +1,178 @@
+{
+  "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1",
+  "base": "8cf6eac8b6f809b97be11088e353667712a31d82",
+  "source_sha256": "f52684f0de5af00da4a77a8ec37260b866a769e71de1df8a914073e27a50c5c6",
+  "source_files": 496,
+  "matrix_commands": 197,
+  "balanced_execution_censuses": 57,
+  "artifacts": [
+    {
+      "path": "source-files.json",
+      "bytes": 78158,
+      "sha256": "da6da5ef96cca5200575ce138566c48ca9f2c096c2b8165e805d2f6f29886c83",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "change.patch.gz",
+      "bytes": 1699671,
+      "sha256": "0ade806ae1abc2eda694a3ac4294da1e6a1439acedef687904b229355752f49d",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "bootstrap/bootstrap.json.gz",
+      "bytes": 391,
+      "sha256": "76e40f625241facdc930cb0d353601880a8ffece1a558fd6f12af3f86662ae84",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "bootstrap/stage1.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "bootstrap/stage2.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "bootstrap/stage3.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "driver-builds.json.gz",
+      "bytes": 1039,
+      "sha256": "42022791484802062244e2af192f7e3662d064801becab658b7ceb212294eee3",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "driver-build.log",
+      "bytes": 357,
+      "sha256": "88f3d4210f1807e73841d0362fc263a55cb67c7cbe62636fcdd23c69463be13c",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "driver-sizes.txt",
+      "bytes": 358,
+      "sha256": "ac6931807980aa4cca77eadb8eab5b3c4b0f2a7c90dbcf6c7a14d2a6d6d101cb",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "driver-gate.log",
+      "bytes": 896,
+      "sha256": "c73fac7209e38a42f2a060976ce86a9fbaeff21740af9367441472887a972479",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "final-matrix.json.gz",
+      "bytes": 3858,
+      "sha256": "6c27fac913d2a3f01d0a0968fc52e20f3b20ee9a63e5abba6ef59a1a0751b664",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "final-matrix.log.gz",
+      "bytes": 3319,
+      "sha256": "caa914607d0f8856260e4f70fb0bd80bde80895952e061a5c253c999732cb8fa",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "final-matrix.py.gz",
+      "bytes": 1461,
+      "sha256": "7e7c431a0f60ec1d538b449e10c1a20a0bf57ab74c27f48ead13902e9d063e42",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "byte-matrix.json.gz",
+      "bytes": 1674,
+      "sha256": "7df8aa1b9e39b764c2d3966aa1d060d8aec7fb80df942019648226651e15f15b",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "byte-matrix.log.gz",
+      "bytes": 1375,
+      "sha256": "441ec6fe5c37d39a1091d9d967c3fadbdefcd630c432e1a815601ac6bc584b94",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "byte-matrix.py.gz",
+      "bytes": 1434,
+      "sha256": "9ae43de63db1054e9fa5160435630c817ede888517b98af812dce6c9852701de",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "json-compatibility/matrix.json.gz",
+      "bytes": 1225,
+      "sha256": "1dfecb9acbde92255dc99f5acb39d4428683734b6554648f9ed91668fb70834c",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "json-compatibility/matrix.log.gz",
+      "bytes": 823,
+      "sha256": "37b4d66fa1ca6eb498a2f5d4727b8eef002664bf6b0cb0a64e34574f3e2e75b4",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "json-compatibility/matrix.py.gz",
+      "bytes": 1348,
+      "sha256": "b77f6ea3dda0c95609aec1b8e56ce999d6f7b3e5b934d75e1cc8ea01f4c8202b",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "family-tests.jsonl.gz",
+      "bytes": 2261,
+      "sha256": "3198ec3569d99a46d2a81b4afbeba4bd68636fff7e2d6f7afd093b9b404da956",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "integration-tests.jsonl.gz",
+      "bytes": 1691,
+      "sha256": "fa92d52dd57d4c078329a577b57844f7845e2d120f73447c50ea8ceabb0a1e14",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "byte-contract.jsonl.gz",
+      "bytes": 1068,
+      "sha256": "1b9198831576d4fbbc69b8449d42ef8adbade6ccff3026112caa17600ec1d072",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "format.json",
+      "bytes": 34,
+      "sha256": "5699f09ab7c54311c0e0d631ac2247f668a85614e798c99caf54728825dfa1ff",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "format.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "vet.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "gofmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "oracle-version.txt",
+      "bytes": 612,
+      "sha256": "633cba66c33b039c99423b98ec20fce3b54facd59ef9348a5673fb023ecba55f",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    },
+    {
+      "path": "matrix-logs.tar.gz",
+      "bytes": 7639,
+      "sha256": "b5d0189d2d6345f521042e9c158495473574b2f0b8c3e55e586e92f083eecdfa",
+      "source_commit": "882fece963f63b5d8de536903ebd9a9ad1593df1"
+    }
+  ]
+}

@@ -23,7 +23,7 @@ var streamIRCases = []struct {
 	// read_n advances the cursor; remaining() on the returned Stream = 4 - 1 = 3.
 	{"remaining", `let b: Stream = stream.stream_from_bytes([1 as u8, 2 as u8, 3 as u8, 4 as u8]); let (out, b2) = b.read_n(1); return b2.remaining();`, 3},
 	// read_byte yields Some('A'=65) at the cursor.
-	{"read-byte-some", `let b: Stream = stream.stream_from_bytes([65 as u8, 66 as u8]); let (ob, b2) = b.read_byte(); match (ob) { Some(v) => { return v; }, None => { return 0; }, } return 0;`, 65},
+	{"read-byte-some", `let b: Stream = stream.stream_from_bytes([65 as u8, 66 as u8]); let (ob, b2) = b.read_byte(); let byte: Option[u8] = ob; match (byte) { Some(v) => { return v as i32; }, None => { return 0; }, } return 0;`, 65},
 	// read_byte on an exhausted Stream yields None.
 	{"read-byte-none", `let e: u8[] = []; let b: Stream = stream.stream_from_bytes(e); let (ob, b2) = b.read_byte(); match (ob) { Some(v) => { return 0; }, None => { return 7; }, } return 0;`, 7},
 	// read_n(2) returns the first two bytes; 10 + 20 = 30.

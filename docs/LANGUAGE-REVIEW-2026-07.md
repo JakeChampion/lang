@@ -660,7 +660,7 @@ only `Option`/`Result`/`IoError` ambient.
 - **CLI/logging/format:** builder-style flag parsing with ANSI helpers;
   leveled + structured JSON-lines logging; Rust-style `{:>8.2}` format
   specs.
-- **IDs/random:** CSPRNG-backed `uuid_v4`/`uuid_v7`.
+- **IDs/random:** CSPRNG-backed `v4`/`v7`.
 
 **Notable omissions** (all confirmed by search, most acknowledged in
 `STDLIB-ROADMAP.md`):

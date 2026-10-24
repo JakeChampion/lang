@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/string";
 import "std/crypto/ecdsa";
 import "std/crypto/sha2";
@@ -54,9 +55,9 @@ function verified(point: string, h: sha2.Hash, msg: u8[], sig: string): boolean 
 }
 
 function verified_on(curve: ecdsa.Curve, point: string, h: sha2.Hash, msg: u8[], sig: string): boolean {
-  match (ecdsa.public_key(curve, hex.hex_decode(point))) {
+  match (ecdsa.public_key(curve, __codec_bytes(hex.decode(point)))) {
     Ok(k) => {
-      return ecdsa.verify(k, h, msg, hex.hex_decode(sig));
+      return ecdsa.verify(k, h, msg, __codec_bytes(hex.decode(sig)));
     },
     Err(e) => {
       return false;
@@ -70,7 +71,7 @@ function key_error(point: string): string {
 }
 
 function key_error_on(curve: ecdsa.Curve, point: string): string {
-  match (ecdsa.public_key(curve, hex.hex_decode(point))) {
+  match (ecdsa.public_key(curve, __codec_bytes(hex.decode(point)))) {
     Ok(k) => {
       return "accepted";
     },
@@ -99,9 +100,9 @@ function test_refusals(): test.TestOutcome {
   if (verified(point_a(), sha2.Sha384, message(), sig256())) {
     return test.fail("a signature verified under the other digest");
   }
-  let flipped: u8[] = hex.hex_decode(sig256());
+  let flipped: u8[] = __codec_bytes(hex.decode(sig256()));
   flipped = flipped.with(20, flipped[20] ^ 1 as u8);
-  if (verified(point_a(), sha2.Sha256, message(), hex.hex_encode(flipped))) {
+  if (verified(point_a(), sha2.Sha256, message(), hex.encode(flipped))) {
     return test.fail("a flipped bit verified");
   }
   if (verified(point_a(), sha2.Sha256, message(), sig256() + "00")) {
@@ -123,9 +124,9 @@ function test_p384(): test.TestOutcome {
   if (verified_on(ecdsa.P384, POINT_D, sha2.Sha384, message384(), SIG384_384) || verified_on(ecdsa.P384, POINT_C, sha2.Sha384, message(), SIG384_384) || verified_on(ecdsa.P384, POINT_C, sha2.Sha512, message384(), SIG384_384)) {
     return test.fail("a refusal verified");
   }
-  let flipped: u8[] = hex.hex_decode(SIG384_384);
+  let flipped: u8[] = __codec_bytes(hex.decode(SIG384_384));
   flipped = flipped.with(30, flipped[30] ^ 1 as u8);
-  return test.assert_true(!verified_on(ecdsa.P384, POINT_C, sha2.Sha384, message384(), hex.hex_encode(flipped)));
+  return test.assert_true(!verified_on(ecdsa.P384, POINT_C, sha2.Sha384, message384(), hex.encode(flipped)));
 }
 
 const P256_POINT: string = "0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299";
@@ -150,17 +151,17 @@ const P256_D: string = "c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b
 // signed is the hex signature `d` makes on `curve` over msg, after checking
 // its public point and that it verifies.
 function signed(curve: ecdsa.Curve, d: string, point: string, h: sha2.Hash, msg: string): string {
-  match (ecdsa.private_key(curve, hex.hex_decode(d))) {
+  match (ecdsa.private_key(curve, __codec_bytes(hex.decode(d)))) {
     Ok(k) => {
-      if (hex.hex_encode(k.public_point()) != point) {
-        return "public point " + hex.hex_encode(k.public_point());
+      if (hex.encode(k.public_point()) != point) {
+        return "public point " + hex.encode(k.public_point());
       }
       match (ecdsa.sign(k, h, msg.bytes())) {
         Ok(sig) => {
-          if (!verified_on(curve, point, h, msg.bytes(), hex.hex_encode(sig))) {
+          if (!verified_on(curve, point, h, msg.bytes(), hex.encode(sig))) {
             return "does not verify";
           }
-          return hex.hex_encode(sig);
+          return hex.encode(sig);
         },
         Err(e) => {
           return e.message();
@@ -190,7 +191,7 @@ function test_signing(): test.TestOutcome {
 }
 
 function key_refusal(curve: ecdsa.Curve, d: string): string {
-  match (ecdsa.private_key(curve, hex.hex_decode(d))) {
+  match (ecdsa.private_key(curve, __codec_bytes(hex.decode(d)))) {
     Ok(k) => {
       match (ecdsa.sign(k, sha2.Sha512, "x".bytes())) {
         Ok(_) => {
@@ -226,22 +227,22 @@ function test_bad_keys(): test.TestOutcome {
   if (key_error_on(ecdsa.P384, point_a()) != "ecdsa: the key is not an uncompressed SEC 1 point on its curve" || key_error(POINT_C) != "ecdsa: the key is not an uncompressed SEC 1 point on its curve") {
     return test.fail("a point of the other curve's size was accepted");
   }
-  let off384: u8[] = hex.hex_decode(POINT_C);
+  let off384: u8[] = __codec_bytes(hex.decode(POINT_C));
   off384 = off384.with(96, off384[96] ^ 1 as u8);
-  if (key_error_on(ecdsa.P384, hex.hex_encode(off384)) != "ecdsa: the point is not on the curve") {
+  if (key_error_on(ecdsa.P384, hex.encode(off384)) != "ecdsa: the point is not on the curve") {
     return test.fail("a P-384 point off the curve was accepted");
   }
-  let off: u8[] = hex.hex_decode(point_a());
+  let off: u8[] = __codec_bytes(hex.decode(point_a()));
   off = off.with(64, off[64] ^ 1 as u8);
-  return test.assert_eq(key_error(hex.hex_encode(off)), "ecdsa: the point is not on the curve");
+  return test.assert_eq(key_error(hex.encode(off)), "ecdsa: the point is not on the curve");
 }
 
 function ecdh_shown(curve: ecdsa.Curve, d: string, peer: string): string {
-  match (ecdsa.private_key(curve, hex.hex_decode(d))) {
+  match (ecdsa.private_key(curve, __codec_bytes(hex.decode(d)))) {
     Ok(k) => {
-      match (ecdsa.ecdh(k, hex.hex_decode(peer))) {
+      match (ecdsa.ecdh(k, __codec_bytes(hex.decode(peer)))) {
         Ok(shared) => {
-          return hex.hex_encode(shared);
+          return hex.encode(shared);
         },
         Err(e) => {
           return e.message();
@@ -271,9 +272,9 @@ function test_ecdh(): test.TestOutcome {
   if (ecdh_shown(ecdsa.P384, "333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333", pb) != "41d79200620b9d74eff5bf04c6dea1535f44679f7c12716d0435a854e8fd7900ccb9d52c58c84d45685b1a6239234572") {
     return test.fail("P-384");
   }
-  let off: u8[] = hex.hex_decode(gr);
+  let off: u8[] = __codec_bytes(hex.decode(gr));
   off = off.with(64, off[64] ^ 1 as u8);
-  if (ecdh_shown(ecdsa.P256, "c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433", hex.hex_encode(off)) != "ecdsa: the point is not on the curve") {
+  if (ecdh_shown(ecdsa.P256, "c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433", hex.encode(off)) != "ecdsa: the point is not on the curve") {
     return test.fail("a point off the curve");
   }
   return test.assert_eq(ecdh_shown(ecdsa.P256, "c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433", pb), "ecdsa: the key is not an uncompressed SEC 1 point on its curve");
@@ -290,4 +291,18 @@ function main(): i32 {
   r = r.it("signing refusals", test_signing_refusals);
   r = r.it("ECDH", test_ecdh);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

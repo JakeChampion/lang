@@ -11,12 +11,12 @@ const semverProg = `
 import "std/semver" as semver;
 function cmp(x: string, y: string): i32 {
     match (semver.parse(x)) {
-        Some(a) => { match (semver.parse(y)) { Some(b) => { return a.compare(b); }, None => { return 99; } } },
-        None => { return 99; }
+        Ok(a) => { match (semver.parse(y)) { Ok(b) => { return a.compare(b); }, Err(_) => { return 99; } } },
+        Err(_) => { return 99; }
     }
 }
 function parses(s: string): boolean {
-    match (semver.parse(s)) { Some(v) => { return true; }, None => { return false; } }
+    match (semver.parse(s)) { Ok(v) => { return true; }, Err(_) => { return false; } }
 }
 function main(): i32 {
     if (cmp("1.0.0-alpha", "1.0.0-alpha.1") >= 0) { return 1; }
@@ -27,6 +27,7 @@ function main(): i32 {
     if (cmp("1.0.0+a", "1.0.0+b") != 0) { return 6; }
     if (cmp("1.2.3", "1.2.3") != 0) { return 7; }
     if (parses("1.2") || parses("1.2.3-") || parses("01.2.3") || parses("1.2.3-01")) { return 8; }
+    if (parses("1.2.3-alpha!") || parses("1.2.3+build!") || parses("1.2.3+a..b")) { return 9; }
     return 42;
 }
 `

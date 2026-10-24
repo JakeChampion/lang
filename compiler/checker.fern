@@ -1181,7 +1181,7 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
     return ([t_i32(), t_string()], true);
   }
   if (name == "__crc32_cksum_array") {
-    return ([t_i32(), t_array(t_u8())], true);
+    return ([t_i32(), t_view(t_u8())], true);
   }
   if (name == "__memchr" || name == "__rmemchr") {
     return ([t_string(), t_i32(), t_i32()], true);
@@ -1190,10 +1190,10 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
     return ([t_array(t_u8()), t_i32()], true);
   }
   if (name == "__sum_bytes_array") {
-    return ([t_array(t_u8())], true);
+    return ([t_view(t_u8())], true);
   }
   if (name == "__bsd_sum_bytes") {
-    return ([t_array(t_u8()), t_i32()], true);
+    return ([t_view(t_u8()), t_i32()], true);
   }
   if (name == "__memchr_bytes" || name == "__rmemchr_bytes") {
     return ([t_array(t_u8()), t_i32(), t_i32()], true);
@@ -7639,17 +7639,17 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
 }
 
 function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
+  return unary_result_type(u, check_expr(u.operand, s), s);
+}
+
+// unary_result_type is check_unary_expr over the operand's checked type.
+function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typeinfo.Type {
   // `-2147483648` is i32-min, though its operand alone has no i32 reading.
   if (u.op == "-" && unsettled_int_literal(ast.ExprUnary { ...u })) {
     if let ast.ExprNumber(_) = u.operand {
       return t_i32();
     }
   }
-  return unary_result_type(u, check_expr(u.operand, s), s);
-}
-
-// unary_result_type is check_unary_expr over the operand's checked type.
-function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typeinfo.Type {
   if (u.op == "-") {
     if (is_integer(ot)) {
       return ot;

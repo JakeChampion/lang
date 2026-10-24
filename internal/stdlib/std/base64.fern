@@ -1,23 +1,8 @@
-// std/base64 — RFC 4648 (standard alphabet) base64 encode /
-// decode.
-//
-// `base64_encode(b)` / `base64_decode(s)` — round-trip
-// content-preserving on raw bytes. Encode emits `=` padding
-// to align to a 4-character group. Decode terminates at the
-// first non-base64 character (so trailing `=` padding works
-// without special handling), preserving the bytes
-// successfully decoded up to that point.
-//
-// Bytes are `u8[]` on both sides (#5730, decision D9): arbitrary input
-// decodes to arbitrary bytes, which are not UTF-8 and so must not be
-// typed as a `string`, and encoding is the inverse — its job is
-// rendering bytes as text. Read a decode result back with
-// `std/utf8.from_bytes` when the bytes are supposed to be text; encode
-// a string's bytes with `std/string`'s `s.bytes()`.
-//
-// No prelude: these are in scope only after a program
-// declares `import "std/base64";` (docs/PRELUDE-TO-MODULES.md,
-// Phase 5).
+// std/base64 implements standard and URL-safe RFC 4648 encodings.
+// Encode borrows bytes. Decode checks the complete input and returns typed errors.
+// Decode accepts optional padding and requires zero unused trailing bits.
+
+import "std/codec";
 
 function __b64_alphabet(v: i32): i32 {
   if (v < 26) {  // A-Z (0..25 → 65..90)
@@ -35,7 +20,7 @@ function __b64_alphabet(v: i32): i32 {
   return 47;  // '/'
 }
 
-function __b64_decode_char(c: i32): i32 {
+function __b64_decode_char(c: i32, url: boolean): i32 {
   if (c >= 65 && c < 91) {  // A-Z
     return c - 65;
   }
@@ -45,16 +30,16 @@ function __b64_decode_char(c: i32): i32 {
   if (c >= 48 && c < 58) {  // 0-9 (48..57 → 52..61)
     return c + 4;
   }
-  if (c == 43) {  // '+'
+  if (c == (if (url) { 45 } else { 43 })) {  // '+'
     return 62;
   }
-  if (c == 47) {  // '/'
+  if (c == (if (url) { 95 } else { 47 })) {  // '/'
     return 63;
   }
   return 0 - 1;
 }
 
-pub function base64_encode(bs: u8[]): string {
+pub function encode(bs: [u8]): string {
   let n: i32 = bs.len();
   if (n == 0) {
     return "";
@@ -95,119 +80,6 @@ pub function base64_encode(bs: u8[]): string {
   return string_from_bytes_unchecked(buf);
 }
 
-pub function base64_decode(s: string): u8[] {
-  let sLen: i32 = s.len();
-  // Walk forward to count consecutive valid base64 chars;
-  // first non-base64 (eg `=` padding) terminates the input.
-  let n: i32 = 0;
-  while (n < sLen) {
-    if (__b64_decode_char(s[n] as i32) < 0) {
-      break;
-    }
-    n = n + 1;
-  }
-  if (n == 0) {
-    return [];
-  }
-  let out_len: i32 = n * 3 / 4;
-  if (out_len == 0) {
-    return [];
-  }
-  let buf: u8[] = __alloc_u8(out_len);
-  let i: i32 = 0;
-  let j: i32 = 0;
-  let acc: i32 = 0;  // 6-bit-shift accumulator
-  let bits: i32 = 0;  // bits currently held in acc
-  while (i < n) {
-    acc = acc << 6 | __b64_decode_char(s[i] as i32);
-    bits = bits + 6;
-    if (bits >= 8) {
-      bits = bits - 8;
-      buf = buf.with(j, (acc >> bits & 255) as u8);
-      j = j + 1;
-    }
-    i = i + 1;
-  }
-  return buf;
-}
-
-// `base64_decode_strict(s)` — like `base64_decode` but returns `None` on
-// malformed input instead of silently truncating at the first bad byte.
-// Decoding an attacker-supplied token/signature with the lenient variant
-// hides tampering (a flipped byte just shortens the output); the strict
-// variant makes malformed input observable (#4384). Rules: the leading run
-// of valid base64 chars may be followed ONLY by `=` padding (at most two, and
-// nothing after it); a run length of n%4==1 is impossible base64; and any
-// padding must align the total to a multiple of 4 (proper RFC 4648). A bare
-// `""` decodes to `Some("")`; `"=="` (padding, no data) is `None`.
-pub function base64_decode_strict(s: string): Option[u8[]] {
-  let sLen: i32 = s.len();
-  let n: i32 = 0;
-  while (n < sLen) {
-    if (__b64_decode_char(s[n] as i32) < 0) {
-      break;
-    }
-    n = n + 1;
-  }
-  // Everything after the data run must be `=` padding — a non-`=` char
-  // (including a valid base64 char after a `=`) means the token is malformed.
-  let p: i32 = n;
-  let pad: i32 = 0;
-  while (p < sLen) {
-    if (s[p] != 61) {  // 61 = '='
-      return None;
-    }
-    pad = pad + 1;
-    p = p + 1;
-  }
-  if (pad > 2) {
-    return None;
-  }
-  if (n == 0) {
-    if (pad > 0) {
-      return None;
-    }
-    return Some([]);
-  }
-  if (n % 4 == 1) {
-    return None;
-  }
-  if (pad > 0 && (n + pad) % 4 != 0) {
-    return None;
-  }
-  let out_len: i32 = n * 3 / 4;
-  if (out_len == 0) {
-    return Some([]);
-  }
-  let buf: u8[] = __alloc_u8(out_len);
-  let i: i32 = 0;
-  let j: i32 = 0;
-  let acc: i32 = 0;
-  let bits: i32 = 0;
-  while (i < n) {
-    acc = acc << 6 | __b64_decode_char(s[i] as i32);
-    bits = bits + 6;
-    if (bits >= 8) {
-      bits = bits - 8;
-      buf = buf.with(j, (acc >> bits & 255) as u8);
-      j = j + 1;
-    }
-    i = i + 1;
-  }
-  return Some(buf);
-}
-
-// std/base64 url-safe variant (RFC 4648 §5): the same base64 with the
-// two alphabet characters `+` `/` replaced by `-` `_` (so the output is
-// safe in URLs and filenames), and no `=` padding on encode. This is the
-// encoding JWTs and most URL tokens use.
-//
-// Implemented by reusing the standard core: encode then translate the
-// two distinct characters and drop padding; decode by translating back
-// and handing off to `base64_decode`, which already tolerates missing
-// padding (it decodes the leading run of valid characters). Round-trips
-// with `base64url_encode` for any byte content.
-
 function __b64_std_to_url(s: string): string {
   let out: u8[] = [];
   let i: i32 = 0;
@@ -226,57 +98,50 @@ function __b64_std_to_url(s: string): string {
   return string_from_bytes_unchecked(out);
 }
 
-function __b64_url_to_std(s: string): string {
-  let out: u8[] = [];
-  let i: i32 = 0;
-  while (i < s.len()) {
-    let c: i32 = s[i] as i32;
-    if (c == 45) {  // '-' → '+'
-      out = out.append(43 as u8);
-    } else if (c == 95) {  // '_' → '/'
-      out = out.append(47 as u8);
-    } else {
-      out = out.append(s[i] as u8);
+pub function encode_url(input: [u8]): string {
+  return __b64_std_to_url(encode(input));
+}
+
+pub function decode(input: string): Result[u8[], codec.DecodeError] {
+  return __b64_decode(input, false);
+}
+
+pub function decode_url(input: string): Result[u8[], codec.DecodeError] {
+  return __b64_decode(input, true);
+}
+
+function __b64_decode(input: string, url: boolean): Result[u8[], codec.DecodeError] {
+  let encoding: string = if (url) { "base64url" } else { "base64" };
+  let n: i32 = 0;
+  while (n < input.len() && input[n] != 61) {
+    if (__b64_decode_char(input[n] as i32, url) < 0) {
+      return Err(codec.error(encoding, n, codec.InvalidByte(input[n])));
     }
-    i = i + 1;
+    n = n + 1;
   }
-  return string_from_bytes_unchecked(out);
-}
-
-// `base64url_encode(b)` — URL-safe base64 of `b`, no `=` padding.
-pub function base64url_encode(bs: u8[]): string {
-  return __b64_std_to_url(base64_encode(bs));
-}
-
-// `base64url_decode(s)` — inverse of `base64url_encode`. Accepts input
-// with or without `=` padding (padding is ignored). Lenient like
-// `base64_decode`: stops at the first character that is neither a
-// url-safe base64 digit nor padding.
-pub function base64url_decode(s: string): u8[] {
-  return base64_decode(__b64_url_to_std(s));
-}
-
-// `base64url_decode_strict(s)` — the strict URL-safe decoder: `None` on
-// malformed input instead of truncating, the url-safe counterpart of
-// `base64_decode_strict`. This is the one to use on a JWT segment or a
-// URL token, where a tampered byte must be observable rather than
-// silently dropped (#4384).
-//
-// Stricter than `base64url_decode` in two ways: it rejects the standard-
-// alphabet `+` / `/` (only `-` / `_` are URL-safe), and it applies the
-// full `base64_decode_strict` structural rules (valid chars, `=` only at
-// the end aligning to a 4-char group, no `n%4==1` run). Padding stays
-// optional — canonical base64url is unpadded. `""` decodes to `Some("")`.
-pub function base64url_decode_strict(s: string): Option[u8[]] {
-  // Reject the non-URL-safe standard-alphabet characters up front:
-  // `__b64_url_to_std` leaves `+` / `/` untouched, so base64_decode_strict
-  // would otherwise accept them.
-  let i: i32 = 0;
-  while (i < s.len()) {
-    if (s[i] == 43 || s[i] == 47) {  // '+' or '/'
-      return None;
+  if let Some(problem) = codec.padding_error(input, n, 2, 4, encoding) {
+    return Err(problem);
+  }
+  let rem: i32 = n % 4;
+  if (rem == 1) {
+    return Err(codec.error(encoding, n, codec.InvalidLength));
+  }
+  let trailing: i32 = rem * 6 % 8;
+  if (trailing > 0 && (__b64_decode_char(input[n - 1] as i32, url) & (1 << trailing) - 1) != 0) {
+    return Err(codec.error(encoding, n - 1, codec.NonZeroTrailingBits));
+  }
+  let output: u8[] = __alloc_u8(n / 4 * 3 + rem * 6 / 8);
+  let at: i32 = 0;
+  let acc: i32 = 0;
+  let bits: i32 = 0;
+  for i in 0..n {
+    acc = acc << 6 | __b64_decode_char(input[i] as i32, url);
+    bits = bits + 6;
+    if (bits >= 8) {
+      bits = bits - 8;
+      output = output.with(at, (acc >> bits & 255) as u8);
+      at = at + 1;
     }
-    i = i + 1;
   }
-  return base64_decode_strict(__b64_url_to_std(s));
+  return Ok(output);
 }

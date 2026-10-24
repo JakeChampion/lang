@@ -1390,7 +1390,7 @@ function __roots_key(roots: Option[verify.Roots]): string {
     Some(r) => {
       let h: crypto.Sha256 = crypto.sha256_new();
       for c in r.certs {
-        h = h.update_array(c.raw);
+        h = h.update(c.raw);
       }
       return h.final_hex();
     },
@@ -3753,7 +3753,7 @@ function __proxy_auth(full: string): string {
   if (!userinfo.contains(":")) {
     userinfo = userinfo + ":";
   }
-  return "Basic " + base64.base64_encode(userinfo.bytes());
+  return "Basic " + base64.encode(userinfo.bytes());
 }
 
 // ---------------------------------------------------------------------------

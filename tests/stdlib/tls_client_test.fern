@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/crypto/ed25519";
 import "std/tls";
 import "std/tls/client";
@@ -41,7 +42,7 @@ const NOT_BEFORE_MS: i64 = 1577836800000;
 const NOT_AFTER_MS: i64 = 4102444800000;
 
 function roots(der: string): verify.Roots {
-  return verify.roots([hex.hex_decode(der)]);
+  return verify.roots([__codec_bytes(hex.decode(der))]);
 }
 
 function leaf_seed(): u8[] {
@@ -63,7 +64,7 @@ function connect(cfg: client.Config, alpn: string[], forge: boolean): Result[Pai
 // connect_at is `connect` with the session's wall clock at `now`.
 function connect_at(cfg: client.Config, alpn: string[], forge: boolean, now: i64): Result[Pair, tls.TlsError] {
   let start: client.Step = client.start(cfg, now)?;
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([hex.hex_decode(LEAF)], [0x0807]), alpn: alpn };
+  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), alpn: alpn };
   let server: handshake.Server = srv(handshake.server_new(sc, random_bytes(handshake.server_entropy(sc))))?;
   let s1: handshake.ServerStep = srv(server.read(start.output))?;
   if (s1.events.len() == 0) {
@@ -265,7 +266,7 @@ function test_untrusted(): test.TestOutcome {
 // sends: sealed under the handshake keys, it reads as bad_certificate.
 function refusal_alert(): Result[string, tls.TlsError] {
   let start: client.Step = client.start(client.config("tls.example", roots(OTHER_ROOT)), WALL_MS)?;
-  let sc: handshake.ServerConfig = handshake.server_config([hex.hex_decode(LEAF)], [0x0807]);
+  let sc: handshake.ServerConfig = handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]);
   let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, random_bytes(handshake.server_entropy(sc))))?.read(start.output))?;
   let sig: u8[] = [];
   match (ed25519.sign(leaf_seed(), signing(s1.events))) {
@@ -421,7 +422,7 @@ function issued(p: Pair): Result[(client.Ticket, u8[]), tls.TlsError] {
 // that takes it up with `psk`; a server never asked is a refusal.
 function connect_resumed(cfg: client.Config, psk: u8[]): Result[Pair, tls.TlsError] {
   let start: client.Step = client.start(cfg, WALL_MS)?;
-  let server: handshake.Server = srv(handshake.server_new(handshake.server_config([hex.hex_decode(LEAF)], [0x0807]), random_bytes(handshake.server_entropy(handshake.server_config([hex.hex_decode(LEAF)], [0x0807])))))?;
+  let server: handshake.Server = srv(handshake.server_new(handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), random_bytes(handshake.server_entropy(handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807])))))?;
   let s1: handshake.ServerStep = srv(server.read(start.output))?;
   if (!has_resume(s1.events)) {
     return Err(tls.HandshakeFailed(handshake.Misuse("no ticket offered")));
@@ -443,7 +444,7 @@ function test_resumption(): test.TestOutcome {
       match (issued(p)) {
         Ok(got) => {
           let t: client.Ticket = got.0;
-          if (t.server_name != "tls.example" || t.suite != keyschedule.Aes128GcmSha256.code() || t.lifetime != 7200 as u32 || hex.hex_encode(t.psk) != hex.hex_encode(got.1)) {
+          if (t.server_name != "tls.example" || t.suite != keyschedule.Aes128GcmSha256.code() || t.lifetime != 7200 as u32 || hex.encode(t.psk) != hex.encode(got.1)) {
             return test.fail("the ticket kept");
           }
           match (connect_resumed(client.config("tls.example", roots(OTHER_ROOT)).with_ticket(t), got.1)) {
@@ -491,7 +492,7 @@ function client_shown(events: handshake.Event[]): Option[handshake.Verification]
 // whether the signature verifies under the leaf's key.
 function connect_asked(cfg: client.Config): Result[string, tls.TlsError] {
   let start: client.Step = client.start(cfg, WALL_MS)?;
-  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([hex.hex_decode(LEAF)], [0x0807]), request_client_certificate: true };
+  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), request_client_certificate: true };
   let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, random_bytes(handshake.server_entropy(sc))))?.read(start.output))?;
   let sig: u8[] = [];
   match (ed25519.sign(leaf_seed(), signing(s1.events))) {
@@ -562,7 +563,7 @@ function test_identity(): test.TestOutcome {
 }
 
 function pem_of(der_hex: string): string {
-  return pem.encode("CERTIFICATE", hex.hex_decode(der_hex));
+  return pem.encode("CERTIFICATE", __codec_bytes(hex.decode(der_hex)));
 }
 
 function main(): i32 {
@@ -577,4 +578,18 @@ function main(): i32 {
   r = r.it("resumption", test_resumption);
   r = r.it("an identity", test_identity);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

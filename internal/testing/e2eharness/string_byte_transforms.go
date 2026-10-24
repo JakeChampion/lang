@@ -24,7 +24,7 @@ function main(): i32 {
     while (b < 256) {
         let one: u8[] = "A".shift_byte(b - 65);
         if (one.len() != 1 || one[0] as i32 != b) { return 6; }
-        let two: u8[] = "AA".replace_byte(65, b);
+        let two: u8[] = "AA".replace_byte(65, b as u8);
         if (two.len() != 2 || two[0] as i32 != b || two[1] as i32 != b) { return 7; }
         b = b + 1;
     }
@@ -32,8 +32,6 @@ function main(): i32 {
     for s in samples {
         if (!s.reverse_bytes().reverse().equal(s.bytes())) { return 8; }
         if (!s.shift_byte(256).equal(s.bytes())) { return 9; }
-        if (!s.replace_byte(999, 0).equal(s.bytes())) { return 10; }
-        if (!s.without_byte(999).equal(s.bytes())) { return 11; }
         let dropped: u8[] = s.without_byte(195);
         for x in dropped { if (x == 195) { return 12; } }
     }

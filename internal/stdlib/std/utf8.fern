@@ -331,8 +331,8 @@ pub function is_valid_utf8(s: string): boolean {
 // for it. The transiently-unchecked string never escapes — it is either
 // returned inside `Some` after passing the same strict scan
 // `is_valid_utf8` applies, or dropped.
-pub function from_bytes(b: u8[]): Option[string] {
-  let s: string = string_from_bytes_unchecked(b);
+pub function from_bytes(b: [u8]): Option[string] {
+  let s: string = string_from_bytes_unchecked(__bytes_owned(b));
   if (is_valid_utf8(s)) {
     return Some(s);
   }
@@ -347,8 +347,8 @@ pub function from_bytes(b: u8[]): Option[string] {
 // `into_string`. Well-formed input comes back untouched, and a caller
 // who wants the bytes themselves takes the `u8[]` sibling of whichever
 // API handed it these.
-pub function from_bytes_lossy(b: u8[]): string {
-  let s: string = string_from_bytes_unchecked(b);
+pub function from_bytes_lossy(b: [u8]): string {
+  let s: string = string_from_bytes_unchecked(__bytes_owned(b));
   if (is_valid_utf8(s)) {
     return s;
   }

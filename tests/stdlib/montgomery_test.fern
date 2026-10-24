@@ -1,5 +1,6 @@
 import "std/test";
 import "std/hex";
+import "std/codec";
 import "std/string";
 import "core/bigint";
 import "std/crypto/montgomery" as mont;
@@ -59,25 +60,25 @@ function mismatch(modulus: string, bytes: i32): string {
   let p: bigint.BigInt = big(modulus);
   let vs: string[] = values(p, bytes);
   for a in vs {
-    let am: i64[] = mont.from_bytes(m, hex.hex_decode(a));
-    if (hex.hex_encode(mont.to_bytes(m, am)) != a) {
+    let am: i64[] = mont.from_bytes(m, __codec_bytes(hex.decode(a)));
+    if (hex.encode(mont.to_bytes(m, am)) != a) {
       return "round trip " + a;
     }
     for b in vs {
-      let bm: i64[] = mont.from_bytes(m, hex.hex_decode(b));
-      if (hex.hex_encode(mont.to_bytes(m, mont.mul(m, am, bm))) != hex_of(reduced(big(a).mul(big(b)), p), bytes)) {
+      let bm: i64[] = mont.from_bytes(m, __codec_bytes(hex.decode(b)));
+      if (hex.encode(mont.to_bytes(m, mont.mul(m, am, bm))) != hex_of(reduced(big(a).mul(big(b)), p), bytes)) {
         return "mul " + a + " " + b;
       }
-      if (hex.hex_encode(mont.to_bytes(m, mont.add(m, am, bm))) != hex_of(reduced(big(a).add(big(b)), p), bytes)) {
+      if (hex.encode(mont.to_bytes(m, mont.add(m, am, bm))) != hex_of(reduced(big(a).add(big(b)), p), bytes)) {
         return "add " + a + " " + b;
       }
-      if (hex.hex_encode(mont.to_bytes(m, mont.sub(m, am, bm))) != hex_of(reduced(big(a).sub(big(b)), p), bytes)) {
+      if (hex.encode(mont.to_bytes(m, mont.sub(m, am, bm))) != hex_of(reduced(big(a).sub(big(b)), p), bytes)) {
         return "sub " + a + " " + b;
       }
     }
     if (mont.is_zero(am) == 0 as i64) {
       let inv: i64[] = mont.inv(m, am);
-      if (hex.hex_encode(mont.to_bytes(m, mont.mul(m, inv, am))) != hex_of(bigint.from_u64(1 as u64), bytes)) {
+      if (hex.encode(mont.to_bytes(m, mont.mul(m, inv, am))) != hex_of(bigint.from_u64(1 as u64), bytes)) {
         return "inv " + a;
       }
     }
@@ -99,7 +100,7 @@ function test_in_range(): test.TestOutcome {
   let one: bigint.BigInt = bigint.from_u64(1 as u64);
   let got: string = "";
   for v in [bigint.zero(), one, p.sub(one), p, p.add(one)] {
-    got = got + mont.in_range(m, hex.hex_decode(hex_of(v, 32))).to_string();
+    got = got + mont.in_range(m, __codec_bytes(hex.decode(hex_of(v, 32)))).to_string();
   }
   return test.assert_eq(got, "01100");
 }
@@ -119,4 +120,18 @@ function main(): i32 {
   r = r.it("in_range", test_in_range);
   r = r.it("select", test_select);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

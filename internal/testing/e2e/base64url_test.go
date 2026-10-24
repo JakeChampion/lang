@@ -3,26 +3,35 @@ package e2e
 import "testing"
 
 // Differential coverage for std/base64's URL-safe variant
-// (base64url_encode / base64url_decode) across backends. Returns 42 iff
+// (encode_url / decode_url) across backends. Returns 42 iff
 // the url-safe alphabet is used (no + / =), padding is dropped on encode
 // but tolerated on decode, and encode/decode round-trips arbitrary
 // bytes. Each leg skips itself when its toolchain is absent.
 const base64urlProg = `
 import "std/base64" as b64;
+import "std/codec";
 import "std/string";
 function main(): i32 {
-    let enc: string = b64.base64url_encode("Hello, World!".bytes());
+    let enc: string = b64.encode_url("Hello, World!".bytes());
     if (enc.contains("+") || enc.contains("/") || enc.contains("=")) { return 1; }
-    if (string_from_bytes_unchecked(b64.base64url_decode(enc)) != "Hello, World!") { return 2; }
+    if (string_from_bytes_unchecked(__codec_bytes(b64.decode_url(enc))) != "Hello, World!") { return 2; }
     // 0xFFFFFF is not valid UTF-8 — since #5730 it stays u8[] on both
     // sides and never has to pose as a string.
     let s2: u8[] = [255 as u8, 255 as u8, 255 as u8];
-    if (b64.base64url_encode(s2) != "____") { return 3; }
-    if (b64.base64url_encode(b64.base64url_decode("____")) != "____") { return 4; }
-    if (b64.base64url_encode("Hi".bytes()) != "SGk") { return 5; }
-    if (string_from_bytes_unchecked(b64.base64url_decode("SGk")) != "Hi" || string_from_bytes_unchecked(b64.base64url_decode("SGk=")) != "Hi") { return 6; }
-    if (b64.base64url_encode("".bytes()) != "" || string_from_bytes_unchecked(b64.base64url_decode("")) != "") { return 7; }
+    if (b64.encode_url(s2) != "____") { return 3; }
+    if (b64.encode_url(__codec_bytes(b64.decode_url("____"))) != "____") { return 4; }
+    if (b64.encode_url("Hi".bytes()) != "SGk") { return 5; }
+    if (string_from_bytes_unchecked(__codec_bytes(b64.decode_url("SGk"))) != "Hi" || string_from_bytes_unchecked(__codec_bytes(b64.decode_url("SGk="))) != "Hi") { return 6; }
+    if (b64.encode_url("".bytes()) != "" || string_from_bytes_unchecked(__codec_bytes(b64.decode_url(""))) != "") { return 7; }
     return 42;
+}
+
+// Decode a valid fixture. Report a malformed fixture before ending the test.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => { return bytes; },
+    Err(problem) => { eprint(problem.message()); exit(98); return []; }
+  }
 }
 `
 

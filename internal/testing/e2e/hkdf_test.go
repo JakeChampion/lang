@@ -20,7 +20,7 @@ function main(): i32 {
     let ikm: u8[] = rep(11, 22);
     let salt: u8[] = [0 as u8,1 as u8,2 as u8,3 as u8,4 as u8,5 as u8,6 as u8,7 as u8,8 as u8,9 as u8,10 as u8,11 as u8,12 as u8];
     let info: u8[] = [240 as u8,241 as u8,242 as u8,243 as u8,244 as u8,245 as u8,246 as u8,247 as u8,248 as u8,249 as u8];
-    if (hex.hex_encode(crypto.hkdf_extract(salt, ikm)) !=
+    if (hex.encode(crypto.hkdf_extract(salt, ikm)) !=
         "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5") { return 1; }
     if (crypto.hkdf_sha256_hex(salt, ikm, info, 42) !=
         "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865") { return 2; }

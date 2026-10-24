@@ -60,6 +60,7 @@ var stdModuleReach = map[string]string{
 	"std/binary":        "",
 	"std/brotli":        "",
 	"std/cli":           "env",
+	"std/codec":         "",
 	"std/constmap":      "",
 	"std/convert":       "",
 	"std/crypto":        "",

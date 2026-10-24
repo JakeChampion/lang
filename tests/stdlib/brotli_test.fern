@@ -1,6 +1,7 @@
 import "std/test";
 import "std/brotli";
 import "std/hex";
+import "std/codec";
 import "std/hash";
 import "std/utf8";
 import "core/int";
@@ -28,9 +29,9 @@ function lines(n: i32): u8[] {
 
 // `read(hex)` — the stream decoded, as its length and CRC-32.
 function read(stream: string): string {
-  match (brotli.decompress(hex.hex_decode(stream), 1048576)) {
+  match (brotli.decompress(__codec_bytes(hex.decode(stream)), 1048576)) {
     Ok(out) => {
-      return out.len().to_string() + " " + hash.crc32_new().update_array(out).finish().to_string();
+      return out.len().to_string() + " " + hash.crc32_new().update(out).finish().to_string();
     },
     Err(e) => {
       return e.message();
@@ -40,7 +41,7 @@ function read(stream: string): string {
 }
 
 function sum(bs: u8[]): string {
-  return bs.len().to_string() + " " + hash.crc32_new().update_array(bs).finish().to_string();
+  return bs.len().to_string() + " " + hash.crc32_new().update(bs).finish().to_string();
 }
 
 function english(): string {
@@ -48,7 +49,7 @@ function english(): string {
 }
 
 function test_text(): test.TestOutcome {
-  match (brotli.decompress(hex.hex_decode("8b0c8068656c6c6f2c2068656c6c6f2c2068656c6c6f20776f726c640a03"), 1024)) {
+  match (brotli.decompress(__codec_bytes(hex.decode("8b0c8068656c6c6f2c2068656c6c6f2c2068656c6c6f20776f726c640a03")), 1024)) {
     Ok(out) => {
       return test.assert_eq(utf8.from_bytes_lossy(out), "hello, hello, hello world\n");
     },
@@ -79,7 +80,7 @@ function test_contexts_and_windows(): test.TestOutcome {
 // One meta-block per transform that trims a word's start, each a single
 // dictionary reference.
 function test_trimmed_starts(): test.TestOutcome {
-  match (brotli.decompress(hex.hex_decode("500000004458141225094000000044581412e80ac600000010615148ac311004000080088b4282b5812000000088b02824581d1c08000080080b6042dd036200000088b00026d6435c04000080080b60629d8401"), 1024)) {
+  match (brotli.decompress(__codec_bytes(hex.decode("500000004458141225094000000044581412e80ac600000010615148ac311004000080088b4282b5812000000088b02824581d1c08000080080b6042dd036200000088b00026d6435c04000080080b60629d8401")), 1024)) {
     Ok(out) => {
       return test.assert_eq(utf8.from_bytes_lossy(out), "espectsplayuestrveteally tionns");
     },
@@ -101,7 +102,7 @@ function test_refusals(): test.TestOutcome {
   let cut: string = read(english().slice_snap(0, 120));
   let window: string = read("11");
   let limit: string = "";
-  match (brotli.decompress(hex.hex_decode(english()), 100)) {
+  match (brotli.decompress(__codec_bytes(hex.decode(english())), 100)) {
     Ok(_) => {
       limit = "decoded";
     },
@@ -122,4 +123,18 @@ function main(): i32 {
   r = r.it("an empty stream and a metadata block", test_empty_and_metadata);
   r = r.it("refusals", test_refusals);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before the test exits.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

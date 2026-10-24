@@ -1,0 +1,35 @@
+{
+  "source_commit": "073d9b48cbdfe817fe38eeb6d1c673a78c8f9e41",
+  "ci_run": 40066011748,
+  "artifacts": [
+    {
+      "file": "ci-coreutils-gnu912-tests.jsonl.gz",
+      "sha256": "f9a26197abf7824f32886149411a1cf6f1cc6b15198cf8ebb9533a7eb3e572f2",
+      "uncompressed_sha256": "b8bde1ffa6c006caee02f895848060c07e2c57310d26c97afe67cd1f2144c125"
+    },
+    {
+      "file": "ci-perf-aarch64.log.gz",
+      "sha256": "261a6a39394f9e50fc4fce76711d689b10d92b4efcfdd98d6eed5b04070fab3b",
+      "uncompressed_sha256": "503b877a3b028e6130a48a6c09ad2955e2af585482bb39a3290b2cc6448a49e7"
+    },
+    {
+      "file": "ci-perf-x86_64.log.gz",
+      "sha256": "03e39ceb6a2ed8ec45e052633c549748bf95a35f6aac76bcac6869380100a7ac",
+      "uncompressed_sha256": "1a33dbf34488b2cfc5c48487e99ba2c58b66bf7a6d35000e77cf02d105e7b83a"
+    },
+    {
+      "file": "ci-coreutils-x86-shard0.log.gz",
+      "sha256": "45be97c1ea33f849e188a168fc44210e713025cc2f5fc2da9be250d2b628682b",
+      "uncompressed_sha256": "892f2f04e6069c57e4b9f20c4affe78e41f3b78acadd764477359fb38623fd90"
+    },
+    {
+      "file": "ci-perf-updates.json.gz",
+      "sha256": "c4e1731c516a5adf4ec6adc7380bb8c5033ac1dae18f4624abe3577fb0ba6e78",
+      "uncompressed_sha256": "73ec6f32697502e3534a623285987f495e89ecb932aa8e9eb22a3bab013043ab"
+    }
+  ],
+  "test_actions": {
+    "run": 1520,
+    "pass": 1521
+  }
+}

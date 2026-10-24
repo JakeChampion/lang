@@ -45,7 +45,7 @@ function check_rendered(tile: fractal.Tile, iterations: i64, bytes: i32, checksu
   if (tile.iterations != iterations) {
     return test.fail("tile iteration total differs");
   }
-  if (tile.png.len() != bytes || hash.crc32_new().update_array(tile.png).finish() != checksum) {
+  if (tile.png.len() != bytes || hash.crc32_new().update(tile.png).finish() != checksum) {
     return test.fail("tile PNG differs");
   }
   return test.pass();

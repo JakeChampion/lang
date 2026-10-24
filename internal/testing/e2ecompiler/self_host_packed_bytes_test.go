@@ -54,7 +54,7 @@ function main(): i32 {
     let big: string = "abcdefghijklmnop";
     let k: i32 = 0;
     while (k < 12) { big = big + big; k = k + 1; }
-    print(crypto.sha256_hex(big));
+    print(crypto.sha256_hex(big.as_bytes()));
     let before: i64 = __heap_bump_bytes();
     let mb: u8[] = __alloc_u8(4194304);
     let cost: i64 = __heap_bump_bytes() - before;

@@ -7421,10 +7421,10 @@ import "std/csv";
 import "std/http";
 function main(): i32 {
     // center
-    if ("hi".center(6, "-") != "--hi--") { return 1; }
-    if ("hi".center(7, "-") != "--hi---") { return 2; }   // odd → right
-    if ("hi".center(2, "-") != "hi") { return 3; }
-    if ("hello".center(3, "-") != "hello") { return 4; }
+    if ("hi".center(6, '-') != "--hi--") { return 1; }
+    if ("hi".center(7, '-') != "--hi---") { return 2; }   // odd → right
+    if ("hi".center(2, '-') != "hi") { return 3; }
+    if ("hello".center(3, '-') != "hello") { return 4; }
 
     // reverse_words
     if ("one two three".reverse_words() != "three two one") { return 5; }
@@ -7932,9 +7932,9 @@ function main(): i32 {
 
     // repeated chars via pad_start (repeat_char dropped: std/string
     // free fns are uncallable under no-prelude — qualifier is a keyword)
-    if ("".pad_start(4, "x") != "xxxx") { return 18; }
-    if ("".pad_start(5, "-") != "-----") { return 19; }
-    if ("".pad_start(0, "x") != "") { return 20; }
+    if ("".pad_start(4, 'x') != "xxxx") { return 18; }
+    if ("".pad_start(5, '-') != "-----") { return 19; }
+    if ("".pad_start(0, 'x') != "") { return 20; }
 
     // http_status_text
     if (http.http_status_text(200) != "OK") { return 21; }
@@ -8238,11 +8238,11 @@ func TestArm64StdlibBundle(t *testing.T) {
 import "std/string";
 function main(): i32 {
     // pad_start / pad_end
-    if ("42".pad_start(5, "0") != "00042") { return 1; }
-    if ("42".pad_end(5, " ") != "42   ") { return 2; }
-    if ("longer".pad_start(3, "0") != "longer") { return 3; }
-    if ("x".pad_start(3, "") != "x") { return 4; }       // empty ch → no-op
-    if ("".pad_start(3, "ab") != "aaa") { return 5; }    // only first byte of ch
+    if ("42".pad_start(5, '0') != "00042") { return 1; }
+    if ("42".pad_end(5, ' ') != "42   ") { return 2; }
+    if ("longer".pad_start(3, '0') != "longer") { return 3; }
+    if ("x".pad_start(2, 'é') != "x") { return 4; }       // no whole fill character fits
+    if ("".pad_start(3, 'a') != "aaa") { return 5; }    // repeat one fill character
 
     // split_once — first match wins, empty sep / no-match → None
     match ("key=value".split_once("=")) {

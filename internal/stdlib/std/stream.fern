@@ -171,15 +171,15 @@ pub function (s: Stream) read_all_string(): (Option[string], Stream) {
 // ============================================================
 
 // `(s: Stream).read_byte()` — read a single byte from the
-// cursor. Returns `(Option[i32], advancedStream)`: Some(b)
+// cursor. Returns `(Option[u8], advancedStream)`: Some(b)
 // + a Stream advanced past it, or None + the unchanged
 // Stream when exhausted. Rebind: `let (b, s) = s.read_byte();`.
-pub function (s: Stream) read_byte(): (Option[i32], Stream) {
+pub function (s: Stream) read_byte(): (Option[u8], Stream) {
   let cur: Stream = __fill(s);
   if (cur.pos >= cur.data.len()) {
     return (None, cur);
   }
-  let b: i32 = cur.data[cur.pos] as i32;
+  let b: u8 = cur.data[cur.pos];
   return (Some(b), Stream { ...cur, pos: cur.pos + 1 });
 }
 

@@ -1,6 +1,7 @@
 import "std/test";
 import "std/zstd";
 import "std/hex";
+import "std/codec";
 import "std/hash";
 import "std/utf8";
 import "core/int";
@@ -41,9 +42,9 @@ function lcg_bytes(n: i32): u8[] {
 
 // `read(hex)` — the frame decoded, as its length and CRC-32.
 function read(frame: string): string {
-  match (zstd.decompress(hex.hex_decode(frame), 1048576)) {
+  match (zstd.decompress(__codec_bytes(hex.decode(frame)), 1048576)) {
     Ok(out) => {
-      return out.len().to_string() + " " + hash.crc32_new().update_array(out).finish().to_string();
+      return out.len().to_string() + " " + hash.crc32_new().update(out).finish().to_string();
     },
     Err(e) => {
       return e.message();
@@ -53,7 +54,7 @@ function read(frame: string): string {
 }
 
 function sum(bs: u8[]): string {
-  return bs.len().to_string() + " " + hash.crc32_new().update_array(bs).finish().to_string();
+  return bs.len().to_string() + " " + hash.crc32_new().update(bs).finish().to_string();
 }
 
 function small(): string {
@@ -69,7 +70,7 @@ function run(): string {
 }
 
 function test_small(): test.TestOutcome {
-  match (zstd.decompress(hex.hex_decode(small()), 1024)) {
+  match (zstd.decompress(__codec_bytes(hex.decode(small())), 1024)) {
     Ok(out) => {
       return test.assert_eq(utf8.from_bytes_lossy(out), "hello, hello, hello world\n");
     },
@@ -104,7 +105,7 @@ function test_block_kinds(): test.TestOutcome {
 }
 
 function test_frames(): test.TestOutcome {
-  match (zstd.decompress(hex.hex_decode("28b52ffd200c6100006669727374206672616d653b532a4d1805000000787878787828b52ffd200c6100007365636f6e64206672616d65"), 1024)) {
+  match (zstd.decompress(__codec_bytes(hex.decode("28b52ffd200c6100006669727374206672616d653b532a4d1805000000787878787828b52ffd200c6100007365636f6e64206672616d65")), 1024)) {
     Ok(out) => {
       return test.assert_eq(utf8.from_bytes_lossy(out), "first frame;second frame");
     },
@@ -118,9 +119,9 @@ function test_frames(): test.TestOutcome {
 // A frame cut short, a checksum or magic number altered, output past the
 // limit, a reserved block type, and a dictionary.
 function test_refusals(): test.TestOutcome {
-  let r: u8[] = hex.hex_decode(run());
+  let r: u8[] = __codec_bytes(hex.decode(run()));
   let cut: string = read(two().slice_snap(0, 1000));
-  let sum_bad: string = read(hex.hex_encode(r.with(r.len() - 1, r[r.len() - 1] ^ 1 as u8)));
+  let sum_bad: string = read(hex.encode(r.with(r.len() - 1, r[r.len() - 1] ^ 1 as u8)));
   let magic: string = read("29b52ffd" + run().slice_snap(8, run().len()));
   let limit: string = "";
   match (zstd.decompress(r, 100000)) {
@@ -141,7 +142,7 @@ function packed(input: u8[]): string {
   let frame: u8[] = zstd.compress(input);
   match (zstd.decompress(frame, input.len() + 1)) {
     Ok(out) => {
-      if (out.len() != input.len() || hex.hex_encode(out) != hex.hex_encode(input)) {
+      if (out.len() != input.len() || hex.encode(out) != hex.encode(input)) {
         return "differs";
       }
       return sum(frame);
@@ -163,7 +164,7 @@ function test_encoder(): test.TestOutcome {
 // first.
 function test_encoder_blocks(): test.TestOutcome {
   let skew: u8[] = [];
-  match (zstd.decompress(hex.hex_decode("28b52ffd60c408852b003a7b20110c1010731d034e6cdb00b89ba4030110011001af3c826cf5ced0ca47046676714e9cae1ea19b4ba5e4a5b4adc12d57658df08f5c22a2a95ff6c257f6b54b34ca9536ce1d48388490933634d5f93b56bb1cf984a5ee9348b735f2a41e7d054f9fa7b0644ab3993ab278a9ba5bbc300c0526c97c02725d74451cfcba645e0a1c177b20554ac5328763b528c22bc3e1850ca6728c361502d292a55ff341057e6645577f5e677bad4b67de1ecfc07392087eb9b49cbb84f2f7bbbd090ec05f3c75068fd268a15dd380e1d4e6331bb26ac5d080cb0256a9110d584e0056fe26fe073466944a9f1972376ede01d953575facae2abe26351fea53b3986012a6cfcd1559fdb5a5b3a1e871e69cf863626215c8f389b806cc335b48b0ac522f531e4fa5c271823b1e99f15815765b616ac11048bcd3855e0e0e783428f872ce34cc0a54be868f8555c0deba1cfdee480ec775021e06296b24c06ab74bf5e4e62cf66afa78ca002c66b6fb429ed8c70ab934d293429430f30c96ee93757edf2e496cdfbdddba7b3008c6ae8c6c87d2b91dff92d02c7242573c5bd68567a35e1465e5ccc356cb8da5d6757a15edb48cbc509dd0e095fe56852d0b652b519f1c69c2ed663467501d00d26ff642bbdd3379a96b7939b3cca394d4f1b60e75846c1fdac0d70764a503f74da305020d43a63b9c139c502e81de241cbedd520b8a4d56b506ec37fb47097012911b8f81632c4a39d7e89f95a3c1a6072b166f6d685c7c3e9a858f4b4010baa19a0649b170be5fe6851323d46557b9a035fc5a51095827e4be7a3a0596977e90902e15acadd7ddcae3abf9cc1b084ae6eba0e53e13fd91bc2969969cb555162ad3c75c921f3ee641223f953324edc617e270b1100990ea9f540486c8b4048093cc282452462d373e540f666890954d1917d693421767dbddf68ccb743636962f98b8dbc098358127de249f9804754e3c0d7325c64df4cf6a200b60f31b2901c5194368efc53b9f926ce7605f09b22d43e83620a77a888d9b510b7bba26d2c36b353a32362f09a2b4b7691fdd3393d902dc60de7862e5103dcb8f0290a05ffa646a3503da82d1c00927cd8c158a253398838fd7e1208775836184395e6ee1d2f074d6444271766010ebdf49fe13993bbd87e489ae98be9989d8e5d0ae8db91078574a8e2fa0c43daa0c247102b79ea3d24091d44b3d89998c1e8d946d568b09cbc9425d49a72cef278f35592b395d602540ff145d86ab9a8fbe740c9b3473d6997aad50c4aded231ebe64168e57c2e93d1f3d7f892b9bf40c9e74b54ed31fda36e6cf41f022d4ef0e9049890307022dd90392e8f81bf42bdaf2482ae4b5ee4d519d7938da562d1e8f22782767f0a07e43ba701fb90728cfa742167b857ea08699ba99a14a49de9a6f1a4d400839ec961ceed91407615a753ae0e8aa8960831f60287e55f28ab8be467108ea1d3c0c7f2502ba8bef9b700d9989c4e17a185aa16270c9cf87d328850ce4068e4d524af851664c3aabc33a92919af480d2f467460d2a057e087ea8a11c8490418410638c11119a9292ea1012420c62503d10d8b5062fff76901150442bc3533337a2b6a55844f648b02e424a615031ed6f6d42b164afbb78aa254a1d07436c6a7743a52e15ecd69516b06d0dc7385862581d5d1828bd1c20ed4119870a017c8475692a9d4532e3d42fea31fddca7979fad18d2857788e00e149532908dcc3d5d04aaf6660757a893133395363c6b37fe8b1eeb810c523a60da1a57d878f6d72d6f1ca511fbdb2849485f7cd0739f6cb889f5826b7bd63b68a4cb44f04285f0ede1969506751cfc4fb50378eee4c60d6ec01025c4718da890ba10001329df7b58032431cb862a06e28121113b32c0bc8ad63ab214c32b9ceae6c95600927ab2cf467eb9c84da14cebdee1a4319821195316c8553b279ca7c8f68a444d15"), 4096)) {
+  match (zstd.decompress(__codec_bytes(hex.decode("28b52ffd60c408852b003a7b20110c1010731d034e6cdb00b89ba4030110011001af3c826cf5ced0ca47046676714e9cae1ea19b4ba5e4a5b4adc12d57658df08f5c22a2a95ff6c257f6b54b34ca9536ce1d48388490933634d5f93b56bb1cf984a5ee9348b735f2a41e7d054f9fa7b0644ab3993ab278a9ba5bbc300c0526c97c02725d74451cfcba645e0a1c177b20554ac5328763b528c22bc3e1850ca6728c361502d292a55ff341057e6645577f5e677bad4b67de1ecfc07392087eb9b49cbb84f2f7bbbd090ec05f3c75068fd268a15dd380e1d4e6331bb26ac5d080cb0256a9110d584e0056fe26fe073466944a9f1972376ede01d953575facae2abe26351fea53b3986012a6cfcd1559fdb5a5b3a1e871e69cf863626215c8f389b806cc335b48b0ac522f531e4fa5c271823b1e99f15815765b616ac11048bcd3855e0e0e783428f872ce34cc0a54be868f8555c0deba1cfdee480ec775021e06296b24c06ab74bf5e4e62cf66afa78ca002c66b6fb429ed8c70ab934d293429430f30c96ee93757edf2e496cdfbdddba7b3008c6ae8c6c87d2b91dff92d02c7242573c5bd68567a35e1465e5ccc356cb8da5d6757a15edb48cbc509dd0e095fe56852d0b652b519f1c69c2ed663467501d00d26ff642bbdd3379a96b7939b3cca394d4f1b60e75846c1fdac0d70764a503f74da305020d43a63b9c139c502e81de241cbedd520b8a4d56b506ec37fb47097012911b8f81632c4a39d7e89f95a3c1a6072b166f6d685c7c3e9a858f4b4010baa19a0649b170be5fe6851323d46557b9a035fc5a51095827e4be7a3a0596977e90902e15acadd7ddcae3abf9cc1b084ae6eba0e53e13fd91bc2969969cb555162ad3c75c921f3ee641223f953324edc617e270b1100990ea9f540486c8b4048093cc282452462d373e540f666890954d1917d693421767dbddf68ccb743636962f98b8dbc098358127de249f9804754e3c0d7325c64df4cf6a200b60f31b2901c5194368efc53b9f926ce7605f09b22d43e83620a77a888d9b510b7bba26d2c36b353a32362f09a2b4b7691fdd3393d902dc60de7862e5103dcb8f0290a05ffa646a3503da82d1c00927cd8c158a253398838fd7e1208775836184395e6ee1d2f074d6444271766010ebdf49fe13993bbd87e489ae98be9989d8e5d0ae8db91078574a8e2fa0c43daa0c247102b79ea3d24091d44b3d89998c1e8d946d568b09cbc9425d49a72cef278f35592b395d602540ff145d86ab9a8fbe740c9b3473d6997aad50c4aded231ebe64168e57c2e93d1f3d7f892b9bf40c9e74b54ed31fda36e6cf41f022d4ef0e9049890307022dd90392e8f81bf42bdaf2482ae4b5ee4d519d7938da562d1e8f22782767f0a07e43ba701fb90728cfa742167b857ea08699ba99a14a49de9a6f1a4d400839ec961ceed91407615a753ae0e8aa8960831f60287e55f28ab8be467108ea1d3c0c7f2502ba8bef9b700d9989c4e17a185aa16270c9cf87d328850ce4068e4d524af851664c3aabc33a92919af480d2f467460d2a057e087ea8a11c8490418410638c11119a9292ea1012420c62503d10d8b5062fff76901150442bc3533337a2b6a55844f648b02e424a615031ed6f6d42b164afbb78aa254a1d07436c6a7743a52e15ecd69516b06d0dc7385862581d5d1828bd1c20ed4119870a017c8475692a9d4532e3d42fea31fddca7979fad18d2857788e00e149532908dcc3d5d04aaf6660757a893133395363c6b37fe8b1eeb810c523a60da1a57d878f6d72d6f1ca511fbdb2849485f7cd0739f6cb889f5826b7bd63b68a4cb44f04285f0ede1969506751cfc4fb50378eee4c60d6ec01025c4718da890ba10001329df7b58032431cb862a06e28121113b32c0bc8ad63ab214c32b9ceae6c95600927ab2cf467eb9c84da14cebdee1a4319821195316c8553b279ca7c8f68a444d15")), 4096)) {
     Ok(out) => {
       skew = out;
     },
@@ -197,4 +198,18 @@ function main(): i32 {
   r = r.it("the encoder's frames read back", test_encoder);
   r = r.it("the encoder across blocks", test_encoder_blocks);
   return r.finish();
+}
+
+// Decode a valid fixture. Report a malformed fixture before ending the test.
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
 }

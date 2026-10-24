@@ -366,7 +366,7 @@ function own_binary(): (i64, string) {
   for path in paths {
     match (read_file_bytes(path)) {
       Ok(bytes) => {
-        return (bytes.len() as i64, crypto.sha256_new().update_bytes(bytes).final_hex().take(24));
+        return (bytes.len() as i64, crypto.sha256_new().update(bytes).final_hex().take(24));
       },
       Err(_) => {}
     }
@@ -382,7 +382,7 @@ function own_binary(): (i64, string) {
   }
   // Without the executable, the source digest identifies the session only.
   // Such a response does not receive an immutable cache policy.
-  return (0, crypto.sha256_hex(text).take(24));
+  return (0, crypto.sha256_hex(text.as_bytes()).take(24));
 }
 
 function main(): i32 {

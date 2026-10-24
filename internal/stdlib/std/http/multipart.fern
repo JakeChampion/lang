@@ -535,7 +535,7 @@ pub struct Builder { boundary: string, body: u8[] }
 
 // builder() — a builder with a random boundary.
 pub function builder(): Builder {
-  return builder_with(hex.hex_encode(random_bytes(16)));
+  return builder_with(hex.encode(random_bytes(16)));
 }
 
 // builder_with(boundary) — a builder with the boundary given, for a body

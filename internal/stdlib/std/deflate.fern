@@ -68,12 +68,12 @@ pub struct Inflated { out: u8[], consumed: i32 }
 
 // `inflate(input, max_out)` — the raw DEFLATE stream at the head of
 // `input` decoded, at most `max_out` bytes of output.
-pub function inflate(input: u8[], max_out: i32): Result[Inflated, InflateError] {
+pub function inflate(input: [u8], max_out: i32): Result[Inflated, InflateError] {
   return inflate_from(input, 0, max_out);
 }
 
 // `inflate_from(input, from, max_out)` — `inflate` over input[from, len).
-pub function inflate_from(input: u8[], from: i32, max_out: i32): Result[Inflated, InflateError] {
+pub function inflate_from(input: [u8], from: i32, max_out: i32): Result[Inflated, InflateError] {
   return __inflated(input, from, [], max_out);
 }
 
@@ -82,8 +82,8 @@ pub function inflate_from(input: u8[], from: i32, max_out: i32): Result[Inflated
 // reach back into `history`, which is not part of the output. What a
 // message framing that keeps its LZ77 window across messages decodes
 // with (RFC 7692's context takeover).
-pub function inflate_after(history: u8[], input: u8[], max_out: i32): Result[Inflated, InflateError] {
-  match (__inflated(input, 0, history, max_out)) {
+pub function inflate_after(history: [u8], input: [u8], max_out: i32): Result[Inflated, InflateError] {
+  match (__inflated(input, 0, __bytes_owned(history), max_out)) {
     Ok(got) => {
       return Ok(Inflated { ...got, out: array.drop(got.out, history.len()) });
     },
@@ -94,7 +94,7 @@ pub function inflate_after(history: u8[], input: u8[], max_out: i32): Result[Inf
   return Err(Truncated);
 }
 
-function __inflated(input: u8[], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError] {
+function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result[Inflated, InflateError] {
   let s: __State = __State { pos: from, bitbuf: 0, bitcnt: 0, out: history, max_out: max_out + history.len(), last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
   let done: boolean = false;
   while (!done && !s.failed) {
@@ -133,7 +133,7 @@ function __fail(own s: __State, e: InflateError): __State {
 }
 
 // `__block(s, data, kind)` — one block of the given type (RFC 1951 §3.2.3).
-function __block(own s: __State, data: u8[], kind: i32): __State {
+function __block(own s: __State, data: [u8], kind: i32): __State {
   if (kind == 0) {
     return __stored(s, data);
   }
@@ -149,7 +149,7 @@ function __block(own s: __State, data: u8[], kind: i32): __State {
 // `__bits(s, data, need)` — the next `need` bits (at most 16) as an integer,
 // least significant bit first (RFC 1951 §3.1.1), into `last`; 0 once
 // the decoder has failed.
-function __bits(own s: __State, data: u8[], need: i32): __State {
+function __bits(own s: __State, data: [u8], need: i32): __State {
   if (s.failed) {
     return s;
   }
@@ -170,7 +170,7 @@ function __bits(own s: __State, data: u8[], need: i32): __State {
 
 // `__stored(s, data)` — a stored block (RFC 1951 §3.2.4): the rest of the
 // current byte dropped, then LEN, its complement, and LEN bytes copied.
-function __stored(own s: __State, data: u8[]): __State {
+function __stored(own s: __State, data: [u8]): __State {
   s = __State { ...s, bitbuf: 0, bitcnt: 0 };
   if (s.pos + 4 > data.len()) {
     return __fail(s, Truncated);
@@ -255,7 +255,7 @@ function __zeros(n: i32): i32[] {
 // `__decode(s, data, h)` — the next symbol under `h`, read a bit at a time
 // through the code lengths (RFC 1951 §3.2.2), into `last`; a bit pattern
 // no code has is `Malformed`.
-function __decode(own s: __State, data: u8[], h: __Huff): __State {
+function __decode(own s: __State, data: [u8], h: __Huff): __State {
   let code: i32 = 0;
   let first: i32 = 0;
   let index: i32 = 0;
@@ -360,7 +360,7 @@ function __walk(h: __Huff, bits: i64, avail: i32): i32 {
 // One loop, so the bit reader stays in locals rather than crossing a call
 // per symbol.
 // fern-lint: allow cyclomatic-complexity
-function __codes(own s: __State, data: u8[], lencode: __Huff, distcode: __Huff): __State {
+function __codes(own s: __State, data: [u8], lencode: __Huff, distcode: __Huff): __State {
   let lit: i32[] = __table(lencode, LIT_BITS);
   let dtab: i32[] = __table(distcode, DIST_BITS);
   let lmask: i64 = (1 << LIT_BITS) as i64 - 1;
@@ -495,7 +495,7 @@ function __copy(own out: u8[], len: i32, dist: i32): u8[] {
 }
 
 // `__fixed(s, data)` — a block under the fixed codes (RFC 1951 §3.2.6).
-function __fixed(own s: __State, data: u8[]): __State {
+function __fixed(own s: __State, data: [u8]): __State {
   let lengths: i32[] = [];
   let sym: i32 = 0;
   while (sym < 288) {
@@ -532,7 +532,7 @@ function __code_length_order(): i32[] {
 // `__dynamic(s, data)` — a block under codes sent in its header (RFC 1951
 // §3.2.7): the code length code, then the literal/length and distance
 // code lengths under it, then the block's symbols.
-function __dynamic(own s: __State, data: u8[]): __State {
+function __dynamic(own s: __State, data: [u8]): __State {
   s = __bits(s, data, 5);
   let nlen: i32 = s.last + 257;
   s = __bits(s, data, 5);
@@ -565,7 +565,7 @@ function __dynamic(own s: __State, data: u8[]): __State {
 // literal/length and distance codes whose lengths `__code_lengths` left
 // in `lengths`; an incomplete code is allowed only with a single code
 // (RFC 1951 §3.2.7, a one-distance block), an over-subscribed one never.
-function __dynamic_codes(own s: __State, data: u8[], nlen: i32, ndist: i32): __State {
+function __dynamic_codes(own s: __State, data: [u8], nlen: i32, ndist: i32): __State {
   let all: i32[] = s.lengths;
   if (all[256] == 0) {
     return __fail(s, Malformed("no end-of-block code"));
@@ -595,7 +595,7 @@ function __tail(xs: i32[], from: i32, end: i32): i32[] {
 // code (RFC 1951 §3.2.7), left in `lengths`: 0 to 15 are lengths, 16
 // repeats the previous length three to six times, 17 and 18 send three
 // to ten and eleven to 138 zeros.
-function __code_lengths(own s: __State, data: u8[], code: __Huff, n: i32): __State {
+function __code_lengths(own s: __State, data: [u8], code: __Huff, n: i32): __State {
   let lengths: i32[] = [];
   while (lengths.len() < n && !s.failed) {
     s = __decode(s, data, code);
@@ -616,7 +616,7 @@ function __code_lengths(own s: __State, data: u8[], code: __Huff, n: i32): __Sta
 
 // `__repeat(s, data, sym, lengths)` — how often a 16, 17 or 18 repeats, into
 // `last`; a 16 with no length before it is `Malformed`.
-function __repeat(own s: __State, data: u8[], sym: i32, lengths: i32[]): __State {
+function __repeat(own s: __State, data: [u8], sym: i32, lengths: i32[]): __State {
   if (sym == 16) {
     if (lengths.len() == 0) {
       return __fail(s, Malformed("a repeat with no length before it"));
@@ -656,7 +656,7 @@ function __repeated(own lengths: i32[], times: i32, value: i32): i32[] {
 // `gunzip(input, max_out)` — every gzip member in `input` decoded and
 // their outputs joined, at most `max_out` bytes in all; each member's
 // CRC-32 and length are checked against what it produced.
-pub function gunzip(input: u8[], max_out: i32): Result[u8[], InflateError] {
+pub function gunzip(input: [u8], max_out: i32): Result[u8[], InflateError] {
   let out: u8[] = [];
   let at: i32 = 0;
   while (at < input.len()) {
@@ -670,7 +670,7 @@ pub function gunzip(input: u8[], max_out: i32): Result[u8[], InflateError] {
   return Ok(out);
 }
 
-function __joined(own out: u8[], more: u8[]): u8[] {
+function __joined(own out: u8[], more: [u8]): u8[] {
   let i: i32 = 0;
   while (i < more.len()) {
     out = out.append(more[i]);
@@ -682,7 +682,7 @@ function __joined(own out: u8[], more: u8[]): u8[] {
 // `__gzip_member(input, from, max_out)` — one member at `from`: the
 // header read past its optional fields, the stream inflated, the trailer
 // checked; `consumed` covers all three.
-function __gzip_member(input: u8[], from: i32, max_out: i32): Result[Inflated, InflateError] {
+function __gzip_member(input: [u8], from: i32, max_out: i32): Result[Inflated, InflateError] {
   let body: i32 = __gzip_header(input, from)?;
   let inflated: Inflated = inflate_from(input, body, max_out)?;
   let trailer: i32 = body + inflated.consumed;
@@ -691,7 +691,7 @@ function __gzip_member(input: u8[], from: i32, max_out: i32): Result[Inflated, I
   }
   let crc: u32 = __le32(input, trailer);
   let isize: u32 = __le32(input, trailer + 4);
-  if (crc != hash.crc32_new().update_bytes(inflated.out[:]).finish() || isize != inflated.out.len() as u32) {
+  if (crc != hash.crc32_new().update(inflated.out[:]).finish() || isize != inflated.out.len() as u32) {
     return Err(BadChecksum);
   }
   return Ok(Inflated { out: inflated.out, consumed: trailer + 8 - from });
@@ -700,7 +700,7 @@ function __gzip_member(input: u8[], from: i32, max_out: i32): Result[Inflated, I
 // `__gzip_header(input, from)` — where the member's stream begins, past
 // the fixed header and the optional extra field, name, comment and
 // header CRC (RFC 1952 §2.3.1), or why the header is not one this reads.
-function __gzip_header(input: u8[], from: i32): Result[i32, InflateError] {
+function __gzip_header(input: [u8], from: i32): Result[i32, InflateError] {
   if (from + 2 > input.len()) {
     return Err(Truncated);
   }
@@ -723,7 +723,7 @@ function __gzip_header(input: u8[], from: i32): Result[i32, InflateError] {
 // `__gzip_optional(input, at, flags)` — the index past the optional
 // header fields `flags` announce, in their order: the extra field, the
 // name, the comment, the header CRC.
-function __gzip_optional(input: u8[], at: i32, flags: i32): Result[i32, InflateError] {
+function __gzip_optional(input: [u8], at: i32, flags: i32): Result[i32, InflateError] {
   if ((flags & 4) != 0) {
     if (at + 2 > input.len()) {
       return Err(Truncated);
@@ -747,7 +747,7 @@ function __gzip_optional(input: u8[], at: i32, flags: i32): Result[i32, InflateE
 
 // `__past_nul(input, at)` — the index after the NUL that ends the
 // zero-terminated field at `at`.
-function __past_nul(input: u8[], at: i32): Result[i32, InflateError] {
+function __past_nul(input: [u8], at: i32): Result[i32, InflateError] {
   let i: i32 = at;
   while (i < input.len()) {
     if (input[i] == 0 as u8) {
@@ -758,7 +758,7 @@ function __past_nul(input: u8[], at: i32): Result[i32, InflateError] {
   return Err(Truncated);
 }
 
-function __le32(input: u8[], at: i32): u32 {
+function __le32(input: [u8], at: i32): u32 {
   return input[at] as u32 | input[at + 1] as u32 << 8 | input[at + 2] as u32 << 16 | input[at + 3] as u32 << 24;
 }
 
@@ -768,7 +768,7 @@ function __le32(input: u8[], at: i32): u32 {
 // `zlib_decode(input, max_out)` — a zlib stream decoded, at most
 // `max_out` bytes, its Adler-32 checked. A preset dictionary is not
 // supported.
-pub function zlib_decode(input: u8[], max_out: i32): Result[u8[], InflateError] {
+pub function zlib_decode(input: [u8], max_out: i32): Result[u8[], InflateError] {
   if (input.len() < 2) {
     return Err(Truncated);
   }
@@ -796,7 +796,7 @@ pub function zlib_decode(input: u8[], max_out: i32): Result[u8[], InflateError] 
 }
 
 // `adler32(bs)` — the Adler-32 checksum (RFC 1950 §8.2) of `bs`.
-pub function adler32(bs: u8[]): u32 {
+pub function adler32(bs: [u8]): u32 {
   let a: u32 = 1;
   let b: u32 = 0;
   let i: i32 = 0;
@@ -815,21 +815,21 @@ pub function adler32(bs: u8[]): u32 {
 // LZ77 matches found through a 32 KiB window with zlib's lazy evaluation,
 // in blocks each stored, under the fixed code or under a Huffman code
 // built for it, whichever is shortest.
-pub function deflate(input: u8[]): u8[] {
+pub function deflate(input: [u8]): u8[] {
   return __deflated(input, 15, true);
 }
 
 // A greedy single-candidate search trades compression ratio for CPU time.
 // The output is an ordinary raw DEFLATE stream accepted by the same decoders.
-pub function deflate_fast(input: u8[]): u8[] {
+pub function deflate_fast(input: [u8]): u8[] {
   return __deflated_tokens(input, __fast_tokens(input), true);
 }
 
 // `gzip(input)` — `input` as one gzip member (RFC 1952) around its
 // `deflate` stream: no name, no modification time, the operating system
 // unknown.
-pub function gzip(input: u8[]): u8[] {
-  let crc: u32 = hash.crc32_new().update_array(input).finish();
+pub function gzip(input: [u8]): u8[] {
+  let crc: u32 = hash.crc32_new().update(input).finish();
   let head: u8[] = [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8];
   return __put_le32(__put_le32(__joined(head, deflate(input)), crc), input.len() as u32);
 }
@@ -844,7 +844,7 @@ function __put_le32(own out: u8[], v: u32): u8[] {
 // output ends in the four bytes `00 00 ff ff` and an inflater that reads
 // it has everything the data holds. The shape a message framing uses
 // (RFC 7692's permessage-deflate drops those four bytes).
-pub function deflate_flushed(input: u8[], window_bits: i32): u8[] {
+pub function deflate_flushed(input: [u8], window_bits: i32): u8[] {
   return __deflated(input, window_bits, false);
 }
 
@@ -1025,11 +1025,11 @@ function __put_match(w: __Bits, length: i32, distance: i32, lit: __Code, dist: _
 // in blocks of at most 16384, each stored, under the fixed code or under
 // a code of its own, whichever is shortest; the last block ended as
 // `final` says, an empty stored block after it otherwise.
-function __deflated(input: u8[], window_bits: i32, final: boolean): u8[] {
+function __deflated(input: [u8], window_bits: i32, final: boolean): u8[] {
   return __deflated_tokens(input, __tokens(input, 1 << window_bits), final);
 }
 
-function __deflated_tokens(input: u8[], toks: i32[], final: boolean): u8[] {
+function __deflated_tokens(input: [u8], toks: i32[], final: boolean): u8[] {
   let fixed: (__Code, __Code) = (__fixed_lit(), __fixed_dist());
   let empty: u8[] = [];
   let w: __Bits = __Bits { out: empty, acc: 0, n: 0 };
@@ -1073,7 +1073,7 @@ function __span(toks: i32[], at: i32, end: i32): i32 {
 
 // __put_block(w, input, toks, s, fixed) — the block `s` written whichever way
 // costs fewest bits.
-function __put_block(w: __Bits, input: u8[], toks: i32[], s: __Span, fixed: (__Code, __Code)): __Bits {
+function __put_block(w: __Bits, input: [u8], toks: i32[], s: __Span, fixed: (__Code, __Code)): __Bits {
   let f: (i32[], i32[]) = __freqs(toks, s.at, s.end);
   let lit: __Code = __canonical(huffman_lengths(__two_used(f.0), 15));
   let dist: __Code = __canonical(huffman_lengths(__two_used(f.1), 15));
@@ -1149,7 +1149,7 @@ function __stored_cost(len: i32): i32 {
   return (len / 65535 + 1) * 42 + len * 8;
 }
 
-function __put_stored(w: __Bits, input: u8[], s: __Span): __Bits {
+function __put_stored(w: __Bits, input: [u8], s: __Span): __Bits {
   let at: i32 = s.from;
   let end: i32 = s.from + s.len;
   let first: boolean = true;
@@ -1168,7 +1168,7 @@ function __put_stored(w: __Bits, input: u8[], s: __Span): __Bits {
   return w;
 }
 
-function __joined_range(out: u8[], more: u8[], from: i32, to: i32): u8[] {
+function __joined_range(out: u8[], more: [u8], from: i32, to: i32): u8[] {
   let i: i32 = from;
   while (i < to) {
     out = out.append(more[i]);
@@ -1472,7 +1472,7 @@ function __put_header(w: __Bits, h: __Header): __Bits {
 // 258 bytes; a match is deferred a byte when the next position starts a
 // longer one, as zlib's lazy evaluation has it. The chains are updated
 // here rather than in a helper so each update stays in place.
-function __tokens(input: u8[], window: i32): i32[] {
+function __tokens(input: [u8], window: i32): i32[] {
   let n: i32 = input.len();
   let head: i32[] = __filled(32768, 0 - 1);
   let prev: i32[] = __filled(window, 0 - 1);
@@ -1509,7 +1509,7 @@ function __tokens(input: u8[], window: i32): i32[] {
 }
 
 // One hash candidate per position, with no lazy match or predecessor chain.
-function __fast_tokens(input: u8[]): i32[] {
+function __fast_tokens(input: [u8]): i32[] {
   let head: i32[] = __filled(32768, -1);
   let out: i32[] = [];
   let pos: i32 = 0;
@@ -1543,7 +1543,7 @@ function __fast_tokens(input: u8[]): i32[] {
 // __match_at(input, pos, skip, head, prev, window) — the longest match
 // at `pos`, none where a token cannot start: before `skip`, inside the
 // match last taken, or too near the end for one.
-function __match_at(input: u8[], pos: i32, skip: i32, head: i32[], prev: i32[], window: i32): (i32, i32) {
+function __match_at(input: [u8], pos: i32, skip: i32, head: i32[], prev: i32[], window: i32): (i32, i32) {
   if (pos < skip || pos + 2 >= input.len()) {
     return (0, 0);
   }
@@ -1560,7 +1560,7 @@ function __filled(n: i32, v: i32): i32[] {
   return out;
 }
 
-function __hash3(input: u8[], pos: i32): i32 {
+function __hash3(input: [u8], pos: i32): i32 {
   if (pos + 2 >= input.len()) {
     return 0;
   }
@@ -1570,7 +1570,7 @@ function __hash3(input: u8[], pos: i32): i32 {
 
 // __common(input, from, pos) — how many bytes from `pos` repeat those from
 // `from`, at most 258 and not past the end of the input.
-function __common(input: u8[], from: i32, pos: i32): i32 {
+function __common(input: [u8], from: i32, pos: i32): i32 {
   let n: i32 = input.len();
   let len: i32 = 0;
   while (len < 258 && pos + len < n && input[from + len] == input[pos + len]) {
@@ -1582,7 +1582,7 @@ function __common(input: u8[], from: i32, pos: i32): i32 {
 // __longest(input, pos, cand, prev, window) — the longest match at
 // `pos` among the chain starting at `cand`: `(length, distance)`, length
 // 0 for none.
-function __longest(input: u8[], pos: i32, cand: i32, prev: i32[], window: i32): (i32, i32) {
+function __longest(input: [u8], pos: i32, cand: i32, prev: i32[], window: i32): (i32, i32) {
   let n: i32 = input.len();
   let best_len: i32 = 0;
   let best_dist: i32 = 0;

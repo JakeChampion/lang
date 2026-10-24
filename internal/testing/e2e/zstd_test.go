@@ -87,7 +87,7 @@ function main(): i32 {
   }
   let ins: u8[][] = [lines(3000), lcg_bytes(5000), run, mixed];
   for x in ins {
-    print(hex.hex_encode(zstd.compress(x)));
+    print(hex.encode(zstd.compress(x)));
   }
   return 0;
 }
