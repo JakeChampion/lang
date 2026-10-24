@@ -303,11 +303,10 @@ Standard library modules can use `.fern.md` sources. Imports retain their
 public names, such as `import "std/option"`. The compiler expands the
 document in memory before it checks or compiles the module.
 
-The first three modules are
-[`std/option`](../internal/stdlib/std/option.fern.md),
-[`std/result`](../internal/stdlib/std/result.fern.md), and
-[`std/csv`](../internal/stdlib/std/csv.fern.md). Each document contains STE
-explanations, named chunks, and executable examples. Brief declaration
+The library has 152 literate modules. The
+[source inventory](LITERATE-STDLIB.md) lists each document and the six plain
+sources. Each literate module contains STE explanations and named chunks.
+There are 71 executable examples across 68 documents. Brief declaration
 comments provide the text for API reference pages and editor hovers.
 
 ```sh

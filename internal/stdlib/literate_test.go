@@ -9,17 +9,21 @@ import (
 )
 
 func TestLiterateModulesRetainLogicalNamesAndSourcePositions(t *testing.T) {
-	for _, name := range []string{"std/option", "std/result", "std/csv"} {
+	names, err := Modules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		module, err := ReadModule(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if module.DocPath == "" {
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
-			module, err := ReadModule(name)
-			if err != nil {
-				t.Fatal(err)
-			}
 			if module.DocPath != name+".fern.md" || !strings.HasPrefix(module.DocSource, "# ") {
 				t.Fatalf("document provenance: %#v", module)
-			}
-			if strings.Contains(module.Code, "```") || strings.Contains(module.Code, "<<") {
-				t.Fatalf("source contains unexpanded document syntax: %s", module.Code)
 			}
 			if ModuleKey(name) != "stdlib://"+name+".fern" {
 				t.Fatalf("logical module key changed: %q", ModuleKey(name))

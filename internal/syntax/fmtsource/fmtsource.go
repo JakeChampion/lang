@@ -9,6 +9,9 @@ import (
 )
 
 func Format(src string) (string, error) {
+	if strings.Contains(src, "```") && literate.Parse(src).IsProgram() {
+		return FormatLiterate(src), nil
+	}
 	prog, err := parser.Parse(src)
 	if err != nil {
 		return "", err

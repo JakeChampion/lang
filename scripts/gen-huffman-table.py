@@ -9,11 +9,11 @@
 # drifted from what the authored HUFF_CODE and HUFF_LEN generate, the mode
 # make huffman-table-check runs in the lint lane.
 import re, random, sys, os, argparse
-DEFAULT_TARGET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "http", "huffman.fern")
+DEFAULT_TARGET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "http", "huffman.fern.md")
 ap = argparse.ArgumentParser(description="generate or check std/http/huffman's HUFF and HUFF_DEC tables")
 ap.add_argument("out", nargs="?", help="write HUFF_DEC entries here; omit with --check")
 ap.add_argument("--check", action="store_true", help="fail if the committed HUFF or HUFF_DEC drifted")
-ap.add_argument("--target", default=DEFAULT_TARGET, help="the huffman.fern to read and check")
+ap.add_argument("--target", default=DEFAULT_TARGET, help="the huffman.fern.md to read and check")
 args = ap.parse_args()
 src = open(args.target).read()
 def arr(name):
@@ -127,7 +127,7 @@ if args.check:
     # runs it, rather than later as a failing HPACK round trip.
     stale = [name for name, want in (("HUFF", huff), ("HUFF_DEC", vals)) if arr(name) != want]
     if stale:
-        print("internal/stdlib/std/http/huffman.fern is out of date: "
+        print("internal/stdlib/std/http/huffman.fern.md is out of date: "
               + ", ".join(stale) + "; regenerate with scripts/gen-huffman-table.py OUT "
               "and paste OUT's entries into HUFF_DEC, the printed entries into HUFF", file=sys.stderr)
         sys.exit(1)

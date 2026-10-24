@@ -1,0 +1,302 @@
+# Random choices and seeded sequences
+
+This module provides random array operations and a seeded PCG32 generator.
+
+## Model
+
+Array helpers select, sample, or shuffle values. Seeded variants use a PCG32 state so callers can reproduce a sequence.
+
+## Contracts
+
+A seeded operation must retain its returned state for the next draw. A choice from an empty array has no value.
+
+## Executable example
+
+```fern test name=std-rand-example
+import "std/rand";
+
+function main(): i32 {
+  let seed = rand.rng_seed(42);
+  let (a, x) = rand.rng_next(seed);
+  let (b, y) = rand.rng_next(seed);
+  if (a != b || x != y) { return 1; }
+  return 0;
+}
+```
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<module introduction>>
+
+<<dependencies 2>>
+
+<<3 pub function shuffle[T](xs: T[]): T[]>>
+
+<<4 function __pcg_mult(): u64>>
+
+<<5 pub function rng_seed(seed: i64): i64>>
+
+<<6 function __rotr32(v: u32, r: u32): u32>>
+
+<<7 pub function rng_next(state: i64): (i64, u32)>>
+
+<<8 function __rng_word(state: i64): (i64, u64)>>
+
+<<9 pub function rng_bytes(state: i64, n: i32): (i64, u8[])>>
+```
+
+### `module introduction`
+
+```fern
+<<module introduction>>=
+// This module provides random array operations and a seeded PCG32 generator.
+```
+
+### `dependencies 2`
+
+```fern
+<<dependencies 2>>=
+import "std/math" as math;
+```
+
+### `3 pub function shuffle[T](xs: T[]): T[]`
+
+```fern
+<<3 pub function shuffle[T](xs: T[]): T[]>>=
+pub function shuffle[T](xs: T[]): T[] {
+  let out: T[] = [];
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  let j: i32 = out.len() - 1;
+  while (j > 0) {
+    let k: i32 = math.random_int(0, j + 1);
+    let tmp: T = out[j];
+    out = out.with(j, out[k]);
+    out = out.with(k, tmp);
+    j = j - 1;
+  }
+  return out;
+}
+
+pub function choice[T](xs: T[]): Option[T] {
+  if (xs.len() == 0) {
+    return None;
+  }
+  return Some(xs[math.random_int(0, xs.len())]);
+}
+
+pub function sample[T](xs: T[], k: i32): T[] {
+  let shuffled: T[] = shuffle(xs);
+  if (k >= shuffled.len()) {
+    return shuffled;
+  }
+  let out: T[] = [];
+  let i: i32 = 0;
+  while (i < k) {
+    out = out.append(shuffled[i]);
+    i = i + 1;
+  }
+  return out;
+}
+```
+
+### `4 function __pcg_mult(): u64`
+
+```fern
+<<4 function __pcg_mult(): u64>>=
+function __pcg_mult(): u64 {
+  return 6364136223846793005 as u64;
+}
+
+function __pcg_inc(): u64 {
+  return 1442695040888963407 as u64;
+}
+```
+
+### `5 pub function rng_seed(seed: i64): i64`
+
+```fern
+<<5 pub function rng_seed(seed: i64): i64>>=
+pub function rng_seed(seed: i64): i64 {
+  let s: u64 = 0 as u64;
+  s = s * __pcg_mult() + __pcg_inc();
+  s = s + seed as u64;
+  s = s * __pcg_mult() + __pcg_inc();
+  return s as i64;
+}
+```
+
+### `6 function __rotr32(v: u32, r: u32): u32`
+
+```fern
+<<6 function __rotr32(v: u32, r: u32): u32>>=
+function __rotr32(v: u32, r: u32): u32 {
+  let k: u32 = r & 31 as u32;
+  let back: u32 = 32 as u32 - k & 31 as u32;
+  return v >> k | v << back;
+}
+```
+
+### `7 pub function rng_next(state: i64): (i64, u32)`
+
+```fern
+<<7 pub function rng_next(state: i64): (i64, u32)>>=
+pub function rng_next(state: i64): (i64, u32) {
+  let old: u64 = state as u64;
+  let advanced: u64 = old * __pcg_mult() + __pcg_inc();
+  let xorshifted: u32 = ((old >> 18 as u64 ^ old) >> 27 as u64) as u32;
+  let rot: u32 = (old >> 59 as u64) as u32;
+  return (advanced as i64, __rotr32(xorshifted, rot));
+}
+
+pub function rng_below(state: i64, n: i32): (i64, i32) {
+  if (n <= 0) {
+    return (state, 0);
+  }
+  let wide: u64 = n as u64;
+  let mask: u64 = (1 as u64 << 32 as u64) - 1 as u64;
+  let step = rng_next(state);
+  let st: i64 = step.0;
+  let product: u64 = step.1 as u64 * wide;
+  let low: u64 = product & mask;
+  if (low < wide) {
+    let threshold: u64 = ((1 as u64 << 32 as u64) - wide) % wide;
+    while (low < threshold) {
+      let again = rng_next(st);
+      st = again.0;
+      product = again.1 as u64 * wide;
+      low = product & mask;
+    }
+  }
+  return (st, (product >> 32 as u64) as i32);
+}
+
+pub function rng_between(state: i64, lo: i32, hi: i32): (i64, i32) {
+  if (hi <= lo) {
+    return (state, lo);
+  }
+  let step = rng_below(state, hi - lo);
+  return (step.0, lo + step.1);
+}
+
+pub function shuffle_seeded[T](seed: i64, xs: T[]): T[] {
+  let out: T[] = [];
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  let st: i64 = rng_seed(seed);
+  let j: i32 = out.len() - 1;
+  while (j > 0) {
+    let pick = rng_below(st, j + 1);
+    st = pick.0;
+    let k: i32 = pick.1;
+    let tmp: T = out[j];
+    out = out.with(j, out[k]);
+    out = out.with(k, tmp);
+    j = j - 1;
+  }
+  return out;
+}
+
+pub function choice_seeded[T](seed: i64, xs: T[]): Option[T] {
+  if (xs.len() == 0) {
+    return None;
+  }
+  let pick = rng_below(rng_seed(seed), xs.len());
+  return Some(xs[pick.1]);
+}
+
+pub function rng_fill(state: i64, h: usize, n: i32): i64 {
+  let mult: u64 = __pcg_mult();
+  let inc: u64 = __pcg_inc();
+  let st: u64 = state as u64;
+  let left: i32 = n;
+  while (left >= 8) {
+    let lo: u64 = st;
+    st = lo * mult + inc;
+    let hi: u64 = st;
+    st = hi * mult + inc;
+    let a: u32 = __rotr32(((lo >> 18 as u64 ^ lo) >> 27 as u64) as u32, (lo >> 59 as u64) as u32);
+    let b: u32 = __rotr32(((hi >> 18 as u64 ^ hi) >> 27 as u64) as u32, (hi >> 59 as u64) as u32);
+    buf_push_u64(h, a as u64 | b as u64 << 32 as u64);
+    left = left - 8;
+  }
+  if (left <= 0) {
+    return st as i64;
+  }
+  let tail = __rng_word(st as i64);
+  let v: u64 = tail.1;
+  let k: i32 = 0;
+  while (k < left) {
+    buf_push_byte(h, (v & 255 as u64) as i32);
+    v = v >> 8 as u64;
+    k = k + 1;
+  }
+  return tail.0;
+}
+```
+
+### `8 function __rng_word(state: i64): (i64, u64)`
+
+```fern
+<<8 function __rng_word(state: i64): (i64, u64)>>=
+function __rng_word(state: i64): (i64, u64) {
+  let lo = rng_next(state);
+  let hi = rng_next(lo.0);
+  return (hi.0, lo.1 as u64 | hi.1 as u64 << 32 as u64);
+}
+```
+
+### `9 pub function rng_bytes(state: i64, n: i32): (i64, u8[])`
+
+```fern
+<<9 pub function rng_bytes(state: i64, n: i32): (i64, u8[])>>=
+pub function rng_bytes(state: i64, n: i32): (i64, u8[]) {
+  if (n <= 0) {
+    return (state, []);
+  }
+  let h: usize = buf_new(n);
+  let st: i64 = rng_fill(state, h, n);
+  let out: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return (st, out);
+}
+
+pub function rng_seed_from_os(): i64 {
+  let bs: u8[] = random_bytes(8);
+  let seed: u64 = 0 as u64;
+  let i: i32 = 0;
+  while (i < bs.len()) {
+    seed = seed << 8 as u64 | bs[i] as u64;
+    i = i + 1;
+  }
+  return rng_seed(seed as i64);
+}
+
+pub function sample_seeded[T](seed: i64, xs: T[], k: i32): T[] {
+  let out: T[] = [];
+  if (k <= 0) {
+    return out;
+  }
+  let pool: T[] = shuffle_seeded(seed, xs);
+  let take: i32 = k;
+  if (take > pool.len()) {
+    take = pool.len();
+  }
+  let i: i32 = 0;
+  while (i < take) {
+    out = out.append(pool[i]);
+    i = i + 1;
+  }
+  return out;
+}
+```

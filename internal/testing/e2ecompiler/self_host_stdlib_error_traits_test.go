@@ -9,6 +9,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/stdlib"
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 func TestSelfHostStdlibErrorTraits(t *testing.T) {
@@ -21,10 +24,10 @@ func TestSelfHostStdlibErrorTraits(t *testing.T) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.IsDir() || !strings.HasSuffix(path, ".fern") {
+		if entry.IsDir() || stdlib.ModuleName(path) == "" {
 			return nil
 		}
-		src, err := os.ReadFile(path)
+		src, err := literate.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -37,7 +40,7 @@ func TestSelfHostStdlibErrorTraits(t *testing.T) {
 			return err
 		}
 		alias := fmt.Sprintf("m%d", count)
-		fmt.Fprintf(&imports, "import %q as %s;\n", strings.TrimSuffix(filepath.ToSlash(rel), ".fern"), alias)
+		fmt.Fprintf(&imports, "import %q as %s;\n", stdlib.ModuleName(filepath.ToSlash(rel)), alias)
 		for _, typ := range types {
 			fmt.Fprintf(&probes, "function probe%d(e: %s.%s): dyn error.Error { let text: string = display(e); return e; }\n", count, alias, typ[1])
 			count++

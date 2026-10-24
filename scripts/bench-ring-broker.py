@@ -50,7 +50,7 @@ def main():
     sources = output / "source"
     sources.mkdir()
     inputs = [root / "examples/fip" / name for name in ("broker.fern", "broker_core.fern", "broker_ring.fern", "bounded_ring.fern")]
-    inputs += [Path(__file__).resolve(), root / "scripts/bench-broker.py", root / "bootstrap/stage0.lock", root / "internal/stdlib/std/bench.fern"]
+    inputs += [Path(__file__).resolve(), root / "scripts/bench-broker.py", root / "bootstrap/stage0.lock", root / "internal/stdlib/std/bench.fern.md"]
     hashes = {}
     for path in inputs:
         shutil.copy2(path, sources / path.name)

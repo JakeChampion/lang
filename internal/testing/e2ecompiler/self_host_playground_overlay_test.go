@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 const playgroundProgram = `import "std/i64";
@@ -29,7 +31,11 @@ func buildPlaygroundDriver(t *testing.T) string {
 
 func buildPlaygroundDriverWith(t *testing.T, stdlib string) string {
 	t.Helper()
-	return buildPlaygroundDriverForTarget(t, stdlib, "x86-64-linux")
+	target := e2eharness.HostSelfHostTarget()
+	if target == "" {
+		t.Skip("playground driver needs a supported native compiler host")
+	}
+	return buildPlaygroundDriverForTarget(t, stdlib, target)
 }
 
 func buildPlaygroundDriverForTarget(t *testing.T, stdlib, target string) string {
@@ -151,8 +157,8 @@ func playgroundLSPStdlibAnswers(t *testing.T, bin string) {
 	if err := json.Unmarshal(response(t, frames, "4").Result, &def); err != nil {
 		t.Fatal(err)
 	}
-	if def.URI != "file:///stdlib/std/i32.fern" || def.Range.Start.Line == 0 {
-		t.Errorf("definition of to_string = %+v, want a line of file:///stdlib/std/i32.fern", def)
+	if def.URI != "file:///stdlib/std/i32.fern.md" || def.Range.Start.Line == 0 {
+		t.Errorf("definition of to_string = %+v, want a line of file:///stdlib/std/i32.fern.md", def)
 	}
 }
 

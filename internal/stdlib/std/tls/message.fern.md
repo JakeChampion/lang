@@ -1,0 +1,1017 @@
+# TLS records and handshake messages
+
+This module reads and writes TLS records and handshake messages.
+
+## Model
+
+Message helpers encode and decode the fields of TLS records and handshake messages. Constants retain their protocol-assigned wire values.
+
+## Contracts
+
+Message lengths and extension structure require validation. A decoded message is input to the handshake state machine rather than evidence of an authenticated peer.
+
+## Module assembly
+
+The root chunk preserves the declaration order. The chunks below contain the complete implementation.
+
+```fern
+<<*>>=
+<<dependencies 1>>
+
+<<2 pub const CLIENT_HELLO: i32>>
+
+<<3 pub function (e: MsgError) to_string(): string>>
+
+<<4 impl error.Error for MsgError>>
+
+<<5 pub function (e: MsgError) message(): string>>
+
+<<6 pub struct Extension>>
+
+<<7 pub function (m: Message) kind(): i32>>
+
+<<8 const RETRY_RANDOM: u8[]>>
+
+<<9 pub function retry_random(): u8[]>>
+
+<<10 function __u8(own out: u8[], v: i32): u8[]>>
+
+<<11 pub function encode(m: Message): u8[]>>
+
+<<12 struct Span>>
+
+<<13 function __decode_error(what: string): MsgError>>
+
+<<14 function __new_session_ticket(b: [u8]): Result[Message, MsgError]>>
+
+<<15 pub struct Raw>>
+
+<<16 pub function decode(r: Raw): Result[Message, MsgError]>>
+
+<<17 pub struct Split>>
+
+<<18 function __known(kind: i32): boolean>>
+
+<<19 pub function split(buf: [u8]): Result[Split, MsgError]>>
+
+<<20 pub struct KeyShareEntry>>
+
+<<21 function __entry(own out: u8[], e: KeyShareEntry): u8[]>>
+
+<<22 pub function ext_key_shares(entries: KeyShareEntry[]): Extension>>
+
+<<23 pub struct PskIdentity>>
+
+<<24 pub function ext_pre_shared_key(offer: OfferedPsks): Extension>>
+
+<<25 function __binders(binders: u8[][]): u8[]>>
+
+<<26 pub function binders_length(binders: u8[][]): i32>>
+```
+
+### `dependencies 1`
+
+```fern
+<<dependencies 1>>=
+// This module reads and writes TLS records and handshake messages.
+import "core/int";
+import "std/utf8";
+import "std/error";
+import "core/cmp";
+```
+
+### `2 pub const CLIENT_HELLO: i32`
+
+```fern
+<<2 pub const CLIENT_HELLO: i32>>=
+pub const CLIENT_HELLO: i32 = 1;
+
+pub const SERVER_HELLO: i32 = 2;
+
+pub const NEW_SESSION_TICKET: i32 = 4;
+
+pub const END_OF_EARLY_DATA: i32 = 5;
+
+pub const ENCRYPTED_EXTENSIONS: i32 = 8;
+
+pub const CERTIFICATE: i32 = 11;
+
+pub const CERTIFICATE_REQUEST: i32 = 13;
+
+pub const CERTIFICATE_VERIFY: i32 = 15;
+
+pub const FINISHED: i32 = 20;
+
+pub const KEY_UPDATE: i32 = 24;
+
+pub const EXT_SERVER_NAME: i32 = 0;
+
+pub const EXT_SUPPORTED_GROUPS: i32 = 10;
+
+pub const EXT_SIGNATURE_ALGORITHMS: i32 = 13;
+
+pub const EXT_ALPN: i32 = 16;
+
+pub const EXT_PRE_SHARED_KEY: i32 = 41;
+
+pub const EXT_EARLY_DATA: i32 = 42;
+
+pub const EXT_SUPPORTED_VERSIONS: i32 = 43;
+
+pub const EXT_COOKIE: i32 = 44;
+
+pub const EXT_PSK_KEY_EXCHANGE_MODES: i32 = 45;
+
+pub const EXT_KEY_SHARE: i32 = 51;
+
+pub const EXT_QUIC_TRANSPORT_PARAMETERS: i32 = 57;
+
+pub const TLS13: i32 = 0x0304;
+
+pub const LEGACY_VERSION: i32 = 0x0303;
+
+pub enum MsgError {
+  DecodeError(string),
+  IllegalParameter(string),
+  ProtocolVersion(i32),
+  UnexpectedMessage(i32),
+  TooLarge(i32, i32),
+}
+```
+
+### `3 pub function (e: MsgError) to_string(): string`
+
+```fern
+<<3 pub function (e: MsgError) to_string(): string>>=
+pub function (e: MsgError) to_string(): string {
+  return e.message();
+}
+```
+
+### `4 impl error.Error for MsgError`
+
+```fern
+<<4 impl error.Error for MsgError>>=
+impl error.Error for MsgError {}
+
+impl cmp.Display for MsgError {}
+```
+
+### `5 pub function (e: MsgError) message(): string`
+
+```fern
+<<5 pub function (e: MsgError) message(): string>>=
+pub function (e: MsgError) message(): string {
+  match (e) {
+    DecodeError(what) => {
+      return "tls message: malformed " + what;
+    },
+    IllegalParameter(what) => {
+      return "tls message: illegal " + what;
+    },
+    ProtocolVersion(v) => {
+      return "tls message: legacy_version " + int.int_to_string(v) + " is not TLS 1.2's";
+    },
+    UnexpectedMessage(t) => {
+      return "tls message: unknown handshake message type " + int.int_to_string(t);
+    },
+    TooLarge(t, n) => {
+      return "tls message: a type " + int.int_to_string(t) + " message of " + int.int_to_string(n) + " bytes is over the limit";
+    }
+  }
+  return "";
+}
+```
+
+### `6 pub struct Extension`
+
+```fern
+<<6 pub struct Extension>>=
+pub struct Extension { kind: i32, data: u8[] }
+
+pub struct ClientHello { random: u8[], session_id: u8[], cipher_suites: i32[], extensions: Extension[] }
+
+pub struct ServerHello { random: u8[], session_id: u8[], cipher_suite: i32, extensions: Extension[] }
+
+pub struct NewSessionTicket { lifetime: u32, age_add: u32, nonce: u8[], ticket: u8[], extensions: Extension[] }
+
+pub struct CertificateRequest { context: u8[], extensions: Extension[] }
+
+pub struct CertificateEntry { data: u8[], extensions: Extension[] }
+
+pub struct Certificate { context: u8[], entries: CertificateEntry[] }
+
+pub struct CertificateVerify { scheme: i32, signature: u8[] }
+
+pub enum Message {
+  ClientHelloMsg(ClientHello),
+  ServerHelloMsg(ServerHello),
+  NewSessionTicketMsg(NewSessionTicket),
+  EndOfEarlyData,
+  EncryptedExtensions(Extension[]),
+  CertificateRequestMsg(CertificateRequest),
+  CertificateMsg(Certificate),
+  CertificateVerifyMsg(CertificateVerify),
+  Finished(u8[]),
+  KeyUpdate(boolean),
+}
+```
+
+### `7 pub function (m: Message) kind(): i32`
+
+```fern
+<<7 pub function (m: Message) kind(): i32>>=
+// fern-lint: allow cyclomatic-complexity
+pub function (m: Message) kind(): i32 {
+  match (m) {
+    ClientHelloMsg(h) => {
+      return CLIENT_HELLO;
+    },
+    ServerHelloMsg(h) => {
+      return SERVER_HELLO;
+    },
+    NewSessionTicketMsg(t) => {
+      return NEW_SESSION_TICKET;
+    },
+    EndOfEarlyData => {
+      return END_OF_EARLY_DATA;
+    },
+    EncryptedExtensions(e) => {
+      return ENCRYPTED_EXTENSIONS;
+    },
+    CertificateRequestMsg(r) => {
+      return CERTIFICATE_REQUEST;
+    },
+    CertificateMsg(c) => {
+      return CERTIFICATE;
+    },
+    CertificateVerifyMsg(v) => {
+      return CERTIFICATE_VERIFY;
+    },
+    Finished(v) => {
+      return FINISHED;
+    },
+    KeyUpdate(r) => {
+      return KEY_UPDATE;
+    }
+  }
+  return 0;
+}
+```
+
+### `8 const RETRY_RANDOM: u8[]`
+
+```fern
+<<8 const RETRY_RANDOM: u8[]>>=
+const RETRY_RANDOM: u8[] = [207, 33, 173, 116, 229, 154, 97, 17, 190, 29, 140, 2, 30, 101, 184, 145, 194, 162, 17, 22, 122, 187, 140, 94, 7, 158, 9, 226, 200, 168, 51, 156];
+```
+
+### `9 pub function retry_random(): u8[]`
+
+```fern
+<<9 pub function retry_random(): u8[]>>=
+pub function retry_random(): u8[] {
+  return RETRY_RANDOM;
+}
+
+pub function (s: ServerHello) is_retry(): boolean {
+  if (s.random.len() != RETRY_RANDOM.len()) {
+    return false;
+  }
+  for i in 0..RETRY_RANDOM.len() {
+    if (s.random[i] != RETRY_RANDOM[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+```
+
+### `10 function __u8(own out: u8[], v: i32): u8[]`
+
+```fern
+<<10 function __u8(own out: u8[], v: i32): u8[]>>=
+function __u8(own out: u8[], v: i32): u8[] {
+  return out.append((v & 255) as u8);
+}
+
+function __u16(own out: u8[], v: i32): u8[] {
+  return out.append((v >> 8 & 255) as u8).append((v & 255) as u8);
+}
+
+function __u24(own out: u8[], v: i32): u8[] {
+  return out.append((v >> 16 & 255) as u8).append((v >> 8 & 255) as u8).append((v & 255) as u8);
+}
+
+function __u32(own out: u8[], v: u32): u8[] {
+  return out.append((v >> 24 & 255) as u8).append((v >> 16 & 255) as u8).append((v >> 8 & 255) as u8).append((v & 255) as u8);
+}
+
+function __bytes(own out: u8[], b: [u8]): u8[] {
+  let i: i32 = 0;
+  while (i < b.len()) {
+    out = out.append(b[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __vec8(own out: u8[], b: [u8]): u8[] {
+  return __bytes(__u8(out, b.len()), b);
+}
+
+function __vec16(own out: u8[], b: [u8]): u8[] {
+  return __bytes(__u16(out, b.len()), b);
+}
+
+function __vec24(own out: u8[], b: [u8]): u8[] {
+  return __bytes(__u24(out, b.len()), b);
+}
+
+function __u16s(v: i32[]): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < v.len()) {
+    out = __u16(out, v[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __ext_list(exts: Extension[]): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < exts.len()) {
+    out = __vec16(__u16(out, exts[i].kind), exts[i].data);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __client_hello_body(h: ClientHello): u8[] {
+  let out: u8[] = __bytes(__u16([], LEGACY_VERSION), h.random);
+  out = __vec16(__vec8(out, h.session_id), __u16s(h.cipher_suites));
+  return __vec16(__vec8(out, [0 as u8]), __ext_list(h.extensions));
+}
+
+function __server_hello_body(h: ServerHello): u8[] {
+  let out: u8[] = __vec8(__bytes(__u16([], LEGACY_VERSION), h.random), h.session_id);
+  return __vec16(__u8(__u16(out, h.cipher_suite), 0), __ext_list(h.extensions));
+}
+
+function __certificate_body(c: Certificate): u8[] {
+  let list: u8[] = [];
+  let i: i32 = 0;
+  while (i < c.entries.len()) {
+    list = __vec16(__vec24(list, c.entries[i].data), __ext_list(c.entries[i].extensions));
+    i = i + 1;
+  }
+  return __vec24(__vec8([], c.context), list);
+}
+
+// fern-lint: allow cyclomatic-complexity
+function __body(m: Message): u8[] {
+  match (m) {
+    ClientHelloMsg(h) => {
+      return __client_hello_body(h);
+    },
+    ServerHelloMsg(h) => {
+      return __server_hello_body(h);
+    },
+    NewSessionTicketMsg(t) => {
+      return __vec16(__vec16(__vec8(__u32(__u32([], t.lifetime), t.age_add), t.nonce), t.ticket), __ext_list(t.extensions));
+    },
+    EndOfEarlyData => {
+      return [];
+    },
+    EncryptedExtensions(e) => {
+      return __vec16([], __ext_list(e));
+    },
+    CertificateRequestMsg(r) => {
+      return __vec16(__vec8([], r.context), __ext_list(r.extensions));
+    },
+    CertificateMsg(c) => {
+      return __certificate_body(c);
+    },
+    CertificateVerifyMsg(v) => {
+      return __vec16(__u16([], v.scheme), v.signature);
+    },
+    Finished(v) => {
+      return __bytes([], v);
+    },
+    KeyUpdate(r) => {
+      if (r) {
+        return [1 as u8];
+      }
+      return [0 as u8];
+    }
+  }
+  return [];
+}
+```
+
+### `11 pub function encode(m: Message): u8[]`
+
+```fern
+<<11 pub function encode(m: Message): u8[]>>=
+pub function encode(m: Message): u8[] {
+  let body: u8[] = __body(m);
+  return __bytes(__u24(__u8([], m.kind()), body.len()), body);
+}
+```
+
+### `12 struct Span`
+
+```fern
+<<12 struct Span>>=
+struct Span { from: i32, to: i32 }
+```
+
+### `13 function __decode_error(what: string): MsgError`
+
+```fern
+<<13 function __decode_error(what: string): MsgError>>=
+function __decode_error(what: string): MsgError {
+  return DecodeError(what);
+}
+
+function __need(b: [u8], at: i32, n: i32, what: string): Result[i32, MsgError] {
+  if (at + n > b.len()) {
+    return Err(__decode_error(what));
+  }
+  return Ok(at + n);
+}
+
+function __get16(b: [u8], at: i32): i32 {
+  return b[at] as i32 << 8 | b[at + 1] as i32;
+}
+
+function __get24(b: [u8], at: i32): i32 {
+  return b[at] as i32 << 16 | b[at + 1] as i32 << 8 | b[at + 2] as i32;
+}
+
+function __get32(b: [u8], at: i32): u32 {
+  return b[at] as u32 << 24 | b[at + 1] as u32 << 16 | b[at + 2] as u32 << 8 | b[at + 3] as u32;
+}
+
+function __vec(b: [u8], at: i32, n: i32, min: i32, max: i32, what: string): Result[Span, MsgError] {
+  let from: i32 = __need(b, at, n, what)?;
+  let len: i32 = b[at] as i32;
+  if (n == 2) {
+    len = __get16(b, at);
+  }
+  if (n == 3) {
+    len = __get24(b, at);
+  }
+  if (len < min || len > max) {
+    return Err(__decode_error(what));
+  }
+  let to: i32 = __need(b, from, len, what)?;
+  return Ok(Span { from: from, to: to });
+}
+
+function __whole(b: [u8], n: i32, min: i32, max: i32, what: string): Result[Span, MsgError] {
+  let s: Span = __vec(b, 0, n, min, max, what)?;
+  if (s.to != b.len()) {
+    return Err(__decode_error(what));
+  }
+  return Ok(s);
+}
+
+function __copy(b: [u8], from: i32, to: i32): u8[] {
+  let out: u8[] = __alloc_u8(to - from);
+  let i: i32 = from;
+  while (i < to) {
+    out = out.with(i - from, b[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __read_u16s(b: [u8], what: string): Result[i32[], MsgError] {
+  if (b.len() % 2 != 0) {
+    return Err(__decode_error(what));
+  }
+  let out: i32[] = [];
+  let at: i32 = 0;
+  while (at < b.len()) {
+    out = out.append(__get16(b, at));
+    at = at + 2;
+  }
+  return Ok(out);
+}
+
+function __read_exts(b: [u8]): Result[Extension[], MsgError] {
+  let out: Extension[] = [];
+  let at: i32 = 0;
+  while (at < b.len()) {
+    __need(b, at, 2, "extension")?;
+    let kind: i32 = __get16(b, at);
+    let s: Span = __vec(b, at + 2, 2, 0, 65535, "extension")?;
+    let i: i32 = 0;
+    while (i < out.len()) {
+      if (out[i].kind == kind) {
+        return Err(IllegalParameter("repeated extension " + int.int_to_string(kind)));
+      }
+      i = i + 1;
+    }
+    out = out.append(Extension { kind: kind, data: __copy(b, s.from, s.to) });
+    at = s.to;
+  }
+  return Ok(out);
+}
+
+function __hello_head(b: [u8], what: string): Result[Span, MsgError] {
+  __need(b, 0, 34, what)?;
+  let v: i32 = __get16(b, 0);
+  if (v != LEGACY_VERSION) {
+    return Err(ProtocolVersion(v));
+  }
+  return __vec(b, 34, 1, 0, 32, "legacy_session_id");
+}
+
+function __client_hello(b: [u8]): Result[Message, MsgError] {
+  let sid: Span = __hello_head(b, "ClientHello")?;
+  let suites: Span = __vec(b, sid.to, 2, 2, 65534, "cipher_suites")?;
+  let comp: Span = __vec(b, suites.to, 1, 1, 255, "legacy_compression_methods")?;
+  if (comp.to - comp.from != 1 || b[comp.from] != 0) {
+    return Err(IllegalParameter("legacy_compression_methods"));
+  }
+  let ext: Span = __vec(b, comp.to, 2, 8, 65535, "ClientHello extensions")?;
+  if (ext.to != b.len()) {
+    return Err(__decode_error("ClientHello"));
+  }
+  return Ok(ClientHelloMsg(ClientHello { random: __copy(b, 2, 34), session_id: __copy(b, sid.from, sid.to), cipher_suites: __read_u16s(b[suites.from:suites.to], "cipher_suites")?, extensions: __read_exts(b[ext.from:ext.to])? }));
+}
+
+function __server_hello(b: [u8]): Result[Message, MsgError] {
+  let sid: Span = __hello_head(b, "ServerHello")?;
+  __need(b, sid.to, 3, "ServerHello")?;
+  if (b[sid.to + 2] != 0) {
+    return Err(IllegalParameter("legacy_compression_method"));
+  }
+  let ext: Span = __vec(b, sid.to + 3, 2, 6, 65535, "ServerHello extensions")?;
+  if (ext.to != b.len()) {
+    return Err(__decode_error("ServerHello"));
+  }
+  return Ok(ServerHelloMsg(ServerHello { random: __copy(b, 2, 34), session_id: __copy(b, sid.from, sid.to), cipher_suite: __get16(b, sid.to), extensions: __read_exts(b[ext.from:ext.to])? }));
+}
+```
+
+### `14 function __new_session_ticket(b: [u8]): Result[Message, MsgError]`
+
+```fern
+<<14 function __new_session_ticket(b: [u8]): Result[Message, MsgError]>>=
+function __new_session_ticket(b: [u8]): Result[Message, MsgError] {
+  __need(b, 0, 8, "NewSessionTicket")?;
+  let nonce: Span = __vec(b, 8, 1, 0, 255, "ticket_nonce")?;
+  let ticket: Span = __vec(b, nonce.to, 2, 1, 65535, "ticket")?;
+  let ext: Span = __vec(b, ticket.to, 2, 0, 65534, "NewSessionTicket extensions")?;
+  if (ext.to != b.len()) {
+    return Err(__decode_error("NewSessionTicket"));
+  }
+  return Ok(NewSessionTicketMsg(NewSessionTicket { lifetime: __get32(b, 0), age_add: __get32(b, 4), nonce: __copy(b, nonce.from, nonce.to), ticket: __copy(b, ticket.from, ticket.to), extensions: __read_exts(b[ext.from:ext.to])? }));
+}
+
+function __certificate_request(b: [u8]): Result[Message, MsgError] {
+  let ctx: Span = __vec(b, 0, 1, 0, 255, "certificate_request_context")?;
+  let ext: Span = __vec(b, ctx.to, 2, 2, 65535, "CertificateRequest extensions")?;
+  if (ext.to != b.len()) {
+    return Err(__decode_error("CertificateRequest"));
+  }
+  return Ok(CertificateRequestMsg(CertificateRequest { context: __copy(b, ctx.from, ctx.to), extensions: __read_exts(b[ext.from:ext.to])? }));
+}
+
+function __certificate(b: [u8]): Result[Message, MsgError] {
+  let ctx: Span = __vec(b, 0, 1, 0, 255, "certificate_request_context")?;
+  let list: Span = __vec(b, ctx.to, 3, 0, 16777215, "certificate_list")?;
+  if (list.to != b.len()) {
+    return Err(__decode_error("Certificate"));
+  }
+  let entries: CertificateEntry[] = [];
+  let at: i32 = list.from;
+  while (at < list.to) {
+    let l: [u8] = b[0:list.to];
+    let data: Span = __vec(l, at, 3, 1, 16777215, "cert_data")?;
+    let ext: Span = __vec(l, data.to, 2, 0, 65535, "CertificateEntry extensions")?;
+    entries = entries.append(CertificateEntry { data: __copy(b, data.from, data.to), extensions: __read_exts(b[ext.from:ext.to])? });
+    at = ext.to;
+  }
+  return Ok(CertificateMsg(Certificate { context: __copy(b, ctx.from, ctx.to), entries: entries }));
+}
+
+function __certificate_verify(b: [u8]): Result[Message, MsgError] {
+  __need(b, 0, 2, "CertificateVerify")?;
+  let sig: Span = __vec(b, 2, 2, 0, 65535, "signature")?;
+  if (sig.to != b.len()) {
+    return Err(__decode_error("CertificateVerify"));
+  }
+  return Ok(CertificateVerifyMsg(CertificateVerify { scheme: __get16(b, 0), signature: __copy(b, sig.from, sig.to) }));
+}
+
+function __key_update(b: [u8]): Result[Message, MsgError] {
+  if (b.len() != 1) {
+    return Err(__decode_error("KeyUpdate"));
+  }
+  if (b[0] > 1) {
+    return Err(IllegalParameter("request_update"));
+  }
+  return Ok(KeyUpdate(b[0] == 1));
+}
+```
+
+### `15 pub struct Raw`
+
+```fern
+<<15 pub struct Raw>>=
+pub struct Raw { kind: i32, bytes: u8[] }
+```
+
+### `16 pub function decode(r: Raw): Result[Message, MsgError]`
+
+```fern
+<<16 pub function decode(r: Raw): Result[Message, MsgError]>>=
+// fern-lint: allow cyclomatic-complexity
+pub function decode(r: Raw): Result[Message, MsgError] {
+  let b: [u8] = r.bytes[4:r.bytes.len()];
+  if (r.kind == CLIENT_HELLO) {
+    return __client_hello(b);
+  }
+  if (r.kind == SERVER_HELLO) {
+    return __server_hello(b);
+  }
+  if (r.kind == NEW_SESSION_TICKET) {
+    return __new_session_ticket(b);
+  }
+  if (r.kind == END_OF_EARLY_DATA) {
+    if (b.len() != 0) {
+      return Err(__decode_error("EndOfEarlyData"));
+    }
+    return Ok(EndOfEarlyData);
+  }
+  if (r.kind == ENCRYPTED_EXTENSIONS) {
+    let ext: Span = __whole(b, 2, 0, 65535, "EncryptedExtensions")?;
+    return Ok(EncryptedExtensions(__read_exts(b[ext.from:ext.to])?));
+  }
+  if (r.kind == CERTIFICATE_REQUEST) {
+    return __certificate_request(b);
+  }
+  if (r.kind == CERTIFICATE) {
+    return __certificate(b);
+  }
+  if (r.kind == CERTIFICATE_VERIFY) {
+    return __certificate_verify(b);
+  }
+  if (r.kind == FINISHED) {
+    return Ok(Finished(__copy(b, 0, b.len())));
+  }
+  if (r.kind == KEY_UPDATE) {
+    return __key_update(b);
+  }
+  return Err(UnexpectedMessage(r.kind));
+}
+```
+
+### `17 pub struct Split`
+
+```fern
+<<17 pub struct Split>>=
+pub struct Split { messages: Raw[], rest: u8[] }
+
+const KINDS: i32[] = [CLIENT_HELLO, SERVER_HELLO, NEW_SESSION_TICKET, END_OF_EARLY_DATA, ENCRYPTED_EXTENSIONS, CERTIFICATE, CERTIFICATE_REQUEST, CERTIFICATE_VERIFY, FINISHED, KEY_UPDATE];
+```
+
+### `18 function __known(kind: i32): boolean`
+
+```fern
+<<18 function __known(kind: i32): boolean>>=
+function __known(kind: i32): boolean {
+  let i: i32 = 0;
+  while (i < KINDS.len()) {
+    if (KINDS[i] == kind) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function __limit(kind: i32): i32 {
+  if (kind == CERTIFICATE) {
+    return 262144;
+  }
+  return 65536;
+}
+```
+
+### `19 pub function split(buf: [u8]): Result[Split, MsgError]`
+
+```fern
+<<19 pub function split(buf: [u8]): Result[Split, MsgError]>>=
+pub function split(buf: [u8]): Result[Split, MsgError] {
+  let out: Raw[] = [];
+  let at: i32 = 0;
+  while (at + 4 <= buf.len()) {
+    let kind: i32 = buf[at] as i32;
+    if (!__known(kind)) {
+      return Err(UnexpectedMessage(kind));
+    }
+    let len: i32 = __get24(buf, at + 1);
+    if (len > __limit(kind)) {
+      return Err(TooLarge(kind, len));
+    }
+    if (at + 4 + len > buf.len()) {
+      break;
+    }
+    out = out.append(Raw { kind: kind, bytes: __copy(buf, at, at + 4 + len) });
+    at = at + 4 + len;
+  }
+  return Ok(Split { messages: out, rest: __copy(buf, at, buf.len()) });
+}
+
+pub function find(exts: Extension[], kind: i32): Option[u8[]] {
+  let i: i32 = 0;
+  while (i < exts.len()) {
+    if (exts[i].kind == kind) {
+      return Some(exts[i].data);
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+pub function ext_server_name(host: string): Extension {
+  let entry: u8[] = __vec16(__u8([], 0), host.bytes());
+  return Extension { kind: EXT_SERVER_NAME, data: __vec16([], entry) };
+}
+
+pub function server_name(d: [u8]): Result[string, MsgError] {
+  let list: Span = __whole(d, 2, 1, 65535, "server_name")?;
+  let at: i32 = list.from;
+  while (at < list.to) {
+    __need(d, at, 1, "server_name")?;
+    let name: Span = __vec(d, at + 1, 2, 1, 65535, "server_name")?;
+    if (d[at] == 0) {
+      match (utf8.from_bytes(__copy(d, name.from, name.to))) {
+        Some(s) => {
+          return Ok(s);
+        },
+        None => {
+          return Err(__decode_error("server_name"));
+        }
+      }
+    }
+    at = name.to;
+  }
+  return Err(__decode_error("server_name"));
+}
+
+pub function ext_supported_versions(versions: i32[]): Extension {
+  return Extension { kind: EXT_SUPPORTED_VERSIONS, data: __vec8([], __u16s(versions)) };
+}
+
+pub function supported_versions(d: [u8]): Result[i32[], MsgError] {
+  let s: Span = __whole(d, 1, 2, 254, "supported_versions")?;
+  return __read_u16s(d[s.from:s.to], "supported_versions");
+}
+
+pub function ext_selected_version(v: i32): Extension {
+  return Extension { kind: EXT_SUPPORTED_VERSIONS, data: __u16([], v) };
+}
+
+pub function selected_version(d: [u8]): Result[i32, MsgError] {
+  if (d.len() != 2) {
+    return Err(__decode_error("supported_versions"));
+  }
+  return Ok(__get16(d, 0));
+}
+
+pub function ext_supported_groups(groups: i32[]): Extension {
+  return Extension { kind: EXT_SUPPORTED_GROUPS, data: __vec16([], __u16s(groups)) };
+}
+
+pub function supported_groups(d: [u8]): Result[i32[], MsgError] {
+  let s: Span = __whole(d, 2, 2, 65535, "supported_groups")?;
+  return __read_u16s(d[s.from:s.to], "supported_groups");
+}
+
+pub function ext_signature_algorithms(schemes: i32[]): Extension {
+  return Extension { kind: EXT_SIGNATURE_ALGORITHMS, data: __vec16([], __u16s(schemes)) };
+}
+
+pub function signature_algorithms(d: [u8]): Result[i32[], MsgError] {
+  let s: Span = __whole(d, 2, 2, 65534, "signature_algorithms")?;
+  return __read_u16s(d[s.from:s.to], "signature_algorithms");
+}
+```
+
+### `20 pub struct KeyShareEntry`
+
+```fern
+<<20 pub struct KeyShareEntry>>=
+pub struct KeyShareEntry { group: i32, key: u8[] }
+```
+
+### `21 function __entry(own out: u8[], e: KeyShareEntry): u8[]`
+
+```fern
+<<21 function __entry(own out: u8[], e: KeyShareEntry): u8[]>>=
+function __entry(own out: u8[], e: KeyShareEntry): u8[] {
+  return __vec16(__u16(out, e.group), e.key);
+}
+```
+
+### `22 pub function ext_key_shares(entries: KeyShareEntry[]): Extension`
+
+```fern
+<<22 pub function ext_key_shares(entries: KeyShareEntry[]): Extension>>=
+pub function ext_key_shares(entries: KeyShareEntry[]): Extension {
+  let list: u8[] = [];
+  let i: i32 = 0;
+  while (i < entries.len()) {
+    list = __entry(list, entries[i]);
+    i = i + 1;
+  }
+  return Extension { kind: EXT_KEY_SHARE, data: __vec16([], list) };
+}
+
+pub function key_shares(d: [u8]): Result[KeyShareEntry[], MsgError] {
+  let list: Span = __whole(d, 2, 0, 65535, "key_share")?;
+  let out: KeyShareEntry[] = [];
+  let at: i32 = list.from;
+  while (at < list.to) {
+    __need(d, at, 2, "key_share")?;
+    let group: i32 = __get16(d, at);
+    let key: Span = __vec(d, at + 2, 2, 1, 65535, "key_share")?;
+    let i: i32 = 0;
+    while (i < out.len()) {
+      if (out[i].group == group) {
+        return Err(IllegalParameter("repeated key share " + int.int_to_string(group)));
+      }
+      i = i + 1;
+    }
+    out = out.append(KeyShareEntry { group: group, key: __copy(d, key.from, key.to) });
+    at = key.to;
+  }
+  return Ok(out);
+}
+
+pub function ext_key_share(e: KeyShareEntry): Extension {
+  return Extension { kind: EXT_KEY_SHARE, data: __entry([], e) };
+}
+
+pub function key_share(d: [u8]): Result[KeyShareEntry, MsgError] {
+  __need(d, 0, 2, "key_share")?;
+  let key: Span = __vec(d, 2, 2, 1, 65535, "key_share")?;
+  if (key.to != d.len()) {
+    return Err(__decode_error("key_share"));
+  }
+  return Ok(KeyShareEntry { group: __get16(d, 0), key: __copy(d, key.from, key.to) });
+}
+
+pub function ext_retry_group(group: i32): Extension {
+  return Extension { kind: EXT_KEY_SHARE, data: __u16([], group) };
+}
+
+pub function retry_group(d: [u8]): Result[i32, MsgError] {
+  if (d.len() != 2) {
+    return Err(__decode_error("key_share"));
+  }
+  return Ok(__get16(d, 0));
+}
+
+pub function ext_alpn(protocols: string[]): Extension {
+  let list: u8[] = [];
+  let i: i32 = 0;
+  while (i < protocols.len()) {
+    list = __vec8(list, protocols[i].bytes());
+    i = i + 1;
+  }
+  return Extension { kind: EXT_ALPN, data: __vec16([], list) };
+}
+
+pub function alpn(d: [u8]): Result[string[], MsgError] {
+  let list: Span = __whole(d, 2, 2, 65535, "application_layer_protocol_negotiation")?;
+  let out: string[] = [];
+  let at: i32 = list.from;
+  while (at < list.to) {
+    let name: Span = __vec(d, at, 1, 1, 255, "application_layer_protocol_negotiation")?;
+    match (utf8.from_bytes(__copy(d, name.from, name.to))) {
+      Some(s) => {
+        out = out.append(s);
+      },
+      None => {
+        return Err(__decode_error("application_layer_protocol_negotiation"));
+      }
+    }
+    at = name.to;
+  }
+  return Ok(out);
+}
+```
+
+### `23 pub struct PskIdentity`
+
+```fern
+<<23 pub struct PskIdentity>>=
+pub struct PskIdentity { identity: u8[], obfuscated_age: u32 }
+
+pub struct OfferedPsks { identities: PskIdentity[], binders: u8[][] }
+```
+
+### `24 pub function ext_pre_shared_key(offer: OfferedPsks): Extension`
+
+```fern
+<<24 pub function ext_pre_shared_key(offer: OfferedPsks): Extension>>=
+pub function ext_pre_shared_key(offer: OfferedPsks): Extension {
+  let ids: u8[] = [];
+  let i: i32 = 0;
+  while (i < offer.identities.len()) {
+    ids = __u32(__vec16(ids, offer.identities[i].identity), offer.identities[i].obfuscated_age);
+    i = i + 1;
+  }
+  return Extension { kind: EXT_PRE_SHARED_KEY, data: __vec16(__vec16([], ids), __binders(offer.binders)) };
+}
+```
+
+### `25 function __binders(binders: u8[][]): u8[]`
+
+```fern
+<<25 function __binders(binders: u8[][]): u8[]>>=
+function __binders(binders: u8[][]): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < binders.len()) {
+    out = __vec8(out, binders[i]);
+    i = i + 1;
+  }
+  return out;
+}
+```
+
+### `26 pub function binders_length(binders: u8[][]): i32`
+
+```fern
+<<26 pub function binders_length(binders: u8[][]): i32>>=
+pub function binders_length(binders: u8[][]): i32 {
+  return 2 + __binders(binders).len();
+}
+
+pub function pre_shared_key(d: [u8]): Result[OfferedPsks, MsgError] {
+  let ids: Span = __vec(d, 0, 2, 7, 65535, "pre_shared_key identities")?;
+  let binders: Span = __vec(d, ids.to, 2, 33, 65535, "pre_shared_key binders")?;
+  if (binders.to != d.len()) {
+    return Err(__decode_error("pre_shared_key"));
+  }
+  let out: OfferedPsks = OfferedPsks { identities: [], binders: [] };
+  let at: i32 = ids.from;
+  while (at < ids.to) {
+    let id: Span = __vec(d, at, 2, 1, 65535, "psk_identity")?;
+    __need(d, id.to, 4, "obfuscated_ticket_age")?;
+    out = OfferedPsks { ...out, identities: out.identities.append(PskIdentity { identity: __copy(d, id.from, id.to), obfuscated_age: __get32(d, id.to) }) };
+    at = id.to + 4;
+  }
+  at = binders.from;
+  while (at < binders.to) {
+    let b: Span = __vec(d, at, 1, 32, 255, "psk_binder")?;
+    out = OfferedPsks { ...out, binders: out.binders.append(__copy(d, b.from, b.to)) };
+    at = b.to;
+  }
+  if (out.identities.len() != out.binders.len()) {
+    return Err(IllegalParameter("pre_shared_key binders"));
+  }
+  return Ok(out);
+}
+
+pub function ext_selected_psk(index: i32): Extension {
+  return Extension { kind: EXT_PRE_SHARED_KEY, data: __u16([], index) };
+}
+
+pub function selected_psk(d: [u8]): Result[i32, MsgError] {
+  if (d.len() != 2) {
+    return Err(__decode_error("pre_shared_key"));
+  }
+  return Ok(__get16(d, 0));
+}
+
+pub function ext_psk_modes(modes: i32[]): Extension {
+  let list: u8[] = [];
+  let i: i32 = 0;
+  while (i < modes.len()) {
+    list = __u8(list, modes[i]);
+    i = i + 1;
+  }
+  return Extension { kind: EXT_PSK_KEY_EXCHANGE_MODES, data: __vec8([], list) };
+}
+
+pub function psk_modes(d: [u8]): Result[i32[], MsgError] {
+  let s: Span = __whole(d, 1, 1, 255, "psk_key_exchange_modes")?;
+  let out: i32[] = [];
+  let i: i32 = s.from;
+  while (i < s.to) {
+    out = out.append(d[i] as i32);
+    i = i + 1;
+  }
+  return Ok(out);
+}
+```

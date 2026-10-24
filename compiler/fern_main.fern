@@ -20,6 +20,22 @@ function stdlib_digest(): string {
   return slice_unchecked(h.final_hex(), 0, 16) + "";
 }
 
+function stdlib_installed(root: string): boolean {
+  match (read_file(root + "/std/io.fern")) {
+    Ok(_) => {
+      return true;
+    },
+    Err(_) => {}
+  }
+  match (read_file(root + "/std/io.fern.md")) {
+    Ok(_) => {
+      return true;
+    },
+    Err(_) => {}
+  }
+  return false;
+}
+
 function stdlib_root(): string {
   let base: string = util.cache_base();
   if (base.len() == 0) {
@@ -27,11 +43,8 @@ function stdlib_root(): string {
     return "";
   }
   let root: string = base + "/stdlib-" + stdlib_digest();
-  match (read_file(root + "/std/io.fern")) {
-    Ok(_) => {
-      return root;
-    },
-    Err(_) => {}
+  if (stdlib_installed(root)) {
+    return root;
   }
   let suffix: string = "";
   for b in random_bytes(6) {
@@ -60,11 +73,8 @@ function stdlib_root(): string {
       return root;
     },
     Err(e) => {
-      match (read_file(root + "/std/io.fern")) {
-        Ok(_) => {
-          return root;
-        },
-        Err(_) => {}
+      if (stdlib_installed(root)) {
+        return root;
       }
       eprint("fern: cannot install the stdlib at " + root + ": " + e.message());
       return "";

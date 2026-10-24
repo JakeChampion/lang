@@ -53,5 +53,5 @@ def table():
     return "// BASE stores `k * 256^j * B` at `((j * 8 + k - 1) * 12)`.\n// Each point stores `y + x`, `y - x`, and `2d * x * y`, with four limbs per value.\nconst BASE: u64[] = [\n" + "\n".join(lines) + "\n];\n"
 
 if __name__ == "__main__":
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "crypto", "ed25519.fern")
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "internal", "stdlib", "std", "crypto", "ed25519.fern.md")
     write_region(path, "ED25519 BASE TABLE", "gen-ed25519.py", table())

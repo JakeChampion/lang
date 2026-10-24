@@ -690,13 +690,12 @@ pub function module_src(ov: Overlay, entry_path: string, parts: flatten.PerModul
     }
     path = id + ".fern";
   }
-  match (read_file(path)) {
-    Ok(src) => {
-      return Some(src);
-    },
-    Err(e) => {
-      return None;
-    }
+  if (util.str_has_suffix(path, ".fern.md")) {
+    path = slice_unchecked(path, 0, path.len() - 3) + "";
+  }
+  let source: Resolved = read_module(ov.files, path);
+  if (source.ok) {
+    return Some(source.src);
   }
   return None;
 }

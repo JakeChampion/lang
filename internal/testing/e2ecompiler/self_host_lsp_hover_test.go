@@ -351,8 +351,8 @@ func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 		"option.fern":    "import \"std/option\";\nfunction main(): i32 {\n  let value: Option[i32] = Some(42);\n  return value.unwrap_or(0);\n}\n",
 		"std.fern":       "import \"std/string\";\nfunction main(): i32 {\n  let s: string = \"abc\";\n  let r: string = string.repeat_char(1 as char, 2);\n  if (s.starts_with(\"a\")) {\n    return r.len();\n  }\n  return 0;\n}\n",
 	})
-	stringFern := filepath.Join(s.stdlib, "std", "string.fern")
-	arrayFern := filepath.Join(s.stdlib, "std", "array.fern")
+	stringFern := filepath.Join(s.stdlib, "std", "string.fern.md")
+	arrayFern := filepath.Join(s.stdlib, "std", "array.fern.md")
 	optionFern := filepath.Join(s.stdlib, "std", "option.fern.md")
 	declAt := func(file, decl, name string) lspRange {
 		for i, l := range strings.Split(string(mustRead(t, file)), "\n") {
